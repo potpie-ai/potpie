@@ -1,7 +1,7 @@
 """Enrichment Agent for adding implementation details to core requirements."""
+
 from pydantic_ai import Agent
 from app.modules.intelligence.provider.provider_service import ProviderService
-from .spec_models import RequirementEnrichmentOutput
 
 ENRICHMENT_AGENT_PROMPT = """You are **THE ENRICHMENT AGENT**, a specification detail specialist.
 
@@ -76,7 +76,10 @@ def create_enrichment_agent(
     llm_provider: ProviderService,
 ) -> Agent:
     """Create enrichment agent for Phase 2 of requirements generation."""
-    prompt = ENRICHMENT_AGENT_PROMPT + "\n\nIMPORTANT: Return your response as valid JSON matching the RequirementEnrichmentOutput schema."
+    prompt = (
+        ENRICHMENT_AGENT_PROMPT
+        + "\n\nIMPORTANT: Return your response as valid JSON matching the RequirementEnrichmentOutput schema."
+    )
     return Agent(
         model=llm_provider.get_pydantic_model(),
         system_prompt=prompt,

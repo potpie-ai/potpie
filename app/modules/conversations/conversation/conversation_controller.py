@@ -1,9 +1,13 @@
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator, List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.conversations.utils.redis_streaming import AsyncRedisStreamManager
+from app.modules.conversations.session.session_service import AsyncSessionService
+
 from .conversation_store import ConversationStore
 from ..message.message_store import MessageStore
 
@@ -32,7 +36,13 @@ from app.modules.intelligence.agents.custom_agents.custom_agent_model import Cus
 
 class ConversationController:
     def __init__(
-        self, db: Session, async_db: AsyncSession, user_id: str, user_email: str
+        self,
+        db: Session,
+        async_db: AsyncSession,
+        user_id: str,
+        user_email: str,
+        async_redis_manager: Optional[AsyncRedisStreamManager] = None,
+        async_session_service: Optional[AsyncSessionService] = None,
     ):
         self.user_email = user_email
         self.user_id = user_id
@@ -48,6 +58,9 @@ class ConversationController:
             db=self.db,
             user_id=self.user_id,
             user_email=self.user_email,
+            async_db=self.async_db,
+            async_redis_manager=async_redis_manager,
+            async_session_service=async_session_service,
         )
 
     async def create_conversation(
@@ -172,6 +185,22 @@ class ConversationController:
             raise HTTPException(status_code=404, detail="Conversation not found")
         except AccessTypeReadError:
             raise HTTPException(status_code=403, detail="Access denied")
+        except ConversationServiceError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def update_agent(
+        self, conversation_id: str, agent_id: str
+    ) -> ConversationInfoResponse:
+        try:
+            return await self.service.update_conversation_agent(
+                conversation_id, agent_id, self.user_id
+            )
+        except ConversationNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except AccessTypeNotFoundError as e:
+            raise HTTPException(status_code=401, detail=str(e))
+        except AccessTypeReadError as e:
+            raise HTTPException(status_code=403, detail=str(e))
         except ConversationServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))
 

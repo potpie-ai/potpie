@@ -1,7 +1,10 @@
 import json
+import logging
 import os
 
-import requests
+import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class ParseWebhookHelper:
@@ -16,16 +19,17 @@ class ParseWebhookHelper:
 
         try:
             if self.url:
-                response = requests.post(
-                    self.url,
-                    data=json.dumps(message),
-                    headers={"Content-Type": "application/json"},
-                )
-
-                if response.status_code != 200:
-                    print(
-                        f"Failed to send message to Slack: {response.status_code} {response.text}"
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(
+                        self.url,
+                        content=json.dumps(message),
+                        headers={"Content-Type": "application/json"},
                     )
-
+                    if response.status_code != 200:
+                        logger.warning(
+                            "Failed to send message to Slack: %s %s",
+                            response.status_code,
+                            response.text,
+                        )
         except Exception as e:
-            print(f"Error sending message to Slack: {e}")
+            logger.warning("Error sending message to Slack: %s", e)

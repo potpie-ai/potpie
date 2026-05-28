@@ -10,7 +10,6 @@ from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.core.database import get_db
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
@@ -868,7 +867,7 @@ class InferenceService:
         # Step 1: Fetch graph nodes
         fetch_start = time.time()
         logger.info(
-            f"[INFERENCE] Step 1/6: Fetching graph nodes from Neo4j",
+            "[INFERENCE] Step 1/6: Fetching graph nodes from Neo4j",
             project_id=repo_id,
         )
         nodes = self.fetch_graph(repo_id)
@@ -977,7 +976,7 @@ class InferenceService:
         # Step 4: Create batches for nodes that need LLM inference
         batch_start = time.time()
         logger.info(
-            f"[INFERENCE] Step 4/6: Creating batches for LLM inference",
+            "[INFERENCE] Step 4/6: Creating batches for LLM inference",
             project_id=repo_id,
         )
         batches = self._create_batches_from_nodes(nodes, project_id=repo_id)
@@ -1169,7 +1168,7 @@ class InferenceService:
             f"[INFERENCE] Completed LLM batch processing: "
             f"{len(batches)} batches in {llm_batch_time:.2f}s, "
             f"avg batch time: {avg_batch_time:.2f}s, "
-            f"cached {total_cache_stored_count} results (avg store: {avg_cache_store_time*1000:.1f}ms)",
+            f"cached {total_cache_stored_count} results (avg store: {avg_cache_store_time * 1000:.1f}ms)",
             project_id=repo_id,
             batch_count=len(batches),
             llm_batch_time_seconds=llm_batch_time,
@@ -1185,7 +1184,7 @@ class InferenceService:
             if not isinstance(result, DocstringResponse):
                 invalid_results += 1
                 logger.error(
-                    f"[INFERENCE] Invalid response during inference. Manually verify project completion.",
+                    "[INFERENCE] Invalid response during inference. Manually verify project completion.",
                     project_id=repo_id,
                 )
         validation_time = time.time() - validation_start
@@ -1585,7 +1584,7 @@ class InferenceService:
             # Create vector index
             vector_index_start = time.time()
             logger.info(
-                f"[INFERENCE RUN] Creating vector index",
+                "[INFERENCE RUN] Creating vector index",
                 project_id=repo_id,
             )
             self.create_vector_index()

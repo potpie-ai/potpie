@@ -2,8 +2,7 @@ import os
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, AsyncEngine
 from sqlalchemy.pool import NullPool
 
@@ -39,7 +38,7 @@ async_engine = create_async_engine(
     max_overflow=10,
     pool_timeout=30,
     pool_recycle=1800,
-    pool_pre_ping=False,  # Disabled: causes event loop issues in Celery workers
+    pool_pre_ping=True,  # Check connection liveness before use (safe with asyncio.run per task)
     echo=False,
 )
 

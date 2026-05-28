@@ -3,10 +3,15 @@ Linear Python SDK - A simple interface for the Linear GraphQL API.
 """
 
 import json
-import requests
-from typing import Dict, Any, Optional
 import os
+from typing import Any, Dict, Optional
+
+import httpx
 from sqlalchemy.orm import Session
+
+
+# Timeout for Linear GraphQL API: default 30s, connect 10s, read 30s (httpx requires default or all four)
+LINEAR_REQUEST_TIMEOUT = httpx.Timeout(30.0, connect=10.0, read=30.0)
 
 
 class LinearClient:
@@ -23,7 +28,7 @@ class LinearClient:
         """
         self.api_key = api_key
         self.headers = {
-            "Authorization": f"{api_key}",
+            "Authorization": api_key,
             "Content-Type": "application/json",
         }
 
@@ -31,47 +36,66 @@ class LinearClient:
         self, query: str, variables: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Execute a GraphQL query against the Linear API.
+        Execute a GraphQL query against the Linear API (sync).
+        Prefer execute_query_async from async routes.
+        """
+        with httpx.Client(timeout=LINEAR_REQUEST_TIMEOUT) as client:
+            payload = {"query": query}
+            if variables:
+                payload["variables"] = variables
+            response = client.post(
+                self.API_URL, headers=self.headers, json=payload
+            )
+            if response.status_code != 200:
+                raise Exception(
+                    f"Request failed with status code {response.status_code}: {response.text}"
+                )
+            result = response.json()
+            if "errors" in result:
+                raise Exception(
+                    f"GraphQL errors: {json.dumps(result['errors'], indent=2)}"
+                )
+            return result["data"]
 
-        Args:
-            query (str): The GraphQL query or mutation
-            variables (Dict[str, Any], optional): Variables for the query
-
-        Returns:
-            Dict[str, Any]: The response data
-
-        Raises:
-            Exception: If the request fails or returns errors
+    async def execute_query_async(
+        self, query: str, variables: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a GraphQL query against the Linear API (async, non-blocking).
         """
         payload = {"query": query}
         if variables:
             payload["variables"] = variables
-
-        response = requests.post(self.API_URL, headers=self.headers, json=payload)
-
-        if response.status_code != 200:
-            raise Exception(
-                f"Request failed with status code {response.status_code}: {response.text}"
+        async with httpx.AsyncClient(timeout=LINEAR_REQUEST_TIMEOUT) as client:
+            response = await client.post(
+                self.API_URL, headers=self.headers, json=payload
             )
-
-        result = response.json()
-
-        if "errors" in result:
-            raise Exception(f"GraphQL errors: {json.dumps(result['errors'], indent=2)}")
-
-        return result["data"]
+            if response.status_code != 200:
+                raise Exception(
+                    f"Request failed with status code {response.status_code}: {response.text}"
+                )
+            result = response.json()
+            if "errors" in result:
+                raise Exception(
+                    f"GraphQL errors: {json.dumps(result['errors'], indent=2)}"
+                )
+            return result["data"]
 
     def get_issue(self, issue_id: str) -> Dict[str, Any]:
-        """
-        Fetch an issue by its ID.
+        """Fetch an issue by its ID (sync). Prefer get_issue_async from async routes."""
+        variables = {"id": issue_id}
+        result = self.execute_query(self._get_issue_query(), variables)
+        return result["issue"]
 
-        Args:
-            issue_id (str): The ID of the issue to fetch
+    async def get_issue_async(self, issue_id: str) -> Dict[str, Any]:
+        """Fetch an issue by its ID (async, non-blocking)."""
+        variables = {"id": issue_id}
+        result = await self.execute_query_async(self._get_issue_query(), variables)
+        return result["issue"]
 
-        Returns:
-            Dict[str, Any]: The issue data
-        """
-        query = """
+    @staticmethod
+    def _get_issue_query() -> str:
+        return """
         query GetIssue($id: String!) {
           issue(id: $id) {
             id
@@ -97,22 +121,25 @@ class LinearClient:
         }
         """
 
-        variables = {"id": issue_id}
-        result = self.execute_query(query, variables)
-        return result["issue"]
-
     def update_issue(self, issue_id: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Update an issue.
+        """Update an issue (sync). Prefer update_issue_async from async routes."""
+        variables = {"id": issue_id, "input": input_data}
+        result = self.execute_query(self._update_issue_mutation(), variables)
+        return result["issueUpdate"]
 
-        Args:
-            issue_id (str): The ID of the issue to update
-            input_data (Dict[str, Any]): The update data
+    async def update_issue_async(
+        self, issue_id: str, input_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update an issue (async, non-blocking)."""
+        variables = {"id": issue_id, "input": input_data}
+        result = await self.execute_query_async(
+            self._update_issue_mutation(), variables
+        )
+        return result["issueUpdate"]
 
-        Returns:
-            Dict[str, Any]: The updated issue data
-        """
-        mutation = """
+    @staticmethod
+    def _update_issue_mutation() -> str:
+        return """
         mutation UpdateIssue($id: String!, $input: IssueUpdateInput!) {
           issueUpdate(id: $id, input: $input) {
             success
@@ -135,23 +162,23 @@ class LinearClient:
         }
         """
 
-        variables = {"id": issue_id, "input": input_data}
-
-        result = self.execute_query(mutation, variables)
-        return result["issueUpdate"]
-
     def comment_create(self, issue_id: str, body: str) -> Dict[str, Any]:
-        """
-        Add a comment to an issue.
+        """Add a comment to an issue (sync). Prefer comment_create_async from async routes."""
+        variables = {"input": {"issueId": issue_id, "body": body}}
+        result = self.execute_query(self._comment_create_mutation(), variables)
+        return result["commentCreate"]
 
-        Args:
-            issue_id (str): The ID of the issue to comment on
-            body (str): The content of the comment
+    async def comment_create_async(self, issue_id: str, body: str) -> Dict[str, Any]:
+        """Add a comment to an issue (async, non-blocking)."""
+        variables = {"input": {"issueId": issue_id, "body": body}}
+        result = await self.execute_query_async(
+            self._comment_create_mutation(), variables
+        )
+        return result["commentCreate"]
 
-        Returns:
-            Dict[str, Any]: The created comment data
-        """
-        mutation = """
+    @staticmethod
+    def _comment_create_mutation() -> str:
+        return """
         mutation CreateComment($input: CommentCreateInput!) {
           commentCreate(input: $input) {
             success
@@ -167,11 +194,6 @@ class LinearClient:
           }
         }
         """
-
-        variables = {"input": {"issueId": issue_id, "body": body}}
-
-        result = self.execute_query(mutation, variables)
-        return result["commentCreate"]
 
 
 class LinearClientConfig:

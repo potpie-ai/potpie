@@ -1,15 +1,14 @@
 from datetime import datetime
 import logging
-import os
 from typing import List, Optional
 
-from fastapi import Depends, Header, HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db, get_async_db
-from app.modules.auth.api_key_service import APIKeyService
+from app.modules.auth.api_key_deps import get_api_key_user
 from app.modules.conversations.conversation.conversation_controller import (
     ConversationController,
 )
@@ -32,15 +31,22 @@ from app.modules.parsing.graph_construction.parsing_schema import (
     ParsingStatusRequest,
 )
 from app.modules.projects.projects_controller import ProjectController
-from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.usage.usage_service import UsageService
 from app.modules.search.search_service import SearchService
 from app.modules.search.search_schema import SearchRequest, SearchResponse
-from app.modules.integrations.integrations_service import IntegrationsService
-from app.modules.integrations.integrations_schema import (
+from integrations.application.integrations_service import IntegrationsService
+from integrations.domain.integrations_schema import (
     IntegrationSaveRequest,
     IntegrationSaveResponse,
+)
+from adapters.inbound.http.api.v1.context.router import create_context_router
+from app.modules.context_graph.context_engine_http import (
+    POTPIE_CONTEXT_GRAPH_MUTATIONS,
+    get_context_engine_container_for_api_key,
+)
+from app.modules.context_graph.context_pot_routes import (
+    router as _context_pot_crud_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,44 +59,12 @@ class SimpleConversationRequest(BaseModel):
     agent_ids: List[str]
 
 
-async def get_api_key_user(
-    x_api_key: Optional[str] = Header(None),
-    x_user_id: Optional[str] = Header(None),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Dependency to validate API key and get user info."""
-    if not x_api_key:
-        raise HTTPException(
-            status_code=401,
-            detail="API key is required",
-            headers={"WWW-Authenticate": "ApiKey"},
-        )
-
-    if x_api_key == os.environ.get("INTERNAL_ADMIN_SECRET"):
-        user = UserService(db).get_user_by_uid(x_user_id or "")
-        if not user:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid user_id",
-                headers={"WWW-Authenticate": "ApiKey"},
-            )
-        return {"user_id": user.uid, "email": user.email, "auth_type": "api_key"}
-
-    user = await APIKeyService.validate_api_key(x_api_key, db)
-    if not user:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid API key",
-            headers={"WWW-Authenticate": "ApiKey"},
-        )
-
-    return user
-
-
+from app.modules.conversations.conversation_deps import get_async_redis_stream_manager
 from app.modules.conversations.utils.conversation_routing import (
     normalize_run_id,
-    ensure_unique_run_id,
+    async_ensure_unique_run_id,
     start_celery_task_and_stream,
+    start_celery_task_and_wait,
 )
 
 
@@ -106,7 +80,7 @@ async def create_conversation(
 ):
     user_id = user["user_id"]
     # This will either return True or raise an HTTPException
-    await UsageService.check_usage_limit(user_id)
+    await UsageService.check_usage_limit(user_id, async_db)
     # Create full conversation request with defaults
     full_request = CreateConversationRequest(
         user_id=user_id,
@@ -133,9 +107,12 @@ async def parse_directory(
 async def get_parsing_status(
     project_id: str,
     db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
     user=Depends(get_api_key_user),
 ):
-    return await ParsingController.fetch_parsing_status(project_id, db, user)
+    return await ParsingController.fetch_parsing_status(
+        project_id, db, async_db, user
+    )
 
 
 @router.post("/parsing-status")
@@ -161,43 +138,28 @@ async def post_message(
     db: Session = Depends(get_db),
     async_db: AsyncSession = Depends(get_async_db),
     user=Depends(get_api_key_user),
+    async_redis=Depends(get_async_redis_stream_manager),
 ):
     if message.content == "" or message.content is None or message.content.isspace():
         raise HTTPException(status_code=400, detail="Message content cannot be empty")
 
     user_id = user["user_id"]
-    checked = await UsageService.check_usage_limit(user_id)
-    if not checked:
-        raise HTTPException(
-            status_code=402,
-            detail="Subscription required to create a conversation.",
-        )
+    await UsageService.check_usage_limit(user_id, async_db)
 
-    # Use Celery for both streaming and non-streaming requests
     run_id = normalize_run_id(
         conversation_id, user_id, session_id, prev_human_message_id
     )
-
-    # For fresh requests without cursor, ensure we get a unique stream
     if not cursor:
-        run_id = ensure_unique_run_id(conversation_id, run_id)
+        run_id = await async_ensure_unique_run_id(
+            conversation_id, run_id, async_redis
+        )
 
-    # Extract agent_id from conversation (will be handled in background task)
     agent_id = None
-
-    # Extract node_id strings from NodeContext objects
     node_ids_list = [nc.node_id for nc in (message.node_ids or [])]
-
-    # Check User-Agent header for local mode
     user_agent = request.headers.get("user-agent", "")
     local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
 
     if not stream:
-        # Non-streaming: use Celery but wait for complete response
-        from app.modules.conversations.utils.conversation_routing import (
-            start_celery_task_and_wait,
-        )
-
         return await start_celery_task_and_wait(
             conversation_id=conversation_id,
             run_id=run_id,
@@ -206,13 +168,12 @@ async def post_message(
             agent_id=agent_id,
             node_ids=node_ids_list,
             attachment_ids=message.attachment_ids or [],
+            async_redis_manager=async_redis,
             local_mode=local_mode,
             tunnel_url=message.tunnel_url,
         )
 
-    # Streaming: use Celery with streaming response
-
-    return start_celery_task_and_stream(
+    return await start_celery_task_and_stream(
         conversation_id=conversation_id,
         run_id=run_id,
         user_id=user_id,
@@ -220,10 +181,26 @@ async def post_message(
         agent_id=agent_id,
         node_ids=node_ids_list,
         attachment_ids=message.attachment_ids or [],
+        async_redis_manager=async_redis,
         cursor=cursor,
         local_mode=local_mode,
         tunnel_url=message.tunnel_url,
     )
+
+
+@router.post("/conversations/{conversation_id}/stop", response_model=dict)
+async def stop_generation(
+    conversation_id: str,
+    session_id: Optional[str] = Query(None, description="Session ID to stop"),
+    db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
+    user=Depends(get_api_key_user),
+):
+    """Stop streaming generation and persist partial response to the database."""
+    user_id = user["user_id"]
+    user_email = user.get("email") or None
+    controller = ConversationController(db, async_db, user_id, user_email)
+    return await controller.stop_generation(conversation_id, session_id)
 
 
 @router.post("/project/{project_id}/message/")
@@ -325,3 +302,24 @@ async def save_integration(
             data=None,
             error=f"Failed to save integration: {str(e)}",
         )
+
+
+# Context graph: same routes as /api/v1/context but authenticated with X-API-Key (Potpie API v2).
+_context_graph_v2_router = create_context_router(
+    require_auth=get_api_key_user,
+    get_container=get_context_engine_container_for_api_key,
+    get_db=get_db,
+    get_db_optional=get_db,
+    mutation_handlers=POTPIE_CONTEXT_GRAPH_MUTATIONS,
+    enforce_pot_access=True,
+)
+router.include_router(
+    _context_graph_v2_router,
+    prefix="/context",
+    tags=["Context Graph API"],
+)
+router.include_router(
+    _context_pot_crud_router,
+    prefix="/context",
+    tags=["Context Graph API"],
+)

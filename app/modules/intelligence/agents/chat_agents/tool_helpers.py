@@ -1,4 +1,5 @@
 import re
+import json
 from typing import Any, Dict, List
 
 # Import todo management for streaming todo list state
@@ -115,7 +116,7 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             return "Semantically searching codebase"
         case "analyze_code_structure":
             return "Analyzing code structure"
-        case "bash_command":
+        case "bash_command" | "sandbox_shell":
             if args:
                 command = args.get("command", "")
                 if command:
@@ -125,6 +126,50 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
                     )
                     return f"Running: {display_cmd}"
             return "Executing bash command on codebase"
+        case "sandbox_text_editor":
+            command = args.get("command") if args else None
+            path = args.get("path") if args else None
+            match command:
+                case "view":
+                    return f"Reading: {path}" if path else "Reading file"
+                case "create":
+                    return f"Creating: {path}" if path else "Creating file"
+                case "str_replace":
+                    return f"Editing: {path}" if path else "Editing file"
+                case "insert":
+                    return f"Inserting in: {path}" if path else "Inserting in file"
+                case _:
+                    return f"Editing: {path}" if path else "Editing file in sandbox"
+        case "sandbox_search":
+            pattern = args.get("pattern") if args else None
+            if pattern:
+                return f"Searching code: {pattern[:60]}"
+            return "Searching code in sandbox"
+        case "sandbox_git":
+            command = args.get("command") if args else None
+            match command:
+                case "status":
+                    return "Checking git status"
+                case "diff":
+                    return "Inspecting git diff"
+                case "log":
+                    return "Reading git log"
+                case "commit":
+                    msg = args.get("message") if args else None
+                    if msg:
+                        preview = msg if len(msg) <= 60 else msg[:57] + "..."
+                        return f"Committing: {preview}"
+                    return "Committing changes"
+                case "push":
+                    return "Pushing branch"
+                case _:
+                    return "Running git command"
+        case "sandbox_pr":
+            title = args.get("title") if args else None
+            if title:
+                preview = title if len(title) <= 60 else title[:57] + "..."
+                return f"Opening PR: {preview}"
+            return "Opening pull request"
         case "execute_terminal_command":
             if args:
                 command = args.get("command", "")
@@ -219,8 +264,6 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             )
         case "list_files_in_changes":
             return "Listing files in code changes"
-        case "search_content_in_changes":
-            return "Searching content in code changes"
         case "clear_file_from_changes":
             file_path = _get_file_path()
             return (
@@ -284,6 +327,119 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             return "Adding comment to Confluence page"
         case _:
             return "Querying data"
+
+
+def _parse_partial_args_buffer(args_buffer: str) -> Dict[str, Any] | None:
+    """Best-effort parser for partially streamed tool args JSON."""
+    if not args_buffer or not isinstance(args_buffer, str):
+        return None
+
+    s = args_buffer.strip()
+    if not s:
+        return None
+
+    try:
+        parsed = json.loads(s)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    open_braces = s.count("{") - s.count("}")
+    open_brackets = s.count("[") - s.count("]")
+    repaired = s + ("]" * max(open_brackets, 0)) + ("}" * max(open_braces, 0))
+    try:
+        parsed = json.loads(repaired)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _extract_string_field(args_buffer: str, field_name: str) -> str | None:
+    """Extract a string field from partial JSON text via regex fallback."""
+    m = re.search(rf'"{re.escape(field_name)}"\s*:\s*"([^"]+)', args_buffer)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    return None
+
+
+def try_extract_streaming_preview(tool_name: str, args_buffer: str) -> str | None:
+    """Return an early meaningful preview from streaming tool args, when possible."""
+    args: Dict[str, Any] = _parse_partial_args_buffer(args_buffer) or {}
+
+    if tool_name == "fetch_file":
+        file_path = args.get("file_path") or _extract_string_field(args_buffer, "file_path")
+        if file_path:
+            return get_tool_run_message(tool_name, {"file_path": file_path})
+        return None
+
+    if tool_name == "fetch_files_batch":
+        paths = args.get("paths")
+        if isinstance(paths, list) and len(paths) > 0:
+            return get_tool_run_message(tool_name, {"paths": paths})
+        return None
+
+    if tool_name in {
+        "search_text",
+        "search_workspace_symbols",
+        "semantic_search",
+    }:
+        query = args.get("query") or _extract_string_field(args_buffer, "query")
+        if query:
+            return get_tool_run_message(tool_name, {"query": query})
+        return None
+
+    if tool_name == "search_files":
+        pattern = args.get("pattern") or _extract_string_field(args_buffer, "pattern")
+        if pattern:
+            return get_tool_run_message(tool_name, {"pattern": pattern})
+        return None
+
+    if tool_name == "search_symbols":
+        file_path = args.get("file_path") or _extract_string_field(args_buffer, "file_path")
+        if file_path:
+            return get_tool_run_message(tool_name, {"file_path": file_path})
+        return None
+
+    if tool_name in {"search_bash", "bash_command", "sandbox_shell", "execute_terminal_command"}:
+        command = args.get("command") or _extract_string_field(args_buffer, "command")
+        if command:
+            payload: Dict[str, Any] = {"command": command}
+            mode = args.get("mode")
+            if mode:
+                payload["mode"] = mode
+            return get_tool_run_message(tool_name, payload)
+        return None
+
+    if tool_name == "sandbox_text_editor":
+        path = args.get("path") or _extract_string_field(args_buffer, "path")
+        command = args.get("command") or _extract_string_field(args_buffer, "command")
+        if path:
+            return get_tool_run_message(tool_name, {"path": path, "command": command})
+        return None
+
+    if tool_name == "sandbox_search":
+        pattern = args.get("pattern") or _extract_string_field(args_buffer, "pattern")
+        if pattern:
+            return get_tool_run_message(tool_name, {"pattern": pattern})
+        return None
+
+    if tool_name == "sandbox_git":
+        command = args.get("command") or _extract_string_field(args_buffer, "command")
+        if command:
+            payload: Dict[str, Any] = {"command": command}
+            message = args.get("message") or _extract_string_field(args_buffer, "message")
+            if message:
+                payload["message"] = message
+            return get_tool_run_message(tool_name, payload)
+        return None
+
+    if tool_name == "sandbox_pr":
+        title = args.get("title") or _extract_string_field(args_buffer, "title")
+        if title:
+            return get_tool_run_message(tool_name, {"title": title})
+        return None
+
+    return None
 
 
 def _parse_terminal_result_string(content: str) -> tuple[str | None, int | None, bool]:
@@ -572,7 +728,7 @@ def get_tool_response_message(
                 if lines:
                     base += f" — {len(lines)} result(s)"
             return base
-        case "bash_command":
+        case "bash_command" | "sandbox_shell":
             command = args.get("command", "") if args else ""
             if isinstance(result, dict):
                 exit_code = result.get("exit_code")
@@ -597,6 +753,84 @@ def get_tool_response_message(
                 _format_small_result(result) if _is_small_result(result) else ""
             )
             return f"Bash command executed successfully{result_suffix}"
+        case "sandbox_text_editor":
+            command = args.get("command") if args else None
+            path = args.get("path") if args else None
+            if isinstance(result, dict) and result.get("success") is False:
+                err = result.get("error", "")[:80]
+                return f"Editor failed: {path or 'file'} — {err}"
+            if isinstance(result, dict) and command == "view":
+                total = result.get("total_lines")
+                if total is not None:
+                    return f"Read {path}: {total} line(s)"
+            if isinstance(result, dict) and command == "str_replace":
+                added = result.get("lines_added")
+                removed = result.get("lines_removed")
+                if added is not None and removed is not None:
+                    return f"Edited {path}: +{added}/-{removed} line(s)"
+            if isinstance(result, dict) and command == "create":
+                size = result.get("bytes")
+                if size is not None:
+                    return f"Created {path} ({size} bytes)"
+            if isinstance(result, dict) and command == "insert":
+                line = result.get("insert_line")
+                if line is not None:
+                    return f"Inserted into {path} at line {line}"
+            return f"Editor: {command or 'op'} on {path or 'file'}"
+        case "sandbox_search":
+            pattern = args.get("pattern") if args else None
+            if isinstance(result, dict):
+                hits = result.get("hits") or []
+                truncated = result.get("truncated")
+                base = (
+                    f"Search '{pattern[:50]}'" if pattern else "Search"
+                )
+                suffix = "+" if truncated else ""
+                return f"{base}: {len(hits)}{suffix} match(es)"
+            return f"Search: {pattern[:50]}" if pattern else "Search completed"
+        case "sandbox_git":
+            command = args.get("command") if args else None
+            if isinstance(result, dict):
+                if result.get("success") is False:
+                    err = (result.get("error") or "")[:80]
+                    return f"git {command or 'op'} failed: {err}"
+                match command:
+                    case "status":
+                        clean = result.get("is_clean")
+                        if clean is True:
+                            return "git status: clean"
+                        staged = len(result.get("staged") or [])
+                        unstaged = len(result.get("unstaged") or [])
+                        untracked = len(result.get("untracked") or [])
+                        return (
+                            f"git status: {staged} staged, "
+                            f"{unstaged} unstaged, {untracked} untracked"
+                        )
+                    case "commit":
+                        sha = (result.get("commit") or "")[:8]
+                        return f"Committed {sha}" if sha else "Commit done"
+                    case "log":
+                        commits = result.get("commits") or []
+                        return f"git log: {len(commits)} commit(s)"
+                    case "diff":
+                        diff = result.get("diff") or ""
+                        n_lines = len(diff.splitlines())
+                        return f"git diff: {n_lines} line(s)"
+                    case "push":
+                        return "git push completed"
+            return f"git {command} done" if command else "git op done"
+        case "sandbox_pr":
+            if isinstance(result, dict):
+                if result.get("success") is False:
+                    err = (result.get("error") or "")[:80]
+                    return f"PR creation failed: {err}"
+                url = result.get("url")
+                pr_id = result.get("pr_id")
+                if url:
+                    return f"PR opened: {url}"
+                if pr_id:
+                    return f"PR opened: #{pr_id}"
+            return "Pull request opened"
         case "execute_terminal_command":
             command = args.get("command", "") if args else ""
             mode = args.get("mode", "sync") if args else "sync"
@@ -744,8 +978,6 @@ def get_tool_response_message(
                         f"Files listed successfully ({m.group(1)} file(s) in changes)"
                     )
             return "Files listed successfully"
-        case "search_content_in_changes":
-            return "Content search completed successfully"
         case "clear_file_from_changes":
             file_path = args.get("file_path") if args else None
             if file_path:
@@ -992,13 +1224,75 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             node_ids = args.get("node_ids")
             context_info = f" (within {len(node_ids)} nodes)" if node_ids else ""
             return f"-> semantically searching codebase for '{query}' (top {top_k} results){context_info}\n"
-        case "bash_command":
+        case "bash_command" | "sandbox_shell":
             command = args.get("command")
             working_dir = args.get("working_directory")
             if command:
                 dir_info = f" in directory '{working_dir}'" if working_dir else ""
                 return f"-> executing command: {command}{dir_info}\n"
             return "-> executing bash command\n"
+        case "sandbox_text_editor":
+            command = args.get("command", "")
+            path = args.get("path", "")
+            match command:
+                case "view":
+                    view_range = args.get("view_range")
+                    if view_range and isinstance(view_range, list) and len(view_range) == 2:
+                        return f"-> viewing {path} (lines {view_range[0]}-{view_range[1]})\n"
+                    return f"-> viewing {path}\n"
+                case "create":
+                    file_text = args.get("file_text", "")
+                    n = len(file_text.splitlines()) if file_text else 0
+                    return f"-> creating {path} ({n} line(s))\n"
+                case "str_replace":
+                    old_str = (args.get("old_str") or "")[:60].replace("\n", "↵")
+                    return f"-> str_replace in {path} (old: {old_str!r})\n"
+                case "insert":
+                    insert_line = args.get("insert_line")
+                    return f"-> inserting after line {insert_line} in {path}\n"
+                case _:
+                    return f"-> {command} {path}\n"
+        case "sandbox_search":
+            pattern = args.get("pattern", "")
+            glob = args.get("glob")
+            path = args.get("path")
+            extras = []
+            if glob:
+                extras.append(f"glob={glob}")
+            if path:
+                extras.append(f"path={path}")
+            extra_text = f" ({', '.join(extras)})" if extras else ""
+            return f"-> ripgrep '{pattern}'{extra_text}\n"
+        case "sandbox_git":
+            command = args.get("command", "")
+            base_ref = args.get("base_ref")
+            paths = args.get("paths")
+            message = args.get("message")
+            match command:
+                case "status":
+                    return "-> git status\n"
+                case "diff":
+                    base = f" vs {base_ref}" if base_ref else ""
+                    p = f" ({', '.join(paths)})" if paths else ""
+                    return f"-> git diff{base}{p}\n"
+                case "log":
+                    limit = args.get("limit")
+                    return f"-> git log (last {limit or 20})\n"
+                case "commit":
+                    msg_preview = (message or "")[:60]
+                    p = f" ({', '.join(paths)})" if paths else " (all changes)"
+                    return f"-> git commit{p}: {msg_preview}\n"
+                case "push":
+                    force = args.get("force")
+                    return f"-> git push{' --force-with-lease' if force else ''}\n"
+                case _:
+                    return f"-> git {command}\n"
+        case "sandbox_pr":
+            title = args.get("title", "")
+            base_branch = args.get("base_branch", "")
+            head_branch = args.get("head_branch")
+            head = head_branch or "current branch"
+            return f"-> opening PR: {head} -> {base_branch}: {title[:60]}\n"
         case "execute_terminal_command":
             command = args.get("command")
             working_dir = args.get("working_directory")
@@ -1095,14 +1389,6 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
                 filters.append(f"path: {path_pattern}")
             filter_text = f" ({', '.join(filters)})" if filters else ""
             return f"-> listing files in code changes{filter_text}\n"
-        case "search_content_in_changes":
-            pattern = args.get("pattern", "")
-            file_pattern = args.get("file_pattern", "")
-            return (
-                f"-> searching content in code changes: pattern '{pattern}'"
-                + (f" in files matching '{file_pattern}'" if file_pattern else "")
-                + "\n"
-            )
         case "clear_file_from_changes":
             file_path = args.get("file_path", "")
             return f"-> clearing file from code changes: {file_path}\n"
@@ -1447,11 +1733,98 @@ description:
                     formatted += f"\n... ({len(content) - 10} more results)"
                 return formatted
             return ""
-        case "bash_command":
+        case "sandbox_text_editor":
+            if isinstance(content, Dict):
+                if content.get("success") is False:
+                    return f"Failed: {content.get('error', 'unknown error')}"
+                kind = content.get("kind")
+                if kind == "directory":
+                    entries = content.get("entries") or []
+                    names = [
+                        f"{e.get('name')}{'/' if e.get('is_dir') else ''}"
+                        for e in entries[:30]
+                    ]
+                    suffix = (
+                        f"\n... ({len(entries) - 30} more)"
+                        if len(entries) > 30
+                        else ""
+                    )
+                    return f"```\n{chr(10).join(names)}{suffix}\n```"
+                if kind == "file":
+                    text = content.get("content") or ""
+                    snippet = text[:600]
+                    if len(text) > 600:
+                        snippet += "\n..."
+                    return f"```\n{snippet}\n```"
+                # create / str_replace / insert echoes
+                command = content.get("command")
+                if command:
+                    return f"Editor `{command}` succeeded"
+            return ""
+        case "sandbox_search":
+            if isinstance(content, Dict):
+                if content.get("success") is False:
+                    return f"Failed: {content.get('error', 'unknown error')}"
+                hits = content.get("hits") or []
+                if not hits:
+                    return "No matches"
+                lines = [
+                    f"{h.get('path')}:{h.get('line')}  {h.get('snippet', '')[:120]}"
+                    for h in hits[:30]
+                ]
+                suffix = f"\n... ({len(hits) - 30} more)" if len(hits) > 30 else ""
+                return f"```\n{chr(10).join(lines)}{suffix}\n```"
+            return ""
+        case "sandbox_git":
+            if isinstance(content, Dict):
+                if content.get("success") is False:
+                    return f"Failed: {content.get('error', 'unknown error')}"
+                command = content.get("command")
+                match command:
+                    case "status":
+                        return (
+                            f"branch={content.get('branch')} "
+                            f"clean={content.get('is_clean')} "
+                            f"staged={len(content.get('staged') or [])} "
+                            f"unstaged={len(content.get('unstaged') or [])} "
+                            f"untracked={len(content.get('untracked') or [])}"
+                        )
+                    case "diff":
+                        diff = content.get("diff") or ""
+                        snippet = diff[:1000]
+                        if len(diff) > 1000:
+                            snippet += "\n... (truncated)"
+                        return f"```\n{snippet}\n```" if snippet else "no changes"
+                    case "log":
+                        commits = content.get("commits") or []
+                        lines = [
+                            f"{c.get('sha', '')[:8]}  {c.get('subject', '')[:80]}"
+                            for c in commits[:20]
+                        ]
+                        return "```\n" + "\n".join(lines) + "\n```" if lines else ""
+                    case "commit":
+                        return f"committed {content.get('commit', '')[:8]}"
+                    case "push":
+                        return f"pushed {content.get('branch', '')}"
+            return ""
+        case "sandbox_pr":
+            if isinstance(content, Dict):
+                if content.get("success") is False:
+                    return f"Failed: {content.get('error', 'unknown error')}"
+                url = content.get("url")
+                pr_id = content.get("pr_id")
+                head = content.get("head_branch")
+                base = content.get("base_branch")
+                if url:
+                    return f"PR #{pr_id} opened: {head} -> {base}\n{url}"
+                return "Pull request opened"
+            return ""
+        case "bash_command" | "sandbox_shell":
             if isinstance(content, Dict):
                 success = content.get("success", False)
-                output = content.get("output", "")
-                error = content.get("error", "")
+                # sandbox_shell uses stdout/stderr; bash_command uses output/error.
+                output = content.get("output") or content.get("stdout", "")
+                error = content.get("error") or content.get("stderr", "")
                 exit_code = content.get("exit_code", -1)
 
                 if not success:
@@ -1544,7 +1917,6 @@ description:
             | "delete_file_in_changes"
             | "get_file_from_changes"
             | "list_files_in_changes"
-            | "search_content_in_changes"
             | "clear_file_from_changes"
             | "clear_all_changes"
             | "get_changes_summary"
@@ -1577,8 +1949,6 @@ def get_delegation_call_message(agent_type: str) -> str:
             return "🚀 Starting subagent with full tool access - streaming work in real-time..."
         case "jira":
             return "🎫 Starting Jira integration agent - handling Jira operations..."
-        case "github":
-            return "🐙 Starting GitHub integration agent - handling repository operations..."
         case "confluence":
             return "📄 Starting Confluence integration agent - handling documentation operations..."
         case "linear":
@@ -1594,8 +1964,6 @@ def get_delegation_response_message(agent_type: str) -> str:
             return "✅ Subagent completed - returning task result to supervisor"
         case "jira":
             return "✅ Jira agent completed - returning results to supervisor"
-        case "github":
-            return "✅ GitHub agent completed - returning results to supervisor"
         case "confluence":
             return "✅ Confluence agent completed - returning results to supervisor"
         case "linear":
@@ -1615,8 +1983,6 @@ def get_delegation_info_content(
             agent_prefix = "🤖 **General Subagent**"
         case "jira":
             agent_prefix = "🎫 **Jira Integration Agent**"
-        case "github":
-            agent_prefix = "🐙 **GitHub Integration Agent**"
         case "confluence":
             agent_prefix = "📄 **Confluence Integration Agent**"
         case "linear":
@@ -1656,8 +2022,6 @@ def get_delegation_result_content(agent_type: str, result: str) -> str:
             agent_label = "General Subagent Result"
         case "jira":
             agent_label = "Jira Agent Result"
-        case "github":
-            agent_label = "GitHub Agent Result"
         case "confluence":
             agent_label = "Confluence Agent Result"
         case "linear":

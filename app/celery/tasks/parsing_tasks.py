@@ -2,6 +2,7 @@ from typing import Any, Dict
 
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
+from app.core.config_provider import config_provider
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 from app.modules.utils.logger import setup_logger, log_context
@@ -25,6 +26,7 @@ def process_parsing(
     # Set up logging context with domain IDs
     with log_context(project_id=project_id, user_id=user_id):
         logger.info("Task received: Starting parsing process")
+        parsing_service = None
         try:
             parsing_service = ParsingService(
                 self.db, user_id, raise_library_exceptions=True
@@ -49,11 +51,26 @@ def process_parsing(
                     "Parsing process completed", elapsed_seconds=round(elapsed_time, 2)
                 )
 
-            # Use BaseTask's long-lived event loop for consistency
+            # Run parsing in a fresh event loop (asyncio.run)
             self.run_async(run_parsing())
+
+            if config_provider.get_context_graph_config().get("enabled"):
+                from app.modules.context_graph.tasks import context_graph_backfill_pot
+
+                context_graph_backfill_pot.delay(project_id)
+                logger.info(
+                    "Enqueued context graph backfill after parsing",
+                    pot_id=project_id,
+                )
         except Exception:
             logger.exception("Error during parsing")
             raise
+        finally:
+            if parsing_service is not None:
+                try:
+                    parsing_service.close()
+                except Exception:
+                    pass
 
 
 logger.info("Parsing tasks module loaded")

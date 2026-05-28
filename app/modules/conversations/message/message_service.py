@@ -59,7 +59,7 @@ class MessageService:
                 status=MessageStatus.ACTIVE,
             )
 
-            await asyncio.get_event_loop().run_in_executor(
+            await asyncio.get_running_loop().run_in_executor(
                 None, self._sync_create_message, new_message
             )
             logger.info(
@@ -99,7 +99,7 @@ class MessageService:
 
     async def mark_message_archived(self, message_id: str) -> None:
         try:
-            await asyncio.get_event_loop().run_in_executor(
+            await asyncio.get_running_loop().run_in_executor(
                 None, self._sync_mark_message_archived, message_id
             )
             # TODO: add conversation_id to the log

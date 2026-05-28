@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 import asyncio
+import base64
 import json
 import os
 import time
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Callable, List, Optional, Dict, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -39,7 +43,10 @@ from app.modules.intelligence.agents.context_config import (
     HISTORY_MESSAGE_CAP,
     get_history_token_budget,
 )
-from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
+from app.modules.intelligence.memory.chat_history_service import (
+    AsyncChatHistoryService,
+    ChatHistoryService,
+)
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager.sync_helper import ensure_repo_registered
@@ -48,10 +55,18 @@ from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.media.media_service import MediaService
-from app.modules.conversations.session.session_service import SessionService
-from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+from app.modules.conversations.session.session_service import (
+    AsyncSessionService,
+    SessionService,
+)
+from app.modules.conversations.utils.redis_streaming import (
+    AsyncRedisStreamManager,
+    RedisStreamManager,
+)
 from app.celery.celery_app import celery_app
 from app.modules.conversations.exceptions import GenerationCancelled
+from app.modules.billing.usage_service import usage_reporting_service
+from app.modules.billing.subscription_service import billing_subscription_service
 from .conversation_store import ConversationStore, StoreError
 from ..message.message_store import MessageStore
 
@@ -96,6 +111,9 @@ class ConversationService:
         media_service: MediaService,
         session_service: SessionService = None,
         redis_manager: RedisStreamManager = None,
+        async_redis_manager: AsyncRedisStreamManager = None,
+        async_session_service: AsyncSessionService = None,
+        async_history_manager: Optional[AsyncChatHistoryService] = None,
     ):
         self.db = db
         self.user_id = user_id
@@ -104,32 +122,36 @@ class ConversationService:
         self.message_store = message_store
         self.project_service = project_service
         self.history_manager = history_manager
+        self.async_history_manager = async_history_manager
         self.provider_service = provider_service
         self.tool_service = tools_service
         self.prompt_service = promt_service
         self.agent_service = agent_service
         self.custom_agent_service = custom_agent_service
         self.media_service = media_service
-        # Dependency injection for stop_generation
         self.session_service = session_service or SessionService()
         self.redis_manager = redis_manager or RedisStreamManager()
+        self.async_redis_manager = async_redis_manager
+        self.async_session_service = async_session_service
         self.celery_app = celery_app
 
-        # Initialize repo manager if enabled
+        # The conversation lifecycle no longer talks to RepoManager directly:
+        # the sandbox client owns the bare-repo cache and the per-conversation
+        # worktrees. ``self.repo_manager`` is kept as ``None`` for backwards
+        # compatibility with any external caller that introspected it.
         self.repo_manager = None
-        try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                from app.modules.repo_manager import RepoManager
 
-                self.repo_manager = RepoManager()
-                logger.info("ConversationService: RepoManager initialized")
-        except Exception as e:
-            logger.warning(
-                f"ConversationService: Failed to initialize RepoManager: {e}"
-            )
+        # ProjectSandbox is the lifecycle facade: ensure() is idempotent
+        # and self-healing (it probes the workspace and recovers via
+        # the provider's label-based recovery if the backing storage is
+        # gone). Lazy import here so the conversation service stays
+        # importable without the sandbox module installed at the
+        # bottom of the import graph.
+        from app.modules.intelligence.tools.sandbox.project_sandbox import (
+            get_project_sandbox,
+        )
+
+        self._project_sandbox = get_project_sandbox()
 
     @classmethod
     def create(
@@ -139,9 +161,15 @@ class ConversationService:
         db: Session,
         user_id: str,
         user_email: str,
+        async_db: Optional[AsyncSession] = None,
+        async_redis_manager: Optional[AsyncRedisStreamManager] = None,
+        async_session_service: Optional[AsyncSessionService] = None,
     ):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
+        async_history_manager: Optional[AsyncChatHistoryService] = None
+        if async_db is not None:
+            async_history_manager = AsyncChatHistoryService(async_db)
         provider_service = ProviderService(db, user_id)
         tool_service = ToolService(db, user_id)
         prompt_service = PromptService(db)
@@ -169,6 +197,83 @@ class ConversationService:
             media_service,
             session_service,
             redis_manager,
+            async_redis_manager=async_redis_manager,
+            async_session_service=async_session_service,
+            async_history_manager=async_history_manager,
+        )
+
+    async def _history_get_session_history(self, user_id: str, conversation_id: str):
+        """Dispatch to async or sync history manager for get_session_history."""
+        if self.async_history_manager:
+            return await self.async_history_manager.get_session_history(
+                user_id, conversation_id
+            )
+        return self.history_manager.get_session_history(user_id, conversation_id)
+
+    def _history_add_message_chunk(
+        self,
+        conversation_id: str,
+        content: str,
+        message_type: MessageType,
+        sender_id: Optional[str] = None,
+        citations: Optional[List[str]] = None,
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        thinking: Optional[str] = None,
+    ) -> None:
+        """Dispatch to async or sync history manager for add_message_chunk."""
+        target = (
+            self.async_history_manager
+            if self.async_history_manager
+            else self.history_manager
+        )
+        target.add_message_chunk(
+            conversation_id,
+            content,
+            message_type,
+            sender_id,
+            citations,
+            tool_calls=tool_calls,
+            thinking=thinking,
+        )
+
+    async def _history_flush_message_buffer(
+        self,
+        conversation_id: str,
+        message_type: MessageType,
+        sender_id: Optional[str] = None,
+    ):
+        """Dispatch to async or sync history manager for flush_message_buffer."""
+        if self.async_history_manager:
+            return await self.async_history_manager.flush_message_buffer(
+                conversation_id, message_type, sender_id
+            )
+        return self.history_manager.flush_message_buffer(
+            conversation_id, message_type, sender_id
+        )
+
+    async def _history_save_partial_ai_message(
+        self,
+        conversation_id: str,
+        content: str,
+        citations: Optional[List[str]] = None,
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        thinking: Optional[str] = None,
+    ):
+        """Dispatch to async or sync history manager for save_partial_ai_message."""
+        if self.async_history_manager:
+            return await self.async_history_manager.save_partial_ai_message(
+                conversation_id,
+                content,
+                citations,
+                tool_calls=tool_calls,
+                thinking=thinking,
+            )
+        return self.history_manager.save_partial_ai_message(
+            conversation_id,
+            content,
+            citations,
+            tool_calls=tool_calls,
+            thinking=thinking,
         )
 
     async def check_conversation_access(
@@ -288,19 +393,47 @@ class ConversationService:
 
             fetch_task.add_done_callback(_on_fetch_done)
 
-            # Ensure repo is registered and cloned in repo manager (skip in local/VSCode mode)
-            if not local_mode and self.repo_manager and conversation.project_ids:
+            # Provision the project sandbox so the user's first
+            # message lands on a warm workspace. Fire-and-forget:
+            # ProjectSandbox.ensure() can take seconds for a fresh
+            # Daytona sandbox, and we don't want that latency on the
+            # POST /conversations response. The first store_message
+            # below will block on its own ensure() call if this hasn't
+            # finished yet, so the timing here is purely an
+            # optimization. Skipped in local/VSCode mode — the IDE
+            # tunnel covers reads there.
+            if not local_mode and conversation.project_ids:
                 project_id_str = str(conversation.project_ids[0])
-                # Fast path: register any existing local copy (5s timeout)
                 asyncio.create_task(
-                    self._ensure_repo_in_repo_manager(project_id_str, user_id)
-                )
-                # Slow path: clone the repo if it's missing entirely (no timeout — runs until done)
-                asyncio.create_task(
-                    self._clone_repo_if_missing(project_id_str, user_id)
+                    self._ensure_project_sandbox_safe(project_id_str, user_id)
                 )
 
             await self._add_system_message(conversation_id, project_name, user_id)
+
+            # Carry forward attachments sent during conversation creation.
+            # This ensures the first user message can reuse them even if the client
+            # sends only text on redirect from newchat -> chat.
+            if conversation.attachment_ids:
+                try:
+                    if self.async_redis_manager:
+                        await self.async_redis_manager.redis_client.set(
+                            f"conversation:pending_attachments:{conversation_id}",
+                            json.dumps(conversation.attachment_ids),
+                            ex=3600,
+                        )
+                    else:
+                        self.redis_manager.redis_client.set(
+                            f"conversation:pending_attachments:{conversation_id}",
+                            json.dumps(conversation.attachment_ids),
+                            ex=3600,
+                        )
+                    logger.info(
+                        f"Stored {len(conversation.attachment_ids)} pending attachments for conversation {conversation_id}"
+                    )
+                except Exception:
+                    logger.exception(
+                        f"Failed to store pending attachments for conversation {conversation_id}"
+                    )
 
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
@@ -340,252 +473,236 @@ class ConversationService:
         return conversation_id
 
     async def _ensure_repo_in_repo_manager(self, project_id: str, user_id: str) -> None:
+        """Compatibility shim that now delegates to ProjectSandbox.
+
+        ``_ensure_repo_in_repo_manager`` and ``_clone_repo_if_missing``
+        used to be a fast/slow split when the worktree creation was a
+        separate, slow filesystem step. With the sandbox client the
+        two collapse into a single idempotent call — we keep both
+        names so existing call sites compile, but the implementation
+        is the same ``_ensure_project_sandbox_safe`` underneath.
         """
-        Ensure that the repository for a project is registered in the repo manager.
-        If the repo doesn't exist, attempts to register it if the project has been parsed.
+        await self._ensure_project_sandbox_safe(
+            project_id, user_id, timeout_s=5.0
+        )
 
-        This runs in a thread pool to avoid blocking the async event loop with filesystem operations.
+    async def _ensure_project_sandbox_safe(
+        self, project_id: str, user_id: str, *, timeout_s: Optional[float] = None
+    ) -> bool:
+        """Ensure the project sandbox is alive and reachable for ``project_id``.
 
-        Args:
-            project_id: The project ID
-            user_id: The user ID
+        Single entry point used by both the conversation-create
+        provisioning and the per-message liveness probe.
+        :meth:`ProjectSandbox.ensure` is idempotent and self-healing:
+        it acquires the workspace (cache hit on the happy path),
+        probes ``is_alive``, and re-creates if the backing storage was
+        archived/deleted out-of-band. So this method's job is just
+        wiring — fetch the project, build a :class:`ProjectRef`, hand
+        it off, swallow failures so a transient sandbox blip never
+        blocks the user.
+
+        Returns ``True`` when the sandbox is ensured, ``False`` when
+        skipped (local-mode upload, missing metadata) or when the
+        ensure call failed and got logged. Callers shouldn't depend on
+        the return value for correctness — agent tools tolerate a
+        cold sandbox by re-acquiring inside the run.
         """
-        if not self.repo_manager:
-            return  # Repo manager not enabled
-
-        # Run filesystem operations in a thread pool to avoid blocking
-        # Add timeout to prevent hanging
         try:
-            await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
-                    None, self._ensure_repo_in_repo_manager_sync, project_id, user_id
-                ),
-                timeout=5.0,  # 5 second timeout to prevent hanging
+            project = await asyncio.get_running_loop().run_in_executor(
+                None, self._fetch_project_for_provision, project_id
             )
-        except asyncio.TimeoutError:
+        except Exception as exc:
             logger.warning(
-                f"Timeout ensuring repo in repo manager for project {project_id} (took >5s)"
-            )
-        except Exception as e:
-            logger.warning(
-                f"Error ensuring repo in repo manager for project {project_id}: {e}",
+                f"[ensure_sandbox] project lookup failed for {project_id}: {exc}",
                 exc_info=True,
             )
-            # Don't fail the message if repo registration fails
+            return False
+        if not project:
+            return False
+
+        repo_name = project.get("project_name")
+        repo_path = project.get("repo_path")
+        if not repo_name or repo_path:
+            # Local/uploaded projects (with a host-side ``repo_path``)
+            # have no remote URL to clone. The agent tools serve them
+            # off the IDE tunnel; the sandbox path doesn't apply.
+            return False
+        base_ref = project.get("commit_id") or project.get("branch_name")
+        if not base_ref:
+            logger.warning(
+                f"[ensure_sandbox] project {project_id} has no ref; skipping"
+            )
+            return False
+
+        # Lazy import: keeps ProjectRef out of the conversation_service
+        # import graph since most call sites don't reach this branch.
+        from app.modules.intelligence.tools.sandbox.project_sandbox import (
+            ProjectRef,
+        )
+
+        async def _do_ensure() -> bool:
+            try:
+                await self._project_sandbox.ensure(
+                    user_id=user_id,
+                    project_id=project_id,
+                    repo=ProjectRef(
+                        repo_name=repo_name,
+                        base_ref=base_ref,
+                        repo_url=repo_path or None,
+                    ),
+                )
+                return True
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    f"[ensure_sandbox] ProjectSandbox.ensure failed for "
+                    f"{repo_name}@{base_ref}: {exc}",
+                    exc_info=True,
+                )
+                return False
+
+        if timeout_s is not None:
+            try:
+                return await asyncio.wait_for(_do_ensure(), timeout=timeout_s)
+            except asyncio.TimeoutError:
+                logger.info(
+                    f"[ensure_sandbox] still running after {timeout_s}s for "
+                    f"{repo_name}@{base_ref}; not blocking caller"
+                )
+                return False
+        return await _do_ensure()
+
+    def _fetch_project_for_provision(self, project_id: str) -> Optional[Dict[str, Any]]:
+        """Synchronous DB lookup, ID-flexible (str or int)."""
+        try:
+            return self.project_service.get_project_from_db_by_id_sync(project_id)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            try:
+                return self.project_service.get_project_from_db_by_id_sync(int(project_id))  # type: ignore[arg-type]
+            except (ValueError, TypeError):
+                return None
 
     def _ensure_repo_in_repo_manager_sync(self, project_id: str, user_id: str) -> None:
+        """Legacy sync entrypoint — now delegates to the async ProjectSandbox
+        ensure via ``asyncio.run`` from a worker thread. Kept for the
+        sync call site that schedules this as ``run_in_executor`` work.
         """
-        Synchronous version of _ensure_repo_in_repo_manager.
-        Runs in a thread pool to avoid blocking the async event loop.
-        Delegates to shared ensure_repo_registered helper.
-        """
-        if not self.repo_manager:
-            return
-
         try:
-            try:
-                project = self.project_service.get_project_from_db_by_id_sync(
-                    project_id
-                )  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                try:
-                    project = self.project_service.get_project_from_db_by_id_sync(
-                        int(project_id)
-                    )  # type: ignore[arg-type]
-                except (ValueError, TypeError):
-                    logger.warning(
-                        f"Cannot ensure repo in repo manager: invalid project_id {project_id}"
-                    )
-                    return
-
-            if not project:
-                logger.warning(
-                    f"Cannot ensure repo in repo manager: project {project_id} not found"
-                )
-                return
-
-            # Map project keys to expected format (project uses project_name, etc.)
-            project_data = {
-                "project_name": project.get("project_name"),
-                "branch_name": project.get("branch_name"),
-                "commit_id": project.get("commit_id"),
-                "repo_path": project.get("repo_path"),
-                "status": project.get("status"),
-            }
-            ensure_repo_registered(
-                project_data,
-                user_id,
-                self.repo_manager,
-                registered_from="conversation_message",
+            asyncio.run(
+                self._ensure_project_sandbox_safe(project_id, user_id)
             )
-        except Exception as e:
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
-                f"Error in _ensure_repo_in_repo_manager_sync for project {project_id}: {e}",
+                f"[ensure_sandbox] sync wrapper failed for {project_id}: {exc}",
                 exc_info=True,
             )
+
+    def _legacy_ensure_repo_in_repo_manager_sync(self, project_id: str, user_id: str) -> None:
+        """Deprecated. Use :meth:`_ensure_project_sandbox_safe` instead.
+
+        Body removed during the sandbox cutover; kept as a name so any
+        out-of-tree caller fails loudly rather than silently picking up
+        the new flow with the wrong call shape.
+        """
+        raise NotImplementedError(
+            "RepoManager-based repo provisioning has been removed; use "
+            "_ensure_project_sandbox_safe instead."
+        )
 
     def _needs_full_clone_sync(self, project_id: str) -> bool:
+        """Decide whether to surface a "loading workspace" banner.
+
+        With ProjectSandbox the workspace is provisioned at parse time
+        and re-verified at conversation start. The ensure() call is
+        idempotent and cheap on a cache hit — so by the time the user
+        starts chatting we usually have nothing to wait for.
+
+        We probe the sandbox metadata store for an existing
+        ``RepoCache`` row to decide if we still need a full clone.
+        Anything that errors (DB miss, stale row, sandbox not
+        configured) we treat as "no banner needed" so we never block
+        the UI on this check.
         """
-        Returns True only when a full git clone is needed (bare repo not on disk yet).
-        When the bare repo already exists, prepare_for_parsing just creates a worktree
-        quickly — no loading message is needed in that case.
-        On any error or local repo, returns False so we never show a spurious message.
-        """
-        if not self.repo_manager:
-            return False
         try:
-            try:
-                project = self.project_service.get_project_from_db_by_id_sync(project_id)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                try:
-                    project = self.project_service.get_project_from_db_by_id_sync(int(project_id))  # type: ignore[arg-type]
-                except (ValueError, TypeError):
-                    return False
-            if not project:
-                return False
-            repo_name = project.get("project_name")
-            repo_path = project.get("repo_path")
-            if not repo_name or repo_path:
-                return False  # local repo, always considered available
-            # Check if the bare repo directory exists on disk.
-            # If it does, worktree creation is fast — no loading message needed.
-            bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name)  # noqa: SLF001
-            return not bare_repo_path.exists()
+            project = self._fetch_project_for_provision(project_id)
         except Exception:
-            logger.warning(
-                f"Error checking bare repo for project {project_id}, assuming available",
-                exc_info=True,
+            return False
+        if not project:
+            return False
+        repo_name = project.get("project_name")
+        repo_path = project.get("repo_path")
+        if not repo_name or repo_path:
+            # No remote repo to clone (local-only project, or invalid).
+            return False
+
+        try:
+            from app.modules.intelligence.tools.sandbox.client import (
+                get_sandbox_client,
             )
+
+            client = get_sandbox_client()
+            store = client.container.store
+
+            async def _check() -> bool:
+                base_ref = project.get("commit_id") or project.get("branch_name")
+                if not base_ref:
+                    return False
+                # The cache key is host+repo+ref; we only need a positive
+                # hit on (host, repo) — any base_ref pinned to the same
+                # bare counts as warm because the bare clones a fresh
+                # ref into the existing mirror in milliseconds.
+                from sandbox.domain.models import RepoCacheRequest, RepoIdentity
+
+                req = RepoCacheRequest(
+                    repo=RepoIdentity(repo_name=repo_name, repo_url=repo_path or None),
+                    base_ref=base_ref,
+                )
+                existing = await store.find_repo_cache_by_key(req.key())
+                return existing is None
+
+            return asyncio.run(_check())
+        except Exception:
             return False
 
     def _clone_repo_if_missing_sync(self, project_id: str, user_id: str) -> None:
+        """Sync wrapper around the sandbox ensure; runs in a thread pool.
+
+        Kept as a name because external schedulers reference it
+        (``loop.run_in_executor(None, self._clone_repo_if_missing_sync, …)``).
+        Internally now identical to :meth:`_ensure_repo_in_repo_manager_sync`
+        — there's no longer a meaningful "fast vs slow" split; a single
+        idempotent ensure covers both.
         """
-        Ensure the repo worktree exists in the repo manager.
-        Calls prepare_for_parsing if the repo is not yet registered or the worktree
-        is missing. Fast when the bare repo already exists (just adds the worktree);
-        slow only on the very first clone. Safe to call on every message.
-        """
-        if not self.repo_manager:
-            logger.info(f"[clone_sync] Skipping project {project_id}: no repo_manager")
-            return
         try:
-            try:
-                project = self.project_service.get_project_from_db_by_id_sync(project_id)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                try:
-                    project = self.project_service.get_project_from_db_by_id_sync(int(project_id))  # type: ignore[arg-type]
-                except (ValueError, TypeError):
-                    logger.warning(f"[clone_sync] Cannot parse project_id={project_id}")
-                    return
-
-            if not project:
-                logger.warning(f"[clone_sync] Project {project_id} not found in DB")
-                return
-
-            repo_name = project.get("project_name")
-            branch = project.get("branch_name")
-            commit_id = project.get("commit_id")
-            repo_path = project.get("repo_path")
-
-            logger.info(
-                f"[clone_sync] project={project_id} repo_name={repo_name!r} "
-                f"branch={branch!r} commit_id={commit_id!r} repo_path={repo_path!r}"
+            asyncio.run(
+                self._ensure_project_sandbox_safe(project_id, user_id)
             )
-
-            if not repo_name:
-                logger.warning(f"[clone_sync] Skipping project {project_id}: no repo_name")
-                return
-            if repo_path:
-                logger.info(
-                    f"[clone_sync] Skipping project {project_id}: has local repo_path={repo_path!r}"
-                )
-                return
-
-            # Match the same ref priority used by get_file_content: commit_id first,
-            # then branch. This ensures the worktree key registered here is the same key
-            # that all code-provider tools use for their lookups.
-            ref = commit_id if commit_id else branch
-            is_commit_ref = bool(commit_id)
-
-            available = self.repo_manager.is_repo_available(
-                repo_name, branch=branch, commit_id=commit_id, user_id=user_id
-            )
-            logger.info(
-                f"[clone_sync] is_repo_available({repo_name!r}@{ref!r}) = {available}"
-            )
-            if available:
-                return  # already there
-
-            if not ref:
-                logger.warning(f"[clone_sync] Skipping {repo_name}: no ref (branch or commit_id)")
-                return
-
-            logger.info(
-                f"[clone_sync] Calling prepare_for_parsing for {repo_name}@{ref} "
-                f"(is_commit={is_commit_ref})"
-            )
-            from app.modules.code_provider.github.github_service import GithubService
-
-            user_token = GithubService(self.db).get_github_oauth_token(user_id)
-
-            # Try with user token first; fall back to env-var token (GH_TOKEN / GITHUB_TOKEN)
-            # if the user token is missing or returns a permission error — matching the
-            # same retry strategy used in parsing_helper.
-            for attempt, token in enumerate([user_token, None]):
-                if attempt == 1 and token == user_token:
-                    break  # no point retrying with the same (None) token
-                try:
-                    self.repo_manager.prepare_for_parsing(
-                        repo_name,
-                        ref,
-                        auth_token=token,
-                        is_commit=is_commit_ref,
-                        user_id=user_id,
-                    )
-                    logger.info(
-                        f"[clone_sync] Worktree ready: {repo_name}@{ref} "
-                        f"(attempt {attempt + 1}, token={'user' if token else 'env'})"
-                    )
-                    break
-                except Exception as e:
-                    if attempt == 0 and token is not None:
-                        logger.warning(
-                            f"[clone_sync] User-token clone failed for {repo_name}@{ref}: {e}. "
-                            "Retrying with env token.",
-                        )
-                    else:
-                        logger.warning(
-                            f"[clone_sync] prepare_for_parsing failed for {repo_name}@{ref}: {e}",
-                            exc_info=True,
-                        )
-        except Exception as e:
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
-                f"[clone_sync] Unexpected error for project {project_id}: {e}",
+                f"[ensure_sandbox] sync wrapper failed for {project_id}: {exc}",
                 exc_info=True,
             )
 
     async def _clone_repo_if_missing(self, project_id: str, user_id: str) -> None:
+        """Async sandbox ensure.
+
+        ``ProjectSandbox.ensure`` is idempotent: cache-hit on the happy
+        path, recovery if the backing storage is gone. We just await
+        it directly — no thread pool needed because the sandbox client
+        handles its own blocking I/O.
         """
-        Fire-and-forget background clone. Runs in a thread so it never blocks the
-        event loop, with no timeout — the clone runs until it completes or fails.
-        """
-        if not self.repo_manager:
-            return
-        try:
-            await asyncio.get_event_loop().run_in_executor(
-                None, self._clone_repo_if_missing_sync, project_id, user_id
-            )
-        except Exception as e:
-            logger.warning(
-                f"_clone_repo_if_missing error for project {project_id}: {e}",
-                exc_info=True,
-            )
+        await self._ensure_project_sandbox_safe(project_id, user_id)
 
     async def _add_system_message(
         self, conversation_id: str, project_name: str, user_id: str
     ):
         content = f"You can now ask questions about the {project_name} repository."
         try:
+            self._history_add_message_chunk(
+                conversation_id, content, MessageType.SYSTEM_GENERATED, user_id
+            )
+            await self._history_flush_message_buffer(
+                conversation_id, MessageType.SYSTEM_GENERATED, user_id
+            )
             await self.message_store.create_system_message(conversation_id, content)
             logger.info(
                 f"Added system message to conversation {conversation_id} for user {user_id}"
@@ -620,10 +737,57 @@ class ConversationService:
             )
             if access_level == ConversationAccessType.READ:
                 raise AccessTypeReadError("Access denied.")
-            self.history_manager.add_message_chunk(
+            if message_type == MessageType.HUMAN and not message.attachment_ids:
+                # Backward-compatible fallback for first message after create_conversation
+                # when attachment IDs were provided only at conversation creation time.
+                conversation = await self._get_conversation_with_message_count(
+                    conversation_id
+                )
+                is_first_human_turn = bool(conversation) and (
+                    conversation.human_message_count == 0
+                )
+                if is_first_human_turn:
+                    try:
+                        pending_key = (
+                            f"conversation:pending_attachments:{conversation_id}"
+                        )
+                        pending_raw = None
+                        if self.async_redis_manager:
+                            pending_raw = (
+                                await self.async_redis_manager.redis_client.get(
+                                    pending_key
+                                )
+                            )
+                        else:
+                            pending_raw = self.redis_manager.redis_client.get(
+                                pending_key
+                            )
+                        if pending_raw:
+                            pending_value = (
+                                pending_raw.decode("utf-8")
+                                if isinstance(pending_raw, bytes)
+                                else pending_raw
+                            )
+                            parsed = json.loads(pending_value)
+                            if isinstance(parsed, list) and parsed:
+                                message.attachment_ids = parsed
+                                logger.info(
+                                    f"Applied {len(parsed)} pending attachments to first message in conversation {conversation_id}"
+                                )
+                                if self.async_redis_manager:
+                                    await self.async_redis_manager.redis_client.delete(
+                                        pending_key
+                                    )
+                                else:
+                                    self.redis_manager.redis_client.delete(pending_key)
+                    except Exception:
+                        logger.exception(
+                            f"Failed to load pending attachments for conversation {conversation_id}"
+                        )
+            self._history_add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
-            message_id = self.history_manager.flush_message_buffer(
+            message_id = await self._history_flush_message_buffer(
                 conversation_id, message_type, user_id
             )
             logger.info(f"Stored message in conversation {conversation_id}")
@@ -646,6 +810,44 @@ class ConversationService:
                     # Continue processing even if attachment linking fails
 
             if message_type == MessageType.HUMAN:
+                # Report usage to Dodo (fire and forget - don't block on failure)
+                # Auto-initialize free user if no dodo_customer_id exists
+                dodo_customer_id = None
+                try:
+                    dodo_customer_id = await asyncio.wait_for(
+                        billing_subscription_service.get_or_create_dodo_customer_id(user_id),
+                        timeout=5.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"billing lookup timed out for user {user_id}")
+                except Exception as e:
+                    # Log but don't fail - billing should not break chat
+                    logger.error(f"Failed to get or create dodo_customer_id: {e}")
+
+                if dodo_customer_id:
+                    report_task = asyncio.create_task(
+                        usage_reporting_service.report_message_usage(
+                            user_id=user_id,
+                            dodo_customer_id=dodo_customer_id,
+                            conversation_id=conversation_id,
+                        )
+                    )
+
+                    def _on_report_done(t: asyncio.Task) -> None:
+                        if t.cancelled():
+                            return
+                        try:
+                            exc = t.exception()
+                        except asyncio.CancelledError:
+                            return
+                        if exc is not None:
+                            logger.exception("Failed to report message usage", exc_info=exc)
+
+                    report_task.add_done_callback(_on_report_done)
+                    logger.info(f"Usage reporting triggered for user {user_id}, conversation {conversation_id}")
+                else:
+                    logger.warning(f"Could not get or create dodo_customer_id for user {user_id}")
+
                 conversation = await self._get_conversation_with_message_count(
                     conversation_id
                 )
@@ -669,20 +871,21 @@ class ConversationService:
                         "No project associated with this conversation"
                     )
 
-                # Ensure repo is registered in repo manager (skip in local/VSCode mode)
-                # Convert project_id to string if needed (it might be a Column object)
+                # Verify the project sandbox is alive before the
+                # agent runs its first tool call. ``ensure()`` is the
+                # health check — it acquires (cheap on cache hit),
+                # probes ``is_alive``, and recovers if the backing
+                # storage was archived/deleted out-of-band. So the
+                # happy path is one ``acquire_session`` cache hit plus
+                # one cheap probe; the heavy recovery work only fires
+                # when the sandbox is actually gone.
+                #
+                # Skipped in local/VSCode mode — the IDE tunnel reads
+                # straight from the user's filesystem.
                 project_id_str = str(project_id) if project_id else None
-                if project_id_str and not local_mode and self.repo_manager:
-                    logger.info(
-                        f"[store_message] Checking/creating worktree for project {project_id_str}"
-                    )
-                    # Only show loading message when a full clone is needed (bare repo missing).
-                    # When the bare repo already exists, worktree creation is fast — no message.
-                    needs_clone = await asyncio.get_event_loop().run_in_executor(
+                if project_id_str and not local_mode:
+                    needs_clone = await asyncio.get_running_loop().run_in_executor(
                         None, self._needs_full_clone_sync, project_id_str
-                    )
-                    logger.info(
-                        f"[store_message] needs_full_clone={needs_clone} for project {project_id_str}"
                     )
                     if needs_clone and stream:
                         yield ChatMessageResponse(
@@ -690,19 +893,16 @@ class ConversationService:
                             citations=[],
                             tool_calls=[],
                         )
-                    # Always run synchronously: creates bare repo + worktree if missing,
-                    # or returns quickly if everything already exists.
-                    await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        self._clone_repo_if_missing_sync,
-                        project_id_str,
-                        user_id,
+                    # Bounded so a slow recovery (Daytona sandbox
+                    # creation can take ~10s) doesn't stall the user
+                    # past a reasonable budget; if it overruns, the
+                    # subsequent agent tool will pay the cost on its
+                    # own ensure() call. 30s gives a fresh Daytona
+                    # sandbox enough time to reach RUNNING without
+                    # holding the request open indefinitely.
+                    await self._ensure_project_sandbox_safe(
+                        project_id_str, user_id, timeout_s=30.0
                     )
-                elif project_id_str and not local_mode:
-                    logger.info(
-                        f"[store_message] No repo_manager, skipping worktree setup for project {project_id_str}"
-                    )
-                    await self._ensure_repo_in_repo_manager(project_id_str, user_id)
 
                 logger.info(
                     f"[store_message] message.tunnel_url={message.tunnel_url}, "
@@ -742,7 +942,10 @@ class ConversationService:
                             accumulated_thinking = chunk.thinking
 
                     yield ChatMessageResponse(
-                        message=full_message, citations=all_citations, tool_calls=[], thinking=accumulated_thinking
+                        message=full_message,
+                        citations=all_citations,
+                        tool_calls=[],
+                        thinking=accumulated_thinking,
                     )
 
         except AccessTypeReadError:
@@ -820,20 +1023,20 @@ class ConversationService:
                     attachments = await self.media_service.get_message_attachments(
                         last_human_message.id, include_download_urls=False
                     )
-                    # Extract only image attachment IDs for multimodal processing
+                    # Extract both image and document attachment IDs for multimodal processing
                     from app.modules.media.media_model import AttachmentType
 
                     attachment_ids = [
                         att.id
                         for att in attachments
-                        if att.attachment_type == AttachmentType.IMAGE
+                        if att.attachment_type in (AttachmentType.IMAGE, AttachmentType.DOCUMENT)
                     ]
                     if attachment_ids:
                         logger.info(
-                            f"Found {len(attachment_ids)} image attachments for regeneration: {attachment_ids}"
+                            f"Found {len(attachment_ids)} attachments (images + documents) for regeneration: {attachment_ids}"
                         )
                     else:
-                        logger.info("No image attachments found in last human message")
+                        logger.info("No attachments found in last human message")
                 except Exception as e:
                     logger.warning(
                         f"Failed to retrieve attachments for message {last_human_message.id}: {e}"
@@ -880,7 +1083,10 @@ class ConversationService:
                         accumulated_thinking = chunk.thinking
 
                 yield ChatMessageResponse(
-                    message=full_message, citations=all_citations, tool_calls=[], thinking=accumulated_thinking
+                    message=full_message,
+                    citations=all_citations,
+                    tool_calls=[],
+                    thinking=accumulated_thinking,
                 )
 
         except AccessTypeReadError:
@@ -1039,7 +1245,7 @@ class ConversationService:
         project_id = conversation.project_ids[0] if conversation.project_ids else None
 
         try:
-            history = self.history_manager.get_session_history(user_id, conversation_id)
+            history = await self._history_get_session_history(user_id, conversation_id)
             validated_history = [
                 (f"{msg.type}: {msg.content}" if msg.content else msg)
                 for msg in history
@@ -1067,14 +1273,31 @@ class ConversationService:
 
             # Prepare multimodal context - use current message attachments if available
             image_attachments = None
+            document_attachments = None
+            logger.info(
+                f"[_generate_and_stream_ai_response] Received attachment_ids: {attachment_ids}"
+            )
             if attachment_ids:
                 image_attachments = await self._prepare_attachments_as_images(
                     attachment_ids
                 )
+                document_attachments = await self._prepare_attachments_as_documents(
+                    attachment_ids
+                )
+                logger.info(f"[_generate_and_stream_ai_response] Prepared image_attachments: {len(image_attachments) if image_attachments else 0}, document_attachments: {len(document_attachments) if document_attachments else 0}")
 
             # Also get context images from recent conversation history
             context_images = await self._prepare_conversation_context_images(
                 conversation_id
+            )
+
+            # Log vision model check for debugging
+            is_vision = self.agent_service.llm_provider.is_vision_model()
+            logger.info(
+                f"[_generate_and_stream_ai_response] Vision model check: {is_vision}, "
+                f"has_images: {bool(image_attachments or context_images)}, "
+                f"has_documents: {bool(document_attachments)}, "
+                f"attachment_ids_count: {len(attachment_ids) if attachment_ids else 0}"
             )
 
             logger.info(
@@ -1114,6 +1337,9 @@ class ConversationService:
                         else project_name
                     ),
                     branch=project_info.get("branch_name") if project_info else None,
+                    image_attachments=image_attachments,
+                    context_images=context_images,
+                    document_attachments=document_attachments,
                 )
                 custom_ctx.check_cancelled = check_cancelled
                 res = (
@@ -1127,26 +1353,31 @@ class ConversationService:
                 async for chunk in res:
                     if check_cancelled and check_cancelled():
                         raise GenerationCancelled()
-                    # Accumulate tool_calls from each chunk
+                    chunk_tool_calls = None
                     if chunk.tool_calls:
+                        chunk_tool_calls = []
                         for tool_call in chunk.tool_calls:
                             tool_call_dict = (
                                 tool_call.model_dump()
                                 if hasattr(tool_call, "model_dump")
-                                else tool_call.dict()
-                                if hasattr(tool_call, "dict")
-                                else tool_call
+                                else (
+                                    tool_call.dict()
+                                    if hasattr(tool_call, "dict")
+                                    else tool_call
+                                )
                             )
                             accumulated_tool_calls.append(tool_call_dict)
+                            chunk_tool_calls.append(tool_call_dict)
                     # Capture thinking content if present
                     if chunk.thinking:
                         accumulated_thinking = chunk.thinking
-                    self.history_manager.add_message_chunk(
+                    self._history_add_message_chunk(
                         conversation_id,
                         chunk.response,
                         MessageType.AI_GENERATED,
                         citations=chunk.citations,
-                        tool_calls=accumulated_tool_calls if chunk.tool_calls else None,
+                        tool_calls=chunk_tool_calls,
+                        thinking=accumulated_thinking,
                     )
                     yield ChatMessageResponse(
                         message=chunk.response,
@@ -1157,9 +1388,8 @@ class ConversationService:
                         ],
                         thinking=chunk.thinking,
                     )
-                # Flush with thinking content if captured
-                self.history_manager.flush_message_buffer(
-                    conversation_id, MessageType.AI_GENERATED, thinking=accumulated_thinking
+                await self._history_flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
                 )
             else:
                 # Create enhanced ChatContext with multimodal support
@@ -1174,6 +1404,7 @@ class ConversationService:
                     project_status=project_status,
                     image_attachments=image_attachments,
                     context_images=context_images,
+                    document_attachments=document_attachments,
                     conversation_id=conversation_id,
                     user_id=user_id,  # Set user_id for tunnel routing
                     tunnel_url=tunnel_url,  # Tunnel URL from request (takes priority)
@@ -1194,26 +1425,31 @@ class ConversationService:
                 async for chunk in res:
                     if check_cancelled and check_cancelled():
                         raise GenerationCancelled()
-                    # Accumulate tool_calls from each chunk
+                    chunk_tool_calls = None
                     if chunk.tool_calls:
+                        chunk_tool_calls = []
                         for tool_call in chunk.tool_calls:
                             tool_call_dict = (
                                 tool_call.model_dump()
                                 if hasattr(tool_call, "model_dump")
-                                else tool_call.dict()
-                                if hasattr(tool_call, "dict")
-                                else tool_call
+                                else (
+                                    tool_call.dict()
+                                    if hasattr(tool_call, "dict")
+                                    else tool_call
+                                )
                             )
                             accumulated_tool_calls.append(tool_call_dict)
+                            chunk_tool_calls.append(tool_call_dict)
                     # Capture thinking content if present
                     if chunk.thinking:
                         accumulated_thinking = chunk.thinking
-                    self.history_manager.add_message_chunk(
+                    self._history_add_message_chunk(
                         conversation_id,
                         chunk.response,
                         MessageType.AI_GENERATED,
                         citations=chunk.citations,
-                        tool_calls=accumulated_tool_calls if chunk.tool_calls else None,
+                        tool_calls=chunk_tool_calls,
+                        thinking=accumulated_thinking,
                     )
                     yield ChatMessageResponse(
                         message=chunk.response,
@@ -1224,9 +1460,8 @@ class ConversationService:
                         ],
                         thinking=chunk.thinking,
                     )
-                # Flush with thinking content if captured
-                self.history_manager.flush_message_buffer(
-                    conversation_id, MessageType.AI_GENERATED, thinking=accumulated_thinking
+                await self._history_flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
                 )
 
             logger.info(
@@ -1273,13 +1508,27 @@ class ConversationService:
                 try:
                     # Get attachment info
                     attachment = await self.media_service.get_attachment(attachment_id)
+                    if not attachment:
+                        logger.info(
+                            f"DEBUG: Skipping attachment {attachment_id} - not found"
+                        )
+                        continue
+
                     logger.info(
-                        f"DEBUG: Retrieved attachment {attachment_id}: type={attachment.attachment_type.value if attachment else 'None'}, mime_type={attachment.mime_type if attachment else 'None'}"
+                        f"DEBUG: Retrieved attachment {attachment_id}: "
+                        f"type={attachment.attachment_type.value}, mime_type={attachment.mime_type}"
                     )
-                    if (
-                        attachment
-                        and attachment.attachment_type.value.upper() == "IMAGE"
-                    ):  # Check if it's an image
+                    is_image_record = (
+                        attachment.attachment_type.value.upper() == "IMAGE"
+                    )
+                    # Pre-upload via /media/upload can store as DOCUMENT if Content-Type was
+                    # missing or not in the allowlist; still treat image/* as vision input.
+                    is_image_mime = (
+                        attachment.mime_type
+                        and attachment.mime_type.startswith("image/")
+                    )
+
+                    if is_image_record:
                         base64_data = await self.media_service.get_image_as_base64(
                             attachment_id
                         )
@@ -1291,6 +1540,21 @@ class ConversationService:
                         }
                         logger.info(
                             f"Prepared image {attachment_id} ({attachment.file_name}) for multimodal processing"
+                        )
+                    elif is_image_mime:
+                        raw = await self.media_service.get_attachment_data(
+                            attachment_id
+                        )
+                        base64_data = base64.b64encode(raw).decode("utf-8")
+                        images[attachment_id] = {
+                            "base64": base64_data,
+                            "mime_type": attachment.mime_type,
+                            "file_name": attachment.file_name,
+                            "file_size": attachment.file_size,
+                        }
+                        logger.info(
+                            f"Prepared image {attachment_id} ({attachment.file_name}) "
+                            f"as DOCUMENT+image/* for multimodal processing"
                         )
                     else:
                         logger.info(
@@ -1310,6 +1574,73 @@ class ConversationService:
 
         except Exception:
             logger.exception("Error preparing attachments as images")
+            return None
+
+    async def _prepare_attachments_as_documents(
+        self, attachment_ids: List[str]
+    ) -> Optional[Dict[str, Dict[str, Union[str, int]]]]:
+        """Convert attachment IDs to base64 documents for multimodal processing"""
+        try:
+            if not attachment_ids:
+                return None
+
+            documents = {}
+            for attachment_id in attachment_ids:
+                try:
+                    # Get attachment info
+                    attachment = await self.media_service.get_attachment(attachment_id)
+                    logger.info(
+                        f"DEBUG: Retrieved attachment {attachment_id}: type={attachment.attachment_type.value if attachment else 'None'}, mime_type={attachment.mime_type if attachment else 'None'}"
+                    )
+                    if (
+                        attachment
+                        and attachment.attachment_type.value.upper() == "DOCUMENT"
+                        # Avoid duplicating image bytes already handled as vision input
+                        and not (
+                            attachment.mime_type
+                            and attachment.mime_type.startswith("image/")
+                        )
+                    ):  # Check if it's a document
+                        # Get document data as base64
+                        doc_data = await self.media_service.get_attachment_data(attachment_id)
+                        base64_data = base64.b64encode(doc_data).decode("utf-8")
+                        document_url = None
+                        try:
+                            document_url = await self.media_service.generate_signed_url(
+                                attachment_id, expiration_minutes=60
+                            )
+                        except Exception as url_exc:
+                            logger.warning(
+                                f"Failed to generate signed URL for document {attachment_id}: {url_exc}"
+                            )
+                        documents[attachment_id] = {
+                            "base64": base64_data,
+                            "mime_type": attachment.mime_type,
+                            "file_name": attachment.file_name,
+                            "file_size": attachment.file_size,
+                            "url": document_url,
+                        }
+                        logger.info(
+                            f"Prepared document {attachment_id} ({attachment.file_name}) for multimodal processing"
+                        )
+                    else:
+                        logger.info(
+                            f"DEBUG: Skipping attachment {attachment_id} - not a document or attachment not found"
+                        )
+                except Exception:
+                    logger.exception(
+                        f"Failed to prepare attachment {attachment_id} as document",
+                        attachment_id=attachment_id,
+                    )
+                    continue
+
+            logger.info(
+                f"Prepared {len(documents)} documents from {len(attachment_ids)} attachments for multimodal processing"
+            )
+            return documents if documents else None
+
+        except Exception:
+            logger.exception("Error preparing attachments as documents")
             return None
 
     async def _prepare_current_message_images(
@@ -1610,7 +1941,14 @@ class ConversationService:
                 ActiveSessionErrorResponse,
             )
 
-            active_session = self.session_service.get_active_session(conversation_id)
+            if self.async_session_service:
+                active_session = await self.async_session_service.get_active_session(
+                    conversation_id
+                )
+            else:
+                active_session = self.session_service.get_active_session(
+                    conversation_id
+                )
 
             if isinstance(active_session, ActiveSessionErrorResponse):
                 # No active session found - this is okay, just return success
@@ -1629,13 +1967,23 @@ class ConversationService:
             )
 
         # Retrieve task_id before any mutation so we know whether we will revoke (and thus need to save from stream).
-        task_id = self.redis_manager.get_task_id(conversation_id, run_id)
+        if self.async_redis_manager:
+            task_id = await self.async_redis_manager.get_task_id(
+                conversation_id, run_id
+            )
+        else:
+            task_id = self.redis_manager.get_task_id(conversation_id, run_id)
         logger.info(
             f"Stop generation: conversation_id={conversation_id}, run_id={run_id}, task_id={task_id or 'none'}"
         )
 
         # Snapshot the stream before revoke so we have a consistent read (worker may be killed mid-write after revoke).
-        snapshot = self.redis_manager.get_stream_snapshot(conversation_id, run_id)
+        if self.async_redis_manager:
+            snapshot = await self.async_redis_manager.get_stream_snapshot(
+                conversation_id, run_id
+            )
+        else:
+            snapshot = self.redis_manager.get_stream_snapshot(conversation_id, run_id)
         content_len = len(snapshot.get("content") or "")
         citations_count = len(snapshot.get("citations") or [])
         tool_calls_count = len(snapshot.get("tool_calls") or [])
@@ -1646,7 +1994,10 @@ class ConversationService:
         )
 
         # Set cancellation flag and revoke the Celery task so it stops producing chunks.
-        self.redis_manager.set_cancellation(conversation_id, run_id)
+        if self.async_redis_manager:
+            await self.async_redis_manager.set_cancellation(conversation_id, run_id)
+        else:
+            self.redis_manager.set_cancellation(conversation_id, run_id)
         if task_id:
             try:
                 # Step 1: Try graceful revocation first (cooperative cancellation).
@@ -1661,13 +2012,22 @@ class ConversationService:
                 time.sleep(0.5)
 
                 # Check if task is still running via task status
-                task_status = self.redis_manager.get_task_status(conversation_id, run_id)
+                if self.async_redis_manager:
+                    task_status = await self.async_redis_manager.get_task_status(
+                        conversation_id, run_id
+                    )
+                else:
+                    task_status = self.redis_manager.get_task_status(
+                        conversation_id, run_id
+                    )
                 if task_status in ["running", "queued"]:
                     logger.info(
                         f"Task {task_id} still running after graceful revoke, using terminate"
                     )
                     # Step 3: Use terminate with SIGTERM as fallback
-                    self.celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+                    self.celery_app.control.revoke(
+                        task_id, terminate=True, signal="SIGTERM"
+                    )
                     logger.info(
                         f"Sent SIGTERM to Celery task {task_id} for {conversation_id}:{run_id}"
                     )
@@ -1681,6 +2041,18 @@ class ConversationService:
             logger.info(
                 f"No task ID for {conversation_id}:{run_id} - already completed or revoked"
             )
+
+        # Take a second snapshot after revoke/wait to capture chunks published during the graceful period.
+        if task_id:
+            snapshot2 = self.redis_manager.get_stream_snapshot(conversation_id, run_id)
+            len1 = len(snapshot.get("content") or "")
+            len2 = len(snapshot2.get("content") or "")
+            if len2 > len1:
+                snapshot = snapshot2
+                logger.info(
+                    f"Using post-revoke snapshot for {conversation_id}:{run_id} "
+                    f"(captured {len2 - len1} more chars)"
+                )
 
         # Only save from stream when we revoked (worker did not flush). Persist content or tool-only placeholder.
         saved_partial = False
@@ -1696,10 +2068,12 @@ class ConversationService:
                 else:
                     content_to_save = ""
                 if content_to_save:
-                    saved_message_id = self.history_manager.save_partial_ai_message(
+                    saved_message_id = await self._history_save_partial_ai_message(
                         conversation_id,
                         content=content_to_save,
                         citations=snapshot.get("citations"),
+                        tool_calls=snapshot.get("tool_calls"),
+                        thinking=snapshot.get("thinking"),
                     )
                     saved_partial = saved_message_id is not None
                     if saved_partial:
@@ -1721,11 +2095,11 @@ class ConversationService:
                 )
 
         # Always clear the session - publish end event and update status
-        # This ensures clients know the session is stopped and prevents stale sessions
-        # This is important even if there's no task_id - it clears any stale session data
-        # This will also handle the case where stop is called with a stale session_id
         try:
-            self.redis_manager.clear_session(conversation_id, run_id)
+            if self.async_redis_manager:
+                await self.async_redis_manager.clear_session(conversation_id, run_id)
+            else:
+                self.redis_manager.clear_session(conversation_id, run_id)
         except Exception as e:
             logger.warning(
                 f"Failed to clear session for {conversation_id}:{run_id}: {str(e)}"
@@ -1785,6 +2159,69 @@ class ConversationService:
             )
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
+            ) from e
+
+    async def update_conversation_agent(
+        self, conversation_id: str, agent_id: str, user_id: str
+    ) -> ConversationInfoResponse:
+        try:
+            conversation = await self.conversation_store.get_by_id(conversation_id)
+
+            if not conversation:
+                logger.warning(f"Conversation {conversation_id} not found in database")
+                raise ConversationNotFoundError(
+                    f"Conversation with id {conversation_id} not found"
+                )
+
+            access_type = await self.check_conversation_access(
+                conversation_id, self.user_email, user_id
+            )
+
+            if access_type == ConversationAccessType.NOT_FOUND:
+                logger.bind(conversation_id=conversation_id, user_id=user_id).error(
+                    f"Access denied - access type is NOT_FOUND for user {user_id} on conversation {conversation_id}"
+                )
+                raise AccessTypeNotFoundError("Access type not found")
+
+            if access_type == ConversationAccessType.READ:
+                logger.bind(conversation_id=conversation_id, user_id=user_id).error(
+                    f"Access denied - access type is READ for user {user_id} on conversation {conversation_id}"
+                )
+                raise AccessTypeReadError("Access denied.")
+
+            if not await self.agent_service.validate_agent_id(user_id, agent_id):
+                raise ConversationServiceError(f"Invalid agent_id: {agent_id}")
+
+            await self.conversation_store.update_agent_ids(
+                conversation_id, [agent_id]
+            )
+
+            logger.info(
+                f"Updated conversation {conversation_id} agent to {agent_id} by user {user_id}"
+            )
+
+            return await self.get_conversation_info(conversation_id, user_id)
+
+        except ConversationNotFoundError as e:
+            logger.warning(f"ConversationNotFoundError: {str(e)}")
+            raise
+        except AccessTypeNotFoundError:
+            logger.exception(
+                f"AccessTypeNotFoundError in update_conversation_agent for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+            raise
+        except ConversationServiceError:
+            raise
+        except Exception as e:
+            logger.exception(
+                f"Error in update_conversation_agent for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+            raise ConversationServiceError(
+                f"Failed to update conversation agent for {conversation_id}"
             ) from e
 
     async def get_conversations_with_projects_for_user(

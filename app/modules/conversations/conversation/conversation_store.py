@@ -57,6 +57,15 @@ class ConversationStore(BaseStore):
         await self.async_db.execute(stmt)
         await self.async_db.commit()
 
+    async def update_agent_ids(self, conversation_id: str, agent_ids: List[str]) -> None:
+        stmt = (
+            update(Conversation)
+            .where(Conversation.id == conversation_id)
+            .values(agent_ids=agent_ids, updated_at=datetime.now(timezone.utc))
+        )
+        await self.async_db.execute(stmt)
+        await self.async_db.commit()
+
     async def delete(self, conversation_id: str) -> int:
         stmt = delete(Conversation).where(Conversation.id == conversation_id)
         result = await self.async_db.execute(stmt)

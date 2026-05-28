@@ -23,6 +23,10 @@ from app.modules.intelligence.tools.reasoning_manager import (
     _reset_reasoning_manager,
 )
 
+from app.modules.context_graph.bundle_renderer import intelligence_coverage_status
+from app.modules.intelligence.tracing.logfire_tracer import (
+    should_instrument_pydantic_ai,
+)
 from ..chat_agent import (
     ChatAgent,
     ChatAgentResponse,
@@ -31,7 +35,7 @@ from ..chat_agent import (
     ToolCallResponse,
 )
 
-from pydantic_ai import Agent, Tool
+from pydantic_ai import Agent
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -47,6 +51,9 @@ from pydantic_ai.messages import (
 from app.modules.intelligence.agents.chat_agents.multi_agent.utils.message_history_utils import (
     _history_strings_to_model_messages,
 )
+from app.modules.intelligence.agents.chat_agents.multi_agent.utils.multimodal_utils import (
+    document_to_user_content,
+)
 from app.modules.intelligence.agents.chat_agents.multi_agent.utils.tool_utils import (
     wrap_structured_tools,
 )
@@ -54,6 +61,26 @@ from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError
 from langchain_core.tools import StructuredTool
 
 logger = setup_logger(__name__)
+
+
+def _sanitize_prompt_file_name(file_name: object, max_length: int = 200) -> str:
+    """Sanitize file names before interpolating into prompt text."""
+    normalized_name = str(file_name or "")
+    # Drop control characters and normalize all whitespace/newlines to single spaces.
+    normalized_name = "".join(ch for ch in normalized_name if ch.isprintable())
+    normalized_name = re.sub(r"\s+", " ", normalized_name).strip()
+    if not normalized_name:
+        return "unknown"
+    return normalized_name[:max_length]
+
+
+def _safe_file_size(file_size: object) -> int:
+    """Best-effort conversion to a non-negative integer file size."""
+    try:
+        normalized_size = int(file_size)
+        return normalized_size if normalized_size >= 0 else 0
+    except (TypeError, ValueError):
+        return 0
 
 
 def handle_exception(tool_func):
@@ -184,7 +211,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             "defer_model_check": True,
             "end_strategy": "exhaustive",
             "model_settings": {"max_tokens": 14000},
-            "instrument": True,
+            "instrument": should_instrument_pydantic_ai(),
             "history_processors": [self._history_processor],
         }
 
@@ -210,17 +237,19 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
         return Agent(**agent_kwargs)
 
     def _prepare_multimodal_instructions(self, ctx: ChatContext) -> str:
-        """Prepare multimodal-specific instructions when images are present"""
-        if not ctx.has_images():
+        """Prepare multimodal-specific instructions when media is present"""
+        if not (ctx.has_images() or ctx.has_documents()):
             return ""
 
         all_images = ctx.get_all_images()
         current_images = ctx.get_current_images_only()
         context_images = ctx.get_context_images_only()
+        all_documents = ctx.get_all_documents()
 
         return f"""
         MULTIMODAL ANALYSIS INSTRUCTIONS:
-        You have access to {len(all_images)} image(s) - {len(current_images)} from the current message and {len(context_images)} from conversation history.
+        You have access to {len(all_images)} image(s) and {len(all_documents)} document(s).
+        Image split: {len(current_images)} from the current message and {len(context_images)} from conversation history.
 
         CRITICAL GUIDELINES FOR ACCURATE ANALYSIS:
         1. **ONLY analyze what you can clearly see** - Do not infer or guess about unclear details
@@ -250,25 +279,92 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
         if isinstance(ctx.node_ids, str):
             ctx.node_ids = [ctx.node_ids]
 
-        # Add image context information
+        # Add media context information
         image_context = ""
-        if ctx.has_images():
+        if ctx.has_images() or ctx.has_documents():
             all_images = ctx.get_all_images()
             image_details = []
             for attachment_id, image_data in all_images.items():
-                file_name = image_data.get("file_name", "unknown")
-                file_size = image_data.get("file_size", 0)
+                file_name = _sanitize_prompt_file_name(
+                    image_data.get("file_name", "unknown")
+                )
+                file_size = _safe_file_size(image_data.get("file_size", 0))
                 image_details.append(f"- {file_name} ({file_size} bytes)")
+            document_details = []
+            all_documents = ctx.get_all_documents()
+            for attachment_id, doc_data in all_documents.items():
+                file_name = _sanitize_prompt_file_name(
+                    doc_data.get("file_name", "unknown")
+                )
+                file_size = _safe_file_size(doc_data.get("file_size", 0))
+                document_details.append(f"- {file_name} ({file_size} bytes)")
 
             image_context = f"""
             ATTACHED IMAGES:
             {chr(10).join(image_details)}
+
+            ATTACHED DOCUMENTS:
+            {chr(10).join(document_details)}
 
             Image Analysis Notes:
             - These images are provided for visual analysis and debugging
             - Reference specific details from the images in your response
             - Correlate visual evidence with the user's query
             """
+
+        bundle = getattr(ctx, "context_intelligence_bundle", None)
+        ci_status = (
+            intelligence_coverage_status(bundle)
+            if isinstance(bundle, dict)
+            else "unknown"
+        )
+
+        if ci_status == "COMPLETE":
+            instructions_block = """
+                INSTRUCTIONS (CONTEXT INTELLIGENCE — COMPLETE):
+                1. Answer from Additional Context (CONTEXT INTELLIGENCE block) first. Do NOT call
+                   context_resolve, context_search, or ask_knowledge_graph_queries to re-fetch
+                   evidence already present in the prefetch.
+                2. Cite prefetched sections ([Artifacts], [Change history], [Discussions], etc.) in your answer.
+                3. Use fetch_file / get_code_from_probable_node_name / analyze_code_structure only if the user needs source code not in the block.
+                4. Format in markdown with clear structure.
+                5. Verify your output before submitting.
+
+                IMPORTANT:
+                - Do not use tools to "gather" graph/PR data already in Additional Context.
+                - Use tools efficiently; avoid CODEOWNERS fetches for ownership — use [Ownership] or state none.
+                - Only use the tools listed below when they add new information.
+                """
+        elif ci_status == "PARTIAL":
+            instructions_block = f"""
+                INSTRUCTIONS (CONTEXT INTELLIGENCE — PARTIAL):
+                1. Use the CONTEXT INTELLIGENCE block first, then call only tools allowed by
+                   MANDATORY TOOL-CALL RULES for missing families.
+                2. {"Analyze the provided media in detail and " if (ctx.has_images() or ctx.has_documents()) else ""}Synthesize and answer.
+                3. Format your response in markdown unless explicitly asked otherwise.
+                4. Include relevant code snippets and file references when applicable.
+                5. Verify your output before submitting.
+
+                IMPORTANT:
+                - Use tools efficiently and avoid duplicate fetches for families already prefetched.
+                - Only use the tools listed below.
+                """
+        else:
+            instructions_block = f"""
+                INSTRUCTIONS:
+                1. Use the available tools to gather information
+                2. {"Analyze the provided media in detail and " if (ctx.has_images() or ctx.has_documents()) else ""}Process and synthesize the gathered information
+                3. Format your response in markdown unless explicitely asked to output in a different format, make sure it's well formatted
+                4. Include relevant code snippets and file references
+                5. {"Reference specific details from the attached media when relevant" if (ctx.has_images() or ctx.has_documents()) else "Provide clear explanations"}
+                6. Verify your output before submitting
+
+                IMPORTANT:
+                - Use tools efficiently and avoid unnecessary API calls
+                - Only use the tools listed below
+                - You have access to tools in MCP Servers too, use them effectively. These mcp servers provide you with tools user might ask you to perform tasks on
+                {"- Provide detailed analysis when images/documents are present" if (ctx.has_images() or ctx.has_documents()) else ""}
+                """
 
         return f"""
                 CONTEXT:
@@ -284,25 +380,14 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                 TASK HANDLING: (follow the method below if the user asks you to execute your task for your role and goal)
                 {task_config.description}
 
-                INSTRUCTIONS:
-                1. Use the available tools to gather information
-                2. {"Analyze the provided images in detail and " if ctx.has_images() else ""}Process and synthesize the gathered information
-                3. Format your response in markdown unless explicitely asked to output in a different format, make sure it's well formatted
-                4. Include relevant code snippets and file references
-                5. {"Reference specific details from the images when relevant" if ctx.has_images() else "Provide clear explanations"}
-                6. Verify your output before submitting
-
-                IMPORTANT:
-                - Use tools efficiently and avoid unnecessary API calls
-                - Only use the tools listed below
-                - You have access to tools in MCP Servers too, use them effectively. These mcp servers provide you with tools user might ask you to perform tasks on
-                {"- Provide detailed image analysis when images are present" if ctx.has_images() else ""}
+                {instructions_block}
             """
 
     def _debug_multimodal_content(self, ctx: ChatContext) -> None:
         """Debug method to log detailed information about multimodal content"""
         logger.info("=== MULTIMODAL CONTENT DEBUG ===")
         logger.info(f"Context has images: {ctx.has_images()}")
+        logger.info(f"Context has documents: {ctx.has_documents()}")
 
         if ctx.has_images():
             all_images = ctx.get_all_images()
@@ -408,8 +493,15 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                 )
                 continue
 
-        # If no current images, add context images as fallback
-        if not current_images:
+        current_documents = ctx.get_current_documents_only()
+        is_document_only_request = bool(current_documents) and not bool(current_images)
+        if is_document_only_request:
+            logger.info(
+                "Skipping historical image fallback because request is document-only"
+            )
+
+        # If no current images, add context images as fallback (except document-only requests)
+        if not current_images and not is_document_only_request:
             context_images = ctx.get_context_images_only()
             logger.info(
                 f"No current images found, processing {len(context_images)} context images as fallback"
@@ -468,8 +560,34 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                     )
                     continue
 
+        # Add document attachments to the content
         logger.info(
-            f"Final multimodal content has {len(content)} elements: 1 text + {len(content) - 1} images"
+            f"Processing {len(current_documents)} current documents for multimodal content"
+        )
+
+        for attachment_id, doc_data in current_documents.items():
+            try:
+                if not isinstance(doc_data, dict):
+                    logger.error(
+                        f"Invalid document data structure for {attachment_id}: {type(doc_data)}"
+                    )
+                    continue
+                part = document_to_user_content(doc_data, attachment_id)
+                if part:
+                    content.append(part)
+                    logger.info(
+                        "Added document %s to multimodal content (DocumentUrl or text fallback)",
+                        attachment_id,
+                    )
+            except Exception:
+                logger.exception(
+                    f"Failed to add document {attachment_id} to content",
+                    attachment_id=attachment_id,
+                )
+                continue
+
+        logger.info(
+            f"Final multimodal content has {len(content)} elements: 1 text + {len(content) - 1} media items (images + documents)"
         )
         return content
 
@@ -488,41 +606,31 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Main execution flow with multimodal support using PydanticAI's native capabilities"""
         logger.info(
-            f"Running pydantic-ai agent {'with multimodal support' if ctx.has_images() else ''}"
+            f"Running pydantic-ai agent {'with multimodal support' if (ctx.has_images() or ctx.has_documents()) else ''}"
         )
 
-        # Initialize code changes manager with conversation_id for persistence across messages
-        from app.modules.intelligence.tools.code_changes_manager import (
-            _init_code_changes_manager,
+        from app.modules.intelligence.tools.sandbox.context import (
+            set_run_context as _set_sandbox_run_context,
         )
 
-        logger.info(
-            f"🔄 [PydanticRagAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
-            f"ctx.conversation_id={ctx.conversation_id}"
-        )
-        _init_code_changes_manager(
-            conversation_id=ctx.conversation_id,
-            agent_id=ctx.curr_agent_id,
+        _set_sandbox_run_context(
             user_id=ctx.user_id,
-            tunnel_url=ctx.tunnel_url,
-            local_mode=ctx.local_mode if hasattr(ctx, "local_mode") else False,
-            repository=getattr(ctx, "repository", None),
+            conversation_id=ctx.conversation_id,
             branch=getattr(ctx, "branch", None),
-        )
-        logger.info(
-            f"🔄 Initialized code changes manager for conversation_id={ctx.conversation_id}, agent_id={ctx.curr_agent_id}, user_id={ctx.user_id}, tunnel_url={ctx.tunnel_url}"
+            local_mode=ctx.local_mode if hasattr(ctx, "local_mode") else False,
         )
 
-        # Check if we have images and if the model supports vision
-        if ctx.has_images() and self.llm_provider.is_vision_model():
+        # Check if we have media and if the model supports vision/multimodal input
+        has_multimodal_content = ctx.has_images() or ctx.has_documents()
+        if has_multimodal_content and self.llm_provider.is_vision_model():
             logger.info(
-                f"Processing {len(ctx.get_all_images())} images with PydanticAI multimodal"
+                f"Processing multimodal content with PydanticAI: {len(ctx.get_all_images())} images, {len(ctx.get_all_documents())} documents"
             )
             return await self._run_multimodal(ctx)
         else:
-            if ctx.has_images() and not self.llm_provider.is_vision_model():
+            if has_multimodal_content and not self.llm_provider.is_vision_model():
                 logger.warning(
-                    "Images provided but current model doesn't support vision, proceeding with text-only"
+                    "Multimodal content provided but current model doesn't support vision, proceeding with text-only"
                 )
             # Use standard PydanticAI agent for text-only
             return await self._run_standard(ctx)
@@ -602,21 +710,25 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
+        has_images = ctx.has_images()
+        has_documents = ctx.has_documents()
+        has_multimodal_content = has_images or has_documents
+        is_vision = self.llm_provider.is_vision_model()
         logger.info(
-            f"Running pydantic-ai agent stream {'with multimodal support' if ctx.has_images() else ''}"
+            f"[PydanticRagAgent.run_stream] has_images={has_images}, has_documents={has_documents}, is_vision_model={is_vision}, model={self.llm_provider.chat_config.model}"
         )
 
-        # Check if we have images and if the model supports vision
-        if ctx.has_images() and self.llm_provider.is_vision_model():
+        # Check if we have media and if the model supports vision
+        if has_multimodal_content and is_vision:
             logger.info(
-                f"Processing {len(ctx.get_all_images())} images with PydanticAI multimodal streaming"
+                f"Processing multimodal content with PydanticAI streaming: {len(ctx.get_all_images())} images, {len(ctx.get_all_documents())} documents"
             )
             async for chunk in self._run_multimodal_stream(ctx):
                 yield chunk
         else:
-            if ctx.has_images() and not self.llm_provider.is_vision_model():
+            if has_multimodal_content and not is_vision:
                 logger.warning(
-                    "Images provided but current model doesn't support vision, proceeding with text-only streaming"
+                    f"[PydanticRagAgent.run_stream] Multimodal content provided but model '{self.llm_provider.chat_config.model}' doesn't support vision, proceeding with text-only streaming"
                 )
             # Use standard PydanticAI streaming for text-only
             async for chunk in self._run_standard_stream(ctx):

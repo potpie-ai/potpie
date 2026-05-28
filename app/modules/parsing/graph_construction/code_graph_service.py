@@ -1,13 +1,17 @@
 import hashlib
-import os
 import time
-from pathlib import Path
 from typing import Dict, Optional
 
 from neo4j import GraphDatabase
+from qdrant_client import QdrantClient
 from sqlalchemy.orm import Session
 
-from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
+from app.core.config_provider import config_provider
+from app.modules.parsing.knowledge_graph.qdrant_indexing_service import (
+    INDEXABLE_NODE_TYPES,
+    delete_hybrid_collection,
+    index_nodes_to_qdrant,
+)
 from app.modules.search.search_service import SearchService
 from app.modules.utils.logger import setup_logger
 
@@ -18,6 +22,25 @@ class CodeGraphService:
     def __init__(self, neo4j_uri, neo4j_user, neo4j_password, db: Session):
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         self.db = db
+        qdrant_config = config_provider.get_qdrant_config()
+        api_key = qdrant_config.get("api_key", "")
+        grpc_port = qdrant_config.get("grpc_port")
+        self.qdrant_client = QdrantClient(
+            host=qdrant_config["host"],
+            port=int(qdrant_config["port"]),
+            **({"grpc_port": int(grpc_port)} if grpc_port else {}),
+            https=bool(qdrant_config.get("https", False)),
+            prefer_grpc=bool(grpc_port),
+            **({"api_key": api_key} if api_key else {}),
+        )
+
+    @staticmethod
+    def get_qdrant_collection_name(project_id: str) -> str:
+        return f"hybrid_{project_id}"
+
+    @staticmethod
+    def get_qdrant_collection_alias(project_id: str) -> str:
+        return f"hybrid_active_{project_id}"
 
     @staticmethod
     def generate_node_id(path: str, user_id: str):
@@ -35,57 +58,73 @@ class CodeGraphService:
 
     def close(self):
         self.driver.close()
+        if hasattr(self, "qdrant_client"):
+            self.qdrant_client.close()
 
-    def create_and_store_graph(self, repo_dir, project_id, user_id):
-        graph_start_time = time.time()
-        # Ensure repo_dir is a string and absolute path
-        repo_dir = str(Path(repo_dir).resolve())
-        logger.info(
-            f"[GRAPH GENERATION] Starting graph creation for project {project_id}",
-            project_id=project_id,
-        )
-        logger.info(
-            f"[GRAPH GENERATION] Using repository directory: {repo_dir} (exists: {os.path.exists(repo_dir)}, isdir: {os.path.isdir(repo_dir)})",
-            project_id=project_id,
+    def store_graph_from_artifacts(
+        self, artifacts, project_id: str, user_id: str
+    ) -> None:
+        """Write a sandbox-parsed graph payload into neo4j + qdrant.
+
+        New entry point for the post-Phase-3 pipeline:
+        ``ProjectSandbox.parse(handle)`` returns a :class:`ParseArtifacts`,
+        which we feed straight in here. The host process never walks the
+        repo tree itself — that's the whole point of moving the parser
+        inside the sandbox.
+
+        Internally reuses the same DB-write path as the legacy
+        ``create_and_store_graph`` flow by reconstructing an
+        ``nx.MultiDiGraph`` first, so neo4j / qdrant insertion logic
+        stays untouched.
+        """
+        # Lazy import keeps the heavy parsing_repomap module (RepoMap,
+        # tree_sitter, grep_ast) off the critical path for callers that
+        # only want to hit the DBs.
+        from app.modules.parsing.graph_construction.parsing_repomap import (
+            _reconstruct_graph_from_payload,
         )
 
-        # Step 1: Create RepoMap and parse repository
-        repo_map_start = time.time()
-        logger.info(
-            f"[GRAPH GENERATION] Step 1/4: Initializing RepoMap parser",
-            project_id=project_id,
-        )
-        self.repo_map = RepoMap(
-            root=repo_dir,
-            verbose=True,
-            main_model=SimpleTokenCounter(),
-            io=SimpleIO(),
-        )
-
-        parse_start = time.time()
-        logger.info(
-            f"[GRAPH GENERATION] Step 2/4: Parsing repository structure",
-            project_id=project_id,
-        )
-        nx_graph = self.repo_map.create_graph(repo_dir)
-        parse_time = time.time() - parse_start
+        nx_graph = _reconstruct_graph_from_payload(artifacts)
         node_count = nx_graph.number_of_nodes()
         relationship_count = nx_graph.number_of_edges()
         logger.info(
-            f"[GRAPH GENERATION] Parsed repository: {node_count} nodes, {relationship_count} relationships in {parse_time:.2f}s",
+            f"[GRAPH GENERATION] Reconstructed graph from artifacts: "
+            f"{node_count} nodes, {relationship_count} relationships",
             project_id=project_id,
             node_count=node_count,
             relationship_count=relationship_count,
-            parse_time_seconds=parse_time,
         )
+        self._store_graph(nx_graph, project_id, user_id)
 
+    def _store_graph(
+        self,
+        nx_graph,
+        project_id: str,
+        user_id: str,
+        *,
+        graph_start_time: float | None = None,
+        parse_time: float | None = None,
+    ) -> None:
+        """Write ``nx_graph`` into neo4j and qdrant.
+
+        Extracted so both the in-sandbox parser path
+        (:meth:`store_graph_from_artifacts`) and the legacy host-FS
+        path (:meth:`create_and_store_graph`) share the same DB-side
+        code. Anything that needs to vary between the two paths
+        (logging timestamps that pre-date the call, parse durations
+        the caller already measured) comes in via keyword args.
+        """
+        if graph_start_time is None:
+            graph_start_time = time.time()
+        node_count = nx_graph.number_of_nodes()
+        relationship_count = nx_graph.number_of_edges()
         with self.driver.session() as session:
             db_start_time = time.time()
 
             # Step 2: Create indices
             index_start = time.time()
             logger.info(
-                f"[GRAPH GENERATION] Step 3/4: Creating Neo4j indices",
+                "[GRAPH GENERATION] Step 3/4: Creating Neo4j indices",
                 project_id=project_id,
             )
             session.run(
@@ -183,6 +222,61 @@ class CodeGraphService:
                 nodes_inserted=nodes_inserted,
                 node_insert_time_seconds=node_insert_time,
             )
+
+            # Index nodes to Qdrant (hybrid dense + BM25 + ColBERT embeddings)
+            qdrant_index_start = time.time()
+            nodes_for_indexing = []
+            for node_key, node_data in nx_graph.nodes(data=True):
+                if node_data.get("type", "") not in INDEXABLE_NODE_TYPES:
+                    continue
+                nodes_for_indexing.append(
+                    {
+                        "node_id": CodeGraphService.generate_node_id(node_key, user_id),
+                        "name": node_data.get("name", ""),
+                        "file": node_data.get("file", ""),
+                        "type": node_data.get("type", ""),
+                        "line": node_data.get("line", -1),
+                        "end_line": node_data.get("end_line", -1),
+                        "text": node_data.get("text", ""),
+                    }
+                )
+            logger.info(
+                f"[GRAPH GENERATION] Indexing {len(nodes_for_indexing)} nodes to Qdrant",
+                project_id=project_id,
+                total_nodes=len(nodes_for_indexing),
+            )
+            if nodes_for_indexing:
+                try:
+                    collection_name = self.get_qdrant_collection_name(project_id)
+                    collection_alias = self.get_qdrant_collection_alias(project_id)
+                    # Build a replacement collection first and only switch the
+                    # live alias after the new index is fully written.
+                    count, n_bm25, n_colbert = index_nodes_to_qdrant(
+                        self.qdrant_client,
+                        collection_name,
+                        nodes_for_indexing,
+                        recreate_collection=True,
+                        alias_name=collection_alias,
+                    )
+                    qdrant_index_time = time.time() - qdrant_index_start
+                    logger.info(
+                        f"[GRAPH GENERATION] Qdrant indexing completed: {count} points indexed, {n_bm25} BM25 tokens, {n_colbert} ColBERT tokens in {qdrant_index_time:.2f}s",
+                        project_id=project_id,
+                        indexed_count=count,
+                        bm25_tokens=n_bm25,
+                        colbert_tokens=n_colbert,
+                        qdrant_index_time_seconds=qdrant_index_time,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[GRAPH GENERATION] Qdrant indexing failed (non-fatal): continuing without Qdrant index",
+                        project_id=project_id,
+                    )
+            else:
+                logger.info(
+                    "[GRAPH GENERATION] No indexable nodes found for Qdrant indexing",
+                    project_id=project_id,
+                )
 
             # Step 4: Insert relationships
             rel_insert_start = time.time()
@@ -288,9 +382,16 @@ class CodeGraphService:
 
             db_time = time.time() - db_start_time
             total_time = time.time() - graph_start_time
-
+            # The artifacts path doesn't have a host-side parse phase
+            # to time, so the field is omitted from the log line when
+            # `parse_time` is None — keeps the legacy log shape stable
+            # while the new path skips the irrelevant metric.
+            parse_segment = (
+                f", Parsing: {parse_time:.2f}s" if parse_time is not None else ""
+            )
             logger.info(
-                f"[GRAPH GENERATION] Graph creation completed in {total_time:.2f}s (DB operations: {db_time:.2f}s, Parsing: {parse_time:.2f}s)",
+                f"[GRAPH GENERATION] Graph creation completed in {total_time:.2f}s "
+                f"(DB operations: {db_time:.2f}s{parse_segment})",
                 project_id=project_id,
                 total_time_seconds=total_time,
                 db_time_seconds=db_time,
@@ -313,6 +414,27 @@ class CodeGraphService:
         search_service = SearchService(self.db)
         search_service.delete_project_index(project_id)
 
+        if hasattr(self, "qdrant_client"):
+            # Qdrant cleanup is best-effort. The fresh parse rebuilds the
+            # hybrid collection from scratch, so failing to delete the old
+            # one only leaves a small orphaned collection (Qdrant's own
+            # retention sweeps it eventually). Don't take down a parse
+            # because the vector store is unreachable / rate-limited.
+            try:
+                delete_hybrid_collection(
+                    self.qdrant_client,
+                    self.get_qdrant_collection_name(project_id),
+                    alias_name=self.get_qdrant_collection_alias(project_id),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Qdrant cleanup failed for project %s — continuing parse "
+                    "anyway (the new index will rebuild from scratch). %s: %s",
+                    project_id,
+                    type(exc).__name__,
+                    exc,
+                )
+
     async def get_node_by_id(self, node_id: str, project_id: str) -> Optional[Dict]:
         with self.driver.session() as session:
             result = session.run(
@@ -331,45 +453,3 @@ class CodeGraphService:
             result = session.run(query)
             return [record.data() for record in result]
 
-
-class SimpleIO:
-    def read_text(self, fname):
-        """
-        Read file with multiple encoding fallbacks.
-
-        Tries encodings in order:
-        1. utf-8 (most common)
-        2. utf-8-sig (UTF-8 with BOM)
-        3. utf-16 (common in Windows files)
-        4. latin-1 (fallback that accepts all bytes)
-        """
-        encodings = ["utf-8", "utf-8-sig", "utf-16", "latin-1"]
-
-        for encoding in encodings:
-            try:
-                with open(fname, "r", encoding=encoding) as f:
-                    content = f.read()
-                    if encoding != "utf-8":
-                        logger.info(f"Read {fname} using {encoding} encoding")
-                    return content
-            except (UnicodeDecodeError, UnicodeError):
-                continue
-            except Exception:
-                logger.exception(f"Error reading {fname}")
-                return ""
-
-        logger.warning(
-            f"Could not read {fname} with any supported encoding. Skipping this file."
-        )
-        return ""
-
-    def tool_error(self, message):
-        logger.error(f"Error: {message}")
-
-    def tool_output(self, message):
-        logger.info(message)
-
-
-class SimpleTokenCounter:
-    def token_count(self, text):
-        return len(text.split())

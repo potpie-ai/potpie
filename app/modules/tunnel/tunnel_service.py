@@ -6,14 +6,21 @@ Tool calls are executed over Socket.IO (WorkspaceSocketService). Workspace
 isolation by workspace_id = sha256(user_id:repo_url)[:16].
 """
 
+import asyncio
 import hashlib
 import json
-import time
-import redis
 import os
-from typing import Optional, Dict, List, cast
-from app.modules.utils.logger import setup_logger
+from typing import Any, Dict, Optional
+
+import redis
+
 from app.core.config_provider import ConfigProvider
+from app.modules.utils.logger import setup_logger
+
+try:
+    import redis.asyncio as aioredis
+except ImportError:
+    aioredis = None  # type: ignore[assignment]
 
 logger = setup_logger(__name__)
 
@@ -23,7 +30,8 @@ TUNNEL_TTL_SECONDS = 60 * 60  # 1 hour expiry (refreshed on each registration)
 
 # Workspace tunnel record (metadata: user_id, repo_url, status), stored in Redis
 WORKSPACE_TUNNEL_RECORD_PREFIX = "workspace_tunnel:"
-# No TTL - records persist until deprovision (or optional long TTL later)
+# TTL for workspace tunnel records (avoids unbounded keys; refreshed on set)
+WORKSPACE_TUNNEL_RECORD_TTL = 60 * 60 * 24  # 24 hours
 
 # In-process lookup cache: avoid hitting Redis on every get_tunnel_url when the same
 # lookup is repeated (e.g. multiple tools in one message). Entries expire after this many seconds.
@@ -124,6 +132,23 @@ class TunnelService:
             self._in_memory_tunnels: Dict[str, str] = {}
             self._in_memory_workspace_tunnel_records: Dict[str, str] = {}
 
+        # Async Redis client for FastAPI routes (non-blocking get/set/scan)
+        self._async_redis_client: Optional[Any] = None
+        if redis_url and aioredis is not None:
+            try:
+                self._async_redis_client = aioredis.from_url(
+                    redis_url, decode_responses=True
+                )
+                logger.info(
+                    "[TunnelService] Async Redis client created for tunnel routes"
+                )
+            except Exception as e:
+                logger.warning(
+                    "[TunnelService] Async Redis unavailable, routes will use sync fallback: %s",
+                    e,
+                )
+                self._async_redis_client = None
+
         # In-process cache for get_tunnel_url lookups: (cache_key -> (tunnel_url, expiry_ts))
         # Avoids blocking Redis on every tool call when the same user/conv is resolved repeatedly.
         self._lookup_cache: Dict[str, tuple[str, float]] = {}
@@ -200,7 +225,7 @@ class TunnelService:
         repo_url: str,
         status: str = "active",
     ) -> bool:
-        """Store workspace record in Redis (or in-memory fallback). No TTL."""
+        """Store workspace record in Redis (or in-memory fallback) with TTL."""
         try:
             key = self._workspace_tunnel_record_key(workspace_id)
             value = json.dumps({
@@ -209,7 +234,7 @@ class TunnelService:
                 "status": status,
             })
             if self.redis_client:
-                self.redis_client.set(key, value)
+                self.redis_client.setex(key, WORKSPACE_TUNNEL_RECORD_TTL, value)
             else:
                 self._in_memory_workspace_tunnel_records[key] = value
             logger.debug(
@@ -222,6 +247,66 @@ class TunnelService:
                 exc_info=True,
             )
             return False
+
+    async def get_workspace_tunnel_record_async(
+        self, workspace_id: str
+    ) -> Optional[Dict]:
+        """
+        Get workspace record (user_id, repo_url, status). Non-blocking when async Redis is available.
+        """
+        if self._async_redis_client:
+            try:
+                key = self._workspace_tunnel_record_key(workspace_id)
+                raw = await self._async_redis_client.get(key)
+                if not raw:
+                    return None
+                return json.loads(raw)
+            except Exception as e:
+                logger.error(
+                    f"[TunnelService] Error getting workspace tunnel record (async): {e}",
+                    exc_info=True,
+                )
+                return None
+        return await asyncio.to_thread(
+            self.get_workspace_tunnel_record, workspace_id
+        )
+
+    async def set_workspace_tunnel_record_async(
+        self,
+        workspace_id: str,
+        user_id: str,
+        repo_url: str,
+        status: str = "active",
+    ) -> bool:
+        """Store workspace record in Redis with TTL. Non-blocking when async Redis is available."""
+        if self._async_redis_client:
+            try:
+                key = self._workspace_tunnel_record_key(workspace_id)
+                value = json.dumps({
+                    "user_id": user_id,
+                    "repo_url": repo_url,
+                    "status": status,
+                })
+                await self._async_redis_client.setex(
+                    key, WORKSPACE_TUNNEL_RECORD_TTL, value
+                )
+                logger.debug(
+                    f"[TunnelService] Stored workspace tunnel record (async): workspace_id={workspace_id}"
+                )
+                return True
+            except Exception as e:
+                logger.error(
+                    f"[TunnelService] Error setting workspace tunnel record (async): {e}",
+                    exc_info=True,
+                )
+                return False
+        return await asyncio.to_thread(
+            self.set_workspace_tunnel_record,
+            workspace_id,
+            user_id,
+            repo_url,
+            status,
+        )
 
     def _store_tunnel_data(self, key: str, tunnel_data_json: str) -> bool:
         """Store tunnel data in Redis or in-memory storage"""
@@ -455,12 +540,13 @@ class TunnelService:
         tunnels = {}
         try:
             if self.redis_client:
-                # Search for conversation-level tunnels belonging to this user
-                # We need to scan all conversation keys and filter by user_id
+                # Search for conversation-level tunnels belonging to this user.
+                # Use SCAN instead of KEYS to avoid blocking Redis.
                 conversation_pattern = f"{TUNNEL_KEY_PREFIX}:conversation:*"
-                # Sync redis client: .keys() returns a list; cast for type checker (avoids Awaitable confusion)
-                conversation_keys: List[str] = cast(
-                    List[str], self.redis_client.keys(conversation_pattern)
+                conversation_keys = list(
+                    self.redis_client.scan_iter(
+                        match=conversation_pattern, count=100
+                    )
                 )
                 for key in conversation_keys:
                     data = self.redis_client.get(key)
@@ -486,6 +572,33 @@ class TunnelService:
                 exc_info=True,
             )
         return tunnels
+
+    async def list_user_tunnels_async(self, user_id: str) -> Dict[str, Dict]:
+        """
+        List all tunnels for a user (async). Uses SCAN instead of KEYS when async Redis is available.
+        """
+        if self._async_redis_client:
+            tunnels: Dict[str, Dict] = {}
+            try:
+                conversation_pattern = f"{TUNNEL_KEY_PREFIX}:conversation:*"
+                async for key in self._async_redis_client.scan_iter(
+                    match=conversation_pattern, count=100
+                ):
+                    data = await self._async_redis_client.get(key)
+                    if data:
+                        tunnel_data = json.loads(data)
+                        if tunnel_data.get("user_id") == user_id:
+                            tunnels[key] = tunnel_data
+                logger.info(
+                    f"[TunnelService] Found {len(tunnels)} tunnel(s) for user {user_id} (async)"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[TunnelService] Error listing tunnels for user {user_id} (async): {e}",
+                    exc_info=True,
+                )
+            return tunnels
+        return await asyncio.to_thread(self.list_user_tunnels, user_id)
 
     def execute_tool_call(
         self,

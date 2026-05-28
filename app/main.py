@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+from contextlib import asynccontextmanager
+
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,12 +20,17 @@ from app.api.router import router as potpie_api_router
 from app.core.base_model import Base
 from app.core.database import SessionLocal, engine
 from app.core.models import *  # noqa #necessary for models to not give import errors
+from app.modules.analytics.analytics_router import router as analytics_router
 from app.modules.auth.auth_router import auth_router
 from app.modules.code_provider.github.github_router import router as github_router
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
-from app.modules.integrations.integrations_router import router as integrations_router
+from integrations.application.bootstrap import load_providers
+from integrations.adapters.inbound.http.integrations_router import (
+    router as integrations_router,
+)
+from integrations.adapters.inbound.http.sources_router import router as sources_router
 from app.modules.intelligence.agents.agents_router import router as agent_router
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
@@ -45,6 +52,10 @@ from app.modules.search.search_router import router as search_router
 from app.modules.tunnel.tunnel_router import router as tunnel_router
 from app.modules.usage.usage_router import router as usage_router
 from app.modules.users.user_router import router as user_router
+from app.modules.context_graph.context_engine_http import (
+    potpie_context_engine_router,
+    potpie_context_pot_v1_router,
+)
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
 from app.modules.utils.logger import configure_logging, setup_logger
@@ -52,6 +63,7 @@ from app.modules.utils.logging_middleware import LoggingContextMiddleware
 
 configure_logging()
 logger = setup_logger(__name__)
+load_providers()
 
 
 class MainApp:
@@ -66,7 +78,15 @@ class MainApp:
             exit(1)
         self.setup_sentry()
         self.setup_tracing()
-        self.app = FastAPI()
+
+        @asynccontextmanager
+        async def lifespan(_app: FastAPI):
+            _app.state.main_app = self
+            await self.startup_event()
+            yield
+            await self.shutdown_event()
+
+        self.app = FastAPI(lifespan=lifespan)
         self.setup_cors()
         self.setup_logging_middleware()
         self.setup_socket_io()
@@ -173,6 +193,7 @@ class MainApp:
         self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
         self.app.include_router(tool_router, prefix="/api/v1", tags=["Tools"])
         self.app.include_router(usage_router, prefix="/api/v1/usage", tags=["Usage"])
+        self.app.include_router(analytics_router, prefix="/api/v1", tags=["Analytics"])
         self.app.include_router(
             potpie_api_router, prefix="/api/v2", tags=["Potpie API"]
         )
@@ -183,8 +204,19 @@ class MainApp:
         self.app.include_router(
             integrations_router, prefix="/api/v1", tags=["Integrations"]
         )
+        self.app.include_router(sources_router, prefix="/api/v1", tags=["Sources"])
         self.app.include_router(
             knowledge_graph_router, prefix="/api/v1", tags=["Knowledge Graph"]
+        )
+        self.app.include_router(
+            potpie_context_engine_router,
+            prefix="/api/v1/context",
+            tags=["Context Graph API"],
+        )
+        self.app.include_router(
+            potpie_context_pot_v1_router,
+            prefix="/api/v1/context",
+            tags=["Context Graph API"],
         )
 
     def add_health_check(self):
@@ -205,6 +237,24 @@ class MainApp:
         self.initialize_database()
         logger.info("Database initialized successfully")
 
+        # Async Redis stream manager for FastAPI (native async, no event-loop blocking)
+        try:
+            from app.modules.conversations.utils.redis_streaming import (
+                AsyncRedisStreamManager,
+            )
+
+            self.app.state.async_redis_stream_manager = AsyncRedisStreamManager()
+            logger.info("AsyncRedisStreamManager initialized")
+        except Exception as e:
+            logger.exception(
+                "AsyncRedisStreamManager failed to initialize (redis.asyncio required): %s",
+                e,
+            )
+            raise RuntimeError(
+                "Async Redis stream manager unavailable; cannot start. "
+                "Install redis>=4.2 with redis.asyncio support."
+            ) from e
+
         # Setup data (Firebase or dummy user)
         logger.info("Setting up application data...")
         self.setup_data()
@@ -222,9 +272,64 @@ class MainApp:
         finally:
             db.close()
 
+        await self._ensure_sandbox_snapshot()
+
+    async def _ensure_sandbox_snapshot(self) -> None:
+        """Pre-build the agent-sandbox snapshot when running on Daytona.
+
+        Without this, the build runs lazily on the first sandbox-tool
+        request, which means the user sees either a multi-minute hang
+        (cold build) or — if the build silently fails — a confusing
+        "Snapshot not found" error from the SDK. Running it at startup
+        moves the cost off the user-facing path and surfaces build
+        problems in deploy logs.
+
+        Soft-fail: a misconfigured or unreachable Daytona must not block
+        boot. Local-provider deploys early-exit because the workspace
+        provider has no ``_ensure_snapshot`` method.
+        """
+        provider_name = (
+            os.getenv("SANDBOX_WORKSPACE_PROVIDER", "local").strip().lower()
+        )
+        if provider_name != "daytona":
+            return
+        try:
+            from app.modules.intelligence.tools.sandbox.client import (
+                get_sandbox_client,
+            )
+
+            client = get_sandbox_client()
+            logger.info("Ensuring Daytona agent-sandbox snapshot is ready...")
+            await client.ensure_snapshot_ready()
+            logger.info("Daytona agent-sandbox snapshot is ready")
+        except Exception:
+            logger.exception(
+                "Failed to ensure Daytona agent-sandbox snapshot at startup; "
+                "sandbox tools may fail until the snapshot is built manually "
+                "(see app/src/sandbox/scripts/build_agent_snapshot.py)"
+            )
+
+    async def shutdown_event(self):
+        """Close async Redis and other resources on app shutdown."""
+        if getattr(self.app.state, "async_redis_stream_manager", None):
+            try:
+                await self.app.state.async_redis_stream_manager.aclose()
+                logger.info("AsyncRedisStreamManager closed")
+            except Exception as e:
+                logger.warning("Error closing AsyncRedisStreamManager: %s", e)
+        try:
+            from app.modules.code_provider.github.github_service import (
+                close_github_async_redis_cache,
+                GithubService,
+            )
+
+            await close_github_async_redis_cache()
+            GithubService.shutdown_executor()
+        except Exception as e:
+            logger.warning("Shutdown cleanup error: %s", e)
+
     def run(self):
         self.add_health_check()
-        self.app.add_event_handler("startup", self.startup_event)
         return self.app
 
 

@@ -8,8 +8,19 @@ logger = setup_logger(__name__)
 
 
 class BaseTask(Task):
+    """
+    Base for Celery tasks that may use async (run_async) and sync DB.
+
+    Async/sync rule (avoids deadlocks and hangs in forked workers):
+    - Do ALL sync DB (SessionLocal, self.db) and any blocking I/O BEFORE calling
+      run_async(). Resolve user, load config, etc. in the sync task body.
+    - Inside the coroutine passed to run_async(), use ONLY async_db() for DB;
+      never call SessionLocal() or use self.db. Using sync DB inside the
+      coroutine blocks the event loop and can hang (e.g. pool/connection state
+      in forked workers).
+    """
+
     _db = None
-    _loop = None
 
     @property
     def db(self):
@@ -23,7 +34,11 @@ class BaseTask(Task):
         Provides an async session with a fresh connection for Celery tasks.
 
         This creates a non-pooled connection to avoid asyncpg Future binding issues
-        when tasks share the same event loop but have different coroutine contexts.
+        when each task runs in a fresh event loop via asyncio.run().
+
+        Use this only inside the coroutine passed to run_async(). Do not use sync
+        DB (SessionLocal or self.db) inside that coroutine — do sync work before
+        run_async() and pass results in.
 
         Usage:
             async with self.async_db() as session:
@@ -59,22 +74,19 @@ class BaseTask(Task):
             except Exception:
                 logger.exception("Error during connection cleanup", task_id=task_id)
 
-    def _get_event_loop(self):
-        """
-        Returns a long-lived event loop for this worker process. Creates one if needed.
-        """
-        # Reuse a single loop per worker process to avoid cross-loop issues
-        if self._loop is None or self._loop.is_closed():
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-        return self._loop
-
     def run_async(self, coro):
         """
-        Run the given coroutine on the worker's long-lived event loop.
+        Run the given coroutine in a fresh event loop per invocation.
+        asyncio.run() calls shutdown_asyncgens() before closing the loop,
+        ensuring all pydantic_ai async generators are properly finalized in
+        the correct context — preventing deferred aclose() callbacks from
+        one agent run leaking into the next and causing OTel context errors.
+
+        Important: the coroutine must not perform sync DB (SessionLocal or
+        self.db) or other blocking I/O; do that before calling run_async()
+        and pass results into the coroutine (see class docstring).
         """
-        loop = self._get_event_loop()
-        return loop.run_until_complete(coro)
+        return asyncio.run(coro)
 
     def on_success(self, retval, task_id, args, kwargs):
         try:

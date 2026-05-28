@@ -58,41 +58,46 @@ class KnowledgeGraphQueryTool:
         self, queries: List[QueryRequest]
     ) -> Dict[str, str]:
         inference_service = InferenceService(self.sql_db, "dummy")
-
-        async def process_query(query_request: QueryRequest) -> List[QueryResponse]:
-            try:
-                # Call the query_vector_index method directly from InferenceService
-                results = inference_service.query_vector_index(
-                    query_request.project_id,
-                    query_request.query,
-                    query_request.node_ids,
-                )
-                return [
-                    QueryResponse(
-                        node_id=result.get("node_id"),
-                        docstring=result.get("docstring"),
-                        file_path=result.get("file_path"),
-                        start_line=result.get("start_line") or 0,
-                        end_line=result.get("end_line") or 0,
-                        similarity=result.get("similarity"),
+        try:
+            async def process_query(query_request: QueryRequest) -> List[QueryResponse]:
+                try:
+                    # Call the query_vector_index method directly from InferenceService
+                    results = inference_service.query_vector_index(
+                        query_request.project_id,
+                        query_request.query,
+                        query_request.node_ids,
                     )
-                    for result in results
-                ]
-            except Exception as e:
-                # Vector search may fail during INFERRING status (embeddings not ready)
-                # Return empty results gracefully instead of failing
-                import logging
+                    return [
+                        QueryResponse(
+                            node_id=result.get("node_id"),
+                            docstring=result.get("docstring"),
+                            file_path=result.get("file_path"),
+                            start_line=result.get("start_line") or 0,
+                            end_line=result.get("end_line") or 0,
+                            similarity=result.get("similarity"),
+                        )
+                        for result in results
+                    ]
+                except Exception as e:
+                    # Vector search may fail during INFERRING status (embeddings not ready)
+                    # Return empty results gracefully instead of failing
+                    import logging
 
-                logging.warning(
-                    f"Vector search failed for project {query_request.project_id} "
-                    f"(likely during INFERRING): {e}"
-                )
-                return []
+                    logging.warning(
+                        f"Vector search failed for project {query_request.project_id} "
+                        f"(likely during INFERRING): {e}"
+                    )
+                    return []
 
-        tasks = [process_query(query) for query in queries]
-        results = await asyncio.gather(*tasks)
+            tasks = [process_query(query) for query in queries]
+            results = await asyncio.gather(*tasks)
 
-        return results
+            return results
+        finally:
+            try:
+                inference_service.close()
+            except Exception:
+                pass
 
     async def arun(
         self, queries: List[str], project_id: str, node_ids: List[str] = []
