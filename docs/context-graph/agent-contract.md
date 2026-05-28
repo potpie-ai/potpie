@@ -2,9 +2,17 @@
 
 Last reviewed: 2026-05-28.
 
-Agents see one contract in every deployment. Local CLI/MCP calls the local
-daemon by default. Managed Potpie calls the hosted context API. Tool names,
-request shape, response envelope, and usage rules stay the same.
+Agents see one contract in every deployment. In OSS self-serve, agents use the
+Potpie CLI and the CLI calls the local daemon by default. Managed Potpie calls
+the hosted context API. Tool names, request shape, response envelope, and usage
+rules stay the same.
+
+The agent contract is a data-plane surface over the Graph Service. Pot
+Management operations (pot CRUD, export/import, graph analytics, daemon
+lifecycle) and Skill Manager operations (installing/updating skills into the
+harness) belong to CLI/API administration commands, not additional agent tools.
+The only skill-related agent-visible surface is the advisory `skills` block in
+`context_status`.
 
 Code anchors:
 
@@ -13,7 +21,8 @@ Code anchors:
 - `domain/graph_query.py` owns graph query models.
 - `domain/agent_envelope.py` owns the canonical response envelope.
 - `domain/context_records.py` owns structured `context_record` payloads.
-- `adapters/inbound/mcp/server.py` exposes the tools to agents.
+- `adapters/inbound/cli/` exposes the local OSS command surface to users and
+  agents.
 
 ## The Four Tools
 
@@ -230,22 +239,51 @@ Request shape:
   "intent": "debugging",
   "scope": {
     "repo_name": "platform"
-  }
+  },
+  "harness": "claude"
 }
 ```
+
+`harness` is an optional hint identifying the calling agent (`claude`, `codex`,
+`default`). It lets status report which skills are missing for *this* harness.
 
 Response should include:
 
 - daemon/API health
 - active pot
-- graph store readiness
+- Pot Management Service readiness
+- Graph Service readiness
+- graph backend name and capability set
+- semantic search readiness (vector index + embedder)
 - reader-backed include families
 - planned/unbacked include families
 - source freshness or scanner status when known
 - recommended recipe for the requested intent
+- a `skills` block: which skills are recommended for this intent/harness, which
+  are installed, which are missing or outdated, and the install command
 
-Local status should also report daemon pid/socket/port and local data path.
-Cloud status should report hosted API and auth state.
+The `skills` block is the **only** agent-visible surface for skill management. It
+is advisory: status reports the gap and the command; it never installs anything.
+Installs happen via the `potpie skills …` CLI (see
+[`architecture.md`](./architecture.md#skill-manager-service)).
+
+```json
+{
+  "skills": {
+    "harness": "claude",
+    "recommended": ["debugging-playbook", "record-fix"],
+    "installed": [{ "id": "debugging-playbook", "version": "1.2.0" }],
+    "missing": ["record-fix"],
+    "outdated": [{ "id": "debugging-playbook", "installed": "1.2.0", "latest": "1.3.0" }],
+    "install_command": "potpie skills install record-fix --agent claude"
+  }
+}
+```
+
+Local status should also report daemon pid/socket/port, local data path, the
+active storage profile, and the graph backend `name`/`capabilities`. Cloud
+status should report hosted API, auth state, hosted backend readiness,
+worker/event ledger readiness, and skill-sync state when relevant.
 
 ## Usage Rules
 
@@ -259,4 +297,7 @@ Cloud status should report hosted API and auth state.
   note, doc reference, or incident summary should become reusable memory.
 - Do not store full source payloads in the graph. Store compact claims and
   source refs.
+- If `context_status` reports missing or outdated skills, relay the
+  `install_command` to the user — do not try to install skills yourself, and do
+  not treat skill management as a tool.
 - Local graph use must not require cloud auth. Cloud use must be explicit.

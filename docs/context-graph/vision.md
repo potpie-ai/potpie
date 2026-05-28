@@ -23,11 +23,13 @@ deployment shape.
 There are now two supported distribution shapes:
 
 - **Local self-serve / open source** — installed with the Potpie CLI, backed by
-  a local daemon and local graph/state store. The agent harness owns source
-  access and ingestion reasoning; the daemon stores and serves graph context.
+  a local daemon shell and local graph/state store. The daemon hosts a Pot
+  Management Service and a Graph Service. The agent harness owns source access
+  and ingestion reasoning; the daemon stores and serves graph context.
 - **Managed Potpie** — hosted API, shared pots, hosted database/graph,
-  workers, cloud source integrations, and collaboration controls. This is an
-  adapter/deployment of the same core engine, not a separate graph product.
+  workers, cloud source integrations, event ledger, and collaboration controls.
+  This is an adapter/deployment of the same core engine, not a separate graph
+  product.
 
 What the Context Engine is *not*: a re-implementation of the code graph, a wrapper over GitHub's API, or a place to dump full PR diffs and document bodies.
 
@@ -40,9 +42,17 @@ A pot is the unit of isolation and the unit of context. Every fact, every edge, 
 
 Inside a pot, queries can be scoped further (repo, service, environment, feature, file, PR, ticket, user, time window). Outside a pot, nothing leaks.
 
-In local mode, a pot is a user-local workspace boundary. In managed mode, a pot
-is also the authorization and collaboration boundary. The graph model is the
-same in both cases; only the state, auth, and deployment adapters differ.
+In local mode, a pot is a user-local workspace boundary managed by the local
+Pot Management Service. In managed mode, a pot is also the authorization and
+collaboration boundary managed by Potpie cloud. The graph model is the same in
+both cases; only the state, auth, and deployment adapters differ.
+
+First local setup creates a pot named `default` and marks it active. Users only
+create or switch pots explicitly when they need another workspace boundary.
+
+The name `pot` is inherited from the current codebase. Keep it for now to
+avoid churn, but treat it as a product term under review. The architectural
+boundary matters more than the label.
 
 ## Source-reference-first storage
 
@@ -72,19 +82,37 @@ The contracts for these tools are in [`agent-contract.md`](./agent-contract.md).
 
 ### Why narrow
 
-New use cases become *parameters* on `context_resolve` (`intent`, `include`, `scope`, `mode`, `source_policy`), not new tools. Adding `context_get_feature_context`, `context_get_debugging_context`, `context_get_operational_context` would create exactly the tool sprawl the engine exists to prevent. Skill recipes (defined in agent bundles) compose the four tools into workflows; they do not appear at the tool-port boundary.
+New use cases become *parameters* on `context_resolve` (`intent`, `include`, `scope`, `mode`, `source_policy`), not new tools. Adding `context_get_feature_context`, `context_get_debugging_context`, `context_get_operational_context` would create exactly the tool sprawl the engine exists to prevent. Skill recipes compose the four tools into workflows; they do not appear at the tool-port boundary. The **Skill Manager** owns the lifecycle of those skills — catalog, install into harnesses like Claude Code, update, and cloud sync — and nudges through `context_status` (advisory) when a harness is missing one. Skill management is a CLI/admin concern, never a fifth tool.
 
 ## Substrate choice
 
 The durable invariant is the Potpie graph model: deterministic entity keys,
-canonical claim edges, provenance, source refs, bitemporality, validation, and
-one read/write graph port. The physical store is an adapter decision behind
-`ContextGraphPort`, `GraphWriterPort`, and `ClaimQueryPort`.
+canonical claim edges, provenance, source refs, bitemporality, and validation.
+The physical store is not part of that invariant — it is a swappable adapter.
 
-Managed Potpie can use Neo4j for native graph traversal. The local open-source
-daemon may use a lighter local store if that is what makes `pip install
-potpie` viable. This is an intentional shift from "one physical graph store" to
-"one graph model and one graph API."
+Two ideas keep the model portable without coupling it to any one database
+(detailed in [`architecture.md`](./architecture.md#graph-service-interfaces)):
+
+- **Capabilities are interfaces; stores are bindings.** The graph layer is a set
+  of narrow capability ports (mutation, claim query, inspection, analytics,
+  semantic search, snapshot) bundled as a `GraphBackend`. A storage profile binds
+  those capabilities to physical stores. The default profile binds all of them to
+  one embedded store; a heavy profile may spread them across Neo4j and a vector
+  DB. "One embedded store by default" and "six clean capabilities" are not in
+  tension because they live on different axes.
+- **The canonical claim store is the only source of truth.** Every other
+  structure — vector index, full-text index, a graph-native traversal copy — is a
+  derived projection, rebuildable from claims. Three of the six capabilities are
+  mandatory (mutation, claim query, vector search); the other three have default
+  implementations derived from claims, so adding a backend costs three ports, not
+  six.
+
+Vector semantic search is a required capability, not an add-on: embeddings run on
+a small bundled local model so it works offline with no cloud key. Managed Potpie
+can use Neo4j for native traversal and a hosted vector store; the local daemon
+defaults to an embedded store (SQLite with a vector index) so `pip install
+potpie` stays viable. This is the intentional shift from "one physical graph
+store" to "one graph model, one capability API, many bindings."
 
 ## Ontology is data, not control flow
 
@@ -101,15 +129,25 @@ These are not under-investments. They are decisions:
 - **No parallel graph model or parallel agent contract.** Storage adapters may
   differ between local and managed deployments, but the graph shape, ports,
   ontology, and envelope must not.
-- **No new public agent tools** beyond the four. Use parameters.
+- **No new public agent tools** beyond the four. Use parameters. Skills are
+  installed by the Skill Manager (CLI) and nudged advisorily via
+  `context_status`; they are never a fifth tool, and skill content never enters
+  the graph.
 - **No source-specific code in the application layer.** Managed integrations
   live behind connector or event-ledger contracts; local source access lives in
   the agent harness and skills.
+- **No daemon shell as a dumping ground.** The shell owns lifecycle, auth,
+  config, health, logs, and IPC. Pot Management and Graph Service modules own
+  business behavior.
 - **No full source payloads in the graph.** References plus compact summaries.
-- **No hidden cloud dependency for local graph use.** Local CLI/MCP must work
+- **No hidden cloud dependency for local graph use.** Local CLI must work
   without a Potpie API key. Cloud login is only for optional managed features.
-- **No daemon-side LLM dependency by default in local mode.** Agent-mediated
-  structured writes are the default; raw-event reconciliation can be optional.
+- **No daemon-side generation LLM or cloud key by default in local mode.**
+  Agent-mediated structured writes are the default; raw-event reconciliation is
+  opt-in. The required vector search runs on a small bundled local embedding
+  model — that is not a generation LLM and needs no cloud key.
+- **No mandatory local Docker/Neo4j/Postgres stack for OSS V1.** Heavier stores
+  should be optional profiles behind the same graph interfaces.
 - **No cross-pot federation.** One pot, one tenant, one graph.
 - **No frontend in the Context Engine.** The UI is a consumer of the agent contract, not part of it.
 

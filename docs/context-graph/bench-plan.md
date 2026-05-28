@@ -5,10 +5,14 @@
 > Last reviewed for local-first docs: 2026-05-28.
 
 This is a graph-quality benchmark plan, not the open-source packaging roadmap.
-Use it to validate that local and managed graph adapters return equivalent
-agent envelopes for the same seeded corpus. Mentions of `--local` or
-`InProcessEngineClient` refer to benchmark execution mode, not the final
-daemon-based OSS product shape.
+Use it to validate that local and managed graph backends return equivalent
+agent envelopes for the same seeded corpus. The mechanism for that equivalence
+is the adapter conformance suite: the seed/read scenarios run through the
+`GraphBackend` interface (see
+[`architecture.md`](./architecture.md#adapter-conformance)), so any backend —
+in-memory, embedded SQLite, or Neo4j — is graded against the same contract.
+Mentions of `--local` or `InProcessEngineClient` refer to benchmark execution
+mode, not the final daemon-based OSS product shape.
 
 The bench exists to give us a per-dimension score for the engine that survives
 ontology / query-layer churn, so that the work of improving each layer shows up
@@ -676,15 +680,17 @@ Verified live: `infra_topology_basic` scores **ingestion 100 / retrieval 100**
 (`includes_used=['infra_topology']`, cites the architecture doc, 0 failed
 events, 41 entities / 50 edges).
 
-**In-process harness (recommended; non-blocking, no :8001).** A new driver
+**In-process harness (benchmark only; recommended; non-blocking, no :8001).** A new driver
 (`benchmarks/core/local_engine.py`, `InProcessEngineClient`) runs the bench
 **without the HTTP server on :8001 and without a Celery worker** — it builds
 the engine container in-process and reconciles inline against the shared
 Postgres/Neo4j via the same `handle_process_batch` verb the worker uses.
 Activate with `python -m benchmarks run --local` (or `POTPIE_BENCH_INPROCESS=1`).
-This frees the app's port, is fully self-contained (needs only Postgres +
-Neo4j up + `OPENAI_API_KEY`), and — being single-threaded — sidesteps the
-"Event loop is closed" race below entirely. Verified: `--local` on
+This frees the app's port and is self-contained for the **current benchmark
+stack** (Postgres + Neo4j + `OPENAI_API_KEY`). It is not the target OSS local
+daemon shape, which should work without a mandatory Postgres/Neo4j/Docker stack
+or daemon-side model key. Being single-threaded, it also sidesteps the "Event
+loop is closed" race below entirely. Verified: `--local` on
 `infra_topology_basic` reconciles with 0 failed events and retrieval 100.
 
 **Operational notes for the HTTP path:**
