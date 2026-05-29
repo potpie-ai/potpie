@@ -1531,10 +1531,8 @@ class InferenceService:
         with self.driver.session() as session:
             batch_size = 300
             precomputed = precomputed_embeddings or {}
-            should_update_content_hash = content_hash_by_node_id is not None
-            content_hashes = (
-                content_hash_by_node_id if should_update_content_hash else {}
-            )
+            should_update_content_hash = bool(content_hash_by_node_id)
+            content_hashes = content_hash_by_node_id or {}
             docstring_list = [
                 {
                     "node_id": n.node_id,
@@ -1548,7 +1546,8 @@ class InferenceService:
             ]
             if should_update_content_hash:
                 for item in docstring_list:
-                    item["content_hash"] = content_hashes.get(item["node_id"])
+                    if item["node_id"] in content_hashes:
+                        item["content_hash"] = content_hashes[item["node_id"]]
 
             project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
             repo_path = project.get("repo_path")
@@ -1556,7 +1555,7 @@ class InferenceService:
             for i in range(0, len(docstring_list), batch_size):
                 batch = docstring_list[i : i + batch_size]
                 content_hash_set_clause = (
-                    "n.content_hash = item.content_hash,\n                        "
+                    "n.content_hash = coalesce(item.content_hash, n.content_hash),\n                        "
                     if should_update_content_hash
                     else ""
                 )

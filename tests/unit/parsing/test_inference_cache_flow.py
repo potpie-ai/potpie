@@ -123,9 +123,43 @@ def test_update_neo4j_persists_content_hash(monkeypatch):
     )
 
     query, kwargs = fake_driver.session_obj.calls[0]
-    assert "n.content_hash = item.content_hash" in query
+    assert "n.content_hash = coalesce(item.content_hash, n.content_hash)" in query
     assert kwargs["batch"][0]["content_hash"] == "hash-1"
     assert kwargs["clear_source"] is False
+
+
+def test_update_neo4j_preserves_content_hash_for_nodes_missing_from_map(monkeypatch):
+    service, fake_driver = _service_for_neo4j_update(monkeypatch)
+    response = DocstringResponse(
+        docstrings=[
+            DocstringNode(
+                node_id="cacheable-node",
+                docstring="Explains a cacheable node.",
+                tags=["UTILITY"],
+            ),
+            DocstringNode(
+                node_id="uncacheable-node",
+                docstring="Explains an uncacheable node.",
+                tags=["UTILITY"],
+            ),
+        ]
+    )
+
+    service.update_neo4j_with_docstrings(
+        "project-1",
+        response,
+        precomputed_embeddings={
+            "cacheable-node": [0.1, 0.2],
+            "uncacheable-node": [0.3, 0.4],
+        },
+        content_hash_by_node_id={"cacheable-node": "hash-1"},
+    )
+
+    query, kwargs = fake_driver.session_obj.calls[0]
+    batch_by_node_id = {item["node_id"]: item for item in kwargs["batch"]}
+    assert "n.content_hash = coalesce(item.content_hash, n.content_hash)" in query
+    assert batch_by_node_id["cacheable-node"]["content_hash"] == "hash-1"
+    assert "content_hash" not in batch_by_node_id["uncacheable-node"]
 
 
 def test_update_neo4j_leaves_content_hash_untouched_without_map(monkeypatch):
