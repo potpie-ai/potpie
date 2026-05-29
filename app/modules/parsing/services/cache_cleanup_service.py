@@ -3,9 +3,9 @@ from sqlalchemy import delete
 from app.modules.parsing.models.inference_cache_model import InferenceCache
 from datetime import datetime, timedelta, timezone
 import os
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class CacheCleanupService:
@@ -18,13 +18,13 @@ class CacheCleanupService:
         except (TypeError, ValueError):
             logger.warning(
                 f"Invalid INFERENCE_CACHE_TTL_DAYS={raw_ttl!r}; falling back to default of 30 days"
-            )
+            , raw_ttl=raw_ttl)
             self.cache_ttl_days = 30
         if self.cache_ttl_days <= 0:
             logger.warning(
                 f"INFERENCE_CACHE_TTL_DAYS={self.cache_ttl_days} <= 0; defaulting to 30 days "
                 "to avoid purging the entire cache"
-            )
+            , self_cache_ttl_days=self.cache_ttl_days)
             self.cache_ttl_days = 30
 
     def cleanup_expired_entries(self) -> int:
@@ -38,7 +38,7 @@ class CacheCleanupService:
         deleted_count = result.rowcount
         self.db.commit()
 
-        logger.info(f"Cleaned up {deleted_count} expired cache entries")
+        logger.info(f"Cleaned up {deleted_count} expired cache entries", deleted_count=deleted_count)
         return deleted_count
 
     def cleanup_least_accessed(self, max_entries: int = 100000) -> int:
@@ -66,7 +66,7 @@ class CacheCleanupService:
 
         self.db.commit()
 
-        logger.info(f"Cleaned up {entries_to_remove} least accessed cache entries")
+        logger.info(f"Cleaned up {entries_to_remove} least accessed cache entries", entries_to_remove=entries_to_remove)
         return entries_to_remove
 
     def get_cleanup_stats(self) -> dict:

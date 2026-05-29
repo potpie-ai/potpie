@@ -32,7 +32,7 @@ def _get_git_module():
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from sqlalchemy.orm import Session
 from redis import Redis
 from redis.exceptions import RedisError
@@ -50,7 +50,7 @@ try:
 except ImportError:
     redis_async = None  # type: ignore[assignment]
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Lazy async Redis client for project structure cache (shared across instances)
 _async_redis_cache: Optional[Any] = None
@@ -185,7 +185,6 @@ class GithubService:
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
             return provider.client
         except Exception as e:
-            logger.error(f"Failed to get GitHub client for {repo_name}: {str(e)}")
             raise Exception(
                 f"Repository {repo_name} not found or inaccessible on GitHub"
             )
@@ -200,7 +199,7 @@ class GithubService:
         project_id: str,
         commit_id: str,
     ) -> str:
-        logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
+        logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}", file_path=file_path, repo_name=repo_name)
 
         try:
             # Try authenticated access first
@@ -216,7 +215,6 @@ class GithubService:
                 repo = github.get_repo(repo_name)
                 file_contents = repo.get_contents(file_path)
             except Exception as public_error:
-                logger.error(f"Failed to access public repo: {str(public_error)}")
                 raise HTTPException(
                     status_code=404,
                     detail=f"Repository or file not found or inaccessible: {repo_name}/{file_path}",
@@ -248,10 +246,6 @@ class GithubService:
             selected_lines = lines[max(0, start_line - 1) : min(len(lines), end_line)]
             return "\n".join(selected_lines)
         except Exception as e:
-            logger.error(
-                f"Error processing file content for {repo_name}/{file_path}: {e}",
-                exc_info=True,
-            )
             raise HTTPException(
                 status_code=500,
                 detail=f"Error processing file content: {str(e)}",
@@ -545,7 +539,7 @@ class GithubService:
                     github_username = github_user.login
                     logger.info(
                         f"Retrieved GitHub username {github_username} from API for user {user_id}"
-                    )
+                    , github_username=github_username, user_id=user_id)
                 except GithubException as e:
                     error_str = str(e)
                     is_414_error = (
@@ -576,7 +570,7 @@ class GithubService:
             if not github_oauth_token:
                 logger.info(
                     f"No user OAuth token for {firebase_uid}, falling back to system tokens"
-                )
+                , firebase_uid=firebase_uid)
                 # Try GH_TOKEN_LIST first
                 token_list_str = os.getenv("GH_TOKEN_LIST", "")
                 if token_list_str:
@@ -712,9 +706,6 @@ class GithubService:
                                 return {"repositories": []}
                             elif response.status != 200:
                                 error_text = await response.text()
-                                logger.error(
-                                    f"Failed to get installations. Response: {error_text}"
-                                )
                                 raise HTTPException(
                                     status_code=response.status,
                                     detail=f"Failed to get installations: {error_text}",
@@ -738,9 +729,6 @@ class GithubService:
                     except (ClientConnectorError, asyncio.TimeoutError) as net_err:
                         attempt += 1
                         if attempt >= max_attempts:
-                            logger.error(
-                                f"Network error contacting GitHub installations API: {net_err}"
-                            )
                             raise HTTPException(
                                 status_code=503,
                                 detail="Unable to reach GitHub API (installations). Please check network/proxy settings and try again.",
@@ -773,12 +761,12 @@ class GithubService:
                                 error_text = await response.text()
                                 logger.error(
                                     f"Failed to fetch page {url}. Response: {error_text}"
-                                )
+                                , url=url, error_text=error_text)
                                 return []
                         except (ClientConnectorError, asyncio.TimeoutError) as net_err:
                             attempt += 1
                             if attempt >= max_attempts:
-                                logger.error(f"Network error fetching {url}: {net_err}")
+                                logger.error(f"Network error fetching {url}: {net_err}", url=url, net_err=net_err)
                                 return []
                             await asyncio.sleep(backoff)
                             backoff *= 2
@@ -987,7 +975,7 @@ class GithubService:
                                                 # Skip if rel format is unexpected (e.g., "pageabc")
                                                 logger.debug(
                                                     f"Skipping unexpected rel format in Link header: {rel}"
-                                                )
+                                                , rel=rel)
                                                 continue
 
                                         if should_add:
@@ -1089,9 +1077,6 @@ class GithubService:
                 return {"repositories": []}
             else:
                 # Re-raise other GithubExceptions
-                logger.exception(
-                    "GithubException in get_repos_for_user", user_id=user_id
-                )
                 raise HTTPException(
                     status_code=e.status if hasattr(e, "status") else 500,
                     detail=f"GitHub API error: {error_str}",
@@ -1112,7 +1097,6 @@ class GithubService:
                 )
                 return {"repositories": []}
 
-            logger.exception("Failed to fetch repositories", user_id=user_id)
             raise HTTPException(
                 status_code=500, detail="Failed to fetch repositories"
             ) from e
@@ -1120,7 +1104,7 @@ class GithubService:
             total_duration = time.time() - start_time  # Calculate total duration
             logger.info(
                 f"get_repos_for_user executed in {total_duration:.2f} seconds"
-            )  # Log total duration
+            , total_duration=total_duration)  # Log total duration
 
     async def get_combined_user_repos(
         self, user_id: str, async_session: Optional[AsyncSession] = None
@@ -1198,7 +1182,6 @@ class GithubService:
                     try:
                         git = _get_git_module()
                     except ImportError as e:
-                        logger.error("Git module not available: %s", e)
                         raise HTTPException(
                             status_code=500,
                             detail="Git support not available",
@@ -1228,10 +1211,6 @@ class GithubService:
                         detail=f"Not a valid git repository: {repo_name}",
                     )
                 except Exception as e:
-                    logger.error(
-                        f"Error fetching branches for local repo {repo_name}: {str(e)}",
-                        exc_info=True,
-                    )
                     raise HTTPException(
                         status_code=500,
                         detail=f"Error fetching branches for local repo: {str(e)}",
@@ -1248,9 +1227,6 @@ class GithubService:
         except HTTPException as he:
             raise he
         except Exception as e:
-            logger.error(
-                f"Error fetching branches for repo {repo_name}: {str(e)}", exc_info=True
-            )
             raise HTTPException(
                 status_code=404,
                 detail=f"Repository not found or error fetching branches: {str(e)}",
@@ -1308,14 +1284,14 @@ class GithubService:
                     logger.info(
                         f"GitHub App auth failed with 404 for {repo_name}, "
                         f"attempting final fallback to PAT pool"
-                    )
+                    , repo_name=repo_name)
                     try:
                         # Force PAT authentication by using the public instance method
                         github_client = self.get_public_github_instance()
                         repo = github_client.get_repo(repo_name)
                         logger.info(
                             f"Successfully accessed {repo_name} using PAT after App auth failed"
-                        )
+                        , repo_name=repo_name)
                         return github_client, repo
                     except Exception as pat_error:
                         logger.warning(
@@ -1323,7 +1299,6 @@ class GithubService:
                         )
 
             # If all methods failed, raise the original error
-            logger.error(f"Failed to access repository {repo_name}: {error_str}")
             raise HTTPException(
                 status_code=404,
                 detail=f"Repository {repo_name} not found or inaccessible on GitHub",
@@ -1334,7 +1309,7 @@ class GithubService:
     ) -> str:
         logger.info(
             f"Fetching project structure for project ID: {project_id}, path: {path}"
-        )
+        , project_id=project_id, path=path)
 
         # Modify cache key to reflect that we're only caching the specific path
         cache_key = (
@@ -1358,7 +1333,7 @@ class GithubService:
         if cached_structure:
             logger.info(
                 f"Project structure found in cache for project ID: {project_id}, path: {path}"
-            )
+            , project_id=project_id, path=path)
             return (
                 cached_structure.decode("utf-8")
                 if isinstance(cached_structure, bytes)
@@ -1423,10 +1398,6 @@ class GithubService:
         except HTTPException as he:
             raise he
         except Exception as e:
-            logger.error(
-                f"Error fetching project structure for {repo_name}: {str(e)}",
-                exc_info=True,
-            )
             raise HTTPException(
                 status_code=500, detail=f"Failed to fetch project structure: {str(e)}"
             )

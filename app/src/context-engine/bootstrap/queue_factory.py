@@ -98,7 +98,6 @@ def _resolve_hatchet(*, explicit_backend_was_set: bool) -> ContextGraphJobQueueP
         return q
     except Exception as exc:
         if explicit_backend_was_set:
-            logger.exception("Hatchet queue requested but initialization failed")
             raise
         logger.warning(
             "Context graph job queue: falling back to celery (Hatchet unavailable: %s). "

@@ -5,9 +5,9 @@ import asyncio
 from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 from sqlalchemy.orm import Session
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 from app.modules.intelligence.tools.jira_tools.jira_client import (
     get_jira_client_for_user,

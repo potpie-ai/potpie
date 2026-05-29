@@ -1,8 +1,8 @@
 import os
 import secrets
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 from typing import Dict, Any, List, Optional, Type
 from pydantic import BaseModel, Field
 from github import Github
@@ -65,7 +65,7 @@ class CodeProviderCreateBranchTool:
     def _get_github_client(self, repo_name: str) -> Github:
         """Get code provider client using provider factory."""
         try:
-            logger.info(f"[CREATE_BRANCH] Creating provider for repo: {repo_name}")
+            logger.info(f"[CREATE_BRANCH] Creating provider for repo: {repo_name}", repo_name=repo_name)
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
             logger.info(
                 f"[CREATE_BRANCH] Provider created successfully, type: {type(provider).__name__}"
@@ -75,10 +75,6 @@ class CodeProviderCreateBranchTool:
             )
             return provider.client
         except Exception as e:
-            logger.error(
-                f"[CREATE_BRANCH] Failed to get client: {type(e).__name__}: {str(e)}",
-                exc_info=True,
-            )
             raise Exception(
                 f"Repository {repo_name} not found or inaccessible: {str(e)}"
             )
@@ -102,7 +98,7 @@ class CodeProviderCreateBranchTool:
         """
         logger.info(
             f"[CREATE_BRANCH] Starting branch creation: repo={repo_name}, base={base_branch}, new={new_branch_name}"
-        )
+        , repo_name=repo_name, base_branch=base_branch, new_branch_name=new_branch_name)
         try:
             # Normalize input repo_name if needed, then get actual name for API calls
             from app.modules.parsing.utils.repo_name_normalizer import (
@@ -127,20 +123,20 @@ class CodeProviderCreateBranchTool:
 
             logger.info(
                 f"[CREATE_BRANCH] Provider type: {provider_type}, Original repo: {repo_name}, Normalized: {normalized_input}, Actual repo for API: {actual_repo_name}"
-            )
+            , provider_type=provider_type, repo_name=repo_name, normalized_input=normalized_input, actual_repo_name=actual_repo_name)
 
             repo = g.get_repo(actual_repo_name)
-            logger.info(f"[CREATE_BRANCH] Successfully got repo object: {repo.name}")
+            logger.info(f"[CREATE_BRANCH] Successfully got repo object: {repo.name}", repo_name=repo.name)
 
             # Get the base branch reference
             try:
                 logger.info(
                     f"[CREATE_BRANCH] Attempting to get ref for base branch: heads/{base_branch}"
-                )
+                , base_branch=base_branch)
                 base_ref = repo.get_git_ref(f"heads/{base_branch}")
                 logger.info(
                     f"[CREATE_BRANCH] Successfully got base branch ref: {base_ref.ref}, sha: {base_ref.object.sha}"
-                )
+                , base_ref_ref=base_ref.ref, base_ref_object_sha=base_ref.object.sha)
             except GithubException as e:
                 logger.error(
                     f"[CREATE_BRANCH] Failed to get base branch '{base_branch}': status={e.status}, data={e.data}, message={str(e)}"
@@ -156,11 +152,11 @@ class CodeProviderCreateBranchTool:
             try:
                 logger.info(
                     f"[CREATE_BRANCH] Checking if new branch already exists: heads/{new_branch_name}"
-                )
+                , new_branch_name=new_branch_name)
                 repo.get_git_ref(f"heads/{new_branch_name}")
                 logger.warning(
                     f"[CREATE_BRANCH] Branch '{new_branch_name}' already exists"
-                )
+                , new_branch_name=new_branch_name)
                 return {
                     "success": False,
                     "error": f"Branch '{new_branch_name}' already exists",
@@ -170,7 +166,7 @@ class CodeProviderCreateBranchTool:
                     # If error is not "Not Found", it's an unexpected error
                     logger.error(
                         f"[CREATE_BRANCH] Unexpected error checking branch existence: status={e.status}, data={e.data}"
-                    )
+                    , e_status=e.status, e_data=e.data)
                     return {
                         "success": False,
                         "error": f"Error checking branch existence: {str(e)}",
@@ -179,18 +175,18 @@ class CodeProviderCreateBranchTool:
                 # 404 means the branch doesn't exist, which is what we want
                 logger.info(
                     f"[CREATE_BRANCH] Branch '{new_branch_name}' does not exist (404), proceeding with creation"
-                )
+                , new_branch_name=new_branch_name)
 
             # Create the new branch
             logger.info(
                 f"[CREATE_BRANCH] Creating new branch: refs/heads/{new_branch_name} from sha: {base_ref.object.sha}"
-            )
+            , new_branch_name=new_branch_name, base_ref_object_sha=base_ref.object.sha)
             new_ref = repo.create_git_ref(
                 ref=f"refs/heads/{new_branch_name}", sha=base_ref.object.sha
             )
             logger.info(
                 f"[CREATE_BRANCH] Successfully created branch: {new_ref.ref}, sha: {new_ref.object.sha}"
-            )
+            , new_ref_ref=new_ref.ref, new_ref_object_sha=new_ref.object.sha)
 
             # Use the normalized input we already computed
             normalized_repo_name = normalized_input
@@ -218,7 +214,7 @@ class CodeProviderCreateBranchTool:
                 "sha": new_ref.object.sha,
                 "url": branch_url,
             }
-            logger.info(f"[CREATE_BRANCH] Returning success result: {result}")
+            logger.info(f"[CREATE_BRANCH] Returning success result: {result}", result=result)
             return result
 
         except GithubException as e:

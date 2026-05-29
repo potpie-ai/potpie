@@ -17,9 +17,9 @@ from app.core.database import get_db
 from app.modules.parsing.graph_construction.parsing_helper import (  # noqa: E402
     ParseHelper,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
@@ -222,7 +222,7 @@ class RepoMap:
             query = Query(language, query_scm)
             cursor = QueryCursor(query)
         except Exception as e:
-            logger.warning(f"Failed to create query for {fname}: {e}")
+            logger.warning(f"Failed to create query for {fname}: {e}", fname=fname, e=e)
             return
 
         captures = []
@@ -232,7 +232,7 @@ class RepoMap:
                     for node in nodes:
                         captures.append((node, capture_name))
         except Exception as e:
-            logger.warning(f"Failed to execute query matches for {fname}: {e}")
+            logger.warning(f"Failed to execute query matches for {fname}: {e}", fname=fname, e=e)
             return
 
         saw = set()
@@ -321,7 +321,7 @@ class RepoMap:
             query = Query(language, query_scm)
             cursor = QueryCursor(query)
         except Exception as e:
-            logger.warning(f"Failed to create query for {fname}: {e}")
+            logger.warning(f"Failed to create query for {fname}: {e}", fname=fname, e=e)
             return
 
         captures = []
@@ -331,7 +331,7 @@ class RepoMap:
                     for node in nodes:
                         captures.append((node, capture_name))
         except Exception as e:
-            logger.warning(f"Failed to execute query matches for {fname}: {e}")
+            logger.warning(f"Failed to execute query matches for {fname}: {e}", fname=fname, e=e)
             return
 
         saw = set()
@@ -737,7 +737,7 @@ class RepoMap:
                 if not self.parse_helper.is_text_file(file_path):
                     continue
 
-                logger.info(f"\nProcessing file: {file_rel_path}")
+                logger.info(f"\nProcessing file: {file_rel_path}", file_rel_path=file_rel_path)
 
                 # Add file node
                 file_node_name = file_rel_path

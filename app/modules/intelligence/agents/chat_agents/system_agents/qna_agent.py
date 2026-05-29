@@ -16,10 +16,10 @@ from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class QnAAgent(ChatAgent):
@@ -129,9 +129,9 @@ class QnAAgent(ChatAgent):
 
         logger.info(
             f"QnAAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
-        )
-        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
-        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+        , supports_pydantic=supports_pydantic, should_use_multi=should_use_multi)
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}", self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}", self_llm_provider_chat_config_capabilities=self.llm_provider.chat_config.capabilities)
 
         if supports_pydantic:
             if should_use_multi:
@@ -167,7 +167,7 @@ class QnAAgent(ChatAgent):
         else:
             logger.error(
                 f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticRagAgent"
-            )
+            , self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
@@ -198,7 +198,7 @@ class QnAAgent(ChatAgent):
                 )
         except ValueError as e:
             # Expected when context graph isn't set up for this pot/user — skip silently.
-            logger.warning(f"Skipping context_resolve prefetch: {e}")
+            logger.warning(f"Skipping context_resolve prefetch: {e}", e=e)
         except Exception:
             logger.exception("Failed prefetching context via context_resolve")
 

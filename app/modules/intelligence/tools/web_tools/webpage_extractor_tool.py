@@ -8,9 +8,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.modules.intelligence.tools.tool_utils import truncate_dict_response
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class WebpageExtractorInput(BaseModel):
@@ -95,7 +95,7 @@ class WebpageExtractorTool:
         # Truncate response if it exceeds character limits
         truncated_result = truncate_dict_response(result)
         if len(str(result)) > 80000:
-            logger.warning(f"webpage_extractor_tool output truncated for URL: {url}")
+            logger.warning(f"webpage_extractor_tool output truncated for URL: {url}", url=url)
         return truncated_result
 
 

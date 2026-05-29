@@ -73,45 +73,59 @@ class StructuredLogger:
         self._logger = logger
         self._extra = extra or {}
 
-    def _prepare(self, kwargs: dict) -> dict:
+    def _prepare(self, kwargs: dict, stacklevel_offset: int) -> dict:
         passthru = {k: kwargs.pop(k) for k in _RESERVED if k in kwargs}
         extra = kwargs.pop("extra", None) or {}
         fields = {**self._extra, **extra, **kwargs}
         passthru["extra"] = {"obs_fields": fields}
-        passthru["stacklevel"] = int(passthru.get("stacklevel", 1)) + 1
+        passthru["stacklevel"] = (
+            int(passthru.get("stacklevel", 1)) + stacklevel_offset
+        )
         return passthru
 
-    def debug(self, message, *args, **kwargs) -> None:
-        self.log(logging.DEBUG, message, *args, **kwargs)
+    def debug(self, msg, *args, **kwargs) -> None:
+        self._log(logging.DEBUG, msg, *args, stacklevel_offset=2, **kwargs)
 
-    def info(self, message, *args, **kwargs) -> None:
-        self.log(logging.INFO, message, *args, **kwargs)
+    def info(self, msg, *args, **kwargs) -> None:
+        self._log(logging.INFO, msg, *args, stacklevel_offset=2, **kwargs)
 
-    def warning(self, message, *args, **kwargs) -> None:
-        self.log(logging.WARNING, message, *args, **kwargs)
+    def warning(self, msg, *args, **kwargs) -> None:
+        self._log(logging.WARNING, msg, *args, stacklevel_offset=2, **kwargs)
 
     warn = warning
 
-    def error(self, message, *args, **kwargs) -> None:
-        self.log(logging.ERROR, message, *args, **kwargs)
+    def error(self, msg, *args, **kwargs) -> None:
+        self._log(logging.ERROR, msg, *args, stacklevel_offset=2, **kwargs)
 
-    def exception(self, message, *args, **kwargs) -> None:
+    def exception(self, msg, *args, **kwargs) -> None:
         kwargs.setdefault("exc_info", True)
-        self.error(message, *args, **kwargs)
+        self.error(msg, *args, **kwargs)
 
-    def critical(self, message, *args, **kwargs) -> None:
-        self.log(logging.CRITICAL, message, *args, **kwargs)
+    def critical(self, msg, *args, **kwargs) -> None:
+        self._log(logging.CRITICAL, msg, *args, stacklevel_offset=2, **kwargs)
 
     fatal = critical
 
-    def log(self, log_level, message, *args, **kwargs) -> None:
-        self._logger.log(log_level, message, *args, **self._prepare(kwargs))
+    def log(self, log_level, msg, *args, **kwargs) -> None:
+        self._log(log_level, msg, *args, stacklevel_offset=2, **kwargs)
+
+    def _log(self, log_level, msg, *args, stacklevel_offset: int, **kwargs) -> None:
+        self._logger.log(
+            log_level,
+            msg,
+            *args,
+            **self._prepare(kwargs, stacklevel_offset),
+        )
 
     def isEnabledFor(self, level: int) -> bool:  # noqa: N802 - stdlib API name
         return self._logger.isEnabledFor(level)
 
     def getChild(self, suffix: str) -> "StructuredLogger":  # noqa: N802
         return StructuredLogger(self._logger.getChild(suffix), self._extra)
+
+    def bind(self, **fields) -> "StructuredLogger":
+        """Return a logger with default structured fields, loguru-compatible."""
+        return StructuredLogger(self._logger, {**self._extra, **fields})
 
     def __getattr__(self, name: str):
         return getattr(self._logger, name)

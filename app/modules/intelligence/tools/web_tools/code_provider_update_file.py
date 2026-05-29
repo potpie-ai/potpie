@@ -1,8 +1,8 @@
 import os
 import secrets
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 from typing import Dict, Any, List, Optional, Type
 from pydantic import BaseModel, Field
 from github import Github
@@ -70,9 +70,6 @@ class CodeProviderUpdateFileTool:
         try:
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         except ValueError as e:
-            logger.exception(
-                f"Failed to create provider for repository '{repo_name}': {str(e)}"
-            )
             raise ValueError(
                 f"Repository {repo_name} not found or inaccessible on GitHub"
             ) from e
@@ -82,7 +79,6 @@ class CodeProviderUpdateFileTool:
                 f"Provider factory returned None for repository '{repo_name}'. "
                 "Unable to obtain client."
             )
-            logger.error(message)
             raise ValueError(message)
 
         client = getattr(provider, "client", None)
@@ -91,7 +87,6 @@ class CodeProviderUpdateFileTool:
                 f"Provider '{type(provider).__name__}' does not expose a client for "
                 f"repository '{repo_name}'."
             )
-            logger.error(message)
             raise ValueError(message)
 
         if not hasattr(client, "get_repo"):
@@ -99,7 +94,6 @@ class CodeProviderUpdateFileTool:
                 f"Client of type '{type(client).__name__}' for repository "
                 f"'{repo_name}' does not support required operations."
             )
-            logger.error(message)
             raise ValueError(message)
 
         return client
@@ -131,10 +125,10 @@ class CodeProviderUpdateFileTool:
         """
         logger.info(
             f"[UPDATE_FILE] Starting file update: repo={repo_name}, file={file_path}, branch={branch_name}"
-        )
+        , repo_name=repo_name, file_path=file_path, branch_name=branch_name)
         try:
             # Initialize GitHub client
-            logger.info(f"[UPDATE_FILE] Getting client for repo: {repo_name}")
+            logger.info(f"[UPDATE_FILE] Getting client for repo: {repo_name}", repo_name=repo_name)
             g = self._get_github_client(repo_name)
 
             # Normalize input repo_name if needed, then get actual name for API calls
@@ -153,20 +147,20 @@ class CodeProviderUpdateFileTool:
             )
             logger.info(
                 f"[UPDATE_FILE] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
-            )
+            , provider_type=provider_type, repo_name=repo_name, actual_repo_name=actual_repo_name)
 
             repo = g.get_repo(actual_repo_name)
-            logger.info(f"[UPDATE_FILE] Successfully got repo object: {repo.name}")
+            logger.info(f"[UPDATE_FILE] Successfully got repo object: {repo.name}", repo_name=repo.name)
 
             # Try to get the file to check if it exists and get its SHA
             try:
                 logger.info(
                     f"[UPDATE_FILE] Checking if file exists: {file_path} on branch: {branch_name}"
-                )
+                , file_path=file_path, branch_name=branch_name)
                 file = repo.get_contents(file_path, ref=branch_name)
                 sha = file.sha
                 file_exists = True
-                logger.info(f"[UPDATE_FILE] File exists with sha: {sha}")
+                logger.info(f"[UPDATE_FILE] File exists with sha: {sha}", sha=sha)
             except GithubException as e:
                 if e.status == 404:
                     # File doesn't exist
@@ -176,9 +170,6 @@ class CodeProviderUpdateFileTool:
                         "[UPDATE_FILE] File does not exist (404), will create new file"
                     )
                 else:
-                    logger.error(
-                        f"[UPDATE_FILE] Error checking file existence: status={e.status}, data={e.data}"
-                    )
                     raise e
 
             # Create commit with author info if provided
@@ -188,7 +179,7 @@ class CodeProviderUpdateFileTool:
 
             # Update or create the file
             if file_exists:
-                logger.info(f"[UPDATE_FILE] Updating existing file: {file_path}")
+                logger.info(f"[UPDATE_FILE] Updating existing file: {file_path}", file_path=file_path)
                 result = repo.update_file(
                     path=file_path,
                     content=content,
@@ -208,7 +199,7 @@ class CodeProviderUpdateFileTool:
                     "url": result["commit"].html_url,
                 }
             else:
-                logger.info(f"[UPDATE_FILE] Creating new file: {file_path}")
+                logger.info(f"[UPDATE_FILE] Creating new file: {file_path}", file_path=file_path)
                 result = repo.create_file(
                     path=file_path,
                     content=content,

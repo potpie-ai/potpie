@@ -8,9 +8,9 @@ from app.modules.code_provider.base.code_provider_interface import (
     ICodeProvider,
     AuthMethod,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class GitHubProvider(ICodeProvider):
@@ -35,7 +35,7 @@ class GitHubProvider(ICodeProvider):
 
             logger.info(
                 f"Authenticating with Personal Access Token for GitHub (base URL: {self.base_url})"
-            )
+            , self_base_url=self.base_url)
             self.client = Github(token, base_url=self.base_url)
 
         elif method == AuthMethod.OAUTH_TOKEN:
@@ -99,7 +99,7 @@ class GitHubProvider(ICodeProvider):
             repo = self.client.get_repo(repo_name)
             logger.info(
                 f"Successfully fetched repository: {repo_name} (private: {repo.private})"
-            )
+            , repo_name=repo_name, repo_private=repo.private)
             return {
                 "id": repo.id,
                 "name": repo.name,
@@ -112,9 +112,6 @@ class GitHubProvider(ICodeProvider):
                 "language": repo.language,
             }
         except GithubException as e:
-            logger.error(
-                f"Failed to fetch repository {repo_name}: {type(e).__name__} - {str(e)}"
-            )
             raise
 
     def check_repository_access(self, repo_name: str) -> bool:
@@ -174,7 +171,6 @@ class GitHubProvider(ICodeProvider):
         try:
             repo = self.client.get_repo(repo_name)
         except GithubException as e:
-            logger.error(f"GitHubProvider: Failed to get repo {repo_name}: {e}")
             raise
 
         def _recurse(current_path: str, depth: int) -> list[dict[str, Any]]:
@@ -194,7 +190,7 @@ class GitHubProvider(ICodeProvider):
                     logger.error(
                         f"GitHubProvider: get_contents returned None for path '{current_path}', ref={ref}. "
                         f"This usually means the path doesn't exist or auth failed."
-                    )
+                    , current_path=current_path, ref=ref)
                     return []
 
                 if not isinstance(contents, list):
@@ -217,12 +213,12 @@ class GitHubProvider(ICodeProvider):
             except GithubException as e:
                 logger.warning(
                     f"GitHubProvider: Failed to get contents for {current_path}: {e}"
-                )
+                , current_path=current_path, e=e)
             except Exception as e:
                 logger.error(
                     f"GitHubProvider: Unexpected error getting contents for {current_path}: {e}",
                     exc_info=True,
-                )
+                 current_path=current_path, e=e)
 
             return result
 
@@ -343,7 +339,6 @@ class GitHubProvider(ICodeProvider):
             }
 
         except GithubException as e:
-            logger.error(f"[GITHUB] Error comparing branches: {str(e)}")
             raise
 
     # ============ Pull Request Operations ============
@@ -540,14 +535,14 @@ class GitHubProvider(ICodeProvider):
                 try:
                     pr.create_review_request(reviewers=reviewers)
                 except GithubException as e:
-                    logger.warning(f"Error adding reviewers: {e}")
+                    logger.warning(f"Error adding reviewers: {e}", e=e)
 
             # Add labels
             if labels:
                 try:
                     pr.add_to_labels(*labels)
                 except GithubException as e:
-                    logger.warning(f"Error adding labels: {e}")
+                    logger.warning(f"Error adding labels: {e}", e=e)
 
             return {"success": True, "pr_number": pr.number, "url": pr.html_url}
 

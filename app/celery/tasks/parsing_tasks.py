@@ -5,9 +5,9 @@ from app.celery.tasks.base_task import BaseTask
 from app.core.config_provider import config_provider
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
-from app.modules.utils.logger import setup_logger, log_context
+from observability import get_logger, log_context
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 @celery_app.task(
@@ -63,7 +63,6 @@ def process_parsing(
                     pot_id=project_id,
                 )
         except Exception:
-            logger.exception("Error during parsing")
             raise
         finally:
             if parsing_service is not None:

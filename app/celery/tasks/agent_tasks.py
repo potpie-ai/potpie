@@ -14,7 +14,7 @@ from app.celery.tasks.base_task import BaseTask
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
 from app.modules.users.user_model import User
 from app.modules.users.user_service import UserService
-from app.modules.utils.logger import setup_logger, log_context
+from observability import get_logger, log_context
 from app.modules.intelligence.tracing.logfire_tracer import logfire_trace_metadata
 from app.modules.intelligence.provider.openrouter_usage_context import (
     init_usage_context,
@@ -22,7 +22,7 @@ from app.modules.intelligence.provider.openrouter_usage_context import (
     estimate_cost_for_log,
 )
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _resolve_user_email_for_celery(db: Session, user_id: str) -> str:
@@ -168,7 +168,7 @@ def execute_agent_background(
             logger.info(
                 f"Starting background agent execution with tunnel_url={tunnel_url}, "
                 f"local_mode={local_mode}, conversation_id={conversation_id}"
-            )
+            , tunnel_url=tunnel_url, local_mode=local_mode, conversation_id=conversation_id)
             try:
                 # Set task status to indicate task has started
                 redis_manager.set_task_status(conversation_id, run_id, "running")
@@ -455,7 +455,7 @@ def execute_agent_background(
                         logger.info(
                             "[LLM cost - partial before error] "
                             f"total={total_cost} credits"
-                        )
+                        , total_cost=total_cost)
                         print(
                             "[LLM cost - partial before error] "
                             f"total={total_cost} credits",
@@ -488,12 +488,7 @@ def execute_agent_background(
                         },
                     )
                 except Exception:
-                    logger.exception(
-                        "Failed to publish error event to Redis",
-                        conversation_id=conversation_id,
-                        run_id=run_id,
-                    )
-                raise
+                    raise
 
 
 @celery_app.task(
@@ -753,7 +748,7 @@ def execute_regenerate_background(
                         )
                         logger.info(msg)
                         print(msg, flush=True)
-                    logger.info(f"[LLM cost this run] total={total_cost} credits")
+                    logger.info(f"[LLM cost this run] total={total_cost} credits", total_cost=total_cost)
                     print(
                         f"[LLM cost this run] total={total_cost} credits",
                         flush=True,
@@ -819,7 +814,7 @@ def execute_regenerate_background(
                             print(msg, flush=True)
                         logger.info(
                             f"[LLM cost - partial before error] total={total_cost} credits"
-                        )
+                        , total_cost=total_cost)
                         print(
                             f"[LLM cost - partial before error] total={total_cost} credits",
                             flush=True,
@@ -852,10 +847,4 @@ def execute_regenerate_background(
                         },
                     )
                 except Exception:
-                    logger.exception(
-                        "Failed to publish error event to Redis",
-                        conversation_id=conversation_id,
-                        run_id=run_id,
-                        user_id=user_id,
-                    )
-                raise
+                    raise
