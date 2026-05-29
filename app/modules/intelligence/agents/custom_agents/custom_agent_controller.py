@@ -63,15 +63,15 @@ class CustomAgentController:
 
             logger.info(
                 f"Before update - Agent {agent_id} visibility: {agent.visibility}"
-            )
+            , agent_id=agent_id, agent_visibility=agent.visibility)
 
             # Handle visibility changes first
             if visibility is not None:
-                logger.info(f"Changing agent {agent_id} visibility to {visibility}")
+                logger.info(f"Changing agent {agent_id} visibility to {visibility}", agent_id=agent_id, visibility=visibility)
 
                 # If making private, remove all shares
                 if visibility == AgentVisibility.PRIVATE:
-                    logger.info(f"Making agent {agent_id} private")
+                    logger.info(f"Making agent {agent_id} private", agent_id=agent_id)
                     updated_agent = await self.service.make_agent_private(
                         agent_id, owner_id
                     )
@@ -98,7 +98,7 @@ class CustomAgentController:
                 if not shared_with_email:
                     logger.info(
                         f"After update - Agent {agent_id} visibility: {updated_agent.visibility}"
-                    )
+                    , agent_id=agent_id, updated_agent_visibility=updated_agent.visibility)
                     return updated_agent
 
             # Handle sharing with specific user
@@ -118,7 +118,7 @@ class CustomAgentController:
 
                 # Only update visibility if it's currently private and we haven't already changed it
                 if agent.visibility == AgentVisibility.PRIVATE and visibility is None:
-                    logger.info(f"Updating agent {agent_id} visibility to SHARED")
+                    logger.info(f"Updating agent {agent_id} visibility to SHARED", agent_id=agent_id)
                     updated_agent = await self.service.update_agent(
                         agent_id,
                         owner_id,
@@ -131,21 +131,21 @@ class CustomAgentController:
                         )
                     logger.info(
                         f"After update - Agent {agent_id} visibility: {updated_agent.visibility}"
-                    )
+                    , agent_id=agent_id, updated_agent_visibility=updated_agent.visibility)
                     return updated_agent
 
                 # Get the current agent state
                 current_agent = await self.service.get_agent(agent_id, owner_id)
                 logger.info(
                     f"Current agent {agent_id} visibility: {current_agent.visibility}"
-                )
+                , agent_id=agent_id, current_agent_visibility=current_agent.visibility)
                 return current_agent
 
             # If we haven't returned by now, return the current agent state
             current_agent = await self.service.get_agent(agent_id, owner_id)
             logger.info(
                 f"Current agent {agent_id} visibility: {current_agent.visibility}"
-            )
+            , agent_id=agent_id, current_agent_visibility=current_agent.visibility)
             return current_agent
 
         except HTTPException:
@@ -196,7 +196,7 @@ class CustomAgentController:
             updated_agent = await self.service.get_agent(agent_id, owner_id)
             logger.info(
                 f"Access revoked, agent {agent_id} visibility: {updated_agent.visibility}"
-            )
+            , agent_id=agent_id, updated_agent_visibility=updated_agent.visibility)
             return updated_agent
 
         except HTTPException:
@@ -225,7 +225,7 @@ class CustomAgentController:
                     detail="You don't have permission to view this agent's shares",
                 )
 
-            logger.info(f"Listing all shares for agent {agent_id}")
+            logger.info(f"Listing all shares for agent {agent_id}", agent_id=agent_id)
             # Get the list of emails this agent is shared with
             emails = await self.service.list_agent_shares(agent_id)
             return emails

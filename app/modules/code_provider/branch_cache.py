@@ -235,7 +235,7 @@ class BranchCache:
                     f"BranchCache: 🗑️ Invalidated cache for {repo_name} ({len(keys)} keys)"
                 )
             else:
-                logger.info(f"BranchCache: No cache keys found for {repo_name}")
+                logger.info(f"BranchCache: No cache keys found for {repo_name}", repo_name=repo_name)
 
             return True
 

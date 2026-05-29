@@ -125,10 +125,10 @@ class CodeProviderUpdateFileTool:
         """
         logger.info(
             f"[UPDATE_FILE] Starting file update: repo={repo_name}, file={file_path}, branch={branch_name}"
-        )
+        , repo_name=repo_name, file_path=file_path, branch_name=branch_name)
         try:
             # Initialize GitHub client
-            logger.info(f"[UPDATE_FILE] Getting client for repo: {repo_name}")
+            logger.info(f"[UPDATE_FILE] Getting client for repo: {repo_name}", repo_name=repo_name)
             g = self._get_github_client(repo_name)
 
             # Normalize input repo_name if needed, then get actual name for API calls
@@ -147,20 +147,20 @@ class CodeProviderUpdateFileTool:
             )
             logger.info(
                 f"[UPDATE_FILE] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
-            )
+            , provider_type=provider_type, repo_name=repo_name, actual_repo_name=actual_repo_name)
 
             repo = g.get_repo(actual_repo_name)
-            logger.info(f"[UPDATE_FILE] Successfully got repo object: {repo.name}")
+            logger.info(f"[UPDATE_FILE] Successfully got repo object: {repo.name}", repo_name=repo.name)
 
             # Try to get the file to check if it exists and get its SHA
             try:
                 logger.info(
                     f"[UPDATE_FILE] Checking if file exists: {file_path} on branch: {branch_name}"
-                )
+                , file_path=file_path, branch_name=branch_name)
                 file = repo.get_contents(file_path, ref=branch_name)
                 sha = file.sha
                 file_exists = True
-                logger.info(f"[UPDATE_FILE] File exists with sha: {sha}")
+                logger.info(f"[UPDATE_FILE] File exists with sha: {sha}", sha=sha)
             except GithubException as e:
                 if e.status == 404:
                     # File doesn't exist
@@ -179,7 +179,7 @@ class CodeProviderUpdateFileTool:
 
             # Update or create the file
             if file_exists:
-                logger.info(f"[UPDATE_FILE] Updating existing file: {file_path}")
+                logger.info(f"[UPDATE_FILE] Updating existing file: {file_path}", file_path=file_path)
                 result = repo.update_file(
                     path=file_path,
                     content=content,
@@ -199,7 +199,7 @@ class CodeProviderUpdateFileTool:
                     "url": result["commit"].html_url,
                 }
             else:
-                logger.info(f"[UPDATE_FILE] Creating new file: {file_path}")
+                logger.info(f"[UPDATE_FILE] Creating new file: {file_path}", file_path=file_path)
                 result = repo.create_file(
                     path=file_path,
                     content=content,

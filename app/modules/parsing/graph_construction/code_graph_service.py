@@ -138,7 +138,7 @@ class CodeGraphService:
                 f"[GRAPH GENERATION] Created indices in {index_time:.2f}s",
                 project_id=project_id,
                 index_time_seconds=index_time,
-            )
+             index_time=index_time)
 
             # Step 3: Batch insert nodes
             node_insert_start = time.time()
@@ -146,7 +146,7 @@ class CodeGraphService:
                 f"[GRAPH GENERATION] Step 4/4: Inserting {node_count} nodes into Neo4j",
                 project_id=project_id,
                 total_nodes=node_count,
-            )
+             node_count=node_count)
             batch_size = 1000
             total_batches = (node_count + batch_size - 1) // batch_size
             nodes_inserted = 0
@@ -221,7 +221,7 @@ class CodeGraphService:
                 project_id=project_id,
                 nodes_inserted=nodes_inserted,
                 node_insert_time_seconds=node_insert_time,
-            )
+             node_insert_time=node_insert_time)
 
             # Index nodes to Qdrant (hybrid dense + BM25 + ColBERT embeddings)
             qdrant_index_start = time.time()
@@ -266,7 +266,7 @@ class CodeGraphService:
                         bm25_tokens=n_bm25,
                         colbert_tokens=n_colbert,
                         qdrant_index_time_seconds=qdrant_index_time,
-                    )
+                     count=count, n_bm25=n_bm25, n_colbert=n_colbert, qdrant_index_time=qdrant_index_time)
                 except Exception:
                     logger.exception(
                         "[GRAPH GENERATION] Qdrant indexing failed (non-fatal): continuing without Qdrant index",
@@ -284,7 +284,7 @@ class CodeGraphService:
                 f"[GRAPH GENERATION] Inserting {relationship_count} relationships into Neo4j",
                 project_id=project_id,
                 total_relationships=relationship_count,
-            )
+             relationship_count=relationship_count)
 
             # Pre-calculate common relationship types to avoid dynamic relationship creation
             rel_types = set()
@@ -378,7 +378,7 @@ class CodeGraphService:
                 project_id=project_id,
                 relationships_inserted=total_rels_inserted,
                 rel_insert_time_seconds=rel_insert_time,
-            )
+             total_rels_inserted=total_rels_inserted, rel_insert_time=rel_insert_time)
 
             db_time = time.time() - db_start_time
             total_time = time.time() - graph_start_time
@@ -398,7 +398,7 @@ class CodeGraphService:
                 parse_time_seconds=parse_time,
                 nodes_inserted=nodes_inserted,
                 relationships_inserted=total_rels_inserted,
-            )
+             total_time=total_time, db_time=db_time, parse_segment=parse_segment)
 
     def cleanup_graph(self, project_id: str):
         with self.driver.session() as session:

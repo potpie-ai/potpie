@@ -109,7 +109,7 @@ def _route_to_local_server(
         if not tunnel_url:
             logger.debug(
                 f"No tunnel available for user {user_id}, using CodeChangesManager"
-            )
+            , user_id=user_id)
             return None
 
         # Map operation to LocalServer endpoint (must be defined before smart routing)
@@ -128,7 +128,7 @@ def _route_to_local_server(
 
         endpoint = endpoint_map.get(operation)
         if not endpoint:
-            logger.warning(f"Unknown operation for tunnel routing: {operation}")
+            logger.warning(f"Unknown operation for tunnel routing: {operation}", operation=operation)
             return None
 
         # Prepare request data
@@ -147,7 +147,7 @@ def _route_to_local_server(
         if tunnel_url and tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
             logger.info(
                 f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer via Socket.IO (timeout=120s)"
-            )
+            , operation=operation)
             route_result = _execute_via_socket(
                 user_id=user_id,
                 conversation_id=conversation_id,
@@ -180,36 +180,36 @@ def _route_to_local_server(
                             logger.info(
                                 f"[Tunnel Routing] 🏠 VSCODE_LOCAL_TUNNEL_SERVER set, using direct connection: {direct_url} "
                                 f"(bypassing tunnel {tunnel_url})"
-                            )
+                            , direct_url=direct_url, tunnel_url=tunnel_url)
                             url = f"{direct_url}{endpoint}"
                         else:
                             logger.warning(
                                 f"[Tunnel Routing] ⚠️ LocalServer not responding on {direct_url}, falling back to tunnel"
-                            )
+                            , direct_url=direct_url)
                             url = f"{tunnel_url}{endpoint}"
                     except Exception as e:
                         logger.warning(
                             f"[Tunnel Routing] ⚠️ Cannot reach LocalServer on {direct_url}: {e}, using tunnel instead"
-                        )
+                        , direct_url=direct_url, e=e)
                         url = f"{tunnel_url}{endpoint}"
                 else:
                     if force_tunnel:
                         logger.info(
                             f"[Tunnel Routing] 🔧 FORCE_TUNNEL enabled, using tunnel URL: {tunnel_url}{endpoint}"
-                        )
+                        , tunnel_url=tunnel_url, endpoint=endpoint)
                     else:
                         logger.info(
                             f"[Tunnel Routing] 🌐 Using tunnel URL: {tunnel_url}{endpoint}"
-                        )
+                        , tunnel_url=tunnel_url, endpoint=endpoint)
                     url = f"{tunnel_url}{endpoint}"
             except Exception as e:
                 logger.warning(
                     f"[Tunnel Routing] Error in smart routing, falling back to tunnel URL: {e}"
-                )
+                , e=e)
                 url = f"{tunnel_url}{endpoint}"
 
             logger.info(f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer: {url}")
-            logger.debug(f"[Tunnel Routing] Request data: {request_data}")
+            logger.debug(f"[Tunnel Routing] Request data: {request_data}", request_data=request_data)
 
             is_tunnel_request = url.startswith("https://") or (
                 url.startswith("http://") and "localhost" not in url
@@ -219,7 +219,7 @@ def _route_to_local_server(
             )  # 2 minutes for tunnel, 30s for localhost
             logger.debug(
                 f"[Tunnel Routing] Using timeout: {request_timeout}s (tunnel={is_tunnel_request})"
-            )
+            , request_timeout=request_timeout, is_tunnel_request=is_tunnel_request)
 
             with httpx.Client(timeout=request_timeout) as client:
                 try:
@@ -231,7 +231,7 @@ def _route_to_local_server(
                         if not file_path:
                             logger.warning(
                                 f"[Tunnel Routing] No file_path provided for {operation}"
-                            )
+                            , operation=operation)
                             return None
                         url_with_params = f"{url}?path={url_quote(file_path)}"
                         response = client.get(url_with_params)
@@ -247,7 +247,7 @@ def _route_to_local_server(
                         route_result = response.json()
                         logger.info(
                             f"[Tunnel Routing] ✅ LocalServer {operation} succeeded: {route_result}"
-                        )
+                        , operation=operation, route_result=route_result)
                     else:
                         # Non-200: error handling and optional tunnel invalidation
                         error_text = response.text
@@ -262,9 +262,9 @@ def _route_to_local_server(
                                 get_tunnel_service().unregister_tunnel(user_id, conversation_id)
                                 logger.info(
                                     f"[Tunnel Routing] ✅ Invalidated stale conversation tunnel for user {user_id}"
-                                )
+                                , user_id=user_id)
                             except Exception as e:
-                                logger.error(f"[Tunnel Routing] Failed to invalidate tunnel: {e}")
+                                logger.error(f"[Tunnel Routing] Failed to invalidate tunnel: {e}", e=e)
                             logger.info(f"[Tunnel Routing] ⬇️ Falling back to cloud execution for {operation}")
                             return None
                         logger.warning(
@@ -302,11 +302,11 @@ def _route_to_local_server(
                         logger.error(
                             f"[Tunnel Routing] ⏱️ Timeout routing {operation} to LocalServer after {request_timeout}s: {e}. "
                             f"URL: {url}. This may indicate the tunnel is not connected or LocalServer is not responding."
-                        )
+                        , operation=operation, request_timeout=request_timeout, e=e, url=url)
                     elif "Connect" in error_type or "connection" in str(e).lower():
                         logger.warning(
                             f"[Tunnel Routing] 🔌 Connection error routing {operation} to LocalServer: {e}"
-                        )
+                        , operation=operation, e=e)
                     else:
                         resp = getattr(e, "response", None)
                         if resp is not None:
@@ -316,11 +316,11 @@ def _route_to_local_server(
                             )
                             logger.warning(
                                 f"[Tunnel Routing] ❌ HTTP error routing {operation} to LocalServer: {error_message}"
-                            )
+                            , operation=operation, error_message=error_message)
                         else:
                             logger.warning(
                                 f"[Tunnel Routing] ❌ Error routing {operation} to LocalServer: {e}"
-                            )
+                            , operation=operation, e=e)
                     return None  # Fall back to CodeChangesManager
 
         if route_result:
@@ -372,7 +372,7 @@ def _route_to_local_server(
                     except Exception as e:
                         logger.debug(
                             f"[Tunnel Routing] Could not enrich replace_in_file diff: {e}"
-                        )
+                        , e=e)
 
                 response_msg = (
                     f"✅ Replaced pattern '{pattern}' in '{file_path}'\n\n"
@@ -512,7 +512,7 @@ def _route_to_local_server(
         # Outer exception handler for non-httpx errors
         logger.warning(
             f"[Tunnel Routing] Unexpected error in _route_to_local_server: {e}"
-        )
+        , e=e)
         return None
 
 
@@ -534,13 +534,13 @@ def _should_route_to_local_server() -> bool:
 
     logger.info(
         f"[Tunnel Routing] Checking routing: agent_id={agent_id}, user_id={user_id}, conversation_id={conversation_id}"
-    )
+    , agent_id=agent_id, user_id=user_id, conversation_id=conversation_id)
 
     # Route these agents to tunnel when available for local-first code changes
     if agent_id not in ["code", "code_generation_agent", "codebase_qna_agent"]:
         logger.debug(
             f"[Tunnel Routing] Agent {agent_id} not eligible for tunnel routing"
-        )
+        , agent_id=agent_id)
         return False
 
     try:
@@ -563,17 +563,17 @@ def _should_route_to_local_server() -> bool:
         if tunnel_url:
             logger.info(
                 f"[Tunnel Routing] ✅ Routing to LocalServer via tunnel: {tunnel_url}"
-            )
+            , tunnel_url=tunnel_url)
         else:
             # Debug: Check what tunnels exist
             logger.warning(
                 f"[Tunnel Routing] ❌ No tunnel available for user {user_id}, conversation {conversation_id}. "
                 f"Agent: {agent_id}. Check if tunnel was registered."
-            )
+            , user_id=user_id, conversation_id=conversation_id, agent_id=agent_id)
 
         return tunnel_url is not None
     except Exception as e:
-        logger.exception(f"[Tunnel Routing] Error checking tunnel: {e}")
+        logger.exception(f"[Tunnel Routing] Error checking tunnel: {e}", e=e)
         return False
 
 
@@ -632,7 +632,7 @@ def _get_local_server_base_url_for_files() -> Optional[str]:
                 pass
         return tunnel_url
     except Exception as e:
-        logger.debug(f"Failed to get LocalServer base URL for files: {e}")
+        logger.debug(f"Failed to get LocalServer base URL for files: {e}", e=e)
         return None
 
 
@@ -671,7 +671,7 @@ def _fetch_file_content_from_local_server(file_path: str) -> Optional[str]:
                 if isinstance(out, dict) and out.get("content") is not None:
                     return out.get("content", "")
         except Exception as e:
-            logger.debug(f"Failed to fetch file via socket: {e}")
+            logger.debug(f"Failed to fetch file via socket: {e}", e=e)
         return None
     try:
         import httpx
@@ -682,7 +682,7 @@ def _fetch_file_content_from_local_server(file_path: str) -> Optional[str]:
             if response.status_code == 200:
                 return response.json().get("content", "")
     except Exception as e:
-        logger.debug(f"Failed to fetch file content via LocalServer: {e}")
+        logger.debug(f"Failed to fetch file content via LocalServer: {e}", e=e)
     return None
 
 
@@ -713,12 +713,12 @@ def _sync_file_from_local_server_to_redis(file_path: str) -> bool:
         )
         logger.debug(
             f"CodeChangesManager: Synced file from LocalServer to Redis: {file_path}"
-        )
+        , file_path=file_path)
         return True
     except Exception as e:
         logger.debug(
             f"CodeChangesManager: Failed to sync file from LocalServer to Redis: {e}"
-        )
+        , e=e)
         return False
 
 
@@ -775,11 +775,11 @@ def _record_local_change_in_redis(
                 )
         logger.info(
             f"CodeChangesManager: Recorded local change in Redis for {operation} '{file_path}'"
-        )
+        , operation=operation, file_path=file_path)
     except Exception as e:
         logger.warning(
             f"CodeChangesManager: Failed to record local change in Redis: {e}"
-        )
+        , e=e)
 
 
 def _execute_local_write(operation: str, data: Dict[str, Any], file_path: str) -> Optional[str]:
@@ -798,7 +798,7 @@ def _execute_local_write(operation: str, data: Dict[str, Any], file_path: str) -
     if not should_route:
         # No tunnel available - user is not using VS Code extension
         # Return None to allow cloud fallback (for web UI users)
-        logger.info(f"[Local-First] No tunnel for {operation}, allowing cloud fallback")
+        logger.info(f"[Local-First] No tunnel for {operation}, allowing cloud fallback", operation=operation)
         return None
 
     # User has tunnel = using VS Code extension = expects LOCAL changes

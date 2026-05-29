@@ -282,7 +282,7 @@ class ConversationAPI:
 
             logger.info(
                 f"[post_message] tunnel_url={tunnel_url}, conversation_id={conversation_id}, user_id={user_id}"
-            )
+            , tunnel_url=tunnel_url, conversation_id=conversation_id, user_id=user_id)
 
             controller = ConversationController(db, async_db, user_id, user_email)
 
@@ -392,7 +392,7 @@ class ConversationAPI:
                 except Exception as e:
                     logger.warning(
                         f"Failed to retrieve attachments for message {last_human_message.id}: {e}"
-                    )
+                    , last_human_message_id=last_human_message.id, e=e)
                     attachment_ids = []
         except Exception as e:
             logger.error(f"Failed to get last human message for regenerate: {str(e)}")
@@ -423,7 +423,7 @@ class ConversationAPI:
         await async_redis.set_task_id(conversation_id, run_id, task_result.id)
         logger.info(
             f"Started regenerate task {task_result.id} for {conversation_id}:{run_id}"
-        )
+        , task_result_id=task_result.id, conversation_id=conversation_id, run_id=run_id)
 
         task_started = await async_redis.wait_for_task_start(
             conversation_id, run_id, timeout=30, require_running=True
@@ -431,7 +431,7 @@ class ConversationAPI:
         if not task_started:
             logger.warning(
                 f"Background regenerate task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
-            )
+            , conversation_id=conversation_id, run_id=run_id)
 
         return StreamingResponse(
             redis_stream_generator(conversation_id, run_id, cursor),
@@ -596,7 +596,7 @@ class ConversationAPI:
         task_status = await async_redis.get_task_status(conversation_id, session_id)
         logger.info(
             f"Resuming session {session_id} with status: {task_status}, cursor: {cursor}"
-        )
+        , session_id=session_id, task_status=task_status, cursor=cursor)
 
         return StreamingResponse(
             redis_stream_generator(conversation_id, session_id, cursor),
@@ -734,7 +734,7 @@ async def sync_code_change_from_local(
         if success:
             logger.info(
                 f"Synced {change_type} change for '{file_path}' in conversation {conversation_id}"
-            )
+            , change_type=change_type, file_path=file_path, conversation_id=conversation_id)
             return {
                 "message": "Change synced successfully",
                 "conversation_id": conversation_id,

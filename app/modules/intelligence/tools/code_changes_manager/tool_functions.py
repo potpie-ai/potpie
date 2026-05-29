@@ -57,7 +57,7 @@ def add_file_tool(input_data: AddFileInput) -> str:
         if project_id:
             logger.info(
                 f"Tool add_file_tool: Resolved project_id={project_id} from conversation_id={conversation_id}"
-            )
+            , project_id=project_id, conversation_id=conversation_id)
 
     logger.info(f"🔧 [Tool Call] add_file_tool: Adding file '{input_data.file_path}'")
 
@@ -108,7 +108,7 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
     """Update a file in the code changes manager"""
     logger.info(
         f"🔧 [Tool Call] update_file_tool: Updating file '{input_data.file_path}'"
-    )
+    , input_data_file_path=input_data.file_path)
 
     # LOCAL-FIRST: Try local execution first
     local_result = _execute_local_write(
@@ -185,7 +185,7 @@ def revert_file_tool(input_data: RevertFileInput) -> str:
 
 def delete_file_tool(input_data: DeleteFileInput) -> str:
     """Delete a file locally or mark for deletion in cloud"""
-    logger.info(f"Tool delete_file_tool: Deleting file '{input_data.file_path}'")
+    logger.info(f"Tool delete_file_tool: Deleting file '{input_data.file_path}'", input_data_file_path=input_data.file_path)
 
     # LOCAL-FIRST: Try local execution first
     local_result = _execute_local_write(
@@ -231,7 +231,7 @@ def delete_file_tool(input_data: DeleteFileInput) -> str:
 
 def get_file_tool(input_data: GetFileInput) -> str:
     """Get comprehensive change information and metadata for a specific file"""
-    logger.info(f"Tool get_file_tool: Retrieving file '{input_data.file_path}'")
+    logger.info(f"Tool get_file_tool: Retrieving file '{input_data.file_path}'", input_data_file_path=input_data.file_path)
 
     # Check if we should route to LocalServer
     if _should_route_to_local_server():
@@ -311,7 +311,7 @@ def list_files_tool(input_data: ListFilesInput) -> str:
     """List all files with changes, optionally filtered"""
     logger.info(
         f"Tool list_files_tool: Listing files (filter: {input_data.change_type_filter}, pattern: {input_data.path_pattern})"
-    )
+    , input_data_change_type_filter=input_data.change_type_filter, input_data_path_pattern=input_data.path_pattern)
     try:
         manager = _get_code_changes_manager()
 
@@ -356,7 +356,7 @@ def list_files_tool(input_data: ListFilesInput) -> str:
 
 def clear_file_tool(input_data: ClearFileInput) -> str:
     """Clear changes for a specific file"""
-    logger.info(f"Tool clear_file_tool: Clearing file '{input_data.file_path}'")
+    logger.info(f"Tool clear_file_tool: Clearing file '{input_data.file_path}'", input_data_file_path=input_data.file_path)
     try:
         manager = _get_code_changes_manager()
         success = manager.clear_file(input_data.file_path)
@@ -429,7 +429,7 @@ def get_changes_for_pr_tool(input_data: GetChangesForPRInput) -> str:
     """
     logger.info(
         f"Tool get_changes_for_pr_tool: Getting changes for conversation {input_data.conversation_id}"
-    )
+    , input_data_conversation_id=input_data.conversation_id)
     try:
         manager = CodeChangesManager(conversation_id=input_data.conversation_id)
         summary = manager.get_summary()
@@ -493,7 +493,7 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
         if input_data.project_id:
             logger.info(
                 f"Tool update_file_lines_tool: Project ID provided ({input_data.project_id}), fetching database session"
-            )
+            , input_data_project_id=input_data.project_id)
             from app.core.database import get_db
 
             db = next(get_db())
@@ -546,12 +546,12 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
         if project_id:
             logger.info(
                 f"Tool replace_in_file_tool: Resolved project_id={project_id} from conversation_id={conversation_id}"
-            )
+            , project_id=project_id, conversation_id=conversation_id)
 
     logger.info(
         f"🔧 [Tool Call] replace_in_file_tool: str_replace in '{input_data.file_path}' "
         f"(project_id={project_id})"
-    )
+    , input_data_file_path=input_data.file_path, project_id=project_id)
 
     # LOCAL-FIRST: Try local execution first
     local_result = _execute_local_write(
@@ -575,7 +575,7 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
         if project_id:
             logger.info(
                 f"Tool replace_in_file_tool: Project ID available ({project_id}), fetching database session"
-            )
+            , project_id=project_id)
             from app.core.database import get_db
 
             db = next(get_db())
@@ -640,7 +640,7 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
     logger.info(
         f"🔧 [Tool Call] insert_lines_tool: Inserting lines {position} line {input_data.line_number} "
         f"in '{input_data.file_path}' (project_id={input_data.project_id})"
-    )
+    , position=position, input_data_line_number=input_data.line_number, input_data_file_path=input_data.file_path, input_data_project_id=input_data.project_id)
 
     # LOCAL-FIRST: Try local execution first
     local_result = _execute_local_write(
@@ -667,7 +667,7 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
         if input_data.project_id:
             logger.info(
                 f"Tool insert_lines_tool: Project ID provided ({input_data.project_id}), fetching database session"
-            )
+            , input_data_project_id=input_data.project_id)
             from app.core.database import get_db
 
             db = next(get_db())
@@ -741,7 +741,7 @@ def delete_lines_tool(input_data: DeleteLinesInput) -> str:
         if input_data.project_id:
             logger.info(
                 f"Tool delete_lines_tool: Project ID provided ({input_data.project_id}), fetching database session"
-            )
+            , input_data_project_id=input_data.project_id)
             from app.core.database import get_db
 
             db = next(get_db())
@@ -889,11 +889,11 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
         if project_id:
             logger.info(
                 f"Tool show_diff_tool: Resolved project_id={project_id} from conversation_id={conversation_id}"
-            )
+            , project_id=project_id, conversation_id=conversation_id)
 
     logger.info(
         f"Tool show_diff_tool: Displaying diff(s) (file_path: {input_data.file_path}, context_lines: {input_data.context_lines}, project_id: {project_id})"
-    )
+    , input_data_file_path=input_data.file_path, input_data_context_lines=input_data.context_lines, project_id=project_id)
     try:
         manager = _get_code_changes_manager()
         summary = manager.get_summary()
@@ -908,7 +908,7 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
         if project_id:
             logger.info(
                 f"Tool show_diff_tool: Project ID available ({project_id}), fetching database session"
-            )
+            , project_id=project_id)
             from app.core.database import get_db
 
             db = next(get_db())
@@ -983,7 +983,7 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
                                 except GitOperationError as git_error:
                                     logger.warning(
                                         f"Tool show_diff_tool: Git operation timed out: {git_error}"
-                                    )
+                                    , git_error=git_error)
                                     repo_content = None
 
                                 if repo_content:
@@ -991,7 +991,7 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
                         except Exception as e:
                             logger.warning(
                                 f"Tool show_diff_tool: Error fetching from repository: {e}"
-                            )
+                            , e=e)
                             old_content = None
 
                     # Fallback to filesystem
@@ -1044,7 +1044,7 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
             except Exception as e:
                 logger.warning(
                     f"Tool show_diff_tool: Failed to get reasoning hash: {e}"
-                )
+                , e=e)
 
             # Create JSON with model_patch and reasoning_hash fields
             diff_data = {"model_patch": combined_diff}
@@ -1057,11 +1057,11 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
             logger.info(
                 f"Tool show_diff_tool: Diff written to {filepath} "
                 f"(reasoning_hash: {reasoning_hash})"
-            )
+            , filepath=filepath, reasoning_hash=reasoning_hash)
         except Exception as e:
             logger.warning(
                 f"Tool show_diff_tool: Failed to write diff to .data folder: {e}"
-            )
+            , e=e)
 
         # Output clean diff format
         result = "--generated diff--\n\n"
@@ -1091,7 +1091,7 @@ def get_file_diff_tool(input_data: GetFileDiffInput) -> str:
     """
     logger.info(
         f"Tool get_file_diff_tool: Getting diff for '{input_data.file_path}' (context_lines: {input_data.context_lines}, project_id: {input_data.project_id})"
-    )
+    , input_data_file_path=input_data.file_path, input_data_context_lines=input_data.context_lines, input_data_project_id=input_data.project_id)
     try:
         # In local mode, sync file from LocalServer to Redis so diff reflects current local content
         if _should_route_to_local_server():
@@ -1152,7 +1152,7 @@ def get_file_diff_tool(input_data: GetFileDiffInput) -> str:
         if input_data.project_id:
             logger.info(
                 f"Tool get_file_diff_tool: Project ID provided ({input_data.project_id}), fetching database session"
-            )
+            , input_data_project_id=input_data.project_id)
             from app.core.database import get_db
 
             db = next(get_db())
@@ -1261,7 +1261,7 @@ def export_changes_tool(input_data: ExportChangesInput) -> str:
     """Export all changes in the specified format"""
     logger.info(
         f"Tool export_changes_tool: Exporting changes in '{input_data.format}' format"
-    )
+    , input_data_format=input_data.format)
     try:
         manager = _get_code_changes_manager()
 
@@ -1270,7 +1270,7 @@ def export_changes_tool(input_data: ExportChangesInput) -> str:
         if input_data.project_id:
             logger.info(
                 f"Tool export_changes_tool: Project ID provided ({input_data.project_id}), fetching database session"
-            )
+            , input_data_project_id=input_data.project_id)
             from app.core.database import get_db
 
             db = next(get_db())

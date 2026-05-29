@@ -66,7 +66,7 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
     """
     logger.info(
         f"🔧 [Tool Call] execute_terminal_command: Executing '{input_data.command}' (mode: {input_data.mode})"
-    )
+    , input_data_command=input_data.command, input_data_mode=input_data.mode)
 
     user_id, conversation_id = get_context_vars()
 
@@ -123,7 +123,7 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
         # Workspace socket was registered but request failed
         logger.warning(
             f"⚠️ [execute_terminal_command] Workspace socket registered ({tunnel_url}) but not reachable (error: {error_type})"
-        )
+        , tunnel_url=tunnel_url, error_type=error_type)
         return (
             f"❌ **Workspace socket connection error**\n\n"
             f"The extension is registered (`{tunnel_url}`) but the request failed.\n\n"
@@ -157,7 +157,7 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
         # No workspace socket available: no user_id, or no workspace_id (repo not in context), or socket not registered
         logger.warning(
             f"⚠️ [execute_terminal_command] Workspace socket not available (error: {error_type})"
-        )
+        , error_type=error_type)
         return (
             "❌ Terminal command requires the VS Code extension (Socket.IO workspace connection) for local execution.\n\n"
             "**Local execution (required):**\n"

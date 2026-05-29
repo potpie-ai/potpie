@@ -199,7 +199,7 @@ class ChangeDetectionTool:
             logger.error(
                 f"[CHANGE_DETECTION] Error searching for node by file and name: {e}",
                 exc_info=True,
-            )
+             e=e)
             return None
 
     def _get_gitignore_spec(self, repo_path: str) -> Optional[pathspec.PathSpec]:
@@ -316,7 +316,7 @@ class ChangeDetectionTool:
                     if any(start_line < line < end_line for line in lines):
                         result.append(node_name)
             except Exception as e:
-                logger.error(f"Exception {e}")
+                logger.error(f"Exception {e}", e=e)
         return result
 
     async def get_updated_function_list(self, patch_details, project_id):
@@ -381,12 +381,12 @@ class ChangeDetectionTool:
     async def get_code_changes(self, project_id):
         logger.info(
             f"[CHANGE_DETECTION] Starting get_code_changes for project_id: {project_id}"
-        )
+        , project_id=project_id)
         patches_dict = {}
         project_details = await ProjectService(self.sql_db).get_project_from_db_by_id(
             project_id
         )
-        logger.info(f"[CHANGE_DETECTION] Retrieved project details: {project_details}")
+        logger.info(f"[CHANGE_DETECTION] Retrieved project details: {project_details}", project_details=project_details)
 
         if project_details is None:
             raise HTTPException(status_code=400, detail="Project Details not found.")
@@ -401,7 +401,7 @@ class ChangeDetectionTool:
         repo_path = project_details["repo_path"]
         logger.info(
             f"[CHANGE_DETECTION] Project info - repo: {repo_name}, branch: {branch_name}, path: {repo_path}"
-        )
+        , repo_name=repo_name, branch_name=branch_name, repo_path=repo_path)
 
         # Use CodeProviderService to get the appropriate service instance
         code_service = CodeProviderService(self.sql_db)
@@ -433,14 +433,14 @@ class ChangeDetectionTool:
                     actual_repo_name = repo_path
                     logger.info(
                         f"[CHANGE_DETECTION] Using local repo_path: {actual_repo_name}"
-                    )
+                    , actual_repo_name=actual_repo_name)
                 else:
                     actual_repo_name = get_actual_repo_name_for_lookup(
                         repo_name, provider_type
                     )
                     logger.info(
                         f"[CHANGE_DETECTION] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
-                    )
+                    , provider_type=provider_type, repo_name=repo_name, actual_repo_name=actual_repo_name)
 
                 # For local repos, skip provider creation and use git diff directly
                 if repo_path and os.path.isdir(repo_path):
@@ -467,7 +467,7 @@ class ChangeDetectionTool:
                     current_branch = branch_name or git_repo.active_branch.name
                     logger.info(
                         f"[CHANGE_DETECTION] Local repo - comparing {default_branch}..{current_branch}"
-                    )
+                    , default_branch=default_branch, current_branch=current_branch)
 
                     # Get all changes from default branch (includes committed + uncommitted)
                     # This is equivalent to: git diff <default_branch>
@@ -501,7 +501,7 @@ class ChangeDetectionTool:
                                         else:
                                             logger.debug(
                                                 f"[CHANGE_DETECTION] Excluding ignored file: {current_file}"
-                                            )
+                                            , current_file=current_file)
                                     # Extract filename
                                     parts = line.split()
                                     if len(parts) >= 3:
@@ -521,7 +521,7 @@ class ChangeDetectionTool:
                                 else:
                                     logger.debug(
                                         f"[CHANGE_DETECTION] Excluding ignored file: {current_file}"
-                                    )
+                                    , current_file=current_file)
 
                         logger.info(
                             f"[CHANGE_DETECTION] Local repo - found {len(patches_dict)} changed files (diff from {default_branch})"
@@ -529,7 +529,7 @@ class ChangeDetectionTool:
                     except Exception as e:
                         logger.error(
                             f"[CHANGE_DETECTION] Error getting local changes: {e}"
-                        )
+                        , e=e)
                         patches_dict = {}
                 else:
                     # Remote repository - create provider with proper auth
@@ -542,7 +542,7 @@ class ChangeDetectionTool:
                     default_branch = repo.default_branch
                     logger.info(
                         f"[CHANGE_DETECTION] Remote repo - default branch: {default_branch}, comparing with: {branch_name}"
-                    )
+                    , default_branch=default_branch, branch_name=branch_name)
 
                     # Use provider's compare_branches method
                     logger.info(
@@ -581,14 +581,14 @@ class ChangeDetectionTool:
                 )
                 logger.info(
                     f"[CHANGE_DETECTION] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
-                )
+                , provider_type=provider_type, repo_name=repo_name, actual_repo_name=actual_repo_name)
 
                 repo = github.get_repo(actual_repo_name)
-                logger.info(f"[CHANGE_DETECTION] Got repo object: {repo.name}")
+                logger.info(f"[CHANGE_DETECTION] Got repo object: {repo.name}", repo_name=repo.name)
                 default_branch = repo.default_branch
                 logger.info(
                     f"[CHANGE_DETECTION] Default branch: {default_branch}, comparing with: {branch_name}"
-                )
+                , default_branch=default_branch, branch_name=branch_name)
 
                 # GitBucket workaround: Use commits API to get diff
                 if provider_type == "gitbucket":
@@ -600,7 +600,7 @@ class ChangeDetectionTool:
                         # Get commits on the branch
                         logger.info(
                             f"[CHANGE_DETECTION] Getting commits for branch: {branch_name}"
-                        )
+                        , branch_name=branch_name)
                         commits = repo.get_commits(sha=branch_name)
 
                         patches_dict = {}
@@ -634,7 +634,7 @@ class ChangeDetectionTool:
                                     patches_dict[file.filename] = file.patch
                                     logger.info(
                                         f"[CHANGE_DETECTION] Added patch for file: {file.filename}"
-                                    )
+                                    , file_filename=file.filename)
 
                             # Limit to reasonable number of commits
                             if commit_count >= 50:
@@ -756,7 +756,7 @@ class ChangeDetectionTool:
                         ):
                             logger.warning(
                                 f"[CHANGE_DETECTION] Missing required fields for node {node_id}"
-                            )
+                            , node_id=node_id)
                             continue
 
                         node_code_dict[node_id] = {
@@ -774,7 +774,7 @@ class ChangeDetectionTool:
                         if node not in node_code_dict:
                             logger.warning(
                                 f"[CHANGE_DETECTION] Skipping node {node} - not in node_code_dict"
-                            )
+                            , node=node)
                             continue
 
                         entry_point_code = code_from_node_tool.run(
@@ -795,7 +795,7 @@ class ChangeDetectionTool:
                         ):
                             logger.warning(
                                 f"[CHANGE_DETECTION] Missing required fields in entry point code: {entry_point_code}"
-                            )
+                            , entry_point_code=entry_point_code)
                             continue
 
                         changes_list.append(

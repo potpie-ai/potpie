@@ -154,7 +154,7 @@ def handle_exception(tool_func):
             try:
                 return await tool_func(*args, **kwargs)
             except Exception as e:
-                logger.error(f"Exception in tool function: {e}")
+                logger.error(f"Exception in tool function: {e}", e=e)
                 return "An internal error occurred. Please try again later."
 
         return async_wrapper
@@ -165,7 +165,7 @@ def handle_exception(tool_func):
             try:
                 return tool_func(*args, **kwargs)
             except Exception as e:
-                logger.error(f"Exception in tool function: {e}")
+                logger.error(f"Exception in tool function: {e}", e=e)
                 return "An internal error occurred. Please try again later."
 
         return wrapper

@@ -139,7 +139,7 @@ class CodeProviderTool:
             )
             logger.info(
                 f"[CODE_PROVIDER_TOOL] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
-            )
+            , provider_type=provider_type, repo_name=repo_name, actual_repo_name=actual_repo_name)
 
             repo = github.get_repo(actual_repo_name)
 

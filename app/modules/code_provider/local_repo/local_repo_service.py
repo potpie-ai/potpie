@@ -73,7 +73,7 @@ class LocalRepoService:
     ) -> str:
         logger.info(
             f"Attempting to access file: {file_path} for project ID: {project_id}"
-        )
+        , file_path=file_path, project_id=project_id)
         try:
             project = self.project_manager.get_project_from_db_by_id_sync(project_id)
             if not project:

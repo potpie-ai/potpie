@@ -64,7 +64,7 @@ class MessageService:
             )
             logger.info(
                 f"Created new message with ID: {message_id} for conversation: {conversation_id}"
-            )
+            , message_id=message_id, conversation_id=conversation_id)
             return new_message
 
         except InvalidMessageError as e:
@@ -96,7 +96,7 @@ class MessageService:
                 None, self._sync_mark_message_archived, message_id
             )
             # TODO: add conversation_id to the log
-            logger.info(f"Marked message {message_id} as archived")
+            logger.info(f"Marked message {message_id} as archived", message_id=message_id)
         except MessageNotFoundError as e:
             logger.warning(str(e))
             raise

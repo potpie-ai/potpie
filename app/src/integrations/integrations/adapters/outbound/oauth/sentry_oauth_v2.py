@@ -118,7 +118,7 @@ class SentryOAuthV2:
             )
         )
 
-        logger.info(f"Generated Sentry OAuth URL: {sanitized_url}")
+        logger.info(f"Generated Sentry OAuth URL: {sanitized_url}", sanitized_url=sanitized_url)
         return auth_url
 
     async def exchange_code_for_tokens(
@@ -202,6 +202,7 @@ class SentryOAuthV2:
                 )
 
                 if response.status_code != 200:
+                    logger.error(f"Failed to get organizations: {response.status_code}", response_status_code=response.status_code)
                     logger.error(f"Failed to get organizations: {response.status_code}")
                     raise HTTPException(
                         status_code=response.status_code,

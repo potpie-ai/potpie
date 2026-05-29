@@ -165,14 +165,14 @@ class GetCodeFromProbableNodeNameTool:
             if not node_data:
                 logger.error(
                     f"Node with ID '{node_id}' not found in repo '{project_id}'"
-                )
+                , node_id=node_id, project_id=project_id)
                 return {
                     "error": f"Node with ID '{node_id}' not found in repo '{project_id}'"
                 }
 
             project = self._get_project(project_id)
             if not project:
-                logger.error(f"Project with ID '{project_id}' not found in database")
+                logger.error(f"Project with ID '{project_id}' not found in database", project_id=project_id)
                 return {
                     "error": f"Project with ID '{project_id}' not found in database"
                 }
@@ -254,7 +254,7 @@ class GetCodeFromProbableNodeNameTool:
         if len(str(result)) > 80000:
             logger.warning(
                 f"get_code_from_probable_node_name output truncated for node_id={node_id}, project_id={project_id}"
-            )
+            , node_id=node_id, project_id=project_id)
         return truncated_result
 
     @staticmethod

@@ -64,7 +64,7 @@ class ProjectService:
             project_name = projects[0].repo_name
             logger.info(
                 f"Retrieved project name: {project_name} for project IDs: {project_ids}"
-            )
+            , project_name=project_name, project_ids=project_ids)
             return project_name
         except SQLAlchemyError as e:
             raise ProjectServiceError(
@@ -106,7 +106,7 @@ class ProjectService:
             # Update the existing project with new information (e.g., normalized repo_name)
             logger.info(
                 f"Project {project_id} already exists. Updating repo_name from '{existing_project.repo_name}' to '{repo_name}'"
-            )
+            , project_id=project_id, existing_project_repo_name=existing_project.repo_name, repo_name=repo_name)
             existing_project.repo_name = repo_name
             existing_project.branch_name = branch_name
             existing_project.repo_path = repo_path
@@ -117,7 +117,7 @@ class ProjectService:
                 self.db.commit()
                 self.db.refresh(existing_project)
             except Exception:
-                logger.exception(f"Error updating existing project {project_id}")
+                logger.exception(f"Error updating existing project {project_id}", project_id=project_id)
                 self.db.rollback()
                 raise
             message = f"Project id '{project_id}' for repo '{repo_name}' and branch '{branch_name}' updated successfully."
@@ -137,7 +137,7 @@ class ProjectService:
         try:
             project = ProjectService.create_project(self.db, project)
         except Exception as e:
-            logger.error(f"Error creating project {project_id}: {e}")
+            logger.error(f"Error creating project {project_id}: {e}", project_id=project_id, e=e)
             self.db.rollback()
             raise
         message = f"Project id '{project.id}' for repo '{repo_name}' and branch '{branch_name}' registered successfully."
@@ -214,9 +214,9 @@ class ProjectService:
             )
             logger.info(
                 f"Project with ID {project_id} has now been updated with status {status}."
-            )
+            , project_id=project_id, status=status)
         except Exception:
-            logger.exception(f"Error updating project status for {project_id}")
+            logger.exception(f"Error updating project status for {project_id}", project_id=project_id)
             self.db.rollback()
             raise
 
@@ -254,24 +254,24 @@ class ProjectService:
         logger.info(
             f"Looking up project: repo_name={repo_name}, branch={branch_name}, "
             f"user={user_id}, repo_path={repo_path}, commit_id={commit_id}"
-        )
+        , repo_name=repo_name, branch_name=branch_name, user_id=user_id, repo_path=repo_path, commit_id=commit_id)
 
         if commit_id:
             # If commit_id is provided, only check by commit_id (no fallback to branch)
             # This ensures repo+commit_id maps to exactly one project
             project = query.filter(Project.commit_id == commit_id).first()
             if project:
-                logger.info(f"Found project by commit_id: {project.id}")
+                logger.info(f"Found project by commit_id: {project.id}", project_id=project.id)
                 return project
             logger.info(
                 f"No project found with commit_id={commit_id}; not falling back to branch lookup."
-            )
+            , commit_id=commit_id)
             return None
 
         # Fall back to branch_name lookup only if commit_id was not provided
         project = query.filter(Project.branch_name == branch_name).first()
         if project:
-            logger.info(f"Found project by branch_name: {project.id}")
+            logger.info(f"Found project by branch_name: {project.id}", project_id=project.id)
         else:
             logger.info("No existing project found for this repository and branch")
         return project
@@ -462,7 +462,7 @@ class ProjectService:
             if project:
                 logger.info(
                     f"Retrieved demo repo ID: {project.id} for repo name: {repo_name}"
-                )
+                , project_id=project.id, repo_name=repo_name)
                 return project.id  # Return the demo repo ID
             else:
                 raise ProjectNotFoundError(

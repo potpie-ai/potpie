@@ -109,7 +109,7 @@ class AnalyticsAPI:
             return [TokensByDay(**r) for r in rows]
         except ValueError as e:
             error_msg = str(e)
-            logger.error(f"ValueError in tokens-by-day: {error_msg}")
+            logger.error(f"ValueError in tokens-by-day: {error_msg}", error_msg=error_msg)
             if "LOGFIRE_READ_TOKEN" in error_msg:
                 raise HTTPException(
                     status_code=500,
@@ -155,7 +155,7 @@ class AnalyticsAPI:
             return analytics_data
         except ValueError as e:
             error_msg = str(e)
-            logger.error(f"ValueError in analytics: {error_msg}")
+            logger.error(f"ValueError in analytics: {error_msg}", error_msg=error_msg)
             if "LOGFIRE_READ_TOKEN" in error_msg:
                 raise HTTPException(
                     status_code=500,
@@ -210,7 +210,7 @@ class AnalyticsAPI:
             return spans
         except ValueError as e:
             error_msg = str(e)
-            logger.error(f"ValueError in raw spans: {error_msg}")
+            logger.error(f"ValueError in raw spans: {error_msg}", error_msg=error_msg)
             if "LOGFIRE_READ_TOKEN" in error_msg:
                 raise HTTPException(
                     status_code=500,
@@ -260,7 +260,7 @@ class AnalyticsAPI:
             return raw
         except ValueError as e:
             error_msg = str(e)
-            logger.error(f"Configuration error: {error_msg}")
+            logger.error(f"Configuration error: {error_msg}", error_msg=error_msg)
             if "LOGFIRE_READ_TOKEN" in error_msg:
                 raise HTTPException(
                     status_code=500,

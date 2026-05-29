@@ -109,14 +109,14 @@ class GetCodeFromNodeIdTool:
             if not node_data:
                 logger.warning(
                     f"Node with ID '{node_id}' not found in repo '{project_id}'"
-                )
+                , node_id=node_id, project_id=project_id)
                 return {
                     "error": f"Node with ID '{node_id}' not found in repo '{project_id}'"
                 }
 
             project = self._get_project(project_id)
             if not project:
-                logger.error(f"Project with ID '{project_id}' not found in database")
+                logger.error(f"Project with ID '{project_id}' not found in database", project_id=project_id)
                 return {
                     "error": f"Project with ID '{project_id}' not found in database"
                 }
@@ -162,12 +162,12 @@ class GetCodeFromNodeIdTool:
         if not node_data or "file_path" not in node_data:
             logger.error(
                 f"Node data is incomplete or missing file_path for node_id: {node_id}"
-            )
+            , node_id=node_id)
             return {"error": f"Node data is incomplete for node_id: {node_id}"}
 
         file_path = node_data["file_path"]
         if file_path is None:
-            logger.error(f"File path is None for node_id: {node_id}")
+            logger.error(f"File path is None for node_id: {node_id}", node_id=node_id)
             return {"error": f"File path is None for node_id: {node_id}"}
 
         start_line = node_data["start_line"]
@@ -206,7 +206,7 @@ class GetCodeFromNodeIdTool:
         if len(str(result)) > 80000:
             logger.warning(
                 f"get_code_from_node_id output truncated for node_id={node_id}, project_id={project.id}"
-            )
+            , node_id=node_id, project_id=project.id)
         return truncated_result
 
     @staticmethod

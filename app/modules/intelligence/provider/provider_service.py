@@ -316,7 +316,7 @@ def sanitize_messages_for_tracing(messages: list) -> list:
                     sanitized_msg["content"] = ""
                     logger.debug(
                         f"Sanitized message {idx}: converted None content to empty string"
-                    )
+                    , idx=idx)
                 # Handle nested content structures (e.g., multimodal messages)
                 elif "content" in sanitized_msg and isinstance(
                     sanitized_msg["content"], list
@@ -327,7 +327,7 @@ def sanitize_messages_for_tracing(messages: list) -> list:
                             # Skip None items in content list
                             logger.debug(
                                 f"Sanitized message {idx}: skipping None item at index {item_idx} in content list"
-                            )
+                            , idx=idx, item_idx=item_idx)
                             continue
                         elif isinstance(item, dict):
                             sanitized_item = item.copy()
@@ -337,7 +337,7 @@ def sanitize_messages_for_tracing(messages: list) -> list:
                                     sanitized_item[key] = ""
                                     logger.debug(
                                         f"Sanitized message {idx}: converted None value for key '{key}' to empty string"
-                                    )
+                                    , idx=idx, key=key)
                             sanitized_content.append(sanitized_item)
                         else:
                             sanitized_content.append(item)
@@ -348,7 +348,7 @@ def sanitize_messages_for_tracing(messages: list) -> list:
                         sanitized_msg[key] = ""
                         logger.debug(
                             f"Sanitized message {idx}: converted None value for key '{key}' to empty string"
-                        )
+                        , idx=idx, key=key)
                 sanitized.append(sanitized_msg)
             else:
                 sanitized.append(msg)
@@ -357,7 +357,7 @@ def sanitize_messages_for_tracing(messages: list) -> list:
             logger.warning(
                 f"Error sanitizing message {idx}: {e}. Message will be included as-is.",
                 exc_info=True,
-            )
+             idx=idx, e=e)
             sanitized.append(msg)
     return sanitized
 
@@ -1207,7 +1207,7 @@ class ProviderService:
             # Fallback to OpenAI format for unknown providers
             logger.warning(
                 f"Unknown provider {provider}, using OpenAI format for multimodal"
-            )
+            , provider=provider)
             return self._format_openai_multimodal_message(text_content, images)
 
     def _format_openai_multimodal_message(
@@ -1277,7 +1277,7 @@ class ProviderService:
                 if "base64" not in img_data or not img_data["base64"]:
                     logger.warning(
                         f"Skipping image {img_id}: missing or empty base64 data"
-                    )
+                    , img_id=img_id)
                     continue
 
                 base64_data = str(img_data["base64"])
@@ -1303,7 +1303,7 @@ class ProviderService:
                 if mime_type not in supported_types:
                     logger.warning(
                         f"Skipping image {img_id}: unsupported MIME type {mime_type}"
-                    )
+                    , img_id=img_id, mime_type=mime_type)
                     continue
 
                 # Basic base64 validation (should start with valid characters)
@@ -1313,7 +1313,7 @@ class ProviderService:
                     .replace("=", "")
                     .isalnum()
                 ):
-                    logger.warning(f"Skipping image {img_id}: invalid base64 encoding")
+                    logger.warning(f"Skipping image {img_id}: invalid base64 encoding", img_id=img_id)
                     continue
 
                 # Image passed validation
@@ -1342,7 +1342,7 @@ class ProviderService:
         config = self.chat_config if config_type == "chat" else self.inference_config
         model_name = config.model.lower()
 
-        logger.info(f"Checking if model '{config.model}' supports vision capabilities")
+        logger.info(f"Checking if model '{config.model}' supports vision capabilities", config_model=config.model)
 
         # Known vision models - expanded list
         vision_models = [
@@ -1385,12 +1385,12 @@ class ProviderService:
         ]
 
         is_vision = any(vision_model in model_name for vision_model in vision_models)
-        logger.info(f"Model '{config.model}' vision support: {is_vision}")
+        logger.info(f"Model '{config.model}' vision support: {is_vision}", config_model=config.model, is_vision=is_vision)
 
         if not is_vision:
             logger.warning(
                 f"Model '{config.model}' may not support vision. Known vision models: {vision_models}"
-            )
+            , config_model=config.model, vision_models=vision_models)
 
         return is_vision
 

@@ -205,7 +205,7 @@ class PydanticMultiAgent(ChatAgent):
         logger.info(
             f"🔄 [PydanticMultiAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
             f"ctx.conversation_id={ctx.conversation_id}"
-        )
+        , ctx_tunnel_url=ctx.tunnel_url, ctx_user_id=ctx.user_id, ctx_conversation_id=ctx.conversation_id)
         init_managers(
             conversation_id=ctx.conversation_id,
             agent_id=ctx.curr_agent_id,
@@ -223,7 +223,7 @@ class PydanticMultiAgent(ChatAgent):
             doc_count = len(ctx.get_all_documents()) if ctx.has_documents() else 0
             logger.info(
                 f"Processing multimodal content with PydanticAI: {image_count} images, {doc_count} documents"
-            )
+            , image_count=image_count, doc_count=doc_count)
             return await self._multimodal_flow.run(ctx)
         else:
             if has_multimodal_content and not self.llm_provider.is_vision_model():
@@ -250,7 +250,7 @@ class PydanticMultiAgent(ChatAgent):
         logger.info(
             f"🔄 [PydanticMultiAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
             f"ctx.conversation_id={ctx.conversation_id}"
-        )
+        , ctx_tunnel_url=ctx.tunnel_url, ctx_user_id=ctx.user_id, ctx_conversation_id=ctx.conversation_id)
         init_managers(
             conversation_id=ctx.conversation_id,
             agent_id=ctx.curr_agent_id,
@@ -268,7 +268,7 @@ class PydanticMultiAgent(ChatAgent):
             doc_count = len(ctx.get_all_documents()) if ctx.has_documents() else 0
             logger.info(
                 f"Processing multimodal content with PydanticAI: {image_count} images, {doc_count} documents"
-            )
+            , image_count=image_count, doc_count=doc_count)
             async for chunk in self._multimodal_streaming_flow.run_stream(ctx):
                 yield chunk
         else:

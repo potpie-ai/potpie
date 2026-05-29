@@ -151,7 +151,7 @@ async def get_custom_agent_info(
     user=Depends(auth_handler.check_auth),
 ):
     """Get information about a specific custom agent"""
-    logger.info(f"Getting custom agent info for agent_id: {agent_id}")
+    logger.info(f"Getting custom agent info for agent_id: {agent_id}", agent_id=agent_id)
     user_id = user["user_id"]
     custom_agent_controller = CustomAgentController(user_id, db)
     try:
@@ -169,7 +169,7 @@ async def get_agent_shares(
     user=Depends(auth_handler.check_auth),
 ):
     """Get a list of all emails this agent has been shared with"""
-    logger.info(f"Getting shares for agent_id: {agent_id}")
+    logger.info(f"Getting shares for agent_id: {agent_id}", agent_id=agent_id)
     user_id = user["user_id"]
     custom_agent_controller = CustomAgentController(user_id, db)
     try:

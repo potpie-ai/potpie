@@ -49,7 +49,7 @@ def get_architecture() -> Optional[str]:
     arch = arch_map.get(machine)
 
     if not arch:
-        logger.warning(f"Unsupported architecture: {machine}")
+        logger.warning(f"Unsupported architecture: {machine}", machine=machine)
         return None
 
     # gVisor primarily supports Linux
@@ -57,7 +57,7 @@ def get_architecture() -> Optional[str]:
         logger.warning(
             f"gVisor is primarily designed for Linux. Current system: {system}. "
             f"Installation may not work correctly."
-        )
+        , system=system)
 
     return arch
 
@@ -108,7 +108,7 @@ def check_runsc_installed(install_path: Path) -> bool:
         )
         return result.returncode == 0
     except Exception as e:
-        logger.debug(f"Error checking runsc: {e}")
+        logger.debug(f"Error checking runsc: {e}", e=e)
         return False
 
 
@@ -144,10 +144,10 @@ def download_file(url: str, dest: Path) -> bool:
                 urllib.request.urlretrieve(url, dest)
                 return True
             except urllib.error.URLError as e:
-                logger.error(f"Failed to download {url} with urllib: {e}")
+                logger.error(f"Failed to download {url} with urllib: {e}", url=url, e=e)
                 return False
     except Exception as e:
-        logger.error(f"Failed to download {url}: {e}")
+        logger.error(f"Failed to download {url}: {e}", url=url, e=e)
         return False
 
 
@@ -193,7 +193,7 @@ def verify_checksum(file_path: Path, checksum_url: str) -> bool:
             return False
 
     except Exception as e:
-        logger.warning(f"Error verifying checksum: {e}, continuing anyway")
+        logger.warning(f"Error verifying checksum: {e}, continuing anyway", e=e)
         return True  # Continue anyway
 
 
@@ -217,11 +217,11 @@ def install_gvisor(force: bool = False) -> bool:
 
     # Check if already installed
     if not force and check_runsc_installed(install_path):
-        logger.info(f"gVisor runsc is already installed at {runsc_path}")
+        logger.info(f"gVisor runsc is already installed at {runsc_path}", runsc_path=runsc_path)
         return True
 
-    logger.info(f"Installing gVisor runsc for architecture: {arch}")
-    logger.info(f"Installation path: {install_path}")
+    logger.info(f"Installing gVisor runsc for architecture: {arch}", arch=arch)
+    logger.info(f"Installation path: {install_path}", install_path=install_path)
 
     # Create installation directory if it doesn't exist
     install_path.mkdir(parents=True, exist_ok=True)
@@ -236,7 +236,7 @@ def install_gvisor(force: bool = False) -> bool:
 
     try:
         # Download runsc binary
-        logger.info(f"Downloading runsc from {runsc_url}")
+        logger.info(f"Downloading runsc from {runsc_url}", runsc_url=runsc_url)
         if not download_file(runsc_url, temp_path):
             logger.error("Failed to download runsc binary")
             return False
@@ -255,7 +255,7 @@ def install_gvisor(force: bool = False) -> bool:
             runsc_path.unlink()
         temp_path.rename(runsc_path)
 
-        logger.info(f"Successfully installed gVisor runsc to {runsc_path}")
+        logger.info(f"Successfully installed gVisor runsc to {runsc_path}", runsc_path=runsc_path)
 
         # Verify installation
         if check_runsc_installed(install_path):

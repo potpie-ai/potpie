@@ -116,7 +116,7 @@ class GetCodeFileStructureTool:
             if not tunnel_url:
                 logger.debug(
                     f"[get_code_file_structure] No tunnel available for user {user_id}"
-                )
+                , user_id=user_id)
                 return None
 
             # Socket path: use Socket.IO RPC
@@ -151,7 +151,7 @@ class GetCodeFileStructureTool:
 
             logger.info(
                 f"[get_code_file_structure] 🚀 Routing to LocalServer: {url_with_params}"
-            )
+            , url_with_params=url_with_params)
 
             with httpx.Client(timeout=30.0) as client:
                 response = client.get(url_with_params)
@@ -191,26 +191,26 @@ class GetCodeFileStructureTool:
                         logger.warning(
                             f"[get_code_file_structure] ❌ Stale tunnel detected ({status_code}): {tunnel_url}. "
                             f"Invalidating tunnel URL and falling back to remote."
-                        )
+                        , status_code=status_code, tunnel_url=tunnel_url)
 
                         # Invalidate the stale tunnel URL
                         try:
                             tunnel_service.unregister_tunnel(user_id, conversation_id)
                             logger.info(
                                 f"[get_code_file_structure] ✅ Invalidated stale tunnel for user {user_id}"
-                            )
+                            , user_id=user_id)
                         except Exception as e:
                             logger.error(
                                 f"[get_code_file_structure] Failed to invalidate tunnel: {e}"
-                            )
+                            , e=e)
 
                     logger.debug(
                         f"[get_code_file_structure] LocalServer returned {status_code}"
-                    )
+                    , status_code=status_code)
                     return None
 
         except Exception as e:
-            logger.debug(f"[get_code_file_structure] Local routing failed: {e}")
+            logger.debug(f"[get_code_file_structure] Local routing failed: {e}", e=e)
             return None
 
     async def _try_sandbox(self, project_id: str, path: Optional[str]) -> Optional[str]:
@@ -223,7 +223,7 @@ class GetCodeFileStructureTool:
         try:
             structure = await list_dir_via_sandbox(project_id, path)
         except Exception as exc:  # noqa: BLE001
-            logger.debug(f"[get_code_file_structure] sandbox list_dir failed: {exc}")
+            logger.debug(f"[get_code_file_structure] sandbox list_dir failed: {exc}", exc=exc)
             return None
         if not structure:
             return None
@@ -247,7 +247,7 @@ class GetCodeFileStructureTool:
         # Tier 3 — CodeProviderService (GitHub or LocalRepoService).
         logger.debug(
             f"[get_code_file_structure] Falling back to remote for project {project_id}, path={path}"
-        )
+        , project_id=project_id, path=path)
         return await self.cp_service.get_project_structure_async(project_id, path)
 
     async def arun(self, project_id: str, path: Optional[str] = None) -> str:
@@ -261,7 +261,7 @@ class GetCodeFileStructureTool:
                 )
             return truncated_result
         except Exception as e:
-            logger.error(f"Error fetching file structure: {e}")
+            logger.error(f"Error fetching file structure: {e}", e=e)
             return "error fetching data"
 
     def run(self, project_id: str, path: Optional[str] = None) -> str:
@@ -275,7 +275,7 @@ class GetCodeFileStructureTool:
                 )
             return truncated_result
         except Exception as e:
-            logger.error(f"Error fetching file structure: {e}")
+            logger.error(f"Error fetching file structure: {e}", e=e)
             return "error fetching data"
 
 

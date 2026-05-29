@@ -68,7 +68,7 @@ def init_managers(
     _reset_requirement_manager()
     logger.info(
         f"🔄 Initialized managers for agent run (conversation_id={conversation_id}, agent_id={agent_id}, user_id={user_id}, tunnel_url={tunnel_url})"
-    )
+    , conversation_id=conversation_id, agent_id=agent_id, user_id=user_id, tunnel_url=tunnel_url)
 
 
 # Backward compatibility alias
@@ -152,7 +152,7 @@ class StandardExecutionFlow:
                     logger.warning(
                         f"MCP server initialization failed in standard run: {error_detail}",
                         exc_info=True,
-                    )
+                     error_detail=error_detail)
                     # Check if it's a JSON parsing error
                     if (
                         "json" in str(mcp_error).lower()

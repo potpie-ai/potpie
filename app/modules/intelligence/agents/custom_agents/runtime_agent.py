@@ -98,7 +98,7 @@ class RuntimeCustomAgent(ChatAgent):
         except Exception as e:
             logger.warning(
                 f"Failed to extract MCP servers from task configuration: {e}. Continuing without MCP servers."
-            )
+            , e=e)
             mcp_servers = []
 
         supports_pydantic = self.llm_provider.supports_pydantic("chat")
@@ -106,9 +106,9 @@ class RuntimeCustomAgent(ChatAgent):
 
         logger.info(
             f"RuntimeCustomAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
-        )
-        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
-        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+        , supports_pydantic=supports_pydantic, should_use_multi=should_use_multi)
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}", self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}", self_llm_provider_chat_config_capabilities=self.llm_provider.chat_config.capabilities)
 
         if supports_pydantic:
             if should_use_multi:

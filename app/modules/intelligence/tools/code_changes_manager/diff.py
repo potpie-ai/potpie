@@ -112,5 +112,5 @@ def fetch_repo_file_content_for_diff(
         except GitOperationError:
             return None
     except Exception as e:
-        logger.debug(f"diff.fetch_repo_file_content_for_diff: Failed: {e}")
+        logger.debug(f"diff.fetch_repo_file_content_for_diff: Failed: {e}", e=e)
         return None

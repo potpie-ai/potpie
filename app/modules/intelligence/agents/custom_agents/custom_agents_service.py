@@ -58,9 +58,9 @@ class CustomAgentService:
             if agent:
                 logger.info(
                     f"Agent {agent_id} found for user {user_id}, visibility: {agent.visibility}"
-                )
+                , agent_id=agent_id, user_id=user_id, agent_visibility=agent.visibility)
             else:
-                logger.info(f"Agent {agent_id} not found for user {user_id}")
+                logger.info(f"Agent {agent_id} not found for user {user_id}", agent_id=agent_id, user_id=user_id)
             return agent
         except SQLAlchemyError:
             raise
@@ -76,9 +76,9 @@ class CustomAgentService:
             if agent:
                 logger.info(
                     f"Agent model {agent_id} found, visibility: {agent.visibility}"
-                )
+                , agent_id=agent_id, agent_visibility=agent.visibility)
             else:
-                logger.info(f"Agent model {agent_id} not found")
+                logger.info(f"Agent model {agent_id} not found", agent_id=agent_id)
             return agent
         except SQLAlchemyError:
             raise
@@ -91,9 +91,9 @@ class CustomAgentService:
             # Get the agent to log its current state
             agent = await self.get_agent_model(agent_id)
             if agent:
-                logger.info(f"Agent {agent_id} current visibility: {agent.visibility}")
+                logger.info(f"Agent {agent_id} current visibility: {agent.visibility}", agent_id=agent_id, agent_visibility=agent.visibility)
             else:
-                logger.warning(f"Agent {agent_id} not found when creating share")
+                logger.warning(f"Agent {agent_id} not found when creating share", agent_id=agent_id)
 
             # Check if share already exists
             existing_share = (
@@ -107,7 +107,7 @@ class CustomAgentService:
             if existing_share:
                 logger.info(
                     f"Share already exists for agent {agent_id} with user {shared_with_user_id}"
-                )
+                , agent_id=agent_id, shared_with_user_id=shared_with_user_id)
                 return existing_share
 
             # Create new share
@@ -124,7 +124,7 @@ class CustomAgentService:
             if agent:
                 logger.info(
                     f"Agent {agent_id} visibility after share creation: {agent.visibility}"
-                )
+                , agent_id=agent_id, agent_visibility=agent.visibility)
 
             return share
         except SQLAlchemyError:
@@ -137,9 +137,9 @@ class CustomAgentService:
             # Get the agent to log its current state
             agent = await self.get_agent_model(agent_id)
             if agent:
-                logger.info(f"Agent {agent_id} current visibility: {agent.visibility}")
+                logger.info(f"Agent {agent_id} current visibility: {agent.visibility}", agent_id=agent_id, agent_visibility=agent.visibility)
             else:
-                logger.warning(f"Agent {agent_id} not found when revoking access")
+                logger.warning(f"Agent {agent_id} not found when revoking access", agent_id=agent_id)
                 return False
 
             # Find the share to delete
@@ -155,12 +155,12 @@ class CustomAgentService:
             if not share:
                 logger.info(
                     f"No share found for agent {agent_id} with user {shared_with_user_id}"
-                )
+                , agent_id=agent_id, shared_with_user_id=shared_with_user_id)
                 return False
 
             self.db.delete(share)
             self.db.commit()
-            logger.info(f"Share deleted successfully for agent {agent_id}")
+            logger.info(f"Share deleted successfully for agent {agent_id}", agent_id=agent_id)
 
             # Check if there are any remaining shares
             remaining_shares = (
@@ -173,7 +173,7 @@ class CustomAgentService:
             if remaining_shares == 0 and agent.visibility == AgentVisibility.SHARED:
                 logger.info(
                     f"No more shares for agent {agent_id}, updating visibility to PRIVATE"
-                )
+                , agent_id=agent_id)
                 agent.visibility = AgentVisibility.PRIVATE.value
                 self.db.commit()
 
@@ -193,7 +193,7 @@ class CustomAgentService:
             )
 
             if not shares:
-                logger.info(f"No shares found for agent {agent_id}")
+                logger.info(f"No shares found for agent {agent_id}", agent_id=agent_id)
                 return []
 
             # Get all user emails from user IDs
@@ -217,7 +217,7 @@ class CustomAgentService:
             # Get the agent and verify ownership
             agent = await self._get_agent_by_id_and_user(agent_id, user_id)
             if not agent:
-                logger.warning(f"Agent {agent_id} not found for user {user_id}")
+                logger.warning(f"Agent {agent_id} not found for user {user_id}", agent_id=agent_id, user_id=user_id)
                 return None
 
             # Delete all shares
@@ -229,7 +229,7 @@ class CustomAgentService:
             agent.visibility = AgentVisibility.PRIVATE.value
             self.db.commit()
 
-            logger.info(f"Agent {agent_id} is now private")
+            logger.info(f"Agent {agent_id} is now private", agent_id=agent_id)
 
             # Return the updated agent
             return self._convert_to_agent_schema(agent)
@@ -313,7 +313,7 @@ class CustomAgentService:
             # If conversion fails, default to PRIVATE
             logger.warning(
                 f"Invalid visibility value '{visibility}' for agent {custom_agent.id}, defaulting to PRIVATE"
-            )
+            , visibility=visibility, custom_agent_id=custom_agent.id)
             visibility_enum = AgentVisibility.PRIVATE
 
         result = Agent(
@@ -406,16 +406,16 @@ class CustomAgentService:
         try:
             agent = await self._get_agent_by_id_and_user(agent_id, user_id)
             if not agent:
-                logger.warning(f"Agent {agent_id} not found for user {user_id}")
+                logger.warning(f"Agent {agent_id} not found for user {user_id}", agent_id=agent_id, user_id=user_id)
                 return None
 
             logger.info(
                 f"Before update - Agent {agent_id} visibility: {agent.visibility}"
-            )
+            , agent_id=agent_id, agent_visibility=agent.visibility)
 
             # Convert to dict and handle special fields
             update_data = agent_data.dict(exclude_unset=True)
-            logger.info(f"Update data: {update_data}")
+            logger.info(f"Update data: {update_data}", update_data=update_data)
 
             # Handle tasks separately if present
             if "tasks" in update_data:
@@ -431,22 +431,22 @@ class CustomAgentService:
 
             # Apply all updates to the agent model
             for key, value in update_data.items():
-                logger.info(f"Setting {key} = {value}")
+                logger.info(f"Setting {key} = {value}", key=key, value=value)
                 setattr(agent, key, value)
 
             # Explicitly commit changes to ensure they're saved
-            logger.info(f"Committing changes to agent {agent_id}")
+            logger.info(f"Committing changes to agent {agent_id}", agent_id=agent_id)
             self.db.commit()
 
             # Refresh the agent from the database to ensure we have the latest data
             self.db.refresh(agent)
             logger.info(
                 f"After update - Agent {agent_id} visibility: {agent.visibility}"
-            )
+            , agent_id=agent_id, agent_visibility=agent.visibility)
 
             # Convert to schema and return
             result = self._convert_to_agent_schema(agent)
-            logger.info(f"Converted agent schema visibility: {result.visibility}")
+            logger.info(f"Converted agent schema visibility: {result.visibility}", result_visibility=result.visibility)
             return result
         except SQLAlchemyError:
             self.db.rollback()
@@ -486,7 +486,7 @@ class CustomAgentService:
             # First check if user is the owner
             agent_model = await self._get_agent_by_id_and_user(agent_id, user_id)
             if agent_model:
-                logger.info(f"User {user_id} is the owner of agent {agent_id}")
+                logger.info(f"User {user_id} is the owner of agent {agent_id}", user_id=user_id, agent_id=agent_id)
 
             # If not owner, check if agent is public or shared with user
             if not agent_model:
@@ -494,17 +494,17 @@ class CustomAgentService:
                 if agent_model:
                     logger.info(
                         f"Agent {agent_id} found, visibility: {agent_model.visibility}"
-                    )
+                    , agent_id=agent_id, agent_model_visibility=agent_model.visibility)
                     # Check if agent is public
                     if agent_model.visibility == AgentVisibility.PUBLIC:
                         logger.info(
                             f"Agent {agent_id} is public, accessible to user {user_id}"
-                        )
+                        , agent_id=agent_id, user_id=user_id)
                     # Check if agent is shared with this user
                     elif agent_model.visibility == AgentVisibility.SHARED:
                         logger.info(
                             f"Agent {agent_id} is shared, checking if shared with user {user_id}"
-                        )
+                        , agent_id=agent_id, user_id=user_id)
                         share = (
                             self.db.query(CustomAgentShareModel)
                             .filter(
@@ -516,34 +516,34 @@ class CustomAgentService:
                         if not share:
                             logger.info(
                                 f"Agent {agent_id} is not shared with user {user_id}"
-                            )
+                            , agent_id=agent_id, user_id=user_id)
                             return None  # User doesn't have access to this shared agent
-                        logger.info(f"Agent {agent_id} is shared with user {user_id}")
+                        logger.info(f"Agent {agent_id} is shared with user {user_id}", agent_id=agent_id, user_id=user_id)
                     else:
                         logger.info(
                             f"Agent {agent_id} is private and user {user_id} is not the owner"
-                        )
+                        , agent_id=agent_id, user_id=user_id)
                         return None  # Private agent and user is not the owner
                 else:
-                    logger.info(f"Agent {agent_id} not found")
+                    logger.info(f"Agent {agent_id} not found", agent_id=agent_id)
         else:
             # If no user_id provided, just get the agent without permission checks
             logger.info(
                 f"No user_id provided, getting agent {agent_id} without permission checks"
-            )
+            , agent_id=agent_id)
             agent_model = await self.get_agent_model(agent_id)
             if agent_model:
                 logger.info(
                     f"Agent {agent_id} found without permission checks, visibility: {agent_model.visibility}"
-                )
+                , agent_id=agent_id, agent_model_visibility=agent_model.visibility)
             else:
-                logger.info(f"Agent {agent_id} not found")
+                logger.info(f"Agent {agent_id} not found", agent_id=agent_id)
 
         if agent_model:
             result = self._convert_to_agent_schema(agent_model)
             logger.info(
                 f"Converted agent {agent_id} to schema, visibility: {result.visibility}"
-            )
+            , agent_id=agent_id, result_visibility=result.visibility)
             return result
         else:
             return None
@@ -556,7 +556,7 @@ class CustomAgentService:
         """Execute an agent at runtime without deployment"""
         logger.info(
             f"Executing agent {ctx.curr_agent_id} for user {user_id} with query: {ctx.query}"
-        )
+        , ctx_curr_agent_id=ctx.curr_agent_id, user_id=user_id, ctx_query=ctx.query)
 
         # First check if user is the owner
         agent_model = (
@@ -572,7 +572,7 @@ class CustomAgentService:
         if not agent_model:
             logger.info(
                 f"User {user_id} is not the owner of agent {ctx.curr_agent_id}, checking visibility"
-            )
+            , user_id=user_id, ctx_curr_agent_id=ctx.curr_agent_id)
             agent_model = (
                 self.db.query(CustomAgentModel)
                 .filter(CustomAgentModel.id == ctx.curr_agent_id)
@@ -581,17 +581,17 @@ class CustomAgentService:
             if agent_model:
                 logger.info(
                     f"Agent {ctx.curr_agent_id} found, visibility: {agent_model.visibility}"
-                )
+                , ctx_curr_agent_id=ctx.curr_agent_id, agent_model_visibility=agent_model.visibility)
                 # Check if agent is public
                 if agent_model.visibility == AgentVisibility.PUBLIC:
                     logger.info(
                         f"Agent {ctx.curr_agent_id} is public, accessible to user {user_id}"
-                    )
+                    , ctx_curr_agent_id=ctx.curr_agent_id, user_id=user_id)
                 # Check if agent is shared with this user
                 elif agent_model.visibility == AgentVisibility.SHARED:
                     logger.info(
                         f"Agent {ctx.curr_agent_id} is shared, checking if shared with user {user_id}"
-                    )
+                    , ctx_curr_agent_id=ctx.curr_agent_id, user_id=user_id)
                     share = (
                         self.db.query(CustomAgentShareModel)
                         .filter(
@@ -603,23 +603,23 @@ class CustomAgentService:
                     if not share:
                         logger.info(
                             f"Agent {ctx.curr_agent_id} is not shared with user {user_id}"
-                        )
+                        , ctx_curr_agent_id=ctx.curr_agent_id, user_id=user_id)
                         raise HTTPException(status_code=404, detail="Agent not found")
                     logger.info(
                         f"Agent {ctx.curr_agent_id} is shared with user {user_id}"
-                    )
+                    , ctx_curr_agent_id=ctx.curr_agent_id, user_id=user_id)
                 else:
                     logger.info(
                         f"Agent {ctx.curr_agent_id} is private and user {user_id} is not the owner"
-                    )
+                    , ctx_curr_agent_id=ctx.curr_agent_id, user_id=user_id)
                     raise HTTPException(status_code=404, detail="Agent not found")
             else:
-                logger.info(f"Agent {ctx.curr_agent_id} not found")
+                logger.info(f"Agent {ctx.curr_agent_id} not found", ctx_curr_agent_id=ctx.curr_agent_id)
                 raise HTTPException(status_code=404, detail="Agent not found")
 
         logger.info(
             f"Executing agent {ctx.curr_agent_id} with role: {agent_model.role}"
-        )
+        , ctx_curr_agent_id=ctx.curr_agent_id, agent_model_role=agent_model.role)
         # Build agent config
         agent_config = {
             "user_id": agent_model.user_id,
@@ -780,7 +780,7 @@ class CustomAgentService:
     async def get_custom_agent(self, db: Session, user_id: str, agent_id: str):
         """Validate if an agent exists and belongs to the user or is shared with the user"""
         try:
-            logger.info(f"Validating agent {agent_id} for user {user_id}")
+            logger.info(f"Validating agent {agent_id} for user {user_id}", agent_id=agent_id, user_id=user_id)
 
             # First check if user is the owner
             agent = (
@@ -792,7 +792,7 @@ class CustomAgentService:
             )
 
             if agent:
-                logger.info(f"User {user_id} is the owner of agent {agent_id}")
+                logger.info(f"User {user_id} is the owner of agent {agent_id}", user_id=user_id, agent_id=agent_id)
                 return agent
 
             # If not owner, check if agent is public or shared with user
@@ -802,20 +802,20 @@ class CustomAgentService:
                 .first()
             )
             if not agent:
-                logger.info(f"Agent {agent_id} not found")
+                logger.info(f"Agent {agent_id} not found", agent_id=agent_id)
                 return None
 
-            logger.info(f"Agent {agent_id} found, visibility: {agent.visibility}")
+            logger.info(f"Agent {agent_id} found, visibility: {agent.visibility}", agent_id=agent_id, agent_visibility=agent.visibility)
 
             # Check if agent is public
             if agent.visibility == AgentVisibility.PUBLIC:
-                logger.info(f"Agent {agent_id} is public, accessible to user {user_id}")
+                logger.info(f"Agent {agent_id} is public, accessible to user {user_id}", agent_id=agent_id, user_id=user_id)
                 return agent
             # Check if agent is shared with this user
             elif agent.visibility == AgentVisibility.SHARED:
                 logger.info(
                     f"Agent {agent_id} is shared, checking if shared with user {user_id}"
-                )
+                , agent_id=agent_id, user_id=user_id)
                 share = (
                     db.query(CustomAgentShareModel)
                     .filter(
@@ -825,14 +825,14 @@ class CustomAgentService:
                     .first()
                 )
                 if not share:
-                    logger.info(f"Agent {agent_id} is not shared with user {user_id}")
+                    logger.info(f"Agent {agent_id} is not shared with user {user_id}", agent_id=agent_id, user_id=user_id)
                     return None  # User doesn't have access to this shared agent
-                logger.info(f"Agent {agent_id} is shared with user {user_id}")
+                logger.info(f"Agent {agent_id} is shared with user {user_id}", agent_id=agent_id, user_id=user_id)
                 return agent
             else:
                 logger.info(
                     f"Agent {agent_id} is private and user {user_id} is not the owner"
-                )
+                , agent_id=agent_id, user_id=user_id)
                 return None  # Private agent and user is not the owner
         except SQLAlchemyError:
             raise
