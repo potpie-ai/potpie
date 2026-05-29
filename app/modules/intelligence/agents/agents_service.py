@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel
@@ -25,6 +24,8 @@ from app.modules.intelligence.tools.registry import (
     build_registry_from_tool_service,
 )
 from observability import get_logger
+from app.core.config_provider import ConfigProvider
+from app.modules.utils.logger import setup_logger
 
 from .chat_agent import AgentWithInfo, ChatContext
 from .chat_agents.system_agents import (
@@ -57,7 +58,7 @@ class AgentsService:
         prompt_provider: PromptService,
         tools_provider: ToolService,
     ):
-        self.project_path = str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute())
+        self.project_path = ConfigProvider.get_project_path()
         self.db = db
         self.prompt_service = PromptService(db)
         self.llm_provider = llm_provider
