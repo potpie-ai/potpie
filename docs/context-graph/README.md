@@ -70,6 +70,39 @@ potpie cloud status
 potpie cloud skills sync
 ```
 
+## Local graph backend: FalkorDB (lightweight alternative to Neo4j)
+
+The context graph defaults to **Neo4j** (production). For local/self-hosted
+development you can switch the context graph to **FalkorDB** — a lightweight
+Redis-module graph DB — without touching application code. Only the context
+graph is affected; the code knowledge graph still uses Neo4j.
+
+Container mode (the supported first-PR path):
+
+```bash
+docker compose --profile falkordb up falkordb   # starts FalkorDB on :6399
+export GRAPH_DB_BACKEND=falkordb
+export FALKORDB_URL=redis://localhost:6399
+# optional: export FALKORDB_GRAPH_NAME=context_graph
+pip install "context-engine[falkordb]"           # optional client (import: falkordb)
+```
+
+`GRAPH_DB_BACKEND` (default `neo4j`) is read by the context-engine settings and
+`build_container` selects the writer + claim store together. The FalkorDB
+client is an optional extra and is imported lazily, so the default Neo4j
+install does not require it. FalkorDBLite (embedded, no container) is planned
+but not yet wired (`FALKORDB_MODE=lite` is reserved).
+
+Troubleshooting:
+
+- **`falkordb_unavailable` / writes are no-ops** — `FALKORDB_URL` is unset; the
+  writer reports `enabled=False` and silently skips (same gate as Neo4j creds).
+- **`ModuleNotFoundError: falkordb`** — install the optional extra above.
+- **Unsupported index/vector syntax** — index creation is best-effort and
+  non-fatal; the relationship vector index is intentionally skipped (reads use
+  the Python token-overlap fallback).
+- **Fall back** — unset `GRAPH_DB_BACKEND` (or set it to `neo4j`).
+
 ## Ontology Import Surface
 
 Most graph vocabulary is derived from `domain.ontology`:

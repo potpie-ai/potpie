@@ -20,3 +20,9 @@ __all__ = [
     "Neo4jClaimQueryStore",
     "Neo4jGraphWriter",
 ]
+
+# FalkorDB adapters are imported lazily (optional ``falkordb`` extra); they are
+# intentionally NOT imported at module load so the default Neo4j install does
+# not require the FalkorDB client. Import them directly from their modules
+# (``adapters.outbound.graph.falkordb_writer`` / ``...falkordb_reader``) or let
+# ``build_container`` select them via ``GRAPH_DB_BACKEND=falkordb``.

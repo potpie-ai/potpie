@@ -16,5 +16,25 @@ class ContextEngineSettingsPort(Protocol):
     def neo4j_password(self) -> str | None:
         ...
 
+    # -- Graph backend selection -------------------------------------------
+    # Concrete defaults (not ``...``) so existing implementers keep working
+    # without change: anything that doesn't override these reports the
+    # default ``neo4j`` backend, leaving production untouched.
+    def graph_db_backend(self) -> str:
+        """Which graph backend to use: ``neo4j`` (default) or ``falkordb``."""
+        return "neo4j"
+
+    def falkordb_url(self) -> str | None:
+        """Redis-protocol URL for FalkorDB server/container mode."""
+        return None
+
+    def falkordb_graph_name(self) -> str:
+        """FalkorDB graph (keyspace) name for the context graph."""
+        return "context_graph"
+
+    def falkordb_mode(self) -> str:
+        """FalkorDB runtime mode: ``server`` (default) or ``lite`` (embedded)."""
+        return "server"
+
     def backfill_max_prs_per_run(self) -> int:
         """Max merged PRs to ingest per backfill run (deterministic cap)."""

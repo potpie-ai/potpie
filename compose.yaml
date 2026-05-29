@@ -45,11 +45,27 @@ services:
     networks:
       - app-network
 
+  # Lightweight local graph backend (opt-in alternative to Neo4j for the
+  # context graph). Start with: docker compose --profile falkordb up falkordb
+  # then set GRAPH_DB_BACKEND=falkordb and FALKORDB_URL=redis://localhost:6399.
+  # Host port 6399 avoids clashing with the redis broker on 6379.
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: potpie_falkordb
+    profiles: ["falkordb"]
+    ports:
+      - "6399:6379"
+    volumes:
+      - falkordb_data:/data
+    networks:
+      - app-network
+
 volumes:
   postgres_data:
   neo4j_data:
   neo4j_logs:
   redis_data:
+  falkordb_data:
 
 networks:
   app-network:

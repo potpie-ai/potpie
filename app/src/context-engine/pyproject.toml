@@ -29,6 +29,9 @@ benchmarks = [
 graph = [
     "neo4j>=5.28.0",
 ]
+falkordb = [
+    "falkordb>=1.6.1",
+]
 github = [
     "pygithub>=2.8.0",
 ]
