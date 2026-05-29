@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from adapters.inbound.http.api.v1.context.router import create_context_router
 from app.core.database import get_db
-from app.modules.auth.api_key_deps import get_api_key_user
+from app.modules.auth.api_key_deps import get_firebase_or_api_key_user
 from app.modules.auth.auth_service import AuthService
 from app.modules.context_graph.context_pot_routes import make_pot_router
 from app.modules.context_graph.wiring import build_container_for_user_session
@@ -26,10 +26,10 @@ def get_context_engine_container(
 
 
 def get_context_engine_container_for_api_key(
-    user: dict = Depends(get_api_key_user),
+    user: dict = Depends(get_firebase_or_api_key_user),
     db: Session = Depends(get_db),
 ) -> ContextEngineContainer:
-    """Same container shape as Firebase auth, for /api/v2/context (X-API-Key)."""
+    """Same container shape as Firebase auth, for /api/v2/context dual auth."""
     return build_container_for_user_session(db, user["user_id"])
 
 

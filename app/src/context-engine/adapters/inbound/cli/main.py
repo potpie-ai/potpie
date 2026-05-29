@@ -3,24 +3,55 @@ import json
 import os
 import time
 import uuid
+import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import typer
 
+from adapters.inbound.cli.auth.github import (
+    GitHubDeviceFlowError,
+    build_provider_credentials,
+    list_user_owned_repositories,
+    poll_for_access_token,
+    request_device_code,
+    verify_account,
+)
+from adapters.inbound.cli.auth.firebase_session import (
+    FirebaseSessionError,
+    exchange_custom_token,
+    refresh_id_token,
+)
+from adapters.inbound.cli.auth.potpie import (
+    PotpieCliAuthError,
+    fetch_account_me,
+    open_cli_success_page,
+    resolve_potpie_api_url_for_auth,
+    revoke_api_key_on_server,
+    run_browser_login_flow,
+)
 from adapters.inbound.cli.credentials_store import (
     clear_active_pot_id,
-    clear_credentials,
+    clear_potpie_auth,
+    clear_provider_credentials,
     clear_pot_scope_state,
     credentials_path,
     get_active_pot_id,
+    get_potpie_auth_type,
+    get_potpie_firebase_api_key,
+    get_potpie_firebase_refresh_token,
     get_pot_aliases,
+    get_provider_credentials,
     get_stored_api_base_url,
     get_stored_api_key,
+    ProviderCredentialError,
     register_pot_alias,
     resolve_cli_pot_ref,
     set_active_pot_id,
+    store_potpie_firebase_refresh_token,
+    update_potpie_firebase_refresh_token,
+    write_provider_credentials,
     write_credentials,
 )
 from adapters.inbound.cli.agent_installer import AGENT_TYPES, install_agent_bundle
@@ -48,8 +79,8 @@ from adapters.inbound.cli.output import (
     print_search_results,
 )
 from adapters.inbound.cli.potpie_api_config import (
+    resolve_potpie_auth_config,
     resolve_potpie_api_base_url,
-    resolve_potpie_api_key,
 )
 from adapters.outbound.http.potpie_context_api_client import (
     IngestRejectedError,
@@ -74,6 +105,18 @@ app = typer.Typer(
 pot_app = typer.Typer(help="Active pot and local pot helpers.")
 pot_repo_app = typer.Typer(help="Repositories attached to a context pot (Potpie API).")
 event_app = typer.Typer(help="Inspect and wait for ingestion events.")
+github_app = typer.Typer(help="GitHub authentication helpers.")
+github_test_app = typer.Typer(help="GitHub test helpers.")
+git_app = typer.Typer(
+    help="Deprecated: use `potpie github` instead.",
+    hidden=True,
+)
+git_test_app = typer.Typer(help="Git provider test helpers.", hidden=True)
+auth_app = typer.Typer(
+    help="Deprecated: use `potpie login` / `potpie logout` instead.",
+    hidden=True,
+)
+auth_test_app = typer.Typer(help="Potpie auth diagnostics.")
 
 # Set by root callback; read by all subcommands (including nested `pot`).
 _cli_state: dict[str, Any] = {"json": False, "verbose": False, "source": None}
@@ -104,13 +147,14 @@ def _cli_client_name() -> str:
 
 def _cli_client_or_exit(verbose: bool) -> PotpieContextApiClient:
     try:
+        auth_config = resolve_potpie_auth_config()
         return PotpieContextApiClient(
             resolve_potpie_api_base_url(),
-            resolve_potpie_api_key(),
+            auth_headers=auth_config.headers,
             client_surface="cli",
             client_name=_cli_client_name(),
         )
-    except ValueError as exc:
+    except (ValueError, ProviderCredentialError) as exc:
         emit_error("Potpie API not configured", str(exc), verbose=verbose)
         raise typer.Exit(code=1) from exc
 
@@ -207,8 +251,93 @@ def _cli(
         configure_cli_logging(verbose)
 
 
+def _potpie_login_impl() -> None:
+    """Sign in to Potpie via browser and store a Firebase refresh token in keychain."""
+    j, v = _flags()
+    try:
+        print_plain_line(
+            "Opening browser to sign in...\nWaiting for authentication...",
+            as_json=False,
+        )
+        result = run_browser_login_flow()
+        session = exchange_custom_token(
+            result.custom_token,
+            firebase_api_key=result.firebase_api_key,
+        )
+        stamp = datetime.now(timezone.utc).isoformat()
+        store_potpie_firebase_refresh_token(
+            session.refresh_token,
+            created_at=stamp,
+            firebase_api_key=result.firebase_api_key,
+        )
+    except PotpieCliAuthError as exc:
+        emit_error("Potpie login failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    except FirebaseSessionError as exc:
+        emit_error("Potpie login failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    except ProviderCredentialError as exc:
+        emit_error("Potpie login failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    if j:
+        print_json_blob(
+            {"ok": True, "auth_type": "firebase_session", "token_storage": "keychain"},
+            as_json=True,
+        )
+        return
+    print_plain_line("Logged in to Potpie successfully.", as_json=False)
+
+
+def _potpie_logout_impl() -> None:
+    """Remove Potpie CLI auth from the system keychain."""
+    j, v = _flags()
+    api_key = ""
+    clear_api_key = False
+    try:
+        clear_api_key = get_potpie_auth_type() == "api_key"
+        if clear_api_key:
+            api_key = get_stored_api_key()
+    except ProviderCredentialError as exc:
+        emit_error("Potpie logout failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    if api_key:
+        try:
+            revoke_api_key_on_server(
+                api_base_url=resolve_potpie_api_url_for_auth(),
+                api_key=api_key,
+            )
+        except PotpieCliAuthError as exc:
+            emit_error("Potpie logout failed", str(exc), verbose=v)
+            raise typer.Exit(code=1) from exc
+
+    try:
+        clear_potpie_auth(clear_api_key=clear_api_key)
+    except ProviderCredentialError as exc:
+        emit_error("Potpie logout failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    if j:
+        print_json_blob({"ok": True}, as_json=True)
+        return
+    print_plain_line("Logged out of Potpie.", as_json=False)
+
+
 @app.command("login")
-def login_cmd(
+def login_cmd() -> None:
+    """Sign in to Potpie via browser (stores Firebase session in keychain)."""
+    _potpie_login_impl()
+
+
+@app.command("logout")
+def logout_cmd() -> None:
+    """Remove Potpie account auth from keychain."""
+    _potpie_logout_impl()
+
+
+@app.command("login-api-key", hidden=True)
+def login_api_key_cmd(
     token: str = typer.Argument(..., help="Potpie API key (from the app)"),
     url: str | None = typer.Option(
         None,
@@ -217,7 +346,7 @@ def login_cmd(
         help="Potpie API base URL, e.g. http://127.0.0.1:8001 (optional; env still overrides)",
     ),
 ) -> None:
-    """Save Potpie API key and optional base URL (required for search / ingest / reset via /api/v2/context)."""
+    """Save Potpie API key and optional base URL (legacy automation)."""
     write_credentials(api_key=token, api_base_url=url)
     j, _ = _flags()
     print_plain_line(
@@ -227,16 +356,265 @@ def login_cmd(
     )
 
 
-@app.command("logout")
-def logout_cmd() -> None:
-    """Remove stored API credentials from disk."""
-    clear_credentials()
-    j, _ = _flags()
+@auth_app.command("login")
+def auth_login_cmd() -> None:
+    """Deprecated alias for `potpie login`."""
+    _potpie_login_impl()
+
+
+@auth_app.command("logout")
+def auth_logout_cmd() -> None:
+    """Deprecated alias for `potpie logout`."""
+    _potpie_logout_impl()
+
+
+@auth_app.command("status")
+def auth_status_cmd() -> None:
+    """Show whether the CLI is logged in to Potpie."""
+    j, v = _flags()
+    id_token = ""
+    try:
+        api_key = get_stored_api_key()
+        refresh_token = get_potpie_firebase_refresh_token()
+        firebase_api_key = get_potpie_firebase_api_key()
+    except ProviderCredentialError as exc:
+        emit_error("Potpie auth status failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    if not api_key and not refresh_token:
+        msg = "Not logged in. Run: potpie login"
+        if j:
+            print_json_blob({"logged_in": False}, as_json=True)
+            return
+        print_plain_line(msg, as_json=False)
+        return
+
+    try:
+        if refresh_token:
+            session = refresh_id_token(
+                refresh_token,
+                firebase_api_key=firebase_api_key or None,
+            )
+            update_potpie_firebase_refresh_token(session.refresh_token)
+            id_token = session.id_token
+        account = fetch_account_me(
+            api_base_url=resolve_potpie_api_url_for_auth(),
+            api_key=None if id_token else api_key or None,
+            id_token=id_token or None,
+        )
+    except (PotpieCliAuthError, FirebaseSessionError) as exc:
+        emit_error("Potpie auth status failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    email = str(account.get("email") or "").strip()
+    display_name = str(account.get("display_name") or "").strip()
+    user_id = str(account.get("user_id") or "").strip()
+    if j:
+        print_json_blob(
+            {
+                "logged_in": True,
+                "auth_type": "firebase_session" if id_token else "api_key",
+                "email": email,
+                "display_name": display_name,
+                "user_id": user_id,
+            },
+            as_json=True,
+        )
+        return
+    label = email or display_name or user_id or "unknown"
+    print_plain_line(f"Logged in to Potpie as {label}", as_json=False)
+    if display_name and email:
+        print_plain_line(f"  Name: {display_name}", as_json=False)
+    if user_id:
+        print_plain_line(f"  User ID: {user_id}", as_json=False)
+
+
+@auth_test_app.command("pots")
+def auth_test_pots_cmd() -> None:
+    """Test Firebase credentials from `potpie login` by listing context pots."""
+    j, v = _flags()
+    try:
+        refresh_token = get_potpie_firebase_refresh_token()
+        if not refresh_token:
+            raise ValueError("Firebase session missing. Run `potpie login`.")
+        firebase_api_key = get_potpie_firebase_api_key()
+        session = refresh_id_token(
+            refresh_token,
+            firebase_api_key=firebase_api_key or None,
+        )
+        update_potpie_firebase_refresh_token(session.refresh_token)
+        client = PotpieContextApiClient(
+            resolve_potpie_api_base_url(),
+            auth_headers={"Authorization": f"Bearer {session.id_token}"},
+            timeout=30.0,
+            client_surface="cli",
+            client_name=_cli_client_name(),
+        )
+        rows = client.list_context_pots()
+    except (ValueError, ProviderCredentialError) as exc:
+        emit_error("Potpie auth test failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    except PotpieContextApiError as exc:
+        emit_error("Potpie auth test failed", _format_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    if j:
+        print_json_blob(
+            {
+                "ok": True,
+                "auth_type": "firebase_session",
+                "count": len(rows),
+                "context_pots": rows,
+            },
+            as_json=True,
+        )
+        return
+
     print_plain_line(
-        "Removed stored Potpie API credentials.",
-        as_json=j,
-        json_payload={"ok": True},
+        f"Potpie auth works (firebase_session). Found {len(rows)} context pot(s).",
+        as_json=False,
     )
+    for p in rows:
+        pid = p.get("id", "")
+        slug = p.get("slug", "")
+        repo = p.get("primary_repo_name", "")
+        print_plain_line(f"{slug}\t{pid}\t{repo}", as_json=False)
+
+
+def _github_login_impl() -> None:
+    """Authenticate the CLI with GitHub using device flow."""
+    j, v = _flags()
+    account = None
+    payload = None
+    try:
+        device_code = request_device_code()
+        opened = webbrowser.open(device_code.verification_uri)
+        if not opened:
+            print_plain_line(
+                f"Open {device_code.verification_uri}",
+                as_json=False,
+            )
+        print_plain_line(
+            f"Enter code: {device_code.user_code}\nWaiting for GitHub authorization...",
+            as_json=False,
+        )
+        token = poll_for_access_token(device_code)
+        account = verify_account(token.access_token)
+        payload = build_provider_credentials(
+            token, account, verification_uri=device_code.verification_uri
+        )
+        write_provider_credentials("github", payload.as_dict())
+    except GitHubDeviceFlowError as exc:
+        emit_error("GitHub login failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    except ProviderCredentialError as exc:
+        emit_error("GitHub login failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    if j:
+        print_json_blob(
+            {
+                "ok": True,
+                "provider": "github",
+                "account": payload.account if payload else {},
+                "path": str(credentials_path()),
+            },
+            as_json=True,
+        )
+        return
+
+    assert account is not None and payload is not None
+    stored = get_provider_credentials("github")
+    login = str(stored.get("account", {}).get("login") or account.login)
+    email = str(stored.get("account", {}).get("email") or account.email or "")
+    print_plain_line(
+        f"Logged in to GitHub as {login}" + (f" ({email})" if email else ""),
+        as_json=False,
+    )
+    if not j:
+        open_cli_success_page(provider="github")
+
+
+def _github_logout_impl() -> None:
+    """Remove GitHub credentials from keychain and config."""
+    j, v = _flags()
+    try:
+        clear_provider_credentials("github")
+    except (ProviderCredentialError, ValueError) as exc:
+        emit_error("GitHub logout failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    if j:
+        print_json_blob({"ok": True, "provider": "github"}, as_json=True)
+        return
+    print_plain_line("Logged out of GitHub.", as_json=False)
+
+
+@github_app.command("login")
+def github_login_cmd() -> None:
+    """Authenticate the CLI with GitHub using device flow."""
+    _github_login_impl()
+
+
+@github_app.command("logout")
+def github_logout_cmd() -> None:
+    """Remove stored GitHub credentials."""
+    _github_logout_impl()
+
+
+@git_app.command("login")
+def git_login_cmd() -> None:
+    """Deprecated alias for `potpie github login`."""
+    _github_login_impl()
+
+
+@git_app.command("logout")
+def git_logout_cmd() -> None:
+    """Deprecated alias for `potpie github logout`."""
+    _github_logout_impl()
+
+
+@github_test_app.command("repos")
+@git_test_app.command("repos")
+def github_test_repos_cmd() -> None:
+    """List GitHub repositories owned by the authenticated user."""
+    j, v = _flags()
+    try:
+        credentials = get_provider_credentials("github")
+    except ProviderCredentialError as exc:
+        emit_error(
+            "GitHub credentials not found",
+            str(exc),
+            verbose=v,
+        )
+        raise typer.Exit(code=1)
+    token = str(credentials.get("access_token") or "").strip()
+    if not token:
+        emit_error(
+            "GitHub credentials not found",
+            "GitHub token not found in system keychain. Run: potpie github login",
+            verbose=v,
+        )
+        raise typer.Exit(code=1)
+    try:
+        repos = list_user_owned_repositories(token)
+    except GitHubDeviceFlowError as exc:
+        emit_error("GitHub repository listing failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    if j:
+        print_json_blob(
+            {"ok": True, "provider": "github", "count": len(repos), "repos": repos},
+            as_json=True,
+        )
+        return
+
+    for repo in repos:
+        visibility = "private" if repo.get("private") else "public"
+        print_plain_line(
+            f"{repo.get('full_name')}\t{visibility}\t{repo.get('default_branch') or ''}",
+            as_json=False,
+        )
 
 
 @app.command("doctor")
@@ -265,9 +643,10 @@ def doctor_cmd() -> None:
     auth_ok: bool | None = None
     auth_msg: str | None = None
     try:
+        auth_config = resolve_potpie_auth_config()
         c = PotpieContextApiClient(
             resolve_potpie_api_base_url(),
-            resolve_potpie_api_key(),
+            auth_headers=auth_config.headers,
             timeout=15.0,
             client_surface="cli",
             client_name=_cli_client_name(),
@@ -282,11 +661,11 @@ def doctor_cmd() -> None:
         except PotpieContextApiError as exc:
             auth_ok = False
             auth_msg = f"HTTP {exc.status_code}: {_format_api_error(exc)}"
-    except ValueError:
+    except (ValueError, ProviderCredentialError):
         health_ok = None
-        health_msg = "skipped (no base URL / API key)"
+        health_msg = "skipped (no base URL / auth)"
         auth_ok = None
-        auth_msg = "skipped (no base URL / API key)"
+        auth_msg = "skipped (no base URL / auth)"
     except OSError as exc:
         health_ok = False
         health_msg = str(exc)
@@ -294,7 +673,7 @@ def doctor_cmd() -> None:
         auth_msg = str(exc)
 
     summary: list[str] = [
-        "[dim]search / ingest / pot hard-reset call Potpie POST /api/v2/context/* with X-API-Key.[/dim]",
+        "[dim]search / ingest / pot hard-reset call Potpie POST /api/v2/context/* with configured auth.[/dim]",
         "[dim]Local Neo4j is not required on this machine.[/dim]",
     ]
     if health_ok is True:
@@ -426,15 +805,16 @@ def _resolve_cli_pot_ref_with_api(ref: str) -> tuple[str | None, str]:
     if not slug:
         return None, rerr
     try:
+        auth_config = resolve_potpie_auth_config()
         client = PotpieContextApiClient(
             resolve_potpie_api_base_url(),
-            resolve_potpie_api_key(),
+            auth_headers=auth_config.headers,
             timeout=30.0,
             client_surface="cli",
             client_name=_cli_client_name(),
         )
         row = client.find_context_pot_by_slug(slug)
-    except (ValueError, OSError, PotpieContextApiError):
+    except (ValueError, ProviderCredentialError, OSError, PotpieContextApiError):
         return None, rerr
     if not row:
         return None, rerr
@@ -811,6 +1191,12 @@ def pot_hard_reset(
 
 
 app.add_typer(pot_app, name="pot")
+github_app.add_typer(github_test_app, name="test")
+app.add_typer(github_app, name="github")
+git_app.add_typer(git_test_app, name="test")
+app.add_typer(git_app, name="git")
+auth_app.add_typer(auth_test_app, name="test")
+app.add_typer(auth_app, name="auth")
 
 
 def _event_terminal(status: Any) -> bool:

@@ -25,3 +25,23 @@ def test_load_env_file_respects_existing(
     assert os.environ["A"] == "keep"
     assert os.environ["B"] == "2"
     del os.environ["B"]
+
+
+def test_load_cli_env_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cli_root = tmp_path / "context-engine"
+    cli_root.mkdir()
+    (cli_root / ".env.cli").write_text(
+        "POTPIE_CLI_API_BASE_URL=https://stage-api.potpie.ai\n"
+        "POTPIE_CLI_UI_BASE_URL=https://stage.potpie.ai\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("POTPIE_CLI_API_BASE_URL", raising=False)
+    monkeypatch.delenv("POTPIE_CLI_UI_BASE_URL", raising=False)
+    monkeypatch.setattr(eb, "_cli_package_root", lambda: cli_root)
+
+    eb._load_cli_env_defaults()
+
+    import os
+
+    assert os.environ["POTPIE_CLI_API_BASE_URL"] == "https://stage-api.potpie.ai"
+    assert os.environ["POTPIE_CLI_UI_BASE_URL"] == "https://stage.potpie.ai"

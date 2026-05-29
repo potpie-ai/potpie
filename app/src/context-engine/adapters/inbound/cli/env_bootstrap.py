@@ -43,6 +43,17 @@ def _load_env_file(path: Path) -> None:
 _PROJECT_ROOT_MARKERS = ("pyproject.toml", ".git")
 
 
+def _cli_package_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _load_cli_env_defaults() -> None:
+    """Load CLI-owned non-secret defaults from the context-engine package."""
+    cli_env = _cli_package_root() / ".env.cli"
+    if cli_env.is_file():
+        _load_env_file(cli_env)
+
+
 def load_cli_env() -> None:
     """Merge the project root's ``.env`` (never an arbitrary ancestor's).
 
@@ -57,13 +68,31 @@ def load_cli_env() -> None:
     if _loaded:
         return
     _loaded = True
+    _load_cli_env_defaults()
     cur = Path.cwd().resolve()
     for _ in range(24):
         if any((cur / m).exists() for m in _PROJECT_ROOT_MARKERS):
             candidate = cur / ".env"
             if candidate.is_file():
                 _load_env_file(candidate)
+            _load_monorepo_potpie_env(cur)
             return
         if cur.parent == cur:
             break
         cur = cur.parent
+
+
+def _load_monorepo_potpie_env(start: Path) -> None:
+    """Merge ``potpie/.env`` when the CLI runs inside the Potpie monorepo."""
+    for ancestor in [start, *start.parents]:
+        potpie_root = ancestor / "potpie"
+        if not potpie_root.is_dir():
+            continue
+        if not (potpie_root / "pyproject.toml").is_file() and not (
+            potpie_root / "app" / "main.py"
+        ).is_file():
+            continue
+        env_file = potpie_root / ".env"
+        if env_file.is_file():
+            _load_env_file(env_file)
+            return

@@ -39,7 +39,13 @@ def configure_cli_logging(verbose: bool) -> None:
     )
     noisy = verbose or env_verbose
     level = logging.DEBUG if noisy else logging.ERROR
-    for name in ("neo4j", "neo4j.io", "neo4j.notifications"):
+    for name in (
+        "neo4j",
+        "neo4j.io",
+        "neo4j.notifications",
+        "httpx",
+        "httpcore",
+    ):
         logging.getLogger(name).setLevel(level)
 
 

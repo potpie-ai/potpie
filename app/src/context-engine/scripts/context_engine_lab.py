@@ -33,8 +33,8 @@ if str(PACKAGE_ROOT) not in sys.path:
 from adapters.inbound.http.api.v1.context.router import create_context_router  # noqa: E402
 from adapters.inbound.cli.credentials_store import get_active_pot_id  # noqa: E402
 from adapters.inbound.cli.potpie_api_config import (  # noqa: E402
+    resolve_potpie_auth_config,
     resolve_potpie_api_base_url,
-    resolve_potpie_api_key,
 )
 from adapters.outbound.http.potpie_context_api_client import (  # noqa: E402
     IngestRejectedError,
@@ -319,9 +319,10 @@ def _run_api_smoke(args: argparse.Namespace) -> int:
             "pot_id missing: pass --pot-id or run `potpie pot use`"
         )
     repo_name = args.repo_name or data.get("repo_name")
+    auth_config = resolve_potpie_auth_config()
     client = PotpieContextApiClient(
         resolve_potpie_api_base_url(),
-        resolve_potpie_api_key(),
+        auth_headers=auth_config.headers,
     )
     result = {
         "ok": True,
