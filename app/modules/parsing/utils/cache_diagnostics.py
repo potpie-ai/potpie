@@ -4,9 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.modules.parsing.models.inference_cache_model import InferenceCache
 from app.modules.parsing.utils.content_hash import generate_content_hash
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def analyze_cache_misses(nodes: List[Dict[str, Any]], db: Session) -> Dict[str, Any]:
@@ -91,7 +91,7 @@ def analyze_cache_misses(nodes: List[Dict[str, Any]], db: Session) -> Dict[str, 
                         }
                     )
         except Exception as e:
-            logger.error(f"Error analyzing node {node_id}: {e}")
+            logger.error(f"Error analyzing node {node_id}: {e}", node_id=node_id, e=e)
 
     # Calculate percentages
     if diagnostics["total_nodes"] > 0:

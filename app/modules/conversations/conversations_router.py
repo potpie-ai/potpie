@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db, get_async_db
 from app.modules.auth.auth_service import AuthService
-from app.modules.utils.logger import setup_logger, log_context
+from observability import get_logger, log_context
 from app.modules.conversations.access.access_schema import (
     RemoveAccessRequest,
     ShareChatRequest,
@@ -56,13 +56,15 @@ from app.modules.conversations.utils.conversation_routing import (
     normalize_run_id,
     async_ensure_unique_run_id,
     redis_stream_generator,
+    resolve_conversation_agent_id,
     start_celery_task_and_stream,
+    start_regenerate_task_and_stream,
 )
 from app.modules.conversations.utils.redis_streaming import AsyncRedisStreamManager
 from app.modules.conversations.session.session_service import AsyncSessionService
 
 router = APIRouter()
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 _VSCODE_EXT_PATTERN = re.compile(r"\bPotpie-VSCode-Extension/\d+\.\d+(?:\.\d+)?\b")
 
 AuthenticatedUser = Annotated[dict[str, Any], Depends(AuthService.check_auth)]
@@ -152,10 +154,6 @@ class ConversationAPI:
             result = await controller.get_conversation_info(conversation_id)
             return result
         except Exception as e:
-            logger.error(
-                f"Error in get_conversation_info for {conversation_id}: {str(e)}",
-                exc_info=True,
-            )
             raise
 
     @staticmethod
@@ -182,10 +180,6 @@ class ConversationAPI:
             )
             return result
         except Exception as e:
-            logger.error(
-                f"Error in get_conversation_messages for {conversation_id}: {str(e)}",
-                exc_info=True,
-            )
             raise
 
     @staticmethod
@@ -290,7 +284,7 @@ class ConversationAPI:
 
             logger.info(
                 f"[post_message] tunnel_url={tunnel_url}, conversation_id={conversation_id}, user_id={user_id}"
-            )
+            , tunnel_url=tunnel_url, conversation_id=conversation_id, user_id=user_id)
 
             controller = ConversationController(db, async_db, user_id, user_email)
 
@@ -312,12 +306,15 @@ class ConversationAPI:
                 )
 
             node_ids_list = parsed_node_ids or []
+            agent_id = await resolve_conversation_agent_id(
+                conversation_id, db, async_db
+            )
             return await start_celery_task_and_stream(
                 conversation_id=conversation_id,
                 run_id=run_id,
                 user_id=user_id,
                 query=content,
-                agent_id=None,
+                agent_id=agent_id,
                 node_ids=node_ids_list,
                 attachment_ids=attachment_ids or [],
                 async_redis_manager=async_redis,
@@ -400,50 +397,25 @@ class ConversationAPI:
                 except Exception as e:
                     logger.warning(
                         f"Failed to retrieve attachments for message {last_human_message.id}: {e}"
-                    )
+                    , last_human_message_id=last_human_message.id, e=e)
                     attachment_ids = []
         except Exception as e:
             logger.error(f"Failed to get last human message for regenerate: {str(e)}")
             attachment_ids = []
 
-        from app.celery.tasks.agent_tasks import execute_regenerate_background
-
-        await async_redis.set_task_status(conversation_id, run_id, "queued")
-        await async_redis.publish_event(
-            conversation_id,
-            run_id,
-            "queued",
-            {
-                "status": "queued",
-                "message": "Regeneration task queued for processing",
-            },
+        agent_id = await resolve_conversation_agent_id(
+            conversation_id, db, async_db
         )
-
-        task_result = execute_regenerate_background.delay(
+        return await start_regenerate_task_and_stream(
             conversation_id=conversation_id,
             run_id=run_id,
             user_id=user_id,
             node_ids=request.node_ids or [],
             attachment_ids=attachment_ids,
+            agent_id=agent_id,
+            async_redis_manager=async_redis,
+            cursor=cursor,
             local_mode=local_mode,
-        )
-
-        await async_redis.set_task_id(conversation_id, run_id, task_result.id)
-        logger.info(
-            f"Started regenerate task {task_result.id} for {conversation_id}:{run_id}"
-        )
-
-        task_started = await async_redis.wait_for_task_start(
-            conversation_id, run_id, timeout=30, require_running=True
-        )
-        if not task_started:
-            logger.warning(
-                f"Background regenerate task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
-            )
-
-        return StreamingResponse(
-            redis_stream_generator(conversation_id, run_id, cursor),
-            media_type="text/event-stream",
         )
 
     @staticmethod
@@ -514,10 +486,6 @@ class ConversationAPI:
         try:
             return await controller.update_agent(conversation_id, request.agent_id)
         except Exception as e:
-            logger.error(
-                f"Error in update_agent for {conversation_id}: {str(e)}",
-                exc_info=True,
-            )
             raise
 
     @staticmethod
@@ -537,7 +505,6 @@ class ConversationAPI:
         try:
             await controller.get_conversation_info(conversation_id)
         except Exception as e:
-            logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
             raise HTTPException(status_code=403, detail="Access denied to conversation")
 
         result = await async_session_service.get_active_session(conversation_id)
@@ -565,7 +532,6 @@ class ConversationAPI:
         try:
             await controller.get_conversation_info(conversation_id)
         except Exception as e:
-            logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
             raise HTTPException(status_code=403, detail="Access denied to conversation")
 
         result = await async_session_service.get_task_status(conversation_id)
@@ -598,7 +564,6 @@ class ConversationAPI:
         try:
             await controller.get_conversation_info(conversation_id)
         except Exception as e:
-            logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
             raise HTTPException(status_code=403, detail="Access denied to conversation")
 
         stream_key = async_redis.stream_key(conversation_id, session_id)
@@ -611,7 +576,7 @@ class ConversationAPI:
         task_status = await async_redis.get_task_status(conversation_id, session_id)
         logger.info(
             f"Resuming session {session_id} with status: {task_status}, cursor: {cursor}"
-        )
+        , session_id=session_id, task_status=task_status, cursor=cursor)
 
         return StreamingResponse(
             redis_stream_generator(conversation_id, session_id, cursor),
@@ -749,7 +714,7 @@ async def sync_code_change_from_local(
         if success:
             logger.info(
                 f"Synced {change_type} change for '{file_path}' in conversation {conversation_id}"
-            )
+            , change_type=change_type, file_path=file_path, conversation_id=conversation_id)
             return {
                 "message": "Change synced successfully",
                 "conversation_id": conversation_id,
@@ -764,9 +729,4 @@ async def sync_code_change_from_local(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(
-            f"Error syncing code change from local: {e}",
-            conversation_id=conversation_id,
-            file_path=change.get("file_path"),
-        )
         raise HTTPException(status_code=500, detail=f"Error syncing change: {str(e)}")

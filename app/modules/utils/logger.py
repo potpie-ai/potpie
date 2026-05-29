@@ -1,110 +1,41 @@
+"""Compatibility wrapper for the legacy app.modules.utils.logger import path."""
+
+from __future__ import annotations
+
 import json
-import logging
 import os
-import re
 import sys
-from contextlib import contextmanager
-from typing import Any, Optional
+from typing import Any
 
-from loguru import logger as _loguru_logger
+from observability import configure, get_logger, log_context as log_context
+from observability.redaction import (
+    SENSITIVE_PATTERNS as SENSITIVE_PATTERNS,
+    sanitize_log_text,
+)
 
-_LOGGING_CONFIGURED = False
-_logger = _loguru_logger
-
-# Control whether to include stack traces in error logs
-# Set LOG_STACK_TRACES=false to disable stack traces
 SHOW_STACK_TRACES = os.getenv("LOG_STACK_TRACES", "true").lower() in (
     "true",
     "1",
     "yes",
 )
 
-REDACTED_VALUE = "***REDACTED***"
-REDACTED_KEY_VALUE_REPLACEMENT = rf"\1={REDACTED_VALUE}"
-REDACTED_DOUBLE_QUOTED_VALUE_REPLACEMENT = rf'\1"{REDACTED_VALUE}"'
-REDACTED_SINGLE_QUOTED_VALUE_REPLACEMENT = rf"\1'{REDACTED_VALUE}'"
 
-# Sensitive data patterns to redact in logs
-SENSITIVE_PATTERNS = [
-    # Credentials in key=value format
-    (
-        re.compile(r'(password|passwd|pwd)=["\']?([^"\'\s&]+)', re.IGNORECASE),
-        REDACTED_KEY_VALUE_REPLACEMENT,
-    ),
-    (
-        re.compile(
-            r'(token|access_token|refresh_token|id_token)=["\']?([^"\'\s&]+)',
-            re.IGNORECASE,
-        ),
-        REDACTED_KEY_VALUE_REPLACEMENT,
-    ),
-    (
-        re.compile(
-            r'(secret|client_secret|api_secret)=["\']?([^"\'\s&]+)', re.IGNORECASE
-        ),
-        REDACTED_KEY_VALUE_REPLACEMENT,
-    ),
-    (
-        re.compile(r'(api[_-]?key)=["\']?([^"\'\s&]+)', re.IGNORECASE),
-        REDACTED_KEY_VALUE_REPLACEMENT,
-    ),
-    (
-        re.compile(r'(auth|authorization)=["\']?([^"\'\s&]+)', re.IGNORECASE),
-        REDACTED_KEY_VALUE_REPLACEMENT,
-    ),
-    # Bearer tokens
-    (
-        re.compile(r"Bearer\s+([A-Za-z0-9._~+/=-]+)", re.IGNORECASE),
-        r"Bearer ***REDACTED***",
-    ),
-    # Basic auth
-    (re.compile(r"Basic\s+([A-Za-z0-9+/]+=*)", re.IGNORECASE), r"Basic ***REDACTED***"),
-    # Redis/Database URLs with passwords
-    (
-        re.compile(
-            r"(redis|postgresql|mysql|mongodb)://([^:]+):([^@]+)@", re.IGNORECASE
-        ),
-        r"\1://\2:***REDACTED***@",
-    ),
-    # OAuth authorization codes (typically 20-100 chars alphanumeric)
-    (
-        re.compile(r"([?&]code=)([A-Za-z0-9._~-]{20,100})([&\s]|$)", re.IGNORECASE),
-        r"\1***REDACTED***\3",
-    ),
-    # Generic secrets in quotes
-    (
-        re.compile(
-            r'("(?:password|token|secret|api_key)"\s*:\s*)"([^"]+)"', re.IGNORECASE
-        ),
-        REDACTED_DOUBLE_QUOTED_VALUE_REPLACEMENT,
-    ),
-    (
-        re.compile(
-            r"('(?:password|token|secret|api_key)'\s*:\s*)'([^']+)'", re.IGNORECASE
-        ),
-        REDACTED_SINGLE_QUOTED_VALUE_REPLACEMENT,
-    ),
-]
+def setup_logger(name: str):
+    """Return the new observability structured logger under the legacy name."""
+    return get_logger(name)
+
+
+def configure_logging(level: str | None = None) -> None:
+    """Legacy entrypoint retained for modules that have not migrated yet."""
+    del level
+    configure()
 
 
 def filter_sensitive_data(text: Any) -> Any:
-    """
-    Filter sensitive data from log messages.
-
-    Args:
-        text: Log message text to filter
-
-    Returns:
-        Filtered text with sensitive data redacted
-    """
+    """Backward-compatible alias for observability redaction."""
     if not isinstance(text, str):
         return text
-
-    filtered = text
-    for pattern, replacement in SENSITIVE_PATTERNS:
-        filtered = pattern.sub(replacement, filtered)
-
-    return filtered
+    return sanitize_log_text(text)
 
 
 def truncate_traceback(text: Any, max_lines: int = 10) -> Any:
@@ -120,25 +51,16 @@ def truncate_traceback(text: Any, max_lines: int = 10) -> Any:
     return "\n".join(lines[-max_lines:])
 
 
-def production_log_sink(message):
-    """Custom sink for production that outputs flat JSON format for better machine readability.
-
-    When serialize=True, loguru outputs JSON string. We parse it and reformat as flat JSON
-    for easier parsing by log aggregation tools (ELK, Datadog, Splunk, CloudWatch, etc.).
-
-    Also filters sensitive data patterns to prevent credential leakage.
-    """
+def production_log_sink(message: str) -> None:
+    """Legacy JSONL sink retained for callers that import it directly."""
     try:
-        # Parse the serialized JSON from loguru
         full_record = json.loads(message)
         record = full_record.get("record", full_record)
     except (json.JSONDecodeError, AttributeError):
-        # Fallback: if message is not JSON, output as-is (shouldn't happen with serialize=True)
         sys.stdout.write(message)
         sys.stdout.flush()
         return
 
-    # Extract exception info if present
     exception = None
     exc = record.get("exception")
     if exc:
@@ -154,8 +76,6 @@ def production_log_sink(message):
             ),
         }
 
-    # Build flat JSON structure - easier for log parsers
-    # Filter sensitive data from message
     log_data = {
         "timestamp": record.get("time", {}).get("repr", ""),
         "level": record.get("level", {}).get("name", "INFO"),
@@ -165,240 +85,16 @@ def production_log_sink(message):
         "message": filter_sensitive_data(str(record.get("message", ""))),
     }
 
-    # Add all extra fields (conversation_id, user_id, etc.) at top level
-    # Filter sensitive data from extra fields too
     extras = record.get("extra", {})
     for key, value in extras.items():
-        if key != "name":  # Already included as "logger"
-            # Convert value to string and filter if it's a string-like type
-            if isinstance(value, (str, bytes)):
-                log_data[key] = filter_sensitive_data(str(value))
-            else:
-                log_data[key] = value
+        if key == "name":
+            continue
+        log_data[key] = (
+            filter_sensitive_data(value) if isinstance(value, str) else value
+        )
 
-    # Add exception if present
     if exception:
         log_data["exception"] = exception
 
-    # Write flat JSON to stdout (one JSON object per line - JSONL format)
     sys.stdout.write(json.dumps(log_data, default=str) + "\n")
     sys.stdout.flush()
-
-
-class InterceptHandler(logging.Handler):
-    """Intercept standard library logging and route through loguru."""
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            level = _logger.level(record.levelname).name
-        except ValueError:
-            level = str(record.levelno)
-
-        frame, depth = sys._getframe(6), 6
-        while frame and frame.f_code.co_filename == logging.__file__:
-            frame = frame.f_back
-            depth += 1
-
-        _logger.bind(name=record.name).opt(depth=depth, exception=record.exc_info).log(
-            level, record.getMessage()
-        )
-
-
-def _resolve_log_level(level: Optional[str]) -> str:
-    return (level or os.getenv("LOG_LEVEL", "INFO")).upper()
-
-
-def _resolve_environment() -> str:
-    return (os.getenv("ENV") or "development").lower().strip()
-
-
-def _ensure_record_extra(record: dict[str, Any]) -> dict[str, Any]:
-    extras = record.setdefault("extra", {})
-    extras.setdefault("name", record.get("name", record.get("module", "unknown")))
-    return extras
-
-
-def _patch_log_record(record: dict[str, Any]) -> None:
-    _ensure_record_extra(record)
-    if "message" in record:
-        record["message"] = filter_sensitive_data(str(record["message"]))
-
-
-def _development_log_filter(record: dict[str, Any]) -> bool:
-    extras = _ensure_record_extra(record)
-    record["message"] = filter_sensitive_data(str(record["message"]))
-
-    extra_parts = []
-    for key, value in extras.items():
-        if isinstance(value, (str, bytes)):
-            extras[key] = filter_sensitive_data(str(value))
-        if key != "name":
-            extra_parts.append(f"{key}: {extras[key]}")
-
-    if extra_parts:
-        record["message"] = f"{record['message']} | " + ", ".join(extra_parts)
-
-    return True
-
-
-def _configure_production_sink(level: str) -> None:
-    _logger.add(
-        production_log_sink,
-        format="{message}",
-        level=level,
-        serialize=True,
-        backtrace=SHOW_STACK_TRACES,
-        diagnose=SHOW_STACK_TRACES,
-    )
-
-
-def _configure_development_sink(level: str) -> None:
-    _logger.add(
-        sys.stdout,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[name]}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level>",
-        level=level,
-        colorize=True,
-        filter=_development_log_filter,
-        backtrace=SHOW_STACK_TRACES,
-        diagnose=SHOW_STACK_TRACES,
-    )
-
-
-def _library_log_levels(level: str) -> dict[str, str]:
-    return {
-        "app": level,
-        "api": level,
-        "services": level,
-        "models": level,
-        "uvicorn": "INFO",
-        "uvicorn.access": "WARNING",
-        "uvicorn.error": "INFO",
-        "fastapi": "INFO",
-        "sqlalchemy.engine": "WARNING",
-        "sqlalchemy.pool": "WARNING",
-        "sqlalchemy.orm": "WARNING",
-        "alembic": "INFO",
-        "celery": "INFO",
-        "kombu": "WARNING",
-        "httpx": "WARNING",
-        "urllib3": "WARNING",
-        "boto3": "WARNING",
-        "botocore": "WARNING",
-    }
-
-
-def _root_logger_level() -> int:
-    return (
-        logging.DEBUG
-        if os.getenv("LOG_LEVEL", "INFO").upper() == "DEBUG"
-        else logging.INFO
-    )
-
-
-def _configure_standard_loggers(
-    intercept_handler: InterceptHandler, library_levels: dict[str, str]
-) -> None:
-    logging.basicConfig(
-        handlers=[intercept_handler],
-        level=_root_logger_level(),
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        force=True,
-    )
-
-    for logger_name, log_level in library_levels.items():
-        lib_logger = logging.getLogger(logger_name)
-        lib_logger.handlers = [intercept_handler]
-        lib_logger.setLevel(log_level)
-        lib_logger.propagate = False
-
-    logging.getLogger().setLevel(logging.WARNING)
-
-
-def configure_logging(level: Optional[str] = None):
-    """
-    Configure unified logging with loguru.
-
-    Standard practice:
-    1. Your app logs: Use loguru directly
-    2. Third-party logs: Intercept selectively with appropriate levels
-    3. Filter at sink level for production vs development
-    """
-    global _LOGGING_CONFIGURED, _logger
-
-    if _LOGGING_CONFIGURED:
-        return
-
-    level = _resolve_log_level(level)
-    env = _resolve_environment()
-
-    _logger.remove()
-    _logger = _logger.patch(_patch_log_record)
-
-    if env != "development":
-        _configure_production_sink(level)
-    else:
-        _configure_development_sink(level)
-
-    intercept_handler = InterceptHandler()
-    _configure_standard_loggers(intercept_handler, _library_log_levels(level))
-
-    _LOGGING_CONFIGURED = True
-
-
-@contextmanager
-def log_context(**kwargs):
-    """
-    Context manager to add domain IDs to all logs within the context.
-
-    Uses Loguru's native contextualize() which is thread-safe and async-safe.
-
-    Usage:
-        with log_context(conversation_id=conv_id, user_id=user_id):
-            logger.info("This log will include conversation_id and user_id")
-            logger.exception("Error occurred")  # Also includes context
-    """
-    with _logger.contextualize(**kwargs):
-        yield
-
-
-def setup_logger(name: str):
-    """
-    Setup a logger with the given name.
-
-    Standard practice: Use this for YOUR application code.
-    For third-party libraries, let the interception handle it.
-
-    For context, use log_context() context manager or add context as kwargs:
-        logger.info("Message", user_id=user_id, conversation_id=conv_id)
-        logger.exception("Error", user_id=user_id)  # Includes stack trace + context
-    """
-    if not _LOGGING_CONFIGURED:
-        configure_logging()
-
-    return _logger.bind(name=name)
-
-
-def should_show_stack_trace() -> bool:
-    """Check if stack traces should be shown in logs.
-
-    Controlled by LOG_STACK_TRACES environment variable.
-    Set LOG_STACK_TRACES=false to disable stack traces.
-
-    Usage in logging calls:
-        logger.warning("Error occurred", exc_info=should_show_stack_trace())
-    """
-    return SHOW_STACK_TRACES
-
-
-# Convenience function for dynamic level adjustment
-def set_library_log_level(library_name: str, level: str):
-    """
-    Dynamically adjust log level for a specific library.
-
-    Usage:
-        set_library_log_level("sqlalchemy.engine", "DEBUG")  # Temporarily debug SQL
-        set_library_log_level("sqlalchemy.engine", "WARNING")  # Back to normal
-    """
-    lib_logger = logging.getLogger(library_name)
-    lib_logger.setLevel(level)
-    _logger.info(f"Set log level for '{library_name}' to {level}")

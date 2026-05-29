@@ -37,7 +37,6 @@ dependencies = [
     "langsmith>=0.8.0",
     "langgraph>=1.0.10",
     "litellm>=1.83.10,<1.84.0",
-    "loguru>=0.7.3",
     "neo4j>=5.28.2",
     "networkx>=3.4.2",
     "newrelic>=11.2.0",
@@ -72,7 +71,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "transformers>=4.57.1",
     "tree-sitter>=0.20.4",
-    "tree-sitter-language-pack>=0.13.0",
+    "tree-sitter-language-pack>=0.13.0,<1.6.1",
     "mako>=1.3.12",
     "fastmcp>=3.2.0",
     "lupa>=2.7",
@@ -88,6 +87,7 @@ dependencies = [
     "typer>=0.15.0",
     "parsing",
     "potpie-sandbox",
+    "observability",
     "daytona>=0.134.0",
     "tree-sitter-c-sharp==0.23.1",
     "tree-sitter-embedded-template==0.25.0",
@@ -105,6 +105,7 @@ parsing = { path = "app/src/parsing" }
 context-engine = { path = "app/src/context-engine", editable = true }
 potpie-integrations = { path = "app/src/integrations", editable = true }
 potpie-sandbox = { path = "app/src/sandbox", editable = true }
+observability = { path = "app/src/observability", editable = true }
 
 [project.scripts]
 potpie-seed = "seed.cli:main"
@@ -124,6 +125,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["potpie*", "app*", "seed*"]
+# Defensive: keep the in-monorepo path-packages out of root's package discovery.
+# Each is its own distribution wired in via [tool.uv.sources] above.
+exclude = ["app.src*"]
 
 [tool.bandit]
 exclude_dirs = ["tests", "app/alembic"]

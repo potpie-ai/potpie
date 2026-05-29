@@ -25,9 +25,9 @@ from app.modules.parsing.utils.content_hash import (
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Global singleton for SentenceTransformer to avoid reloading
 _embedding_model = None
@@ -81,7 +81,7 @@ class InferenceService:
         try:
             return InferenceCacheService(self.db)
         except Exception as e:
-            logger.warning(f"Failed to initialize cache service: {e}")
+            logger.warning(f"Failed to initialize cache service: {e}", e=e)
             return None
 
     def _normalize_node_text(
@@ -240,7 +240,7 @@ class InferenceService:
             )
             return True
         except Exception as e:
-            logger.warning(f"Failed to store inference in cache: {e}")
+            logger.warning(f"Failed to store inference in cache: {e}", e=e)
             return False
 
     def log_graph_stats(self, repo_id):
@@ -266,11 +266,11 @@ class InferenceService:
                     # Log the results
                     logger.info(
                         f"DEBUGNEO4J: Repo ID: {repo_id}, Nodes: {node_count}, Relationships: {relationship_count}"
-                    )
+                    , repo_id=repo_id, node_count=node_count, relationship_count=relationship_count)
                 else:
                     logger.info(
                         f"DEBUGNEO4J: No data found for repository ID: {repo_id}"
-                    )
+                    , repo_id=repo_id)
 
         except Exception as e:
             logger.error(f"An error occurred: {str(e)}")
@@ -324,7 +324,7 @@ class InferenceService:
                 all_nodes.extend(batch)
                 offset += batch_size
 
-        logger.info(f"DEBUGNEO4J: Fetched {len(all_nodes)} nodes for repo {repo_id}")
+        logger.debug(f"fetched {len(all_nodes)} nodes for repo {repo_id}")
         return all_nodes
 
     def get_entry_points(self, repo_id: str) -> List[str]:
@@ -838,7 +838,7 @@ class InferenceService:
             )
             return result
         except Exception as e:
-            logger.error(f"Entry point response generation failed: {e}")
+            logger.error(f"Entry point response generation failed: {e}", e=e)
             return DocstringResponse(docstrings=[])
 
     async def generate_docstrings(
@@ -848,7 +848,7 @@ class InferenceService:
         logger.info(
             f"[INFERENCE] Starting docstring generation for project {repo_id}",
             project_id=repo_id,
-        )
+         repo_id=repo_id)
         self.log_graph_stats(repo_id)
 
         # Initialize cache service once for the entire inference process
@@ -919,7 +919,7 @@ class InferenceService:
             f"[INFERENCE] Committed search indices in {commit_time:.2f}s",
             project_id=repo_id,
             commit_time_seconds=commit_time,
-        )
+         commit_time=commit_time)
 
         # Step 3: Cache lookup - check which nodes have cached inference
         cache_lookup_start = time.time()
@@ -1007,7 +1007,7 @@ class InferenceService:
             project_id=repo_id,
             cached_nodes_count=cached_updated,
             cached_process_time_seconds=cached_process_time,
-        )
+         cached_updated=cached_updated, cached_process_time=cached_process_time)
 
         all_docstrings = {"docstrings": []}
         total_cache_stored_count = 0
@@ -1108,7 +1108,7 @@ class InferenceService:
                                         f"[INFERENCE] Failed to cache inference for node {request.node_id}: {cache_error}",
                                         project_id=repo_id,
                                         node_id=request.node_id,
-                                    )
+                                     request_node_id=request.node_id, cache_error=cache_error)
 
                         cache_store_time = time.time() - cache_store_start
 
@@ -1216,7 +1216,7 @@ class InferenceService:
             llm_batch_time_seconds=llm_batch_time,
             validation_time_seconds=validation_time,
             invalid_results=invalid_results,
-        )
+         total_inference_time=total_inference_time, fetch_time=fetch_time, search_index_time=search_index_time, cache_lookup_time=cache_lookup_time, batch_time=batch_time, cached_process_time=cached_process_time, llm_batch_time=llm_batch_time, validation_time=validation_time)
 
         return updated_docstrings, cache_stats
 
@@ -1348,7 +1348,7 @@ class InferenceService:
             )
             result = DocstringResponse(docstrings=[])
 
-        logger.info(f"Parsing project {repo_id}: Inference request completed.")
+        logger.info(f"Parsing project {repo_id}: Inference request completed.", repo_id=repo_id)
         return result
 
     def generate_embedding(self, text: str) -> List[float]:
@@ -1553,7 +1553,7 @@ class InferenceService:
         logger.info(
             f"[INFERENCE RUN] Starting inference pipeline for project {repo_id}",
             project_id=repo_id,
-        )
+         repo_id=repo_id)
 
         try:
             # Set status to INFERRING at the beginning (repo_id may be str or int)
@@ -1593,7 +1593,7 @@ class InferenceService:
                 f"[INFERENCE RUN] Created vector index in {vector_index_time:.2f}s",
                 project_id=repo_id,
                 vector_index_time_seconds=vector_index_time,
-            )
+             vector_index_time=vector_index_time)
 
             # Set status to READY after successful completion
             await self.project_manager.update_project_status(
@@ -1605,11 +1605,11 @@ class InferenceService:
                 f"[INFERENCE RUN] Inference pipeline completed in {total_run_time:.2f}s",
                 project_id=repo_id,
                 total_run_time_seconds=total_run_time,
-            )
+             total_run_time=total_run_time)
 
             return cache_stats
         except Exception as e:
-            logger.error(f"Inference failed for project {repo_id}: {e}")
+            logger.error(f"Inference failed for project {repo_id}: {e}", repo_id=repo_id, e=e)
             # Set status to ERROR on failure
             try:
                 pid = int(repo_id) if isinstance(repo_id, str) else repo_id
@@ -1704,5 +1704,5 @@ class InferenceService:
             except Exception as e:
                 logger.warning(
                     f"Error querying vector index for project {project_id}: {e}"
-                )
+                , project_id=project_id, e=e)
                 return []

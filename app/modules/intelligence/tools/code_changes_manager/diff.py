@@ -5,10 +5,10 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def create_unified_diff(
@@ -112,5 +112,5 @@ def fetch_repo_file_content_for_diff(
         except GitOperationError:
             return None
     except Exception as e:
-        logger.debug(f"diff.fetch_repo_file_content_for_diff: Failed: {e}")
+        logger.debug(f"diff.fetch_repo_file_content_for_diff: Failed: {e}", e=e)
         return None

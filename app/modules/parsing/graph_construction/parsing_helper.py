@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _fetch_github_branch_head_sha_http(
@@ -190,11 +190,11 @@ class ParseHelper:
         logger.info(
             f"check_commit_status: Checking commit status for project {project_id}, "
             f"requested_commit_id={requested_commit_id}"
-        )
+        , project_id=project_id, requested_commit_id=requested_commit_id)
 
         project = await self.project_manager.get_project_from_db_by_id(project_id)
         if not project:
-            logger.error(f"Project with ID {project_id} not found")
+            logger.error(f"Project with ID {project_id} not found", project_id=project_id)
             return False
 
         current_commit_id = project.get("commit_id")
@@ -204,7 +204,7 @@ class ParseHelper:
         logger.info(
             f"check_commit_status: Project {project_id} - repo={repo_name}, "
             f"branch={branch_name}, current_commit_id={current_commit_id}"
-        )
+        , project_id=project_id, repo_name=repo_name, branch_name=branch_name, current_commit_id=current_commit_id)
 
         # Check if this is a pinned commit parse
         # If the user explicitly provided a commit_id in the parse request,
@@ -213,19 +213,19 @@ class ParseHelper:
             logger.info(
                 f"check_commit_status: Pinned commit parse detected "
                 f"(requested_commit_id={requested_commit_id})"
-            )
+            , requested_commit_id=requested_commit_id)
             # For pinned commits, check if the requested commit matches the stored commit
             if requested_commit_id == current_commit_id:
                 logger.info(
                     f"check_commit_status: Pinned commit {requested_commit_id} matches "
                     f"stored commit, no reparse needed"
-                )
+                , requested_commit_id=requested_commit_id)
                 return True
             else:
                 logger.info(
                     f"check_commit_status: Pinned commit changed from {current_commit_id} "
                     f"to {requested_commit_id}, reparse needed"
-                )
+                , current_commit_id=current_commit_id, requested_commit_id=requested_commit_id)
                 return False
 
         # If we reach here, this is a branch-based parse (not pinned commit)
@@ -234,14 +234,14 @@ class ParseHelper:
         if not repo_name:
             logger.error(
                 f"Repository name or branch name not found for project ID {project_id}"
-            )
+            , project_id=project_id)
             return False
 
         if not branch_name:
             logger.info(
                 f"check_commit_status: Branch is empty (pinned commit parse) - "
                 f"sticking to commit and not updating it for: {project_id}"
-            )
+            , project_id=project_id)
             return True
 
         if len(repo_name.split("/")) < 2:
@@ -254,13 +254,13 @@ class ParseHelper:
             if current_commit_id is None:
                 logger.info(
                     f"check_commit_status: Project {project_id} has no commit_id, will reparse"
-                )
+                , project_id=project_id)
                 return False
 
             # Use HTTP-only GitHub API to avoid GitPython/libgit2 in forked gunicorn workers (SIGSEGV)
             logger.info(
                 f"check_commit_status: Branch-based parse - getting repo info for {repo_name}"
-            )
+            , repo_name=repo_name)
             latest_commit_id = await asyncio.to_thread(
                 _fetch_github_branch_head_sha_http, repo_name, branch_name
             )

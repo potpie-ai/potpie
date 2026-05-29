@@ -113,7 +113,7 @@ class SWEBDebugAgent(ChatAgent):
         else:
             logger.error(
                 f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticRagAgent"
-            )
+            , self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:

@@ -158,9 +158,9 @@ class CodeProviderController:
         Sync helper: fetch all branches from provider with fallbacks (PAT, unauthenticated, GitHub App).
         Runs in thread pool to avoid blocking the event loop on slow GitHub API.
         """
-        from app.modules.utils.logger import setup_logger
+        from observability import get_logger
 
-        logger = setup_logger(__name__)
+        logger = get_logger(__name__)
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         all_branches = provider.list_branches(repo_name)
         self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
@@ -172,9 +172,9 @@ class CodeProviderController:
         Sync helper: fetch branches with full fallback chain (PAT -> unauthenticated -> GitHub App).
         Used from asyncio.to_thread to avoid blocking the event loop.
         """
-        from app.modules.utils.logger import setup_logger
+        from observability import get_logger
 
-        logger = setup_logger(__name__)
+        logger = get_logger(__name__)
         try:
             return self._fetch_branches_from_provider_sync(repo_name)
         except Exception as e:
@@ -198,7 +198,7 @@ class CodeProviderController:
                 logger.info(
                     f"PAT authentication failed with {error_type} for {repo_name}, "
                     "trying unauthenticated access for public repo"
-                )
+                , error_type=error_type, repo_name=repo_name)
                 try:
                     from app.modules.code_provider.github.github_provider import GitHubProvider
 
@@ -209,11 +209,11 @@ class CodeProviderController:
                     logger.info(f"Cached {len(all_branches)} branches for {repo_name} (unauthenticated)")
                     return all_branches
                 except Exception as unauth_error:
-                    logger.warning(f"Unauthenticated access also failed for {repo_name}: {unauth_error}")
+                    logger.warning(f"Unauthenticated access also failed for {repo_name}: {unauth_error}", repo_name=repo_name, unauth_error=unauth_error)
 
             if provider_type == "github" and os.getenv("GITHUB_APP_ID") and config_provider.get_github_key():
                 try:
-                    logger.info(f"Retrying branch fetch for {repo_name} with GitHub App auth")
+                    logger.info(f"Retrying branch fetch for {repo_name} with GitHub App auth", repo_name=repo_name)
                     provider = CodeProviderFactory.create_github_app_provider(repo_name)
                     all_branches = provider.list_branches(repo_name)
                     self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
@@ -225,8 +225,7 @@ class CodeProviderController:
             if is_404_error or is_401_error or (hasattr(e, "status") and getattr(e, "status", None) == 403):
                 logger.info(f"Authentication failed for {repo_name}: {str(e)}")
             else:
-                logger.error(f"Error fetching branches for {repo_name}: {str(e)}", exc_info=True)
-            raise
+                raise
 
     async def get_branch_list(
         self, repo_name: str, limit: Optional[int] = None, offset: int = 0, search: Optional[str] = None
@@ -238,9 +237,9 @@ class CodeProviderController:
         Returns paginated results if limit is specified.
         GitHub API calls run in a thread pool to avoid blocking the event loop.
         """
-        from app.modules.utils.logger import setup_logger
+        from observability import get_logger
 
-        logger = setup_logger(__name__)
+        logger = get_logger(__name__)
         search_query = self._normalize_search_query(search)
 
         # Fast path: check cache (async Redis when available)
@@ -289,8 +288,8 @@ class CodeProviderController:
             Dictionary containing filtered repositories
         """
         try:
-            from app.modules.utils.logger import setup_logger
-            logger = setup_logger(__name__)
+            from observability import get_logger
+            logger = get_logger(__name__)
 
             # Normalize and validate search query
             search_query = self._normalize_search_query(search)

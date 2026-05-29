@@ -6,9 +6,9 @@ from sqlalchemy.orm import selectinload
 from app.core.base_store import BaseStore
 from .conversation_model import Conversation
 from ..message.message_model import Message, MessageType
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class StoreError(Exception):
@@ -120,7 +120,7 @@ class ConversationStore(BaseStore):
             logger.error(
                 f"Database error in get_for_user for user {user_id}: {e}",
                 exc_info=True,
-            )
+             user_id=user_id, e=e)
             # Re-raise with a generic store error to not leak details
             raise StoreError(
                 f"Failed to retrieve conversations for user {user_id}"

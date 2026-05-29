@@ -37,9 +37,9 @@ from app.modules.intelligence.agents.chat_agents.tool_helpers import (
     get_tool_call_info_content,
     try_extract_streaming_preview,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Tool name constants
 TOOL_NAME_SHOW_UPDATED_FILE = "show_updated_file"
@@ -305,7 +305,7 @@ class StreamProcessor:
                 logger.warning(
                     f"Model API connection error in {context}: {error}. "
                     "Often caused by network drops, timeouts, or proxy/load balancer limits."
-                )
+                , context=context, error=error)
                 return self.create_error_response(
                     "*The connection to the model was lost. You can try again.*"
                 )
@@ -318,19 +318,19 @@ class StreamProcessor:
                 logger.warning(
                     f"Model connection error in {context}: {error}. "
                     "Likely network/provider connectivity issue during stream setup."
-                )
+                , context=context, error=error)
                 return self.create_error_response(
                     "*Could not connect to the model provider. Please try again.*"
                 )
         except ImportError:
             pass
         if isinstance(error, (ModelRetry, AgentRunError, UserError)):
-            logger.warning(f"Pydantic-ai error in {context}: {error}")
+            logger.warning(f"Pydantic-ai error in {context}: {error}", context=context, error=error)
             return self.create_error_response(
                 "*Encountered an issue while processing your request. Trying to recover...*"
             )
         elif isinstance(error, anyio.WouldBlock):
-            logger.warning(f"{context} would block - continuing...")
+            logger.warning(f"{context} would block - continuing...", context=context)
             return None  # Signal to continue
         elif isinstance(error, ValueError):
             error_str = str(error)
@@ -353,7 +353,7 @@ class StreamProcessor:
             error_detail = f"{type(error).__name__}: {str(error)}"
             logger.error(
                 f"Unexpected error in {context}: {error_detail}", exc_info=True
-            )
+            , context=context, error_detail=error_detail)
             if "json" in str(error).lower() or "parse" in str(error).lower():
                 return self.create_error_response(
                     "*Encountered a parsing error. Skipping this step and continuing...*"
@@ -535,7 +535,7 @@ class StreamProcessor:
                                 yield chunk
                             logger.info(
                                 f"[{context}] Finished model request stream: yielded {chunk_count} chunks"
-                            )
+                            , context=context, chunk_count=chunk_count)
                         except Exception as e:
                             if isinstance(e, GenerationCancelled):
                                 raise
@@ -551,7 +551,7 @@ class StreamProcessor:
                                     except asyncio.TimeoutError:
                                         logger.warning(
                                             f"[{context}] Drain after stream error timed out (10s), exiting"
-                                        )
+                                        , context=context)
                                         break
                             except Exception:
                                 pass
@@ -592,7 +592,7 @@ class StreamProcessor:
                 reasoning_manager = _get_reasoning_manager()
                 reasoning_hash = reasoning_manager.finalize_and_save()
                 if reasoning_hash:
-                    logger.info(f"Reasoning content saved with hash: {reasoning_hash}")
+                    logger.info(f"Reasoning content saved with hash: {reasoning_hash}", reasoning_hash=reasoning_hash)
                 break
 
     async def process_tool_call_node(
@@ -629,7 +629,7 @@ class StreamProcessor:
                 context_type = "SUPERVISOR" if current_context else "SUBAGENT"
                 logger.info(
                     f"[process_tool_call_node] Starting tool call processing ({context_type} context)"
-                )
+                , context_type=context_type)
 
                 async def consume_delegation_queue(
                     tool_call_id: str,
@@ -656,7 +656,7 @@ class StreamProcessor:
                                     except asyncio.QueueFull:
                                         logger.warning(
                                             f"[consume_delegation_queue] Output queue full for {tool_call_id}"
-                                        )
+                                        , tool_call_id=tool_call_id)
                                     break
                                 # Use put_nowait to avoid blocking - queue should be unbounded
                                 try:
@@ -670,7 +670,7 @@ class StreamProcessor:
                                 except asyncio.QueueFull:
                                     logger.warning(
                                         f"[consume_delegation_queue] Output queue full, dropping chunk for {tool_call_id}"
-                                    )
+                                    , tool_call_id=tool_call_id)
                             except asyncio.TimeoutError:
                                 # Check if the streaming task is done
                                 task = streaming_tasks.get(tool_call_id)
@@ -691,7 +691,7 @@ class StreamProcessor:
                                             except asyncio.QueueFull:
                                                 logger.warning(
                                                     f"[consume_delegation_queue] Output queue full, dropping chunk for {tool_call_id}"
-                                                )
+                                                , tool_call_id=tool_call_id)
                                     except asyncio.QueueEmpty:
                                         try:
                                             output_queue.put_nowait(None)
@@ -817,7 +817,7 @@ class StreamProcessor:
                                 if chunks_yielded > 0:
                                     logger.debug(
                                         f"[process_tool_call_node] Yielded {chunks_yielded} chunks from queue {queue_key}"
-                                    )
+                                    , chunks_yielded=chunks_yielded, queue_key=queue_key)
                                 break
 
                     # Wait for EITHER next event OR drain timeout; do not cancel the next-event
@@ -1005,7 +1005,7 @@ class StreamProcessor:
                             except Exception as e:
                                 logger.warning(
                                     f"Error setting up subagent streaming for {tool_name}: {e}"
-                                )
+                                , tool_name=tool_name, e=e)
                                 # Clean up the queues and tasks if there was an error
                                 if tool_call_id in active_streams:
                                     del active_streams[tool_call_id]
@@ -1176,7 +1176,7 @@ class StreamProcessor:
                         # Already fully drained, just clean up
                         logger.debug(
                             f"[process_tool_call_node] Skipping already-drained queue: {queue_key}"
-                        )
+                        , queue_key=queue_key)
                         output_queues.pop(queue_key, None)
                         # Only cleanup active_streams and delegation_manager for non-Redis queues
                         if not queue_key.endswith("_redis"):
@@ -1186,7 +1186,7 @@ class StreamProcessor:
 
                     logger.info(
                         f"[process_tool_call_node] Draining final chunks from queue: {queue_key}"
-                    )
+                    , queue_key=queue_key)
                     output_queue = output_queues[queue_key]
                     final_drain_start = asyncio.get_running_loop().time()
                     total_final_chunks = 0
@@ -1216,7 +1216,7 @@ class StreamProcessor:
                         logger.warning(
                             f"[process_tool_call_node] ⚠️ Final drain incomplete for {queue_key} after 20 attempts: "
                             f"chunks={total_final_chunks}, elapsed={final_drain_elapsed:.2f}s"
-                        )
+                        , queue_key=queue_key, total_final_chunks=total_final_chunks, final_drain_elapsed=final_drain_elapsed)
                     output_queues.pop(queue_key, None)
                     # Only cleanup active_streams and delegation_manager for non-Redis queues
                     if not queue_key.endswith("_redis"):
@@ -1369,14 +1369,14 @@ class StreamProcessor:
                     f"Duplicate tool_result error in tool call stream: {pydantic_error}. "
                     f"This indicates pydantic_ai's internal message history has duplicate tool results. "
                     f"This may require restarting the agent run with a fresh context."
-                )
+                , pydantic_error=pydantic_error)
                 yield self.create_error_response(
                     "*Encountered a message history error. This may require starting a new conversation.*"
                 )
             else:
                 logger.warning(
                     f"Pydantic-ai error in tool call stream: {pydantic_error}"
-                )
+                , pydantic_error=pydantic_error)
                 yield self.create_error_response(
                     "*Encountered an issue while calling tools. Trying to recover...*"
                 )
@@ -1393,12 +1393,12 @@ class StreamProcessor:
                 logger.error(
                     f"Duplicate tool_result error in tool call stream: {e}. "
                     f"This indicates pydantic_ai's internal message history has duplicate tool results."
-                )
+                , e=e)
                 yield self.create_error_response(
                     "*Encountered a message history error. This may require starting a new conversation.*"
                 )
             else:
-                logger.error(f"Unexpected error in tool call stream: {e}")
+                logger.error(f"Unexpected error in tool call stream: {e}", e=e)
                 yield self.create_error_response(
                     "*An unexpected error occurred during tool execution. Continuing...*"
                 )

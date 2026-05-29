@@ -6,9 +6,9 @@ from github.GithubException import BadCredentialsException
 
 from app.modules.code_provider.github.github_provider import GitHubProvider
 from app.modules.code_provider.provider_factory import CodeProviderFactory
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class MockRepo:
@@ -64,7 +64,7 @@ class MockRepo:
     def get_archive_link(self, format_type, ref):
         logger.info(
             f"ProviderWrapper: Getting archive link for repo '{self.full_name}', format: '{format_type}', ref: '{ref}'"
-        )
+        , self_full_name=self.full_name, format_type=format_type, ref=ref)
 
         try:
             # Use the provider's get_archive_link method if available
@@ -74,7 +74,7 @@ class MockRepo:
                 )
                 logger.info(
                     f"ProviderWrapper: Retrieved archive URL from provider: {archive_url}"
-                )
+                , archive_url=archive_url)
                 return archive_url
             else:
                 # Fallback to manual URL construction
@@ -114,12 +114,9 @@ class MockRepo:
 
                 logger.info(
                     f"ProviderWrapper: Generated archive URL (fallback): {archive_url}"
-                )
+                , archive_url=archive_url)
                 return archive_url
         except Exception as e:
-            logger.error(
-                f"ProviderWrapper: Error getting archive link for '{self.full_name}': {e}"
-            )
             raise
 
     @property
@@ -164,7 +161,7 @@ class ProviderWrapper:
             self.repo_manager = RepoManager()
             logger.info("ProviderWrapper: RepoManager initialized")
         except Exception as e:
-            logger.warning(f"ProviderWrapper: Failed to initialize RepoManager: {e}")
+            logger.warning(f"ProviderWrapper: Failed to initialize RepoManager: {e}", e=e)
 
     def _wrap_provider_if_needed(self, provider):
         """
@@ -193,10 +190,10 @@ class ProviderWrapper:
         Note: get_repo doesn't use local copies since it needs to fetch repository metadata
         from the provider API. Local copies are used for file content and structure operations.
         """
-        logger.info(f"ProviderWrapper: get_repo called for {repo_name}")
+        logger.info(f"ProviderWrapper: get_repo called for {repo_name}", repo_name=repo_name)
         logger.info(
             f"ProviderWrapper: About to create provider with fallback for {repo_name}"
-        )
+        , repo_name=repo_name)
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         logger.info(
             f"ProviderWrapper: Provider created successfully, type: {type(provider).__name__}"
@@ -205,11 +202,11 @@ class ProviderWrapper:
         try:
             logger.info(
                 f"ProviderWrapper: About to call provider.get_repository for {repo_name}"
-            )
+            , repo_name=repo_name)
             repo_info = provider.get_repository(repo_name)
             logger.info(
                 f"ProviderWrapper: provider.get_repository completed for {repo_name}"
-            )
+            , repo_name=repo_name)
         except Exception as e:
             # Check if this is a 401 error (bad credentials)
             is_401_error = (
@@ -240,15 +237,15 @@ class ProviderWrapper:
         if isinstance(provider, GitHubProvider):
             logger.info(
                 f"ProviderWrapper: GitHubProvider detected, ensuring authentication for {repo_name}"
-            )
+            , repo_name=repo_name)
             provider._ensure_authenticated()
             logger.info(
                 f"ProviderWrapper: About to call provider.client.get_repo for {repo_name}"
-            )
+            , repo_name=repo_name)
             github_repo = provider.client.get_repo(repo_name)
             logger.info(
                 f"ProviderWrapper: provider.client.get_repo completed for {repo_name}"
-            )
+            , repo_name=repo_name)
             return (provider.client, github_repo)
 
         # Return the provider client and mock repo
@@ -286,7 +283,7 @@ class ProviderWrapper:
                 if tunnel_provider.check_repository_access(repo_name):
                     logger.info(
                         f"Using UserLocalTunnelProvider for file {file_path} (tunnel available)"
-                    )
+                    , file_path=file_path)
                     return tunnel_provider.get_file_content(
                         repo_name=repo_name,
                         file_path=file_path,
@@ -297,7 +294,7 @@ class ProviderWrapper:
             except Exception as e:
                 logger.debug(
                     f"Tunnel provider failed: {e}, falling back to other providers"
-                )
+                , e=e)
 
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         # Wrap provider to use local copies if available
@@ -327,7 +324,7 @@ class ProviderWrapper:
                 logger.warning(
                     f"Configured authentication failed (401) for {repo_name}/{file_path}, "
                     f"falling back to unauthenticated access"
-                )
+                , repo_name=repo_name, file_path=file_path)
                 # Try unauthenticated as final fallback for public repos
                 from app.modules.code_provider.github.github_provider import (
                     GitHubProvider,
@@ -359,7 +356,7 @@ class ProviderWrapper:
 
             project = await project_manager.get_project_from_db_by_id(project_id)
             if not project:
-                logger.error(f"Project not found for project_id: {project_id}")
+                logger.error(f"Project not found for project_id: {project_id}", project_id=project_id)
                 return []
 
             # Extract repository path/name from project details
@@ -370,7 +367,7 @@ class ProviderWrapper:
             if not repo_name:
                 logger.error(
                     f"Project {project_id} has no associated repository name or path"
-                )
+                , project_id=project_id)
                 return []
 
             logger.info(
@@ -396,7 +393,7 @@ class ProviderWrapper:
                     if tunnel_provider.check_repository_access(repo_name):
                         logger.info(
                             f"Using UserLocalTunnelProvider for project {project_id} (tunnel available)"
-                        )
+                        , project_id=project_id)
                         structure = tunnel_provider.get_repository_structure(
                             repo_name=repo_name, path=path or "", ref=ref, max_depth=4
                         )
@@ -412,7 +409,7 @@ class ProviderWrapper:
                 except Exception as e:
                     logger.debug(
                         f"Tunnel provider failed: {e}, falling back to other providers"
-                    )
+                    , e=e)
 
             # Auto-detect local paths (absolute paths, starting with ~, or valid directory)
             is_local_path = (
@@ -433,7 +430,7 @@ class ProviderWrapper:
                     logger.info(
                         f"[REPO_MANAGER] Using local copy for repository structure: "
                         f"{repo_name}@{ref} (path: {local_path})"
-                    )
+                    , repo_name=repo_name, ref=ref, local_path=local_path)
                     # Use provider wrapped with repo_manager to get structure from local copy
                     # The wrapper will handle finding the correct worktree based on ref
                     provider = CodeProviderFactory.create_provider_with_fallback(
@@ -497,7 +494,7 @@ class ProviderWrapper:
             # Re-raise HTTP exceptions from GithubService
             raise
         except Exception as e:
-            logger.error(f"Failed to get project structure for {project_id}: {e}")
+            logger.error(f"Failed to get project structure for {project_id}: {e}", project_id=project_id, e=e)
             return []
 
 

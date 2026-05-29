@@ -22,9 +22,9 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.modules.projects.projects_service import ProjectService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Lazy import for GitPython - top-level import causes SIGSEGV in forked workers
 if TYPE_CHECKING:
@@ -73,7 +73,7 @@ class LocalRepoService:
     ) -> str:
         logger.info(
             f"Attempting to access file: {file_path} for project ID: {project_id}"
-        )
+        , file_path=file_path, project_id=project_id)
         try:
             project = self.project_manager.get_project_from_db_by_id_sync(project_id)
             if not project:
@@ -98,10 +98,6 @@ class LocalRepoService:
                 selected_lines = lines[start:end_line]
                 return "".join(selected_lines)
         except Exception as e:
-            logger.error(
-                f"Error processing file content for project ID {project_id}, file {file_path}: {e}",
-                exc_info=True,
-            )
             raise HTTPException(
                 status_code=500,
                 detail=f"Error processing file content: {str(e)}",
@@ -134,10 +130,6 @@ class LocalRepoService:
             formatted_structure = self._format_tree_structure(structure)
             return formatted_structure
         except Exception as e:
-            logger.error(
-                f"Error fetching project structure for {repo_path}: {str(e)}",
-                exc_info=True,
-            )
             raise HTTPException(
                 status_code=500, detail=f"Failed to fetch project structure: {str(e)}"
             )
@@ -337,9 +329,6 @@ class LocalRepoService:
             patches_dict = self._parse_diff(diff)
             return patches_dict
         except Exception as e:
-            logger.error(
-                f"Error computing diff for local repo: {str(e)}", exc_info=True
-            )
             raise HTTPException(
                 status_code=500, detail=f"Error computing diff for local repo: {str(e)}"
             )

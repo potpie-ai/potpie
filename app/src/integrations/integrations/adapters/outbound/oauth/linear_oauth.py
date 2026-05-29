@@ -9,10 +9,10 @@ import httpx
 import urllib.parse
 import time
 import hashlib
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from integrations import hash_user_id
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class LinearOAuthStore:
@@ -111,13 +111,13 @@ class LinearOAuth:
 
             # Log token exchange details for debugging (debug level only, no sensitive data)
             logger.debug("Linear token exchange request:")
-            logger.debug(f"  URL: {token_url}")
+            logger.debug(f"  URL: {token_url}", token_url=token_url)
             logger.debug(
                 f"  Client ID: {self.client_id[:10]}..."
                 if self.client_id
                 else "  Client ID: None"
             )
-            logger.debug(f"  Redirect URI: {redirect_uri}")
+            logger.debug(f"  Redirect URI: {redirect_uri}", redirect_uri=redirect_uri)
             logger.debug("  Code: [REDACTED]")
 
             # Make the token exchange request
@@ -130,9 +130,8 @@ class LinearOAuth:
 
                 if response.status_code != 200:
                     logger.error("Linear token exchange failed:")
-                    logger.error(f"  Status: {response.status_code}")
-                    logger.error(f"  Response: {response.text}")
-                    logger.error(f"  Headers: {dict(response.headers)}")
+                    logger.error(f"  Status: {response.status_code}", response_status_code=response.status_code)
+                    logger.error(f"  Response: {response.text}", response_text=response.text)
                     raise Exception(f"Token exchange failed: {response.status_code}")
 
                 token_response = response.json()
@@ -152,7 +151,6 @@ class LinearOAuth:
                 return tokens
 
         except Exception as e:
-            logger.exception("Failed to exchange Linear OAuth code for tokens")
             raise Exception(f"OAuth token exchange failed: {str(e)}")
 
     async def get_user_info_from_api(
@@ -191,7 +189,7 @@ class LinearOAuth:
                 if response.status_code != 200:
                     logger.error(
                         f"Failed to get Linear user info: {response.status_code}"
-                    )
+                    , response_status_code=response.status_code)
                     return None
 
                 result = response.json()
@@ -228,7 +226,7 @@ class LinearOAuth:
             state_hash = (
                 hashlib.sha256(state.encode()).hexdigest()[:8] if state else "none"
             )
-            logger.debug(f"State: {state_hash} (hashed)")
+            logger.debug(f"State: {state_hash} (hashed)", state_hash=state_hash)
 
             return {
                 "status": "success",

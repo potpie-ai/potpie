@@ -69,9 +69,9 @@ except ImportError as e:
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from e
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _sanitize_anthropic_messages(messages: list) -> list:
@@ -155,7 +155,7 @@ def _sanitize_anthropic_messages(messages: list) -> list:
                 if tool_id in orphaned_tool_use_ids:
                     logger.debug(
                         f"[Anthropic Sanitizer] Stripping orphaned tool_use: {tool_id}"
-                    )
+                    , tool_id=tool_id)
                     continue
                 filtered_content.append(block)
 
@@ -165,7 +165,7 @@ def _sanitize_anthropic_messages(messages: list) -> list:
                 if tool_use_id in seen_tool_result_ids:
                     logger.warning(
                         f"[Anthropic Sanitizer] Removing duplicate tool_result: {tool_use_id}"
-                    )
+                    , tool_use_id=tool_use_id)
                     continue
                 seen_tool_result_ids.add(tool_use_id)
                 filtered_content.append(block)
@@ -180,7 +180,7 @@ def _sanitize_anthropic_messages(messages: list) -> list:
             sanitized_msg["content"] = filtered_content
             sanitized_messages.append(sanitized_msg)
         else:
-            logger.debug(f"[Anthropic Sanitizer] Removing empty message (role={role})")
+            logger.debug(f"[Anthropic Sanitizer] Removing empty message (role={role})", role=role)
 
     # Final validation: ensure tool_use/tool_result pairing is correct
     # After stripping, we need to check again for orphaned tool_results
@@ -252,7 +252,7 @@ def _write_cache_metrics_to_file(metrics: dict) -> None:
         with open(CACHE_METRICS_FILE, "a") as f:
             f.write(json.dumps(metrics) + "\n")
     except Exception as e:
-        logger.warning(f"Failed to write cache metrics to file: {e}")
+        logger.warning(f"Failed to write cache metrics to file: {e}", e=e)
 
 
 def _log_cache_metrics(usage_details: dict[str, int], model_name: str) -> None:
@@ -396,7 +396,7 @@ def _log_cache_metrics(usage_details: dict[str, int], model_name: str) -> None:
             f"uncached={input_tokens:,} ({uncached_rate:.1f}%), "
             f"output={output_tokens:,}, "
             f"savings≈{savings_percent:.1f}%"
-        )
+        , cache_status=cache_status, model_name=model_name, cache_read=cache_read, cache_hit_rate=cache_hit_rate, cache_creation=cache_creation, cache_write_rate=cache_write_rate, input_tokens=input_tokens, uncached_rate=uncached_rate, output_tokens=output_tokens, savings_percent=savings_percent)
 
         # Log session summary periodically
         if current_totals["total_requests"] % 5 == 0:
@@ -413,7 +413,7 @@ def _log_cache_metrics(usage_details: dict[str, int], model_name: str) -> None:
             "tokens": {"total_input": 0, "output": output_tokens},
         }
         _write_cache_metrics_to_file(metrics_record)
-        logger.debug(f"No cache metrics available for {model_name}")
+        logger.debug(f"No cache metrics available for {model_name}", model_name=model_name)
 
 
 @dataclass(init=False)

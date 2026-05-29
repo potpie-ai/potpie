@@ -7,10 +7,10 @@ This provides natural language code search capabilities.
 
 from typing import Optional, List
 from pydantic import BaseModel, Field
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from .tunnel_utils import route_to_local_server, get_context_vars
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class SearchSemanticInput(BaseModel):
@@ -46,7 +46,7 @@ def search_semantic_tool(input_data: SearchSemanticInput) -> str:
     logger.info(
         f"🔍 [Tool Call] search_semantic_tool: Query='{input_data.query}', "
         f"project_id={input_data.project_id}, top_k={input_data.top_k}"
-    )
+    , input_data_query=input_data.query, input_data_project_id=input_data.project_id, input_data_top_k=input_data.top_k)
     
     user_id, conversation_id = get_context_vars()
     
@@ -112,7 +112,7 @@ def search_semantic_tool(input_data: SearchSemanticInput) -> str:
             except Exception:
                 pass
     except Exception as e:
-        logger.exception(f"Error in semantic search fallback: {e}")
+        logger.exception(f"Error in semantic search fallback: {e}", e=e)
         return (
             f"❌ Semantic search failed: {str(e)}\n\n"
             "Please ensure:\n"

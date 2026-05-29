@@ -12,7 +12,7 @@ dependencies = [
     "networkx>=3.4.2",
     "pygments>=2.20.0",
     "tree-sitter>=0.20.4",
-    "tree-sitter-language-pack>=0.13.0",
+    "tree-sitter-language-pack>=0.13.0,<1.6.1",
 ]
 
 [tool.uv]

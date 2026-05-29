@@ -11,13 +11,13 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from pydantic import BaseModel
 from langchain_core.tools import StructuredTool
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 if TYPE_CHECKING:
     from app.modules.intelligence.tools.registry.registry import ToolRegistry
     from app.modules.intelligence.tools.registry.schema import ToolMetadata
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _invoke_inner_tool(tool: Any, kwargs: Dict[str, Any]) -> Any:

@@ -3,9 +3,9 @@
 Allows agents to fetch list of available Confluence spaces for the user.
 """
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 import asyncio
 from typing import Any, Dict
 from langchain_core.tools import StructuredTool

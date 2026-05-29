@@ -64,8 +64,8 @@ async def get_user_repos(
             # Re-raise HTTP exceptions (e.g., query too long)
             raise
         except Exception as e:
-            from app.modules.utils.logger import setup_logger
-            logger = setup_logger(__name__)
+            from observability import get_logger
+            logger = get_logger(__name__)
             logger.warning(f"Error filtering repositories: {str(e)}")
 
     # Pagination: offset applied regardless of limit; always return same structure

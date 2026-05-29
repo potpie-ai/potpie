@@ -13,9 +13,9 @@ from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class NodeRelevance(BaseModel):

@@ -1,4 +1,3 @@
-import logging
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -11,6 +10,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from observability import get_logger
 
 from app.core.database import get_async_db, get_db
 from app.modules.auth.auth_schema import (
@@ -36,7 +36,7 @@ from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.utils.email_helper import is_personal_email_domain
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 auth_router = APIRouter()
 load_dotenv(override=True)
@@ -924,9 +924,12 @@ class AuthAPI:
                         status_code=404,
                     )
 
-            except ValueError:
+            except ValueError as ve:
                 # Cannot unlink last provider
-                return _json_error_response(INVALID_REQUEST_ERROR, 400)
+                error_message = str(ve) or INVALID_REQUEST_ERROR
+                if "unlink" not in error_message.lower():
+                    error_message = INVALID_REQUEST_ERROR
+                return _json_error_response(error_message, 400)
 
         except Exception as e:
             logger.exception("Unlink provider error: %s", e)
