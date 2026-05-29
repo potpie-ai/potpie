@@ -14,6 +14,7 @@ import pytest
 from adapters.outbound.graph.falkordb_writer import (
     FalkorDBGraphWriter,
     _records_from_result,
+    build_falkordb_graph,
 )
 from domain.graph_mutations import EntityUpsert, ProvenanceRef
 
@@ -169,3 +170,20 @@ async def test_upsert_entities_empty_is_noop() -> None:
     n = await w.upsert_entities("p1", [], ProvenanceRef(pot_id="p1", source_event_id="e1"))
     assert n == 0
     assert graph.queries == []
+
+
+def test_build_falkordb_graph_server_mode_requires_url() -> None:
+    # Server mode with no URL must fail loudly, not silently fall back to Lite.
+    with pytest.raises(RuntimeError, match="server mode requires a URL"):
+        build_falkordb_graph(_FakeSettings(url=None, mode="server"))
+
+
+def test_enabled_false_server_mode_no_url_even_with_provider() -> None:
+    # The container always injects a shared graph_provider; the enabled gate must
+    # still report False for an unsatisfiable config (server mode, no URL), so it
+    # never disagrees with what build_falkordb_graph can actually honor.
+    w = FalkorDBGraphWriter(
+        _FakeSettings(url=None, mode="server"),
+        graph_provider=lambda: _FakeGraph(),
+    )
+    assert w.enabled is False

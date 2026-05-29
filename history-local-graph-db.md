@@ -1134,7 +1134,7 @@ shape our claim model uses. All verified live:
 
 **Correction to Phase 0:** the earlier "vector index FAILED" result was a
 *syntax* mismatch, not a capability gap — Phase 0 used Neo4j's
-`OPTIONS { indexConfig: { `vector.dimensions`: … } }` DDL. FalkorDB's **native**
+``OPTIONS { indexConfig: { `vector.dimensions`: … } }`` DDL. FalkorDB's **native**
 form (`OPTIONS {dimension, similarityFunction}` + `db.idx.vector.query*`
 procedures + `vecf32(...)`) works on both server and Lite. So a real
 vector-backed `SemanticSearchPort` (replacing the Python token-overlap
@@ -1201,3 +1201,57 @@ client-side `reset_pot`) is unchanged — only the entry points / wiring changed
 Server/container FalkorDB remains available in-code as a deferred profile.
 Native vector-backed `SemanticSearchPort` (now proven feasible on Lite) is the
 recommended next follow-up.
+
+---
+
+## 2026-05-29 — PR review fixes + manual ingest/ask verification
+
+Independent PR review (adapter pattern, coding_rules, edge cases, tests,
+existing e2e). Confirmed the DB is a clean hexagonal outbound adapter
+(`FalkorDBGraphWriter`/`FalkorDBClaimQueryStore` behind the ports; lazy import;
+prod Neo4j path untouched) and that reuse of `cypher.py` + `neo4j_reader`
+honors Simplicity First. Fixed the gaps found:
+
+1. **Server-mode-without-URL footgun** — `build_falkordb_graph` silently fell
+   back to Lite when `mode=server` had no URL, and `enabled` returned True
+   whenever the container's `graph_provider` was injected (gate disagreed with
+   builder). → `build_falkordb_graph` now raises a clear `RuntimeError` for
+   server-mode-no-URL; `enabled` computes from config (`server` ⇒ needs URL,
+   `lite` ⇒ always on) and no longer short-circuits on provider presence.
+   New writer tests cover both.
+2. **`PotpieContextEngineSettings` was untested** — the monolith settings class
+   the *real local user* runs. → Added
+   `tests/unit/context_graph/test_wiring_falkordb_settings.py` (8 tests:
+   backend/url/name/mode/lite_path defaults + `CONTEXT_ENGINE_*`→bare
+   precedence).
+3. **No full-pipeline e2e on FalkorDB** — existing `test_e2e_*` are Neo4j-only.
+   → Added `tests/integration/test_falkordb_pipeline.py`: builds the real
+   container with `GRAPH_DB_BACKEND=falkordb` on an embedded FalkorDBLite file
+   and drives ingest (`apply_plan_async`) → read-back (claim query + resolve
+   query) → reset. Skips without FalkorDBLite.
+4. **Minor** — refreshed the stale `graph/__init__.py` docstring (now names the
+   FalkorDB impls + `GRAPH_DB_BACKEND`); removed the redundant per-iteration
+   count in `reset_pot` (count once up front, then only after each delete
+   batch).
+
+**Manual test (CLI pattern, FalkorDBLite).** The CLI `ingest` POSTs to
+`/api/v2/context/ingest`, which the server turns into a `ReconciliationPlan`
+(LLM agent) and applies via `ContextGraphService.apply_plan_async`. With no LLM
+key / server locally, drove that exact in-process write trunk against Lite:
+- INGEST: 3 entities + 2 edges (`web -DEPENDS_ON-> auth`,
+  `web -DEPLOYED_TO-> prod`), `ok=True`.
+- ASK (targeted claim query): `web depends on auth` ✓.
+- ASK (semantic token-overlap): "where is web deployed" → `web is deployed to
+  prod` ranked first (sim 0.707) ✓.
+- ASK (high-level `query_async`): `RETRIEVE` resolves with no error; `ANSWER`
+  (no LLM) returns the fallback "Resolved 2 infra_topology for this request" —
+  proving the P9 readers surface the ingested topology through the orchestrator
+  on FalkorDB.
+- RESET: `{ok: True, before: 3, remaining: 0}`; 0 claims after ✓.
+
+**Verification:** 44 FalkorDB tests green (36 context-engine: 16 writer / 5
+reader / 8 settings / 2 container / 1 round-trip / 4 pipeline; + 8 monolith
+settings). Default Neo4j path unchanged.
+
+**Status:** Review gaps closed; ingest→ask manually verified end-to-end on
+FalkorDBLite. Ready to commit the review fixes onto the PR branch.

@@ -1,11 +1,12 @@
 """The graph layer.
 
 One layer, two contracts: the writer side mutates the graph through
-``GraphWriterPort`` (one Neo4j implementation), the reader side queries
-canonical ``:RELATES_TO`` claims through ``ClaimQueryPort`` (Neo4j +
-in-memory implementations). ``ContextGraphService`` is the application
-façade that composes both with the read orchestrator + optional LLM
-answer / investigate paths.
+``GraphWriterPort`` (Neo4j + FalkorDB implementations), the reader side
+queries canonical ``:RELATES_TO`` claims through ``ClaimQueryPort`` (Neo4j +
+FalkorDB + in-memory implementations). ``ContextGraphService`` is the
+application façade that composes both with the read orchestrator + optional
+LLM answer / investigate paths. The active backend is selected in
+``build_container`` via ``GRAPH_DB_BACKEND`` (default ``neo4j``).
 """
 
 from adapters.outbound.graph.context_graph_service import ContextGraphService

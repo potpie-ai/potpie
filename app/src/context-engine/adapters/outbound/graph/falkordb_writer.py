@@ -135,11 +135,17 @@ def build_falkordb_graph(settings: ContextEngineSettingsPort) -> Any:
     ``result.header`` / ``result.result_set`` surface this adapter relies on.
     """
     name = settings.falkordb_graph_name()
-    url = settings.falkordb_url()
-    if settings.falkordb_mode() == "server" and url:
+    if settings.falkordb_mode() == "server":
+        url = settings.falkordb_url()
+        if not url:
+            raise RuntimeError(
+                "falkordb server mode requires a URL — set FALKORDB_URL "
+                "(or CONTEXT_ENGINE_FALKORDB_URL), or use the default lite mode"
+            )
         from falkordb import FalkorDB
 
         return FalkorDB.from_url(url).select_graph(name)
+    # Lite (default): embedded FalkorDBLite over a local file — no server.
     from redislite.falkordb_client import FalkorDB as LiteFalkorDB
 
     path = settings.falkordb_lite_path()
@@ -186,11 +192,14 @@ class FalkorDBGraphWriter(GraphWriterPort):
     def enabled(self) -> bool:
         if not self._enabled:
             return False
-        if self._graph is not None or self._graph_provider is not None:
+        # A directly-injected graph (unit tests) is always usable.
+        if self._graph is not None:
             return True
-        if self._settings.falkordb_url():
-            return True
-        # Lite is the default local path and needs no external config.
+        # Otherwise mirror exactly what build_falkordb_graph can honor, so the
+        # gate never reports enabled for a config the builder would reject:
+        # server mode needs a URL; lite (default) needs no external config.
+        if self._settings.falkordb_mode() == "server":
+            return bool(self._settings.falkordb_url())
         return self._settings.falkordb_mode() == "lite"
 
     def _get_graph(self) -> Any:
@@ -278,15 +287,16 @@ class FalkorDBGraphWriter(GraphWriterPort):
         before = self._count(graph, pot_id)
         # Client-side batched delete (no CALL {} IN TRANSACTIONS on FalkorDB).
         # The LIMIT guarantees forward progress; cap iterations defensively.
-        max_iters = before // _RESET_BATCH + 2
-        for _ in range(max_iters):
-            if self._count(graph, pot_id) == 0:
+        # Count once up front, then re-count only after each delete batch.
+        remaining = before
+        for _ in range(before // _RESET_BATCH + 2):
+            if remaining == 0:
                 break
             graph.query(
                 "MATCH (n {group_id: $gid}) WITH n LIMIT $lim DETACH DELETE n",
                 params={"gid": pot_id, "lim": _RESET_BATCH},
             )
-        remaining = self._count(graph, pot_id)
+            remaining = self._count(graph, pot_id)
         if remaining:
             return {
                 "ok": False,

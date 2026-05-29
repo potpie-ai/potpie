@@ -13,6 +13,7 @@ adapters (no fakes).
 from __future__ import annotations
 
 import asyncio
+import shutil
 import tempfile
 
 import pytest
@@ -47,7 +48,11 @@ class _Settings:
 def shared_graph():
     tmp = tempfile.mkdtemp(prefix="falkordblite_test_")
     db = falkordb_client.FalkorDB(f"{tmp}/context_graph.db")
-    yield db.select_graph("context_graph")
+    try:
+        yield db.select_graph("context_graph")
+    finally:
+        db.close()  # stop the embedded redis-server
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def test_write_read_reset_roundtrip(shared_graph) -> None:
