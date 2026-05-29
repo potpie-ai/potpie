@@ -7,9 +7,9 @@ OAuth 2.0 (3LO) requires using api.atlassian.com endpoints with the cloud ID.
 API Reference: https://developer.atlassian.com/cloud/confluence/rest/v2/intro/
 """
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 import httpx
@@ -81,7 +81,7 @@ class ConfluenceClient:
         )
         logger.info(
             f"Initialized Confluence OAuth 2.0 client for {server} (cloud_id: {cloud_id})"
-        )
+        , server=server, cloud_id=cloud_id)
 
     async def close(self):
         """Close the HTTP client connection."""
@@ -120,8 +120,8 @@ class ConfluenceClient:
 
         logger.info(
             f"Calling Confluence API: GET /wiki/api/v2/spaces with params {params}"
-        )
-        logger.info(f"Full URL: {self.api_base_url}/wiki/api/v2/spaces")
+        , params=params)
+        logger.info(f"Full URL: {self.api_base_url}/wiki/api/v2/spaces", self_api_base_url=self.api_base_url)
         logger.info(
             f"Access token length: {len(self.access_token) if self.access_token else 0}"
         )
@@ -374,7 +374,7 @@ async def get_confluence_client_for_user(
         )
 
         if not integration:
-            logger.warning(f"No Confluence integration found for user {user_id}")
+            logger.warning(f"No Confluence integration found for user {user_id}", user_id=user_id)
             return None
 
         # Extract metadata
@@ -396,9 +396,9 @@ async def get_confluence_client_for_user(
             logger.error(f"Available auth_data keys: {list(auth_data.keys())}")
             return None
 
-        logger.info(f"Decrypting access token for user {user_id}")
+        logger.info(f"Decrypting access token for user {user_id}", user_id=user_id)
         access_token = decrypt_token(encrypted_token)
-        logger.info(f"Successfully decrypted access token for user {user_id}")
+        logger.info(f"Successfully decrypted access token for user {user_id}", user_id=user_id)
 
         # Check if token needs refresh
         expires_at = auth_data.get("expires_at")

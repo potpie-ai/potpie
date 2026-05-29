@@ -8,14 +8,14 @@ The main issue is that GitPython uses libgit2 which doesn't handle forking well.
 This module provides retry logic and error handling to work around these issues.
 """
 
-import logging
 import time
 import signal
 import os
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Callable, TypeVar, Optional, Any
+from observability import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 T = TypeVar("T")
 
@@ -92,7 +92,7 @@ def safe_git_operation(
                     future.cancel()
                 logger.warning(
                     f"Git operation '{operation_name}' timed out after {timeout} seconds"
-                )
+                , operation_name=operation_name, timeout=timeout)
                 raise GitOperationTimeoutError(
                     f"Git operation '{operation_name}' timed out after {timeout} seconds"
                 )
@@ -113,7 +113,7 @@ def safe_git_operation(
                 # Log but don't raise - we're already handling a timeout/error
                 logger.debug(
                     f"Error shutting down executor for '{operation_name}': {shutdown_error}"
-                )
+                , operation_name=operation_name, shutdown_error=shutdown_error)
 
     for attempt in range(max_retries):
         try:
@@ -124,7 +124,7 @@ def safe_git_operation(
                     logger.warning(
                         f"Git operation '{operation_name}' exceeded maximum total timeout "
                         f"of {max_total_timeout} seconds after {elapsed:.2f} seconds"
-                    )
+                    , operation_name=operation_name, max_total_timeout=max_total_timeout, elapsed=elapsed)
                     raise GitOperationTimeoutError(
                         f"Git operation '{operation_name}' exceeded maximum total timeout "
                         f"of {max_total_timeout} seconds"
@@ -189,10 +189,6 @@ def safe_git_operation(
                 ) from e
 
             # For other exceptions, log and re-raise immediately
-            logger.error(
-                f"Git operation '{operation_name}' failed on attempt {attempt + 1}: {e}",
-                exc_info=True,
-            )
             raise
 
     # Should not reach here, but just in case
@@ -242,7 +238,7 @@ def safe_git_repo_operation(
             raise
         except Exception as e:
             # Close any open handles before retrying
-            logger.debug(f"Error in git operation, will retry: {e}")
+            logger.debug(f"Error in git operation, will retry: {e}", e=e)
             raise
 
     return safe_git_operation(
@@ -278,4 +274,4 @@ def install_sigsegv_handler():
         logger.debug("Installed SIGSEGV handler for git operations")
     except (ValueError, OSError) as e:
         # Some systems don't allow SIGSEGV handlers
-        logger.debug(f"Could not install SIGSEGV handler: {e}")
+        logger.debug(f"Could not install SIGSEGV handler: {e}", e=e)

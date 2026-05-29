@@ -10,9 +10,9 @@ import os
 import time
 from typing import Dict, Any, List, Optional
 import httpx
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Prefix for socket-backed tunnel URL (get_tunnel_url returns this when socket is online)
 SOCKET_TUNNEL_PREFIX = "socket://"
@@ -300,7 +300,7 @@ def read_files_batch_from_local_server(
                         base = direct_base
                         logger.info(
                             f"[read_files_batch] Using direct LocalServer: {base}"
-                        )
+                        , base=base)
             except Exception:
                 pass
 
@@ -321,7 +321,7 @@ def read_files_batch_from_local_server(
                     return result
                 return None
             base = tunnel_url
-            logger.info(f"[read_files_batch] Using tunnel: {base}")
+            logger.info(f"[read_files_batch] Using tunnel: {base}", base=base)
 
         if not base:
             logger.debug("[read_files_batch] No LocalServer base (tunnel or direct)")
@@ -346,7 +346,7 @@ def read_files_batch_from_local_server(
             return None
         return data
     except Exception as e:
-        logger.debug(f"[read_files_batch] Failed: {e}")
+        logger.debug(f"[read_files_batch] Failed: {e}", e=e)
         return None
 
 
@@ -387,7 +387,7 @@ def route_to_local_server(
         if context_tunnel_url:
             logger.info(
                 f"[Tunnel Routing] ✅ Using fresh tunnel_url from context: {context_tunnel_url}"
-            )
+            , context_tunnel_url=context_tunnel_url)
         tunnel_service = get_tunnel_service()
         tunnel_url = tunnel_service.get_tunnel_url(
             user_id,
@@ -420,7 +420,7 @@ def route_to_local_server(
 
         endpoint = endpoint_map.get(operation)
         if not endpoint:
-            logger.warning(f"Unknown operation for tunnel routing: {operation}")
+            logger.warning(f"Unknown operation for tunnel routing: {operation}", operation=operation)
             return None
 
         # Prepare request data
@@ -465,7 +465,7 @@ def route_to_local_server(
                     else:
                         logger.info(
                             f"[Tunnel Routing] 🏠 Backend local -> routing {operation} directly: {direct_url}"
-                        )
+                        , operation=operation, direct_url=direct_url)
                         with httpx.Client(timeout=30.0) as client:
                             direct_response = client.post(
                                 direct_url,
@@ -500,7 +500,7 @@ def route_to_local_server(
         ):
             logger.info(
                 f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer via Socket.IO"
-            )
+            , operation=operation)
             result = _execute_via_socket(
                 user_id=user_id,
                 conversation_id=conversation_id,
@@ -521,7 +521,7 @@ def route_to_local_server(
             return None
 
     except Exception as e:
-        logger.exception(f"Error routing to LocalServer for {operation}: {e}")
+        logger.exception(f"Error routing to LocalServer for {operation}: {e}", operation=operation, e=e)
         return None
 
 
@@ -772,7 +772,7 @@ def route_terminal_command(
         if context_tunnel_url:
             logger.info(
                 f"[Tunnel Routing] ✅ Using fresh tunnel_url from context: {context_tunnel_url}"
-            )
+            , context_tunnel_url=context_tunnel_url)
         tunnel_service = get_tunnel_service()
         tunnel_url = tunnel_service.get_tunnel_url(
             user_id,
@@ -793,7 +793,7 @@ def route_terminal_command(
             else:
                 logger.info(
                     f"[route_terminal_command] Workspace socket offline for workspace_id={workspace_id} (extension may not have registered)"
-                )
+                , workspace_id=workspace_id)
             return None, "no_tunnel"
 
         # Prepare request data
@@ -810,7 +810,7 @@ def route_terminal_command(
         if tunnel_url and tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
             logger.info(
                 f"[Tunnel Routing] 🚀 Routing terminal command to LocalServer via Socket.IO (timeout={request_timeout_sec}s)"
-            )
+            , request_timeout_sec=request_timeout_sec)
             result = _execute_via_socket(
                 user_id=user_id,
                 conversation_id=conversation_id,
@@ -831,7 +831,7 @@ def route_terminal_command(
         url = f"{base}/api/terminal/execute"
         logger.info(
             f"[Tunnel Routing] 🚀 Routing terminal command via HTTP: {url} (timeout={request_timeout_sec}s)"
-        )
+        , url=url, request_timeout_sec=request_timeout_sec)
         with httpx.Client(timeout=request_timeout_sec) as client:
             response = client.post(
                 url,
@@ -878,7 +878,7 @@ def route_terminal_command(
         if is_dns_error:
             logger.warning(
                 f"[Tunnel Routing] ❌ DNS resolution failed for tunnel URL (tunnel expired or invalid): {tunnel_url_str}"
-            )
+            , tunnel_url_str=tunnel_url_str)
             # Unregister conversation-level tunnel (workspace-only; no user-level)
             if user_id and conversation_id:
                 try:
@@ -888,14 +888,14 @@ def route_terminal_command(
                     tunnel_service.unregister_tunnel(user_id, conversation_id)
                     logger.info(
                         f"[Tunnel Routing] Unregistered expired conversation tunnel for user {user_id}"
-                    )
+                    , user_id=user_id)
                 except Exception as unreg_error:
-                    logger.warning(f"Failed to unregister broken tunnel: {unreg_error}")
+                    logger.warning(f"Failed to unregister broken tunnel: {unreg_error}", unreg_error=unreg_error)
             return None, "tunnel_expired"
         else:
             logger.warning(
                 f"[Tunnel Routing] ❌ Connection error to tunnel: {error_msg}"
-            )
+            , error_msg=error_msg)
         return None, "connection_error"
     except httpx.TimeoutException as e:  # type: ignore[misc]
         logger.warning(
@@ -939,7 +939,7 @@ def route_terminal_command(
             pass
         return None, "timeout"
     except Exception as e:
-        logger.exception(f"Error routing terminal command to LocalServer: {e}")
+        logger.exception(f"Error routing terminal command to LocalServer: {e}", e=e)
         return None, "unknown_error"
 
 
@@ -987,7 +987,7 @@ def get_terminal_session_output(
         )
 
         if not tunnel_url:
-            logger.debug(f"No tunnel available for user {user_id}")
+            logger.debug(f"No tunnel available for user {user_id}", user_id=user_id)
             return None
 
         if tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
@@ -1023,7 +1023,7 @@ def get_terminal_session_output(
             return None
 
     except Exception as e:
-        logger.exception(f"Error getting terminal session output: {e}")
+        logger.exception(f"Error getting terminal session output: {e}", e=e)
         return None
 
 
@@ -1071,7 +1071,7 @@ def send_terminal_session_signal(
         )
 
         if not tunnel_url:
-            logger.debug(f"No tunnel available for user {user_id}")
+            logger.debug(f"No tunnel available for user {user_id}", user_id=user_id)
             return None
 
         if tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
@@ -1092,7 +1092,7 @@ def send_terminal_session_signal(
             f"{base}/api/terminal/sessions/{session_id}/signal",
             f"{base}/terminal/sessions/{session_id}/signal",
         )
-        logger.info(f"[Tunnel Routing] Sending signal {signal} to session {session_id}")
+        logger.info(f"[Tunnel Routing] Sending signal {signal} to session {session_id}", signal=signal, session_id=session_id)
         with httpx.Client(timeout=30.0) as client:
             for url in urls_to_try:
                 response = client.post(
@@ -1107,7 +1107,7 @@ def send_terminal_session_signal(
             return None
 
     except Exception as e:
-        logger.exception(f"Error sending terminal session signal: {e}")
+        logger.exception(f"Error sending terminal session signal: {e}", e=e)
         return None
 
 
@@ -1179,5 +1179,5 @@ def get_context_vars():
         conversation_id = _get_conversation_id()
         return user_id, conversation_id
     except Exception as e:
-        logger.warning(f"Failed to get context vars: {e}")
+        logger.warning(f"Failed to get context vars: {e}", e=e)
         return None, None

@@ -12,12 +12,12 @@ from app.modules.intelligence.tools.registry.schema import (
     ToolCategory,
     ToolMetadata,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 if TYPE_CHECKING:
     from app.modules.intelligence.tools.tool_service import ToolService
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Phase 4: derivation rules for behavioral annotations when not set in definition.
 # Explicit definition always wins. Names are matched by prefix (e.g. delete_*).

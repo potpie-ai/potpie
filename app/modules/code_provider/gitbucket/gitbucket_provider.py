@@ -7,9 +7,9 @@ from app.modules.code_provider.base.code_provider_interface import (
     ICodeProvider,
     AuthMethod,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class GitBucketProvider(ICodeProvider):
@@ -38,7 +38,7 @@ class GitBucketProvider(ICodeProvider):
         self.client: Optional[Github] = None
         self.auth_method: Optional[AuthMethod] = None
 
-        logger.info(f"Initialized GitBucket provider with base_url: {self.base_url}")
+        logger.info(f"Initialized GitBucket provider with base_url: {self.base_url}", self_base_url=self.base_url)
 
     # ============ Authentication ============
 
@@ -62,7 +62,7 @@ class GitBucketProvider(ICodeProvider):
             self.client = Github(username, password, base_url=self.base_url)
             logger.info(
                 f"Authenticated with GitBucket using Basic Auth for user: {username}"
-            )
+            , username=username)
 
         elif method == AuthMethod.OAUTH_TOKEN:
             # GitBucket supports OAuth tokens (since v4.31.0)
@@ -131,12 +131,12 @@ class GitBucketProvider(ICodeProvider):
 
         logger.info(
             f"GitBucket: Attempting to get repository '{repo_name}' (actual: '{actual_repo_name}')"
-        )
+        , repo_name=repo_name, actual_repo_name=actual_repo_name)
         try:
             repo = self._get_repo(repo_name)
             logger.info(
                 f"GitBucket: Successfully retrieved repository '{repo_name}' - ID: {repo.id}, Default branch: {repo.default_branch}"
-            )
+            , repo_name=repo_name, repo_id=repo.id, repo_default_branch=repo.default_branch)
 
             # Normalize full_name and owner to use actual username instead of "root"
             normalized_full_name = normalize_repo_name(repo.full_name, "gitbucket")
@@ -157,7 +157,7 @@ class GitBucketProvider(ICodeProvider):
                 "description": repo.description,
                 "language": repo.language,
             }
-            logger.debug(f"GitBucket: Repository data for '{repo_name}': {repo_data}")
+            logger.debug(f"GitBucket: Repository data for '{repo_name}': {repo_data}", repo_name=repo_name, repo_data=repo_data)
             return repo_data
         except GithubException as e:
             logger.exception(
@@ -170,14 +170,11 @@ class GitBucketProvider(ICodeProvider):
             if hasattr(e, "status") and e.status == 404:
                 logger.error(
                     f"GitBucket: Repository '{repo_name}' not found. This might be due to:"
-                )
+                , repo_name=repo_name)
                 logger.error("  1. Repository doesn't exist")
                 logger.error("  2. Insufficient permissions")
                 logger.error(
                     "  3. Repository name format issue (expected: 'root/repo' for GitBucket)"
-                )
-                logger.error(
-                    f"  4. GitBucket instance not accessible at {self.base_url}"
                 )
 
             raise
@@ -239,34 +236,30 @@ class GitBucketProvider(ICodeProvider):
         try:
             repo = self._get_repo(repo_name)
         except GithubException:
-            logger.exception("GitBucket: Failed to get repository", repo_name=repo_name)
             raise
         except Exception:
-            logger.exception(
-                "GitBucket: Unexpected error getting repository", repo_name=repo_name
-            )
             raise
 
         # GitBucket doesn't handle ref=None well, so resolve it to the default branch
         if ref is None:
             try:
                 ref = repo.default_branch
-                logger.debug(f"GitBucket: Using default branch '{ref}' for ref")
+                logger.debug(f"GitBucket: Using default branch '{ref}' for ref", ref=ref)
             except Exception as e:
                 logger.warning(
                     f"GitBucket: Could not get default branch, using 'main': {e}"
-                )
+                , e=e)
                 ref = "main"
 
         def _recurse(current_path: str, depth: int) -> List[Dict[str, Any]]:
             logger.debug(
                 f"GitBucket: _recurse called with path='{current_path}', depth={depth}, max_depth={max_depth}"
-            )
+            , current_path=current_path, depth=depth, max_depth=max_depth)
 
             if depth > max_depth:
                 logger.warning(
                     f"GitBucket: Max depth {max_depth} reached for path '{current_path}' - stopping recursion"
-                )
+                , max_depth=max_depth, current_path=current_path)
                 return []
 
             # Validate path
@@ -277,7 +270,7 @@ class GitBucketProvider(ICodeProvider):
             try:
                 logger.debug(
                     f"GitBucket: Getting contents for path '{current_path}' at depth {depth} with ref='{ref}'"
-                )
+                , current_path=current_path, depth=depth, ref=ref)
 
                 # GitBucket may have issues with get_contents for some paths
                 # Try to use the raw API if standard method fails
@@ -287,7 +280,7 @@ class GitBucketProvider(ICodeProvider):
                     error_msg = str(e)
                     logger.warning(
                         f"GitBucket: Standard get_contents failed for '{current_path}': {error_msg}"
-                    )
+                    , current_path=current_path, error_msg=error_msg)
                     logger.debug(
                         f"GitBucket: Error type: {type(e).__name__}, checking for URL error..."
                     )
@@ -301,7 +294,7 @@ class GitBucketProvider(ICodeProvider):
                     ):
                         logger.info(
                             f"GitBucket: Attempting raw API fallback for '{current_path}'"
-                        )
+                        , current_path=current_path)
                         # Try alternative approach using raw API and simple dict objects
                         try:
                             # Construct the API URL manually
@@ -310,7 +303,7 @@ class GitBucketProvider(ICodeProvider):
                             else:
                                 url = f"{repo.url}/contents?ref={ref}"
 
-                            logger.debug(f"GitBucket: Using raw API: {url}")
+                            logger.debug(f"GitBucket: Using raw API: {url}", url=url)
                             headers, data = repo._requester.requestJsonAndCheck(
                                 "GET", url
                             )
@@ -346,11 +339,6 @@ class GitBucketProvider(ICodeProvider):
                                 f"GitBucket: Raw API fallback succeeded for '{current_path}', found {len(contents)} items"
                             )
                         except Exception:
-                            logger.exception(
-                                "GitBucket: Raw API fallback also failed",
-                                current_path=current_path,
-                                repo_name=repo_name,
-                            )
                             raise
                     else:
                         raise
@@ -382,7 +370,7 @@ class GitBucketProvider(ICodeProvider):
                     except Exception as e:
                         logger.warning(
                             f"GitBucket: Error accessing raw attributes for item: {e}"
-                        )
+                        , e=e)
                         # Fallback to trying getattr (which might trigger lazy loading)
                         try:
                             item_type = getattr(item, "type", "file")
@@ -482,7 +470,7 @@ class GitBucketProvider(ICodeProvider):
 
         logger.info(
             f"GitBucket: Getting branch '{branch_name}' for repository '{repo_name}' (actual: '{actual_repo_name}')"
-        )
+        , branch_name=branch_name, repo_name=repo_name, actual_repo_name=actual_repo_name)
         try:
             repo = self._get_repo(repo_name)
             branch = repo.get_branch(branch_name)
@@ -494,8 +482,8 @@ class GitBucketProvider(ICodeProvider):
             }
             logger.info(
                 f"GitBucket: Successfully retrieved branch '{branch_name}' - SHA: {branch.commit.sha}"
-            )
-            logger.debug(f"GitBucket: Branch data for '{branch_name}': {branch_data}")
+            , branch_name=branch_name, branch_commit_sha=branch.commit.sha)
+            logger.debug(f"GitBucket: Branch data for '{branch_name}': {branch_data}", branch_name=branch_name, branch_data=branch_data)
             return branch_data
         except GithubException as e:
             logger.exception(
@@ -509,10 +497,9 @@ class GitBucketProvider(ICodeProvider):
             if hasattr(e, "status") and e.status == 404:
                 logger.error(
                     f"GitBucket: Branch '{branch_name}' not found in repository '{repo_name}'. This might be due to:"
-                )
+                , branch_name=branch_name, repo_name=repo_name)
                 logger.error("  1. Branch doesn't exist")
                 logger.error("  2. Repository access issues")
-                logger.error("  3. GitBucket API compatibility issues")
 
             raise
 
@@ -580,7 +567,7 @@ class GitBucketProvider(ICodeProvider):
             repo = self._get_repo(repo_name)
 
             # Get commits on the head branch
-            logger.info(f"[GITBUCKET] Getting commits for branch: {head_branch}")
+            logger.info(f"[GITBUCKET] Getting commits for branch: {head_branch}", head_branch=head_branch)
             head_commits = repo.get_commits(sha=head_branch)
 
             max_commits = 50  # Safety limit
@@ -623,13 +610,13 @@ class GitBucketProvider(ICodeProvider):
                         if file.patch:
                             file_data["patch"] = file.patch
                         files_dict[file.filename] = file_data
-                        logger.info(f"[GITBUCKET] Added file: {file.filename}")
+                        logger.info(f"[GITBUCKET] Added file: {file.filename}", file_filename=file.filename)
 
                 # Safety check
                 if commit_count >= max_commits:
                     logger.warning(
                         f"[GITBUCKET] Reached commit limit of {max_commits}, stopping"
-                    )
+                    , max_commits=max_commits)
                     break
 
             # Convert dict to list
@@ -645,12 +632,6 @@ class GitBucketProvider(ICodeProvider):
             }
 
         except GithubException:
-            logger.exception(
-                "[GITBUCKET] Error comparing branches",
-                base_branch=base_branch,
-                head_branch=head_branch,
-                repo_name=repo_name,
-            )
             raise
 
     # ============ Pull Request Operations ============
@@ -849,7 +830,7 @@ class GitBucketProvider(ICodeProvider):
                 except GithubException as e:
                     logger.warning(
                         f"Error adding reviewers (GitBucket may not support this): {e}"
-                    )
+                    , e=e)
 
             # Add labels (may not be fully supported by GitBucket)
             if labels:
@@ -858,7 +839,7 @@ class GitBucketProvider(ICodeProvider):
                 except GithubException as e:
                     logger.warning(
                         f"Error adding labels (GitBucket may not support this): {e}"
-                    )
+                    , e=e)
 
             return {"success": True, "pr_number": pr.number, "url": pr.html_url}
 
@@ -940,7 +921,7 @@ class GitBucketProvider(ICodeProvider):
         except GithubException as e:
             logger.warning(
                 f"PR review creation may not be fully supported by GitBucket: {e}"
-            )
+            , e=e)
             return {
                 "success": False,
                 "error": str(e),
@@ -1135,7 +1116,7 @@ class GitBucketProvider(ICodeProvider):
                 for org in orgs
             ]
         except GithubException as e:
-            logger.warning(f"Failed to get organizations (GitBucket Groups): {e}")
+            logger.warning(f"Failed to get organizations (GitBucket Groups): {e}", e=e)
             return []
 
     # ============ Archive Operations ============
@@ -1153,7 +1134,7 @@ class GitBucketProvider(ICodeProvider):
 
         logger.info(
             f"GitBucket: Getting archive link for repo '{repo_name}' (actual: '{actual_repo_name}'), format: '{format_type}', ref: '{ref}'"
-        )
+        , repo_name=repo_name, actual_repo_name=actual_repo_name, format_type=format_type, ref=ref)
 
         try:
             self._get_repo(repo_name)
@@ -1175,7 +1156,7 @@ class GitBucketProvider(ICodeProvider):
             else:
                 raise ValueError(f"Unsupported archive format: {format_type}")
 
-            logger.info(f"GitBucket: Constructed archive URL: {archive_url}")
+            logger.info(f"GitBucket: Constructed archive URL: {archive_url}", archive_url=archive_url)
 
             # Test the URL to make sure it works
             import requests
@@ -1185,16 +1166,16 @@ class GitBucketProvider(ICodeProvider):
                 if response.status_code == 200:
                     logger.info(
                         f"GitBucket: Archive URL is accessible - Status: {response.status_code}"
-                    )
+                    , response_status_code=response.status_code)
                     return archive_url
                 else:
                     logger.warning(
                         f"GitBucket: Archive URL returned status {response.status_code}"
-                    )
+                    , response_status_code=response.status_code)
                     # Still return the URL as it might work with authentication
                     return archive_url
             except requests.exceptions.RequestException as e:
-                logger.warning(f"GitBucket: Error testing archive URL: {e}")
+                logger.warning(f"GitBucket: Error testing archive URL: {e}", e=e)
                 # Still return the URL as it might work with authentication
                 return archive_url
 
@@ -1209,17 +1190,13 @@ class GitBucketProvider(ICodeProvider):
             if hasattr(e, "status") and e.status == 404:
                 logger.error(
                     f"GitBucket: Repository '{repo_name}' not found for archive download. This might be due to:"
-                )
+                , repo_name=repo_name)
                 logger.error("  1. Repository doesn't exist")
                 logger.error("  2. Insufficient permissions")
                 logger.error("  3. GitBucket archive feature not available")
-                logger.error("  4. Repository name format issue")
 
             raise
         except Exception:
-            logger.exception(
-                "GitBucket: Unexpected error getting archive link", repo_name=repo_name
-            )
             raise
 
     # ============ Provider Metadata ============
@@ -1245,5 +1222,5 @@ class GitBucketProvider(ICodeProvider):
             # GitBucket might not fully implement rate limit API
             logger.warning(
                 f"Failed to get rate limit info (GitBucket may not support this): {e}"
-            )
+            , e=e)
             return {"limit": None, "remaining": None, "reset_at": None}

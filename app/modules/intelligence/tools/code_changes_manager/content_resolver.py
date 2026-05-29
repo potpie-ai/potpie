@@ -6,7 +6,7 @@ from typing import Dict, Optional, Any
 
 from sqlalchemy.orm import Session
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from .constants import (
     MAX_FILE_SIZE_BYTES,
@@ -16,7 +16,7 @@ from .constants import (
 from .models import ChangeType, FileChange
 from .utils import _execute_with_timeout, _check_memory_pressure, _get_git_file_size
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def read_file_from_codebase(file_path: str) -> Optional[str]:
@@ -36,7 +36,7 @@ def read_file_from_codebase(file_path: str) -> Optional[str]:
                 logger.warning(
                     f"content_resolver.read_file_from_codebase: File '{file_path}' "
                     f"is too large ({file_size} bytes, max {MAX_FILE_SIZE_BYTES} bytes)."
-                )
+                , file_path=file_path, file_size=file_size, MAX_FILE_SIZE_BYTES=MAX_FILE_SIZE_BYTES)
                 return None
             with open(file_path, "r", encoding="utf-8", errors="replace") as f:
                 return f.read()
@@ -55,23 +55,23 @@ def read_file_from_codebase(file_path: str) -> Optional[str]:
                     logger.warning(
                         f"content_resolver.read_file_from_codebase: File '{file_path}' "
                         f"(found at {path}) is too large ({file_size} bytes, max {MAX_FILE_SIZE_BYTES} bytes)."
-                    )
+                    , file_path=file_path, path=path, file_size=file_size, MAX_FILE_SIZE_BYTES=MAX_FILE_SIZE_BYTES)
                     return None
                 with open(path, "r", encoding="utf-8", errors="replace") as f:
-                    logger.debug(f"content_resolver.read_file_from_codebase: Found file at {path}")
+                    logger.debug(f"content_resolver.read_file_from_codebase: Found file at {path}", path=path)
                     return f.read()
 
-        logger.debug(f"content_resolver.read_file_from_codebase: File '{file_path}' not found")
+        logger.debug(f"content_resolver.read_file_from_codebase: File '{file_path}' not found", file_path=file_path)
         return None
     except MemoryError as e:
         logger.error(
             f"content_resolver.read_file_from_codebase: Memory error reading '{file_path}': {e}"
-        )
+        , file_path=file_path, e=e)
         return None
     except Exception as e:
         logger.warning(
             f"content_resolver.read_file_from_codebase: Error reading '{file_path}': {e}"
-        )
+        , file_path=file_path, e=e)
         return None
 
 
@@ -91,7 +91,7 @@ def get_current_content(
     if file_path in changes:
         existing = changes[file_path]
         if existing.change_type == ChangeType.DELETE:
-            logger.info(f"content_resolver.get_current_content: File '{file_path}' is marked as deleted")
+            logger.info(f"content_resolver.get_current_content: File '{file_path}' is marked as deleted", file_path=file_path)
             return ""
         content = existing.content or ""
         elapsed = time.time() - start_time
@@ -106,7 +106,7 @@ def get_current_content(
         logger.info(
             f"content_resolver.get_current_content: [STEP 1] Attempting to fetch '{file_path}' "
             f"from repository using project_id={project_id}"
-        )
+        , file_path=file_path, project_id=project_id)
         try:
             from app.modules.code_provider.code_provider_service import CodeProviderService
             from app.modules.projects.projects_model import Project
@@ -134,7 +134,7 @@ def get_current_content(
             except TimeoutError as timeout_err:
                 logger.error(
                     f"content_resolver.get_current_content: [STEP 1.1.ERROR] Database query TIMED OUT: {timeout_err}"
-                )
+                , timeout_err=timeout_err)
                 project_details = None
             except Exception as e:
                 error_str = str(e).lower()
@@ -186,7 +186,7 @@ def get_current_content(
                     logger.warning(
                         f"content_resolver.get_current_content: [STEP 2.MEMORY] Memory pressure ({mem_percent:.1%}). "
                         f"Skipping repository fetch for '{file_path}'."
-                    )
+                    , mem_percent=mem_percent, file_path=file_path)
                     repo_content = None
                 else:
                     repo_content = None
@@ -202,7 +202,7 @@ def get_current_content(
                                 logger.warning(
                                     f"content_resolver.get_current_content: [STEP 2.SIZE] File '{file_path}' "
                                     f"too large ({file_size} bytes). Skipping."
-                                )
+                                , file_path=file_path, file_size=file_size)
                                 repo_content = None
 
                         cp_service = _execute_with_timeout(
@@ -239,19 +239,19 @@ def get_current_content(
                             except GitOperationError as git_error:
                                 logger.warning(
                                     f"content_resolver.get_current_content: [STEP 3.ERROR] Git failed: {git_error}"
-                                )
+                                , git_error=git_error)
                                 repo_content = None
                             except (MemoryError, SystemExit, KeyboardInterrupt, BaseException) as e:
                                 logger.error(
                                     f"content_resolver.get_current_content: [STEP 3.ERROR] Error: {e}"
-                                )
+                                , e=e)
                                 repo_content = None
                     except TimeoutError:
                         repo_content = None
                     except Exception as service_error:
                         logger.error(
                             f"content_resolver.get_current_content: [STEP 2.ERROR] Service error: {service_error}"
-                        )
+                        , service_error=service_error)
                         repo_content = None
 
                 if repo_content:
@@ -268,11 +268,11 @@ def get_current_content(
         except MemoryError as mem_error:
             logger.error(
                 f"content_resolver.get_current_content: [ERROR] Memory error: {mem_error}"
-            )
+            , mem_error=mem_error)
         except Exception as e:
             logger.warning(
                 f"content_resolver.get_current_content: [ERROR] Error fetching from repository: {e}"
-            )
+            , e=e)
 
     # Fallback to filesystem
     is_pressure, mem_percent = _check_memory_pressure()
@@ -280,7 +280,7 @@ def get_current_content(
         logger.warning(
             f"content_resolver.get_current_content: [STEP 4.MEMORY] Memory pressure ({mem_percent:.1%}). "
             f"Skipping filesystem for '{file_path}'."
-        )
+        , mem_percent=mem_percent, file_path=file_path)
         codebase_content = None
         filesystem_elapsed = 0.0
     else:
@@ -299,5 +299,5 @@ def get_current_content(
 
     logger.warning(
         f"content_resolver.get_current_content: [END] File '{file_path}' not found - treating as new file."
-    )
+    , file_path=file_path)
     return ""

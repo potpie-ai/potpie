@@ -47,14 +47,8 @@ async def _send_with_resend(params, timeout_seconds=None):
             timeout=timeout,
         )
     except asyncio.TimeoutError:
-        logger.error(
-            "Resend send timed out after %s seconds",
-            timeout,
-            exc_info=True,
-        )
         raise
     except Exception:
-        logger.exception("Resend send failed")
         raise
 
 

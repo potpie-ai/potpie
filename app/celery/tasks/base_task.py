@@ -2,9 +2,9 @@ import asyncio
 from celery import Task
 from contextlib import asynccontextmanager
 from app.core.database import SessionLocal
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class BaseTask(Task):
@@ -61,7 +61,6 @@ class BaseTask(Task):
                 "Async DB session operation completed successfully", task_id=task_id
             )
         except Exception:
-            logger.exception("Error during async DB operation", task_id=task_id)
             raise
         finally:
             try:

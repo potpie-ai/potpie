@@ -11,9 +11,9 @@ from app.modules.conversations.message.message_model import (
     MessageStatus,
     MessageType,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class MessageServiceError(Exception):
@@ -64,7 +64,7 @@ class MessageService:
             )
             logger.info(
                 f"Created new message with ID: {message_id} for conversation: {conversation_id}"
-            )
+            , message_id=message_id, conversation_id=conversation_id)
             return new_message
 
         except InvalidMessageError as e:
@@ -72,18 +72,11 @@ class MessageService:
             raise
 
         except IntegrityError as e:
-            logger.exception(
-                "Database integrity error in create_message",
-                conversation_id=conversation_id,
-            )
             raise MessageServiceError(
                 "Failed to create message due to a database integrity error"
             ) from e
 
         except Exception as e:
-            logger.exception(
-                "Unexpected error in create_message", conversation_id=conversation_id
-            )
             raise MessageServiceError(
                 "An unexpected error occurred while creating the message"
             ) from e
@@ -103,21 +96,15 @@ class MessageService:
                 None, self._sync_mark_message_archived, message_id
             )
             # TODO: add conversation_id to the log
-            logger.info(f"Marked message {message_id} as archived")
+            logger.info(f"Marked message {message_id} as archived", message_id=message_id)
         except MessageNotFoundError as e:
             logger.warning(str(e))
             raise
         except SQLAlchemyError as e:
-            logger.exception(
-                "Database error in mark_message_archived", message_id=message_id
-            )
             raise MessageServiceError(
                 f"Failed to archive message {message_id} due to a database error"
             ) from e
         except Exception as e:
-            logger.exception(
-                "Unexpected error in mark_message_archived", message_id=message_id
-            )
             raise MessageServiceError(
                 f"An unexpected error occurred while archiving message {message_id}"
             ) from e

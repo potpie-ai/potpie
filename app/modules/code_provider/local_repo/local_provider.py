@@ -7,9 +7,9 @@ from app.modules.code_provider.base.code_provider_interface import (
     AuthMethod,
     ICodeProvider,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _get_git_imports():
@@ -101,7 +101,7 @@ class LocalProvider(ICodeProvider):
 
             return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
         except Exception as e:
-            logger.warning(f"Error reading .gitignore: {e}")
+            logger.warning(f"Error reading .gitignore: {e}", e=e)
             return None
 
     def _should_include_file(self, file_path: str) -> bool:
@@ -383,7 +383,7 @@ class LocalProvider(ICodeProvider):
             # Detached HEAD or no branches; leave list as-is
             active = None
         except Exception as exc:
-            logger.debug(f"LocalProvider: unable to determine active branch: {exc}")
+            logger.debug(f"LocalProvider: unable to determine active branch: {exc}", exc=exc)
             active = None
 
         if active and active in branches:

@@ -47,9 +47,9 @@ from app.modules.intelligence.tools.sandbox.context import (
     get_conversation_id,
     get_user_id,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 async def acquire_analysis_workspace(project_id: str) -> Optional[Any]:

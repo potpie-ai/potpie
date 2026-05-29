@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 from sqlalchemy.orm import Session
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
     get_change_detection_tool,
@@ -97,7 +97,7 @@ from .requirement_verification_tool import create_requirement_verification_tools
 from .sandbox.tools import create_sandbox_tools
 
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ToolService:

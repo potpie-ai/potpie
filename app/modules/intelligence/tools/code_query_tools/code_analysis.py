@@ -1,7 +1,7 @@
 import os
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 import warnings
 from collections import namedtuple
 from pathlib import Path
@@ -99,7 +99,7 @@ class UniversalCodeAnalyzer:
             language = get_language(lang)
             parser = get_parser(lang)
         except Exception as e:
-            logger.warning(f"Could not get language/parser for {lang}: {e}")
+            logger.warning(f"Could not get language/parser for {lang}: {e}", lang=lang, e=e)
             return
 
         query_scm = self.get_scm_fname(lang)
@@ -113,7 +113,7 @@ class UniversalCodeAnalyzer:
                 with open(fname, "r", encoding="utf-8") as f:
                     code = f.read()
             except Exception as e:
-                logger.warning(f"Could not read file {fname}: {e}")
+                logger.warning(f"Could not read file {fname}: {e}", fname=fname, e=e)
                 return
 
         if not code:
@@ -122,7 +122,7 @@ class UniversalCodeAnalyzer:
         try:
             tree = parser.parse(bytes(code, "utf-8"))
         except Exception as e:
-            logger.warning(f"Could not parse code for {fname}: {e}")
+            logger.warning(f"Could not parse code for {fname}: {e}", fname=fname, e=e)
             return
 
         # Run the tags queries
@@ -131,7 +131,7 @@ class UniversalCodeAnalyzer:
             captures = query.captures(tree.root_node)
             captures = list(captures)
         except Exception as e:
-            logger.warning(f"Could not run query for {fname}: {e}")
+            logger.warning(f"Could not run query for {fname}: {e}", fname=fname, e=e)
             return
 
         saw = set()
@@ -208,16 +208,16 @@ class UniversalCodeAnalyzer:
         if not os.path.isfile(fname):
             if fname not in self.warned_files:
                 if os.path.exists(fname):
-                    logger.warning(f"Can't include {fname}, it is not a normal file")
+                    logger.warning(f"Can't include {fname}, it is not a normal file", fname=fname)
                 else:
-                    logger.warning(f"Can't include {fname}, it no longer exists")
+                    logger.warning(f"Can't include {fname}, it no longer exists", fname=fname)
                 self.warned_files.add(fname)
             return []
 
         try:
             return list(self.get_tags_raw(fname, rel_fname, code))
         except Exception as e:
-            logger.warning(f"Error getting tags for {fname}: {e}")
+            logger.warning(f"Error getting tags for {fname}: {e}", fname=fname, e=e)
             return []
 
     def _extract_docstring_comment(
@@ -587,7 +587,7 @@ class UniversalAnalyzeCodeTool:
         try:
             content = await read_file_via_sandbox(project_id, file_path)
         except Exception as exc:  # noqa: BLE001
-            logger.debug(f"[analyze_code_structure] sandbox read failed: {exc}")
+            logger.debug(f"[analyze_code_structure] sandbox read failed: {exc}", exc=exc)
             content = None
         if content is None:
             return self._run(
@@ -635,7 +635,7 @@ class UniversalAnalyzeCodeTool:
                 "source": "sandbox",
             }
         except Exception as exc:  # noqa: BLE001
-            logger.exception(f"Failed to analyze {language} file: {exc}")
+            logger.exception(f"Failed to analyze {language} file: {exc}", language=language, exc=exc)
             return self._run(
                 project_id, file_path, include_methods, include_private, language
             )

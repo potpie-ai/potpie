@@ -88,7 +88,6 @@ def ingest_merged_pull_request(
             provenance_context=prov_ctx,
         )
     except ReconciliationApplyError:
-        logger.exception("reconciliation apply failed for merged PR ingest")
         raise
     episode_uuid = result.episode_uuids[0] if result.episode_uuids else None
     stamp_counts = {

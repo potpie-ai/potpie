@@ -23,11 +23,11 @@ from app.modules.key_management.secrets_schema import (
 from app.modules.key_management.storage_config import is_gcp_secret_manager_enabled
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.APIRouter import APIRouter
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.modules.utils.posthog_helper import PostHogClient
 
 # Set up logging
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class SecretStorageHandler:
@@ -76,7 +76,7 @@ class SecretStorageHandler:
             SecretStorageHandler._gcp_project_id = project_id
             logger.info(
                 f"GCP Secret Manager initialized successfully for project: {project_id}"
-            )
+            , project_id=project_id)
             return client, project_id
         except Exception as e:
             # GCP not available, cache the failure
@@ -152,7 +152,7 @@ class SecretStorageHandler:
         try:
             logger.info(
                 f"Storing secret for service: {service}, type: {service_type}, user: {customer_id}"
-            )
+            , service=service, service_type=service_type, customer_id=customer_id)
             client, project_id = SecretStorageHandler.get_client_and_project()
 
             if client and project_id:
@@ -162,7 +162,7 @@ class SecretStorageHandler:
                 )
                 parent = f"projects/{project_id}/secrets/{secret_id}"
                 version = {"payload": {"data": api_key.encode("UTF-8")}}
-                logger.info(f"Attempting to store secret in GCP: {parent}")
+                logger.info(f"Attempting to store secret in GCP: {parent}", parent=parent)
 
                 try:
                     # Try to update existing secret
@@ -171,7 +171,7 @@ class SecretStorageHandler:
                     )
                     logger.info(
                         f"Successfully updated existing secret in GCP for {service}"
-                    )
+                    , service=service)
                 except Exception as e:
                     # The secret might not exist yet, try creating it
                     if (
@@ -196,11 +196,8 @@ class SecretStorageHandler:
                             )
                             logger.info(
                                 f"Successfully created new secret in GCP for {service}"
-                            )
+                            , service=service)
                         except Exception as create_error:
-                            logger.error(
-                                f"Failed to create secret in GCP for {service}: {str(create_error)}"
-                            )
                             raise HTTPException(
                                 status_code=500,
                                 detail=f"Failed to create secret: {str(create_error)}",
@@ -218,19 +215,17 @@ class SecretStorageHandler:
 
                 logger.info(
                     f"Storing encrypted key in preferences with key: {key_name}"
-                )
+                , key_name=key_name)
                 preferences[key_name] = encrypted_key
                 logger.info(
                     f"Successfully stored encrypted key in preferences for {service}"
-                )
+                , service=service)
             else:
-                logger.error("Neither GCP nor database storage is available")
                 raise HTTPException(
                     status_code=500,
                     detail="Neither GCP nor database storage is available",
                 )
         except Exception as e:
-            logger.error(f"Error storing secret for {service}: {str(e)}")
             raise
 
     @staticmethod
@@ -245,7 +240,7 @@ class SecretStorageHandler:
             if not is_test_user:
                 logger.info(
                     f"Getting secret for service: {service}, type: {service_type}, user: {customer_id}"
-                )
+                , service=service, service_type=service_type, customer_id=customer_id)
             client, project_id = SecretStorageHandler.get_client_and_project()
 
             if client and project_id:
@@ -258,7 +253,7 @@ class SecretStorageHandler:
                 ):  # Only attempt if secret_id is valid (not None in dev mode)
                     name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
                     if not is_test_user:
-                        logger.info(f"Attempting to get secret from GCP: {name}")
+                        logger.info(f"Attempting to get secret from GCP: {name}", name=name)
 
                     try:
                         response = client.access_secret_version(request={"name": name})
@@ -266,7 +261,7 @@ class SecretStorageHandler:
                         if not is_test_user:
                             logger.info(
                                 f"Successfully retrieved secret from GCP for {service}"
-                            )
+                            , service=service)
                         return secret
                     except Exception as e:
                         if not is_test_user:
@@ -276,7 +271,7 @@ class SecretStorageHandler:
                 else:
                     # Dev mode - skip GCP
                     if not is_test_user:
-                        logger.debug(f"Skipping GCP check for {service} (dev mode)")
+                        logger.debug(f"Skipping GCP check for {service} (dev mode)", service=service)
 
             if preferences is None and db:
                 user_pref = (
@@ -294,18 +289,18 @@ class SecretStorageHandler:
                     key_name = f"api_key_{service}"
 
                 if not is_test_user:
-                    logger.info(f"Looking for key in preferences: {key_name}")
+                    logger.info(f"Looking for key in preferences: {key_name}", key_name=key_name)
                 if key_name in preferences:
                     encrypted_key = preferences[key_name]
                     secret = SecretStorageHandler.decrypt_value(encrypted_key)
                     if not is_test_user:
                         logger.info(
                             f"Successfully retrieved secret from preferences for {service}"
-                        )
+                        , service=service)
                     return secret
                 else:
                     if not is_test_user:
-                        logger.warning(f"No encrypted key found for {service}")
+                        logger.warning(f"No encrypted key found for {service}", service=service)
             else:
                 if not is_test_user:
                     logger.error("Neither GCP nor database storage is available")
@@ -321,7 +316,6 @@ class SecretStorageHandler:
             # For test-user, return None silently instead of logging error
             if is_test_user:
                 return None
-            logger.error(f"Error getting secret for {service}: {str(e)}")
             raise
 
     @staticmethod
@@ -719,7 +713,7 @@ class SecretManager:
             customer_id = user["user_id"]
             logger.info(
                 f"Getting secrets for user: {customer_id}, provider: {provider}"
-            )
+            , customer_id=customer_id, provider=provider)
 
             user_pref = (
                 db.query(UserPreferences)
@@ -727,7 +721,7 @@ class SecretManager:
                 .first()
             )
             if not user_pref:
-                logger.info(f"No preferences found for user: {customer_id}")
+                logger.info(f"No preferences found for user: {customer_id}", customer_id=customer_id)
                 raise
 
             if provider == "all":
@@ -736,7 +730,7 @@ class SecretManager:
                 inference_model = user_pref.preferences.get("inference_model")
                 logger.info(
                     f"User preferences - chat_model: {chat_model}, inference_model: {inference_model}"
-                )
+                , chat_model=chat_model, inference_model=inference_model)
 
                 result = {
                     "chat_config": None,
@@ -750,7 +744,7 @@ class SecretManager:
                     try:
                         logger.info(
                             f"Getting chat secret for provider: {chat_provider}"
-                        )
+                        , chat_provider=chat_provider)
                         chat_secret = SecretManager.get_secret(
                             chat_provider, customer_id, db
                         )
@@ -761,7 +755,7 @@ class SecretManager:
                         }
                         logger.info(
                             f"Successfully retrieved chat secret for {chat_provider}"
-                        )
+                        , chat_provider=chat_provider)
                     except HTTPException as e:
                         logger.warning(
                             f"Failed to get chat secret for {chat_provider}: {str(e)}"
@@ -774,7 +768,7 @@ class SecretManager:
                     try:
                         logger.info(
                             f"Getting inference secret for provider: {inference_provider}"
-                        )
+                        , inference_provider=inference_provider)
                         inference_secret = SecretManager.get_secret(
                             inference_provider, customer_id, db
                         )
@@ -785,7 +779,7 @@ class SecretManager:
                         }
                         logger.info(
                             f"Successfully retrieved inference secret for {inference_provider}"
-                        )
+                        , inference_provider=inference_provider)
                     except HTTPException as e:
                         logger.warning(
                             f"Failed to get inference secret for {inference_provider}: {str(e)}"
@@ -796,7 +790,7 @@ class SecretManager:
                 logger.info("Processing integration keys")
                 for service in SecretManager.INTEGRATION_SERVICES:
                     try:
-                        logger.info(f"Checking integration key for service: {service}")
+                        logger.info(f"Checking integration key for service: {service}", service=service)
                         secret = SecretManager.get_secret(
                             service, customer_id, db, SecretManager.INTEGRATION
                         )
@@ -808,7 +802,7 @@ class SecretManager:
                         )
                         logger.info(
                             f"Successfully retrieved integration key for {service}"
-                        )
+                        , service=service)
                     except HTTPException as e:
                         logger.warning(
                             f"Failed to get integration key for {service}: {str(e)}"
@@ -820,24 +814,23 @@ class SecretManager:
                     and result["inference_config"] is None
                     and not result["integration_keys"]
                 ):
-                    logger.warning(f"No secrets found for user: {customer_id}")
+                    logger.warning(f"No secrets found for user: {customer_id}", customer_id=customer_id)
                     raise HTTPException(
                         status_code=404, detail="No secrets found for this user"
                     )
 
                 logger.info(
                     f"Successfully retrieved all secrets for user: {customer_id}"
-                )
+                , customer_id=customer_id)
                 return result
 
             # For single provider requests
-            logger.info(f"Getting secret for single provider: {provider}")
+            logger.info(f"Getting secret for single provider: {provider}", provider=provider)
             secret = SecretManager.get_secret(provider, customer_id, db)
-            logger.info(f"Successfully retrieved secret for provider: {provider}")
+            logger.info(f"Successfully retrieved secret for provider: {provider}", provider=provider)
             return secret
 
         except Exception as e:
-            logger.error(f"Error getting secrets for user {user['user_id']}: {str(e)}")
             raise
 
     @router.put("/secrets/")
@@ -994,7 +987,6 @@ class SecretManager:
             )
             return APIKeyResponse(api_key=api_key)
         except Exception as e:
-            logger.error(f"Error creating API key for user {user['user_id']}: {str(e)}")
             raise
 
     @router.delete("/api-keys")
@@ -1032,7 +1024,6 @@ class SecretManager:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error getting API key for user {user['user_id']}: {str(e)}")
             raise HTTPException(
                 status_code=500, detail="Internal server error while retrieving API key"
             )

@@ -27,14 +27,14 @@ from app.modules.intelligence.tracing.logfire_tracer import (
 )
 from ..agent_config import AgentConfig, TaskConfig
 from app.modules.intelligence.provider.provider_service import ProviderService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.modules.intelligence.tools.tool_service import ToolService
     from app.modules.intelligence.tools.registry.resolver import ToolResolver
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class AgentFactory:
