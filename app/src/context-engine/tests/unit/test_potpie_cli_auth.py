@@ -64,8 +64,10 @@ def test_parse_custom_token_body_accepts_jwt_like_token() -> None:
             {
                 "custom_token": "header.payload.signature",
                 "firebase_api_key": "firebase-key",
+                "state": "expected-state",
             }
-        ).encode()
+        ).encode(),
+        expected_state="expected-state",
     )
     assert result.custom_token == "header.payload.signature"
     assert result.firebase_api_key == "firebase-key"
@@ -73,18 +75,47 @@ def test_parse_custom_token_body_accepts_jwt_like_token() -> None:
 
 def test_parse_custom_token_body_rejects_invalid() -> None:
     with pytest.raises(potpie_auth.PotpieCliAuthError):
-        potpie_auth._parse_custom_token_body(b'{"custom_token":"not-a-jwt"}')
+        potpie_auth._parse_custom_token_body(
+            b'{"custom_token":"not-a-jwt","state":"expected-state"}',
+            expected_state="expected-state",
+        )
+
+
+def _start_callback_server(
+    host: str,
+    port: int,
+    *,
+    path: str = "/callback-random",
+    state: str = "expected-state",
+    allowed_origin: str = "https://potpie.example.com",
+) -> tuple[potpie_auth._OneShotCallbackServer, threading.Thread]:
+    server = potpie_auth._OneShotCallbackServer(
+        (host, port),
+        expected_state=state,
+        expected_path=path,
+        allowed_origin=allowed_origin,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def _stop_callback_server(
+    server: potpie_auth._OneShotCallbackServer,
+    thread: threading.Thread,
+) -> None:
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=2.0)
 
 
 def test_callback_server_allows_cors_preflight() -> None:
     host = "127.0.0.1"
     port = potpie_auth.pick_callback_port()
-    server = potpie_auth._OneShotCallbackServer((host, port))
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    server, thread = _start_callback_server(host, port)
     try:
         response = httpx.options(
-            f"http://{host}:{port}",
+            f"http://{host}:{port}/callback-random",
             headers={
                 "Origin": "https://potpie.example.com",
                 "Access-Control-Request-Method": "POST",
@@ -93,25 +124,29 @@ def test_callback_server_allows_cors_preflight() -> None:
             timeout=5.0,
         )
         assert response.status_code == 204
-        assert response.headers.get("access-control-allow-origin") == "*"
+        assert (
+            response.headers.get("access-control-allow-origin")
+            == "https://potpie.example.com"
+        )
         assert response.headers.get("access-control-allow-private-network") == "true"
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2.0)
+        _stop_callback_server(server, thread)
 
 
 def test_wait_for_cli_callback_accepts_post() -> None:
     host = "127.0.0.1"
     port = potpie_auth.pick_callback_port()
+    path = "/callback-random"
+    state = "expected-state"
 
     def _post_later() -> None:
         time.sleep(0.15)
         httpx.post(
-            f"http://{host}:{port}",
+            f"http://{host}:{port}{path}",
             json={
                 "custom_token": "header.payload.signature",
                 "firebase_api_key": "firebase-key",
+                "state": state,
             },
             headers={"Origin": "https://potpie.example.com"},
             timeout=5.0,
@@ -121,10 +156,72 @@ def test_wait_for_cli_callback_accepts_post() -> None:
     result = potpie_auth.wait_for_cli_callback(
         host=host,
         port=port,
+        path=path,
+        state=state,
+        allowed_origin="https://potpie.example.com",
         timeout_seconds=5.0,
     )
     assert result.custom_token == "header.payload.signature"
     assert result.firebase_api_key == "firebase-key"
+
+
+def test_callback_server_rejects_wrong_state() -> None:
+    host = "127.0.0.1"
+    port = potpie_auth.pick_callback_port()
+    server, thread = _start_callback_server(host, port)
+    try:
+        response = httpx.post(
+            f"http://{host}:{port}/callback-random",
+            json={
+                "custom_token": "header.payload.signature",
+                "firebase_api_key": "firebase-key",
+                "state": "wrong-state",
+            },
+            timeout=5.0,
+        )
+        assert response.status_code == 400
+        assert not server.received.is_set()
+    finally:
+        _stop_callback_server(server, thread)
+
+
+def test_callback_server_rejects_missing_state() -> None:
+    host = "127.0.0.1"
+    port = potpie_auth.pick_callback_port()
+    server, thread = _start_callback_server(host, port)
+    try:
+        response = httpx.post(
+            f"http://{host}:{port}/callback-random",
+            json={
+                "custom_token": "header.payload.signature",
+                "firebase_api_key": "firebase-key",
+            },
+            timeout=5.0,
+        )
+        assert response.status_code == 400
+        assert not server.received.is_set()
+    finally:
+        _stop_callback_server(server, thread)
+
+
+def test_callback_server_rejects_wrong_path() -> None:
+    host = "127.0.0.1"
+    port = potpie_auth.pick_callback_port()
+    server, thread = _start_callback_server(host, port)
+    try:
+        response = httpx.post(
+            f"http://{host}:{port}/wrong-path",
+            json={
+                "custom_token": "header.payload.signature",
+                "firebase_api_key": "firebase-key",
+                "state": "expected-state",
+            },
+            timeout=5.0,
+        )
+        assert response.status_code == 404
+        assert not server.received.is_set()
+    finally:
+        _stop_callback_server(server, thread)
 
 
 def test_store_potpie_api_key_metadata_only(
@@ -264,7 +361,7 @@ def test_potpie_login_command_stores_firebase_session(
     assert get_potpie_firebase_refresh_token() == "refresh-token"
     assert "Logged in to Potpie successfully" in result.stdout
 
-    alias = _runner.invoke(cli_main.app, ["auth", "login"])
+    alias = _runner.invoke(cli_main.app, ["auth", "potpie-login"])
     assert alias.exit_code == 0, alias.stdout
 
 

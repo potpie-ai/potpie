@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import os
 import random
+import secrets
 import socket
 import threading
 import webbrowser
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
@@ -111,8 +112,8 @@ def pick_callback_port() -> int:
     )
 
 
-def build_sign_in_url(*, ui_base_url: str, callback_url: str) -> str:
-    params = urlencode({"cli_callback": callback_url})
+def build_sign_in_url(*, ui_base_url: str, callback_url: str, state: str) -> str:
+    params = urlencode({"cli_callback": callback_url, "state": state})
     return f"{ui_base_url.rstrip('/')}/sign-in?{params}"
 
 
@@ -129,7 +130,12 @@ def open_cli_success_page(*, provider: str = "potpie") -> None:
         print(f"Open this URL in your browser:\n{url}")
 
 
-def _parse_custom_token_body(body: bytes) -> CliCallbackResult:
+def _parse_custom_token_body(
+    body: bytes,
+    *,
+    expected_state: str,
+    header_state: str | None = None,
+) -> CliCallbackResult:
     if not body:
         raise PotpieCliAuthError("CLI callback received an empty body.")
     try:
@@ -138,6 +144,12 @@ def _parse_custom_token_body(body: bytes) -> CliCallbackResult:
         raise PotpieCliAuthError("CLI callback body was not valid JSON.") from exc
     if not isinstance(payload, dict):
         raise PotpieCliAuthError("CLI callback body must be a JSON object.")
+    body_state = str(payload.get("state") or "").strip()
+    candidate_state = str(header_state or body_state).strip()
+    if not candidate_state:
+        raise PotpieCliAuthError("CLI callback did not include state.")
+    if not secrets.compare_digest(candidate_state, expected_state):
+        raise PotpieCliAuthError("CLI callback state mismatch.")
     custom_token = str(payload.get("custom_token") or "").strip()
     if len(custom_token.split(".")) != 3:
         raise PotpieCliAuthError(
@@ -159,19 +171,40 @@ class _OneShotCallbackHandler(BaseHTTPRequestHandler):
         del format, args
 
     def _append_cors_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
+        server: _OneShotCallbackServer = self.server  # type: ignore[assignment]
+        self.send_header("Access-Control-Allow-Origin", server.allowed_origin)
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization, X-Potpie-Cli-State",
+        )
         self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Access-Control-Max-Age", "600")
 
+    def _discard_request_body(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > 0:
+            self.rfile.read(length)
+
     def do_OPTIONS(self) -> None:  # noqa: N802
+        server: _OneShotCallbackServer = self.server  # type: ignore[assignment]
+        if urlparse(self.path).path != server.expected_path:
+            self.send_response(404)
+            self._append_cors_headers()
+            self.end_headers()
+            return
         self.send_response(204)
         self._append_cors_headers()
         self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802
         server: _OneShotCallbackServer = self.server  # type: ignore[assignment]
+        if urlparse(self.path).path != server.expected_path:
+            self._discard_request_body()
+            self.send_response(404)
+            self._append_cors_headers()
+            self.end_headers()
+            return
         if server.received.is_set():
             self.send_response(409)
             self._append_cors_headers()
@@ -180,15 +213,17 @@ class _OneShotCallbackHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length > 0 else b""
         try:
-            result = _parse_custom_token_body(body)
+            result = _parse_custom_token_body(
+                body,
+                expected_state=server.expected_state,
+                header_state=self.headers.get("X-Potpie-Cli-State"),
+            )
         except PotpieCliAuthError as exc:
-            server.error = exc
             self.send_response(400)
             self.send_header("Content-Type", "application/json")
             self._append_cors_headers()
             self.end_headers()
             self.wfile.write(json.dumps({"error": str(exc)}).encode("utf-8"))
-            server.received.set()
             return
         server.result = result
         self.send_response(200)
@@ -205,20 +240,38 @@ class _OneShotCallbackHandler(BaseHTTPRequestHandler):
 
 
 class _OneShotCallbackServer(HTTPServer):
-    def __init__(self, server_address: tuple[str, int]) -> None:
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        *,
+        expected_state: str,
+        expected_path: str,
+        allowed_origin: str,
+    ) -> None:
         super().__init__(server_address, _OneShotCallbackHandler)
         self.received = threading.Event()
         self.result: CliCallbackResult | None = None
         self.error: Exception | None = None
+        self.expected_state = expected_state
+        self.expected_path = expected_path
+        self.allowed_origin = allowed_origin
 
 
 def wait_for_cli_callback(
     *,
     host: str,
     port: int,
+    path: str,
+    state: str,
+    allowed_origin: str,
     timeout_seconds: float,
 ) -> CliCallbackResult:
-    server = _OneShotCallbackServer((host, port))
+    server = _OneShotCallbackServer(
+        (host, port),
+        expected_state=state,
+        expected_path=path if path.startswith("/") else f"/{path}",
+        allowed_origin=allowed_origin,
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -241,9 +294,15 @@ def wait_for_cli_callback(
 def run_browser_login_flow() -> CliCallbackResult:
     host = _callback_host()
     port = pick_callback_port()
-    callback_url = f"http://{host}:{port}"
+    state = secrets.token_urlsafe(32)
+    callback_path = f"/{secrets.token_urlsafe(24)}"
+    callback_url = f"http://{host}:{port}{callback_path}"
     ui_url = resolve_potpie_ui_url()
-    sign_in_url = build_sign_in_url(ui_base_url=ui_url, callback_url=callback_url)
+    sign_in_url = build_sign_in_url(
+        ui_base_url=ui_url,
+        callback_url=callback_url,
+        state=state,
+    )
     timeout_seconds = _auth_timeout_seconds()
 
     opened = webbrowser.open(sign_in_url)
@@ -253,8 +312,18 @@ def run_browser_login_flow() -> CliCallbackResult:
     return wait_for_cli_callback(
         host=host,
         port=port,
+        path=callback_path,
+        state=state,
+        allowed_origin=_origin_from_url(ui_url),
         timeout_seconds=timeout_seconds,
     )
+
+
+def _origin_from_url(url: str) -> str:
+    parsed = urlparse(url.strip())
+    if not parsed.scheme or not parsed.netloc:
+        raise PotpieCliAuthError("Potpie UI URL must include scheme and host.")
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def revoke_api_key_on_server(*, api_base_url: str, api_key: str) -> None:
