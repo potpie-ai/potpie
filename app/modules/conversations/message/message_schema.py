@@ -12,6 +12,31 @@ class NodeContext(BaseModel):
     name: str
 
 
+def normalize_node_contexts(node_ids: Optional[List[Any]]) -> List[NodeContext]:
+    """Coerce loosely-typed node ids into NodeContext objects.
+
+    Queued payloads vary by backend: Celery may carry NodeContext instances
+    (e.g. in tests), while Hatchet delivers JSON — dict-shaped node ids or
+    plain string ids. Centralizing the coercion keeps the message and
+    regenerate paths in sync and avoids MessageRequest validation failures on
+    string node ids.
+    """
+    node_contexts: List[NodeContext] = []
+    for node in node_ids or []:
+        if isinstance(node, NodeContext):
+            node_contexts.append(node)
+        elif isinstance(node, dict):
+            node_id = str(node.get("node_id") or node.get("id") or "")
+            if node_id:
+                node_contexts.append(
+                    NodeContext(node_id=node_id, name=str(node.get("name") or node_id))
+                )
+        else:
+            node_id = str(node)
+            node_contexts.append(NodeContext(node_id=node_id, name=node_id))
+    return node_contexts
+
+
 class MessageRequest(BaseModel):
     content: str
     node_ids: Optional[List[NodeContext]] = None

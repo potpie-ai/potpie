@@ -32,6 +32,7 @@ from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
     NodeContext,
+    normalize_node_contexts,
 )
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentService,
@@ -1143,23 +1144,7 @@ class ConversationService:
 
             # Convert queued payload node_ids back to NodeContext objects. Celery
             # may receive Pydantic objects in tests, while Hatchet receives JSON.
-            node_contexts = []
-            if node_ids:
-                for node in node_ids:
-                    if isinstance(node, NodeContext):
-                        node_contexts.append(node)
-                    elif isinstance(node, dict):
-                        node_id = str(node.get("node_id") or node.get("id") or "")
-                        if node_id:
-                            node_contexts.append(
-                                NodeContext(
-                                    node_id=node_id,
-                                    name=str(node.get("name") or node_id),
-                                )
-                            )
-                    else:
-                        node_id = str(node)
-                        node_contexts.append(NodeContext(node_id=node_id, name=node_id))
+            node_contexts = normalize_node_contexts(node_ids)
 
             # Execute AI response generation with existing logic
             async for chunk in self._generate_and_stream_ai_response(

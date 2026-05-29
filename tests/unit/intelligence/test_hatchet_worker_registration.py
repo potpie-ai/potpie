@@ -8,6 +8,7 @@ faked so these run without infra.
 
 import pytest
 
+from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.agents import hatchet_worker as hw
 from app.modules.intelligence.agents.runtime.hatchet_backend import (
     AGENT_RUN_OPERATION_MESSAGE,
@@ -327,9 +328,33 @@ async def test_run_agent_via_hatchet_regenerate_op_calls_regenerate(monkeypatch)
     assert len(service.store_message_calls) == 0
     args, kwargs = service.regenerate_calls[0]
     assert args[0] == "c1"
-    assert args[1] == [{"node_id": "n1", "name": "N"}]
+    # node ids are normalized to NodeContext before reaching the service
+    assert args[1] == [NodeContext(node_id="n1", name="N")]
     assert args[2] == ["a1"]
     assert kwargs["run_id"] == "r1"
+
+
+async def test_run_agent_via_hatchet_normalizes_string_node_ids_for_message(
+    monkeypatch,
+):
+    """Plain string node ids from Hatchet payloads must be normalized to
+    NodeContext before MessageRequest is built, otherwise validation fails."""
+    sink, service, *_ = _install_fakes(monkeypatch)
+    inp = _make_input(
+        operation=AGENT_RUN_OPERATION_MESSAGE,
+        query="hi",
+        node_ids=["nodeA", "nodeB"],
+    )
+
+    completed = await hw.run_agent_via_hatchet(inp)
+
+    assert completed is True
+    args, _ = service.store_message_calls[0]
+    message_request = args[1]
+    assert message_request.node_ids == [
+        NodeContext(node_id="nodeA", name="nodeA"),
+        NodeContext(node_id="nodeB", name="nodeB"),
+    ]
 
 
 async def test_run_agent_via_hatchet_completed_emits_end_and_sets_completed_status(
