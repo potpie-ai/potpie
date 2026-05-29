@@ -136,9 +136,6 @@ class RuntimeCustomAgent(ChatAgent):
                 self._pydantic_agent = agent
                 return agent
         else:
-            logger.error(
-                f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - cannot create custom agent"
-            )
             raise UnsupportedProviderError(
                 f"Model '{self.llm_provider.chat_config.model}' does not support Pydantic-based agents."
             )

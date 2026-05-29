@@ -51,10 +51,6 @@ def _execute_with_timeout(
     thread.join(timeout=timeout)
 
     if not result_container["completed"]:
-        logger.error(
-            f"Operation '{operation_name}' timed out after {timeout} seconds. "
-            f"This may indicate a deadlock or hung operation."
-        )
         raise TimeoutError(
             f"Operation '{operation_name}' timed out after {timeout} seconds"
         )

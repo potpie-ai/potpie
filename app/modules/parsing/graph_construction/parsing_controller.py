@@ -306,11 +306,6 @@ class ParsingController:
                         project_id=project_id,
                     )
                 except Exception as e:
-                    logger.exception(
-                        "Failed to submit parsing task to Celery",
-                        project_id=project_id,
-                        error=str(e),
-                    )
                     raise
 
                 await project_manager.update_project_status(
@@ -343,7 +338,6 @@ class ParsingController:
                 )
 
         except Exception as e:
-            logger.error(f"Error in parse_directory: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
         finally:
             if parsing_service is not None:
@@ -504,7 +498,6 @@ class ParsingController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error in fetch_parsing_status: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @staticmethod
@@ -544,5 +537,4 @@ class ParsingController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error in fetch_parsing_status_by_repo: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")

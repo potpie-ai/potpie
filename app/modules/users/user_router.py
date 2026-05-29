@@ -84,7 +84,6 @@ class UserAPI:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error saving onboarding data: {str(e)}", exc_info=True)
             raise HTTPException(
                 status_code=500, detail=f"Failed to save onboarding data: {str(e)}"
             )

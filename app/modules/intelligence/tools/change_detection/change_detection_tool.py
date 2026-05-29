@@ -389,15 +389,9 @@ class ChangeDetectionTool:
         logger.info(f"[CHANGE_DETECTION] Retrieved project details: {project_details}")
 
         if project_details is None:
-            logger.error(
-                f"[CHANGE_DETECTION] Project details not found for project_id: {project_id}"
-            )
             raise HTTPException(status_code=400, detail="Project Details not found.")
 
         if project_details["user_id"] != self.user_id:
-            logger.error(
-                f"[CHANGE_DETECTION] User mismatch: project user_id={project_details['user_id']}, requesting user={self.user_id}"
-            )
             raise ValueError(
                 f"Project id {project_id} not found for user {self.user_id}"
             )
@@ -653,10 +647,6 @@ class ChangeDetectionTool:
                             f"[CHANGE_DETECTION] GitBucket diff complete: {len(patches_dict)} files with patches from {commit_count} commits"
                         )
                     except Exception as api_error:
-                        logger.error(
-                            f"[CHANGE_DETECTION] GitBucket commits API error: {type(api_error).__name__}: {str(api_error)}",
-                            exc_info=True,
-                        )
                         raise
                 else:
                     # Use PyGithub for GitHub
@@ -681,10 +671,6 @@ class ChangeDetectionTool:
                     f"[CHANGE_DETECTION] Local diff complete: {len(patches_dict)} files"
                 )
         except Exception as e:
-            logger.error(
-                f"[CHANGE_DETECTION] Exception during diff: {type(e).__name__}: {str(e)}",
-                exc_info=True,
-            )
             raise HTTPException(
                 status_code=400, detail=f"Error while fetching changes: {str(e)}"
             )

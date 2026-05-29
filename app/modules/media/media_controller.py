@@ -111,12 +111,10 @@ class MediaController:
             return result
 
         except MediaServiceError as e:
-            logger.error(f"Media service error: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error uploading image: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to upload image")
 
     async def upload_file_any(
@@ -162,12 +160,10 @@ class MediaController:
                 message_id=message_id,
             )
         except MediaServiceError as e:
-            logger.error(f"Media service error: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error uploading file: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to upload file")
 
     async def get_attachment_access_url(
@@ -205,7 +201,6 @@ class MediaController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error generating attachment access URL: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to generate access URL")
 
     async def download_attachment(self, attachment_id: str) -> StreamingResponse:
@@ -251,7 +246,6 @@ class MediaController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error downloading attachment: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to download attachment")
 
     async def get_attachment_info(self, attachment_id: str) -> AttachmentInfo:
@@ -287,7 +281,6 @@ class MediaController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error getting attachment info: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to get attachment info")
 
     async def delete_attachment(self, attachment_id: str) -> dict:
@@ -318,7 +311,6 @@ class MediaController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error deleting attachment: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to delete attachment")
 
     async def get_message_attachments(self, message_id: str) -> List[AttachmentInfo]:
@@ -335,7 +327,6 @@ class MediaController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error getting message attachments: {str(e)}")
             raise HTTPException(
                 status_code=500, detail="Failed to get message attachments"
             )
@@ -399,7 +390,6 @@ class MediaController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error testing multimodal functionality: {str(e)}")
             raise HTTPException(
                 status_code=500, detail="Failed to test multimodal functionality"
             )

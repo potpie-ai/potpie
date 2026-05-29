@@ -215,10 +215,6 @@ class MainApp:
             self.app.state.async_redis_stream_manager = AsyncRedisStreamManager()
             logger.info("AsyncRedisStreamManager initialized")
         except Exception as e:
-            logger.exception(
-                "AsyncRedisStreamManager failed to initialize (redis.asyncio required): %s",
-                e,
-            )
             raise RuntimeError(
                 "Async Redis stream manager unavailable; cannot start. "
                 "Install redis>=4.2 with redis.asyncio support."
@@ -236,7 +232,6 @@ class MainApp:
             await system_prompt_setup.initialize_system_prompts()
             logger.info("System prompts initialized successfully")
         except Exception:
-            logger.exception("Failed to initialize system prompts")
             raise
         finally:
             db.close()

@@ -132,7 +132,6 @@ class LinearOAuth:
                     logger.error("Linear token exchange failed:")
                     logger.error(f"  Status: {response.status_code}")
                     logger.error(f"  Response: {response.text}")
-                    logger.error(f"  Headers: {dict(response.headers)}")
                     raise Exception(f"Token exchange failed: {response.status_code}")
 
                 token_response = response.json()
@@ -152,7 +151,6 @@ class LinearOAuth:
                 return tokens
 
         except Exception as e:
-            logger.exception("Failed to exchange Linear OAuth code for tokens")
             raise Exception(f"OAuth token exchange failed: {str(e)}")
 
     async def get_user_info_from_api(

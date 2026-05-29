@@ -80,7 +80,6 @@ class RedisStreamManager:
                 pass
             # #endregion
         except Exception as e:
-            logger.error(f"Failed to publish event to Redis stream {key}: {str(e)}")
             raise
 
     def consume_stream(
@@ -535,7 +534,6 @@ class AsyncRedisStreamManager:
             )
             logger.debug(f"Published {event_type} event to stream {key}")
         except Exception as e:
-            logger.error(f"Failed to publish event to Redis stream {key}: {str(e)}")
             raise
 
     async def set_cancellation(self, conversation_id: str, run_id: str) -> None:

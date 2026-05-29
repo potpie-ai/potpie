@@ -297,9 +297,6 @@ class IntegrationsService:
                 }
 
         except Exception as e:
-            logger.exception(
-                "Failed to refresh Sentry token", integration_id=integration_id
-            )
             raise Exception(f"Token refresh failed: {str(e)}")
 
     async def get_valid_sentry_token(self, integration_id: str) -> str:
@@ -347,9 +344,6 @@ class IntegrationsService:
             return decrypt_token(auth_data["access_token"])
 
         except Exception as e:
-            logger.exception(
-                "Failed to get valid Sentry token", integration_id=integration_id
-            )
             raise Exception(f"Failed to get valid token: {str(e)}")
 
     async def _exchange_code_for_tokens(
@@ -484,7 +478,6 @@ class IntegrationsService:
                 return tokens
 
         except Exception as e:
-            logger.exception("Failed to exchange OAuth code for tokens")
             raise Exception(f"OAuth token exchange failed: {str(e)}")
 
     async def _get_sentry_organization_info(
@@ -568,7 +561,6 @@ class IntegrationsService:
                 return response.json()
 
         except Exception as e:
-            logger.exception("Error making Sentry API call")
             raise Exception(f"Failed to make Sentry API call: {str(e)}")
 
     async def get_sentry_organizations(
@@ -2175,7 +2167,6 @@ class IntegrationsService:
                         f"Successfully refreshed token for integration {integration_id}"
                     )
                 except Exception as e:
-                    logger.error(f"Failed to refresh Jira token: {str(e)}")
                     raise Exception(f"Failed to refresh expired token: {str(e)}")
 
         metadata = getattr(db_integration, "integration_metadata", {}) or {}
@@ -2211,9 +2202,6 @@ class IntegrationsService:
                 "site_url": context.get("site_url"),
             }
         except Exception as e:
-            logger.error(
-                f"Failed to fetch Jira accessible resources for {integration_id}: {str(e)}"
-            )
             raise
 
     async def get_jira_projects(
@@ -2241,11 +2229,6 @@ class IntegrationsService:
             )
 
         if response.status_code != 200:
-            logger.error(
-                "Failed to fetch Jira projects (%s): %s",
-                response.status_code,
-                response.text,
-            )
             raise Exception(
                 f"Failed to fetch Jira projects: {response.status_code} {response.text}"
             )
@@ -2282,11 +2265,6 @@ class IntegrationsService:
             )
 
         if response.status_code != 200:
-            logger.error(
-                "Failed to fetch Jira project details (%s): %s",
-                response.status_code,
-                response.text,
-            )
             raise Exception(
                 f"Failed to fetch Jira project details: {response.status_code}"
             )
@@ -2622,9 +2600,6 @@ class IntegrationsService:
                 "site_url": context.get("site_url"),
             }
         except Exception as e:
-            logger.error(
-                f"Failed to fetch Confluence accessible resources for {integration_id}: {str(e)}"
-            )
             raise
 
     async def get_confluence_spaces(
@@ -2654,11 +2629,6 @@ class IntegrationsService:
             )
 
         if response.status_code != 200:
-            logger.error(
-                "Failed to fetch Confluence spaces (%s): %s",
-                response.status_code,
-                response.text,
-            )
             raise Exception(
                 f"Failed to fetch Confluence spaces: {response.status_code}"
             )

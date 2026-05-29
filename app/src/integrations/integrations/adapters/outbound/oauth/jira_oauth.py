@@ -96,9 +96,6 @@ class JiraOAuth(AtlassianOAuthBase):
         )
 
         if response.status_code not in (200, 201):
-            logger.error(
-                f"Failed to create Jira webhook ({response.status_code}): {response.text}"
-            )
             raise Exception(
                 f"Failed to create Jira webhook: {response.status_code} {response.text}"
             )

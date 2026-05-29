@@ -108,7 +108,6 @@ class CodeProviderAddPRCommentsTool:
             )
             return provider.client
         except Exception as e:
-            logger.exception("[ADD_PR_COMMENT] Failed to get client")
             raise Exception(
                 f"Repository {repo_name} not found or inaccessible: {str(e)}"
             )

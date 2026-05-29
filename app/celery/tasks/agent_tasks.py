@@ -488,12 +488,7 @@ def execute_agent_background(
                         },
                     )
                 except Exception:
-                    logger.exception(
-                        "Failed to publish error event to Redis",
-                        conversation_id=conversation_id,
-                        run_id=run_id,
-                    )
-                raise
+                    raise
 
 
 @celery_app.task(
@@ -852,10 +847,4 @@ def execute_regenerate_background(
                         },
                     )
                 except Exception:
-                    logger.exception(
-                        "Failed to publish error event to Redis",
-                        conversation_id=conversation_id,
-                        run_id=run_id,
-                        user_id=user_id,
-                    )
-                raise
+                    raise

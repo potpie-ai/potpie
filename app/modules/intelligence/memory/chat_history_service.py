@@ -49,20 +49,10 @@ class ChatHistoryService:
             )
             return history
         except SQLAlchemyError as e:
-            logger.exception(
-                "Database error in get_session_history",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ChatHistoryServiceError(
                 f"Failed to retrieve session history for conversation {conversation_id}"
             ) from e
         except Exception as e:
-            logger.exception(
-                "Unexpected error in get_session_history",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ChatHistoryServiceError(
                 f"An unexpected error occurred while retrieving session history for conversation {conversation_id}"
             ) from e
@@ -277,20 +267,10 @@ class AsyncChatHistoryService:
             )
             return history
         except SQLAlchemyError as e:
-            logger.exception(
-                "Database error in get_session_history conversation_id=%s user_id=%s",
-                conversation_id,
-                user_id,
-            )
             raise ChatHistoryServiceError(
                 f"Failed to retrieve session history for conversation {conversation_id}"
             ) from e
         except Exception as e:
-            logger.exception(
-                "Unexpected error in get_session_history conversation_id=%s user_id=%s",
-                conversation_id,
-                user_id,
-            )
             raise ChatHistoryServiceError(
                 f"An unexpected error occurred while retrieving session history for conversation {conversation_id}"
             ) from e

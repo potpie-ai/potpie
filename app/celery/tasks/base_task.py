@@ -61,7 +61,6 @@ class BaseTask(Task):
                 "Async DB session operation completed successfully", task_id=task_id
             )
         except Exception:
-            logger.exception("Error during async DB operation", task_id=task_id)
             raise
         finally:
             try:

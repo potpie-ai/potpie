@@ -112,9 +112,6 @@ class GitHubProvider(ICodeProvider):
                 "language": repo.language,
             }
         except GithubException as e:
-            logger.error(
-                f"Failed to fetch repository {repo_name}: {type(e).__name__} - {str(e)}"
-            )
             raise
 
     def check_repository_access(self, repo_name: str) -> bool:
@@ -174,7 +171,6 @@ class GitHubProvider(ICodeProvider):
         try:
             repo = self.client.get_repo(repo_name)
         except GithubException as e:
-            logger.error(f"GitHubProvider: Failed to get repo {repo_name}: {e}")
             raise
 
         def _recurse(current_path: str, depth: int) -> list[dict[str, Any]]:
@@ -343,7 +339,6 @@ class GitHubProvider(ICodeProvider):
             }
 
         except GithubException as e:
-            logger.error(f"[GITHUB] Error comparing branches: {str(e)}")
             raise
 
     # ============ Pull Request Operations ============

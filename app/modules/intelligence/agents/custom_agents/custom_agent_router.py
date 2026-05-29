@@ -40,7 +40,6 @@ async def create_custom_agent(
     except HTTPException as he:
         raise he
     except Exception:
-        logger.exception("Error creating custom agent", user_id=user_id)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -63,9 +62,6 @@ async def share_agent(
     except HTTPException as he:
         raise he
     except Exception:
-        logger.exception(
-            "Error sharing agent", agent_id=request.agent_id, user_id=user_id
-        )
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -87,9 +83,6 @@ async def revoke_agent_access(
     except HTTPException as he:
         raise he
     except Exception:
-        logger.exception(
-            "Error revoking agent access", agent_id=request.agent_id, user_id=user_id
-        )
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -111,7 +104,6 @@ async def list_agents(
     except HTTPException as he:
         raise he
     except Exception:
-        logger.exception("Error listing agents", user_id=user_id)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -129,9 +121,6 @@ async def delete_custom_agent(
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve)) from ve
     except Exception:
-        logger.exception(
-            "Error deleting custom agent", agent_id=agent_id, user_id=user_id
-        )
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -152,9 +141,6 @@ async def update_custom_agent(
     except HTTPException as he:
         raise he
     except Exception:
-        logger.exception(
-            "Error updating custom agent", agent_id=agent_id, user_id=user_id
-        )
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -173,9 +159,6 @@ async def get_custom_agent_info(
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve)) from ve
     except Exception:
-        logger.exception(
-            "Error retrieving custom agent info", agent_id=agent_id, user_id=user_id
-        )
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -199,9 +182,6 @@ async def get_agent_shares(
     except HTTPException as he:
         raise he
     except Exception:
-        logger.exception(
-            "Error retrieving agent shares", agent_id=agent_id, user_id=user_id
-        )
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -222,5 +202,4 @@ async def create_agent_from_prompt(
     except HTTPException as he:
         raise he
     except Exception:
-        logger.exception("Error creating agent from prompt", user_id=user_id)
         raise HTTPException(status_code=500, detail="Internal server error")

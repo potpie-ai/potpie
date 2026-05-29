@@ -75,10 +75,6 @@ class CodeProviderCreateBranchTool:
             )
             return provider.client
         except Exception as e:
-            logger.error(
-                f"[CREATE_BRANCH] Failed to get client: {type(e).__name__}: {str(e)}",
-                exc_info=True,
-            )
             raise Exception(
                 f"Repository {repo_name} not found or inaccessible: {str(e)}"
             )

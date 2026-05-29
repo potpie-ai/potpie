@@ -334,10 +334,6 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 )
 
                 if isinstance(self._provider, LocalProvider):
-                    logger.error(
-                        f"[REPO_MANAGER] Error reading file from worktree: {e}, "
-                        f"for {repo_name}/{file_path}@{ref}. Not falling back to git show to avoid blocking."
-                    )
                     raise
                 # For non-LocalProvider, it's safe to fall back (e.g., GitHub API)
                 logger.warning(

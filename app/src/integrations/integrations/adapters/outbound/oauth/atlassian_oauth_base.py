@@ -195,11 +195,6 @@ class AtlassianOAuthBase(ABC):
             )
 
         if response.status_code != 200:
-            logger.error(
-                f"{self.product_name.capitalize()} token exchange failed: %s - %s",
-                response.status_code,
-                response.text,
-            )
             raise Exception(
                 f"Token exchange failed ({response.status_code}): {response.text}"
             )
@@ -254,11 +249,6 @@ class AtlassianOAuthBase(ABC):
             )
 
         if response.status_code != 200:
-            logger.error(
-                f"{self.product_name.capitalize()} token refresh failed: %s - %s",
-                response.status_code,
-                response.text,
-            )
             raise Exception(
                 f"Token refresh failed ({response.status_code}): {response.text}"
             )
@@ -300,11 +290,6 @@ class AtlassianOAuthBase(ABC):
             response = await client.get(url, headers=headers)
 
         if response.status_code != 200:
-            logger.error(
-                "Failed to fetch accessible resources: %s - %s",
-                response.status_code,
-                response.text,
-            )
             raise Exception(
                 f"Failed to fetch accessible resources: {response.status_code}"
             )

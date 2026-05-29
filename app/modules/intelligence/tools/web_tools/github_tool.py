@@ -110,18 +110,10 @@ class GithubTool:
         try:
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         except ValueError as e:
-            logger.exception(
-                "Failed to create provider for repository '%s': %s", repo_name, str(e)
-            )
             raise RepositoryAccessError(
                 f"Repository {repo_name} not found or inaccessible"
             ) from e
         except Exception as e:
-            logger.exception(
-                "Unexpected error creating provider for repository '%s': %s",
-                repo_name,
-                str(e),
-            )
             raise RepositoryAccessError(
                 f"Repository {repo_name} not found or inaccessible"
             ) from e
@@ -131,7 +123,6 @@ class GithubTool:
                 f"Provider factory returned None for repository '{repo_name}'. "
                 "Unable to obtain client."
             )
-            logger.error(message)
             raise RepositoryAccessError(message)
 
         client = getattr(provider, "client", None)
@@ -140,7 +131,6 @@ class GithubTool:
                 f"Provider '{type(provider).__name__}' does not expose a client for "
                 f"repository '{repo_name}'."
             )
-            logger.error(message)
             raise RepositoryAccessError(message)
 
         if not hasattr(client, "get_repo"):
@@ -148,7 +138,6 @@ class GithubTool:
                 f"Client of type '{type(client).__name__}' for repository "
                 f"'{repo_name}' does not support required operations."
             )
-            logger.error(message)
             raise RepositoryAccessError(message)
 
         return client

@@ -871,12 +871,10 @@ class RepoManager(IRepoManager):
             return bare_repo_path
 
         except subprocess.TimeoutExpired:
-            logger.error("Git clone timeout", repo_name=repo_name)
             raise RuntimeError(
                 f"Git clone timed out after {self._CLONE_TIMEOUT // 60} minutes"
             )
         except Exception as e:
-            logger.exception(f"Unexpected error cloning {repo_name}")
             raise RuntimeError(f"Failed to clone bare repo: {e}") from e
 
     def create_worktree(
@@ -1080,7 +1078,6 @@ class RepoManager(IRepoManager):
 
             if result.returncode != 0:
                 error_msg = result.stderr or "Unknown error"
-                logger.error(f"Failed to create worktree: {error_msg}")
                 raise RuntimeError(f"Git worktree add failed: {error_msg}")
 
             logger.info(f"Successfully created worktree: {repo_name}@{ref}")
@@ -1105,14 +1102,10 @@ class RepoManager(IRepoManager):
             return worktree_path
 
         except subprocess.TimeoutExpired:
-            logger.error(f"Worktree creation timeout for {repo_name}@{ref}")
             raise RuntimeError(
                 f"Worktree creation timed out after {self._FETCH_TIMEOUT // 60} minutes"
             )
         except Exception as e:
-            logger.exception(
-                f"Unexpected error creating worktree for {repo_name}@{ref}"
-            )
             raise RuntimeError(f"Failed to create worktree: {e}") from e
 
     def create_worktree_with_new_branch(
@@ -1211,7 +1204,6 @@ class RepoManager(IRepoManager):
 
             if result.returncode != 0:
                 error_msg = result.stderr or "Unknown error"
-                logger.error(f"Failed to create worktree with new branch: {error_msg}")
                 raise RuntimeError(f"Git worktree add -b failed: {error_msg}")
 
             logger.info(
@@ -1243,16 +1235,10 @@ class RepoManager(IRepoManager):
             return worktree_path
 
         except subprocess.TimeoutExpired:
-            logger.error(
-                f"Worktree creation timeout for {repo_name}:{new_branch_name}"
-            )
             raise RuntimeError(
                 f"Worktree creation timed out after {self._FETCH_TIMEOUT // 60} minutes"
             )
         except Exception as e:
-            logger.exception(
-                f"Unexpected error creating worktree with new branch for {repo_name}"
-            )
             raise RuntimeError(f"Failed to create worktree with new branch: {e}") from e
 
     def remove_worktree(

@@ -34,7 +34,6 @@ class CustomAgentController:
         try:
             return await self.service.create_agent(user_id, agent_data)
         except Exception as e:
-            logger.error(f"Error creating custom agent: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to create custom agent: {str(e)}",
@@ -152,7 +151,6 @@ class CustomAgentController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error in manage_agent_sharing: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to manage agent sharing: {str(e)}",
@@ -204,7 +202,6 @@ class CustomAgentController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error in revoke_agent_access: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to revoke agent access: {str(e)}",
@@ -236,7 +233,6 @@ class CustomAgentController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error in list_agent_shares: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to list agent shares: {str(e)}",
@@ -254,7 +250,6 @@ class CustomAgentController:
                 user_id, include_public, include_shared
             )
         except Exception as e:
-            logger.error(f"Error listing agents for user {user_id}: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to list agents: {str(e)}",
@@ -275,7 +270,6 @@ class CustomAgentController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error updating custom agent {agent_id}: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to update custom agent: {str(e)}",
@@ -293,7 +287,6 @@ class CustomAgentController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error deleting custom agent {agent_id}: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to delete custom agent: {str(e)}",
@@ -312,7 +305,6 @@ class CustomAgentController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error fetching custom agent {agent_id}: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to fetch custom agent: {str(e)}",
@@ -330,7 +322,6 @@ class CustomAgentController:
                 user_id=user_id,
             )
         except Exception as e:
-            logger.error(f"Error creating agent from prompt: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to create agent from prompt: {str(e)}",

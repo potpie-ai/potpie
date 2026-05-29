@@ -185,7 +185,6 @@ class GithubService:
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
             return provider.client
         except Exception as e:
-            logger.error(f"Failed to get GitHub client for {repo_name}: {str(e)}")
             raise Exception(
                 f"Repository {repo_name} not found or inaccessible on GitHub"
             )
@@ -216,7 +215,6 @@ class GithubService:
                 repo = github.get_repo(repo_name)
                 file_contents = repo.get_contents(file_path)
             except Exception as public_error:
-                logger.error(f"Failed to access public repo: {str(public_error)}")
                 raise HTTPException(
                     status_code=404,
                     detail=f"Repository or file not found or inaccessible: {repo_name}/{file_path}",
@@ -248,10 +246,6 @@ class GithubService:
             selected_lines = lines[max(0, start_line - 1) : min(len(lines), end_line)]
             return "\n".join(selected_lines)
         except Exception as e:
-            logger.error(
-                f"Error processing file content for {repo_name}/{file_path}: {e}",
-                exc_info=True,
-            )
             raise HTTPException(
                 status_code=500,
                 detail=f"Error processing file content: {str(e)}",
@@ -712,9 +706,6 @@ class GithubService:
                                 return {"repositories": []}
                             elif response.status != 200:
                                 error_text = await response.text()
-                                logger.error(
-                                    f"Failed to get installations. Response: {error_text}"
-                                )
                                 raise HTTPException(
                                     status_code=response.status,
                                     detail=f"Failed to get installations: {error_text}",
@@ -738,9 +729,6 @@ class GithubService:
                     except (ClientConnectorError, asyncio.TimeoutError) as net_err:
                         attempt += 1
                         if attempt >= max_attempts:
-                            logger.error(
-                                f"Network error contacting GitHub installations API: {net_err}"
-                            )
                             raise HTTPException(
                                 status_code=503,
                                 detail="Unable to reach GitHub API (installations). Please check network/proxy settings and try again.",
@@ -1089,9 +1077,6 @@ class GithubService:
                 return {"repositories": []}
             else:
                 # Re-raise other GithubExceptions
-                logger.exception(
-                    "GithubException in get_repos_for_user", user_id=user_id
-                )
                 raise HTTPException(
                     status_code=e.status if hasattr(e, "status") else 500,
                     detail=f"GitHub API error: {error_str}",
@@ -1112,7 +1097,6 @@ class GithubService:
                 )
                 return {"repositories": []}
 
-            logger.exception("Failed to fetch repositories", user_id=user_id)
             raise HTTPException(
                 status_code=500, detail="Failed to fetch repositories"
             ) from e
@@ -1198,7 +1182,6 @@ class GithubService:
                     try:
                         git = _get_git_module()
                     except ImportError as e:
-                        logger.error("Git module not available: %s", e)
                         raise HTTPException(
                             status_code=500,
                             detail="Git support not available",
@@ -1228,10 +1211,6 @@ class GithubService:
                         detail=f"Not a valid git repository: {repo_name}",
                     )
                 except Exception as e:
-                    logger.error(
-                        f"Error fetching branches for local repo {repo_name}: {str(e)}",
-                        exc_info=True,
-                    )
                     raise HTTPException(
                         status_code=500,
                         detail=f"Error fetching branches for local repo: {str(e)}",
@@ -1248,9 +1227,6 @@ class GithubService:
         except HTTPException as he:
             raise he
         except Exception as e:
-            logger.error(
-                f"Error fetching branches for repo {repo_name}: {str(e)}", exc_info=True
-            )
             raise HTTPException(
                 status_code=404,
                 detail=f"Repository not found or error fetching branches: {str(e)}",
@@ -1323,7 +1299,6 @@ class GithubService:
                         )
 
             # If all methods failed, raise the original error
-            logger.error(f"Failed to access repository {repo_name}: {error_str}")
             raise HTTPException(
                 status_code=404,
                 detail=f"Repository {repo_name} not found or inaccessible on GitHub",
@@ -1423,10 +1398,6 @@ class GithubService:
         except HTTPException as he:
             raise he
         except Exception as e:
-            logger.error(
-                f"Error fetching project structure for {repo_name}: {str(e)}",
-                exc_info=True,
-            )
             raise HTTPException(
                 status_code=500, detail=f"Failed to fetch project structure: {str(e)}"
             )

@@ -120,7 +120,6 @@ class AnalyticsAPI:
                 detail="Failed to process tokens by day.",
             )
         except Exception as e:
-            logger.exception("Error fetching tokens by day: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail="Failed to retrieve tokens by day.",
@@ -168,7 +167,6 @@ class AnalyticsAPI:
                 detail="Failed to process analytics data.",
             )
         except Exception as e:
-            logger.exception("Error fetching analytics: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail="Failed to retrieve analytics data.",
@@ -224,7 +222,6 @@ class AnalyticsAPI:
                 detail="Failed to process raw span data.",
             )
         except Exception as e:
-            logger.exception("Error fetching raw spans: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail="Failed to retrieve raw span data.",
@@ -274,7 +271,6 @@ class AnalyticsAPI:
                 detail="Failed to process debug data.",
             )
         except Exception as e:
-            logger.exception("Error fetching raw Logfire response: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail="Failed to retrieve raw response.",

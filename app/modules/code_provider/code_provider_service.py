@@ -117,9 +117,6 @@ class MockRepo:
                 )
                 return archive_url
         except Exception as e:
-            logger.error(
-                f"ProviderWrapper: Error getting archive link for '{self.full_name}': {e}"
-            )
             raise
 
     @property

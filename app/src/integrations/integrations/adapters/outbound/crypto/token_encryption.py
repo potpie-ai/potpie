@@ -57,7 +57,6 @@ class TokenEncryption:
             self._fernet = Fernet(base64.urlsafe_b64encode(encryption_key))
 
         except Exception as e:
-            logger.exception("Failed to initialize token encryption")
             raise Exception(f"Token encryption initialization failed: {str(e)}")
 
     def encrypt_token(self, token: str) -> str:
@@ -73,7 +72,6 @@ class TokenEncryption:
             return encrypted_bytes.decode()
 
         except Exception as e:
-            logger.exception("Failed to encrypt token")
             raise Exception(f"Token encryption failed: {str(e)}")
 
     def decrypt_token(self, encrypted_token: str) -> str:
@@ -89,7 +87,6 @@ class TokenEncryption:
             return decrypted_bytes.decode()
 
         except Exception as e:
-            logger.exception("Failed to decrypt token")
             raise Exception(f"Token decryption failed: {str(e)}")
 
 

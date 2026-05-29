@@ -72,18 +72,11 @@ class MessageService:
             raise
 
         except IntegrityError as e:
-            logger.exception(
-                "Database integrity error in create_message",
-                conversation_id=conversation_id,
-            )
             raise MessageServiceError(
                 "Failed to create message due to a database integrity error"
             ) from e
 
         except Exception as e:
-            logger.exception(
-                "Unexpected error in create_message", conversation_id=conversation_id
-            )
             raise MessageServiceError(
                 "An unexpected error occurred while creating the message"
             ) from e
@@ -108,16 +101,10 @@ class MessageService:
             logger.warning(str(e))
             raise
         except SQLAlchemyError as e:
-            logger.exception(
-                "Database error in mark_message_archived", message_id=message_id
-            )
             raise MessageServiceError(
                 f"Failed to archive message {message_id} due to a database error"
             ) from e
         except Exception as e:
-            logger.exception(
-                "Unexpected error in mark_message_archived", message_id=message_id
-            )
             raise MessageServiceError(
                 f"An unexpected error occurred while archiving message {message_id}"
             ) from e

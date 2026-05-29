@@ -57,11 +57,6 @@ def get_discovery_tools(
             exclude_embedding_tools=exclude_embedding_tools,
         )
     except RegistryError as e:
-        logger.error(
-            "get_discovery_tools: failed to resolve allow_list_id=%s: %s",
-            allow_list_id,
-            e,
-        )
         raise
 
     def _search_tools(query: Optional[str] = None) -> List[dict]:
