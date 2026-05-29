@@ -324,7 +324,7 @@ class InferenceService:
                 all_nodes.extend(batch)
                 offset += batch_size
 
-        logger.info(f"DEBUGNEO4J: Fetched {len(all_nodes)} nodes for repo {repo_id}")
+        logger.debug(f"fetched {len(all_nodes)} nodes for repo {repo_id}")
         return all_nodes
 
     def get_entry_points(self, repo_id: str) -> List[str]:

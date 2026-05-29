@@ -194,7 +194,7 @@ class AuthAPI:
                     status_code=404,
                 )
 
-            logger.info(f"Found SSO user: uid={user.uid}, email={user.email}")
+            logger.info("found SSO user", uid=user.uid)
 
             # Check if GitHub already linked
             existing_github = (
@@ -432,7 +432,7 @@ class AuthAPI:
         # ============================================================
         # FLOW 3: EMAIL/PASSWORD SIGN-IN (legacy, rarely used)
         # ============================================================
-        logger.info(f"Email/password flow for {email}")
+        logger.info("email/password sign-in flow")
 
         user = await async_user_service.get_user_by_uid(uid)
 

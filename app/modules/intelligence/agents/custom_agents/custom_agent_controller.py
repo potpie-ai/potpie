@@ -104,7 +104,7 @@ class CustomAgentController:
 
             # Handle sharing with specific user
             if shared_with_email:
-                logger.info(f"Sharing agent {agent_id} with user {shared_with_email}")
+                logger.info("sharing agent", agent_id=agent_id)
                 shared_user = await self.user_service.get_user_by_email(
                     shared_with_email
                 )
@@ -184,7 +184,7 @@ class CustomAgentController:
                     detail=f"User with email {user_email} not found",
                 )
 
-            logger.info(f"Revoking access to agent {agent_id} for user {user_email}")
+            logger.info("revoking agent access", agent_id=agent_id)
 
             # Revoke the share
             success = await self.service.revoke_share(agent_id, user_to_revoke.uid)

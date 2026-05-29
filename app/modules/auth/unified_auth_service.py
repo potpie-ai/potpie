@@ -535,7 +535,7 @@ class UnifiedAuthService:
                             self.db.expunge(existing_user)
                             existing_user = None
                         else:
-                            logger.info(f"Confirmed user {email} deleted successfully")
+                            logger.info("orphaned user deleted", user_uid=user_uid)
                     except Exception as e:
                         logger.error(
                             f"Failed to delete orphaned user {user_uid}: {str(e)}",
