@@ -56,6 +56,7 @@ from app.modules.conversations.utils.conversation_routing import (
     normalize_run_id,
     async_ensure_unique_run_id,
     redis_stream_generator,
+    resolve_conversation_agent_id,
     start_celery_task_and_stream,
 )
 from app.modules.conversations.utils.redis_streaming import AsyncRedisStreamManager
@@ -304,12 +305,15 @@ class ConversationAPI:
                 )
 
             node_ids_list = parsed_node_ids or []
+            agent_id = await resolve_conversation_agent_id(
+                conversation_id, db, async_db
+            )
             return await start_celery_task_and_stream(
                 conversation_id=conversation_id,
                 run_id=run_id,
                 user_id=user_id,
                 query=content,
-                agent_id=None,
+                agent_id=agent_id,
                 node_ids=node_ids_list,
                 attachment_ids=attachment_ids or [],
                 async_redis_manager=async_redis,

@@ -9,9 +9,6 @@ import uuid
 from typing import Generator, Optional
 from observability import get_logger
 
-# TTL for run_id reservation lock (seconds). Reservation expires if stream not established.
-RUN_ID_RESERVATION_TTL = 120
-
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -22,8 +19,107 @@ from app.modules.conversations.utils.redis_streaming import (
     AsyncRedisStreamManager,
     RedisStreamManager,
 )
+from app.modules.intelligence.agents.runtime.backend_selection import select_backend
+from app.modules.intelligence.agents.runtime.hatchet_backend import (
+    AgentRunInput,
+    enqueue_agent_run,
+)
 
 logger = get_logger(__name__)
+
+# TTL for run_id reservation lock (seconds). Reservation expires if stream not established.
+RUN_ID_RESERVATION_TTL = 120
+
+
+async def resolve_conversation_agent_id(
+    conversation_id: str, db, async_db
+) -> Optional[str]:
+    """Resolve a conversation's selected agent via the existing store (``agent_ids[0]``).
+
+    Dispatch sites pass ``agent_id=None`` (the worker resolves the agent downstream from
+    the conversation), so routers call this to let backend selection see the real agent.
+    """
+    from app.modules.conversations.conversation.conversation_store import (
+        ConversationStore,
+    )
+
+    conversation = await ConversationStore(db, async_db).get_by_id(conversation_id)
+    if conversation and conversation.agent_ids:
+        return conversation.agent_ids[0]
+    return None
+
+
+async def _dispatch_agent_run(
+    conversation_id: str,
+    run_id: str,
+    user_id: str,
+    query: str,
+    agent_id: Optional[str],
+    node_ids: list,
+    attachment_ids: list,
+    async_redis_manager: AsyncRedisStreamManager,
+    local_mode: bool,
+    tunnel_url: Optional[str],
+) -> Optional[str]:
+    """Route an agent run to the selected backend.
+
+    Celery by default; Hatchet for allowlisted agents when hatchet-mode is on. Returns
+    the Celery task id (None for Hatchet). Fails closed with HTTP 503 if Hatchet is
+    selected but the enqueue fails — we never silently fall back to Celery, so the
+    caller knows the requested backend was unavailable.
+    """
+    if select_backend(agent_id) == "hatchet":
+        try:
+            enqueue_agent_run(
+                AgentRunInput(
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                    user_id=user_id,
+                    query=query,
+                    agent_id=agent_id or "",
+                    node_ids=node_ids,
+                    attachment_ids=attachment_ids or [],
+                    local_mode=local_mode,
+                    tunnel_url=tunnel_url,
+                )
+            )
+        except Exception as e:
+            logger.exception("Hatchet enqueue failed; failing closed with 503")
+            # Callers set "queued" before dispatch; transition the stream to a
+            # terminal error so subscribers don't sit on a stranded queued state.
+            await async_redis_manager.set_task_status(
+                conversation_id, run_id, "error"
+            )
+            await async_redis_manager.publish_event(
+                conversation_id,
+                run_id,
+                "end",
+                {"status": "error", "message": "Hatchet agent backend unavailable"},
+            )
+            raise HTTPException(
+                status_code=503, detail="Hatchet agent backend unavailable"
+            ) from e
+        logger.info(
+            f"Routed agent run {conversation_id}:{run_id} to Hatchet (agent_id={agent_id})"
+        )
+        return None
+
+    from app.celery.tasks.agent_tasks import execute_agent_background
+
+    task_result = execute_agent_background.delay(
+        conversation_id=conversation_id,
+        run_id=run_id,
+        user_id=user_id,
+        query=query,
+        agent_id=agent_id,
+        node_ids=node_ids,
+        attachment_ids=attachment_ids or [],
+        local_mode=local_mode,
+        tunnel_url=tunnel_url,
+    )
+    await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
+    logger.info(f"Started agent task {task_result.id} for {conversation_id}:{run_id}")
+    return task_result.id
 
 
 def normalize_run_id(
@@ -168,8 +264,6 @@ async def start_celery_task_and_stream(
     Start a Celery background task and return a streaming response.
     Uses async Redis so the event loop is not blocked.
     """
-    from app.celery.tasks.agent_tasks import execute_agent_background
-
     # Set initial "queued" status before starting the task
     await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
 
@@ -184,22 +278,19 @@ async def start_celery_task_and_stream(
         },
     )
 
-    # Start background task
-    task_result = execute_agent_background.delay(
+    # Route to the selected backend (celery default, hatchet for allowlisted agents)
+    await _dispatch_agent_run(
         conversation_id=conversation_id,
         run_id=run_id,
         user_id=user_id,
         query=query,
         agent_id=agent_id,
         node_ids=node_ids,
-        attachment_ids=attachment_ids or [],
+        attachment_ids=attachment_ids,
+        async_redis_manager=async_redis_manager,
         local_mode=local_mode,
         tunnel_url=tunnel_url,
     )
-
-    # Store the Celery task ID for later revocation
-    await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
-    logger.info(f"Started agent task {task_result.id} for {conversation_id}:{run_id}", task_result_id=task_result.id, conversation_id=conversation_id, run_id=run_id)
 
     # Wait for task to reach any terminal or active state (avoids blocking 30s if task goes straight to completed/error)
     task_started = await async_redis_manager.wait_for_task_start(
@@ -242,8 +333,6 @@ async def start_celery_task_and_wait(
     Start a Celery background task and wait for the complete response.
     Uses async Redis for setup; stream collection runs in thread pool.
     """
-    from app.celery.tasks.agent_tasks import execute_agent_background
-
     # Set initial "queued" status before starting the task
     await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
 
@@ -258,24 +347,19 @@ async def start_celery_task_and_wait(
         },
     )
 
-    # Start background task
-    task_result = execute_agent_background.delay(
+    # Route to the selected backend (celery default, hatchet for allowlisted agents)
+    await _dispatch_agent_run(
         conversation_id=conversation_id,
         run_id=run_id,
         user_id=user_id,
         query=query,
         agent_id=agent_id,
         node_ids=node_ids,
-        attachment_ids=attachment_ids or [],
+        attachment_ids=attachment_ids,
+        async_redis_manager=async_redis_manager,
         local_mode=local_mode,
         tunnel_url=tunnel_url,
     )
-
-    # Store the Celery task ID for later revocation
-    await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
-    logger.info(
-        f"Started agent task {task_result.id} for {conversation_id}:{run_id} (non-streaming)"
-    , task_result_id=task_result.id, conversation_id=conversation_id, run_id=run_id)
 
     # Wait for task to reach any terminal or active state (avoids blocking 30s if task goes straight to completed/error)
     task_started = await async_redis_manager.wait_for_task_start(

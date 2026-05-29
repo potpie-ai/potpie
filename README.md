@@ -135,6 +135,43 @@ pnpm build && pnpm start
 
 ---
 
+## Optional: durable agent runtime with Hatchet
+
+By default agents run on Celery. Potpie can optionally run **allowlisted agents** (the
+debug agent first) on a self-hosted [Hatchet](https://hatchet.run) for durable execution —
+fully opt-in, reusing the existing `potpie_postgres` container (no RabbitMQ).
+
+**One command** — boots infra + Hatchet + API + Celery + the Hatchet agent worker:
+
+```bash
+make dev-hatchet
+```
+
+This runs with `AGENT_TASK_BACKEND=hatchet`, so agents in `HATCHET_AGENT_ALLOWLIST`
+(default `debugging_agent`) dispatch to Hatchet while everything else stays on Celery.
+
+Piecemeal / alongside your usual start:
+
+```bash
+make hatchet-up      # boot Hatchet (engine :7077, dashboard :8080) + write .env.hatchet.local
+make hatchet-worker  # run the Hatchet agent worker
+make hatchet-down    # stop only the Hatchet services
+```
+
+Dashboard: http://localhost:8080 (`admin@example.com` / `Admin123!!`). Enable via `.env`
+(see the Hatchet block in `.env.template`):
+
+```bash
+AGENT_TASK_BACKEND=hatchet               # celery (default) | hatchet
+HATCHET_AGENT_ALLOWLIST=debugging_agent  # comma-separated agent ids routed to Hatchet
+```
+
+`HATCHET_CLIENT_*` (token/host) are generated into `.env.hatchet.local` by `make hatchet-up` —
+no manual setup for local dev. If Hatchet is selected but unavailable, those runs fail closed
+with HTTP 503 (no silent fallback). Design notes: `docs/hatchet-durable-agent-runtime-plan.md`.
+
+---
+
 ## How it works?
 
 Potpie parses your repository into a **knowledge graph** stored in Neo4j - capturing every file, function, class, and the relationships between them. Agents read directly from this graph to answer questions and complete tasks grounded in your actual code.
@@ -148,6 +185,7 @@ Potpie parses your repository into a **knowledge graph** stored in Neo4j - captu
 - [**FastAPI**](https://fastapi.tiangolo.com/) serves as the API layer - all requests enter through `localhost:8001` with CORS, Logfire tracing, and optional Sentry error tracking.
 - [**Firebase Auth**](https://firebase.google.com/docs/auth) handles production authentication. In development mode a dummy user is created locally - no Firebase needed.
 - [**Celery Worker**](https://docs.celeryq.dev/) with [Redis](https://redis.io/) as the broker handles async repo parsing - cloning, AST extraction, and knowledge graph construction run entirely in the background.
+- [**Hatchet**](https://hatchet.run) *(optional)* is a swappable durable runtime for allowlisted agent runs (the debug agent first) — see [Optional: durable agent runtime with Hatchet](#optional-durable-agent-runtime-with-hatchet) above.
 - [**Conversation Service**](https://docs.potpie.ai/conversations) manages chat sessions and agent memory across multi-turn interactions.
 - [**Agent Router**](https://docs.potpie.ai/agents/introduction) dispatches prompts to the correct pre-built or custom agent based on intent.
 - [**Tool Service**](https://docs.potpie.ai/tools) exposes callable functions to agents - code search, file fetch, knowledge graph queries, web tools, and more.
