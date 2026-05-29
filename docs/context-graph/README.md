@@ -70,37 +70,41 @@ potpie cloud status
 potpie cloud skills sync
 ```
 
-## Local graph backend: FalkorDB (lightweight alternative to Neo4j)
+## Local graph backend: FalkorDBLite (lightweight alternative to Neo4j)
 
 The context graph defaults to **Neo4j** (production). For local/self-hosted
-development you can switch the context graph to **FalkorDB** — a lightweight
-Redis-module graph DB — without touching application code. Only the context
-graph is affected; the code knowledge graph still uses Neo4j.
-
-Container mode (the supported first-PR path):
+single-user development you can switch the context graph to **FalkorDBLite** —
+an embedded Redis-module graph DB (via `redislite`) backed by a local file, so
+there's **no server and no Docker**. Only the context graph is affected; the
+code knowledge graph still uses Neo4j.
 
 ```bash
-docker compose --profile falkordb up falkordb   # starts FalkorDB on :6399
+pip install "context-engine[falkordb]"   # installs falkordblite + redis<8
 export GRAPH_DB_BACKEND=falkordb
-export FALKORDB_URL=redis://localhost:6399
-# optional: export FALKORDB_GRAPH_NAME=context_graph
-pip install "context-engine[falkordb]"           # optional client (import: falkordb)
+# optional overrides:
+# export FALKORDB_LITE_PATH=.potpie/context_graph/falkordb.db
+# export FALKORDB_GRAPH_NAME=context_graph
 ```
 
 `GRAPH_DB_BACKEND` (default `neo4j`) is read by the context-engine settings and
-`build_container` selects the writer + claim store together. The FalkorDB
-client is an optional extra and is imported lazily, so the default Neo4j
-install does not require it. FalkorDBLite (embedded, no container) is planned
-but not yet wired (`FALKORDB_MODE=lite` is reserved).
+`build_container` selects the writer + claim store together, injecting a single
+shared embedded graph handle into both. The FalkorDBLite dependency is an
+optional extra, imported lazily, so the default Neo4j install doesn't require
+it. The embedded database is created on first use at `FALKORDB_LITE_PATH`.
+
+Server/container FalkorDB (over a redis URL, `FALKORDB_MODE=server` +
+`FALKORDB_URL`) exists as a deferred profile in code but is not part of the
+default local path; it needs the separate `falkordb` client.
 
 Troubleshooting:
 
-- **`falkordb_unavailable` / writes are no-ops** — `FALKORDB_URL` is unset; the
-  writer reports `enabled=False` and silently skips (same gate as Neo4j creds).
-- **`ModuleNotFoundError: falkordb`** — install the optional extra above.
-- **Unsupported index/vector syntax** — index creation is best-effort and
-  non-fatal; the relationship vector index is intentionally skipped (reads use
-  the Python token-overlap fallback).
+- **`ModuleNotFoundError: redislite` / `falkordb`** — install the optional
+  extra above (`context-engine[falkordb]`).
+- **Redis 8 startup error** (`Cannot enable maintenance notifications…`) —
+  FalkorDBLite needs `redis<8`; the extra pins `redis>=7.1,<8`.
+- **Index/vector DDL differences** — index creation is best-effort and
+  non-fatal; `fact_query` currently uses the Python token-overlap fallback
+  (native vector KNN is available on FalkorDB and is a planned follow-up).
 - **Fall back** — unset `GRAPH_DB_BACKEND` (or set it to `neo4j`).
 
 ## Ontology Import Surface

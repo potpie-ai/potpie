@@ -14,9 +14,12 @@ vector index is not on the hot path; see history-local-graph-db.md).
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
-from adapters.outbound.graph.falkordb_writer import _records_from_result
+from adapters.outbound.graph.falkordb_writer import (
+    _records_from_result,
+    build_falkordb_graph,
+)
 from adapters.outbound.graph.neo4j_reader import (
     _ENTITY_LABELS_CYPHER,
     _FIND_CLAIMS_CYPHER,
@@ -32,20 +35,22 @@ class FalkorDBClaimQueryStore:
     """:class:`ClaimQueryPort` over canonical ``:RELATES_TO`` edges in FalkorDB."""
 
     def __init__(
-        self, settings: ContextEngineSettingsPort, *, graph: Any | None = None
+        self,
+        settings: ContextEngineSettingsPort,
+        *,
+        graph: Any | None = None,
+        graph_provider: Callable[[], Any] | None = None,
     ) -> None:
         self._settings = settings
         self._graph = graph  # injectable for unit tests
+        self._graph_provider = graph_provider  # shared handle from the container
 
     def _get_graph(self) -> Any:
         if self._graph is None:
-            url = self._settings.falkordb_url()
-            if not url:
-                raise RuntimeError("falkordb_unavailable")
-            from falkordb import FalkorDB
-
-            self._graph = FalkorDB.from_url(url).select_graph(
-                self._settings.falkordb_graph_name()
+            self._graph = (
+                self._graph_provider()
+                if self._graph_provider is not None
+                else build_falkordb_graph(self._settings)
             )
         return self._graph
 

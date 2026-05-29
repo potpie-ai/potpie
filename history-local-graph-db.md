@@ -902,3 +902,302 @@ work — see the Phase-0 section above.)
 **Status:** First PR (Phases 1–6, server/container mode) complete and GREEN.
 Deferred to a follow-up: FalkorDBLite embedded mode (`FALKORDB_MODE=lite`) and
 the optional native relationship vector index.
+
+---
+
+## 2026-05-29 — Architecture review + FalkorDBLite pivot
+
+Reviewed the PR against `docs/context-graph/architecture.md`,
+`vision.md`, `extending.md`, and `oss-self-serve-flow.md`.
+
+**Architecture conclusion:** the PR follows the **current** code seams
+(`GraphWriterPort` + `ClaimQueryPort`) but only partially matches the **target**
+architecture in the docs. The docs are ahead of the implementation and describe
+a future `GraphBackend` bundle with capability ports:
+
+- mutation
+- claim query
+- semantic search
+- inspection
+- analytics
+- snapshot
+
+The FalkorDB code should not be discarded when that migration happens. It should
+be folded into a future backend bundle:
+
+```text
+FalkorDBGraphBackend
+  mutation = FalkorDBGraphWriter        # later renamed/shaped as GraphMutationPort
+  claims = FalkorDBClaimQueryStore
+  semantic = FalkorDBSemanticSearchPort # follow-up; vector/native or projection
+  inspection = derived or native FalkorDB traversal
+  analytics = derived from claims
+  snapshot = derived from claims
+```
+
+Current mismatch vs target docs:
+
+- `GraphWriterPort` still lives in `adapters.outbound.graph.neo4j_writer`
+  instead of a store-neutral `domain/ports/graph/` package.
+- `build_container` still wires loose writer/query ports, not a single
+  `GraphBackend`.
+- Semantic search is still the Python token-overlap fallback; the docs say
+  every completed backend should expose a real vector-backed
+  `SemanticSearchPort`.
+- Container FalkorDB is lighter than Neo4j, but it still requires another
+  service; the local-first docs prefer an embedded/no-Docker default.
+
+### Real FalkorDBLite smoke test
+
+Tested actual FalkorDBLite locally, not a unit fake.
+
+Installed:
+
+- `falkordblite==0.10.0`
+- discovered import path: `from redislite.falkordb_client import FalkorDB`
+
+Initial failure:
+
+- with `redis==8.0.0`, FalkorDBLite failed during startup:
+  `ValueError: Cannot enable maintenance notifications for connection object
+  that doesn't have a host attribute.`
+
+Fix:
+
+- pin Redis below 8:
+  `redis>=7.1,<8`
+- after downgrading to `redis==7.4.0`, FalkorDBLite started and worked.
+
+Smoke shape:
+
+- created an embedded FalkorDBLite DB file in a temp directory
+- selected a graph
+- injected that graph handle into `FalkorDBGraphWriter` and
+  `FalkorDBClaimQueryStore`
+- exercised real write/read/reset behavior
+
+Passed:
+
+- `ensure_indexes`
+- entity upserts
+- edge upserts
+- duplicate edge write (logical idempotency)
+- `find_claims`
+- token-overlap `fact_query`
+- `entity_labels`
+- edge invalidation
+- `reset_pot`
+
+Representative output:
+
+```text
+enabled= True
+ensure_indexes= True
+entity_upserts= 3
+edge_upserts= 2
+depends_rows= 1
+all_live= 2
+invalidated= 1
+live_after_invalid= 0
+reset= {'ok': True, 'group_id_nodes_before': 3, 'group_id_nodes_remaining': 0}
+rows_after_reset= 0
+```
+
+But the current PR's actual app wiring does **not** enable Lite yet:
+
+```text
+GRAPH_DB_BACKEND=falkordb FALKORDB_MODE=lite
+writer_type= FalkorDBGraphWriter
+writer_enabled= False
+claim_query_type= FalkorDBClaimQueryStore
+```
+
+Reason: the PR intentionally deferred Lite and only marks the writer enabled
+when a server URL or injected test graph exists.
+
+### Product decision: prefer Lite over server/container mode
+
+For the actual local OSS use case, the user clarified that the graph is for a
+single local user. Spinning up a full FalkorDB server/container is therefore
+still more operational overhead than needed. The compatibility proof from
+server mode was useful, but the product direction should now pivot:
+
+**Primary local backend: FalkorDBLite.**
+
+Keep full FalkorDB server/container support out of the first local PR unless a
+specific multi-process/server need appears. The target local setup should feel
+like:
+
+```text
+pip install potpie
+potpie setup
+```
+
+not:
+
+```text
+docker compose --profile falkordb up falkordb
+```
+
+### Recommended simplification of the PR
+
+Do **not** remove the core FalkorDB adapter code. FalkorDBLite exposes the same
+important graph API shape:
+
+```python
+graph.query(...)
+result.header
+result.result_set
+```
+
+So the following remain useful:
+
+- `falkordb_writer.py`
+- `falkordb_reader.py`
+- `_records_from_result`
+- async shim over sync graph query
+- unnamed FalkorDB index DDL
+- client-side `reset_pot`
+
+Remove or defer server/container-specific pieces from this PR:
+
+- `FALKORDB_URL`
+- `FALKORDB_MODE=server|lite` as a two-mode selector
+- compose `falkordb` service
+- container-mode README instructions
+- live server integration test keyed by `FALKORDB_TEST_URL`
+- adapter-side `from falkordb import FalkorDB; FalkorDB.from_url(...)` fallback
+
+Replace with Lite-first settings:
+
+```text
+GRAPH_DB_BACKEND=neo4j|falkordb
+FALKORDB_GRAPH_NAME=context_graph
+FALKORDB_LITE_PATH=.potpie/context_graph/falkordb.db
+```
+
+Container wiring should create one embedded graph and inject the same handle
+into both writer + reader:
+
+```python
+from redislite.falkordb_client import FalkorDB
+
+db = FalkorDB(settings.falkordb_lite_path())
+graph = db.select_graph(settings.falkordb_graph_name())
+
+graph_writer = FalkorDBGraphWriter(settings, graph=graph)
+claim_query = FalkorDBClaimQueryStore(settings, graph=graph)
+```
+
+Dependency recommendation for Lite:
+
+```toml
+falkordblite>=0.10.0
+redis>=7.1,<8
+```
+
+**Status:** current PR proves the adapter semantics, but should be simplified
+before merge if the goal is single-user local graph storage. Make
+FalkorDBLite the primary FalkorDB path; keep full server/container FalkorDB as
+a possible later profile, not first-PR surface area.
+
+---
+
+## 2026-05-29 — FalkorDBLite probe: embedded Redis + native semantic search
+
+Probed real `falkordblite==0.10.0` (with `redis==7.4.0`, import
+`from redislite.falkordb_client import FalkorDB`) to answer two questions.
+
+### 1. Embedded Redis — confirmed
+
+`FalkorDB(dbfile)` runs an **in-process embedded redis-server** via `redislite`
+(connection object is `redislite.client.Redis`). No TCP port, no Docker — it's
+backed by a local `*.db` file (a `*.db.settings` sidecar appears immediately;
+the db file itself is created lazily). This is the `pip install`-only,
+single-user local story we want.
+
+### 2. Semantic search — AVAILABLE natively (revises Phase-0 conclusion)
+
+FalkorDBLite supports native vector search, including the exact relationship
+shape our claim model uses. All verified live:
+
+- **Node** index + KNN:
+  `CREATE VECTOR INDEX FOR (n:Doc) ON (n.embedding) OPTIONS {dimension:4, similarityFunction:'cosine'}`
+  → `CALL db.idx.vector.queryNodes('Doc','embedding',k, vecf32([...])) YIELD node, score`
+  returned correct cosine ordering (exact match score 0.0).
+- **Relationship** index + KNN on `r.fact_embedding` (our `:RELATES_TO` claim
+  edge): `CREATE VECTOR INDEX FOR ()-[r:RELATES_TO]-() ON (r.fact_embedding) OPTIONS {...}`
+  → `CALL db.idx.vector.queryRelationships('RELATES_TO','fact_embedding',k, vecf32([...]))`.
+- Inline `vec.cosineDistance(vecf32([...]), vecf32([...]))` function (no index).
+- `db.indexes()` lists both VECTOR indexes `OPERATIONAL` (HNSW: M=16,
+  efConstruction=200, efRuntime=10).
+
+**Correction to Phase 0:** the earlier "vector index FAILED" result was a
+*syntax* mismatch, not a capability gap — Phase 0 used Neo4j's
+`OPTIONS { indexConfig: { `vector.dimensions`: … } }` DDL. FalkorDB's **native**
+form (`OPTIONS {dimension, similarityFunction}` + `db.idx.vector.query*`
+procedures + `vecf32(...)`) works on both server and Lite. So a real
+vector-backed `SemanticSearchPort` (replacing the Python token-overlap
+fallback) is feasible on FalkorDBLite — addressing the architecture-doc gap
+noted above. Wiring it is a follow-up (needs an embedding source + a chosen
+vector dimension); not required for the first Lite PR, but no longer blocked.
+
+**Status:** FalkorDBLite validated on both fronts — embedded Redis (no Docker)
+and native node+relationship vector search. Confirms the Lite-first pivot is
+sound and unlocks native semantic search as a follow-up.
+
+---
+
+## 2026-05-29 — Lite-first pivot IMPLEMENTED on the PR branch
+
+Reworked the PR so **FalkorDBLite (embedded) is the default local path**;
+server/container FalkorDB is demoted to a deferred in-code profile. Adapter
+core (writer/reader, async shim, `_records_from_result`, unnamed index DDL,
+client-side `reset_pot`) is unchanged — only the entry points / wiring changed.
+
+### Changes
+
+- **Settings:** added `falkordb_lite_path()` (default
+  `.potpie/context_graph/falkordb.db`); `falkordb_mode()` default flipped
+  `server` → **`lite`**. Implemented in the port (defaults) + both env-backed
+  settings. `FALKORDB_LITE_PATH` / `CONTEXT_ENGINE_FALKORDB_LITE_PATH` env.
+- **Graph construction:** new `build_falkordb_graph(settings)` factory —
+  `lite` → `from redislite.falkordb_client import FalkorDB` over a local file
+  (creates parent dir); `server` → `falkordb.FalkorDB.from_url(url)` (deferred,
+  needs the optional `falkordb` client). New `FalkorDBGraphProvider` lazily
+  builds + memoizes **one** handle.
+- **Writer/reader:** both take an optional `graph_provider` (shared handle) in
+  addition to `graph` (test injection). `enabled` now true in `lite` mode
+  without any URL (Lite needs no external config). No more
+  `falkordb_unavailable` for the default path.
+- **Container:** builds one `FalkorDBGraphProvider(s)` and injects it into the
+  writer **and** claim store — so embedded Lite isn't opened twice on one file.
+  Still lazy (no connect at wiring time).
+- **Dependency:** `falkordb` extra is now
+  `falkordblite>=0.10.0; python_version >= '3.12'` + `redis>=7.1,<8` (the
+  `falkordb` server client is no longer a locked dep). Re-locked `uv.lock`.
+- **Ops/docs:** removed the `falkordb` compose service (no Docker for Lite);
+  `.env.template` + `docs/context-graph/README.md` rewritten Lite-first;
+  `.gitignore` now ignores `.potpie/`.
+- **Tests:** settings (mode default `lite`, lite_path), writer `enabled`
+  lite-mode case, container selection needs no URL, and the integration test
+  rewritten to a real **embedded FalkorDBLite** round-trip with a shared handle
+  (write → idempotent re-upsert → read → entity_labels → invalidate → reset).
+
+### Gap found *while implementing* and fixed
+
+- **`falkordblite==0.10.0` requires Python ≥ 3.12**, but context-engine
+  declares `requires-python = ">=3.10,<3.14"`, so `uv lock` failed resolving
+  3.10/3.11. → Guarded the dep with `; python_version >= '3.12'`. Lite genuinely
+  needs 3.12+ (the deployed env is 3.13); on 3.10/3.11 the extra installs only
+  `redis` and Lite import fails with the documented `ModuleNotFoundError`.
+
+### Verification
+
+- 30 tests pass (29 unit + 1 live embedded FalkorDBLite round-trip). No new
+  lint errors. Default (Neo4j) path untouched and still the default.
+
+**Status:** Lite-first implemented, tested, and ready to push to the PR.
+Server/container FalkorDB remains available in-code as a deferred profile.
+Native vector-backed `SemanticSearchPort` (now proven feasible on Lite) is the
+recommended next follow-up.

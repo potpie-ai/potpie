@@ -250,10 +250,16 @@ def build_container(
     backend = (s.graph_db_backend() or "neo4j").strip().lower()
     if backend == "falkordb":
         from adapters.outbound.graph.falkordb_reader import FalkorDBClaimQueryStore
-        from adapters.outbound.graph.falkordb_writer import FalkorDBGraphWriter
+        from adapters.outbound.graph.falkordb_writer import (
+            FalkorDBGraphProvider,
+            FalkorDBGraphWriter,
+        )
 
-        graph_writer = FalkorDBGraphWriter(s)
-        claim_query = FalkorDBClaimQueryStore(s)
+        # One shared (lazily built) graph handle: with embedded FalkorDBLite the
+        # writer and reader must talk to the same instance/file.
+        graph_provider = FalkorDBGraphProvider(s)
+        graph_writer = FalkorDBGraphWriter(s, graph_provider=graph_provider)
+        claim_query = FalkorDBClaimQueryStore(s, graph_provider=graph_provider)
     else:
         graph_writer = Neo4jGraphWriter(s)
         claim_query = Neo4jClaimQueryStore(s)

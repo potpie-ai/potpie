@@ -22,6 +22,8 @@ def _clear(monkeypatch: pytest.MonkeyPatch) -> None:
         "FALKORDB_GRAPH_NAME",
         "CONTEXT_ENGINE_FALKORDB_MODE",
         "FALKORDB_MODE",
+        "CONTEXT_ENGINE_FALKORDB_LITE_PATH",
+        "FALKORDB_LITE_PATH",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -62,8 +64,15 @@ def test_graph_name_default_and_override(monkeypatch: pytest.MonkeyPatch) -> Non
     assert EnvContextEngineSettings().falkordb_graph_name() == "my_graph"
 
 
-def test_mode_default_server_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mode_default_lite_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear(monkeypatch)
-    assert EnvContextEngineSettings().falkordb_mode() == "server"
-    monkeypatch.setenv("FALKORDB_MODE", "LITE")
     assert EnvContextEngineSettings().falkordb_mode() == "lite"
+    monkeypatch.setenv("FALKORDB_MODE", "SERVER")
+    assert EnvContextEngineSettings().falkordb_mode() == "server"
+
+
+def test_lite_path_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear(monkeypatch)
+    assert EnvContextEngineSettings().falkordb_lite_path() == ".potpie/context_graph/falkordb.db"
+    monkeypatch.setenv("FALKORDB_LITE_PATH", "/tmp/cg.db")
+    assert EnvContextEngineSettings().falkordb_lite_path() == "/tmp/cg.db"

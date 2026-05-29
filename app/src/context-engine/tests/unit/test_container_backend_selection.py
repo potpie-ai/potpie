@@ -21,7 +21,12 @@ pytestmark = pytest.mark.unit
 
 
 def _clear(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("GRAPH_DB_BACKEND", "CONTEXT_ENGINE_FALKORDB_URL", "FALKORDB_URL"):
+    for var in (
+        "GRAPH_DB_BACKEND",
+        "CONTEXT_ENGINE_FALKORDB_URL",
+        "FALKORDB_URL",
+        "FALKORDB_MODE",
+    ):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -33,9 +38,10 @@ def test_defaults_to_neo4j(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_selects_falkordb(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Lite is the default mode, so backend selection needs no URL; the shared
+    # graph provider is lazy, so nothing connects at wiring time.
     _clear(monkeypatch)
     monkeypatch.setenv("GRAPH_DB_BACKEND", "falkordb")
-    monkeypatch.setenv("FALKORDB_URL", "redis://localhost:6379")
     c = build_container(settings=EnvContextEngineSettings(), pots=MagicMock())
     assert isinstance(c.graph_writer, FalkorDBGraphWriter)
     assert isinstance(c.context_graph._orchestrator.claim_query, FalkorDBClaimQueryStore)

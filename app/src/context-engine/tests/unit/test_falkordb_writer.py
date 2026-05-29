@@ -49,10 +49,11 @@ class _FakeGraph:
 
 
 class _FakeSettings:
-    def __init__(self, *, enabled=True, url="redis://localhost:6379", name="g"):
+    def __init__(self, *, enabled=True, url="redis://localhost:6379", name="g", mode="server"):
         self._enabled = enabled
         self._url = url
         self._name = name
+        self._mode = mode
 
     def is_enabled(self) -> bool:
         return self._enabled
@@ -62,6 +63,12 @@ class _FakeSettings:
 
     def falkordb_graph_name(self) -> str:
         return self._name
+
+    def falkordb_mode(self) -> str:
+        return self._mode
+
+    def falkordb_lite_path(self) -> str:
+        return ".potpie/test/falkordb.db"
 
 
 def test_records_from_result_maps_columns() -> None:
@@ -80,9 +87,15 @@ def test_enabled_false_when_context_graph_disabled() -> None:
 
 
 def test_enabled_false_when_unconfigured() -> None:
-    # No url, no injected graph → not configured.
-    w = FalkorDBGraphWriter(_FakeSettings(url=None))
+    # Server mode with no url and no injected graph → not configured.
+    w = FalkorDBGraphWriter(_FakeSettings(url=None, mode="server"))
     assert w.enabled is False
+
+
+def test_enabled_true_when_lite_mode() -> None:
+    # Lite is the default local path: needs no url/graph to be enabled.
+    w = FalkorDBGraphWriter(_FakeSettings(url=None, mode="lite"))
+    assert w.enabled is True
 
 
 def test_enabled_true_when_url_set() -> None:

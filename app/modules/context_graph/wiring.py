@@ -98,7 +98,15 @@ class PotpieContextEngineSettings(ContextEngineSettingsPort):
 
     def falkordb_mode(self) -> str:
         v = (os.getenv("CONTEXT_ENGINE_FALKORDB_MODE") or os.getenv("FALKORDB_MODE") or "").strip().lower()
-        return v or "server"
+        return v or "lite"
+
+    def falkordb_lite_path(self) -> str:
+        v = (
+            os.getenv("CONTEXT_ENGINE_FALKORDB_LITE_PATH")
+            or os.getenv("FALKORDB_LITE_PATH")
+            or ""
+        ).strip()
+        return v or ".potpie/context_graph/falkordb.db"
 
     def backfill_max_prs_per_run(self) -> int:
         return int(self._cp.get_context_graph_config().get("backfill_max_prs_per_run", 100))

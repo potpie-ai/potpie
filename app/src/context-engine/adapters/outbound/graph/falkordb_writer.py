@@ -15,14 +15,17 @@ Only three things are FalkorDB-specific and live here:
 3. ``reset_pot`` — FalkorDB has no ``CALL {} IN TRANSACTIONS``, so it deletes
    in a client-side batched loop scoped to ``group_id``.
 
-FalkorDBLite (embedded) is deferred; ``enabled`` requires a configured
-``falkordb_url`` (server/container mode).
+The default local backend is **FalkorDBLite** — an embedded Redis (via
+``redislite``) backed by a local file, so ``pip install`` is enough (no server
+or Docker). Server/container mode (``falkordb_url`` over a redis URL) is kept
+as a deferred profile and requires the optional ``falkordb`` client.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any, Callable, Coroutine, TypeVar
 
 from adapters.outbound.graph.cypher import (
@@ -122,32 +125,80 @@ class _FalkorAsyncDriver:
         return None
 
 
+def build_falkordb_graph(settings: ContextEngineSettingsPort) -> Any:
+    """Build a FalkorDB graph handle from settings.
+
+    Default (``lite``) → embedded FalkorDBLite via ``redislite``, backed by a
+    local file: no server, no Docker. ``server`` mode → connect to a running
+    FalkorDB over a redis URL (deferred profile; needs the optional
+    ``falkordb`` client). Both expose the same ``graph.query(...)`` →
+    ``result.header`` / ``result.result_set`` surface this adapter relies on.
+    """
+    name = settings.falkordb_graph_name()
+    url = settings.falkordb_url()
+    if settings.falkordb_mode() == "server" and url:
+        from falkordb import FalkorDB
+
+        return FalkorDB.from_url(url).select_graph(name)
+    from redislite.falkordb_client import FalkorDB as LiteFalkorDB
+
+    path = settings.falkordb_lite_path()
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    return LiteFalkorDB(path).select_graph(name)
+
+
+class FalkorDBGraphProvider:
+    """Lazily build and memoize **one** shared FalkorDB graph handle.
+
+    The writer and reader must share a single handle so they talk to the same
+    embedded FalkorDBLite instance (two handles on one db file would each spawn
+    a redis-server). Lazy so ``build_container`` never connects at wiring time.
+    """
+
+    def __init__(self, settings: ContextEngineSettingsPort) -> None:
+        self._settings = settings
+        self._graph: Any | None = None
+
+    def __call__(self) -> Any:
+        if self._graph is None:
+            self._graph = build_falkordb_graph(self._settings)
+        return self._graph
+
+
 class FalkorDBGraphWriter(GraphWriterPort):
     """Production-shaped writer for the lightweight FalkorDB local backend."""
 
     def __init__(
-        self, settings: ContextEngineSettingsPort, *, graph: Any | None = None
+        self,
+        settings: ContextEngineSettingsPort,
+        *,
+        graph: Any | None = None,
+        graph_provider: Callable[[], Any] | None = None,
     ) -> None:
         self._settings = settings
         self._enabled = settings.is_enabled()
         self._graph = graph  # injectable for unit tests
+        self._graph_provider = graph_provider  # shared handle from the container
 
     @property
     def enabled(self) -> bool:
         if not self._enabled:
             return False
-        # Server/container mode only for now (Lite deferred): a URL must be set.
-        return bool(self._graph is not None or self._settings.falkordb_url())
+        if self._graph is not None or self._graph_provider is not None:
+            return True
+        if self._settings.falkordb_url():
+            return True
+        # Lite is the default local path and needs no external config.
+        return self._settings.falkordb_mode() == "lite"
 
     def _get_graph(self) -> Any:
         if self._graph is None:
-            url = self._settings.falkordb_url()
-            if not url:
-                raise RuntimeError("falkordb_unavailable")
-            from falkordb import FalkorDB
-
-            self._graph = FalkorDB.from_url(url).select_graph(
-                self._settings.falkordb_graph_name()
+            self._graph = (
+                self._graph_provider()
+                if self._graph_provider is not None
+                else build_falkordb_graph(self._settings)
             )
         return self._graph
 
@@ -259,4 +310,4 @@ class FalkorDBGraphWriter(GraphWriterPort):
         return int(rows[0][0]) if rows and rows[0] else 0
 
 
-__all__ = ["FalkorDBGraphWriter"]
+__all__ = ["FalkorDBGraphProvider", "FalkorDBGraphWriter", "build_falkordb_graph"]
