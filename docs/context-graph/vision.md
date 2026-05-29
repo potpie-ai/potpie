@@ -22,16 +22,16 @@ small stable surface.
 
 ```mermaid
 flowchart TB
-  sources["code, docs, PRs, tickets, ops events"]
-  ledger["Event Ledger<br/>managed or self-hosted source events"]
-  graph["Context Graph<br/>compact claims + source refs"]
-  agent["agent<br/>resolve/search/record/status"]
+  cg_sources["code, docs, PRs, tickets, ops events"]
+  cg_ledger["Event Ledger<br/>managed or self-hosted source events"]
+  cg_context_graph["Context Graph<br/>compact claims + source refs"]
+  cg_agent["agent<br/>resolve/search/record/status"]
 
-  sources --> graph
-  sources -. "webhooks / polling" .-> ledger
-  ledger -. "pull / consume" .-> graph
-  agent --> graph
-  graph --> agent
+  cg_sources --> cg_context_graph
+  cg_sources -. "webhooks / polling" .-> cg_ledger
+  cg_ledger -. "pull / consume" .-> cg_context_graph
+  cg_agent --> cg_context_graph
+  cg_context_graph --> cg_agent
 ```
 
 There are three product boundaries:
@@ -80,14 +80,14 @@ The graph model is the invariant. Physical storage is an adapter.
 
 ```mermaid
 flowchart LR
-  claims[("canonical claims")]
-  semantic[("semantic index")]
-  inspect[("inspection views")]
-  analytics[("analytics rollups")]
+  cg_claims[("canonical claims")]
+  cg_semantic[("semantic index")]
+  cg_inspection[("inspection views")]
+  cg_analytics[("analytics rollups")]
 
-  claims --> semantic
-  claims --> inspect
-  claims --> analytics
+  cg_claims --> cg_semantic
+  cg_claims --> cg_inspection
+  cg_claims --> cg_analytics
 ```
 
 The canonical claim store is the source of truth. Semantic indexes, traversal

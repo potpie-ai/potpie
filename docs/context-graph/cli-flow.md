@@ -9,18 +9,18 @@ services.
 
 ```mermaid
 flowchart TB
-  user["user or agent"]
-  cli["potpie CLI"]
-  local["local profile<br/>daemon hosts same services<br/>local stores"]
-  cloud["managed profile<br/>API server hosts same services<br/>hosted stores"]
-  ledger["Event Ledger<br/>managed or self-hosted"]
+  cg_user["user or agent"]
+  cg_cli["potpie CLI"]
+  cg_local_profile["local profile<br/>daemon hosts same services<br/>local stores"]
+  cg_managed_profile["managed profile<br/>API server hosts same services<br/>hosted stores"]
+  cg_ledger["Event Ledger<br/>managed or self-hosted"]
 
-  user --> cli
-  cli --> local
-  cli -. "explicit cloud profile/sync" .-> cloud
-  cli -. "explicit ledger config/pull" .-> ledger
-  local -. "pull events" .-> ledger
-  cloud -. "consume events" .-> ledger
+  cg_user --> cg_cli
+  cg_cli --> cg_local_profile
+  cg_cli -. "explicit cloud profile/sync" .-> cg_managed_profile
+  cg_cli -. "explicit ledger config/pull" .-> cg_ledger
+  cg_local_profile -. "pull events" .-> cg_ledger
+  cg_managed_profile -. "consume events" .-> cg_ledger
 ```
 
 The CLI owns setup, profiles, pots, sources, ingestion, graph reads/writes,
@@ -32,16 +32,16 @@ self-hosted Event Ledger without changing where graph state is stored.
 
 ```mermaid
 flowchart LR
-  setup["setup or login"]
-  status["status"]
-  resolve["resolve/search"]
-  work["work"]
-  record["record"]
-  ingest["ingest/sync"]
+  cg_setup["setup or login"]
+  cg_status["status"]
+  cg_resolve["resolve/search"]
+  cg_work["work"]
+  cg_record["record"]
+  cg_ingest["ingest/sync"]
 
-  setup --> status --> resolve --> work --> record
-  ingest --> status
-  record --> resolve
+  cg_setup --> cg_status --> cg_resolve --> cg_work --> cg_record
+  cg_ingest --> cg_status
+  cg_record --> cg_resolve
 ```
 
 Local first run:

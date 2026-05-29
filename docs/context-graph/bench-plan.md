@@ -11,16 +11,16 @@ direct scanner fixtures or an Event Ledger replay path.
 
 ```mermaid
 flowchart LR
-  fixtures["fixtures + universe"]
-  ledger["Event Ledger replay<br/>optional"]
-  ingest["ingest / reconcile"]
-  graph["GraphBackend"]
-  query["context_resolve/search"]
-  eval["evaluators"]
-  report["report"]
+  cg_fixtures["fixtures + universe"]
+  cg_ledger_replay["Event Ledger replay<br/>optional"]
+  cg_ingest["ingest / reconcile"]
+  cg_graph_backend["GraphBackend"]
+  cg_query["context_resolve/search"]
+  cg_eval["evaluators"]
+  cg_report["report"]
 
-  fixtures --> ingest --> graph --> query --> eval --> report
-  fixtures --> ledger --> ingest
+  cg_fixtures --> cg_ingest --> cg_graph_backend --> cg_query --> cg_eval --> cg_report
+  cg_fixtures --> cg_ledger_replay --> cg_ingest
 ```
 
 The benchmark measures whether the engine stores the right facts, retrieves the
@@ -129,16 +129,16 @@ repos, people, environments, ADRs, runbooks, and incidents.
 
 ```mermaid
 flowchart TB
-  acme["Acme universe"]
-  services["services + repos"]
-  people["people + owners"]
-  adr["ADRs + runbooks"]
-  events["PRs, issues, deploys, alerts, chat"]
+  cg_acme["Acme universe"]
+  cg_services["services + repos"]
+  cg_people["people + owners"]
+  cg_adrs["ADRs + runbooks"]
+  cg_events["PRs, issues, deploys, alerts, chat"]
 
-  acme --> services
-  acme --> people
-  acme --> adr
-  acme --> events
+  cg_acme --> cg_services
+  cg_acme --> cg_people
+  cg_acme --> cg_adrs
+  cg_acme --> cg_events
 ```
 
 Source types:

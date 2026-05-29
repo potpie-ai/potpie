@@ -10,34 +10,34 @@ or a managed profile.
 
 ```mermaid
 flowchart TB
-  cli["potpie CLI"]
+  cg_cli["potpie CLI"]
 
-  subgraph local_profile["Local profile"]
+  subgraph cg_local_profile["Local profile"]
     direction TB
-    local["local daemon"]
-    local_services["same service modules"]
-    local_store[("local stores")]
-    local --> local_services --> local_store
+    cg_local_daemon["local daemon"]
+    cg_local_services["same service modules"]
+    cg_local_store[("local stores")]
+    cg_local_daemon --> cg_local_services --> cg_local_store
   end
 
-  subgraph managed_profile["Managed graph profile"]
+  subgraph cg_managed_profile["Managed graph profile"]
     direction TB
-    managed["managed API server"]
-    managed_services["same service modules"]
-    hosted_store[("hosted stores")]
-    managed --> managed_services --> hosted_store
+    cg_managed_api["managed API server"]
+    cg_managed_services["same service modules"]
+    cg_hosted_store[("hosted stores")]
+    cg_managed_api --> cg_managed_services --> cg_hosted_store
   end
 
-  subgraph event_ledger["Event Ledger"]
+  subgraph cg_event_ledger["Event Ledger"]
     direction TB
-    ledger["managed or self-hosted<br/>webhooks + event history + cursors"]
+    cg_ledger["managed or self-hosted<br/>webhooks + event history + cursors"]
   end
 
-  cli --> local
-  cli -. "cloud profile/sync" .-> managed
-  cli -. "ledger config/pull" .-> ledger
-  local_services -. "pull events" .-> ledger
-  managed_services -. "consume events" .-> ledger
+  cg_cli --> cg_local_daemon
+  cg_cli -. "cloud profile/sync" .-> cg_managed_api
+  cg_cli -. "ledger config/pull" .-> cg_ledger
+  cg_local_services -. "pull events" .-> cg_ledger
+  cg_managed_services -. "consume events" .-> cg_ledger
 ```
 
 ## Start Here

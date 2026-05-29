@@ -11,27 +11,27 @@ cloud or ledger commands.
 
 ```mermaid
 flowchart TB
-  actor["user or agent"]
-  cli["potpie CLI"]
-  host["host shell<br/>local daemon or managed API server"]
-  pot["Pot Management Service"]
-  graph["Graph Service"]
-  backend["GraphBackend"]
-  skills["Skill Manager Service"]
-  state[("state DB<br/>local or hosted")]
-  store[("graph/search store<br/>local or hosted")]
-  cache[("skill catalog/cache<br/>local or hosted")]
+  cg_actor["user or agent"]
+  cg_cli["potpie CLI"]
+  cg_host["host shell<br/>local daemon or managed API server"]
+  cg_pot_service["Pot Management Service"]
+  cg_graph_service["Graph Service"]
+  cg_backend["GraphBackend"]
+  cg_skill_service["Skill Manager Service"]
+  cg_state_db[("state DB<br/>local or hosted")]
+  cg_graph_store[("graph/search store<br/>local or hosted")]
+  cg_skill_cache[("skill catalog/cache<br/>local or hosted")]
 
-  actor --> cli
-  cli --> host
-  host --> pot
-  host --> graph
-  host --> skills
-  pot --> state
-  pot --> graph
-  graph --> backend
-  backend --> store
-  skills --> cache
+  cg_actor --> cg_cli
+  cg_cli --> cg_host
+  cg_host --> cg_pot_service
+  cg_host --> cg_graph_service
+  cg_host --> cg_skill_service
+  cg_pot_service --> cg_state_db
+  cg_pot_service --> cg_graph_service
+  cg_graph_service --> cg_backend
+  cg_backend --> cg_graph_store
+  cg_skill_service --> cg_skill_cache
 ```
 
 | Piece | Responsibility |
@@ -52,26 +52,26 @@ dependencies differ by deployment.
 
 ```mermaid
 flowchart LR
-  entry["potpie CLI"]
+  cg_entry["potpie CLI"]
 
-  subgraph local_profile["Local profile"]
+  subgraph cg_local_profile["Local profile"]
     direction LR
-    local_daemon["local daemon"]
-    local_services["Pot Management<br/>Graph Service<br/>Skill Manager"]
-    local_storage[("local stores")]
-    local_daemon --> local_services --> local_storage
+    cg_local_daemon["local daemon"]
+    cg_local_services["Pot Management<br/>Graph Service<br/>Skill Manager"]
+    cg_local_storage[("local stores")]
+    cg_local_daemon --> cg_local_services --> cg_local_storage
   end
 
-  subgraph managed_profile["Managed graph profile"]
+  subgraph cg_managed_profile["Managed graph profile"]
     direction LR
-    managed_api["managed API server"]
-    managed_services["Pot Management<br/>Graph Service<br/>Skill Manager"]
-    managed_storage[("hosted stores")]
-    managed_api --> managed_services --> managed_storage
+    cg_managed_api["managed API server"]
+    cg_managed_services["Pot Management<br/>Graph Service<br/>Skill Manager"]
+    cg_managed_storage[("hosted stores")]
+    cg_managed_api --> cg_managed_services --> cg_managed_storage
   end
 
-  entry --> local_daemon
-  entry -. "cloud profile" .-> managed_api
+  cg_entry --> cg_local_daemon
+  cg_entry -. "cloud profile" .-> cg_managed_api
 ```
 
 Both profiles run the same service modules. Only the host shell and storage
@@ -79,15 +79,15 @@ adapters change.
 
 ```mermaid
 flowchart LR
-  sources["GitHub / Linear / other sources"]
-  ledger["Event Ledger<br/>managed or self-hosted"]
-  events["event batches<br/>and cursors"]
-  local_graph["local graph profile"]
-  managed_graph["managed graph profile"]
+  cg_sources["GitHub / Linear / other sources"]
+  cg_ledger["Event Ledger<br/>managed or self-hosted"]
+  cg_event_batches["event batches<br/>and cursors"]
+  cg_local_graph["local graph profile"]
+  cg_managed_graph["managed graph profile"]
 
-  sources --> ledger --> events
-  events --> local_graph
-  events --> managed_graph
+  cg_sources --> cg_ledger --> cg_event_batches
+  cg_event_batches --> cg_local_graph
+  cg_event_batches --> cg_managed_graph
 ```
 
 | Boundary | Local OSS | Managed graph service |
@@ -161,29 +161,29 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-  cmd["potpie record"]
-  validate["validate record"]
-  emit["deterministic claim emitter"]
-  write["GraphMutationPort"]
-  project["rebuild/update projections"]
+  cg_record_cmd["potpie record"]
+  cg_validate["validate record"]
+  cg_emit["deterministic claim emitter"]
+  cg_write["GraphMutationPort"]
+  cg_project["rebuild/update projections"]
 
-  cmd --> validate --> emit --> write --> project
+  cg_record_cmd --> cg_validate --> cg_emit --> cg_write --> cg_project
 ```
 
 ### Ingestion
 
 ```mermaid
 flowchart LR
-  register["potpie source add repo ."]
-  scan["potpie ingest scan"]
-  scanners["scanner adapters"]
-  ledger["potpie ledger pull"]
-  reconcile["event reconciliation"]
-  graph["Graph Service"]
-  backend["GraphBackend"]
+  cg_register["potpie source add repo ."]
+  cg_scan["potpie ingest scan"]
+  cg_scanners["scanner adapters"]
+  cg_ledger_pull["potpie ledger pull"]
+  cg_reconcile["event reconciliation"]
+  cg_graph_service["Graph Service"]
+  cg_backend["GraphBackend"]
 
-  register --> scan --> scanners --> graph --> backend
-  ledger --> reconcile --> graph
+  cg_register --> cg_scan --> cg_scanners --> cg_graph_service --> cg_backend
+  cg_ledger_pull --> cg_reconcile --> cg_graph_service
 ```
 
 Registering a source records metadata. Scanning writes claims. Pulling from an
@@ -297,20 +297,20 @@ A backend is a set of capability ports, not a database handle.
 
 ```mermaid
 flowchart TB
-  backend["GraphBackend"]
-  mutation["GraphMutationPort"]
-  query["ClaimQueryPort"]
-  semantic["SemanticSearchPort"]
-  inspect["GraphInspectionPort"]
-  analytics["GraphAnalyticsPort"]
-  snapshot["GraphSnapshotPort"]
+  cg_backend["GraphBackend"]
+  cg_mutation["GraphMutationPort"]
+  cg_query["ClaimQueryPort"]
+  cg_semantic["SemanticSearchPort"]
+  cg_inspection["GraphInspectionPort"]
+  cg_analytics["GraphAnalyticsPort"]
+  cg_snapshot["GraphSnapshotPort"]
 
-  backend --> mutation
-  backend --> query
-  backend --> semantic
-  backend --> inspect
-  backend --> analytics
-  backend --> snapshot
+  cg_backend --> cg_mutation
+  cg_backend --> cg_query
+  cg_backend --> cg_semantic
+  cg_backend --> cg_inspection
+  cg_backend --> cg_analytics
+  cg_backend --> cg_snapshot
 ```
 
 | Capability | Required | Notes |
@@ -341,16 +341,16 @@ not graph facts and not new agent tools.
 
 ```mermaid
 flowchart LR
-  cli["potpie skills ..."]
-  manager["Skill Manager"]
-  catalog["catalog"]
-  target["agent target adapter"]
-  status["context_status skills nudge"]
+  cg_skills_cli["potpie skills ..."]
+  cg_skill_manager["Skill Manager"]
+  cg_skill_catalog["catalog"]
+  cg_target_adapter["agent target adapter"]
+  cg_status_nudge["context_status skills nudge"]
 
-  cli --> manager
-  manager --> catalog
-  manager --> target
-  manager --> status
+  cg_skills_cli --> cg_skill_manager
+  cg_skill_manager --> cg_skill_catalog
+  cg_skill_manager --> cg_target_adapter
+  cg_skill_manager --> cg_status_nudge
 ```
 
 `context_status` may report missing/outdated skills and provide an install
@@ -378,14 +378,14 @@ events. It is not the Context Graph source of truth.
 
 ```mermaid
 flowchart LR
-  sources["GitHub / Linear / other sources"]
-  ledger["Event Ledger<br/>webhooks + normalized events + cursors"]
-  local["local graph<br/>pull + reconcile"]
-  hosted["managed graph<br/>consume + reconcile"]
+  cg_sources["GitHub / Linear / other sources"]
+  cg_event_ledger["Event Ledger<br/>webhooks + normalized events + cursors"]
+  cg_local_consumer["local graph<br/>pull + reconcile"]
+  cg_managed_consumer["managed graph<br/>consume + reconcile"]
 
-  sources --> ledger
-  ledger --> local
-  ledger --> hosted
+  cg_sources --> cg_event_ledger
+  cg_event_ledger --> cg_local_consumer
+  cg_event_ledger --> cg_managed_consumer
 ```
 
 Responsibilities:
@@ -426,13 +426,13 @@ physical storage.
 
 ```mermaid
 flowchart LR
-  cli["CLI command"]
-  usecase["application use case"]
-  service["service boundary"]
-  port["domain port"]
-  adapter["adapter"]
+  cg_cli_command["CLI command"]
+  cg_use_case["application use case"]
+  cg_service_boundary["service boundary"]
+  cg_domain_port["domain port"]
+  cg_adapter["adapter"]
 
-  cli --> usecase --> service --> port --> adapter
+  cg_cli_command --> cg_use_case --> cg_service_boundary --> cg_domain_port --> cg_adapter
 ```
 
 | Change | Put it here | Rule |

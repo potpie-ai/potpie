@@ -10,16 +10,16 @@ managed graph and Event Ledger deployments.
 
 ```mermaid
 flowchart LR
-  core["shared services<br/>Pot Management<br/>Graph Service<br/>Skill Manager"]
-  ledger["Event Ledger"]
-  port["observability port"]
-  local["local logs/console"]
-  cloud["OTLP / hosted telemetry"]
+  cg_core["shared services<br/>Pot Management<br/>Graph Service<br/>Skill Manager"]
+  cg_ledger["Event Ledger"]
+  cg_observability_port["observability port"]
+  cg_local_sink["local logs/console"]
+  cg_hosted_sink["OTLP / hosted telemetry"]
 
-  core --> port
-  ledger --> port
-  port --> local
-  port --> cloud
+  cg_core --> cg_observability_port
+  cg_ledger --> cg_observability_port
+  cg_observability_port --> cg_local_sink
+  cg_observability_port --> cg_hosted_sink
 ```
 
 Default behavior:
