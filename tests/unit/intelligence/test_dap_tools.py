@@ -162,6 +162,13 @@ class TestStartDebugSessionInputSchema:
         with pytest.raises(ValidationError):
             StartDebugSessionInput(program="/a.py", args=["--flag"])  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize("lang", ["c", "cpp", "c++", "lldb", "cppdbg", "lldb-dap"])
+    def test_native_language_values_accepted(self, lang):
+        from app.modules.intelligence.tools.dap_tools import StartDebugSessionInput
+
+        inp = StartDebugSessionInput(program="/bin/a.out", language=lang)
+        assert inp.language == lang
+
 
 class TestSetBreakpointsResultSchema:
     def test_round_trip(self):
@@ -340,7 +347,28 @@ class TestMakeDapError:
         assert err["error"] == "debug adapter not available"
         assert err["error_type"] == "extension_error"
         assert "debug adapter" in err["message"]
+        assert "NOT a tunnel/connection problem" in err["message"]
         assert "Reconnect and retry" not in err["message"]
+
+    def test_dap_error_timeout_not_reported_as_tunnel_drop(self):
+        from app.modules.intelligence.tools.dap_tools import _make_dap_error
+
+        err = _make_dap_error(error_type="timeout", context="start_session").model_dump(mode="json")
+
+        assert err["error_type"] == "timeout"
+        assert "not evidence" in err["message"]
+        assert "Reconnect and retry" not in err["message"]
+
+    def test_dap_error_debug_adapter_unavailable_includes_install_guidance(self):
+        from app.modules.intelligence.tools.dap_tools import _make_dap_error
+
+        err = _make_dap_error(
+            error_type="debug_adapter_unavailable: No registered debug adapter",
+            context="start_session",
+        ).model_dump(mode="json")
+
+        assert err["error_type"] == "extension_error"
+        assert "not installed" in err["message"].lower()
 
 
 # ===========================================================================
@@ -536,6 +564,86 @@ class TestRouteDapCommand:
         assert result is None
         assert err == "unknown_route"
 
+    def test_http_200_domain_failure_returns_extension_error(self):
+        import httpx
+        from unittest.mock import patch as _patch, MagicMock
+        from app.modules.intelligence.tools.local_search_tools.tunnel_utils import route_dap_command
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "success": False,
+            "error": "debug_adapter_unavailable",
+        }
+
+        with _patch(
+            "app.modules.tunnel.tunnel_service.get_tunnel_service",
+            return_value=self._mock_tunnel_service(),
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_tunnel_url",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_repository",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_branch",
+            return_value=None,
+        ), _patch.object(
+            httpx.Client,
+            "post",
+            return_value=mock_resp,
+        ):
+            result, err = route_dap_command(
+                method="start_session",
+                payload={"program": "a.py"},
+                user_id="u1",
+                conversation_id="c1",
+            )
+
+        assert result is None
+        assert err == "debug_adapter_unavailable"
+
+    def test_http_422_returns_domain_error_not_tunnel_unreachable(self):
+        import httpx
+        from unittest.mock import patch as _patch, MagicMock
+        from app.modules.intelligence.tools.local_search_tools.tunnel_utils import route_dap_command
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 422
+        mock_resp.json.return_value = {
+            "error": "debug_adapter_unavailable: adapter missing",
+            "adapter_type": "cppdbg",
+        }
+        mock_resp.text = "debug_adapter_unavailable: adapter missing"
+
+        with _patch(
+            "app.modules.tunnel.tunnel_service.get_tunnel_service",
+            return_value=self._mock_tunnel_service(),
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_tunnel_url",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_repository",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_branch",
+            return_value=None,
+        ), _patch.object(
+            httpx.Client,
+            "post",
+            return_value=mock_resp,
+        ):
+            result, err = route_dap_command(
+                method="start_session",
+                payload={"program": "a.py"},
+                user_id="u1",
+                conversation_id="c1",
+            )
+
+        assert result is None
+        assert err == "debug_adapter_unavailable: adapter missing"
+        assert err != "tunnel_unreachable"
+
     def test_socket_route_hyphenizes_method_endpoint(self):
         from unittest.mock import patch as _patch
         from app.modules.intelligence.tools.local_search_tools.tunnel_utils import route_dap_command
@@ -639,6 +747,40 @@ class TestRouteDapCommand:
         assert result is None
         assert err == "debug adapter not available"
 
+    def test_socket_domain_failure_body_returns_extension_error(self):
+        from unittest.mock import patch as _patch
+        from app.modules.intelligence.tools.local_search_tools.tunnel_utils import route_dap_command
+
+        mock_svc = MagicMock()
+        mock_svc.get_tunnel_url.return_value = "socket://workspace-1"
+        mock_svc.get_workspace_id.return_value = "workspace-1"
+
+        with _patch(
+            "app.modules.tunnel.tunnel_service.get_tunnel_service",
+            return_value=mock_svc,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_tunnel_url",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_repository",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_branch",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.local_search_tools.tunnel_utils._execute_via_socket",
+            return_value=({"success": False, "error": "debug_adapter_unavailable"}, None),
+        ):
+            result, err = route_dap_command(
+                method="start_session",
+                payload={"program": "a.py"},
+                user_id="u1",
+                conversation_id="c1",
+            )
+
+        assert result is None
+        assert err == "debug_adapter_unavailable"
+
 
 # ===========================================================================
 # A3.3 — Per-tool tests
@@ -694,6 +836,27 @@ class TestStartDebugSession:
         assert payload_val["program"] == "/a.py"
         assert payload_val["port"] == 5678
         assert payload_val["args"] == {"stopOnEntry": True}
+        assert kwargs.get("timeout") == 65.0
+
+    def test_empty_session_id_returns_extension_error(self):
+        from app.modules.intelligence.tools.dap_tools import start_debug_session
+
+        with patch(_DISPATCH, return_value=({"success": False, "error": "launch_failed"}, None)), \
+             patch(_CTX, return_value=_CTX_RETURN):
+            result = start_debug_session(program="/a.py")
+        assert result["error_type"] == "extension_error"
+        assert "session_id" in result["message"]
+
+    def test_domain_failure_body_returns_extension_error(self):
+        from app.modules.intelligence.tools.dap_tools import start_debug_session
+
+        with patch(
+            _DISPATCH,
+            return_value=(None, "debug_adapter_unavailable"),
+        ), patch(_CTX, return_value=_CTX_RETURN):
+            result = start_debug_session(program="/a.py")
+        assert result["error_type"] == "extension_error"
+        assert "not installed" in result["message"].lower()
 
     def test_legacy_argv_list_is_wrapped_as_launch_config_args(self):
         from app.modules.intelligence.tools.dap_tools import start_debug_session
@@ -837,6 +1000,7 @@ class TestStepTools:
         assert kwargs["method"] == expected_method
         assert kwargs["payload"].get("session_id") == "s1"
         assert kwargs["payload"].get("expressions") == ["x"]
+        assert kwargs.get("timeout") == 40.0
 
 
 class TestContinueExecution:

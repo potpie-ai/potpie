@@ -60,6 +60,19 @@ def _route_socket_error(error_type: Optional[str]) -> str:
     return normalized
 
 
+def _dap_domain_error(result: Any) -> Optional[str]:
+    """Detect extension-level failure envelopes in DAP RPC responses."""
+    if not isinstance(result, dict):
+        return None
+    if result.get("success") is False:
+        return _route_socket_error(
+            _normalize_socket_error(result.get("error") or "extension_error")
+        )
+    if result.get("error") in ("unknown_route", "NOT_IMPLEMENTED", "route_not_found"):
+        return "unknown_route"
+    return None
+
+
 def _socket_result(
     result: Optional[Dict[str, Any]],
     error_type: Optional[str],
@@ -1272,16 +1285,12 @@ def route_dap_command(
             else:
                 result, socket_error = socket_call, None
             if result is not None:
-                # Extension may signal an unknown-route error in the result body.
-                if isinstance(result, dict) and result.get("error") in (
-                    "unknown_route",
-                    "NOT_IMPLEMENTED",
-                    "route_not_found",
-                ):
+                domain_err = _dap_domain_error(result)
+                if domain_err:
                     logger.info(
-                        f"[route_dap_command] Extension returned unknown-route for debug.{method}: {result.get('error')}"
+                        f"[route_dap_command] Extension returned domain error for debug.{method}: {domain_err}"
                     )
-                    return None, "unknown_route"
+                    return None, domain_err
                 logger.info(f"[route_dap_command] debug.{method} RPC succeeded")
                 return result, None
             socket_error = _normalize_socket_error(socket_error)
@@ -1322,10 +1331,33 @@ def route_dap_command(
                 f"[route_dap_command] HTTP 404 — route debug.{method} not implemented on extension"
             )
             return None, "unknown_route"
+        try:
+            body = response.json()
+        except Exception:
+            body = None
         if response.status_code == 200:
-            result = response.json()
+            domain_err = _dap_domain_error(body)
+            if domain_err:
+                logger.info(
+                    f"[route_dap_command] HTTP 200 domain error for debug.{method}: {domain_err}"
+                )
+                return None, domain_err
             logger.info(f"[route_dap_command] HTTP debug.{method} RPC succeeded")
-            return result, None
+            return body, None
+        if isinstance(body, dict):
+            domain_err = _dap_domain_error(body)
+            if domain_err:
+                logger.info(
+                    f"[route_dap_command] HTTP {response.status_code} domain error for debug.{method}: {domain_err}"
+                )
+                return None, domain_err
+            error = body.get("error")
+            if error:
+                routed = _route_socket_error(_normalize_socket_error(error))
+                logger.info(
+                    f"[route_dap_command] HTTP {response.status_code} error for debug.{method}: {routed}"
+                )
+                return None, routed
         logger.warning(
             f"[route_dap_command] HTTP {response.status_code} for debug.{method}: {response.text[:300]}"
         )

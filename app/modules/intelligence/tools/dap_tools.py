@@ -45,6 +45,22 @@ from app.modules.intelligence.tools.dap_schemas import (
 
 logger = setup_logger(__name__)
 
+_START_SESSION_TIMEOUT = 65.0
+_STEP_TIMEOUT = 40.0
+
+DebugLanguage = Literal[
+    "python",
+    "node",
+    "go",
+    "unknown",
+    "c",
+    "cpp",
+    "c++",
+    "lldb",
+    "cppdbg",
+    "lldb-dap",
+]
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -58,8 +74,10 @@ _UNKNOWN_ROUTE_MSG = (
     "Extension-side handlers are part of E4 — returns available=False until E4 lands."
 )
 _TIMEOUT_MSG = (
-    "DAP RPC timed out waiting for the extension response. The workspace tunnel "
-    "may still be connected; the extension may still be processing the request."
+    "The debug operation exceeded its time budget waiting for the extension response. "
+    "This is not evidence of a tunnel disconnect — the extension or debug adapter may "
+    "have stalled or failed to respond. Try a larger timeout_seconds or verify the "
+    "debug adapter is installed and configured."
 )
 _TUNNEL_UNREACHABLE_MSG = (
     "Tunnel is registered but unreachable — the VS Code extension may have disconnected. "
@@ -71,9 +89,8 @@ _BACKEND_SOCKET_MSG = (
     "check backend tunnel logs and restart the backend/worker if the bridge is wedged."
 )
 _EXTENSION_ERROR_MSG = (
-    "DAP RPC reached the workspace socket, but the extension or debug adapter "
-    "returned an error. The tunnel may still be connected; inspect the error field "
-    "and extension logs for the DAP-specific failure."
+    "This is NOT a tunnel/connection problem — the debug adapter or extension returned "
+    "an error. Inspect the error field and extension logs for the DAP-specific failure."
 )
 _NO_USER_ID_MSG = "No authenticated user context — cannot route DAP command."
 
@@ -108,6 +125,12 @@ def _make_dap_error(error_type: Optional[str], context: str) -> DapError:
     else:
         msg = _EXTENSION_ERROR_MSG
         etype = "extension_error"
+        if error_type and "debug_adapter_unavailable" in str(error_type).lower():
+            msg = (
+                "The requested debug adapter is not installed in VS Code. "
+                "Install the appropriate extension (e.g. ms-vscode.cpptools or CodeLLDB) "
+                "and retry."
+            )
     return DapError(
         available=False,
         error=error_type or "unknown_error",
@@ -158,9 +181,14 @@ class StartDebugSessionInput(BaseModel):
         ...,
         description="Path to the program entry point (e.g. 'src/main.py' or '/abs/path/main.py').",
     )
-    language: Literal["python", "node", "go", "unknown"] = Field(
+    language: DebugLanguage = Field(
         "python",
-        description="Language of the program being debugged.",
+        description=(
+            "Language of the program being debugged. For compiled/native binaries use "
+            "'c' or 'cpp' and pass args with the launch config (e.g. "
+            '{"type":"cppdbg","MIMode":"lldb"} on macOS or "gdb" on Linux). '
+            "args.type is authoritative when provided."
+        ),
     )
     mode: Literal["launch", "attach"] = Field(
         "launch",
@@ -181,7 +209,7 @@ class StartDebugSessionInput(BaseModel):
 
 def start_debug_session(
     program: str,
-    language: Literal["python", "node", "go", "unknown"] = "python",
+    language: DebugLanguage = "python",
     mode: Literal["launch", "attach"] = "launch",
     port: Optional[int] = None,
     args: Optional[Dict[str, Any] | List[str]] = None,
@@ -207,6 +235,7 @@ def start_debug_session(
             payload=payload,
             user_id=user_id or "",
             conversation_id=conversation_id,
+            timeout=_START_SESSION_TIMEOUT,
         )
     except Exception as exc:
         logger.warning("[start_debug_session] Unexpected exception: %s", exc)
@@ -218,6 +247,19 @@ def start_debug_session(
         ).model_dump(mode="json")
 
     if result is not None:
+        if not result.get("session_id"):
+            raw = repr(result)
+            if len(raw) > 500:
+                raw = raw[:497] + "..."
+            return DapError(
+                available=False,
+                error="extension_error",
+                error_type="extension_error",
+                message=(
+                    "Debug session start returned no session_id — the launch likely failed. "
+                    f"Raw response: {raw}"
+                ),
+            ).model_dump(mode="json")
         try:
             return StartSessionResult(
                 session_id=result.get("session_id", ""),
@@ -247,7 +289,10 @@ def start_debug_session_tool() -> StructuredTool:
             "Sends a 'start_session' RPC to the DebugSessionManager in the connected extension. "
             "Returns StartSessionResult with the session_id on success, or DapError when the "
             "extension is not connected. Call get_workspace_debug_context first to discover "
-            "available launch configurations."
+            "available launch configurations. For compiled/native binaries (C/C++), pass "
+            "language='c' or 'cpp' and include args with the launch config — e.g. "
+            '{"type":"cppdbg","MIMode":"lldb"} on macOS or "gdb" on Linux. '
+            "When args.type is set (e.g. lldb, cppdbg), it overrides language."
         ),
         args_schema=StartDebugSessionInput,
     )
@@ -461,6 +506,7 @@ def _step_tool_impl(method: str, session_id: Optional[str], expressions: Optiona
             payload=payload,
             user_id=user_id or "",
             conversation_id=conversation_id,
+            timeout=_STEP_TIMEOUT,
         )
     except Exception as exc:
         logger.warning("[%s] Unexpected exception: %s", method, exc)

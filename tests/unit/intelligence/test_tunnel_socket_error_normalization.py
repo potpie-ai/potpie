@@ -124,3 +124,52 @@ def test_route_dap_command_maps_handler_timeout_to_timeout():
 
     assert result is None
     assert error_type == "timeout"
+
+
+def test_route_dap_command_http_422_maps_to_domain_error_not_tunnel_unreachable():
+    import httpx
+    from unittest.mock import MagicMock, patch
+
+    from app.modules.intelligence.tools.local_search_tools.tunnel_utils import (
+        route_dap_command,
+    )
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 422
+    mock_resp.json.return_value = {
+        "error": "debug_adapter_unavailable: No registered debug adapter for type 'cppdbg'.",
+        "adapter_type": "cppdbg",
+    }
+    mock_resp.text = mock_resp.json.return_value["error"]
+
+    svc = MagicMock()
+    svc.get_tunnel_url.return_value = "http://localhost:49152"
+    svc.get_workspace_id.return_value = None
+
+    with patch(
+        "app.modules.tunnel.tunnel_service.get_tunnel_service",
+        return_value=svc,
+    ), patch(
+        "app.modules.intelligence.tools.code_changes_manager._get_tunnel_url",
+        return_value=None,
+    ), patch(
+        "app.modules.intelligence.tools.code_changes_manager._get_repository",
+        return_value=None,
+    ), patch(
+        "app.modules.intelligence.tools.code_changes_manager._get_branch",
+        return_value=None,
+    ), patch.object(
+        httpx.Client,
+        "post",
+        return_value=mock_resp,
+    ):
+        result, error_type = route_dap_command(
+            method="start_session",
+            payload={"program": "a.py"},
+            user_id="u1",
+            conversation_id="c1",
+        )
+
+    assert result is None
+    assert error_type == "debug_adapter_unavailable: No registered debug adapter for type 'cppdbg'."
+    assert error_type != "tunnel_unreachable"
