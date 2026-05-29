@@ -441,6 +441,8 @@ from pydantic_ai.messages import (  # noqa: E402
     PartDeltaEvent,
     PartStartEvent,
     TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
     ToolReturnPart,
 )
 
@@ -594,6 +596,16 @@ def _make_part_delta_event(content_delta: str) -> PartDeltaEvent:
     return PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=content_delta))
 
 
+def _make_thinking_start_event(content: str) -> PartStartEvent:
+    return PartStartEvent(index=0, part=ThinkingPart(content=content))
+
+
+def _make_thinking_delta_event(content_delta: str) -> PartDeltaEvent:
+    return PartDeltaEvent(
+        index=0, delta=ThinkingPartDelta(content_delta=content_delta)
+    )
+
+
 def _make_tool_call_event(name: str, call_id: str, args: dict) -> FunctionToolCallEvent:
     return FunctionToolCallEvent(
         part=ToolCallPart(tool_name=name, tool_call_id=call_id, args=args)
@@ -661,6 +673,75 @@ def test_pydantic_deep_debug_agent_streams_text_deltas():
     )
     # No tool call responses in this scenario
     assert all(c.tool_calls == [] for c in chunks)
+
+
+# ---------------------------------------------------------------------------
+# C1b. Reasoning (ThinkingPart) is wrapped in <think> tags so the webview
+#      renders it in a collapsible think block (same path as the code agent).
+# ---------------------------------------------------------------------------
+
+
+def test_pydantic_deep_debug_agent_wraps_reasoning_in_think_tags():
+    """ThinkingPart/ThinkingPartDelta events must be emitted as <think>...</think>
+    content, with the actual answer text after the closing tag."""
+    agent = _build_debug_agent()
+
+    fake_pd = _make_fake_agent(
+        nodes=[
+            _ModelRequestNodeStub(
+                events=[
+                    _make_thinking_start_event("Let me reason"),
+                    _make_thinking_delta_event(" about the bug"),
+                    _make_part_start_event("The fix is X"),
+                ]
+            ),
+            _EndNodeStub(),
+        ]
+    )
+
+    ctx = _make_chat_context()
+
+    with patch(
+        "pydantic_deep.create_deep_agent", return_value=fake_pd
+    ), _patch_node_type_checks():
+        chunks = asyncio.run(_collect_stream(agent, ctx))
+
+    joined = "".join(c.response for c in chunks if c.response)
+    assert "<think>" in joined and "</think>" in joined, (
+        f"Reasoning must be wrapped in think tags, got {joined!r}"
+    )
+    # Reasoning content sits inside the think block; answer after the close tag.
+    think_body = joined[joined.index("<think>") + len("<think>") : joined.index("</think>")]
+    assert "Let me reason about the bug" in think_body
+    after = joined[joined.index("</think>") + len("</think>") :]
+    assert "The fix is X" in after
+
+
+def test_pydantic_deep_debug_agent_closes_think_tag_when_no_text_follows():
+    """If the model reasons then goes straight to a tool call (no text), the
+    <think> block must still be closed so the webview doesn't swallow the rest."""
+    agent = _build_debug_agent()
+
+    fake_pd = _make_fake_agent(
+        nodes=[
+            _ModelRequestNodeStub(
+                events=[_make_thinking_start_event("reasoning with no answer text")]
+            ),
+            _EndNodeStub(),
+        ]
+    )
+
+    ctx = _make_chat_context()
+
+    with patch(
+        "pydantic_deep.create_deep_agent", return_value=fake_pd
+    ), _patch_node_type_checks():
+        chunks = asyncio.run(_collect_stream(agent, ctx))
+
+    joined = "".join(c.response for c in chunks if c.response)
+    assert joined.count("<think>") == 1
+    assert joined.count("</think>") == 1
+    assert joined.strip().endswith("</think>")
 
 
 # ---------------------------------------------------------------------------

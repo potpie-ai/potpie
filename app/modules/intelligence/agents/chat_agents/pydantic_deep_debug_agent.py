@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from contextlib import contextmanager
-from typing import Any, AsyncGenerator, Dict, List
+from typing import Any, AsyncGenerator, List
 
 import anyio
 from langchain_core.tools import StructuredTool
@@ -39,10 +39,6 @@ from app.modules.intelligence.agents.chat_agents.tool_helpers import (
     get_tool_run_message,
 )
 from app.modules.intelligence.provider.provider_service import ProviderService
-from app.modules.intelligence.tools.reasoning_manager import (
-    _get_reasoning_manager,
-    _reset_reasoning_manager,
-)
 from app.modules.intelligence.tracing.logfire_tracer import (
     is_logfire_enabled,
     logfire_trace_metadata,
@@ -195,97 +191,6 @@ Expected output:
 {expected_output}
         """.strip()
 
-    def _build_thinking_model_settings(self) -> Dict[str, Any]:
-        """Enable interleaved thinking when the configured provider supports it."""
-        try:
-            config = self.llm_provider.get_chat_provider_config()
-        except Exception as exc:
-            logger.debug("Could not get chat provider config for thinking: %s", exc)
-            return {}
-
-        if config.provider == "anthropic":
-            return {
-                "anthropic_thinking": {
-                    "type": "enabled",
-                    "budget_tokens": 8192,
-                },
-                "extra_headers": {
-                    "anthropic-beta": "interleaved-thinking-2025-05-14",
-                },
-            }
-
-        if config.auth_provider == "openrouter" and config.provider in (
-            "gemini",
-            "zai",
-            "moonshot",
-        ):
-            return {
-                "extra_body": {
-                    "reasoning": {"effort": "high"},
-                },
-            }
-
-        return {}
-
-    async def _yield_model_request_events(
-        self, request_stream: Any
-    ) -> AsyncGenerator[ChatAgentResponse, None]:
-        """Stream model tokens, thinking, and close thinking blocks before answer text."""
-        reasoning_manager = _get_reasoning_manager()
-        in_thinking = False
-        thinking_buffer = ""
-
-        async for event in request_stream:
-            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                if in_thinking:
-                    in_thinking = False
-                    yield ChatAgentResponse(
-                        response="</" + "think>",
-                        tool_calls=[],
-                        citations=[],
-                        thinking=thinking_buffer or None,
-                    )
-                reasoning_manager.append_content(event.part.content)
-                yield ChatAgentResponse(
-                    response=event.part.content,
-                    tool_calls=[],
-                    citations=[],
-                )
-            elif isinstance(event, PartDeltaEvent) and isinstance(
-                event.delta, TextPartDelta
-            ):
-                reasoning_manager.append_content(event.delta.content_delta)
-                yield ChatAgentResponse(
-                    response=event.delta.content_delta,
-                    tool_calls=[],
-                    citations=[],
-                )
-            elif isinstance(event, PartStartEvent) and isinstance(
-                event.part, ThinkingPart
-            ):
-                in_thinking = True
-                delta = event.part.content or ""
-                thinking_buffer += delta
-                reasoning_manager.append_content(delta)
-                yield ChatAgentResponse(
-                    response="<think>" + delta,
-                    tool_calls=[],
-                    citations=[],
-                    thinking=thinking_buffer,
-                )
-            elif isinstance(event, PartDeltaEvent) and isinstance(
-                event.delta, ThinkingPartDelta
-            ):
-                delta = event.delta.content_delta or ""
-                thinking_buffer += delta
-                reasoning_manager.append_content(delta)
-                yield ChatAgentResponse(
-                    response=delta,
-                    tool_calls=[],
-                    citations=[],
-                    thinking=thinking_buffer,
-                )
-
     def _create_agent(self, ctx: ChatContext):
         try:
             from pydantic_deep import create_deep_agent
@@ -321,10 +226,7 @@ Expected output:
             web_fetch=False,
             context_manager=False,
             cost_tracking=False,
-            model_settings={
-                "max_tokens": 32000,
-                **self._build_thinking_model_settings(),
-            },
+            model_settings={"max_tokens": 32000},
             instrument=should_instrument_pydantic_ai(),
         )
         for tool in wrapped_tools:
@@ -398,7 +300,6 @@ Expected output:
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         self._set_sandbox_context(ctx)
-        _reset_reasoning_manager()
 
         metadata = _build_logfire_metadata(ctx)
         with _safe_trace_metadata(**metadata):
@@ -442,10 +343,81 @@ Expected output:
                             if Agent.is_model_request_node(node):
                                 try:
                                     async with node.stream(run.ctx) as request_stream:
-                                        async for chunk in self._yield_model_request_events(
-                                            request_stream
-                                        ):
-                                            yield chunk
+                                        # Reasoning models emit ThinkingPart events
+                                        # separately from text. Wrap them in <think>
+                                        # tags so the webview renders reasoning in the
+                                        # same collapsible block as the code agent
+                                        # (which gets <think> tags inline from its model).
+                                        thinking_open = False
+                                        async for event in request_stream:
+                                            if isinstance(
+                                                event, PartStartEvent
+                                            ) and isinstance(event.part, ThinkingPart):
+                                                text = event.part.content or ""
+                                                if not thinking_open:
+                                                    thinking_open = True
+                                                    text = "<think>" + text
+                                                yield ChatAgentResponse(
+                                                    response=text,
+                                                    tool_calls=[],
+                                                    citations=[],
+                                                )
+                                                continue
+                                            if isinstance(
+                                                event, PartDeltaEvent
+                                            ) and isinstance(
+                                                event.delta, ThinkingPartDelta
+                                            ):
+                                                text = event.delta.content_delta or ""
+                                                if not thinking_open:
+                                                    thinking_open = True
+                                                    text = "<think>" + text
+                                                yield ChatAgentResponse(
+                                                    response=text,
+                                                    tool_calls=[],
+                                                    citations=[],
+                                                )
+                                                continue
+                                            if isinstance(
+                                                event, PartStartEvent
+                                            ) and isinstance(event.part, TextPart):
+                                                prefix = (
+                                                    "</think>\n\n"
+                                                    if thinking_open
+                                                    else ""
+                                                )
+                                                thinking_open = False
+                                                yield ChatAgentResponse(
+                                                    response=prefix + event.part.content,
+                                                    tool_calls=[],
+                                                    citations=[],
+                                                )
+                                            if isinstance(
+                                                event, PartDeltaEvent
+                                            ) and isinstance(
+                                                event.delta, TextPartDelta
+                                            ):
+                                                prefix = (
+                                                    "</think>\n\n"
+                                                    if thinking_open
+                                                    else ""
+                                                )
+                                                thinking_open = False
+                                                yield ChatAgentResponse(
+                                                    response=prefix
+                                                    + event.delta.content_delta,
+                                                    tool_calls=[],
+                                                    citations=[],
+                                                )
+                                        # Close an unterminated think block (model went
+                                        # straight from reasoning to a tool call with no
+                                        # text in between).
+                                        if thinking_open:
+                                            yield ChatAgentResponse(
+                                                response="</think>\n\n",
+                                                tool_calls=[],
+                                                citations=[],
+                                            )
                                 except (
                                     ModelRetry,
                                     AgentRunError,
@@ -563,12 +535,6 @@ Expected output:
                                     continue
 
                             elif Agent.is_end_node(node):
-                                reasoning_hash = _get_reasoning_manager().finalize_and_save()
-                                if reasoning_hash:
-                                    logger.info(
-                                        "Debug agent reasoning saved with hash: %s",
-                                        reasoning_hash,
-                                    )
                                 logger.info(
                                     "pydantic-deep debug stream completed successfully"
                                 )
