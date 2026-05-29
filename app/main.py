@@ -10,6 +10,13 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+from observability import configure, get_logger
+from observability.integrations.fastapi import LoggingContextMiddleware
+from observability.profiles import monolith
+
+configure(monolith())
+logger = get_logger(__name__)
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -54,12 +61,6 @@ from app.modules.context_graph.context_engine_http import (
 )
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
-from observability import configure, get_logger
-from observability.integrations.fastapi import LoggingContextMiddleware
-from observability.profiles import monolith
-
-configure(monolith())
-logger = get_logger(__name__)
 load_providers()
 
 

@@ -22,13 +22,8 @@ from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
 
-from app.core.models import *  # noqa #This will import and initialize all models
-from celery import Celery
-from celery.signals import worker_process_init, worker_process_shutdown
-
 from observability import _state as _obs_state
 from observability import configure, get_logger
-from observability.integrations.celery import install_celery_observability
 from observability.profiles import celery as celery_profile
 
 # Load environment variables from a .env file if present
@@ -47,6 +42,11 @@ if _obs_state.get("configured_pid") != os.getpid():
     configure(_obs_cfg)
 
 logger = get_logger(__name__)
+
+from app.core.models import *  # noqa #This will import and initialize all models
+from celery import Celery
+from celery.signals import worker_process_init, worker_process_shutdown
+from observability.integrations.celery import install_celery_observability
 
 # Redis configuration
 redishost = os.getenv("REDISHOST", "localhost")
