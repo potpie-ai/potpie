@@ -12,9 +12,9 @@ from sqlalchemy.orm import Session
 from app.modules.key_management.storage_config import is_gcp_secret_manager_enabled
 from app.modules.users.user_model import User
 from app.modules.users.user_preferences_model import UserPreferences
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class APIKeyService:
@@ -172,7 +172,7 @@ class APIKeyService:
             if not api_key.startswith(APIKeyService.SECRET_PREFIX):
                 logger.error(
                     f"Invalid API key format: missing required prefix '{APIKeyService.SECRET_PREFIX}'"
-                )
+                , APIKeyService_SECRET_PREFIX=APIKeyService.SECRET_PREFIX)
                 return None
 
             hashed_key = APIKeyService.hash_api_key(api_key)

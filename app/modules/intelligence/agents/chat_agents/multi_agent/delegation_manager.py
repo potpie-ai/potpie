@@ -18,9 +18,9 @@ from .utils.context_utils import create_project_context_info
 from .utils.tool_call_stream_manager import ToolCallStreamManager
 from .utils.tool_utils import truncate_result_content
 from app.modules.intelligence.agents.chat_agent import ChatContext, ChatAgentResponse
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class DelegationManager:
@@ -123,7 +123,7 @@ class DelegationManager:
                     logger.warning(
                         f"[DELEGATE_FUNCTION] No active streaming task found for cache_key={cache_key}. "
                         f"This may indicate the task hasn't started yet or cache key mismatch."
-                    )
+                    , cache_key=cache_key)
 
                 while waited < max_wait_time:
                     # Check if result is cached
@@ -149,7 +149,7 @@ class DelegationManager:
                             logger.error(
                                 f"[DELEGATE_FUNCTION] Streaming task failed for cache_key={cache_key}: {task_error}",
                                 exc_info=True,
-                            )
+                             cache_key=cache_key, task_error=task_error)
                             # Cache error result to prevent infinite wait
                             error_result = format_delegation_error(
                                 agent_type,
@@ -168,7 +168,7 @@ class DelegationManager:
                             logger.error(
                                 f"[DELEGATE_FUNCTION] Streaming task completed but no result cached "
                                 f"for cache_key={cache_key}. This indicates a bug in stream_subagent_to_queue."
-                            )
+                            , cache_key=cache_key)
                             # Cache error result to prevent infinite wait
                             error_result = format_delegation_error(
                                 agent_type,
@@ -204,7 +204,7 @@ class DelegationManager:
                 logger.error(
                     f"[DELEGATE_FUNCTION] Timeout waiting for delegation result (key={cache_key}). "
                     f"This may indicate the streaming task failed to start or never completed."
-                )
+                , cache_key=cache_key)
                 # Clean up task tracking
                 self._active_streaming_tasks.pop(cache_key, None)
                 return format_delegation_error(
@@ -218,7 +218,7 @@ class DelegationManager:
             except Exception as e:
                 logger.error(
                     f"Error in delegation to {agent_type.value}: {e}", exc_info=True
-                )
+                , agent_type_value=agent_type.value, e=e)
                 return format_delegation_error(
                     agent_type, task_description, type(e).__name__, str(e), ""
                 )
@@ -297,7 +297,7 @@ class DelegationManager:
             logger.info(
                 f"[SUBAGENT STREAM] Starting stream for agent_type={agent_type.value}, "
                 f"cache_key={cache_key}, call_id={call_id}"
-            )
+            , agent_type_value=agent_type.value, cache_key=cache_key, call_id=call_id)
             logger.info(
                 f"[SUBAGENT STREAM] Task description: {task_description[:200]}{'...' if len(task_description) > 200 else ''}"
             )
@@ -309,7 +309,7 @@ class DelegationManager:
             logger.info(
                 f"[SUBAGENT STREAM] Starting to iterate over subagent response (agent_type={agent_type.value}, "
                 f"cache_key={cache_key})"
-            )
+            , agent_type_value=agent_type.value, cache_key=cache_key)
 
             chunk_count = 0
             stream_start_time = asyncio.get_running_loop().time()
@@ -339,7 +339,7 @@ class DelegationManager:
                     f"[SUBAGENT STREAM] Starting chunk iteration loop (agent_type={agent_type.value}, "
                     f"cache_key={cache_key}, call_id={call_id}, "
                     f"chunk_timeout={chunk_timeout}s, stream_timeout={stream_timeout}s)"
-                )
+                , agent_type_value=agent_type.value, cache_key=cache_key, call_id=call_id, chunk_timeout=chunk_timeout, stream_timeout=stream_timeout)
                 loop_iteration = 0
                 last_heartbeat_time = stream_start_time
                 heartbeat_interval = 10.0  # Log heartbeat every 10 seconds
@@ -357,7 +357,7 @@ class DelegationManager:
                             f"(agent_type={agent_type.value}, chunks={chunk_count}, "
                             f"elapsed={elapsed:.1f}s, time_since_last_chunk={time_since_last_chunk:.1f}s, "
                             f"cache_key={cache_key})"
-                        )
+                        , loop_iteration=loop_iteration, agent_type_value=agent_type.value, chunk_count=chunk_count, elapsed=elapsed, time_since_last_chunk=time_since_last_chunk, cache_key=cache_key)
                         last_heartbeat_time = current_loop_time
 
                     if loop_iteration % 10 == 0:  # Log every 10 iterations
@@ -365,7 +365,7 @@ class DelegationManager:
                         logger.debug(
                             f"[SUBAGENT STREAM] Chunk loop iteration #{loop_iteration} "
                             f"(agent_type={agent_type.value}, chunks={chunk_count}, elapsed={elapsed:.1f}s)"
-                        )
+                        , loop_iteration=loop_iteration, agent_type_value=agent_type.value, chunk_count=chunk_count, elapsed=elapsed)
 
                     # Check for overall timeout
                     elapsed = asyncio.get_running_loop().time() - stream_start_time
@@ -388,13 +388,13 @@ class DelegationManager:
                             f"[SUBAGENT STREAM] ⚠️ Waiting for next chunk (agent_type={agent_type.value}, "
                             f"chunk_count={chunk_count}, time_since_last={time_since_last_chunk:.2f}s, "
                             f"timeout={chunk_timeout}s, cache_key={cache_key})"
-                        )
+                        , agent_type_value=agent_type.value, chunk_count=chunk_count, time_since_last_chunk=time_since_last_chunk, chunk_timeout=chunk_timeout, cache_key=cache_key)
                     else:
                         logger.debug(
                             f"[SUBAGENT STREAM] Waiting for next chunk (agent_type={agent_type.value}, "
                             f"chunk_count={chunk_count}, time_since_last={time_since_last_chunk:.2f}s, "
                             f"timeout={chunk_timeout}s)"
-                        )
+                        , agent_type_value=agent_type.value, chunk_count=chunk_count, time_since_last_chunk=time_since_last_chunk, chunk_timeout=chunk_timeout)
                     try:
                         chunk = await asyncio.wait_for(
                             stream_gen.__anext__(), timeout=chunk_timeout
@@ -420,7 +420,7 @@ class DelegationManager:
                             f"[SUBAGENT STREAM] Stream completed normally after {elapsed:.1f}s "
                             f"(agent_type={agent_type.value}, cache_key={cache_key}, "
                             f"chunk_count={chunk_count})"
-                        )
+                        , elapsed=elapsed, agent_type_value=agent_type.value, cache_key=cache_key, chunk_count=chunk_count)
                         # Signal end of stream so consumer and drain loop can finish
                         await stream_queue.put(None)
                         break
@@ -445,7 +445,7 @@ class DelegationManager:
                     logger.debug(
                         f"[SUBAGENT STREAM] Processing chunk #{chunk_count} (agent_type={agent_type.value}, "
                         f"cache_key={cache_key})"
-                    )
+                    , chunk_count=chunk_count, agent_type_value=agent_type.value, cache_key=cache_key)
 
                     # Filter out tool calls - we only want text responses from subagents
                     # Create a clean chunk with only text content (no tool calls)
@@ -465,11 +465,11 @@ class DelegationManager:
                         logger.warning(
                             f"[SUBAGENT STREAM] Queue full, dropping chunk (agent_type={agent_type.value}, "
                             f"cache_key={cache_key}, call_id={call_id}). This should not happen with unbounded queues."
-                        )
+                        , agent_type_value=agent_type.value, cache_key=cache_key, call_id=call_id)
                     except Exception as queue_error:
                         logger.warning(
                             f"[SUBAGENT STREAM] Error putting chunk in queue: {queue_error}"
-                        )
+                        , queue_error=queue_error)
 
                     # Check if this chunk contains an error from the subagent
                     is_error_chunk = chunk.response and is_subagent_error(
@@ -479,7 +479,7 @@ class DelegationManager:
                         logger.warning(
                             f"[SUBAGENT STREAM] ⚠️ Error chunk received from subagent "
                             f"(agent_type={agent_type.value}, cache_key={cache_key})"
-                        )
+                        , agent_type_value=agent_type.value, cache_key=cache_key)
                         # Mark that we received an error
                         subagent_error_occurred = True
 
@@ -500,7 +500,7 @@ class DelegationManager:
                         except Exception as redis_error:
                             logger.warning(
                                 f"Failed to publish to Redis stream for call_id {call_id}: {redis_error}"
-                            )
+                            , call_id=call_id, redis_error=redis_error)
 
                     # Collect text for the final result
                     if chunk.response:
@@ -511,7 +511,7 @@ class DelegationManager:
                     f"[SUBAGENT STREAM] Error in stream iteration (agent_type={agent_type.value}, "
                     f"cache_key={cache_key}): {stream_error}",
                     exc_info=True,
-                )
+                 agent_type_value=agent_type.value, cache_key=cache_key, stream_error=stream_error)
                 # Will be handled by outer exception handler
                 raise
 
@@ -524,7 +524,7 @@ class DelegationManager:
                     logger.warning(
                         f"[SUBAGENT STREAM] Caching partial result due to timeout (agent_type={agent_type.value}, "
                         f"cache_key={cache_key}, elapsed={elapsed:.1f}s, chunks={chunk_count})"
-                    )
+                    , agent_type_value=agent_type.value, cache_key=cache_key, elapsed=elapsed, chunk_count=chunk_count)
                     partial_result = (
                         full_response
                         if full_response
@@ -556,12 +556,12 @@ class DelegationManager:
                     f"--- RESPONSE CONTENT ---\n{full_response}\n"
                     f"--- END RESPONSE CONTENT ---\n"
                     f"========== FULL SUBAGENT RESPONSE END =========="
-                )
+                , agent_type_value=agent_type.value, call_id=call_id, cache_key=cache_key, full_response=full_response)
             else:
                 logger.warning(
                     f"[SUBAGENT STREAM] ⚠️ Full response is empty (agent_type={agent_type.value}, "
                     f"call_id={call_id}, cache_key={cache_key}, chunks={chunk_count})"
-                )
+                , agent_type_value=agent_type.value, call_id=call_id, cache_key=cache_key, chunk_count=chunk_count)
 
             # Publish final complete response to Redis stream if call_id is provided
             # Use async version to avoid blocking the event loop
@@ -587,12 +587,12 @@ class DelegationManager:
                     )
                     logger.info(
                         f"[SUBAGENT STREAM] Successfully published final complete response to Redis: call_id={call_id}"
-                    )
+                    , call_id=call_id)
                 except Exception as redis_error:
                     logger.error(
                         f"[SUBAGENT STREAM] Failed to publish final response to Redis stream for call_id {call_id}: {redis_error}",
                         exc_info=True,
-                    )
+                     call_id=call_id, redis_error=redis_error)
 
             # Store all collected chunks for yielding when tool result comes
             self._delegation_streamed_content[cache_key] = collected_chunks
@@ -610,7 +610,7 @@ class DelegationManager:
                     logger.warning(
                         f"[SUBAGENT STREAM] Caching error result for supervisor "
                         f"(agent_type={agent_type.value}, cache_key={cache_key})"
-                    )
+                    , agent_type_value=agent_type.value, cache_key=cache_key)
                     # Cache the full error response so supervisor can understand what happened
                     self._delegation_result_cache[cache_key] = error_content
                 else:
@@ -619,7 +619,7 @@ class DelegationManager:
                     logger.info(
                         f"[SUBAGENT STREAM] Extracted task result (agent_type={agent_type.value}, "
                         f"cache_key={cache_key}):\n{summary}"
-                    )
+                    , agent_type_value=agent_type.value, cache_key=cache_key, summary=summary)
                     self._delegation_result_cache[cache_key] = (
                         summary if summary else full_response
                     )
@@ -627,7 +627,7 @@ class DelegationManager:
                 logger.warning(
                     f"[SUBAGENT STREAM] No response from subagent (agent_type={agent_type.value}, "
                     f"cache_key={cache_key})"
-                )
+                , agent_type_value=agent_type.value, cache_key=cache_key)
                 self._delegation_result_cache[cache_key] = (
                     "## Task Result\n\n⚠️ No output from subagent. The task may have failed silently."
                 )
@@ -635,21 +635,21 @@ class DelegationManager:
             logger.info(
                 f"[SUBAGENT STREAM] Successfully cached result for cache_key={cache_key} "
                 f"(error={subagent_error_occurred})"
-            )
+            , cache_key=cache_key, subagent_error_occurred=subagent_error_occurred)
 
         except Exception as e:
             logger.error(
                 f"[SUBAGENT STREAM] Error streaming subagent response (agent_type={agent_type_str}, "
                 f"cache_key={cache_key}, call_id={call_id}): {e}",
                 exc_info=True,
-            )
+             agent_type_str=agent_type_str, cache_key=cache_key, call_id=call_id, e=e)
             # Put error response in queue
             error_message = f"*Error in subagent execution: {str(e)}*"
             error_chunk = self.create_error_response(error_message)
             collected_chunks.append(error_chunk)
             await stream_queue.put(error_chunk)
             await stream_queue.put(None)
-            logger.error(f"[SUBAGENT STREAM] Error response sent: {error_message}")
+            logger.error(f"[SUBAGENT STREAM] Error response sent: {error_message}", error_message=error_message)
 
             # Publish error to Redis stream if call_id is provided
             # Use async version to avoid blocking the event loop
@@ -670,7 +670,7 @@ class DelegationManager:
                     logger.error(
                         f"[SUBAGENT STREAM] Failed to publish error response to Redis stream for call_id {call_id}: {redis_error}",
                         exc_info=True,
-                    )
+                     call_id=call_id, redis_error=redis_error)
 
             # Store collected chunks (including error)
             self._delegation_streamed_content[cache_key] = collected_chunks
@@ -685,13 +685,13 @@ class DelegationManager:
             self._delegation_result_cache[cache_key] = error_result
             logger.error(
                 f"[SUBAGENT STREAM] Cached error result for cache_key={cache_key} to prevent deadlock"
-            )
+            , cache_key=cache_key)
         finally:
             # Always clean up task tracking
             self._active_streaming_tasks.pop(cache_key, None)
             logger.info(
                 f"[SUBAGENT STREAM] Cleaned up task tracking for cache_key={cache_key}"
-            )
+            , cache_key=cache_key)
 
     def get_delegation_result(self, cache_key: str) -> Optional[str]:
         """Get a cached delegation result"""

@@ -1,6 +1,6 @@
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 import asyncio
 from typing import List, Optional, Type, Dict, Any
 from urllib.parse import quote as url_quote
@@ -195,12 +195,12 @@ class FetchFileTool:
 
             logger.debug(
                 f"[fetch_file] 🔍 Tunnel lookup result: tunnel_url={tunnel_url}"
-            )
+            , tunnel_url=tunnel_url)
 
             if not tunnel_url:
                 logger.debug(
                     f"[fetch_file] ❌ No tunnel available for user {user_id}, conversation {conversation_id} - falling back to GitHub"
-                )
+                , user_id=user_id, conversation_id=conversation_id)
                 return None
 
             # Socket path: use Socket.IO RPC
@@ -288,24 +288,24 @@ class FetchFileTool:
                         logger.warning(
                             f"[fetch_file] ❌ Stale tunnel detected ({status_code}): {tunnel_url}. "
                             f"Invalidating conversation tunnel (workspace-only)."
-                        )
+                        , status_code=status_code, tunnel_url=tunnel_url)
 
                         # Invalidate the stale tunnel URL (workspace-only; no user-level)
                         try:
                             tunnel_service.unregister_tunnel(user_id, conversation_id)
                             logger.info(
                                 f"[fetch_file] ✅ Invalidated stale conversation tunnel for user {user_id}"
-                            )
+                            , user_id=user_id)
                         except Exception as e:
                             logger.error(
                                 f"[fetch_file] Failed to invalidate tunnel: {e}"
-                            )
+                            , e=e)
 
-                    logger.debug(f"[fetch_file] LocalServer returned {status_code}")
+                    logger.debug(f"[fetch_file] LocalServer returned {status_code}", status_code=status_code)
                     return None
 
         except Exception as e:
-            logger.debug(f"[fetch_file] Local routing failed: {e}")
+            logger.debug(f"[fetch_file] Local routing failed: {e}", e=e)
             return None
 
     async def _try_sandbox(
@@ -330,7 +330,7 @@ class FetchFileTool:
                 end_line=end_line,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.debug(f"[fetch_file] sandbox read failed: {exc}")
+            logger.debug(f"[fetch_file] sandbox read failed: {exc}", exc=exc)
             return None
         if content is None:
             return None
@@ -378,10 +378,10 @@ class FetchFileTool:
                     if sandbox_result:
                         return sandbox_result
                 except Exception as exc:  # noqa: BLE001
-                    logger.debug(f"[fetch_file] sync sandbox attempt skipped: {exc}")
+                    logger.debug(f"[fetch_file] sync sandbox attempt skipped: {exc}", exc=exc)
 
             # Fall back to GitHub/remote
-            logger.debug(f"[fetch_file] Falling back to remote for {file_path}")
+            logger.debug(f"[fetch_file] Falling back to remote for {file_path}", file_path=file_path)
 
             details = self._get_project_details(project_id)
             # Modify cache key to reflect that we're only caching the specific path
@@ -410,7 +410,7 @@ class FetchFileTool:
                     logger.warning(
                         f"fetch_file (cached) output truncated from {original_length} to 80000 characters "
                         f"for file {file_path}, project_id={project_id}"
-                    )
+                    , original_length=original_length, file_path=file_path, project_id=project_id)
 
                 return {
                     "success": True,
@@ -439,14 +439,14 @@ class FetchFileTool:
                 if is_not_found:
                     logger.info(
                         f"[fetch_file] GitHub 404 for {file_path}, trying LocalServer fallback"
-                    )
+                    , file_path=file_path)
                     local_result = self._try_local_server(
                         file_path, with_line_numbers, start_line, end_line
                     )
                     if local_result and local_result.get("success"):
                         logger.info(
                             f"[fetch_file] ✅ LocalServer fallback succeeded for {file_path}"
-                        )
+                        , file_path=file_path)
                         return local_result
 
                     # Both GitHub and local failed - provide helpful error
@@ -484,7 +484,7 @@ class FetchFileTool:
                 logger.warning(
                     f"fetch_file output truncated from {original_length} to 80000 characters "
                     f"for file {file_path}, project_id={project_id}"
-                )
+                , original_length=original_length, file_path=file_path, project_id=project_id)
 
             return {
                 "success": True,
@@ -494,7 +494,7 @@ class FetchFileTool:
             # File not found - try local as last resort
             logger.warning(
                 f"File not found in remote: {file_path} - trying local fallback"
-            )
+            , file_path=file_path)
             local_result = self._try_local_server(
                 file_path, with_line_numbers, start_line, end_line
             )
@@ -510,7 +510,7 @@ class FetchFileTool:
                 "content": None,
             }
         except Exception as e:
-            logger.exception(f"Failed to fetch file content for {file_path}")
+            logger.exception(f"Failed to fetch file content for {file_path}", file_path=file_path)
             return {"success": False, "error": str(e), "content": None}
 
     async def _arun(
@@ -546,7 +546,7 @@ class FetchFileTool:
             # Tier 3 — CodeProviderService (GitHub or LocalRepoService).
             return self._run(project_id, file_path, with_line_numbers, start_line, end_line)
         except Exception as e:  # noqa: BLE001
-            logger.exception(f"Failed to fetch file content for {file_path}")
+            logger.exception(f"Failed to fetch file content for {file_path}", file_path=file_path)
             return {"success": False, "error": str(e), "content": None}
 
 
@@ -667,7 +667,7 @@ class FetchFilesBatchTool:
         try:
             sandbox_files = await read_files_batch_via_sandbox(project_id, paths)
         except Exception as exc:  # noqa: BLE001
-            logger.debug(f"[fetch_files_batch] sandbox read failed: {exc}")
+            logger.debug(f"[fetch_files_batch] sandbox read failed: {exc}", exc=exc)
             sandbox_files = None
         if sandbox_files is not None:
             return self._format_batch_result(sandbox_files, with_line_numbers)

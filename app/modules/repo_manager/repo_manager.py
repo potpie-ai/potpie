@@ -24,9 +24,9 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote, urlparse
 
 from app.modules.repo_manager.repo_manager_interface import IRepoManager
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class RepoManager(IRepoManager):
@@ -102,7 +102,7 @@ class RepoManager(IRepoManager):
             except ValueError:
                 logger.warning(
                     f"Invalid REPOS_VOLUME_LIMIT_BYTES value '{volume_limit_str}', using default 100GB"
-                )
+                , volume_limit_str=volume_limit_str)
                 self.volume_limit_bytes = 100 * 1024 * 1024 * 1024
         else:
             self.volume_limit_bytes = 100 * 1024 * 1024 * 1024
@@ -230,7 +230,7 @@ class RepoManager(IRepoManager):
                 f"[Repomanager] Unsupported URL scheme: {parsed.scheme}",
                 repo_name=repo_name,
                 user_id=user_id,
-            )
+             parsed_scheme=parsed.scheme)
             return repo_url
 
         # Determine username prefix based on token type
@@ -370,7 +370,7 @@ class RepoManager(IRepoManager):
         try:
             return datetime.fromisoformat(dt_str)
         except ValueError:
-            logger.warning(f"Failed to parse datetime '{dt_str}'; defaulting to now()")
+            logger.warning(f"Failed to parse datetime '{dt_str}'; defaulting to now()", dt_str=dt_str)
             return datetime.utcnow()
 
     # ========== METADATA I/O ==========
@@ -384,7 +384,7 @@ class RepoManager(IRepoManager):
             with metadata_path.open("r", encoding="utf-8") as f:
                 return json.load(f)
         except (OSError, json.JSONDecodeError) as e:
-            logger.warning(f"Failed to read metadata at {metadata_path}: {e}")
+            logger.warning(f"Failed to read metadata at {metadata_path}: {e}", metadata_path=metadata_path, e=e)
             return None
 
     def _write_metadata(
@@ -409,7 +409,7 @@ class RepoManager(IRepoManager):
             if metadata_path.exists():
                 metadata_path.unlink()
         except OSError as exc:
-            logger.warning(f"Failed to delete metadata file {metadata_path}: {exc}")
+            logger.warning(f"Failed to delete metadata file {metadata_path}: {exc}", metadata_path=metadata_path, exc=exc)
 
         # Remove empty parents up to metadata root
         current = metadata_path.parent
@@ -435,11 +435,11 @@ class RepoManager(IRepoManager):
             with path.open("r", encoding="utf-8") as fh:
                 data = json.load(fh)
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning(f"Failed to read repo metadata at {path}: {exc}")
+            logger.warning(f"Failed to read repo metadata at {path}: {exc}", path=path, exc=exc)
             return None
 
         if not isinstance(data, dict):
-            logger.warning(f"Metadata at {path} is not a JSON object")
+            logger.warning(f"Metadata at {path} is not a JSON object", path=path)
             return None
 
         data.setdefault("repo_name", repo_name)
@@ -475,7 +475,7 @@ class RepoManager(IRepoManager):
             if path.exists():
                 path.unlink()
         except OSError as exc:
-            logger.warning(f"Failed to delete metadata file {path}: {exc}")
+            logger.warning(f"Failed to delete metadata file {path}: {exc}", path=path, exc=exc)
 
         # Remove empty parents up to metadata root
         current = path.parent
@@ -494,7 +494,7 @@ class RepoManager(IRepoManager):
         repo_metadata_dir = self._metadata_dir(repo_name)
 
         if not repo_metadata_dir.exists():
-            logger.info(f"Metadata directory for repo {repo_name} does not exist")
+            logger.info(f"Metadata directory for repo {repo_name} does not exist", repo_name=repo_name)
             return 0
 
         deleted_count = 0
@@ -504,21 +504,21 @@ class RepoManager(IRepoManager):
                 if meta_file.is_file():
                     meta_file.unlink()
                     deleted_count += 1
-                    logger.debug(f"Deleted metadata file: {meta_file.name}")
+                    logger.debug(f"Deleted metadata file: {meta_file.name}", meta_file_name=meta_file.name)
             except OSError as exc:
-                logger.warning(f"Failed to delete metadata file {meta_file}: {exc}")
+                logger.warning(f"Failed to delete metadata file {meta_file}: {exc}", meta_file=meta_file, exc=exc)
                 continue
 
         try:
             if repo_metadata_dir.exists() and not any(repo_metadata_dir.iterdir()):
                 repo_metadata_dir.rmdir()
-                logger.info(f"Removed empty metadata directory for repo: {repo_name}")
+                logger.info(f"Removed empty metadata directory for repo: {repo_name}", repo_name=repo_name)
         except OSError as exc:
             logger.warning(
                 f"Failed to remove metadata directory for repo {repo_name}: {exc}"
-            )
+            , repo_name=repo_name, exc=exc)
 
-        logger.info(f"Deleted {deleted_count} metadata entries for repo: {repo_name}")
+        logger.info(f"Deleted {deleted_count} metadata entries for repo: {repo_name}", deleted_count=deleted_count, repo_name=repo_name)
         return deleted_count
 
     def _iter_metadata_entries(
@@ -537,11 +537,11 @@ class RepoManager(IRepoManager):
                 with meta_file.open("r", encoding="utf-8") as fh:
                     raw_data = json.load(fh)
             except (OSError, json.JSONDecodeError) as exc:
-                logger.warning(f"Skipping corrupt metadata file {meta_file}: {exc}")
+                logger.warning(f"Skipping corrupt metadata file {meta_file}: {exc}", meta_file=meta_file, exc=exc)
                 continue
 
             if not isinstance(raw_data, dict):
-                logger.warning(f"Unexpected metadata format in {meta_file}")
+                logger.warning(f"Unexpected metadata format in {meta_file}", meta_file=meta_file)
                 continue
 
             entry = self._format_repo_info(repo_name, raw_data)
@@ -625,16 +625,16 @@ class RepoManager(IRepoManager):
             else:
                 logger.warning(
                     f"Failed to calculate volume for {path}: {result.stderr}"
-                )
+                , path=path, result_stderr=result.stderr)
                 return None
         except subprocess.TimeoutExpired:
-            logger.warning(f"Timeout calculating volume for {path}")
+            logger.warning(f"Timeout calculating volume for {path}", path=path)
             return None
         except (ValueError, IndexError) as e:
-            logger.warning(f"Error parsing du output for {path}: {e}")
+            logger.warning(f"Error parsing du output for {path}: {e}", path=path, e=e)
             return None
         except Exception as e:
-            logger.warning(f"Unexpected error calculating volume for {path}: {e}")
+            logger.warning(f"Unexpected error calculating volume for {path}: {e}", path=path, e=e)
             return None
 
     # ========== METADATA UPDATE HELPERS (v2 additions adapted for v1 structure) ==========
@@ -697,7 +697,7 @@ class RepoManager(IRepoManager):
     ) -> None:
         """Fetch updates to bare repository for specific ref."""
         try:
-            logger.info(f"Fetching ref '{ref}' for bare repo at {bare_repo_path}")
+            logger.info(f"Fetching ref '{ref}' for bare repo at {bare_repo_path}", ref=ref, bare_repo_path=bare_repo_path)
 
             fetch_remote = "origin"
             if auth_token and repo_url:
@@ -722,14 +722,14 @@ class RepoManager(IRepoManager):
 
             if result.returncode != 0:
                 sanitized_error = self._sanitize_error_message(result.stderr or "")
-                logger.warning(f"Failed to fetch ref '{ref}': {sanitized_error}")
+                logger.warning(f"Failed to fetch ref '{ref}': {sanitized_error}", ref=ref, sanitized_error=sanitized_error)
             else:
-                logger.info(f"Successfully fetched ref '{ref}'")
+                logger.info(f"Successfully fetched ref '{ref}'", ref=ref)
 
         except subprocess.TimeoutExpired:
-            logger.warning(f"Fetch timeout for ref '{ref}'")
+            logger.warning(f"Fetch timeout for ref '{ref}'", ref=ref)
         except Exception as e:
-            logger.warning(f"Error fetching ref '{ref}': {e}")
+            logger.warning(f"Error fetching ref '{ref}': {e}", ref=ref, e=e)
 
     def ensure_bare_repo(
         self,
@@ -764,7 +764,7 @@ class RepoManager(IRepoManager):
         # Derive URL if not provided
         if repo_url is None:
             repo_url = self._derive_github_url(repo_name)
-            logger.info(f"Derived GitHub URL: {repo_url}")
+            logger.info(f"Derived GitHub URL: {repo_url}", repo_url=repo_url)
 
         # Get auth token
         github_token = auth_token or self._get_github_token()
@@ -806,14 +806,14 @@ class RepoManager(IRepoManager):
         else:
             logger.warning(
                 f"No GitHub token available for cloning {repo_name}. Will attempt unauthenticated access (public repos only)."
-            )
+            , repo_name=repo_name)
 
         clone_url = self._build_authenticated_url(
             repo_url, github_token, repo_name=repo_name, user_id=user_id
         )
 
         if bare_repo_path.exists() and (bare_repo_path / "HEAD").exists():
-            logger.info(f"Bare repo already exists: {repo_name}")
+            logger.info(f"Bare repo already exists: {repo_name}", repo_name=repo_name)
             if ref:
                 self._fetch_ref(bare_repo_path, ref, github_token, repo_url)
             self._update_bare_repo_metadata(
@@ -856,7 +856,7 @@ class RepoManager(IRepoManager):
                 else:
                     raise RuntimeError(f"Git clone failed: {sanitized_error}")
 
-            logger.info(f"Successfully cloned bare repo: {repo_name}")
+            logger.info(f"Successfully cloned bare repo: {repo_name}", repo_name=repo_name)
 
             if ref:
                 self._fetch_ref(bare_repo_path, ref, github_token, repo_url)
@@ -871,12 +871,10 @@ class RepoManager(IRepoManager):
             return bare_repo_path
 
         except subprocess.TimeoutExpired:
-            logger.error("Git clone timeout", repo_name=repo_name)
             raise RuntimeError(
                 f"Git clone timed out after {self._CLONE_TIMEOUT // 60} minutes"
             )
         except Exception as e:
-            logger.exception(f"Unexpected error cloning {repo_name}")
             raise RuntimeError(f"Failed to clone bare repo: {e}") from e
 
     def create_worktree(
@@ -925,10 +923,10 @@ class RepoManager(IRepoManager):
         if worktree_path.exists():
             logger.info(
                 f"Worktree already exists for {repo_name}@{ref}, checking if update needed"
-            )
+            , repo_name=repo_name, ref=ref)
             if unique_id:
                 if exists_ok:
-                    logger.info(f"Worktree already exists for {repo_name}@{ref}")
+                    logger.info(f"Worktree already exists for {repo_name}@{ref}", repo_name=repo_name, ref=ref)
                     return worktree_path
                 else:
                     raise FileExistsError(
@@ -948,7 +946,7 @@ class RepoManager(IRepoManager):
 
                     if is_commit:
                         if current_commit.startswith(ref):
-                            logger.info(f"Worktree already at requested commit {ref}")
+                            logger.info(f"Worktree already at requested commit {ref}", ref=ref)
                             self.update_last_accessed(
                                 repo_name,
                                 None if is_commit else ref,
@@ -959,7 +957,7 @@ class RepoManager(IRepoManager):
                         else:
                             logger.info(
                                 f"Worktree at {current_commit}, but requested {ref}. Recreating..."
-                            )
+                            , current_commit=current_commit, ref=ref)
                     else:
                         result = subprocess.run(
                             [
@@ -994,26 +992,26 @@ class RepoManager(IRepoManager):
                             if current_commit == latest_commit:
                                 logger.info(
                                     f"Worktree already at latest commit for branch {ref}"
-                                )
+                                , ref=ref)
                                 self.update_last_accessed(repo_name, ref, None, user_id)
                                 return worktree_path
                             else:
                                 logger.info(
                                     f"Worktree at {current_commit}, latest is {latest_commit}. Recreating..."
-                                )
+                                , current_commit=current_commit, latest_commit=latest_commit)
                         else:
                             logger.warning(
                                 f"Could not get latest commit for branch {ref}, recreating worktree",
                                 result=result,
-                            )
+                             ref=ref)
                 else:
                     logger.warning(
                         "Could not get current HEAD for worktree, recreating"
                     )
             except Exception as e:
-                logger.warning(f"Error checking worktree state: {e}, recreating")
+                logger.warning(f"Error checking worktree state: {e}, recreating", e=e)
 
-            logger.info(f"Removing existing worktree at {worktree_path}")
+            logger.info(f"Removing existing worktree at {worktree_path}", worktree_path=worktree_path)
             try:
                 result = subprocess.run(
                     [
@@ -1034,10 +1032,10 @@ class RepoManager(IRepoManager):
                 if result.returncode != 0:
                     logger.warning(
                         f"Git worktree remove failed, using rmtree: {result.stderr}"
-                    )
+                    , result_stderr=result.stderr)
                     shutil.rmtree(worktree_path, ignore_errors=True)
             except Exception as e:
-                logger.warning(f"Error removing worktree: {e}, using rmtree")
+                logger.warning(f"Error removing worktree: {e}, using rmtree", e=e)
                 shutil.rmtree(worktree_path, ignore_errors=True)
 
             self._delete_metadata_entry(
@@ -1069,7 +1067,7 @@ class RepoManager(IRepoManager):
             ]
 
         try:
-            logger.info(f"Creating worktree for {repo_name}@{ref}")
+            logger.info(f"Creating worktree for {repo_name}@{ref}", repo_name=repo_name, ref=ref)
 
             result = subprocess.run(
                 cmd,
@@ -1080,10 +1078,9 @@ class RepoManager(IRepoManager):
 
             if result.returncode != 0:
                 error_msg = result.stderr or "Unknown error"
-                logger.error(f"Failed to create worktree: {error_msg}")
                 raise RuntimeError(f"Git worktree add failed: {error_msg}")
 
-            logger.info(f"Successfully created worktree: {repo_name}@{ref}")
+            logger.info(f"Successfully created worktree: {repo_name}@{ref}", repo_name=repo_name, ref=ref)
 
             # Register worktree in metadata
             metadata = {"type": self._TYPE_WORKTREE, "is_commit": is_commit}
@@ -1105,14 +1102,10 @@ class RepoManager(IRepoManager):
             return worktree_path
 
         except subprocess.TimeoutExpired:
-            logger.error(f"Worktree creation timeout for {repo_name}@{ref}")
             raise RuntimeError(
                 f"Worktree creation timed out after {self._FETCH_TIMEOUT // 60} minutes"
             )
         except Exception as e:
-            logger.exception(
-                f"Unexpected error creating worktree for {repo_name}@{ref}"
-            )
             raise RuntimeError(f"Failed to create worktree: {e}") from e
 
     def create_worktree_with_new_branch(
@@ -1168,7 +1161,7 @@ class RepoManager(IRepoManager):
                     f"Edits worktree already exists for {repo_name}:{new_branch_name}",
                     repo_name=repo_name,
                     user_id=user_id,
-                )
+                 new_branch_name=new_branch_name)
                 return worktree_path
             else:
                 raise FileExistsError(
@@ -1200,7 +1193,7 @@ class RepoManager(IRepoManager):
                 f"Creating worktree with new branch {new_branch_name} for {repo_name}@{base_ref}",
                 repo_name=repo_name,
                 user_id=user_id,
-            )
+             new_branch_name=new_branch_name, base_ref=base_ref)
 
             result = subprocess.run(
                 cmd,
@@ -1211,14 +1204,13 @@ class RepoManager(IRepoManager):
 
             if result.returncode != 0:
                 error_msg = result.stderr or "Unknown error"
-                logger.error(f"Failed to create worktree with new branch: {error_msg}")
                 raise RuntimeError(f"Git worktree add -b failed: {error_msg}")
 
             logger.info(
                 f"Successfully created worktree with new branch: {repo_name}:{new_branch_name}",
                 repo_name=repo_name,
                 user_id=user_id,
-            )
+             new_branch_name=new_branch_name)
 
             # Register in metadata with branch=new_branch_name
             metadata = {
@@ -1243,16 +1235,10 @@ class RepoManager(IRepoManager):
             return worktree_path
 
         except subprocess.TimeoutExpired:
-            logger.error(
-                f"Worktree creation timeout for {repo_name}:{new_branch_name}"
-            )
             raise RuntimeError(
                 f"Worktree creation timed out after {self._FETCH_TIMEOUT // 60} minutes"
             )
         except Exception as e:
-            logger.exception(
-                f"Unexpected error creating worktree with new branch for {repo_name}"
-            )
             raise RuntimeError(f"Failed to create worktree with new branch: {e}") from e
 
     def remove_worktree(
@@ -1278,7 +1264,7 @@ class RepoManager(IRepoManager):
         bare_repo_path = self._get_bare_repo_path(repo_name)
         worktree_path = self._get_worktree_path(repo_name, ref)
 
-        logger.info(f"Removing worktree: {repo_name}@{ref}")
+        logger.info(f"Removing worktree: {repo_name}@{ref}", repo_name=repo_name, ref=ref)
 
         worktree_removed = False
 
@@ -1300,12 +1286,12 @@ class RepoManager(IRepoManager):
             )
 
             if result.returncode == 0:
-                logger.info(f"Successfully removed worktree via git: {repo_name}@{ref}")
+                logger.info(f"Successfully removed worktree via git: {repo_name}@{ref}", repo_name=repo_name, ref=ref)
                 worktree_removed = True
             else:
                 logger.warning(
                     f"Git worktree remove failed, using rmtree: {result.stderr}"
-                )
+                , result_stderr=result.stderr)
                 shutil.rmtree(worktree_path, ignore_errors=True)
                 worktree_removed = not os.path.exists(worktree_path)
 
@@ -1314,7 +1300,7 @@ class RepoManager(IRepoManager):
             shutil.rmtree(worktree_path, ignore_errors=True)
             worktree_removed = not os.path.exists(worktree_path)
         except Exception as e:
-            logger.warning(f"Failed to remove worktree via git: {e}, using rmtree")
+            logger.warning(f"Failed to remove worktree via git: {e}, using rmtree", e=e)
             shutil.rmtree(worktree_path, ignore_errors=True)
             worktree_removed = not os.path.exists(worktree_path)
 
@@ -1331,12 +1317,12 @@ class RepoManager(IRepoManager):
                 else:
                     logger.warning(
                         f"No metadata found for {repo_name}@{ref}, deleting as branch"
-                    )
+                    , repo_name=repo_name, ref=ref)
                     self._delete_metadata_entry(repo_name, ref, None)
 
             return True
         else:
-            logger.error(f"Failed to remove worktree: {repo_name}@{ref}")
+            logger.error(f"Failed to remove worktree: {repo_name}@{ref}", repo_name=repo_name, ref=ref)
             return False
 
     def get_worktree_path(
@@ -1383,7 +1369,7 @@ class RepoManager(IRepoManager):
 
         logger.info(
             f"Cleaning up unique worktree for {repo_name} user:{user_id} id:{unique_id}"
-        )
+        , repo_name=repo_name, user_id=user_id, unique_id=unique_id)
 
         safe_user_id = user_id.replace("/", "_").replace("\\", "_")
         safe_unique_id = unique_id.replace("/", "_").replace("\\", "_")
@@ -1392,7 +1378,7 @@ class RepoManager(IRepoManager):
         removed = False
 
         if not worktrees_dir.exists():
-            logger.info(f"Worktrees directory does not exist: {worktrees_dir}")
+            logger.info(f"Worktrees directory does not exist: {worktrees_dir}", worktrees_dir=worktrees_dir)
             return False
 
         try:
@@ -1401,7 +1387,7 @@ class RepoManager(IRepoManager):
                     continue
 
                 if worktree_path.name.startswith(prefix):
-                    logger.info(f"Removing unique worktree: {worktree_path.name}")
+                    logger.info(f"Removing unique worktree: {worktree_path.name}", worktree_path_name=worktree_path.name)
 
                     try:
                         result = subprocess.run(
@@ -1423,22 +1409,22 @@ class RepoManager(IRepoManager):
                         if result.returncode == 0:
                             logger.info(
                                 f"Successfully removed unique worktree via git: {worktree_path.name}"
-                            )
+                            , worktree_path_name=worktree_path.name)
                         else:
                             logger.warning(
                                 f"Git worktree remove failed, using rmtree: {result.stderr}"
-                            )
+                            , result_stderr=result.stderr)
                             shutil.rmtree(worktree_path, ignore_errors=True)
 
                     except subprocess.TimeoutExpired:
                         logger.warning(
                             f"Timeout removing worktree {worktree_path.name}, using rmtree"
-                        )
+                        , worktree_path_name=worktree_path.name)
                         shutil.rmtree(worktree_path, ignore_errors=True)
                     except Exception as e:
                         logger.warning(
                             f"Failed to remove worktree via git: {e}, using rmtree"
-                        )
+                        , e=e)
                         shutil.rmtree(worktree_path, ignore_errors=True)
 
                     removed = True
@@ -1446,16 +1432,16 @@ class RepoManager(IRepoManager):
             if removed:
                 logger.info(
                     f"Successfully cleaned up unique worktrees for user:{user_id} id:{unique_id}"
-                )
+                , user_id=user_id, unique_id=unique_id)
             else:
                 logger.info(
                     f"No unique worktrees found for user:{user_id} id:{unique_id}"
-                )
+                , user_id=user_id, unique_id=unique_id)
 
             return removed
 
         except Exception as e:
-            logger.exception(f"Error cleaning up unique worktrees: {e}")
+            logger.exception(f"Error cleaning up unique worktrees: {e}", e=e)
             return False
 
     # ========== EVICTION LOGIC (v2 tiered eviction) ==========
@@ -1465,7 +1451,7 @@ class RepoManager(IRepoManager):
         percentage = self.get_volume_percentage(user_id=user_id)
 
         if percentage > self._WORKTREE_EVICTION_THRESHOLD_PERCENTAGE:
-            logger.info(f"Volume at {percentage:.1f}%, evicting stale worktrees")
+            logger.info(f"Volume at {percentage:.1f}%, evicting stale worktrees", percentage=percentage)
             self.evict_stale_worktrees(
                 max_age_days=self._STALE_WORKTREE_MAX_AGE_DAYS, user_id=user_id
             )
@@ -1473,7 +1459,7 @@ class RepoManager(IRepoManager):
         percentage = self.get_volume_percentage(user_id=user_id)
 
         if percentage > self._REPO_EVICTION_TARGET_PERCENTAGE:
-            logger.info(f"Volume at {percentage:.1f}%, evicting LRU repos")
+            logger.info(f"Volume at {percentage:.1f}%, evicting LRU repos", percentage=percentage)
             # Use existing evict_stale_repos with very short age when critical
             self.evict_stale_repos(max_age_days=1, user_id=user_id)
 
@@ -1608,7 +1594,7 @@ class RepoManager(IRepoManager):
         if volume_bytes is None:
             logger.warning(
                 f"Failed to calculate volume for {local_path}, proceeding without volume tracking"
-            )
+            , local_path=local_path)
 
         # Check if we need to evict repos to make space
         if volume_bytes:
@@ -1616,7 +1602,7 @@ class RepoManager(IRepoManager):
             if current_total + volume_bytes > self.volume_limit_bytes:
                 logger.info(
                     f"Volume limit would be exceeded (current: {current_total:,}, new: {volume_bytes:,}, limit: {self.volume_limit_bytes:,}). Evicting LRU repos..."
-                )
+                , current_total=current_total, volume_bytes=volume_bytes, self_volume_limit_bytes=self.volume_limit_bytes)
                 _evicted = self.evict_stale_repos(max_age_days=1, user_id=user_id)
                 # Check if we freed enough space
                 new_total = self.get_total_volume_bytes(user_id=user_id)
@@ -1689,7 +1675,7 @@ class RepoManager(IRepoManager):
                 if git_dir.exists():
                     logger.debug(
                         f"[REPO_MANAGER] Found unregistered repo at filesystem path: {expected_path}"
-                    )
+                    , expected_path=expected_path)
                     return str(expected_path)
 
         return None
@@ -1826,7 +1812,7 @@ class RepoManager(IRepoManager):
                 except OSError:
                     logger.exception(
                         f"Failed to delete local repo copy at {local_path}"
-                    )
+                    , local_path=local_path)
 
             logger.info(
                 "Evicted repo %s (branch=%s, commit=%s, volume=%s bytes)",
@@ -1840,22 +1826,22 @@ class RepoManager(IRepoManager):
         # If no branch/commit, evict entire repo (v2 behavior)
         repo_dir = self._get_repo_local_path(repo_name)
 
-        logger.info(f"Evicting entire repo: {repo_name}")
+        logger.info(f"Evicting entire repo: {repo_name}", repo_name=repo_name)
 
         try:
             # First, delete all metadata entries for this repo
             deleted_count = self._delete_metadata_by_repo(repo_name)
             logger.info(
                 f"Deleted {deleted_count} metadata entries for repo: {repo_name}"
-            )
+            , deleted_count=deleted_count, repo_name=repo_name)
 
             # Then, delete the repo directory
             shutil.rmtree(repo_dir)
-            logger.info(f"Successfully evicted repo: {repo_name}")
+            logger.info(f"Successfully evicted repo: {repo_name}", repo_name=repo_name)
 
             return True
         except OSError as e:
-            logger.error(f"Failed to evict repo {repo_name}: {e}")
+            logger.error(f"Failed to evict repo {repo_name}: {e}", repo_name=repo_name, e=e)
             return False
 
     def recalculate_repo_volume(
@@ -1952,7 +1938,7 @@ class RepoManager(IRepoManager):
                     except (FileNotFoundError, OSError):
                         continue
         except OSError as exc:
-            logger.warning(f"Error calculating repo size for {local_path}: {exc}")
+            logger.warning(f"Error calculating repo size for {local_path}: {exc}", local_path=local_path, exc=exc)
             return None
 
         return total_size

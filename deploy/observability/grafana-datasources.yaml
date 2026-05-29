@@ -1,0 +1,20 @@
+# Provisioned data source so Grafana wires Loki on first boot.
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    editable: true
+    jsonData:
+      maxLines: 5000
+      derivedFields:
+        # Click-through from a log line to the trace it belongs to (logfire /
+        # OTel emit a trace_id; the observability package puts it in
+        # obs_context when present).
+        - name: trace_id
+          matcherRegex: "\"trace_id\"\\s*:\\s*\"([a-f0-9]+)\""
+          url: ""
+          datasourceUid: ""

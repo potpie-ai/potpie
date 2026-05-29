@@ -9,9 +9,9 @@ import hashlib
 import os
 from contextvars import ContextVar
 from typing import Optional
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Context variable for reasoning manager - provides isolation per execution context
 _reasoning_manager_ctx: ContextVar[Optional["ReasoningManager"]] = ContextVar(
@@ -62,7 +62,7 @@ class ReasoningManager:
             )
             return self.reasoning_hash
         except Exception as e:
-            logger.error(f"ReasoningManager: Failed to save reasoning content: {e}")
+            logger.error(f"ReasoningManager: Failed to save reasoning content: {e}", e=e)
             return None
 
     def get_reasoning_hash(self) -> Optional[str]:
@@ -89,7 +89,7 @@ def _reset_reasoning_manager() -> None:
     old_size = len(old_manager.content) if old_manager else 0
     logger.debug(
         f"ReasoningManager: Resetting manager (old hash: {old_hash}, old size: {old_size} chars)"
-    )
+    , old_hash=old_hash, old_size=old_size)
     new_manager = ReasoningManager()
     _reasoning_manager_ctx.set(new_manager)
     logger.debug("ReasoningManager: Reset complete")

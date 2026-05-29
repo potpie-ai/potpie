@@ -10,7 +10,7 @@ from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from .agent_config import AgentConfig
 from .history_processor import create_history_processor
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 
@@ -35,7 +35,7 @@ from .multi_agent.utils.tool_utils import create_error_response
 # Export AgentType for backward compatibility
 __all__ = ["PydanticMultiAgent", "AgentType"]
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class PydanticMultiAgent(ChatAgent):
@@ -205,7 +205,7 @@ class PydanticMultiAgent(ChatAgent):
         logger.info(
             f"🔄 [PydanticMultiAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
             f"ctx.conversation_id={ctx.conversation_id}"
-        )
+        , ctx_tunnel_url=ctx.tunnel_url, ctx_user_id=ctx.user_id, ctx_conversation_id=ctx.conversation_id)
         init_managers(
             conversation_id=ctx.conversation_id,
             agent_id=ctx.curr_agent_id,
@@ -223,7 +223,7 @@ class PydanticMultiAgent(ChatAgent):
             doc_count = len(ctx.get_all_documents()) if ctx.has_documents() else 0
             logger.info(
                 f"Processing multimodal content with PydanticAI: {image_count} images, {doc_count} documents"
-            )
+            , image_count=image_count, doc_count=doc_count)
             return await self._multimodal_flow.run(ctx)
         else:
             if has_multimodal_content and not self.llm_provider.is_vision_model():
@@ -250,7 +250,7 @@ class PydanticMultiAgent(ChatAgent):
         logger.info(
             f"🔄 [PydanticMultiAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
             f"ctx.conversation_id={ctx.conversation_id}"
-        )
+        , ctx_tunnel_url=ctx.tunnel_url, ctx_user_id=ctx.user_id, ctx_conversation_id=ctx.conversation_id)
         init_managers(
             conversation_id=ctx.conversation_id,
             agent_id=ctx.curr_agent_id,
@@ -268,7 +268,7 @@ class PydanticMultiAgent(ChatAgent):
             doc_count = len(ctx.get_all_documents()) if ctx.has_documents() else 0
             logger.info(
                 f"Processing multimodal content with PydanticAI: {image_count} images, {doc_count} documents"
-            )
+            , image_count=image_count, doc_count=doc_count)
             async for chunk in self._multimodal_streaming_flow.run_stream(ctx):
                 yield chunk
         else:

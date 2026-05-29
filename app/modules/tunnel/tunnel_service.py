@@ -15,14 +15,14 @@ from typing import Any, Dict, Optional
 import redis
 
 from app.core.config_provider import ConfigProvider
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 try:
     import redis.asyncio as aioredis
 except ImportError:
     aioredis = None  # type: ignore[assignment]
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Redis key prefix for tunnel connections
 TUNNEL_KEY_PREFIX = "tunnel_connection"
@@ -119,7 +119,7 @@ class TunnelService:
             except Exception as e:
                 logger.error(
                     f"[TunnelService] ❌ Failed to connect to Redis: {e}", exc_info=True
-                )
+                , e=e)
                 logger.warning("[TunnelService] Falling back to in-memory storage")
                 self.redis_client = None
                 self._in_memory_tunnels = {}
@@ -215,7 +215,7 @@ class TunnelService:
             logger.error(
                 f"[TunnelService] Error getting workspace tunnel record: {e}",
                 exc_info=True,
-            )
+             e=e)
             return None
 
     def set_workspace_tunnel_record(
@@ -239,13 +239,13 @@ class TunnelService:
                 self._in_memory_workspace_tunnel_records[key] = value
             logger.debug(
                 f"[TunnelService] Stored workspace tunnel record: workspace_id={workspace_id}"
-            )
+            , workspace_id=workspace_id)
             return True
         except Exception as e:
             logger.error(
                 f"[TunnelService] Error setting workspace tunnel record: {e}",
                 exc_info=True,
-            )
+             e=e)
             return False
 
     async def get_workspace_tunnel_record_async(
@@ -265,7 +265,7 @@ class TunnelService:
                 logger.error(
                     f"[TunnelService] Error getting workspace tunnel record (async): {e}",
                     exc_info=True,
-                )
+                 e=e)
                 return None
         return await asyncio.to_thread(
             self.get_workspace_tunnel_record, workspace_id
@@ -292,13 +292,13 @@ class TunnelService:
                 )
                 logger.debug(
                     f"[TunnelService] Stored workspace tunnel record (async): workspace_id={workspace_id}"
-                )
+                , workspace_id=workspace_id)
                 return True
             except Exception as e:
                 logger.error(
                     f"[TunnelService] Error setting workspace tunnel record (async): {e}",
                     exc_info=True,
-                )
+                 e=e)
                 return False
         return await asyncio.to_thread(
             self.set_workspace_tunnel_record,
@@ -322,7 +322,7 @@ class TunnelService:
                 if not verify_data:
                     logger.error(
                         f"[TunnelService] ❌ Failed to verify tunnel registration in Redis: {key}"
-                    )
+                    , key=key)
                     return False
             else:
                 self._in_memory_tunnels[key] = tunnel_data_json
@@ -331,7 +331,7 @@ class TunnelService:
             logger.error(
                 f"[TunnelService] Error storing tunnel data for key {key}: {e}",
                 exc_info=True,
-            )
+             key=key, e=e)
             return False
 
     def get_tunnel_url(
@@ -366,7 +366,7 @@ class TunnelService:
                 return None
             return SOCKET_TUNNEL_PREFIX + workspace_id
         except Exception as e:
-            logger.error(f"Error getting tunnel URL: {e}")
+            logger.error(f"Error getting tunnel URL: {e}", e=e)
             return None
 
     def get_tunnel_info(
@@ -397,7 +397,7 @@ class TunnelService:
                     return tunnel_data
             return None
         except Exception as e:
-            logger.error(f"Error getting tunnel info: {e}")
+            logger.error(f"Error getting tunnel info: {e}", e=e)
             return None
 
     def _get_tunnel_data(self, key: str) -> Optional[Dict]:
@@ -408,29 +408,29 @@ class TunnelService:
                 if data:
                     logger.debug(
                         f"[TunnelService] ✅ Found tunnel data in Redis for key: {key}"
-                    )
+                    , key=key)
                     return json.loads(data)
                 else:
                     logger.debug(
                         f"[TunnelService] ❌ No tunnel data in Redis for key: {key}"
-                    )
+                    , key=key)
             else:
                 data = self._in_memory_tunnels.get(key)
                 if data:
                     logger.debug(
                         f"[TunnelService] ✅ Found tunnel data in memory for key: {key}"
-                    )
+                    , key=key)
                     return json.loads(data)
                 else:
                     logger.debug(
                         f"[TunnelService] ❌ No tunnel data in memory for key: {key}"
-                    )
+                    , key=key)
             return None
         except Exception as e:
             logger.error(
                 f"[TunnelService] Error getting tunnel data for key {key}: {e}",
                 exc_info=True,
-            )
+             key=key, e=e)
             return None
 
     def unregister_tunnel(
@@ -455,16 +455,16 @@ class TunnelService:
                 self._delete_tunnel_key(conversation_key)
                 logger.info(
                     f"[TunnelService] Unregistered conversation-level tunnel: {conversation_key}"
-                )
+                , conversation_key=conversation_key)
             else:
                 logger.debug("[TunnelService] Unregister with no conversation_id: no-op (workspace-only mode)")
 
             logger.info(
                 f"Unregistered tunnel for user {user_id}, conversation {conversation_id}"
-            )
+            , user_id=user_id, conversation_id=conversation_id)
             return True
         except Exception as e:
-            logger.error(f"Error unregistering tunnel: {e}")
+            logger.error(f"Error unregistering tunnel: {e}", e=e)
             return False
 
     def _delete_tunnel_key(self, key: str) -> None:
@@ -570,7 +570,7 @@ class TunnelService:
             logger.error(
                 f"[TunnelService] Error listing tunnels for user {user_id}: {e}",
                 exc_info=True,
-            )
+             user_id=user_id, e=e)
         return tunnels
 
     async def list_user_tunnels_async(self, user_id: str) -> Dict[str, Dict]:
@@ -596,7 +596,7 @@ class TunnelService:
                 logger.error(
                     f"[TunnelService] Error listing tunnels for user {user_id} (async): {e}",
                     exc_info=True,
-                )
+                 user_id=user_id, e=e)
             return tunnels
         return await asyncio.to_thread(self.list_user_tunnels, user_id)
 

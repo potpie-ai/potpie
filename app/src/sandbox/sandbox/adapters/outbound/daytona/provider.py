@@ -712,9 +712,6 @@ class DaytonaWorkspaceProvider:
                 # either: a stage build failure shouldn't pin the process
                 # into "snapshot is fine" forever. The next call (or
                 # the operator's retry) gets to re-check / re-build.
-                logger.error(
-                    "daytona snapshot %s build failed: %s", self.snapshot, exc
-                )
                 raise RuntimeUnavailable(
                     f"daytona snapshot {self.snapshot} build failed: {exc}"
                 ) from exc

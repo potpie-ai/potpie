@@ -22,9 +22,9 @@ from app.modules.tunnel.socket_models import (
     WorkspaceHeartbeatPayload,
     WorkspaceRegisterPayload,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 WORKSPACE_SOCKET_KEY_PREFIX = "workspace:socket:"
 SOCKET_WORKSPACE_KEY_PREFIX = "socket:workspace:"

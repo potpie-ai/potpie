@@ -29,9 +29,9 @@ from app.modules.tunnel.socket_server import (
     WORKSPACE_SOCKET_KEY_PREFIX,
     sio,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 WORKSPACE_TOOL_CALL_TIMEOUT = float(os.getenv("WORKSPACE_TOOL_CALL_TIMEOUT", "30"))
 TOOL_CALL_DEDUP_TTL_SECONDS = 4.0

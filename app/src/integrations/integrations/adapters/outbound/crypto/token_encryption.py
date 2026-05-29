@@ -6,9 +6,9 @@ import os
 import base64
 import hashlib
 from cryptography.fernet import Fernet
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class TokenEncryption:
@@ -37,7 +37,7 @@ class TokenEncryption:
                 ]
                 logger.debug(
                     f"Generated encryption key for development (fingerprint: {key_fingerprint})"
-                )
+                , key_fingerprint=key_fingerprint)
                 logger.warning(
                     "IMPORTANT: Set ENCRYPTION_KEY environment variable in production!"
                 )
@@ -57,7 +57,6 @@ class TokenEncryption:
             self._fernet = Fernet(base64.urlsafe_b64encode(encryption_key))
 
         except Exception as e:
-            logger.exception("Failed to initialize token encryption")
             raise Exception(f"Token encryption initialization failed: {str(e)}")
 
     def encrypt_token(self, token: str) -> str:
@@ -73,7 +72,6 @@ class TokenEncryption:
             return encrypted_bytes.decode()
 
         except Exception as e:
-            logger.exception("Failed to encrypt token")
             raise Exception(f"Token encryption failed: {str(e)}")
 
     def decrypt_token(self, encrypted_token: str) -> str:
@@ -89,7 +87,6 @@ class TokenEncryption:
             return decrypted_bytes.decode()
 
         except Exception as e:
-            logger.exception("Failed to decrypt token")
             raise Exception(f"Token decryption failed: {str(e)}")
 
 

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
     ConversationStatus,
@@ -70,7 +70,7 @@ from app.modules.billing.subscription_service import billing_subscription_servic
 from .conversation_store import ConversationStore, StoreError
 from ..message.message_store import MessageStore
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ConversationServiceError(Exception):
@@ -293,7 +293,7 @@ class ConversationService:
         conversation = await self.conversation_store.get_by_id(conversation_id)
 
         if not conversation:
-            logger.warning(f"Conversation {conversation_id} not found in database")
+            logger.warning(f"Conversation {conversation_id} not found in database", conversation_id=conversation_id)
             return (
                 ConversationAccessType.NOT_FOUND
             )  # Return 'not found' if conversation doesn't exist
@@ -433,16 +433,14 @@ class ConversationService:
                 except Exception:
                     logger.exception(
                         f"Failed to store pending attachments for conversation {conversation_id}"
-                    )
+                    , conversation_id=conversation_id)
 
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
-            logger.exception("IntegrityError in create_conversation", user_id=user_id)
             raise ConversationServiceError(
                 "Failed to create conversation due to a database integrity error."
             ) from e
         except Exception as e:
-            logger.exception("Unexpected error in create_conversation", user_id=user_id)
             raise ConversationServiceError(
                 "An unexpected error occurred while creating the conversation."
             ) from e
@@ -515,7 +513,7 @@ class ConversationService:
             logger.warning(
                 f"[ensure_sandbox] project lookup failed for {project_id}: {exc}",
                 exc_info=True,
-            )
+             project_id=project_id, exc=exc)
             return False
         if not project:
             return False
@@ -531,7 +529,7 @@ class ConversationService:
         if not base_ref:
             logger.warning(
                 f"[ensure_sandbox] project {project_id} has no ref; skipping"
-            )
+            , project_id=project_id)
             return False
 
         # Lazy import: keeps ProjectRef out of the conversation_service
@@ -557,7 +555,7 @@ class ConversationService:
                     f"[ensure_sandbox] ProjectSandbox.ensure failed for "
                     f"{repo_name}@{base_ref}: {exc}",
                     exc_info=True,
-                )
+                 repo_name=repo_name, base_ref=base_ref, exc=exc)
                 return False
 
         if timeout_s is not None:
@@ -567,7 +565,7 @@ class ConversationService:
                 logger.info(
                     f"[ensure_sandbox] still running after {timeout_s}s for "
                     f"{repo_name}@{base_ref}; not blocking caller"
-                )
+                , timeout_s=timeout_s, repo_name=repo_name, base_ref=base_ref)
                 return False
         return await _do_ensure()
 
@@ -594,7 +592,7 @@ class ConversationService:
             logger.warning(
                 f"[ensure_sandbox] sync wrapper failed for {project_id}: {exc}",
                 exc_info=True,
-            )
+             project_id=project_id, exc=exc)
 
     def _legacy_ensure_repo_in_repo_manager_sync(self, project_id: str, user_id: str) -> None:
         """Deprecated. Use :meth:`_ensure_project_sandbox_safe` instead.
@@ -680,7 +678,7 @@ class ConversationService:
             logger.warning(
                 f"[ensure_sandbox] sync wrapper failed for {project_id}: {exc}",
                 exc_info=True,
-            )
+             project_id=project_id, exc=exc)
 
     async def _clone_repo_if_missing(self, project_id: str, user_id: str) -> None:
         """Async sandbox ensure.
@@ -706,13 +704,8 @@ class ConversationService:
             await self.message_store.create_system_message(conversation_id, content)
             logger.info(
                 f"Added system message to conversation {conversation_id} for user {user_id}"
-            )
+            , conversation_id=conversation_id, user_id=user_id)
         except Exception as e:
-            logger.exception(
-                f"Failed to add system message to conversation {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 "Failed to add system message to the conversation."
             ) from e
@@ -731,7 +724,7 @@ class ConversationService:
         try:
             logger.info(
                 f"DEBUG: store_message called with message.attachment_ids: {message.attachment_ids}"
-            )
+            , message_attachment_ids=message.attachment_ids)
             access_level = await self.check_conversation_access(
                 conversation_id, self.user_email, user_id
             )
@@ -783,14 +776,14 @@ class ConversationService:
                     except Exception:
                         logger.exception(
                             f"Failed to load pending attachments for conversation {conversation_id}"
-                        )
+                        , conversation_id=conversation_id)
             self._history_add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
             message_id = await self._history_flush_message_buffer(
                 conversation_id, message_type, user_id
             )
-            logger.info(f"Stored message in conversation {conversation_id}")
+            logger.info(f"Stored message in conversation {conversation_id}", conversation_id=conversation_id)
 
             # Handle attachments if present
             if message_type == MessageType.HUMAN and message.attachment_ids:
@@ -819,10 +812,10 @@ class ConversationService:
                         timeout=5.0
                     )
                 except asyncio.TimeoutError:
-                    logger.warning(f"billing lookup timed out for user {user_id}")
+                    logger.warning(f"billing lookup timed out for user {user_id}", user_id=user_id)
                 except Exception as e:
                     # Log but don't fail - billing should not break chat
-                    logger.error(f"Failed to get or create dodo_customer_id: {e}")
+                    logger.error(f"Failed to get or create dodo_customer_id: {e}", e=e)
 
                 if dodo_customer_id:
                     report_task = asyncio.create_task(
@@ -844,9 +837,9 @@ class ConversationService:
                             logger.exception("Failed to report message usage", exc_info=exc)
 
                     report_task.add_done_callback(_on_report_done)
-                    logger.info(f"Usage reporting triggered for user {user_id}, conversation {conversation_id}")
+                    logger.info(f"Usage reporting triggered for user {user_id}, conversation {conversation_id}", user_id=user_id, conversation_id=conversation_id)
                 else:
-                    logger.warning(f"Could not get or create dodo_customer_id for user {user_id}")
+                    logger.warning(f"Could not get or create dodo_customer_id for user {user_id}", user_id=user_id)
 
                 conversation = await self._get_conversation_with_message_count(
                     conversation_id
@@ -907,7 +900,7 @@ class ConversationService:
                 logger.info(
                     f"[store_message] message.tunnel_url={message.tunnel_url}, "
                     f"conversation_id={conversation_id}, user_id={user_id}"
-                )
+                , message_tunnel_url=message.tunnel_url, conversation_id=conversation_id, user_id=user_id)
                 if stream:
                     async for chunk in self._generate_and_stream_ai_response(
                         message.content,
@@ -953,11 +946,6 @@ class ConversationService:
         except GenerationCancelled:
             raise
         except Exception as e:
-            logger.exception(
-                f"Error in store_message for conversation {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 "Failed to store message or generate AI response."
             ) from e
@@ -1040,7 +1028,7 @@ class ConversationService:
                 except Exception as e:
                     logger.warning(
                         f"Failed to retrieve attachments for message {last_human_message.id}: {e}"
-                    )
+                    , last_human_message_id=last_human_message.id, e=e)
                     attachment_ids = None
 
             await self._archive_subsequent_messages(
@@ -1094,14 +1082,9 @@ class ConversationService:
         except MessageNotFoundError as e:
             logger.warning(
                 f"No message to regenerate in conversation {conversation_id}: {e}"
-            )
+            , conversation_id=conversation_id, e=e)
             raise
         except Exception as e:
-            logger.exception(
-                f"Error in regenerate_last_message for conversation {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError("Failed to regenerate last message.") from e
 
     async def regenerate_last_message_background(
@@ -1163,25 +1146,15 @@ class ConversationService:
         except GenerationCancelled:
             raise
         except (AccessTypeReadError, MessageNotFoundError):
-            logger.exception(
-                f"Background regeneration error for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=self.user_id,
-            )
             raise
         except Exception as e:
-            logger.exception(
-                f"Background regeneration failed for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=self.user_id,
-            )
             raise ConversationServiceError(f"Failed to regenerate message: {str(e)}")
 
     async def _get_last_human_message(self, conversation_id: str):
         message = await self.message_store.get_last_human_message(conversation_id)
 
         if not message:
-            logger.warning(f"No human message found in conversation {conversation_id}")
+            logger.warning(f"No human message found in conversation {conversation_id}", conversation_id=conversation_id)
         return message
 
     async def _archive_subsequent_messages(
@@ -1192,13 +1165,8 @@ class ConversationService:
 
             logger.info(
                 f"Archived subsequent messages in conversation {conversation_id}"
-            )
+            , conversation_id=conversation_id)
         except Exception as e:
-            logger.exception(
-                f"Failed to archive messages in conversation {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=self.user_id,
-            )
             raise ConversationServiceError(
                 "Failed to archive subsequent messages."
             ) from e
@@ -1207,7 +1175,6 @@ class ConversationService:
         try:
             data = json.loads(chunk)
         except json.JSONDecodeError as e:
-            logger.exception("Failed to parse chunk as JSON")
             raise ConversationServiceError("Failed to parse AI response") from e
 
         # Extract the 'message' and 'citations'
@@ -1234,7 +1201,7 @@ class ConversationService:
         logger.info(
             f"[_generate_and_stream_ai_response] tunnel_url={tunnel_url}, "
             f"conversation_id={conversation_id}, user_id={user_id}, local_mode={local_mode}"
-        )
+        , tunnel_url=tunnel_url, conversation_id=conversation_id, user_id=user_id, local_mode=local_mode)
         conversation = await self.conversation_store.get_by_id(conversation_id)
         if not conversation:
             raise ConversationNotFoundError(
@@ -1276,7 +1243,7 @@ class ConversationService:
             document_attachments = None
             logger.info(
                 f"[_generate_and_stream_ai_response] Received attachment_ids: {attachment_ids}"
-            )
+            , attachment_ids=attachment_ids)
             if attachment_ids:
                 image_attachments = await self._prepare_attachments_as_images(
                     attachment_ids
@@ -1302,7 +1269,7 @@ class ConversationService:
 
             logger.info(
                 f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
-            )
+            , conversation_id=conversation_id, agent_id=agent_id, query=query)
 
             if image_attachments or context_images:
                 logger.info(
@@ -1466,15 +1433,10 @@ class ConversationService:
 
             logger.info(
                 f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}"
-            )
+            , conversation_id=conversation.id, user_id=user_id, agent_id=agent_id)
         except GenerationCancelled:
             raise
         except Exception as e:
-            logger.exception(
-                f"Failed to generate and stream AI response for conversation {conversation.id}",
-                conversation_id=conversation.id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 "Failed to generate and stream AI response."
             ) from e
@@ -1511,13 +1473,13 @@ class ConversationService:
                     if not attachment:
                         logger.info(
                             f"DEBUG: Skipping attachment {attachment_id} - not found"
-                        )
+                        , attachment_id=attachment_id)
                         continue
 
                     logger.info(
                         f"DEBUG: Retrieved attachment {attachment_id}: "
                         f"type={attachment.attachment_type.value}, mime_type={attachment.mime_type}"
-                    )
+                    , attachment_id=attachment_id, attachment_attachment_type_value=attachment.attachment_type.value, attachment_mime_type=attachment.mime_type)
                     is_image_record = (
                         attachment.attachment_type.value.upper() == "IMAGE"
                     )
@@ -1540,7 +1502,7 @@ class ConversationService:
                         }
                         logger.info(
                             f"Prepared image {attachment_id} ({attachment.file_name}) for multimodal processing"
-                        )
+                        , attachment_id=attachment_id, attachment_file_name=attachment.file_name)
                     elif is_image_mime:
                         raw = await self.media_service.get_attachment_data(
                             attachment_id
@@ -1555,11 +1517,11 @@ class ConversationService:
                         logger.info(
                             f"Prepared image {attachment_id} ({attachment.file_name}) "
                             f"as DOCUMENT+image/* for multimodal processing"
-                        )
+                        , attachment_id=attachment_id, attachment_file_name=attachment.file_name)
                     else:
                         logger.info(
                             f"DEBUG: Skipping attachment {attachment_id} - not an image or attachment not found"
-                        )
+                        , attachment_id=attachment_id)
                 except Exception:
                     logger.exception(
                         f"Failed to prepare attachment {attachment_id} as image",
@@ -1612,7 +1574,7 @@ class ConversationService:
                         except Exception as url_exc:
                             logger.warning(
                                 f"Failed to generate signed URL for document {attachment_id}: {url_exc}"
-                            )
+                            , attachment_id=attachment_id, url_exc=url_exc)
                         documents[attachment_id] = {
                             "base64": base64_data,
                             "mime_type": attachment.mime_type,
@@ -1622,11 +1584,11 @@ class ConversationService:
                         }
                         logger.info(
                             f"Prepared document {attachment_id} ({attachment.file_name}) for multimodal processing"
-                        )
+                        , attachment_id=attachment_id, attachment_file_name=attachment.file_name)
                     else:
                         logger.info(
                             f"DEBUG: Skipping attachment {attachment_id} - not a document or attachment not found"
-                        )
+                        , attachment_id=attachment_id)
                 except Exception:
                     logger.exception(
                         f"Failed to prepare attachment {attachment_id} as document",
@@ -1735,7 +1697,7 @@ class ConversationService:
 
             logger.info(
                 f"Deleted conversation {conversation_id} and {deleted_messages} related messages"
-            )
+            , conversation_id=conversation_id, deleted_messages=deleted_messages)
             return {
                 "status": "success",
                 "message": f"Conversation {conversation_id} and its messages have been permanently deleted.",
@@ -1748,20 +1710,10 @@ class ConversationService:
         except AccessTypeReadError:
             raise
         except SQLAlchemyError as e:
-            logger.exception(
-                f"Database error in delete_conversation for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to a database error"
             ) from e
         except Exception as e:
-            logger.exception(
-                f"Unexpected error in delete_conversation for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to an unexpected error"
             ) from e
@@ -1774,7 +1726,7 @@ class ConversationService:
             conversation = await self.conversation_store.get_by_id(conversation_id)
 
             if not conversation:
-                logger.warning(f"Conversation {conversation_id} not found in database")
+                logger.warning(f"Conversation {conversation_id} not found in database", conversation_id=conversation_id)
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
@@ -1831,18 +1783,8 @@ class ConversationService:
             logger.warning(f"ConversationNotFoundError: {str(e)}")
             raise
         except AccessTypeNotFoundError:
-            logger.exception(
-                f"AccessTypeNotFoundError in get_conversation_info for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise
         except Exception as e:
-            logger.exception(
-                f"Error in get_conversation_info for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"Failed to get conversation info for {conversation_id}"
             ) from e
@@ -1863,7 +1805,7 @@ class ConversationService:
 
             conversation = await self.conversation_store.get_by_id(conversation_id)
             if not conversation:
-                logger.warning(f"Conversation {conversation_id} not found in database")
+                logger.warning(f"Conversation {conversation_id} not found in database", conversation_id=conversation_id)
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
@@ -1912,18 +1854,8 @@ class ConversationService:
             logger.warning(f"ConversationNotFoundError: {str(e)}")
             raise
         except AccessTypeNotFoundError:
-            logger.exception(
-                f"AccessTypeNotFoundError in get_conversation_messages for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise
         except Exception as e:
-            logger.exception(
-                f"Error in get_conversation_messages for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"Failed to get messages for conversation {conversation_id}"
             ) from e
@@ -1933,7 +1865,7 @@ class ConversationService:
     ) -> dict:
         logger.info(
             f"Attempting to stop generation for conversation {conversation_id}, run_id: {run_id}"
-        )
+        , conversation_id=conversation_id, run_id=run_id)
 
         # If run_id not provided, try to find active session
         if not run_id:
@@ -1955,7 +1887,7 @@ class ConversationService:
                 # The session might have already completed or been cleared
                 logger.info(
                     f"No active session found for conversation {conversation_id} - already stopped or never started"
-                )
+                , conversation_id=conversation_id)
                 return {
                     "status": "success",
                     "message": "No active session to stop",
@@ -1964,7 +1896,7 @@ class ConversationService:
             run_id = active_session.sessionId
             logger.info(
                 f"Found active session {run_id} for conversation {conversation_id}"
-            )
+            , run_id=run_id, conversation_id=conversation_id)
 
         # Retrieve task_id before any mutation so we know whether we will revoke (and thus need to save from stream).
         if self.async_redis_manager:
@@ -1991,7 +1923,7 @@ class ConversationService:
         logger.info(
             f"Stream snapshot: conversation_id={conversation_id}, run_id={run_id}, "
             f"content_len={content_len}, citations={citations_count}, tool_calls={tool_calls_count}, chunk_count={chunk_count}"
-        )
+        , conversation_id=conversation_id, run_id=run_id, content_len=content_len, citations_count=citations_count, tool_calls_count=tool_calls_count, chunk_count=chunk_count)
 
         # Set cancellation flag and revoke the Celery task so it stops producing chunks.
         if self.async_redis_manager:
@@ -2006,7 +1938,7 @@ class ConversationService:
                 self.celery_app.control.revoke(task_id, terminate=False)
                 logger.info(
                     f"Sent graceful revoke for Celery task {task_id} for {conversation_id}:{run_id}"
-                )
+                , task_id=task_id, conversation_id=conversation_id, run_id=run_id)
 
                 # Step 2: Wait briefly for the task to stop gracefully
                 time.sleep(0.5)
@@ -2023,24 +1955,24 @@ class ConversationService:
                 if task_status in ["running", "queued"]:
                     logger.info(
                         f"Task {task_id} still running after graceful revoke, using terminate"
-                    )
+                    , task_id=task_id)
                     # Step 3: Use terminate with SIGTERM as fallback
                     self.celery_app.control.revoke(
                         task_id, terminate=True, signal="SIGTERM"
                     )
                     logger.info(
                         f"Sent SIGTERM to Celery task {task_id} for {conversation_id}:{run_id}"
-                    )
+                    , task_id=task_id, conversation_id=conversation_id, run_id=run_id)
                 else:
                     logger.info(
                         f"Task {task_id} stopped gracefully for {conversation_id}:{run_id}"
-                    )
+                    , task_id=task_id, conversation_id=conversation_id, run_id=run_id)
             except Exception as e:
                 logger.warning(f"Failed to revoke Celery task {task_id}: {str(e)}")
         else:
             logger.info(
                 f"No task ID for {conversation_id}:{run_id} - already completed or revoked"
-            )
+            , conversation_id=conversation_id, run_id=run_id)
 
         # Take a second snapshot after revoke/wait to capture chunks published during the graceful period.
         if task_id:
@@ -2079,20 +2011,20 @@ class ConversationService:
                     if saved_partial:
                         logger.info(
                             f"Saved partial response for {conversation_id}:{run_id}, message_id={saved_message_id}"
-                        )
+                        , conversation_id=conversation_id, run_id=run_id, saved_message_id=saved_message_id)
                     else:
                         logger.info(
                             f"Save partial skipped for {conversation_id}:{run_id} (save_partial_ai_message returned None)"
-                        )
+                        , conversation_id=conversation_id, run_id=run_id)
                 else:
                     logger.info(
                         f"Save partial skipped for {conversation_id}:{run_id}: no content and no tool_calls"
-                    )
+                    , conversation_id=conversation_id, run_id=run_id)
             except Exception as e:
                 logger.warning(
                     f"Failed to save partial response on stop for {conversation_id}:{run_id}: {e}",
                     exc_info=True,
-                )
+                 conversation_id=conversation_id, run_id=run_id, e=e)
 
         # Always clear the session - publish end event and update status
         try:
@@ -2134,29 +2066,19 @@ class ConversationService:
 
             logger.info(
                 f"Renamed conversation {conversation_id} to '{new_title}' by user {user_id}"
-            )
+            , conversation_id=conversation_id, new_title=new_title, user_id=user_id)
             return {
                 "status": "success",
                 "message": f"Conversation renamed to '{new_title}'",
             }
 
         except SQLAlchemyError as e:
-            logger.exception(
-                f"Database error in rename_conversation for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 "Failed to rename conversation due to a database error"
             ) from e
         except AccessTypeReadError:
             raise
         except Exception as e:
-            logger.exception(
-                f"Unexpected error in rename_conversation for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
             ) from e
@@ -2168,7 +2090,7 @@ class ConversationService:
             conversation = await self.conversation_store.get_by_id(conversation_id)
 
             if not conversation:
-                logger.warning(f"Conversation {conversation_id} not found in database")
+                logger.warning(f"Conversation {conversation_id} not found in database", conversation_id=conversation_id)
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
@@ -2198,7 +2120,7 @@ class ConversationService:
 
             logger.info(
                 f"Updated conversation {conversation_id} agent to {agent_id} by user {user_id}"
-            )
+            , conversation_id=conversation_id, agent_id=agent_id, user_id=user_id)
 
             return await self.get_conversation_info(conversation_id, user_id)
 
@@ -2206,20 +2128,10 @@ class ConversationService:
             logger.warning(f"ConversationNotFoundError: {str(e)}")
             raise
         except AccessTypeNotFoundError:
-            logger.exception(
-                f"AccessTypeNotFoundError in update_conversation_agent for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise
         except ConversationServiceError:
             raise
         except Exception as e:
-            logger.exception(
-                f"Error in update_conversation_agent for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"Failed to update conversation agent for {conversation_id}"
             ) from e
@@ -2248,18 +2160,10 @@ class ConversationService:
         except StoreError as e:
             # Catch the specific error from the store and wrap it in a
             # service-level exception, which is a good practice.
-            logger.exception(
-                f"Store layer failed to get conversations for user {user_id}",
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"Failed to retrieve conversations for user {user_id}"
             ) from e
         except Exception as e:
-            logger.exception(
-                f"Unexpected error while getting conversations for user {user_id}",
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"An unexpected error occurred while retrieving conversations for user {user_id}"
             ) from e

@@ -22,20 +22,31 @@ from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
 
-from app.core.models import *  # noqa #This will import and initialize all models
-from app.modules.intelligence.tracing.logfire_tracer import (
-    initialize_logfire_tracing,
-)
-from app.modules.utils.logger import configure_logging, setup_logger
-from celery import Celery
-from celery.signals import worker_process_init, worker_process_shutdown
+from observability import _state as _obs_state
+from observability import configure, get_logger
+from observability.profiles import celery as celery_profile
 
 # Load environment variables from a .env file if present
 load_dotenv()
 
-# Configure logging
-configure_logging()
-logger = setup_logger(__name__)
+_obs_cfg = celery_profile()
+# Pydantic AI instrumentation is enabled; base_task.run_async uses asyncio.run()
+# per task so each run has a fresh event loop and OTel context (no deferred
+# aclose() in wrong context). worker_process_init OTel detach patch remains as safety net.
+_obs_cfg.logfire.instrument_pydantic_ai = True
+
+# Configure observability for this process IF we are the entrypoint (Celery
+# worker). When this module is imported by the FastAPI web app, main.py has
+# already called configure(monolith()) — skip to avoid clobbering its sinks.
+if _obs_state.get("configured_pid") != os.getpid():
+    configure(_obs_cfg)
+
+logger = get_logger(__name__)
+
+from app.core.models import *  # noqa #This will import and initialize all models
+from celery import Celery
+from celery.signals import worker_process_init, worker_process_shutdown
+from observability.integrations.celery import install_celery_observability
 
 # Redis configuration
 redishost = os.getenv("REDISHOST", "localhost")
@@ -166,10 +177,10 @@ def configure_celery(queue_prefix: str):
 
 configure_celery(queue_name)
 
-# Pydantic AI instrumentation is enabled; base_task.run_async uses asyncio.run()
-# per task so each run has a fresh event loop and OTel context (no deferred
-# aclose() in wrong context). worker_process_init OTel detach patch remains as safety net.
-initialize_logfire_tracing(instrument_pydantic_ai=True)
+# Wire Celery-side observability signals: worker_process_init re-configures
+# observability INSIDE each forked worker (fork-safe init for Sentry/logfire
+# sockets) and task_prerun/postrun bracket each task with log_context.
+install_celery_observability(celery_app, config=_obs_cfg)
 
 
 def configure_litellm_for_celery():
@@ -205,7 +216,7 @@ def configure_litellm_for_celery():
         if hasattr(litellm, "verbose"):
             old_verbose = getattr(litellm, "verbose", None)
             setattr(litellm, "verbose", False)
-            logger.debug(f"LiteLLM verbose logging: {old_verbose} -> False")
+            logger.debug(f"LiteLLM verbose logging: {old_verbose} -> False", old_verbose=old_verbose)
 
         # Disable async success handlers that create coroutines
         # This prevents "Task was destroyed but it is pending" errors
@@ -215,7 +226,7 @@ def configure_litellm_for_celery():
                 setattr(litellm, attr_name, [])
                 logger.debug(
                     f"LiteLLM {attr_name}: {old_value} -> [] (disabled async handlers)"
-                )
+                , attr_name=attr_name, old_value=old_value)
 
         # Try to disable litellm's internal async logging handlers more aggressively
         # Check for Logging class and set async_success_handler to a no-op function
@@ -239,7 +250,7 @@ def configure_litellm_for_celery():
                         "Set LiteLLM Logging.async_success_handler to no-op function"
                     )
                 except (AttributeError, TypeError) as e:
-                    logger.warning(f"Could not set Logging.async_success_handler: {e}")
+                    logger.warning(f"Could not set Logging.async_success_handler: {e}", e=e)
 
             # Also try to patch instance-level handlers if Logging instances exist
             # This handles cases where logging_obj is an instance, not the class
@@ -282,7 +293,7 @@ def configure_litellm_for_celery():
                     "Monkey-patched LiteLLM Logging.__init__ to set no-op async_success_handler"
                 )
             except (AttributeError, TypeError) as e:
-                logger.debug(f"Could not monkey-patch Logging.__init__: {e}")
+                logger.debug(f"Could not monkey-patch Logging.__init__: {e}", e=e)
 
             # Also patch litellm.utils._client_async_logging_helper to handle None handlers gracefully
             # This is a safety net in case logging_obj instances are created elsewhere
@@ -341,10 +352,10 @@ def configure_litellm_for_celery():
             except (AttributeError, ImportError, TypeError) as e:
                 logger.debug(
                     f"Could not monkey-patch _client_async_logging_helper: {e}"
-                )
+                , e=e)
 
         except (ImportError, AttributeError) as e:
-            logger.debug(f"Could not access LiteLLM Logging class: {e}")
+            logger.debug(f"Could not access LiteLLM Logging class: {e}", e=e)
 
         # Ensure logging is synchronous by removing async handlers
         import logging
@@ -353,7 +364,7 @@ def configure_litellm_for_celery():
         initial_handler_count = len(litellm_logger.handlers)
         logger.debug(
             f"LiteLLM logger has {initial_handler_count} handlers before cleanup"
-        )
+        , initial_handler_count=initial_handler_count)
 
         # Remove any async handlers that might cause issues
         handlers_to_remove = []
@@ -364,13 +375,13 @@ def configure_litellm_for_celery():
                 try:
                     if asyncio.iscoroutinefunction(handler.emit):
                         handlers_to_remove.append((handler, handler_name))
-                        logger.debug(f"Found async handler to remove: {handler_name}")
+                        logger.debug(f"Found async handler to remove: {handler_name}", handler_name=handler_name)
                 except (TypeError, AttributeError):
                     pass
 
         for handler, handler_name in handlers_to_remove:
             litellm_logger.removeHandler(handler)
-            logger.debug(f"Removed async handler: {handler_name}")
+            logger.debug(f"Removed async handler: {handler_name}", handler_name=handler_name)
 
         final_handler_count = len(litellm_logger.handlers)
         logger.info(
@@ -380,7 +391,7 @@ def configure_litellm_for_celery():
     except ImportError:
         logger.debug("LiteLLM not available, skipping configuration")
     except Exception as e:
-        logger.warning(f"Failed to configure LiteLLM for Celery: {e}", exc_info=True)
+        logger.warning(f"Failed to configure LiteLLM for Celery: {e}", exc_info=True, e=e)
 
 
 @worker_process_init.connect
@@ -491,7 +502,7 @@ def log_worker_memory_config(sender, **kwargs):
             "Worker process initialized. Install psutil for detailed memory logging."
         )
     except Exception as e:
-        logger.debug(f"Could not log worker memory config: {e}")
+        logger.debug(f"Could not log worker memory config: {e}", e=e)
 
 
 @worker_process_shutdown.connect
@@ -521,7 +532,7 @@ def cleanup_async_tasks_on_shutdown(sender, **kwargs):
                 # Cancel all pending tasks
                 for task in pending_tasks:
                     task_name = getattr(task, "__name__", str(task))
-                    logger.debug(f"Cancelling pending task: {task_name}")
+                    logger.debug(f"Cancelling pending task: {task_name}", task_name=task_name)
                     task.cancel()
         except RuntimeError:
             # No running event loop, nothing to clean up
@@ -546,7 +557,7 @@ def cleanup_async_tasks_on_shutdown(sender, **kwargs):
 
         logger.info("Async task cleanup completed")
     except Exception as e:
-        logger.warning(f"Error during async task cleanup: {e}", exc_info=True)
+        logger.warning(f"Error during async task cleanup: {e}", exc_info=True, e=e)
 
 
 # Configure LiteLLM for Celery workers before tasks are imported
@@ -558,7 +569,7 @@ try:
 
     install_sigsegv_handler()
 except Exception as e:
-    logger.warning(f"Could not install SIGSEGV handler: {e}")
+    logger.warning(f"Could not install SIGSEGV handler: {e}", e=e)
 
 # Import the lock decorator
 from celery.contrib.abortable import AbortableTask  # noqa

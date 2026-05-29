@@ -10,9 +10,9 @@ from celery import Celery
 
 from .interfaces import EventBusInterface
 from .schemas import CustomEvent, EventMetadata, WebhookEvent
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class CeleryEventBus(EventBusInterface):

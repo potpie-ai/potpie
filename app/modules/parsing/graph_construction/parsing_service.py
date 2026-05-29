@@ -41,14 +41,14 @@ from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 from app.modules.utils.email_helper import EmailHelper
-from app.modules.utils.logger import log_context, setup_logger
+from observability import log_context, get_logger
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
 from sandbox import WorkspaceHandle
 from sandbox.api.parser_wire import ParseArtifacts
 
 from .parsing_schema import ParsingRequest, RepoDetails
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ParsingService:
@@ -700,7 +700,7 @@ async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
 
         logger.info(
             f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
-        )
+        , old_repo_id=old_repo_id, new_repo_id=new_repo_id)
 
     except Exception:
         logger.exception(

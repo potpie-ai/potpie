@@ -17,9 +17,9 @@ from app.modules.media.media_model import (
     StorageProvider,
 )
 from app.modules.media.media_schema import AttachmentInfo, AttachmentUploadResponse
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class MediaServiceError(Exception):
@@ -74,7 +74,6 @@ class MediaService:
             try:
                 self.storage_provider = StorageProvider(provider)
             except ValueError as exc:  # fall back to safe default
-                logger.error(f"Unsupported storage provider '{provider}': {exc}")
                 raise MediaServiceError(
                     f"Unsupported storage provider configured: {provider}"
                 ) from exc
@@ -99,9 +98,8 @@ class MediaService:
             self.s3_client.head_bucket(Bucket=self.bucket_name)
             logger.info(
                 f"Initialized boto3 client for provider {self.storage_provider.value} (bucket={self.bucket_name})"
-            )
+            , self_storage_provider_value=self.storage_provider.value, self_bucket_name=self.bucket_name)
         except Exception as e:
-            logger.error(f"Failed to initialize object storage client: {e}")
             raise MediaServiceError(f"Failed to initialize object storage: {e}")
 
     def _check_multimodal_enabled(self):
@@ -198,7 +196,7 @@ class MediaService:
 
             logger.info(
                 f"Successfully uploaded image {attachment_id} to {storage_path}"
-            )
+            , attachment_id=attachment_id, storage_path=storage_path)
 
             return AttachmentUploadResponse(
                 id=attachment_id,
@@ -278,7 +276,7 @@ class MediaService:
 
             logger.info(
                 f"Successfully uploaded file {attachment_id} to {storage_path}"
-            )
+            , attachment_id=attachment_id, storage_path=storage_path)
             return AttachmentUploadResponse(
                 id=attachment_id,
                 attachment_type=AttachmentType.DOCUMENT,
@@ -358,7 +356,7 @@ class MediaService:
                 else:
                     logger.info(
                         f"Skipping resize for small image: {img.width}x{img.height}"
-                    )
+                    , img_width=img.width, img_height=img.height)
                     file_metadata["resized"] = False
 
             # Convert to RGB if necessary (for JPEG output)
@@ -391,7 +389,6 @@ class MediaService:
             return processed_data, file_metadata
 
         except Exception as e:
-            logger.error(f"Error processing image: {str(e)}")
             raise MediaServiceError(f"Failed to process image: {str(e)}")
 
     def _generate_storage_path(
@@ -425,7 +422,7 @@ class MediaService:
         try:
             logger.info(
                 f"Uploading object -> provider={self.storage_provider.value} bucket={self.bucket_name} key={storage_path} content_type={mime_type}"
-            )
+            , self_storage_provider_value=self.storage_provider.value, self_bucket_name=self.bucket_name, storage_path=storage_path, mime_type=mime_type)
             md5_b64 = base64.b64encode(hashlib.md5(file_data).digest()).decode("utf-8")
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
@@ -434,9 +431,8 @@ class MediaService:
                 ContentType=mime_type,
                 ContentMD5=md5_b64,
             )
-            logger.info(f"Uploaded object to {self.bucket_name}:{storage_path}")
+            logger.info(f"Uploaded object to {self.bucket_name}:{storage_path}", self_bucket_name=self.bucket_name, storage_path=storage_path)
         except Exception as e:
-            logger.error(f"Failed to upload to object storage: {e}")
             raise MediaServiceError(f"Failed to upload to object storage: {e}")
 
     async def get_attachment(self, attachment_id: str) -> Optional[MessageAttachment]:
@@ -449,7 +445,6 @@ class MediaService:
             )
             return attachment
         except Exception as e:
-            logger.error(f"Error retrieving attachment {attachment_id}: {str(e)}")
             raise MediaServiceError(f"Failed to retrieve attachment: {str(e)}")
 
     async def get_attachment_data(self, attachment_id: str) -> bytes:
@@ -482,7 +477,6 @@ class MediaService:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error downloading attachment {attachment_id}: {str(e)}")
             raise MediaServiceError(f"Failed to download attachment: {str(e)}")
 
     async def generate_signed_url(
@@ -512,9 +506,6 @@ class MediaService:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(
-                f"Error generating signed URL for attachment {attachment_id}: {str(e)}"
-            )
             raise MediaServiceError(f"Failed to generate access URL: {str(e)}")
 
     async def delete_attachment(self, attachment_id: str) -> bool:
@@ -538,16 +529,15 @@ class MediaService:
                     )
                     logger.info(
                         f"Deleted object from {self.bucket_name}:{attachment.storage_path}"
-                    )
+                    , self_bucket_name=self.bucket_name, attachment_storage_path=attachment.storage_path)
                 except ClientError as e:
                     if e.response.get("Error", {}).get("Code") == "NoSuchKey":
                         logger.warning(
                             f"File not found in bucket={self.bucket_name} key={attachment.storage_path}; continuing with DB delete"
-                        )
+                        , self_bucket_name=self.bucket_name, attachment_storage_path=attachment.storage_path)
                     else:
                         raise
             except Exception as e:
-                logger.error(f"Failed to delete from cloud storage: {str(e)}")
                 raise MediaServiceError(
                     f"Failed to delete from cloud storage: {str(e)}"
                 )
@@ -556,12 +546,11 @@ class MediaService:
             self.db.delete(attachment)
             self.db.commit()
 
-            logger.info(f"Successfully deleted attachment {attachment_id}")
+            logger.info(f"Successfully deleted attachment {attachment_id}", attachment_id=attachment_id)
             return True
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Error deleting attachment {attachment_id}: {str(e)}")
             raise MediaServiceError(f"Failed to delete attachment: {str(e)}")
 
     async def update_message_attachments(
@@ -609,11 +598,10 @@ class MediaService:
             logger.info(
                 f"Updated message {message_id}: linked {updated_count} new attachment(s), "
                 f"total on message={attachment_count}, has_attachments={message.has_attachments}"
-            )
+            , message_id=message_id, updated_count=updated_count, attachment_count=attachment_count, message_has_attachments=message.has_attachments)
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Error updating message attachments: {str(e)}")
             raise MediaServiceError(f"Failed to update message attachments: {str(e)}")
 
     async def get_message_attachments(
@@ -637,7 +625,7 @@ class MediaService:
                         )
                         logger.info(
                             f"Generated signed URL for attachment {attachment.id}"
-                        )
+                        , attachment_id=attachment.id)
                     except Exception as e:
                         logger.warning(
                             f"Failed to generate signed URL for attachment {attachment.id}: {str(e)}"
@@ -646,7 +634,7 @@ class MediaService:
                         download_url = f"/api/media/{attachment.id}/download"
                         logger.info(
                             f"Using fallback download URL for attachment {attachment.id}: {download_url}"
-                        )
+                        , attachment_id=attachment.id, download_url=download_url)
 
                 result.append(
                     AttachmentInfo(
@@ -664,9 +652,6 @@ class MediaService:
 
             return result
         except Exception as e:
-            logger.error(
-                f"Error getting message attachments for message {message_id}: {str(e)}"
-            )
             raise MediaServiceError(f"Failed to get message attachments: {str(e)}")
 
     async def get_image_as_base64(self, attachment_id: str) -> str:
@@ -692,7 +677,6 @@ class MediaService:
             return base64_string
 
         except Exception as e:
-            logger.error(f"Error converting image {attachment_id} to base64: {str(e)}")
             raise MediaServiceError(f"Failed to convert image to base64: {str(e)}")
 
     async def get_message_images_as_base64(
@@ -735,9 +719,6 @@ class MediaService:
             return result
 
         except Exception as e:
-            logger.error(
-                f"Error getting message images as base64 for message {message_id}: {str(e)}"
-            )
             raise MediaServiceError(f"Failed to get message images as base64: {str(e)}")
 
     async def get_conversation_recent_images(
@@ -779,9 +760,6 @@ class MediaService:
             return all_images
 
         except Exception as e:
-            logger.error(
-                f"Error getting recent images for conversation {conversation_id}: {str(e)}"
-            )
             raise MediaServiceError(
                 f"Failed to get recent conversation images: {str(e)}"
             )

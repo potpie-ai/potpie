@@ -4,9 +4,9 @@ from typing import Dict, Optional, Any
 from starlette.config import Config
 from integrations.adapters.outbound.oauth.atlassian_oauth_base import AtlassianOAuthBase
 import httpx
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class JiraOAuth(AtlassianOAuthBase):
@@ -81,8 +81,8 @@ class JiraOAuth(AtlassianOAuthBase):
 
         # Log the payload we are about to send for diagnostics
         try:
-            logger.info(f"Creating Jira webhook for site {cloud_id} -> {webhook_url}")
-            logger.info(f"Jira create_webhook payload: {payload}")
+            logger.info(f"Creating Jira webhook for site {cloud_id} -> {webhook_url}", cloud_id=cloud_id, webhook_url=webhook_url)
+            logger.info(f"Jira create_webhook payload: {payload}", payload=payload)
         except Exception:
             # best-effort logging; don't fail the request because logging failed
             pass
@@ -93,12 +93,9 @@ class JiraOAuth(AtlassianOAuthBase):
         # Log the response for debugging
         logger.info(
             f"Webhook creation response status: {response.status_code}, body: {response.text}"
-        )
+        , response_status_code=response.status_code, response_text=response.text)
 
         if response.status_code not in (200, 201):
-            logger.error(
-                f"Failed to create Jira webhook ({response.status_code}): {response.text}"
-            )
             raise Exception(
                 f"Failed to create Jira webhook: {response.status_code} {response.text}"
             )
@@ -106,10 +103,10 @@ class JiraOAuth(AtlassianOAuthBase):
         # Successful response; return parsed JSON
         try:
             result = response.json()
-            logger.info(f"Webhook creation result: {result}")
+            logger.info(f"Webhook creation result: {result}", result=result)
             return result
         except Exception as e:
-            logger.warning(f"Failed to parse webhook response as JSON: {e}")
+            logger.warning(f"Failed to parse webhook response as JSON: {e}", e=e)
             return {"status_code": response.status_code, "text": response.text}
 
     async def delete_webhook(
@@ -144,5 +141,5 @@ class JiraOAuth(AtlassianOAuthBase):
             )
             return False
 
-        logger.info(f"Successfully deleted webhook {webhook_id} for site {cloud_id}")
+        logger.info(f"Successfully deleted webhook {webhook_id} for site {cloud_id}", webhook_id=webhook_id, cloud_id=cloud_id)
         return True
