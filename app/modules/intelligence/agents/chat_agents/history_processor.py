@@ -13,9 +13,9 @@ Stateless: no in-memory caches; config is captured in the closure at factory tim
 """
 
 import json
-import logging
 import re
 from typing import TYPE_CHECKING, Callable, List, Optional, Set, Tuple
+from observability import get_logger
 
 if TYPE_CHECKING:
     from app.modules.intelligence.agents.chat_agents.history_summarizer import (
@@ -40,7 +40,7 @@ from app.modules.intelligence.agents.chat_agents.message_compressor import (
     validate_and_fix_tool_pairing,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Token thresholds
 TOKEN_LIMIT_THRESHOLD = 35000  # Start evicting/compressing when approaching this limit

@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from typing import Optional
 from urllib.parse import quote as url_quote
 
@@ -7,6 +6,7 @@ import httpx
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from observability import get_logger
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.intelligence.tools.sandbox.read_helpers import (
@@ -15,7 +15,7 @@ from app.modules.intelligence.tools.sandbox.read_helpers import (
 )
 from app.modules.intelligence.tools.tool_utils import truncate_response
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Character limit for tool responses to prevent sending insanely large content to LLM
 MAX_RESPONSE_LENGTH = 80000  # 80k characters

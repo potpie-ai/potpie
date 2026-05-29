@@ -11,12 +11,12 @@ default. To exercise the real billing path, set ``BILLING_ENABLED=true`` in
 """
 
 import os
-import logging
 from typing import Optional
 
 import httpx
+from observability import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 STRIPE_POTPIE_URL = os.getenv("STRIPE_POTPIE_URL", "http://localhost:8003")
 

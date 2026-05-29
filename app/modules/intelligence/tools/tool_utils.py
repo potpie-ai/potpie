@@ -2,9 +2,9 @@
 Utility functions for tools to handle common operations like response truncation.
 """
 
-import logging
+from observability import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Character limit for tool responses to prevent sending insanely large content to LLM
 MAX_RESPONSE_LENGTH = 80000  # 80k characters

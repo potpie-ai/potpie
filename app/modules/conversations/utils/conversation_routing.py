@@ -5,9 +5,9 @@ Contains common functions for session management, Redis streaming, and Celery ta
 
 import asyncio
 import json
-import logging
 import uuid
 from typing import Generator, Optional
+from observability import get_logger
 
 # TTL for run_id reservation lock (seconds). Reservation expires if stream not established.
 RUN_ID_RESERVATION_TTL = 120
@@ -23,7 +23,7 @@ from app.modules.conversations.utils.redis_streaming import (
     RedisStreamManager,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def normalize_run_id(

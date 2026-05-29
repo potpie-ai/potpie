@@ -1,5 +1,4 @@
 import json
-import logging
 import os
 
 import httpx
@@ -10,8 +9,9 @@ from fastapi.exceptions import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from observability import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 from app.core.database import get_async_db, get_db
 from app.modules.auth.auth_schema import (
@@ -36,8 +36,6 @@ from app.modules.users.user_service import AsyncUserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.utils.email_helper import is_personal_email_domain
-
-logger = logging.getLogger(__name__)
 
 auth_router = APIRouter()
 load_dotenv(override=True)

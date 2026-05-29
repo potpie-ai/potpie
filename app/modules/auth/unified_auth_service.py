@@ -5,12 +5,12 @@ Handles authentication across multiple providers (Firebase GitHub, SSO, etc.)
 while maintaining single user identity based on email.
 """
 
-import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
+from observability import get_logger
 
 from integrations.adapters.outbound.crypto.token_encryption import (
     decrypt_token,
@@ -54,7 +54,7 @@ from app.modules.auth.auth_schema import (
     SSOLoginResponse,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class UnifiedAuthService:

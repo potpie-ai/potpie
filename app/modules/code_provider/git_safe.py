@@ -8,14 +8,14 @@ The main issue is that GitPython uses libgit2 which doesn't handle forking well.
 This module provides retry logic and error handling to work around these issues.
 """
 
-import logging
 import time
 import signal
 import os
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Callable, TypeVar, Optional, Any
+from observability import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 T = TypeVar("T")
 

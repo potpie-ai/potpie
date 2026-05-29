@@ -8,13 +8,13 @@ Like :mod:`subscription_service`, this is **opt-in** — disabled when
 """
 
 import os
-import logging
 
 import httpx
+from observability import get_logger
 
 from app.modules.billing.subscription_service import _billing_enabled
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # stripe-potpie service URL
 STRIPE_POTPIE_URL = os.getenv("STRIPE_POTPIE_URL", "http://localhost:8003")
