@@ -20,6 +20,9 @@ _GITHUB_TOKEN_USERNAME = "github_token"
 _POTPIE_API_KEY_USERNAME = "potpie_api_key"
 _POTPIE_FIREBASE_REFRESH_TOKEN_USERNAME = "potpie_firebase_refresh_token"
 _POTPIE_FIREBASE_API_KEY_USERNAME = "potpie_firebase_api_key"
+_LINEAR_ACCESS_TOKEN_USERNAME = "linear_access_token"
+_LINEAR_REFRESH_TOKEN_USERNAME = "linear_refresh_token"
+_ATLASSIAN_API_TOKEN_USERNAME = "atlassian_api_token"
 
 
 class ProviderCredentialError(Exception):
@@ -244,6 +247,44 @@ def _delete_potpie_firebase_api_key() -> None:
     except Exception as exc:
         raise ProviderCredentialError(
             f"Failed to remove Potpie Firebase API key from system keychain: {exc}"
+        ) from exc
+
+
+def _store_keychain_secret(label: str, username: str, secret: str) -> None:
+    try:
+        keyring.set_password(_KEYRING_SERVICE, username, secret)
+    except KeyringError as exc:
+        raise ProviderCredentialError(
+            f"Failed to store {label} in system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to store {label} in system keychain: {exc}"
+        ) from exc
+
+
+def _load_keychain_secret(label: str, username: str) -> str:
+    try:
+        secret = keyring.get_password(_KEYRING_SERVICE, username)
+    except KeyringError as exc:
+        raise ProviderCredentialError(
+            f"Failed to read {label} from system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to read {label} from system keychain: {exc}"
+        ) from exc
+    return str(secret or "").strip()
+
+
+def _delete_keychain_secret(label: str, username: str) -> None:
+    try:
+        keyring.delete_password(_KEYRING_SERVICE, username)
+    except KeyringError:
+        pass
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to remove {label} from system keychain: {exc}"
         ) from exc
 
 
@@ -542,6 +583,250 @@ def clear_provider_credentials(provider: str) -> None:
                 path.unlink()
         return
     _write_payload(payload)
+
+
+_INTEGRATION_PROVIDERS = frozenset({"atlassian", "jira", "confluence", "linear"})
+_ATLASSIAN_PRODUCTS = frozenset({"jira", "confluence"})
+_ATLASSIAN_CREDENTIALS_KEY = "atlassian"
+_OAUTH_PROVIDERS = frozenset({"linear"})
+_LINEAR_METADATA_FIELDS = (
+    "expires_at",
+    "expires_in",
+    "scope",
+    "token_type",
+    "cloud_id",
+    "stored_at",
+)
+_ATLASSIAN_METADATA_FIELDS = (
+    "auth_type",
+    "email",
+    "cloud_id",
+    "site_url",
+    "site_name",
+    "stored_at",
+)
+
+
+def _norm_integration_provider(provider: str) -> str:
+    key = provider.strip().lower()
+    if key not in _INTEGRATION_PROVIDERS:
+        raise ValueError(
+            f"Unknown integration provider {provider!r} "
+            f"(expected one of: {', '.join(sorted(_INTEGRATION_PROVIDERS))})."
+        )
+    return key
+
+
+def _read_integrations(payload: dict[str, Any]) -> dict[str, Any]:
+    integrations = payload.get("integrations")
+    return dict(integrations) if isinstance(integrations, dict) else {}
+
+
+def _read_integration_metadata(key: str) -> dict[str, Any]:
+    integrations = _read_integrations(read_credentials())
+    entry = integrations.get(key)
+    return dict(entry) if isinstance(entry, dict) else {}
+
+
+def _write_integration_metadata(key: str, metadata: dict[str, Any]) -> None:
+    payload: dict[str, Any] = dict(read_credentials())
+    integrations = _read_integrations(payload)
+    integrations[key] = metadata
+    payload["integrations"] = integrations
+    payload.pop("linear", None)
+    payload.pop("atlassian", None)
+    payload.pop("jira", None)
+    payload.pop("confluence", None)
+    _write_payload(payload)
+
+
+def _remove_integration_metadata(*keys: str) -> None:
+    payload: dict[str, Any] = dict(read_credentials())
+    integrations = _read_integrations(payload)
+    for key in keys:
+        integrations.pop(key, None)
+        payload.pop(key, None)
+    payload.pop("jira", None)
+    payload.pop("confluence", None)
+    if integrations:
+        payload["integrations"] = integrations
+    else:
+        payload.pop("integrations", None)
+    if not payload:
+        path = credentials_path()
+        try:
+            path.unlink(missing_ok=True)
+        except TypeError:
+            if path.is_file():
+                path.unlink()
+        return
+    _write_payload(payload)
+
+
+def save_atlassian_credentials(credentials: dict[str, Any]) -> None:
+    """Store shared Atlassian API token in keychain and metadata in credentials.json."""
+    api_token = str(credentials.get("api_token") or "").strip()
+    if not api_token:
+        raise ProviderCredentialError("Atlassian API token is required.")
+    _store_keychain_secret(
+        "Atlassian API token",
+        _ATLASSIAN_API_TOKEN_USERNAME,
+        api_token,
+    )
+    metadata: dict[str, Any] = {
+        "provider": "atlassian",
+        "auth_type": "api_token",
+        "token_storage": "keychain",
+    }
+    for field in _ATLASSIAN_METADATA_FIELDS:
+        if field in credentials and credentials[field] is not None:
+            metadata[field] = credentials[field]
+    _write_integration_metadata(_ATLASSIAN_CREDENTIALS_KEY, metadata)
+
+
+def get_atlassian_credentials() -> dict[str, Any]:
+    """Return shared Atlassian credentials with the API token loaded from keychain."""
+    metadata = _read_integration_metadata(_ATLASSIAN_CREDENTIALS_KEY)
+    if not metadata:
+        return {}
+    api_token = _load_keychain_secret(
+        "Atlassian API token",
+        _ATLASSIAN_API_TOKEN_USERNAME,
+    )
+    if not api_token:
+        return {}
+    return {**metadata, "api_token": api_token}
+
+
+def clear_atlassian_credentials() -> None:
+    """Remove shared Atlassian credentials from keychain and metadata."""
+    _delete_keychain_secret("Atlassian API token", _ATLASSIAN_API_TOKEN_USERNAME)
+    _remove_integration_metadata(_ATLASSIAN_CREDENTIALS_KEY, "atlassian")
+
+
+def save_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
+    """Store OAuth tokens in keychain and non-secret metadata in credentials.json."""
+    key = _norm_integration_provider(provider)
+    if key not in _OAUTH_PROVIDERS:
+        raise ValueError(f"{provider!r} does not use OAuth token storage.")
+
+    access_token = str(tokens.get("access_token") or "").strip()
+    if access_token:
+        _store_keychain_secret(
+            "Linear access token",
+            _LINEAR_ACCESS_TOKEN_USERNAME,
+            access_token,
+        )
+    refresh_token = str(tokens.get("refresh_token") or "").strip()
+    if refresh_token:
+        _store_keychain_secret(
+            "Linear refresh token",
+            _LINEAR_REFRESH_TOKEN_USERNAME,
+            refresh_token,
+        )
+
+    metadata: dict[str, Any] = {
+        "provider": "linear",
+        "provider_host": "linear.app",
+        "auth_type": "oauth",
+        "token_storage": "keychain",
+    }
+    for field in _LINEAR_METADATA_FIELDS:
+        if field in tokens and tokens[field] is not None:
+            metadata[field] = tokens[field]
+    _write_integration_metadata(key, metadata)
+
+
+def write_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
+    """Alias for :func:`save_integration_tokens`."""
+    save_integration_tokens(provider, tokens)
+
+
+def get_integration_tokens(provider: str) -> dict[str, Any]:
+    """Return credentials for an integration provider with secrets loaded from keychain."""
+    key = _norm_integration_provider(provider)
+    if key == _ATLASSIAN_CREDENTIALS_KEY or key in _ATLASSIAN_PRODUCTS:
+        creds = get_atlassian_credentials()
+        return {"auth_type": "api_token", **creds} if creds else {}
+
+    metadata = _read_integration_metadata(key)
+    if not metadata:
+        return {}
+    access_token = _load_keychain_secret(
+        "Linear access token",
+        _LINEAR_ACCESS_TOKEN_USERNAME,
+    )
+    if not access_token:
+        return {}
+    refresh_token = _load_keychain_secret(
+        "Linear refresh token",
+        _LINEAR_REFRESH_TOKEN_USERNAME,
+    )
+    credentials = {**metadata, "access_token": access_token}
+    if refresh_token:
+        credentials["refresh_token"] = refresh_token
+    return credentials
+
+
+def clear_integration_tokens(provider: str) -> None:
+    """Remove stored credentials for an integration provider."""
+    key = _norm_integration_provider(provider)
+    if key == _ATLASSIAN_CREDENTIALS_KEY or key in _ATLASSIAN_PRODUCTS:
+        clear_atlassian_credentials()
+        return
+    _delete_keychain_secret("Linear access token", _LINEAR_ACCESS_TOKEN_USERNAME)
+    _delete_keychain_secret("Linear refresh token", _LINEAR_REFRESH_TOKEN_USERNAME)
+    _remove_integration_metadata(key)
+
+
+def list_integration_providers() -> list[str]:
+    """Return integration providers with stored metadata."""
+    integrations = _read_integrations(read_credentials())
+    found: list[str] = []
+    if isinstance(integrations.get(_ATLASSIAN_CREDENTIALS_KEY), dict):
+        found.append("atlassian")
+    if isinstance(integrations.get("linear"), dict):
+        found.append("linear")
+    return found
+
+
+def get_integration_status(provider: str) -> dict[str, Any]:
+    """Return non-secret status metadata for an integration provider."""
+    key = _norm_integration_provider(provider)
+
+    if key == _ATLASSIAN_CREDENTIALS_KEY or key in _ATLASSIAN_PRODUCTS:
+        entry = _read_integration_metadata(_ATLASSIAN_CREDENTIALS_KEY)
+        if not entry or not entry.get("site_url"):
+            return {
+                "provider": "atlassian" if key == _ATLASSIAN_CREDENTIALS_KEY else key,
+                "authenticated": False,
+                "auth_type": "api_token",
+            }
+        return {
+            "provider": "atlassian" if key == _ATLASSIAN_CREDENTIALS_KEY else key,
+            "authenticated": True,
+            "auth_type": "api_token",
+            "email": entry.get("email"),
+            "site_url": entry.get("site_url"),
+            "site_name": entry.get("site_name"),
+            "cloud_id": entry.get("cloud_id"),
+            "stored_at": entry.get("stored_at"),
+            "token_storage": entry.get("token_storage"),
+        }
+
+    entry = _read_integration_metadata(key)
+    if not entry:
+        return {"provider": key, "authenticated": False, "auth_type": "oauth"}
+    return {
+        "provider": key,
+        "authenticated": True,
+        "auth_type": "oauth",
+        "expires_at": entry.get("expires_at"),
+        "scope": entry.get("scope"),
+        "cloud_id": entry.get("cloud_id"),
+        "stored_at": entry.get("stored_at"),
+        "token_storage": entry.get("token_storage"),
+    }
 
 
 def resolve_cli_pot_ref(ref: str) -> tuple[str | None, str]:

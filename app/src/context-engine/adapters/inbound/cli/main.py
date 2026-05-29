@@ -18,6 +18,7 @@ from adapters.inbound.cli.auth.github import (
     request_device_code,
     verify_account,
 )
+from adapters.inbound.cli.auth_commands import auth_app
 from adapters.inbound.cli.auth.firebase_session import (
     FirebaseSessionError,
     exchange_custom_token,
@@ -112,11 +113,7 @@ git_app = typer.Typer(
     hidden=True,
 )
 git_test_app = typer.Typer(help="Git provider test helpers.", hidden=True)
-auth_app = typer.Typer(
-    help="Deprecated: use `potpie login` / `potpie logout` instead.",
-    hidden=True,
-)
-auth_test_app = typer.Typer(help="Potpie auth diagnostics.")
+auth_test_app = typer.Typer(help="Potpie auth diagnostics.", hidden=True)
 
 # Set by root callback; read by all subcommands (including nested `pot`).
 _cli_state: dict[str, Any] = {"json": False, "verbose": False, "source": None}
@@ -356,21 +353,21 @@ def login_api_key_cmd(
     )
 
 
-@auth_app.command("login")
+@auth_app.command("potpie-login", hidden=True)
 def auth_login_cmd() -> None:
     """Deprecated alias for `potpie login`."""
     _potpie_login_impl()
 
 
-@auth_app.command("logout")
+@auth_app.command("potpie-logout", hidden=True)
 def auth_logout_cmd() -> None:
     """Deprecated alias for `potpie logout`."""
     _potpie_logout_impl()
 
 
-@auth_app.command("status")
+@auth_app.command("potpie-status", hidden=True)
 def auth_status_cmd() -> None:
-    """Show whether the CLI is logged in to Potpie."""
+    """Deprecated alias for checking whether the CLI is logged in to Potpie."""
     j, v = _flags()
     id_token = ""
     try:
