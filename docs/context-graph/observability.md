@@ -1,66 +1,63 @@
 # Observability
 
-Last reviewed: 2026-05-28.
+Last reviewed: 2026-05-29.
 
-Observability must work for both local OSS and managed cloud without making
-local installs heavy.
+Observability must work locally without making OSS installs heavy, and it must
+scale up to hosted tracing, metrics, logs, readiness, and cost telemetry in
+managed graph and Event Ledger deployments.
+
+## Shape
+
+```mermaid
+flowchart LR
+  core["shared services<br/>Pot Management<br/>Graph Service<br/>Skill Manager"]
+  ledger["Event Ledger"]
+  port["observability port"]
+  local["local logs/console"]
+  cloud["OTLP / hosted telemetry"]
+
+  core --> port
+  ledger --> port
+  port --> local
+  port --> cloud
+```
 
 Default behavior:
 
-- Local OSS ships dark: local logs, no remote telemetry unless enabled.
-- Managed cloud enables hosted tracing, metrics, logs, readiness, and cost
-  telemetry through deployment config.
-- The core engine emits through ports/adapters, not direct vendor SDK calls.
-- The daemon shell, Pot Management Service, Graph Service, and store adapters
-  should be distinguishable in logs, spans, and readiness output.
+- Local OSS ships with local logs only.
+- No remote telemetry is enabled unless explicitly configured.
+- Managed graph and managed ledger deployments enable hosted telemetry through
+  deployment config.
+- Core code emits through observability ports, not vendor SDKs.
 
-## Enabling
+## Configuration
 
 ```bash
-CONTEXT_ENGINE_OBSERVABILITY=1                      # 1 | console | off
+CONTEXT_ENGINE_OBSERVABILITY=console          # off | console | 1
+CONTEXT_ENGINE_LOG_FORMAT=json                # plain | json
+CONTEXT_ENGINE_LOG_LEVEL=INFO
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
 OTEL_SERVICE_NAME=context-engine
-CONTEXT_ENGINE_LOG_FORMAT=json                      # plain | json
-CONTEXT_ENGINE_LOG_LEVEL=INFO
 ```
 
-`CONTEXT_ENGINE_OBSERVABILITY=console` is the local-friendly mode. OTLP export
-belongs behind an optional extra and explicit config.
+OTLP export belongs behind optional dependencies and explicit config.
 
-## Architecture
-
-Use a hexagonal observability port:
-
-- `domain/ports/observability.py`
-- outbound adapters under `adapters/outbound/observability/`
-- composition-root wiring in bootstrap/runtime code
-
-The core should emit spans, metrics, and logs through this boundary. Local and
-managed deployments decide where those signals go.
-
-## Trace Shape
-
-Important spans:
+## Trace Map
 
 | Span | Meaning |
 |---|---|
-| `daemon.request` or `HTTP {method} {route}` | Local daemon or hosted API request. |
-| `pot.create`, `pot.update`, `pot.reset`, `pot.export` | Pot Management Service operations. |
-| `pot.status` | Pot readiness, source coverage, graph health, and adapter capability check. |
-| `context.resolve` | Resolve/search request. |
-| `reader.{include}` | One reader execution. |
-| `context.record` | Structured record write. |
-| `scanner.{name}` | Local scanner execution. |
-| `graph.write` | Validated graph mutation apply. |
-| `graph.query` | Claim query or graph neighborhood read. |
-| `graph.inspect` | Graph visualization, neighborhood, path, or analytics read. |
+| `daemon.request` | Local daemon request. |
+| `pot.status`, `pot.create`, `pot.reset`, `pot.export` | Pot Management operations. |
+| `context.resolve`, `context.search`, `context.record`, `context.status` | Four-tool Graph Service operations. |
+| `reader.{include}` | Reader execution. |
+| `scanner.{name}` | Scanner execution. |
+| `ledger.pull`, `ledger.cursor.update` | Local or managed graph consuming an Event Ledger. |
+| `graph.write`, `graph.query`, `graph.inspect` | Backend capability calls. |
 | `semantic.search` | Vector semantic retrieval. |
-| `snapshot.export` / `snapshot.import` | Portable pot snapshot operations. |
-| `skill.catalog.fetch` | Skill download/resolve from repo or OSS catalog. |
-| `skill.install` / `skill.update` / `skill.remove` | Agent-target install operations. |
-| `skill.sync` | Managed skill sync to a cloud agent. |
-| `event.ledger.append` | Managed/event-ledger webhook capture. |
-| `reconciliation.run` | Managed or optional local raw-event reconciliation. |
+| `snapshot.export`, `snapshot.import` | Portable pot snapshot operations. |
+| `skill.catalog.fetch`, `skill.install`, `skill.update`, `skill.remove` | Skill Manager operations. |
+| `event_ledger.receive`, `event_ledger.normalize`, `event_ledger.append` | Event Ledger connector/webhook work. |
+| `reconciliation.run` | Event batch to graph records/claims. |
 
 Batch ingestion traces should link source events to reconciliation runs instead
 of pretending delayed fan-in is one synchronous request.
@@ -69,50 +66,51 @@ of pretending delayed fan-in is one synchronous request.
 
 Minimum counters:
 
-- `ce.pot.operation_total{operation,result}`
-- `ce.pot.status_total{result}`
 - `ce.resolve.total{result}`
-- `ce.resolve.unsupported_include_total{include}`
 - `ce.record.total{result,record_type}`
+- `ce.pot.operation_total{operation,result}`
 - `ce.scanner.total{result,scanner}`
 - `ce.graph.write_total{result}`
 - `ce.graph.query_total{result}`
-- `ce.graph.inspect_total{result}`
 - `ce.semantic.search_total{result,adapter}`
-- `ce.snapshot.total{operation,result}`
-- `ce.skill.operation_total{operation,result,agent}` (install/update/remove/sync)
-- `ce.skill.catalog_fetch_total{result,source}` (repo | oss_catalog)
-- `ce.daemon.restart_total` for local
-- `ce.event_ledger.events_total{source}` for managed/event-ledger
-- `ce.reconciliation.total{result}` for raw-event reconciliation
+- `ce.skill.operation_total{operation,result,agent}`
+- `ce.daemon.restart_total`
+- `ce.ledger.pull_total{result,source,binding}`
+- `ce.event_ledger.events_total{result,source}` for ledger deployments
 
-Useful histograms:
+Useful latency histograms:
 
 - `ce.resolve.latency_ms`
 - `ce.reader.latency_ms{include}`
 - `ce.graph.write_ms`
 - `ce.graph.query_ms`
-- `ce.graph.inspect_ms`
 - `ce.semantic.search_ms`
 - `ce.scanner.latency_ms{scanner}`
-- `ce.reconciliation.latency_ms`
+- `ce.ledger.pull_ms{source,binding}`
+- `ce.event_ledger.receive_ms{source}`
 
 Readiness gauges:
 
-- `ce.dependency_up{dependency}`
 - `ce.daemon_up`
-- `ce.graph_store_up`
-- `ce.event_ledger_lag`
+- `ce.dependency_up{dependency}`
+- `ce.graph_backend_up`
+- `ce.ledger_cursor_lag{source,binding}`
+- `ce.event_ledger_up`
 
 ## Logging
 
-Use structured logs when configured. Every request or daemon action should carry
-the active pot id, request id, daemon profile (`local` or `cloud`), and the graph
-backend `name` where safe. Logs should name the service boundary:
-`daemon`, `pot_management`, `graph_service`, `graph_backend`, `skill_manager`,
-`scanner`, `snapshot`, `event_ledger`, or `managed_adapter`.
+Every request, daemon action, or ledger action should carry:
 
-Local logs should be easy to find from:
+- request id;
+- active pot id;
+- profile (`local` or `managed`);
+- ledger binding (`none`, `managed`, or `self_hosted`) when relevant;
+- service boundary (`daemon`, `pot_management`, `graph_service`,
+  `graph_backend`, `skill_manager`, `scanner`, `managed_api`,
+  `event_ledger`);
+- backend name when safe.
+
+Local logs must be discoverable from:
 
 ```bash
 potpie daemon logs
@@ -121,30 +119,37 @@ potpie doctor
 
 ## Readiness
 
-Local readiness should check:
+Local readiness checks:
 
-- daemon process and version
-- local auth/IPC
-- Pot Management Service
-- active pot registry and local state DB/migrations
-- Graph Service and the active graph backend (`name`, `capabilities`)
-- semantic search readiness (vector index + embedder)
-- registered readers and scanners
-- Skill Manager: catalog reachability, installed vs recommended skills per harness
+- daemon process and version;
+- local auth/IPC;
+- local state DB and migrations;
+- active pot;
+- registered sources;
+- Graph Service;
+- active GraphBackend name/capabilities;
+- semantic index and embedder;
+- scanner registry;
+- Skill Manager catalog and installed-vs-recommended skills.
+- optional Event Ledger binding, auth, source cursors, and cursor lag.
 
-Managed readiness should check:
+Managed readiness adds:
 
-- API process
-- auth/policy dependencies
-- Managed Pot Management Service
-- Managed Graph Service
-- hosted graph store
-- hosted vector store and embedder
-- operational DB
-- queue/worker dependencies
-- event ledger
-- configured source connectors
-- Managed Skill Manager: catalog and cloud skill-sync readiness
+- managed API server hosting Pot Management, Graph Service, and Skill Manager;
+- auth/policy dependencies;
+- hosted graph/search profile;
+- operational DB;
+- queue/worker dependencies;
+- cloud skill-sync readiness.
 
-Liveness and readiness should stay separate. A running daemon/API can be live
-while graph storage is not ready.
+Event Ledger readiness is separate:
+
+- ledger API;
+- ledger store;
+- connector/webhook health;
+- configured source connectors;
+- per-source cursor/write lag;
+- auth to third-party providers.
+
+Liveness and readiness are separate. A daemon can be live while graph storage or
+semantic search is not ready.
