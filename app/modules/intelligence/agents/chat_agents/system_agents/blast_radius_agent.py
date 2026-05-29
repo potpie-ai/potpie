@@ -2,7 +2,7 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
     AgentConfig,
     TaskConfig,
 )
-from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_deep_agent import PydanticDeepAgent
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.exceptions import UnsupportedProviderError
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -60,7 +60,7 @@ class BlastRadiusAgent(ChatAgent):
             raise UnsupportedProviderError(
                 f"Model '{self.llm_provider.chat_config.model}' does not support Pydantic-based agents."
             )
-        return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        return PydanticDeepAgent(self.llm_provider, agent_config, tools)
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         return await self._build_agent(ctx).run(ctx)

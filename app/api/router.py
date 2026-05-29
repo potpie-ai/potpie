@@ -42,7 +42,6 @@ from integrations.domain.integrations_schema import (
 )
 from adapters.inbound.http.api.v1.context.router import create_context_router
 from app.modules.context_graph.context_engine_http import (
-    POTPIE_CONTEXT_GRAPH_MUTATIONS,
     get_context_engine_container_for_api_key,
 )
 from app.modules.context_graph.context_pot_routes import (
@@ -310,8 +309,6 @@ _context_graph_v2_router = create_context_router(
     get_container=get_context_engine_container_for_api_key,
     get_db=get_db,
     get_db_optional=get_db,
-    mutation_handlers=POTPIE_CONTEXT_GRAPH_MUTATIONS,
-    enforce_pot_access=True,
 )
 router.include_router(
     _context_graph_v2_router,

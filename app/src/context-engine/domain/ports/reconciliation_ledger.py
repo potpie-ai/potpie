@@ -36,21 +36,6 @@ class ContextEventRow:
 
 
 @dataclass(slots=True)
-class EpisodeStepRow:
-    id: str
-    pot_id: str
-    event_id: str
-    sequence: int
-    step_kind: str
-    step_json: dict[str, Any]
-    status: str
-    attempt_count: int
-    applied_at: datetime | None
-    error: str | None
-    run_id: str | None
-
-
-@dataclass(slots=True)
 class ReconciliationRunRow:
     id: str
     event_id: str
@@ -152,9 +137,6 @@ class ReconciliationLedgerPort(Protocol):
     def mark_event_queued(self, event_id: str) -> None:
         """Transition ``received`` → ``queued`` (async ingestion)."""
 
-    def mark_event_episodes_queued(self, event_id: str) -> None:
-        """Planner finished persisting steps; apply workers will run."""
-
     def set_event_job_metadata(
         self,
         event_id: str,
@@ -164,40 +146,11 @@ class ReconciliationLedgerPort(Protocol):
     ) -> None:
         """Attach broker / correlation ids after enqueue."""
 
-    def replace_episode_steps_for_event(
-        self,
-        pot_id: str,
-        event_id: str,
-        run_id: str | None,
-        steps: list[tuple[int, str, dict[str, Any]]],
-    ) -> None:
-        """Replace all steps for an event: ``(sequence, step_kind, step_json)``."""
-
-    def list_episode_steps(self, event_id: str) -> list[EpisodeStepRow]: ...
-
-    def get_episode_step(
-        self, event_id: str, sequence: int
-    ) -> EpisodeStepRow | None: ...
-
-    def max_applied_sequence(self, event_id: str) -> int | None:
-        """Highest ``sequence`` with status ``applied``, or ``None`` if none."""
-
-    def update_episode_step_status(
-        self,
-        event_id: str,
-        sequence: int,
-        *,
-        status: str,
-        error: str | None = None,
-        increment_attempt: bool = False,
-    ) -> None: ...
-
     def summarize_pot_reconciliation(
         self,
         pot_id: str,
         *,
         recent_failure_limit: int = 5,
-        stuck_step_limit: int = 5,
     ) -> ReconciliationLedgerHealth:
-        """Per-pot reconciliation run + apply step health (for ``/status``)."""
+        """Per-pot reconciliation run health (for ``/status``)."""
         ...

@@ -45,9 +45,15 @@ query IssueDetail($id: String!) {
     title
     description
     url
+    priority
     createdAt
     updatedAt
-    state { name }
+    completedAt
+    canceledAt
+    state { id name type }
+    team { id name }
+    project { id name }
+    creator { id name email }
     assignee { id name email }
     labels(first: 50) {
       nodes { id name }

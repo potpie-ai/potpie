@@ -2,7 +2,7 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
     AgentConfig,
     TaskConfig,
 )
-from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_deep_agent import PydanticDeepAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
     PydanticMultiAgent,
     AgentType as MultiAgentType,
@@ -128,13 +128,13 @@ class DebugAgent(ChatAgent):
                     tools_provider=self.tools_provider,
                 )
             else:
-                logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")
-                return PydanticRagAgent(self.llm_provider, agent_config, tools)
+                logger.info("❌ Multi-agent disabled by config, using PydanticDeepAgent")
+                return PydanticDeepAgent(self.llm_provider, agent_config, tools)
         else:
             logger.error(
-                "❌ Model does not support Pydantic - using fallback PydanticRagAgent"
+                "❌ Model does not support Pydantic - using fallback PydanticDeepAgent"
             )
-            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+            return PydanticDeepAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:

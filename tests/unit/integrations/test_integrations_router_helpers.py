@@ -15,7 +15,12 @@ from integrations.adapters.inbound.http.integrations_router import (
     get_body_summary,
     _sign_oauth_state,
     _verify_oauth_state,
+    _linear_oauth_user_message,
+    _is_dev_environment,
+    _resolve_oauth_state_secret,
+    OAuthStateSecretMissingError,
 )
+import integrations.adapters.inbound.http.integrations_router as router_module
 
 
 class TestSanitizeHeaders:
@@ -138,3 +143,108 @@ class TestVerifyOAuthState:
         ).hexdigest()
         token = f"{payload_b64}.{sig}"
         assert _verify_oauth_state(token) is None
+
+
+class TestLinearOAuthUserMessage:
+    """Verify we never surface raw exception details to the browser."""
+
+    def test_invalid_grant_maps_to_expired_code_message(self):
+        msg = _linear_oauth_user_message(Exception("invalid_grant: code already used"))
+        assert "expired" in msg.lower() or "again" in msg.lower()
+        assert "invalid_grant" not in msg
+
+    def test_expired_text_maps_to_expired_code_message(self):
+        msg = _linear_oauth_user_message(Exception("The code has Expired (age: 700s)"))
+        assert "expired" in msg.lower() or "again" in msg.lower()
+        assert "age:" not in msg
+
+    def test_unknown_error_does_not_leak_message(self):
+        # Simulate the exact shape that leaked before: psycopg2 unique violation.
+        leaky = Exception(
+            "(psycopg2.errors.UniqueViolation) duplicate key value violates "
+            "unique constraint \"ix_integrations_unique_identifier\""
+        )
+        msg = _linear_oauth_user_message(leaky)
+        assert "psycopg2" not in msg
+        assert "UniqueViolation" not in msg
+        assert "constraint" not in msg
+        assert "try again" in msg.lower()
+
+    def test_sqlalchemy_internals_not_leaked(self):
+        leaky = Exception("(sqlalchemy.exc.IntegrityError) ... SQL: INSERT INTO ...")
+        msg = _linear_oauth_user_message(leaky)
+        assert "INSERT" not in msg
+        assert "sqlalchemy" not in msg.lower()
+        assert "sql" not in msg.lower()
+
+    def test_redirect_uri_mismatch(self):
+        msg = _linear_oauth_user_message(Exception("redirect_uri does not match"))
+        assert "redirect" in msg.lower()
+
+
+class TestOAuthStateSecretGate:
+    """Verify the dev/non-dev gating on OAUTH_STATE_SECRET."""
+
+    def setup_method(self):
+        # Reset the once-per-process warning flag between tests so the
+        # logger.warning expectation is reproducible.
+        router_module._oauth_state_secret_warning_emitted = False
+
+    @patch("integrations.adapters.inbound.http.integrations_router.Config")
+    def test_dev_env_with_no_secret_falls_back(self, mock_config):
+        mock_config.return_value.side_effect = lambda key, default="": {
+            "OAUTH_STATE_SECRET": "",
+            "ENV": "development",
+            "ENVIRONMENT": "",
+        }.get(key, default)
+        assert _resolve_oauth_state_secret() is None
+        # Sign returns raw state in dev fallback.
+        assert _sign_oauth_state("user-1") == "user-1"
+        # Verify is symmetric.
+        assert _verify_oauth_state("user-1") == "user-1"
+
+    @patch("integrations.adapters.inbound.http.integrations_router.Config")
+    def test_production_with_no_secret_refuses(self, mock_config):
+        mock_config.return_value.side_effect = lambda key, default="": {
+            "OAUTH_STATE_SECRET": "",
+            "ENV": "production",
+        }.get(key, default)
+        with pytest.raises(OAuthStateSecretMissingError):
+            _resolve_oauth_state_secret()
+        with pytest.raises(OAuthStateSecretMissingError):
+            _sign_oauth_state("user-1")
+        with pytest.raises(OAuthStateSecretMissingError):
+            _verify_oauth_state("anything")
+
+    @patch("integrations.adapters.inbound.http.integrations_router.Config")
+    def test_staging_with_no_secret_refuses(self, mock_config):
+        mock_config.return_value.side_effect = lambda key, default="": {
+            "OAUTH_STATE_SECRET": "",
+            "ENV": "staging",
+        }.get(key, default)
+        with pytest.raises(OAuthStateSecretMissingError):
+            _resolve_oauth_state_secret()
+
+    @patch("integrations.adapters.inbound.http.integrations_router.Config")
+    def test_production_with_secret_signs(self, mock_config):
+        mock_config.return_value.side_effect = lambda key, default="": {
+            "OAUTH_STATE_SECRET": "real-secret",
+            "ENV": "production",
+        }.get(key, default)
+        token = _sign_oauth_state("user-99")
+        assert token is not None and "." in token
+        assert _verify_oauth_state(token) == "user-99"
+
+    def test_is_dev_environment_signals(self):
+        with patch(
+            "integrations.adapters.inbound.http.integrations_router.Config"
+        ) as mock_config:
+            for env in ("development", "dev", "local", "test", "testing", "DEV"):
+                mock_config.return_value.side_effect = (
+                    lambda k, default="", _env=env: {"ENV": _env}.get(k, default)
+                )
+                assert _is_dev_environment(), f"expected dev for {env!r}"
+            mock_config.return_value.side_effect = lambda k, default="": {
+                "ENV": "production"
+            }.get(k, default)
+            assert not _is_dev_environment()

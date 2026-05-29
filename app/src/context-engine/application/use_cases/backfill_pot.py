@@ -1,136 +1,45 @@
-"""Backfill merged PRs for one pot (all attached repos, or one repo when specified)."""
+"""Backfill a pot by enumerating connector-listable artifacts and queuing them.
+
+After Phase 4 backfill is a thin enumerate-and-submit loop: the verb walks
+every registered connector that advertises ``list_capable=True`` and
+submits one ``IngestionSubmissionRequest`` per artifact through the
+standard async pipeline. The agent then handles each event during batch
+processing — the same path live webhooks take. There is no inline
+propose_plan / apply step; deterministic plans are produced by the
+agent's tool surface, not by the inbound submission.
+"""
 
 from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
-from application.services.pr_bundle import fetch_full_pr
-from application.use_cases.ingest_merged_pr import ingest_merged_pull_request
-from domain.ports.context_graph import ContextGraphPort
+from application.services.source_connector_registry import SourceConnectorRegistry
+from domain.ingestion_event_models import IngestionSubmissionRequest
+from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
 from domain.ports.ingestion_ledger import IngestionLedgerPort, ledger_scope_from_pot_repo
-from domain.ports.pot_resolution import PotResolutionPort, ResolvedPotRepo, resolve_write_repo
+from domain.ports.ingestion_submission import IngestionSubmissionService
+from domain.ports.pot_resolution import PotResolutionPort, resolve_write_repo
 from domain.ports.settings import ContextEngineSettingsPort
-from domain.ports.source_control import SourceControlPort
+from domain.source_connector import ConnectorScope
 
 logger = logging.getLogger(__name__)
-
-SOURCE_TYPE = "github"
-
-
-def _backfill_one_repo(
-    *,
-    settings: ContextEngineSettingsPort,
-    source: SourceControlPort,
-    ledger: IngestionLedgerPort,
-    context_graph: ContextGraphPort,
-    pot_id: str,
-    primary: ResolvedPotRepo,
-    rate_limit_sleep_s: float,
-) -> dict[str, Any]:
-    repo_name = primary.repo_name
-    scope = ledger_scope_from_pot_repo(primary)
-    sync = ledger.get_or_create_sync_state(scope, SOURCE_TYPE)
-    cursor = sync.last_synced_at
-    latest_merged_at: datetime | None = cursor
-    ledger.update_sync_state_running(scope, SOURCE_TYPE)
-
-    max_per_run = settings.backfill_max_prs_per_run()
-    ingested = 0
-    skipped = 0
-    failed = 0
-
-    try:
-        for pr in source.iter_closed_pulls(repo_name):
-            if ingested >= max_per_run:
-                break
-            if not pr.merged_at:
-                continue
-            if cursor is not None and pr.merged_at <= cursor:
-                skipped += 1
-                continue
-
-            source_id = f"pr_{pr.number}_merged"
-            try:
-                payload = fetch_full_pr(source, repo_name, pr.number)
-                result = ingest_merged_pull_request(
-                    ledger=ledger,
-                    context_graph=context_graph,
-                    scope=scope,
-                    repo_name=repo_name,
-                    pr_data=payload["pr_data"],
-                    commits=payload["commits"],
-                    review_threads=payload["review_threads"],
-                    linked_issues=payload["linked_issues"],
-                    issue_comments=payload["issue_comments"],
-                )
-
-                ledger.update_bridge_status(
-                    scope,
-                    SOURCE_TYPE,
-                    source_id,
-                    entity_key=result.pr_entity_key,
-                    bridge_result=None,
-                    error=None,
-                )
-                ingested += 1
-                latest_merged_at = pr.merged_at
-                time.sleep(rate_limit_sleep_s)
-            except Exception as exc:
-                failed += 1
-                ledger.update_bridge_status(
-                    scope,
-                    SOURCE_TYPE,
-                    source_id,
-                    entity_key=f"github:pr:{repo_name}:{pr.number}",
-                    bridge_result=None,
-                    error=str(exc),
-                )
-                logger.exception(
-                    "Failed ingesting PR #%s for pot %s repo %s",
-                    pr.number,
-                    pot_id,
-                    repo_name,
-                )
-
-        ledger.update_sync_state_success(scope, SOURCE_TYPE, latest_merged_at)
-        return {
-            "status": "success",
-            "repo_name": repo_name,
-            "ingested": ingested,
-            "skipped": skipped,
-            "failed": failed,
-            "max_prs_per_run": max_per_run,
-            "last_synced_at": latest_merged_at.isoformat() if latest_merged_at else None,
-        }
-    except Exception as exc:
-        ledger.update_sync_state_error(scope, SOURCE_TYPE, str(exc))
-        logger.exception(
-            "Context graph backfill failed for pot %s repo %s", pot_id, repo_name
-        )
-        return {
-            "status": "error",
-            "repo_name": repo_name,
-            "error": str(exc),
-            "ingested": ingested,
-            "failed": failed,
-        }
 
 
 def backfill_pot_context(
     settings: ContextEngineSettingsPort,
     pots: PotResolutionPort,
-    source_for_repo: Callable[[str], SourceControlPort],
+    connectors: SourceConnectorRegistry,
     ledger: IngestionLedgerPort,
-    context_graph: ContextGraphPort,
+    ingestion: IngestionSubmissionService,
     pot_id: str,
     *,
     target_repo_name: str | None = None,
-    rate_limit_sleep_s: float = 0.5,
+    rate_limit_sleep_s: float = 0.1,
 ) -> dict[str, Any]:
+    """Walk list-capable connectors and submit each artifact as an event."""
     if not settings.is_enabled():
         return {
             "status": "skipped",
@@ -139,18 +48,14 @@ def backfill_pot_context(
         }
 
     resolved = pots.resolve_pot(pot_id)
-    if not resolved:
+    if not resolved or not resolved.repos:
         return {
             "status": "skipped",
             "pot_id": pot_id,
             "reason": "pot_not_found_or_missing_repo",
         }
-    if not resolved.repos:
-        return {
-            "status": "skipped",
-            "pot_id": pot_id,
-            "reason": "pot_not_found_or_missing_repo",
-        }
+    if not resolved.ready:
+        return {"status": "skipped", "pot_id": pot_id, "reason": "pot_not_ready"}
 
     if target_repo_name and target_repo_name.strip():
         selected = resolve_write_repo(resolved, repo_name=target_repo_name)
@@ -165,45 +70,42 @@ def backfill_pot_context(
     else:
         repos = list(resolved.repos)
 
-    if not resolved.ready:
-        return {
-            "status": "skipped",
-            "pot_id": pot_id,
-            "reason": "pot_not_ready",
-        }
-
+    max_per_run = settings.backfill_max_prs_per_run()
+    total_queued = 0
+    total_failed = 0
     repo_results: list[dict[str, Any]] = []
-    for rr in repos:
-        if not rr.ready:
+
+    for repo in repos:
+        if not repo.ready:
             repo_results.append(
                 {
                     "status": "skipped",
-                    "repo_name": rr.repo_name,
+                    "repo_name": repo.repo_name,
                     "reason": "repo_not_ready",
                 }
             )
             continue
-        src = source_for_repo(rr.repo_name)
-        one = _backfill_one_repo(
-            settings=settings,
-            source=src,
+        repo_summary = _enumerate_one_repo(
+            connectors=connectors,
             ledger=ledger,
-            context_graph=context_graph,
+            ingestion=ingestion,
             pot_id=pot_id,
-            primary=rr,
+            repo_name=repo.repo_name,
+            scope=ledger_scope_from_pot_repo(repo),
+            max_per_run=max_per_run,
             rate_limit_sleep_s=rate_limit_sleep_s,
         )
-        repo_results.append(one)
+        total_queued += int(repo_summary.get("queued", 0))
+        total_failed += int(repo_summary.get("failed", 0))
+        repo_results.append(repo_summary)
 
-    total_ingested = sum(int(r.get("ingested", 0)) for r in repo_results)
-    total_failed = sum(int(r.get("failed", 0)) for r in repo_results)
     any_err = any(r.get("status") == "error" for r in repo_results)
     out_status = "error" if any_err else "success"
     out: dict[str, Any] = {
         "status": out_status,
         "pot_id": pot_id,
         "repo_results": repo_results,
-        "ingested": total_ingested,
+        "queued": total_queued,
         "failed": total_failed,
     }
     if len(repo_results) == 1:
@@ -213,3 +115,100 @@ def backfill_pot_context(
         out["max_prs_per_run"] = r0.get("max_prs_per_run")
         out["last_synced_at"] = r0.get("last_synced_at")
     return out
+
+
+def _enumerate_one_repo(
+    *,
+    connectors: SourceConnectorRegistry,
+    ledger: IngestionLedgerPort,
+    ingestion: IngestionSubmissionService,
+    pot_id: str,
+    repo_name: str,
+    scope,
+    max_per_run: int,
+    rate_limit_sleep_s: float,
+) -> dict[str, Any]:
+    queued = 0
+    skipped = 0
+    failed = 0
+    last_synced_at: datetime | None = None
+
+    for connector in connectors.all():
+        sync_capable = any(cap.list_capable for cap in connector.capabilities())
+        if not sync_capable:
+            continue
+
+        sync_state = ledger.get_or_create_sync_state(scope, connector.kind())
+        cursor = sync_state.last_synced_at
+        ledger.update_sync_state_running(scope, connector.kind())
+        try:
+            connector_scope = ConnectorScope(
+                pot_id=pot_id,
+                scope={"repo_name": repo_name},
+            )
+            for ref in connector.list_artifacts(connector_scope):
+                if queued >= max_per_run:
+                    break
+                source_id = ref.external_id and f"pr_{ref.external_id}_merged" or ref.ref
+                if (
+                    cursor is not None
+                    and ref.last_seen_at
+                    and ref.last_seen_at <= cursor.isoformat()
+                ):
+                    skipped += 1
+                    continue
+                req = IngestionSubmissionRequest(
+                    pot_id=pot_id,
+                    ingestion_kind=INGESTION_KIND_AGENT_RECONCILIATION,
+                    source_channel="backfill",
+                    source_system=ref.source_system or connector.kind(),
+                    event_type=ref.source_type or "artifact",
+                    action="backfill",
+                    source_id=source_id,
+                    repo_name=repo_name,
+                    payload={
+                        "ref": ref.ref,
+                        "external_id": ref.external_id,
+                        "repo_name": repo_name,
+                        "pr_number": int(ref.external_id)
+                        if (ref.external_id or "").isdigit()
+                        else None,
+                    },
+                )
+                try:
+                    receipt = ingestion.submit(req)
+                    if receipt.duplicate:
+                        skipped += 1
+                    else:
+                        queued += 1
+                        last_synced_at = datetime.now(timezone.utc)
+                        if rate_limit_sleep_s > 0:
+                            time.sleep(rate_limit_sleep_s)
+                except Exception as exc:
+                    failed += 1
+                    logger.exception(
+                        "backfill submit failed for connector=%s ref=%s: %s",
+                        connector.kind(),
+                        ref.ref,
+                        exc,
+                    )
+            ledger.update_sync_state_success(scope, connector.kind(), last_synced_at)
+        except Exception as exc:
+            ledger.update_sync_state_error(scope, connector.kind(), str(exc))
+            logger.exception(
+                "Connector backfill failed for connector=%s pot=%s repo=%s",
+                connector.kind(),
+                pot_id,
+                repo_name,
+            )
+
+    out_status = "error" if failed and not queued else "success"
+    return {
+        "status": out_status,
+        "repo_name": repo_name,
+        "queued": queued,
+        "skipped": skipped,
+        "failed": failed,
+        "max_prs_per_run": max_per_run,
+        "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,
+    }

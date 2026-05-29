@@ -62,8 +62,20 @@ def strict_extraction_enabled() -> bool:
 
 
 def ontology_soft_fail_enabled() -> bool:
-    """When true, unknown labels / edge types / invalid lifecycle coerce instead of rejecting."""
-    return _truthy(os.getenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL"), False)
+    """Coerce LLM-extracted labels / edge types / lifecycle values instead of rejecting (default: on).
+
+    The reconciliation agent is an LLM whose output drifts in small ways from the
+    canonical ontology (e.g. ``status='active'`` for a Decision, or an edge type
+    rendered as ``AUTHORED_BY`` instead of ``AUTHORED``). Hard-rejecting the batch
+    causes large, observable HTTP 500 storms because *every* extracted event
+    gets dropped. We let the downgrade machinery normalize what it can, record
+    what it changed, and surface that on the QualityIssue stream — so callers
+    still see the drift but the graph keeps moving forward.
+
+    Set ``CONTEXT_ENGINE_ONTOLOGY_STRICT=1`` to force the legacy hard-fail
+    behaviour (useful for tests / golden fixtures that want byte-exact plans).
+    """
+    return _truthy(os.getenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL"), True)
 
 
 def ontology_strict_enabled() -> bool:

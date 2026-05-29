@@ -14,7 +14,6 @@ from domain.actor import Actor
 # --- Public lifecycle (stable API / dashboard) ---
 
 IngestionEventStatus = Literal["queued", "processing", "done", "error"]
-IngestionStepStatus = Literal["queued", "processing", "done", "error"]
 
 # --- Internal observability (operators; may evolve independently of public status) ---
 
@@ -71,49 +70,6 @@ class IngestionEvent:
     """Stored ``context_events.status`` before canonical mapping (legacy pipeline strings)."""
     actor: Actor | None = None
     """Principal that submitted the event (user + surface + client)."""
-
-
-@dataclass(frozen=True, slots=True)
-class IngestionPlan:
-    """In-memory planner bundle (durable JSON is stored on ``context_reconciliation_runs.plan_json``)."""
-
-    plan_id: str
-    event_id: str
-    planner_type: str
-    version: int
-    summary: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class EpisodeStep:
-    """One ordered execution unit derived from a plan."""
-
-    step_id: str
-    event_id: str
-    pot_id: str
-    sequence: int
-    kind: str
-    status: IngestionStepStatus
-    input: dict[str, Any]
-    attempt_count: int
-    result: dict[str, Any] | None
-    error: str | None
-    queued_at: datetime | None
-    started_at: datetime | None
-    completed_at: datetime | None
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionResult:
-    """Deterministic output of a single step executor."""
-
-    step_id: str
-    success: bool
-    episode_ref: str | None
-    """Graphiti / episodic reference when applicable."""
-    structural_effects: dict[str, Any]
-    """Summary counts or ids for structural graph writes."""
-    error: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,22 +155,6 @@ class EventListPage:
 
     items: tuple[IngestionEvent, ...]
     next_cursor: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class StepClaimResult:
-    """Result of claiming the next executable step for a pot."""
-
-    step: EpisodeStep | None
-    """None if no queued work or lost race to another worker."""
-
-
-@dataclass(frozen=True, slots=True)
-class PlanWithSteps:
-    """Planner output with ordered step definitions (steps persisted as ``context_episode_steps``)."""
-
-    plan: IngestionPlan
-    steps: tuple[EpisodeStep, ...]
 
 
 @dataclass(frozen=True, slots=True)

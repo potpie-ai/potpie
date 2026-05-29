@@ -57,7 +57,9 @@ async def test_classify_modified_edges_dry_run_migration_row(
     assert out["ok"] is True
     assert out["examined"] == 1
     assert out["would_update"] == 1
-    assert out["samples"][0]["new_name"] == "MIGRATED_TO"
+    # v2 collapses MIGRATED_TO / PLANNED / DELIVERED / DEPRECATED into a
+    # single LIFECYCLE_TRANSITION edge with verb / lifecycle_status on edge props.
+    assert out["samples"][0]["new_name"] == "LIFECYCLE_TRANSITION"
 
 
 @pytest.mark.asyncio

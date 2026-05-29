@@ -23,11 +23,9 @@ from app.modules.context_graph.context_graph_pot_repository_model import (
 from app.modules.context_graph.context_graph_pot_source_model import (
     ContextGraphPotSource,
 )
-from adapters.outbound.source_resolvers import (
-    CompositeSourceResolver,
-    DocumentationUriResolver,
-    GitHubPullRequestResolver,
-)
+from adapters.outbound.connectors.github import GitHubConnector
+from adapters.outbound.connectors.linear.connector import LinearConnector
+from application.services.source_connector_registry import SourceConnectorRegistry
 from bootstrap.container import ContextEngineContainer, build_container
 from domain.context_status import StatusSource
 from domain.source_references import SourceReferenceRecord
@@ -371,21 +369,171 @@ def _resolve_repo_for_pot(db: Session) -> "callable":
     return _resolver
 
 
-def _build_source_resolver(db: Session, source_for_repo):
-    """Compose the default host source-resolver chain.
+def _build_connector_registry(db: Session, source_for_repo) -> SourceConnectorRegistry:
+    """Compose the default host connector registry.
 
-    ``GitHubPullRequestResolver`` covers ``github:pr:*`` and legacy ``change``
-    refs that embed PR numbers; ``DocumentationUriResolver`` covers docs
-    refs with a stored summary/title (no live fetch by default). Adding a
-    ``content_fetcher`` here later enables live doc snippets.
+    Phase 2 replaced the standalone ``CompositeSourceResolver`` chain with a
+    :class:`SourceConnectorRegistry`. The GitHub connector wraps the same
+    ``GitHubPullRequestResolver`` internally and resolves a pot's primary
+    GitHub repo via the closure returned by :func:`_resolve_repo_for_pot`
+    (which also honours ``resolver_hint['repo_name']`` for multi-repo pots).
+
+    The Linear connector resolves its access token per call via
+    :class:`ContextEngineLinearFetcher`, which walks
+    ``pot_id → project_sources → integrations`` and decrypts the stored
+    OAuth token; this keeps the connector multi-tenant without coupling
+    it to any single workspace.
     """
-    return CompositeSourceResolver(
-        children=[
-            GitHubPullRequestResolver(
-                source_for_repo=source_for_repo,
-                repo_resolver=_resolve_repo_for_pot(db),
-            ),
-            DocumentationUriResolver(),
+    from integrations.adapters.outbound.linear.context_engine_fetcher import (
+        ContextEngineLinearFetcher,
+    )
+
+    registry = SourceConnectorRegistry()
+    registry.register(
+        GitHubConnector(
+            source_for_repo=source_for_repo,
+            repo_resolver=_resolve_repo_for_pot(db),
+            webhook_secret=(os.getenv("GITHUB_WEBHOOK_SECRET") or "").strip() or None,
+        )
+    )
+    registry.register(
+        LinearConnector(fetcher=ContextEngineLinearFetcher(db))
+    )
+    return registry
+
+
+from typing import Callable, Optional, Tuple
+
+PotTokenResolver = Callable[
+    [Optional[str], Optional[str]],
+    Tuple[Optional[str], Optional[str]],
+]
+"""``(user_id, repo_name) -> (token, kind)`` — see :func:`_default_pot_token_resolver`."""
+
+
+def _default_pot_token_resolver(user_id: str | None, repo_name: str | None):
+    """Default chain: contextvar → GitHub App → user OAuth → env.
+
+    Returns ``(token, kind)`` so callers / telemetry can tell which branch
+    produced the token. Wraps :func:`_resolve_auth` so the existing chain
+    (which already prefers App-installation tokens, surviving the user
+    leaving the pot) stays the source of truth.
+    """
+    from app.modules.intelligence.tools.sandbox.client import _resolve_auth
+
+    resolved = _resolve_auth(user_id, repo_name)
+    return resolved.token, resolved.kind
+
+
+_POT_TOKEN_RESOLVER = _default_pot_token_resolver
+
+
+def set_pot_token_resolver(resolver) -> None:
+    """Override the per-attachment token resolver process-wide.
+
+    Lets alternate hosts (tests, on-prem deployments without GitHub-App
+    install) plug in their own resolution. Pass ``None`` to restore the
+    default chain.
+    """
+    global _POT_TOKEN_RESOLVER
+    _POT_TOKEN_RESOLVER = resolver or _default_pot_token_resolver
+
+
+def _build_pot_sandbox_resolver(db: Session):
+    """Resolve ``pot_id -> PotSandboxConfig`` (every repo attached to the pot).
+
+    Closes over the request-scoped DB session. Returns ``None`` when the pot
+    has no attached repos — ``build_sandbox_tools`` then silently skips
+    sandbox tools for that batch.
+
+    Tenant choice: the first attacher (oldest ``created_at`` row) owns the
+    pot's sandbox container, so per-pot Daytona/Docker state collapses into
+    one ``(user_id, pot_id)`` key regardless of who attached subsequent
+    repos. Per-repo clone tokens flow through the pluggable
+    :func:`set_pot_token_resolver` so GitHub-App installation tokens win
+    over user OAuth (and the choice is observable in telemetry).
+    """
+    from adapters.outbound.agent_tools.sandbox import (
+        PotSandboxConfig,
+        RepoAttachment,
+    )
+
+    def _resolver(pot_id: str):
+        rows = (
+            db.query(ContextGraphPotRepository)
+            .filter(ContextGraphPotRepository.pot_id == pot_id)
+            .order_by(ContextGraphPotRepository.created_at.asc())
+            .all()
+        )
+        if not rows:
+            return None
+        first = rows[0]
+        repos: list[RepoAttachment] = []
+        for r in rows:
+            full = f"{r.owner}/{r.repo}"
+            try:
+                token, kind = _POT_TOKEN_RESOLVER(r.added_by_user_id, full)
+            except Exception:
+                token, kind = None, "error"
+            repos.append(
+                RepoAttachment(
+                    owner=r.owner,
+                    repo=r.repo,
+                    default_branch=r.default_branch or "main",
+                    repo_url=r.remote_url,
+                    auth_token=token,
+                    auth_kind=kind,
+                )
+            )
+        return PotSandboxConfig(
+            user_id=first.added_by_user_id,
+            pot_id=pot_id,
+            provider_host=first.provider_host,
+            repos=repos,
+        )
+
+    return _resolver
+
+
+async def _sandbox_client_factory():
+    """Async wrapper that hands the agent the process-wide ``SandboxClient``."""
+    from app.modules.intelligence.tools.sandbox.client import get_sandbox_client
+
+    return get_sandbox_client()
+
+
+def _sandbox_tools_disabled() -> bool:
+    return (os.getenv("CONTEXT_ENGINE_DISABLE_SANDBOX_TOOLS") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _attach_sandbox_tools(agent, db: Session) -> None:
+    """Best-effort: wire the sandbox tool builder onto the reconciliation agent.
+
+    Soft-fails if the context-engine package isn't importable or the host has
+    explicitly disabled sandbox tools — the agent still runs with its graph and
+    GitHub tools intact.
+    """
+    if agent is None or _sandbox_tools_disabled():
+        return
+    try:
+        from adapters.outbound.agent_tools.sandbox import build_sandbox_tools
+    except Exception:
+        return
+    attach = getattr(agent, "add_extra_tools", None)
+    if attach is None:
+        return
+    resolver = _build_pot_sandbox_resolver(db)
+    attach(
+        [
+            build_sandbox_tools(
+                client_factory=_sandbox_client_factory,
+                pot_resolver=resolver,
+            )
         ]
     )
 
@@ -395,18 +543,16 @@ def build_container_for_session(db: Session) -> ContextEngineContainer:
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         return CodeProviderSourceControl(provider)
 
+    agent = try_pydantic_deep_reconciliation_agent()
+    _attach_sandbox_tools(agent, db)
     container = build_container(
         settings=PotpieContextEngineSettings(),
         pots=SqlalchemyPotResolution(db),
-        source_for_repo=source_for_repo,
-        reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
+        connectors=_build_connector_registry(db, source_for_repo),
+        reconciliation_agent=agent,
         jobs=get_context_graph_job_queue(),
     )
     container.pot_source_listing = SqlalchemyPotSourceListing(db)
-    resolver = _build_source_resolver(db, source_for_repo)
-    container.source_resolver = resolver
-    if container.resolution_service is not None:
-        container.resolution_service.set_source_resolver(resolver)
     return container
 
 
@@ -415,16 +561,14 @@ def build_container_for_user_session(db: Session, user_id: str) -> ContextEngine
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         return CodeProviderSourceControl(provider)
 
+    agent = try_pydantic_deep_reconciliation_agent()
+    _attach_sandbox_tools(agent, db)
     container = build_container(
         settings=PotpieContextEngineSettings(),
         pots=UserScopedContextGraphPotResolution(db, user_id),
-        source_for_repo=source_for_repo,
-        reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
+        connectors=_build_connector_registry(db, source_for_repo),
+        reconciliation_agent=agent,
         jobs=get_context_graph_job_queue(),
     )
     container.pot_source_listing = SqlalchemyPotSourceListing(db)
-    resolver = _build_source_resolver(db, source_for_repo)
-    container.source_resolver = resolver
-    if container.resolution_service is not None:
-        container.resolution_service.set_source_resolver(resolver)
     return container

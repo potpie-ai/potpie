@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from sandbox.domain.errors import (
     GitPlatformNotConfigured,
     RuntimeNotFound,
@@ -156,9 +158,14 @@ class SandboxService:
             return workspace
 
     async def get_workspace(self, workspace_id: str) -> Workspace:
+        # The store is authoritative: ``get_or_create_workspace`` saves
+        # every workspace before returning. Workspace providers keep
+        # their own in-memory maps (cleared on restart), so a
+        # provider-side fallback only papered over hot paths within one
+        # process and was a dead branch across worker restarts. If a
+        # workspace genuinely isn't in the store it's gone — callers
+        # should re-acquire via ``get_or_create_workspace``.
         workspace = await self._store.get_workspace(workspace_id)
-        if workspace is None:
-            workspace = await self._workspace_provider.get_workspace(workspace_id)
         if workspace is None:
             raise WorkspaceNotFound(f"Workspace not found: {workspace_id}")
         return workspace
@@ -172,8 +179,6 @@ class SandboxService:
         into a re-create rather than handling exceptions inline.
         """
         workspace = await self._store.get_workspace(workspace_id)
-        if workspace is None:
-            workspace = await self._workspace_provider.get_workspace(workspace_id)
         if workspace is None:
             return False
         if workspace.state is WorkspaceState.DELETED:
@@ -396,6 +401,72 @@ class SandboxService:
                     await self.destroy_runtime(runtime.id)
             await self._workspace_provider.delete_workspace(workspace)
             await self._store.delete_workspace(workspace_id)
+
+    async def destroy_pot_container(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        delete_repo_caches: bool = False,
+    ) -> dict[str, int]:
+        """Tear down every workspace + runtime for ``(user_id, project_id)``.
+
+        Walks the store rather than the provider's in-memory map so workers
+        that didn't create the workspace can still clean it up. After the
+        workspaces are gone, asks the workspace provider for a
+        ``destroy_project_sandbox`` hook — Daytona uses it to delete the
+        whole backend sandbox; Local / Docker no-op (their workspace deletes
+        already covered everything).
+
+        ``delete_repo_caches`` only runs when the caller has confirmed no
+        other pot still references the cache; the service does not enforce
+        that — it's a host concern (``ContextGraphPotRepository`` scan).
+        Returns a ``{workspaces, repo_caches}`` count for observability.
+        """
+        removed_workspaces = 0
+        for workspace in await self._store.list_workspaces():
+            req = workspace.request
+            if req.user_id != user_id or req.project_id != project_id:
+                continue
+            try:
+                await self.destroy_workspace(workspace.id)
+                removed_workspaces += 1
+            except Exception:  # noqa: BLE001
+                # Best-effort: missing backend rows shouldn't block the
+                # next workspace from being cleaned up.
+                continue
+
+        destroy_project: Any = getattr(
+            self._workspace_provider, "destroy_project_sandbox", None
+        )
+        if destroy_project is not None:
+            try:
+                await destroy_project(user_id=user_id, project_id=project_id)
+            except Exception:  # noqa: BLE001
+                # Backend may already be gone (archived out-of-band); the
+                # store-side cleanup above is what guarantees the model is
+                # consistent.
+                pass
+
+        removed_caches = 0
+        if delete_repo_caches and self._repo_cache_provider is not None:
+            for cache in await self._store.list_repo_caches():
+                # ``RepoCacheRequest.key`` doesn't include user_id; the
+                # safest filter is the persisted ``user_id`` field on the
+                # cache row when present. Skip caches that don't carry one.
+                cache_user = getattr(cache, "user_id", None)
+                if cache_user != user_id:
+                    continue
+                try:
+                    await self._store.delete_repo_cache(cache.id)
+                    removed_caches += 1
+                except Exception:  # noqa: BLE001
+                    continue
+
+        return {
+            "workspaces": removed_workspaces,
+            "repo_caches": removed_caches,
+        }
 
     async def _exec_unlocked(
         self, workspace_id: str, request: ExecRequest

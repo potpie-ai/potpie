@@ -5,6 +5,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from adapters.outbound.graphiti.context_graph import GraphitiContextGraphAdapter
+from adapters.outbound.readers import (
+    ChangeHistoryReader,
+    SemanticSearchReader,
+)
+from application.services.context_reader_registry import ContextReaderRegistry
 from bootstrap.container import ContextEngineContainer
 from domain.graph_query import (
     ContextGraphGoal,
@@ -18,14 +23,29 @@ from domain.graph_query import (
 )
 
 
+def _adapter_with(readers: ContextReaderRegistry, **kw) -> GraphitiContextGraphAdapter:
+    episodic = kw.pop("episodic", MagicMock())
+    if not hasattr(episodic, "enabled") or episodic.enabled is None:
+        episodic.enabled = True
+    structural = kw.pop("structural", MagicMock())
+    return GraphitiContextGraphAdapter(
+        episodic=episodic,
+        structural=structural,
+        readers=readers,
+        **kw,
+    )
+
+
 def test_context_graph_adapter_semantic_query_delegates_to_existing_search() -> None:
     episodic = MagicMock()
     episodic.enabled = True
     structural = MagicMock()
-    adapter = GraphitiContextGraphAdapter(episodic=episodic, structural=structural)
+    readers = ContextReaderRegistry()
+    readers.register(SemanticSearchReader(episodic=episodic, structural=structural))
+    adapter = _adapter_with(readers, episodic=episodic, structural=structural)
 
     with patch(
-        "adapters.outbound.graphiti.context_graph.search_pot_context",
+        "adapters.outbound.readers.semantic_search.search_pot_context",
         return_value=[{"uuid": "u1"}],
     ) as search:
         out = adapter.query(
@@ -46,11 +66,14 @@ def test_context_graph_adapter_semantic_query_delegates_to_existing_search() -> 
 
 def test_context_graph_adapter_timeline_query_delegates_change_history() -> None:
     episodic = MagicMock()
+    episodic.enabled = True
     structural = MagicMock()
-    adapter = GraphitiContextGraphAdapter(episodic=episodic, structural=structural)
+    readers = ContextReaderRegistry()
+    readers.register(ChangeHistoryReader(episodic=episodic, structural=structural))
+    adapter = _adapter_with(readers, episodic=episodic, structural=structural)
 
     with patch(
-        "adapters.outbound.graphiti.context_graph.get_change_history",
+        "adapters.outbound.readers.change_history.get_change_history",
         return_value=[{"pr_number": 1}],
     ) as history:
         out = adapter.query(
@@ -112,6 +135,7 @@ async def test_context_graph_adapter_sync_answer_query_rejects_running_loop() ->
     adapter = GraphitiContextGraphAdapter(
         episodic=MagicMock(),
         structural=MagicMock(),
+        readers=ContextReaderRegistry(),
         resolution_service=MagicMock(),
     )
 
@@ -132,7 +156,6 @@ def test_container_can_hold_unified_context_graph() -> None:
         episodic=MagicMock(),
         structural=MagicMock(),
         pots=MagicMock(),
-        source_for_repo=lambda _repo: MagicMock(),
         context_graph=graph,
     )
 

@@ -87,9 +87,15 @@ def build_evidence_plan(
     caps = caps or CapabilitySet()
     scope = _merge_scope(request, sig)
     timeout = max(500, min(request.effective_timeout_ms, 30_000))
-    includes = set(
-        includes_for_request(request.intent, request.include, request.exclude)
+    # Preserve caller-supplied include order — downstream ranking (e.g.
+    # ``priority_labels`` in the project-map Cypher) relies on the first
+    # include key being the caller's primary intent. ``set(...)`` here drops
+    # ordering on purpose for membership checks; ``ordered_includes`` keeps
+    # the original order for per-family ordered passes.
+    ordered_includes_list = includes_for_request(
+        request.intent, request.include, request.exclude
     )
+    includes = set(ordered_includes_list)
     excludes = set(normalize_context_values(request.exclude))
 
     if request.mode == "deep":
@@ -131,8 +137,14 @@ def build_evidence_plan(
     ):
         plan.run_discussions = True
 
-    project_map_includes = sorted(includes & PROJECT_MAP_INCLUDES)
-    debugging_memory_includes = sorted(includes & DEBUGGING_MEMORY_INCLUDES)
+    # Preserve caller-supplied order (deduped) so the project-map and
+    # debugging-memory readers can rank canonical labels by request priority.
+    project_map_includes = [
+        inc for inc in ordered_includes_list if inc in PROJECT_MAP_INCLUDES
+    ]
+    debugging_memory_includes = [
+        inc for inc in ordered_includes_list if inc in DEBUGGING_MEMORY_INCLUDES
+    ]
     wants_changes = bool({"recent_changes", "prior_fixes"} & includes)
     wants_decisions = "decisions" in includes
     wants_ownership = "owners" in includes

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 
 from mcp.server.fastmcp import FastMCP
 
@@ -14,7 +14,6 @@ from adapters.inbound.cli.potpie_api_config import (
 )
 from adapters.inbound.mcp.project_access import assert_mcp_pot_allowed
 from adapters.outbound.http.potpie_context_api_client import (
-    IngestRejectedError,
     PotpieContextApiClient,
     PotpieContextApiError,
 )
@@ -124,69 +123,6 @@ def context_search(
         }
     except PotpieContextApiError as e:
         return _api_err(e)
-
-
-def context_ingest_episode(
-    pot_id: str,
-    name: str,
-    episode_body: str,
-    source_description: str,
-    sync: bool = False,
-    reference_time: str | None = None,
-    idempotency_key: str | None = None,
-) -> dict:
-    """Ingest a raw episode (Potpie POST /api/v2/context/ingest)."""
-    assert_mcp_pot_allowed(pot_id)
-    if reference_time and reference_time.strip():
-        try:
-            s = reference_time.strip()
-            if s.endswith("Z"):
-                s = s[:-1] + "+00:00"
-            ref = datetime.fromisoformat(s)
-        except ValueError as exc:
-            return {"ok": False, "error": "invalid_reference_time", "detail": str(exc)}
-    else:
-        ref = datetime.now(timezone.utc)
-
-    body: dict = {
-        "pot_id": pot_id,
-        "name": name,
-        "episode_body": episode_body,
-        "source_description": source_description,
-        "reference_time": ref,
-    }
-    if idempotency_key and idempotency_key.strip():
-        body["idempotency_key"] = idempotency_key.strip()
-    try:
-        status_code, data = _client().ingest(body, sync=sync)
-    except IngestRejectedError as exc:
-        out = {"ok": False, **exc.body}
-        if out.get("status") is None:
-            out["status"] = "reconciliation_rejected"
-        return out
-    except PotpieContextApiError as exc:
-        return {
-            "ok": False,
-            "error": "api_error",
-            "status_code": exc.status_code,
-            "detail": exc.detail,
-        }
-
-    if status_code == 202:
-        return {
-            "ok": True,
-            "status": "queued",
-            "episode_uuid": data.get("episode_uuid"),
-            "event_id": data.get("event_id"),
-            "job_id": data.get("job_id"),
-        }
-    return {
-        "ok": True,
-        "status": "applied",
-        "episode_uuid": data.get("episode_uuid"),
-        "event_id": data.get("event_id"),
-        "job_id": data.get("job_id"),
-    }
 
 
 @mcp.tool()

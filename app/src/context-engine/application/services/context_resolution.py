@@ -35,7 +35,7 @@ from domain.graph_quality import (
 from domain.intelligence_policy import EvidencePlan, build_evidence_plan
 from domain.intelligence_signals import extract_signals
 from domain.ports.intelligence_provider import IntelligenceProvider
-from domain.ports.source_resolver import SourceResolverPort
+from domain.ports.telemetry import DriftSnapshot, NoOpTelemetry, TelemetryPort
 from domain.source_references import (
     assess_freshness,
     dedupe_source_references,
@@ -146,24 +146,32 @@ def _compute_coverage(
 
 
 def _infer_source_system(kind: str | None, url: str | None) -> str | None:
-    """Pick a ``source_system`` so the composite resolver can dispatch.
+    """Pick a ``source_system`` so the connector registry can dispatch.
 
-    Phase 5 routes diff/snippet detail through ``artifact={kind:'pr'}`` plus
-    ``source_policy=summary``/``snippets``. For that to work the artifact ref
-    must carry a ``source_system`` the resolver chain matches on. PR-shaped
-    artifacts default to GitHub today; other kinds inherit only if their URL
-    obviously belongs to a known host.
+    The application layer no longer hard-codes which provider serves which
+    artifact kind — that is the connector's responsibility. We only look
+    at the URL host to recover a source_system when one wasn't already
+    populated upstream; otherwise we return ``None`` and let the registry
+    surface ``unsupported_source_type`` fallbacks for the agent to handle.
     """
-    k = (kind or "").lower()
-    if k in {"pr", "pull_request", "pullrequest"}:
-        return "github"
-    if url:
-        host = url.lower()
-        if "github.com" in host:
-            return "github"
-        if "gitlab" in host:
-            return "gitlab"
-    return None
+    del kind  # Kind alone isn't enough to pick a source post-Phase 2.
+    if not url:
+        return None
+    try:
+        from urllib.parse import urlparse
+
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return None
+    if not host:
+        return None
+    # Strip leading "www." and any subdomain prefix so "github.com" and
+    # "linear.app" land on their canonical names. Connectors register with
+    # the second-level label.
+    parts = host.split(".")
+    if len(parts) >= 2:
+        return parts[-2]
+    return host
 
 
 def _collect_source_references(
@@ -224,7 +232,10 @@ def _collect_source_references(
             ref_value = f"PR #{change.pr_number}"
         if not ref_value:
             continue
-        change_system = "github" if change.pr_number is not None else None
+        # Source-agnostic: ChangeRecord no longer carries provider-specific tags.
+        # Connectors stamp source_system on entities at write time; the registry
+        # surfaces unsupported_source_type if a change ref can't be matched.
+        change_system: str | None = None
         refs.append(
             SourceReferenceRecord(
                 ref=source_ref_key("change", ref_value),
@@ -392,18 +403,27 @@ class ContextResolutionService:
         self,
         provider: IntelligenceProvider,
         *,
-        source_resolver: SourceResolverPort | None = None,
+        source_resolver: Any | None = None,
+        telemetry: TelemetryPort | None = None,
     ) -> None:
+        # Duck-typed: ``source_resolver`` only needs an async ``resolve(...)``
+        # method matching the :class:`SourceConnectorRegistry` shape. The
+        # registry is the canonical supplier and tests can pass a fake object
+        # with a single method.
         self._provider = provider
         self._source_resolver = source_resolver
+        self._telemetry: TelemetryPort = telemetry or NoOpTelemetry()
 
     @property
-    def source_resolver(self) -> SourceResolverPort | None:
+    def source_resolver(self) -> Any | None:
         return self._source_resolver
 
-    def set_source_resolver(self, resolver: SourceResolverPort | None) -> None:
+    def set_source_resolver(self, resolver: Any | None) -> None:
         """Late-bind a resolver (the host wires this after container build)."""
         self._source_resolver = resolver
+
+    def set_telemetry(self, telemetry: TelemetryPort | None) -> None:
+        self._telemetry = telemetry or NoOpTelemetry()
 
     async def _run_source_resolver(
         self,
@@ -794,4 +814,39 @@ class ContextResolutionService:
                     ),
                 }
             )
+        try:
+            self._emit_drift_snapshot(request.pot_id, bundle, len(open_cf))
+        except Exception:
+            logger.debug("telemetry: drift emission failed", exc_info=True)
         return bundle
+
+    def _emit_drift_snapshot(
+        self,
+        pot_id: str,
+        bundle: IntelligenceBundle,
+        open_conflicts_count: int,
+    ) -> None:
+        """Persist a per-pot drift signal aggregate (Phase 5 telemetry).
+
+        Pulls from the already-computed ``bundle.quality.metrics`` so we don't
+        recount; ``open_conflicts_count`` is taken post-fetch from the
+        provider's open-conflicts list.
+        """
+        m = bundle.quality.metrics
+        snapshot = DriftSnapshot(
+            pot_id=pot_id,
+            status=bundle.quality.status,
+            source_ref_count=int(m.get("source_ref_count", 0)),
+            stale_ref_count=int(m.get("stale_ref_count", 0)),
+            needs_verification_ref_count=int(
+                m.get("needs_verification_ref_count", 0)
+            ),
+            verification_failed_ref_count=int(
+                m.get("verification_failed_ref_count", 0)
+            ),
+            source_access_gap_count=int(m.get("source_access_gap_count", 0)),
+            missing_coverage_count=int(m.get("missing_coverage_count", 0)),
+            fallback_count=int(m.get("fallback_count", 0)),
+            open_conflicts_count=open_conflicts_count,
+        )
+        self._telemetry.record_drift(snapshot)

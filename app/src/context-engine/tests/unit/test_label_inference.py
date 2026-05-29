@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from application.use_cases.reconciliation_validation import validate_reconciliation_plan
+from application.services.reconciliation_validation import validate_reconciliation_plan
 from domain.canonical_label_inference import enrich_reconciliation_plan_entity_labels
 from domain.context_events import EventRef
 from domain.graph_mutations import EdgeUpsert, EntityUpsert

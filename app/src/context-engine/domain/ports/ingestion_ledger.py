@@ -1,12 +1,11 @@
-"""Postgres ledger: sync state, ingestion log, raw events (port)."""
+"""Sync-state ledger port: per-pot connector sync metadata + bulk reset."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional, Protocol
+from typing import Protocol
 
-from domain.ingestion import BridgeResult
 from domain.ports.pot_resolution import ResolvedPotRepo
 
 
@@ -22,18 +21,6 @@ class LedgerScope:
 
 
 @dataclass(slots=True)
-class IngestionLogRow:
-    pot_id: str
-    provider: str
-    provider_host: str
-    repo_name: str
-    source_type: str
-    source_id: str
-    graphiti_episode_uuid: str | None
-    entity_key: str | None
-
-
-@dataclass(slots=True)
 class SyncStateRow:
     pot_id: str
     provider: str
@@ -46,35 +33,6 @@ class SyncStateRow:
 
 
 class IngestionLedgerPort(Protocol):
-    def get_ingestion_log(
-        self,
-        scope: LedgerScope,
-        source_type: str,
-        source_id: str,
-    ) -> Optional[IngestionLogRow]:
-        ...
-
-    def try_append_ingestion_and_raw_event(
-        self,
-        scope: LedgerScope,
-        source_type: str,
-        source_id: str,
-        graphiti_episode_uuid: str | None,
-        payload: dict[str, Any],
-    ) -> bool:
-        """Insert merged-PR row into ``context_events`` (``github_merged_pr``). Return False if duplicate."""
-
-    def update_bridge_status(
-        self,
-        scope: LedgerScope,
-        source_type: str,
-        source_id: str,
-        entity_key: str,
-        bridge_result: BridgeResult | None,
-        error: str | None,
-    ) -> None:
-        ...
-
     def get_or_create_sync_state(self, scope: LedgerScope, source_type: str) -> SyncStateRow:
         ...
 
@@ -93,7 +51,7 @@ class IngestionLedgerPort(Protocol):
         ...
 
     def delete_all_for_pot(self, pot_id: str) -> int:
-        """Delete all ledger and raw-event rows for ``pot_id``. Returns rows removed."""
+        """Delete connector-sync ledger rows and sync state for ``pot_id``. Returns rows removed."""
         ...
 
 

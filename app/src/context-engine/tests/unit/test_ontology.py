@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from application.use_cases.reconciliation_validation import validate_reconciliation_plan
+from application.services.reconciliation_validation import validate_reconciliation_plan
 from domain.context_events import EventRef
 from domain.errors import ReconciliationPlanValidationError
 from domain.graph_mutations import EdgeUpsert, EntityUpsert
@@ -29,25 +29,57 @@ def test_allowed_lifecycle_statuses_export() -> None:
 
 
 def test_phase_one_catalog_contains_project_context_domains() -> None:
-    assert ONTOLOGY_VERSION == "2026-04-phase-7"
+    assert ONTOLOGY_VERSION == "2026-05-phase-9-extensibility"
     for label in (
+        # Scope
         "Pot",
         "Repository",
         "Service",
+        "Environment",
+        "Component",
+        "CodeAsset",
+        # Intent
+        "Initiative",
+        "Capability",
         "Feature",
-        "Functionality",
+        "Requirement",
+        "RoadmapItem",
+        "Risk",
+        "OpenQuestion",
+        # Norms
+        "Decision",
+        "Policy",
+        # Code / contracts / config
+        "APIContract",
+        "DataContract",
+        "DataStore",
+        "Dependency",
+        "FeatureFlag",
+        "ConfigVariable",
+        # Change pipeline
+        "PullRequest",
+        "Commit",
+        "Branch",
+        "Release",
         "Deployment",
+        "Migration",
+        "Issue",
+        # Reliability
         "Incident",
+        "Alert",
         "BugPattern",
         "Fix",
+        "Observation",
+        # Evidence
         "SourceReference",
-        "AgentInstruction",
-        "LocalWorkflow",
+        # People / agent / role
         "Agent",
+        "RoleAssignment",
+        # Local / hygiene
+        "LocalWorkflow",
         "QualityIssue",
         "MaintenanceJob",
         "MaterializedAccessPath",
-        "LegacyArtifact",
     ):
         assert label in ENTITY_TYPES
 
@@ -63,9 +95,38 @@ def test_phase_one_catalog_contains_project_context_domains() -> None:
         "FLAGS",
         "REPAIRS",
         "MATERIALIZES",
-        "RELATED_TO",
+        # v2 collapses the wildcard verb explosion to one edge.
+        "LIFECYCLE_TRANSITION",
+        # v2 additions
+        "PURSUES",
+        "BLOCKED_BY",
+        "GATED_BY",
+        "CONFIGURED_BY",
+        "ASSIGNED",
     ):
         assert edge_type in EDGE_TYPES
+
+
+def test_v2_legacy_labels_are_removed() -> None:
+    """v2 hard-removes Functionality, Constraint, Preference, AgentInstruction,
+    DiagnosticSignal, Interface, Integration, Role, Change, LegacyArtifact,
+    Episode, DeploymentTarget, DeploymentStrategy."""
+    removed = {
+        "Functionality",
+        "Constraint",
+        "Preference",
+        "AgentInstruction",
+        "DiagnosticSignal",
+        "Interface",
+        "Integration",
+        "Role",
+        "Change",
+        "LegacyArtifact",
+        "Episode",
+        "DeploymentTarget",
+        "DeploymentStrategy",
+    }
+    assert removed.isdisjoint(ENTITY_TYPES.keys())
 
 
 def test_phase_five_debugging_memory_edges_are_valid() -> None:
@@ -86,7 +147,7 @@ def test_phase_five_debugging_memory_edges_are_valid() -> None:
             ),
             EntityUpsert(
                 entity_key="signal:timeout",
-                labels=("Entity", "DiagnosticSignal"),
+                labels=("Entity", "Observation"),
                 properties={
                     "signal_type": "error_signature",
                     "summary": "Timeout while fetching repository metadata",
@@ -266,7 +327,12 @@ def test_temporal_subject_key_for_edge_chose_with_resolved_family() -> None:
     )
 
 
-def test_reconciliation_plan_validation_uses_ontology_boundary() -> None:
+def test_reconciliation_plan_validation_uses_ontology_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Force strict mode: bare ``Entity`` upserts without a canonical label
+    # would be silently coerced to ``Observation`` under default soft-fail.
+    monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_STRICT", "1")
     plan = ReconciliationPlan(
         event_ref=EventRef(event_id="e1", source_system="test", pot_id="p1"),
         summary="bad structural mutation",

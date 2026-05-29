@@ -17,23 +17,15 @@ class ContextGraphJobQueuePort(Protocol):
     def enqueue_backfill(
         self, pot_id: str, *, target_repo_name: str | None = None
     ) -> None:
-        """Enqueue full pot backfill (historical PR ingestion, etc.)."""
+        """Enqueue full pot backfill (connector enumerate-then-submit sweep)."""
 
-    def enqueue_ingest_pr(
-        self,
-        pot_id: str,
-        pr_number: int,
-        *,
-        is_live_bridge: bool = True,
-        repo_name: str | None = None,
-    ) -> None:
-        """Enqueue ingest for a single pull request."""
+    def enqueue_batch(self, batch_id: str) -> None:
+        """Enqueue processing of a single reconciliation batch by id.
 
-    def enqueue_ingestion_event(self, event_id: str, *, pot_id: str, kind: str) -> None:
-        """Run ingestion agent (or raw routing) for a persisted ``context_events`` row."""
-
-    def enqueue_episode_apply(self, pot_id: str, event_id: str, sequence: int) -> None:
-        """Apply one durable episode step (ordered per ``event_id`` / ``pot_id``)."""
+        Fired from ``admit_event`` on every successful event admission.
+        Redundant calls for an already-claimed batch are a no-op on the
+        worker side (``claim_batch_by_id`` returns ``None``).
+        """
 
 
 class NoOpContextGraphJobQueue:
@@ -44,18 +36,5 @@ class NoOpContextGraphJobQueue:
     ) -> None:
         return None
 
-    def enqueue_ingest_pr(
-        self,
-        pot_id: str,
-        pr_number: int,
-        *,
-        is_live_bridge: bool = True,
-        repo_name: str | None = None,
-    ) -> None:
-        return None
-
-    def enqueue_ingestion_event(self, event_id: str, *, pot_id: str, kind: str) -> None:
-        return None
-
-    def enqueue_episode_apply(self, pot_id: str, event_id: str, sequence: int) -> None:
+    def enqueue_batch(self, batch_id: str) -> None:
         return None
