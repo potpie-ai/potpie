@@ -398,7 +398,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             logger.debug(f"Context images: {len(context_images)}")
 
             for img_id, img_data in all_images.items():
-                logger.debug(f"Image {img_id}:", img_id=img_id)
+                logger.debug(f"Image {img_id}:")
                 logger.debug(f"  - Type: {img_data.get('context_type', 'unknown')}")
                 logger.debug(f"  - File name: {img_data.get('file_name', 'unknown')}")
                 logger.debug(f"  - File size: {img_data.get('file_size', 'unknown')}")
@@ -406,11 +406,11 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                 logger.debug(f"  - Has base64: {'base64' in img_data}")
                 if "base64" in img_data and isinstance(img_data["base64"], str):
                     base64_len = len(img_data["base64"])
-                    logger.debug(f"  - Base64 length: {base64_len}", base64_len=base64_len)
+                    logger.debug(f"  - Base64 length: {base64_len}")
 
         # Test vision model detection
         is_vision = self.llm_provider.is_vision_model()
-        logger.debug(f"Current model supports vision: {is_vision}", is_vision=is_vision)
+        logger.debug(f"Current model supports vision: {is_vision}")
 
     def _create_multimodal_user_content(
         self, ctx: ChatContext

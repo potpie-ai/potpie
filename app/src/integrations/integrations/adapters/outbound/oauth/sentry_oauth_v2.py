@@ -203,6 +203,7 @@ class SentryOAuthV2:
 
                 if response.status_code != 200:
                     logger.error(f"Failed to get organizations: {response.status_code}", response_status_code=response.status_code)
+                    logger.error(f"Failed to get organizations: {response.status_code}")
                     raise HTTPException(
                         status_code=response.status_code,
                         detail=f"Failed to get organizations: {response.text}",
