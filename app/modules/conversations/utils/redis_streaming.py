@@ -101,11 +101,17 @@ class RedisStreamManager:
             # Set starting point for live events
             if cursor and events:
                 last_id = events[-1][0]
-            elif self.redis_client.exists(key):
-                # For fresh requests, start from the latest event in the stream
-                # to avoid replaying old messages
-                latest_events = self.redis_client.xrevrange(key, count=1)
-                last_id = latest_events[0][0] if latest_events else "0-0"
+            elif not cursor and self.redis_client.exists(key):
+                # Fresh attach: replay from the beginning. Hatchet workers can publish
+                # start/chunk events before the HTTP consumer connects; skipping to the
+                # latest entry drops tool-call and thinking chunks emitted early.
+                existing = self.redis_client.xrange(key, min="-", max="+")
+                for event_id, event_data in existing:
+                    formatted_event = self._format_event(event_id, event_data)
+                    yield formatted_event
+                    if formatted_event.get("type") == "end":
+                        return
+                last_id = existing[-1][0] if existing else "0-0"
             else:
                 last_id = "0-0"
 

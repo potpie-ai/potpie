@@ -58,6 +58,7 @@ from app.modules.conversations.utils.conversation_routing import (
     redis_stream_generator,
     resolve_conversation_agent_id,
     start_celery_task_and_stream,
+    start_regenerate_task_and_stream,
 )
 from app.modules.conversations.utils.redis_streaming import AsyncRedisStreamManager
 from app.modules.conversations.session.session_service import AsyncSessionService
@@ -402,44 +403,19 @@ class ConversationAPI:
             logger.error(f"Failed to get last human message for regenerate: {str(e)}")
             attachment_ids = []
 
-        from app.celery.tasks.agent_tasks import execute_regenerate_background
-
-        await async_redis.set_task_status(conversation_id, run_id, "queued")
-        await async_redis.publish_event(
-            conversation_id,
-            run_id,
-            "queued",
-            {
-                "status": "queued",
-                "message": "Regeneration task queued for processing",
-            },
+        agent_id = await resolve_conversation_agent_id(
+            conversation_id, db, async_db
         )
-
-        task_result = execute_regenerate_background.delay(
+        return await start_regenerate_task_and_stream(
             conversation_id=conversation_id,
             run_id=run_id,
             user_id=user_id,
             node_ids=request.node_ids or [],
             attachment_ids=attachment_ids,
+            agent_id=agent_id,
+            async_redis_manager=async_redis,
+            cursor=cursor,
             local_mode=local_mode,
-        )
-
-        await async_redis.set_task_id(conversation_id, run_id, task_result.id)
-        logger.info(
-            f"Started regenerate task {task_result.id} for {conversation_id}:{run_id}"
-        , task_result_id=task_result.id, conversation_id=conversation_id, run_id=run_id)
-
-        task_started = await async_redis.wait_for_task_start(
-            conversation_id, run_id, timeout=30, require_running=True
-        )
-        if not task_started:
-            logger.warning(
-                f"Background regenerate task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
-            , conversation_id=conversation_id, run_id=run_id)
-
-        return StreamingResponse(
-            redis_stream_generator(conversation_id, run_id, cursor),
-            media_type="text/event-stream",
         )
 
     @staticmethod

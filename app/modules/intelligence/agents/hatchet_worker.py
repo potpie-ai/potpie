@@ -79,7 +79,10 @@ async def run_agent_via_hatchet(agent_input: AgentRunInput) -> bool:
         ConversationStore,
     )
     from app.modules.conversations.message.message_model import MessageType
-    from app.modules.conversations.message.message_schema import MessageRequest
+    from app.modules.conversations.message.message_schema import (
+        MessageRequest,
+        normalize_node_contexts,
+    )
     from app.modules.conversations.message.message_store import MessageStore
 
     cid = agent_input.conversation_id
@@ -87,6 +90,9 @@ async def run_agent_via_hatchet(agent_input: AgentRunInput) -> bool:
     redis_manager = RedisStreamManager()
     sink = RedisStreamSink(redis_manager, cid, rid)
     operation = getattr(agent_input, "operation", AGENT_RUN_OPERATION_MESSAGE)
+    # Hatchet payloads may carry string or dict-shaped node ids; normalize once
+    # so message and regenerate paths share the same NodeContext list.
+    node_contexts = normalize_node_contexts(agent_input.node_ids)
 
     # Pre-declare so the finally cleanup is safe even if SessionLocal() /
     # create_celery_async_session() raise before assignment.
@@ -143,7 +149,7 @@ async def run_agent_via_hatchet(agent_input: AgentRunInput) -> bool:
                 }
                 chunk_stream = service.regenerate_last_message_background(
                     cid,
-                    agent_input.node_ids or [],
+                    node_contexts,
                     agent_input.attachment_ids or [],
                     local_mode=agent_input.local_mode,
                     run_id=rid,
@@ -154,7 +160,7 @@ async def run_agent_via_hatchet(agent_input: AgentRunInput) -> bool:
             else:
                 message_request = MessageRequest(
                     content=agent_input.query,
-                    node_ids=agent_input.node_ids,
+                    node_ids=node_contexts,
                     attachment_ids=agent_input.attachment_ids or None,
                     tunnel_url=agent_input.tunnel_url,
                 )
@@ -244,9 +250,9 @@ def run_hatchet_agent_worker(hatchet=None) -> None:
         input_validator=AgentRunInput,
         execution_timeout=timedelta(hours=1),
     )
-    async def agent_run_task(input: AgentRunInput, ctx) -> dict:
+    async def agent_run_task(agent_input: AgentRunInput, ctx) -> dict:
         del ctx
-        completed = await run_agent_via_hatchet(input)
+        completed = await run_agent_via_hatchet(agent_input)
         return {"completed": completed}
 
     worker = hatchet.worker("potpie-agents", slots=4, workflows=[agent_run_task])
