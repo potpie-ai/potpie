@@ -1398,7 +1398,7 @@ class ConversationService:
                         message=chunk.response,
                         citations=chunk.citations,
                         tool_calls=[
-                            tool_call.model_dump_json()
+                            tool_call.model_dump()
                             for tool_call in chunk.tool_calls
                         ],
                         thinking=chunk.thinking,
@@ -1470,7 +1470,7 @@ class ConversationService:
                         message=chunk.response,
                         citations=chunk.citations,
                         tool_calls=[
-                            tool_call.model_dump_json()
+                            tool_call.model_dump()
                             for tool_call in chunk.tool_calls
                         ],
                         thinking=chunk.thinking,
