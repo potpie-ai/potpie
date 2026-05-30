@@ -294,7 +294,7 @@ def test_github_login_stores_token_only_after_verification(
         ),
     )
 
-    result = runner.invoke(cli_main.app, ["github", "login"])
+    result = runner.invoke(cli_main.app, ["auth", "github", "login"])
 
     assert result.exit_code == 0, result.stdout
     stored = cli_main.get_provider_credentials("github")
@@ -342,7 +342,7 @@ def test_github_logout_clears_github_credentials(
     )
     assert fake_keyring[("potpie", "github_token")] == "plaintext-token"
 
-    result = runner.invoke(cli_main.app, ["github", "logout"])
+    result = runner.invoke(cli_main.app, ["auth", "github", "logout"])
 
     assert result.exit_code == 0, result.stdout
     assert cli_main.get_provider_credentials("github") == {}
@@ -380,7 +380,7 @@ def test_git_login_does_not_store_when_account_verification_fails(
 
     monkeypatch.setattr(cli_main, "verify_account", _fail)
 
-    result = runner.invoke(cli_main.app, ["github", "login"])
+    result = runner.invoke(cli_main.app, ["auth", "github", "login"])
 
     assert result.exit_code == 1, result.stdout
     assert cli_main.get_provider_credentials("github") == {}
@@ -428,4 +428,4 @@ def test_git_test_repos_requires_stored_github_credentials(
     result = runner.invoke(cli_main.app, ["github", "test", "repos"])
 
     assert result.exit_code == 1
-    assert "GitHub token not found in system keychain. Run: potpie github login" in result.output
+    assert "GitHub token not found in system keychain. Run: potpie auth github login" in result.output

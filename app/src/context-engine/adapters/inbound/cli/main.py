@@ -106,10 +106,10 @@ app = typer.Typer(
 pot_app = typer.Typer(help="Active pot and local pot helpers.")
 pot_repo_app = typer.Typer(help="Repositories attached to a context pot (Potpie API).")
 event_app = typer.Typer(help="Inspect and wait for ingestion events.")
-github_app = typer.Typer(help="GitHub authentication helpers.")
+github_app = typer.Typer(help="GitHub CLI helpers (use `potpie auth github` to sign in).")
 github_test_app = typer.Typer(help="GitHub test helpers.")
 git_app = typer.Typer(
-    help="Deprecated: use `potpie github` instead.",
+    help="Deprecated: use `potpie auth github` instead.",
     hidden=True,
 )
 git_test_app = typer.Typer(help="Git provider test helpers.", hidden=True)
@@ -547,27 +547,15 @@ def _github_logout_impl() -> None:
     print_plain_line("Logged out of GitHub.", as_json=False)
 
 
-@github_app.command("login")
-def github_login_cmd() -> None:
-    """Authenticate the CLI with GitHub using device flow."""
-    _github_login_impl()
-
-
-@github_app.command("logout")
-def github_logout_cmd() -> None:
-    """Remove stored GitHub credentials."""
-    _github_logout_impl()
-
-
-@git_app.command("login")
+@git_app.command("login", hidden=True)
 def git_login_cmd() -> None:
-    """Deprecated alias for `potpie github login`."""
+    """Deprecated alias for `potpie auth github login`."""
     _github_login_impl()
 
 
-@git_app.command("logout")
+@git_app.command("logout", hidden=True)
 def git_logout_cmd() -> None:
-    """Deprecated alias for `potpie github logout`."""
+    """Deprecated alias for `potpie auth github logout`."""
     _github_logout_impl()
 
 
@@ -589,7 +577,7 @@ def github_test_repos_cmd() -> None:
     if not token:
         emit_error(
             "GitHub credentials not found",
-            "GitHub token not found in system keychain. Run: potpie github login",
+            "GitHub token not found in system keychain. Run: potpie auth github login",
             verbose=v,
         )
         raise typer.Exit(code=1)

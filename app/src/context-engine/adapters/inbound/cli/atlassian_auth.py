@@ -18,8 +18,10 @@ import typer
 from adapters.inbound.cli.credentials_store import (
     ProviderCredentialError,
     credentials_path,
-    get_atlassian_credentials,
-    save_atlassian_credentials,
+    get_confluence_credentials,
+    get_jira_credentials,
+    save_confluence_credentials,
+    save_jira_credentials,
 )
 from adapters.inbound.cli.output import emit_error, print_plain_line
 from adapters.inbound.cli.provider_config import (
@@ -363,6 +365,16 @@ def _candidate_subdomains_from_email(email: str) -> list[str]:
 
 def collect_site_candidates(email: str, api_token: str) -> list[dict[str, Any]]:
     """List plausible Atlassian Cloud sites for this account."""
+    return collect_login_site_candidates(email, api_token, include_email_hints=True)
+
+
+def collect_login_site_candidates(
+    email: str,
+    api_token: str,
+    *,
+    include_email_hints: bool = False,
+) -> list[dict[str, Any]]:
+    """Sites for login: Atlassian accessible-resources (optional email-domain hints)."""
     candidates: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
 
@@ -376,18 +388,35 @@ def collect_site_candidates(email: str, api_token: str) -> list[dict[str, Any]]:
             source="accessible-resources",
         )
 
-    for subdomain in _candidate_subdomains_from_email(email):
-        site_url = site_url_from_subdomain(subdomain)
-        if site_url:
-            _merge_site_candidate(
-                candidates,
-                seen_urls,
-                site_url=site_url,
-                site_name=subdomain,
-                source="email-hint",
-            )
+    if include_email_hints:
+        for subdomain in _candidate_subdomains_from_email(email):
+            site_url = site_url_from_subdomain(subdomain)
+            if site_url:
+                _merge_site_candidate(
+                    candidates,
+                    seen_urls,
+                    site_url=site_url,
+                    site_name=subdomain,
+                    source="email-hint",
+                )
 
     return candidates
+
+
+def _finalize_atlassian_site_unscoped(
+    email: str,
+    api_token: str,
+    site: dict[str, Any],
+) -> tuple[dict[str, Any] | None, AtlassianAuthErrorKind | None]:
+    """Verify Jira and Confluence gateway access for a classic (unscoped) API token."""
+    site, err = _finalize_selected_site(email, api_token, site, "jira")
+    if not site:
+        return None, err
+    cloud_id = str(site.get("cloud_id") or "").strip()
+    confluence = verify_gateway_product(email, api_token, cloud_id, "confluence")
+    if not confluence.ok:
+        return None, confluence.error_kind
+    return site, None
 
 
 def discover_sites_with_api_token(
@@ -517,13 +546,13 @@ def _auth_failure_message(
         "  - Email must match the Atlassian account that created the token",
         "  - Your account must have access to the product on the selected site",
     ]
-    if product == "jira":
-        lines.append(
-            "  - Jira scoped tokens: include read:jira-work "
-            "(read:jira-user is optional for profile APIs)"
-        )
-    else:
-        lines.append("  - Confluence scoped tokens: include Confluence read/content scopes")
+    lines.append(
+        "  - Use Create API token (without scopes) for Jira + Confluence on one token"
+    )
+    lines.append(
+        "  - Or use scoped tokens: Jira needs read:jira-work; "
+        "Confluence needs read/content scopes (one product per token)"
+    )
     if error_kind == AtlassianAuthErrorKind.INVALID_CREDENTIALS:
         lines.insert(1, "  - Invalid email or API token")
     elif error_kind == AtlassianAuthErrorKind.INSUFFICIENT_SCOPES:
@@ -547,6 +576,19 @@ def _auth_failure_message(
     return "\n".join(lines)
 
 
+def _get_product_credentials(product: AtlassianProduct) -> dict[str, Any]:
+    if product == "jira":
+        return get_jira_credentials()
+    return get_confluence_credentials()
+
+
+def _save_product_credentials(product: AtlassianProduct, payload: dict[str, Any]) -> None:
+    if product == "jira":
+        save_jira_credentials(payload)
+    else:
+        save_confluence_credentials(payload)
+
+
 def run_atlassian_api_token_auth(
     product: AtlassianProduct,
     *,
@@ -554,21 +596,22 @@ def run_atlassian_api_token_auth(
     as_json: bool = False,
     verbose: bool = False,
 ) -> None:
-    """Authenticate Jira/Confluence using a shared Atlassian API token."""
+    """Authenticate Jira or Confluence using an Atlassian API token (one product only)."""
+    product_label = product.capitalize()
     try:
-        existing = get_atlassian_credentials()
+        existing = _get_product_credentials(product)
     except ProviderCredentialError as exc:
-        emit_error("Atlassian credential lookup failed", str(exc), verbose=verbose)
+        emit_error(f"{product_label} credential lookup failed", str(exc), verbose=verbose)
         existing = {}
 
     if existing.get("api_token") and existing.get("site_url") and not force:
         print_plain_line(
-            "Atlassian is already connected.",
+            f"{product_label} is already connected.",
             as_json=as_json,
             json_payload={
                 "ok": True,
                 "already_connected": True,
-                "provider": "atlassian",
+                "provider": product,
                 "site_url": existing.get("site_url"),
                 "site_name": existing.get("site_name"),
                 "cloud_id": existing.get("cloud_id"),
@@ -583,7 +626,11 @@ def run_atlassian_api_token_auth(
             as_json=False,
         )
         print_plain_line(
-            "Create a scoped API token with the product read scopes.",
+            f"Create an API token (without scopes) with access to {product_label}.",
+            as_json=False,
+        )
+        print_plain_line(
+            "At id.atlassian.com choose Create API token — not Create API token with scopes.",
             as_json=False,
         )
     webbrowser.open(ATLASSIAN_API_TOKEN_PAGE, new=1)
@@ -597,7 +644,7 @@ def run_atlassian_api_token_auth(
         raise typer.Exit(code=1)
 
     email, api_token = _prompt_credentials()
-    candidates = collect_site_candidates(email, api_token)
+    candidates = collect_login_site_candidates(email, api_token, include_email_hints=False)
     last_error: AtlassianAuthErrorKind | None = None
 
     if not candidates and not sys.stdin.isatty():
@@ -641,7 +688,7 @@ def run_atlassian_api_token_auth(
     site, last_error = _finalize_selected_site(email, api_token, site, product)
     if not site:
         emit_error(
-            f"{product.capitalize()} authentication failed",
+            f"{product_label} authentication failed",
             _auth_failure_message(product, last_error),
             verbose=verbose,
         )
@@ -649,6 +696,7 @@ def run_atlassian_api_token_auth(
 
     payload = {
         "auth_type": "api_token",
+        "token_style": "classic",
         "email": email,
         "api_token": api_token,
         "cloud_id": str(site.get("cloud_id") or "").strip(),
@@ -657,26 +705,28 @@ def run_atlassian_api_token_auth(
         "stored_at": time.time(),
     }
     try:
-        save_atlassian_credentials(payload)
+        _save_product_credentials(product, payload)
     except ProviderCredentialError as exc:
-        emit_error("Atlassian credential storage failed", str(exc), verbose=verbose)
+        emit_error(f"{product_label} credential storage failed", str(exc), verbose=verbose)
         raise typer.Exit(code=1) from exc
 
     summary = (
-        f"Connected to {site['site_name']} ({site['site_url']}). "
-        f"Stored Atlassian token in system keychain; metadata saved to {credentials_path()}."
+        f"Connected {product_label} to {site['site_name']} ({site['site_url']}). "
+        f"Stored token in system keychain; metadata saved to {credentials_path()}."
     )
     print_plain_line(
         summary,
         as_json=as_json,
         json_payload={
             "ok": True,
-            "provider": "atlassian",
+            "provider": product,
+            "token_style": "classic",
             "site_url": site["site_url"],
             "site_name": site["site_name"],
             "cloud_id": payload["cloud_id"],
             "path": str(credentials_path()),
             "token_storage": "keychain",
+            "product_verified": product,
         },
     )
 

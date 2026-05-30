@@ -23,6 +23,10 @@ _POTPIE_FIREBASE_API_KEY_USERNAME = "potpie_firebase_api_key"
 _LINEAR_ACCESS_TOKEN_USERNAME = "linear_access_token"
 _LINEAR_REFRESH_TOKEN_USERNAME = "linear_refresh_token"
 _ATLASSIAN_API_TOKEN_USERNAME = "atlassian_api_token"
+_JIRA_API_TOKEN_USERNAME = "jira_api_token"
+_CONFLUENCE_API_TOKEN_USERNAME = "confluence_api_token"
+_JIRA_CREDENTIALS_KEY = "jira"
+_CONFLUENCE_CREDENTIALS_KEY = "confluence"
 
 
 class ProviderCredentialError(Exception):
@@ -108,7 +112,7 @@ def _load_github_token() -> str:
         ) from exc
     if access_token is None:
         raise ProviderCredentialError(
-            "GitHub token not found in system keychain. Run: potpie github login"
+            "GitHub token not found in system keychain. Run: potpie auth github login"
         )
     return access_token
 
@@ -589,24 +593,10 @@ _INTEGRATION_PROVIDERS = frozenset({"atlassian", "jira", "confluence", "linear"}
 _ATLASSIAN_PRODUCTS = frozenset({"jira", "confluence"})
 _ATLASSIAN_CREDENTIALS_KEY = "atlassian"
 _OAUTH_PROVIDERS = frozenset({"linear"})
-_LINEAR_METADATA_FIELDS = (
-    "expires_at",
-    "expires_in",
-    "scope",
-    "token_type",
-    "cloud_id",
-    "stored_at",
-)
-_ATLASSIAN_METADATA_FIELDS = (
-    "auth_type",
-    "email",
-    "cloud_id",
-    "site_url",
-    "site_name",
-    "stored_at",
-)
-
-
+_ATLASSIAN_PRODUCT_KEYCHAIN: dict[str, tuple[str, str]] = {
+    "jira": ("Jira API token", _JIRA_API_TOKEN_USERNAME),
+    "confluence": ("Confluence API token", _CONFLUENCE_API_TOKEN_USERNAME),
+}
 def _norm_integration_provider(provider: str) -> str:
     key = provider.strip().lower()
     if key not in _INTEGRATION_PROVIDERS:
@@ -663,8 +653,108 @@ def _remove_integration_metadata(*keys: str) -> None:
     _write_payload(payload)
 
 
+def _norm_atlassian_product(product: str) -> str:
+    key = product.strip().lower()
+    if key in {"wiki", "conf"}:
+        return "confluence"
+    if key not in _ATLASSIAN_PRODUCTS:
+        raise ValueError(
+            f"Unknown Atlassian product {product!r} (expected 'jira' or 'confluence')."
+        )
+    return key
+
+
+def _legacy_atlassian_metadata() -> dict[str, Any]:
+    return _read_integration_metadata(_ATLASSIAN_CREDENTIALS_KEY)
+
+
+def _save_product_credentials(product: str, credentials: dict[str, Any]) -> None:
+    from adapters.inbound.cli.integration_profile import (
+        atlassian_site_from_entry,
+        build_product_integration_record,
+    )
+
+    key = _norm_atlassian_product(product)
+    label, username = _ATLASSIAN_PRODUCT_KEYCHAIN[key]
+    api_token = str(credentials.get("api_token") or "").strip()
+    if not api_token:
+        raise ProviderCredentialError(f"{key.capitalize()} API token is required.")
+    _store_keychain_secret(label, username, api_token)
+    prior = _read_integration_metadata(key)
+    merged = {**prior, **credentials}
+    site = atlassian_site_from_entry(merged)
+    if site.get("site_url") and not merged.get("site_url"):
+        merged["site_url"] = site["site_url"]
+    metadata = build_product_integration_record(key, merged)
+    _write_integration_metadata(key, metadata)
+
+
+def _get_product_credentials(product: str) -> dict[str, Any]:
+    key = _norm_atlassian_product(product)
+    metadata = _read_integration_metadata(key)
+    if not metadata:
+        legacy = _legacy_atlassian_metadata()
+        if legacy:
+            metadata = dict(legacy)
+    if not metadata:
+        return {}
+    label, username = _ATLASSIAN_PRODUCT_KEYCHAIN[key]
+    api_token = _load_keychain_secret(label, username)
+    if not api_token:
+        legacy_token = _load_keychain_secret(
+            "Atlassian API token",
+            _ATLASSIAN_API_TOKEN_USERNAME,
+        )
+        api_token = legacy_token
+    if not api_token:
+        return {}
+    return {**metadata, "api_token": api_token}
+
+
+def _clear_product_credentials(product: str) -> None:
+    key = _norm_atlassian_product(product)
+    label, username = _ATLASSIAN_PRODUCT_KEYCHAIN[key]
+    _delete_keychain_secret(label, username)
+    _remove_integration_metadata(key)
+
+
+def save_jira_credentials(credentials: dict[str, Any]) -> None:
+    """Store Jira API token in keychain and metadata in credentials.json."""
+    _save_product_credentials("jira", credentials)
+
+
+def get_jira_credentials() -> dict[str, Any]:
+    """Return Jira credentials with API token loaded from keychain."""
+    return _get_product_credentials("jira")
+
+
+def clear_jira_credentials() -> None:
+    """Remove Jira credentials from keychain and metadata."""
+    _clear_product_credentials("jira")
+
+
+def save_confluence_credentials(credentials: dict[str, Any]) -> None:
+    """Store Confluence API token in keychain and metadata in credentials.json."""
+    _save_product_credentials("confluence", credentials)
+
+
+def get_confluence_credentials() -> dict[str, Any]:
+    """Return Confluence credentials with API token loaded from keychain."""
+    return _get_product_credentials("confluence")
+
+
+def clear_confluence_credentials() -> None:
+    """Remove Confluence credentials from keychain and metadata."""
+    _clear_product_credentials("confluence")
+
+
 def save_atlassian_credentials(credentials: dict[str, Any]) -> None:
-    """Store shared Atlassian API token in keychain and metadata in credentials.json."""
+    """Deprecated: saves to legacy atlassian key only. Prefer save_jira_credentials."""
+    from adapters.inbound.cli.integration_profile import (
+        atlassian_site_from_entry,
+        build_atlassian_integration_record,
+    )
+
     api_token = str(credentials.get("api_token") or "").strip()
     if not api_token:
         raise ProviderCredentialError("Atlassian API token is required.")
@@ -673,20 +763,24 @@ def save_atlassian_credentials(credentials: dict[str, Any]) -> None:
         _ATLASSIAN_API_TOKEN_USERNAME,
         api_token,
     )
-    metadata: dict[str, Any] = {
-        "provider": "atlassian",
-        "auth_type": "api_token",
-        "token_storage": "keychain",
-    }
-    for field in _ATLASSIAN_METADATA_FIELDS:
-        if field in credentials and credentials[field] is not None:
-            metadata[field] = credentials[field]
+    prior = _legacy_atlassian_metadata()
+    merged = {**prior, **credentials}
+    site = atlassian_site_from_entry(merged)
+    if site.get("site_url") and not merged.get("site_url"):
+        merged["site_url"] = site["site_url"]
+    metadata = build_atlassian_integration_record(merged)
     _write_integration_metadata(_ATLASSIAN_CREDENTIALS_KEY, metadata)
 
 
 def get_atlassian_credentials() -> dict[str, Any]:
-    """Return shared Atlassian credentials with the API token loaded from keychain."""
-    metadata = _read_integration_metadata(_ATLASSIAN_CREDENTIALS_KEY)
+    """Return credentials from jira, confluence, or legacy atlassian metadata."""
+    jira = get_jira_credentials()
+    if jira:
+        return jira
+    confluence = get_confluence_credentials()
+    if confluence:
+        return confluence
+    metadata = _legacy_atlassian_metadata()
     if not metadata:
         return {}
     api_token = _load_keychain_secret(
@@ -698,14 +792,59 @@ def get_atlassian_credentials() -> dict[str, Any]:
     return {**metadata, "api_token": api_token}
 
 
+def save_jira_workspace_prefs(*, project_key: str) -> None:
+    """Persist selected Jira project key."""
+    prior = get_jira_credentials()
+    if not prior.get("api_token"):
+        raise ProviderCredentialError(
+            "Jira is not connected. Run: potpie auth jira login"
+        )
+    workspaces = dict(prior.get("workspaces") or {})
+    workspaces["jira_project"] = project_key.strip().upper()
+    save_jira_credentials({**prior, "workspaces": workspaces})
+
+
+def save_confluence_workspace_prefs(*, space_key: str) -> None:
+    """Persist selected Confluence space key."""
+    prior = get_confluence_credentials()
+    if not prior.get("api_token"):
+        raise ProviderCredentialError(
+            "Confluence is not connected. Run: potpie auth confluence login"
+        )
+    workspaces = dict(prior.get("workspaces") or {})
+    workspaces["confluence_space"] = space_key.strip().upper()
+    save_confluence_credentials({**prior, "workspaces": workspaces})
+
+
+def save_atlassian_workspace_prefs(
+    *,
+    jira_project: str | None = None,
+    confluence_space: str | None = None,
+) -> None:
+    """Persist workspace prefs on the matching product integration."""
+    if jira_project:
+        save_jira_workspace_prefs(project_key=jira_project)
+    if confluence_space:
+        save_confluence_workspace_prefs(space_key=confluence_space)
+
+
 def clear_atlassian_credentials() -> None:
-    """Remove shared Atlassian credentials from keychain and metadata."""
+    """Remove legacy atlassian, jira, and confluence credentials."""
     _delete_keychain_secret("Atlassian API token", _ATLASSIAN_API_TOKEN_USERNAME)
-    _remove_integration_metadata(_ATLASSIAN_CREDENTIALS_KEY, "atlassian")
+    for label, username in _ATLASSIAN_PRODUCT_KEYCHAIN.values():
+        _delete_keychain_secret(label, username)
+    _remove_integration_metadata(
+        _ATLASSIAN_CREDENTIALS_KEY,
+        "atlassian",
+        _JIRA_CREDENTIALS_KEY,
+        _CONFLUENCE_CREDENTIALS_KEY,
+    )
 
 
 def save_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
     """Store OAuth tokens in keychain and non-secret metadata in credentials.json."""
+    from adapters.inbound.cli.integration_profile import build_linear_integration_record
+
     key = _norm_integration_provider(provider)
     if key not in _OAUTH_PROVIDERS:
         raise ValueError(f"{provider!r} does not use OAuth token storage.")
@@ -725,15 +864,8 @@ def save_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
             refresh_token,
         )
 
-    metadata: dict[str, Any] = {
-        "provider": "linear",
-        "provider_host": "linear.app",
-        "auth_type": "oauth",
-        "token_storage": "keychain",
-    }
-    for field in _LINEAR_METADATA_FIELDS:
-        if field in tokens and tokens[field] is not None:
-            metadata[field] = tokens[field]
+    prior = _read_integration_metadata(key)
+    metadata = build_linear_integration_record(tokens, existing=prior)
     _write_integration_metadata(key, metadata)
 
 
@@ -745,7 +877,10 @@ def write_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
 def get_integration_tokens(provider: str) -> dict[str, Any]:
     """Return credentials for an integration provider with secrets loaded from keychain."""
     key = _norm_integration_provider(provider)
-    if key == _ATLASSIAN_CREDENTIALS_KEY or key in _ATLASSIAN_PRODUCTS:
+    if key in _ATLASSIAN_PRODUCTS:
+        creds = _get_product_credentials(key)
+        return {"auth_type": "api_token", **creds} if creds else {}
+    if key == _ATLASSIAN_CREDENTIALS_KEY:
         creds = get_atlassian_credentials()
         return {"auth_type": "api_token", **creds} if creds else {}
 
@@ -771,7 +906,13 @@ def get_integration_tokens(provider: str) -> dict[str, Any]:
 def clear_integration_tokens(provider: str) -> None:
     """Remove stored credentials for an integration provider."""
     key = _norm_integration_provider(provider)
-    if key == _ATLASSIAN_CREDENTIALS_KEY or key in _ATLASSIAN_PRODUCTS:
+    if key == "jira":
+        clear_jira_credentials()
+        return
+    if key == "confluence":
+        clear_confluence_credentials()
+        return
+    if key == _ATLASSIAN_CREDENTIALS_KEY:
         clear_atlassian_credentials()
         return
     _delete_keychain_secret("Linear access token", _LINEAR_ACCESS_TOKEN_USERNAME)
@@ -783,6 +924,10 @@ def list_integration_providers() -> list[str]:
     """Return integration providers with stored metadata."""
     integrations = _read_integrations(read_credentials())
     found: list[str] = []
+    if isinstance(integrations.get(_JIRA_CREDENTIALS_KEY), dict):
+        found.append("jira")
+    if isinstance(integrations.get(_CONFLUENCE_CREDENTIALS_KEY), dict):
+        found.append("confluence")
     if isinstance(integrations.get(_ATLASSIAN_CREDENTIALS_KEY), dict):
         found.append("atlassian")
     if isinstance(integrations.get("linear"), dict):
@@ -792,37 +937,60 @@ def list_integration_providers() -> list[str]:
 
 def get_integration_status(provider: str) -> dict[str, Any]:
     """Return non-secret status metadata for an integration provider."""
+    from adapters.inbound.cli.integration_profile import (
+        atlassian_account_from_entry,
+        atlassian_site_from_entry,
+        linear_account_from_entry,
+    )
+
     key = _norm_integration_provider(provider)
 
-    if key == _ATLASSIAN_CREDENTIALS_KEY or key in _ATLASSIAN_PRODUCTS:
-        entry = _read_integration_metadata(_ATLASSIAN_CREDENTIALS_KEY)
-        if not entry or not entry.get("site_url"):
+    if key in _ATLASSIAN_PRODUCTS or key == _ATLASSIAN_CREDENTIALS_KEY:
+        if key in _ATLASSIAN_PRODUCTS:
+            creds = _get_product_credentials(key)
+            entry = _read_integration_metadata(key) or _legacy_atlassian_metadata()
+        else:
+            creds = get_atlassian_credentials()
+            entry = _legacy_atlassian_metadata() or creds
+        site = atlassian_site_from_entry(entry or creds)
+        if not creds or not site.get("site_url"):
             return {
-                "provider": "atlassian" if key == _ATLASSIAN_CREDENTIALS_KEY else key,
+                "provider": key,
                 "authenticated": False,
                 "auth_type": "api_token",
             }
+        account = atlassian_account_from_entry(entry or creds)
         return {
-            "provider": "atlassian" if key == _ATLASSIAN_CREDENTIALS_KEY else key,
+            "provider": key,
             "authenticated": True,
             "auth_type": "api_token",
-            "email": entry.get("email"),
-            "site_url": entry.get("site_url"),
-            "site_name": entry.get("site_name"),
-            "cloud_id": entry.get("cloud_id"),
-            "stored_at": entry.get("stored_at"),
-            "token_storage": entry.get("token_storage"),
+            "email": account.get("email") or (entry or creds).get("email"),
+            "site_url": site.get("site_url") or (entry or creds).get("site_url"),
+            "site_name": site.get("site_name") or (entry or creds).get("site_name"),
+            "cloud_id": site.get("cloud_id") or (entry or creds).get("cloud_id"),
+            "stored_at": (entry or creds).get("stored_at"),
+            "token_storage": (entry or creds).get("token_storage"),
         }
 
     entry = _read_integration_metadata(key)
     if not entry:
         return {"provider": key, "authenticated": False, "auth_type": "oauth"}
+    account = linear_account_from_entry(entry)
+    organization = entry.get("organization")
+    org_name = organization.get("name") if isinstance(organization, dict) else None
+    scopes = entry.get("scopes")
+    scope = entry.get("scope")
+    if scopes is None and scope is not None:
+        scopes = scope
     return {
         "provider": key,
         "authenticated": True,
         "auth_type": "oauth",
+        "login": account.get("name") or account.get("email"),
+        "email": account.get("email"),
+        "site_name": org_name,
         "expires_at": entry.get("expires_at"),
-        "scope": entry.get("scope"),
+        "scope": scopes,
         "cloud_id": entry.get("cloud_id"),
         "stored_at": entry.get("stored_at"),
         "token_storage": entry.get("token_storage"),

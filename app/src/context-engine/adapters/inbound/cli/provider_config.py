@@ -10,8 +10,8 @@ Provider = Literal["github", "atlassian", "jira", "confluence", "linear"]
 OAuthProvider = Literal["linear"]
 AtlassianProduct = Literal["jira", "confluence"]
 
-DEFAULT_CALLBACK_PORT = 8001
-DEFAULT_CALLBACK_PATH = "/api/v1/integrations/linear/callback"
+DEFAULT_CALLBACK_PORT = 8080
+DEFAULT_CALLBACK_PATH = "/callback"
 DEFAULT_REDIRECT_URI = f"http://localhost:{DEFAULT_CALLBACK_PORT}{DEFAULT_CALLBACK_PATH}"
 DEFAULT_CALLBACK_HOST = "localhost"
 
