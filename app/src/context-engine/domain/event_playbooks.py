@@ -17,6 +17,32 @@ having to enumerate every action variant:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+
+_PLAYBOOKS_DIR = Path(__file__).resolve().parent / "playbooks"
+
+
+def _load_skill_body(filename: str) -> str:
+    """Return the markdown body of a skill file under ``domain/playbooks/``.
+
+    Strips the YAML frontmatter (``---`` … ``---``) so the body is ready to
+    drop into a playbook's ``extract`` field, which ``render_playbooks_section``
+    embeds directly into the agent prompt.
+    """
+    path = _PLAYBOOKS_DIR / filename
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return (
+            f"Skill body {filename!r} is unavailable. Stop and report this "
+            "configuration error instead of attempting this playbook."
+        )
+    if not raw.startswith("---\n"):
+        return raw
+    end = raw.find("\n---\n", 4)
+    if end < 0:
+        return raw
+    return raw[end + 5 :].lstrip()
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +193,48 @@ _register(
             "github_get_issue",
             "context_infra_topology",
             "web_fetch",
+        ),
+        max_tool_calls=400,
+        enables_planner=True,
+    )
+)
+
+
+# --- github / repository / one_shot_ingest (PR-history backfill skill) -----
+# Source of truth lives in ``domain/playbooks/repo_one_shot_ingestion.md`` so
+# Claude Code and the internal reconciliation agent read the exact same prompt.
+# The markdown body is embedded into ``extract`` at module import.
+_register(
+    EventPlaybook(
+        source_system="github",
+        event_type="repository",
+        action="one_shot_ingest",
+        summary=(
+            "One-time PR-history ingestion of a repository into the context "
+            "graph. Not incremental — live updates continue via the "
+            "github/pull_request/merged webhook path."
+        ),
+        available_data=(
+            "The full procedure, tool surface, key formats, mutation shapes, "
+            "bounds, and anti-patterns are spelled out in the embedded skill "
+            "below. Follow it as the authoritative playbook for this event."
+        ),
+        extract=_load_skill_body("repo_one_shot_ingestion.md"),
+        skip=(
+            "Do NOT re-emit github/repository/added from this path. Do NOT "
+            "page past one github_list_pull_requests call. Do NOT read code "
+            "unless commit + branch + title + body all leave intent unclear."
+        ),
+        tool_hints=(
+            "sandbox_list_repos",
+            "github_list_pull_requests",
+            "github_get_pull_request",
+            "github_get_pull_request_commits",
+            "github_get_pull_request_review_comments",
+            "github_get_pull_request_issue_comments",
+            "apply_graph_mutations",
+            "mark_event_processed",
+            "finish_batch",
         ),
         max_tool_calls=400,
         enables_planner=True,
