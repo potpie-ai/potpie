@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.modules.auth.api_key_deps import get_api_key_user
+from app.modules.auth.api_key_deps import get_firebase_or_api_key_user
 from app.modules.context_graph.context_graph_pot_integration_model import (
     ContextGraphPotIntegration,
 )
@@ -1578,5 +1578,5 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
     return r
 
 
-# v2 router (X-API-Key auth) — keeps backward compatibility for api/router.py
-router = make_pot_router(get_api_key_user)
+# v2 router (X-API-Key or Firebase Bearer auth) — keeps backward compatibility for api/router.py
+router = make_pot_router(get_firebase_or_api_key_user)

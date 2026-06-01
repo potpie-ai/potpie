@@ -217,3 +217,124 @@ def test_resolve_cli_pot_ref_uuid_normalizes() -> None:
     got, err = cs.resolve_cli_pot_ref(s)
     assert err == ""
     assert got == "550e8400-e29b-41d4-a716-446655440000"
+
+
+@pytest.fixture
+def fake_keyring(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
+    stored: dict[tuple[str, str], str] = {}
+
+    def set_password(service: str, username: str, password: str) -> None:
+        stored[(service, username)] = password
+
+    def get_password(service: str, username: str) -> str | None:
+        return stored.get((service, username))
+
+    def delete_password(service: str, username: str) -> None:
+        stored.pop((service, username), None)
+
+    monkeypatch.setattr(cs.keyring, "set_password", set_password)
+    monkeypatch.setattr(cs.keyring, "get_password", get_password)
+    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
+    return stored
+
+
+def test_store_potpie_api_key_metadata_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_credentials(api_key="legacy-file-key", api_base_url="http://localhost:8000")
+
+    cs.store_potpie_api_key("sk-chain-key", created_at="2026-05-29T12:00:00+00:00")
+
+    assert fake_keyring[("potpie", "potpie_api_key")] == "sk-chain-key"
+    assert cs.get_stored_api_key() == "sk-chain-key"
+
+    data = cs.read_credentials()
+    assert data["api_key"] == "legacy-file-key"
+    assert data["api_base_url"] == "http://localhost:8000"
+    assert data["integrations"]["potpie"] == {
+        "auth_type": "api_key",
+        "token_storage": "keychain",
+        "created_at": "2026-05-29T12:00:00+00:00",
+    }
+    assert "sk-chain-key" not in json.dumps(data)
+
+
+def test_store_potpie_firebase_refresh_token_metadata_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_credentials(api_key="legacy-file-key")
+
+    cs.store_potpie_firebase_refresh_token(
+        "refresh-token",
+        created_at="2026-05-29T12:00:00+00:00",
+        firebase_api_key="firebase-key",
+    )
+
+    assert fake_keyring[("potpie", "potpie_firebase_refresh_token")] == "refresh-token"
+    assert fake_keyring[("potpie", "potpie_firebase_api_key")] == "firebase-key"
+    assert cs.get_potpie_auth_type() == "firebase_session"
+    assert cs.get_potpie_firebase_refresh_token() == "refresh-token"
+    assert cs.get_potpie_firebase_api_key() == "firebase-key"
+
+    data = cs.read_credentials()
+    assert data["api_key"] == "legacy-file-key"
+    assert data["integrations"]["potpie"]["token_storage"] == "keychain"
+    assert "refresh-token" not in json.dumps(data)
+    assert "firebase-key" not in json.dumps(data)
+
+
+def test_update_potpie_firebase_refresh_token_keeps_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.store_potpie_firebase_refresh_token(
+        "refresh-token",
+        created_at="2026-05-29T12:00:00+00:00",
+    )
+
+    cs.update_potpie_firebase_refresh_token("new-refresh-token")
+
+    assert cs.get_potpie_firebase_refresh_token() == "new-refresh-token"
+    assert cs.read_credentials()["integrations"]["potpie"]["created_at"] == (
+        "2026-05-29T12:00:00+00:00"
+    )
+
+
+def test_clear_potpie_auth_preserves_api_key_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.store_potpie_api_key("sk-chain-key", created_at="2026-05-29T12:00:00+00:00")
+    cs.store_potpie_firebase_refresh_token(
+        "refresh-token",
+        created_at="2026-05-29T12:01:00+00:00",
+    )
+
+    cs.clear_potpie_auth()
+
+    assert cs.get_stored_api_key() == "sk-chain-key"
+    assert cs.get_potpie_firebase_refresh_token() == ""
+    assert cs.get_integration_metadata("potpie") == {}
+
+
+def test_clear_potpie_auth_can_clear_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.store_potpie_api_key("sk-chain-key", created_at="2026-05-29T12:00:00+00:00")
+
+    cs.clear_potpie_auth(clear_api_key=True)
+
+    assert cs.get_stored_api_key() == ""

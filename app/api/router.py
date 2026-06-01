@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db, get_async_db
-from app.modules.auth.api_key_deps import get_api_key_user
+from app.modules.auth.api_key_deps import get_firebase_or_api_key_user
 from app.modules.conversations.conversation.conversation_controller import (
     ConversationController,
 )
@@ -75,7 +75,7 @@ async def create_conversation(
     ),
     db: Session = Depends(get_db),
     async_db: AsyncSession = Depends(get_async_db),
-    user=Depends(get_api_key_user),
+    user=Depends(get_firebase_or_api_key_user),
 ):
     user_id = user["user_id"]
     # This will either return True or raise an HTTPException
@@ -97,7 +97,7 @@ async def create_conversation(
 async def parse_directory(
     repo_details: ParsingRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_api_key_user),
+    user=Depends(get_firebase_or_api_key_user),
 ):
     return await ParsingController.parse_directory(repo_details, db, user)
 
@@ -107,7 +107,7 @@ async def get_parsing_status(
     project_id: str,
     db: Session = Depends(get_db),
     async_db: AsyncSession = Depends(get_async_db),
-    user=Depends(get_api_key_user),
+    user=Depends(get_firebase_or_api_key_user),
 ):
     return await ParsingController.fetch_parsing_status(
         project_id, db, async_db, user
@@ -118,7 +118,7 @@ async def get_parsing_status(
 async def get_parsing_status_by_repo(
     request: ParsingStatusRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_api_key_user),
+    user=Depends(get_firebase_or_api_key_user),
 ):
     return await ParsingController.fetch_parsing_status_by_repo(request, db, user)
 
@@ -136,7 +136,7 @@ async def post_message(
     cursor: Optional[str] = Query(None, description="Stream cursor for replay"),
     db: Session = Depends(get_db),
     async_db: AsyncSession = Depends(get_async_db),
-    user=Depends(get_api_key_user),
+    user=Depends(get_firebase_or_api_key_user),
     async_redis=Depends(get_async_redis_stream_manager),
 ):
     if message.content == "" or message.content is None or message.content.isspace():
@@ -193,7 +193,7 @@ async def stop_generation(
     session_id: Optional[str] = Query(None, description="Session ID to stop"),
     db: Session = Depends(get_db),
     async_db: AsyncSession = Depends(get_async_db),
-    user=Depends(get_api_key_user),
+    user=Depends(get_firebase_or_api_key_user),
 ):
     """Stop streaming generation and persist partial response to the database."""
     user_id = user["user_id"]
@@ -212,7 +212,7 @@ async def create_conversation_and_message(
     ),
     db: Session = Depends(get_db),
     async_db: AsyncSession = Depends(get_async_db),
-    user=Depends(get_api_key_user),
+    user=Depends(get_firebase_or_api_key_user),
 ):
     if message.content == "" or message.content is None or message.content.isspace():
         raise HTTPException(status_code=400, detail="Message content cannot be empty")
@@ -250,7 +250,7 @@ async def create_conversation_and_message(
 @router.get("/projects/list")
 async def list_projects(
     db: Session = Depends(get_db),
-    user=Depends(get_api_key_user),
+    user=Depends(get_firebase_or_api_key_user),
 ):
     return await ProjectController.get_project_list(user, db)
 
@@ -258,7 +258,7 @@ async def list_projects(
 @router.get("/list-available-agents")
 async def list_agents(
     db: Session = Depends(get_db),
-    user=Depends(get_api_key_user),
+    user=Depends(get_firebase_or_api_key_user),
 ):
     user_id: str = user["user_id"]
     llm_provider = ProviderService(db, user_id)
@@ -272,7 +272,7 @@ async def list_agents(
 async def search_codebase(
     search_request: SearchRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_api_key_user),
+    user=Depends(get_firebase_or_api_key_user),
 ):
     """Search codebase using API key authentication"""
     search_service = SearchService(db)
@@ -286,7 +286,7 @@ async def search_codebase(
 async def save_integration(
     request: IntegrationSaveRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_api_key_user),
+    user=Depends(get_firebase_or_api_key_user),
 ):
     """Save an integration with configurable and optional fields"""
     try:
@@ -305,7 +305,7 @@ async def save_integration(
 
 # Context graph: same routes as /api/v1/context but authenticated with X-API-Key (Potpie API v2).
 _context_graph_v2_router = create_context_router(
-    require_auth=get_api_key_user,
+    require_auth=get_firebase_or_api_key_user,
     get_container=get_context_engine_container_for_api_key,
     get_db=get_db,
     get_db_optional=get_db,

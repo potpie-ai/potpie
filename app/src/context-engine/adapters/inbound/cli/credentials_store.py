@@ -16,6 +16,9 @@ _CREDENTIALS_FILENAME = "credentials.json"
 _CONFIG_DIR_NAME = "potpie"
 _LEGACY_CONFIG_DIR_NAME = "context-engine"
 _KEYRING_SERVICE = "potpie"
+_POTPIE_API_KEY_SECRET = "potpie_api_key"
+_POTPIE_FIREBASE_REFRESH_TOKEN_SECRET = "potpie_firebase_refresh_token"
+_POTPIE_FIREBASE_API_KEY_SECRET = "potpie_firebase_api_key"
 
 
 class CredentialStoreError(Exception):
@@ -187,6 +190,15 @@ def list_integration_metadata() -> dict[str, dict[str, Any]]:
 
 
 def get_stored_api_key() -> str:
+    try:
+        from_keychain = load_secure_secret(
+            _POTPIE_API_KEY_SECRET,
+            label="Potpie API key",
+        )
+        if from_keychain.strip():
+            return from_keychain.strip()
+    except CredentialStoreError:
+        pass
     v = read_credentials().get("api_key")
     return str(v).strip() if v else ""
 
@@ -215,8 +227,119 @@ def write_credentials(*, api_key: str, api_base_url: Optional[str] = None) -> No
     _write_payload(payload)
 
 
+def write_potpie_auth_metadata(
+    *,
+    created_at: str,
+    auth_type: str = "api_key",
+) -> None:
+    """Persist Potpie CLI auth metadata only; secrets stay in secure storage."""
+    write_integration_metadata(
+        "potpie",
+        {
+            "auth_type": auth_type,
+            "token_storage": "keychain",
+            "created_at": created_at,
+        },
+    )
+
+
+def store_potpie_api_key(api_key: str, *, created_at: str) -> None:
+    """Store Potpie API key in secure storage and write non-secret metadata."""
+    key = api_key.strip()
+    if not key.startswith("sk-"):
+        raise CredentialStoreError("Potpie API key must start with sk-.")
+    store_secure_secret(_POTPIE_API_KEY_SECRET, key, label="Potpie API key")
+    write_potpie_auth_metadata(created_at=created_at, auth_type="api_key")
+
+
+def store_potpie_firebase_refresh_token(
+    refresh_token: str,
+    *,
+    created_at: str,
+    firebase_api_key: str | None = None,
+) -> None:
+    """Store Firebase refresh token in secure storage and write metadata only."""
+    token = refresh_token.strip()
+    if not token:
+        raise CredentialStoreError("Potpie Firebase refresh token is required.")
+    store_secure_secret(
+        _POTPIE_FIREBASE_REFRESH_TOKEN_SECRET,
+        token,
+        label="Potpie refresh token",
+    )
+    if firebase_api_key and firebase_api_key.strip():
+        store_secure_secret(
+            _POTPIE_FIREBASE_API_KEY_SECRET,
+            firebase_api_key.strip(),
+            label="Potpie Firebase API key",
+        )
+    write_potpie_auth_metadata(
+        created_at=created_at,
+        auth_type="firebase_session",
+    )
+
+
+def update_potpie_firebase_refresh_token(refresh_token: str) -> None:
+    """Update rotated Firebase refresh token without touching metadata."""
+    token = refresh_token.strip()
+    if not token:
+        raise CredentialStoreError("Potpie Firebase refresh token is required.")
+    store_secure_secret(
+        _POTPIE_FIREBASE_REFRESH_TOKEN_SECRET,
+        token,
+        label="Potpie refresh token",
+    )
+
+
+def get_potpie_auth_type() -> str:
+    metadata = get_integration_metadata("potpie")
+    return str(metadata.get("auth_type") or "").strip()
+
+
+def get_potpie_firebase_refresh_token() -> str:
+    return load_secure_secret(
+        _POTPIE_FIREBASE_REFRESH_TOKEN_SECRET,
+        label="Potpie refresh token",
+    ).strip()
+
+
+def get_potpie_firebase_api_key() -> str:
+    from_keychain = load_secure_secret(
+        _POTPIE_FIREBASE_API_KEY_SECRET,
+        label="Potpie Firebase API key",
+    )
+    if from_keychain.strip():
+        return from_keychain.strip()
+    metadata = get_integration_metadata("potpie")
+    return str(metadata.get("firebase_api_key") or "").strip()
+
+
+def clear_potpie_auth(*, clear_api_key: bool = False) -> None:
+    """Remove Potpie session secrets and drop integrations.potpie metadata."""
+    if clear_api_key:
+        delete_secure_secret(_POTPIE_API_KEY_SECRET, label="Potpie API key")
+    delete_secure_secret(
+        _POTPIE_FIREBASE_REFRESH_TOKEN_SECRET,
+        label="Potpie refresh token",
+    )
+    delete_secure_secret(
+        _POTPIE_FIREBASE_API_KEY_SECRET,
+        label="Potpie Firebase API key",
+    )
+    clear_integration_metadata("potpie")
+
+
 def clear_credentials() -> None:
     """Remove credentials file if it exists."""
+    delete_secure_secret(_POTPIE_API_KEY_SECRET, label="Potpie API key")
+    delete_secure_secret(
+        _POTPIE_FIREBASE_REFRESH_TOKEN_SECRET,
+        label="Potpie refresh token",
+    )
+    delete_secure_secret(
+        _POTPIE_FIREBASE_API_KEY_SECRET,
+        label="Potpie Firebase API key",
+    )
     path = credentials_path()
     try:
         path.unlink(missing_ok=True)
