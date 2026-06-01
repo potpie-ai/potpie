@@ -29,7 +29,7 @@ def configure_error_output(*, as_json: bool) -> None:
 
 
 def configure_cli_logging(verbose: bool) -> None:
-    """Reduce graph driver noise unless verbose or graph-driver debug is enabled."""
+    """Reduce driver and HTTP client noise unless verbose or debug env is enabled."""
     env_verbose = os.getenv(
         "CONTEXT_ENGINE_GRAPH_DRIVER_DEBUG", ""
     ).strip().lower() in (
@@ -41,6 +41,10 @@ def configure_cli_logging(verbose: bool) -> None:
     level = logging.DEBUG if noisy else logging.ERROR
     for name in ("neo4j", "neo4j.io", "neo4j.notifications"):
         logging.getLogger(name).setLevel(level)
+    # httpx logs every request at INFO; keep CLI auth/read output clean.
+    http_level = logging.DEBUG if noisy else logging.WARNING
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(http_level)
 
 
 @dataclass
