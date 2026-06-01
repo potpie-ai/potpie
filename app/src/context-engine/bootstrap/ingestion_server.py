@@ -1,4 +1,12 @@
-"""Compose adapters and ports (dependency injection)."""
+"""Composition root for the HTTP **ingestion/server** subsystem.
+
+Distinct from ``bootstrap.host_wiring.build_host_shell`` (the in-process agent
+spine behind the CLI + MCP). This root wires the async ingestion pipeline —
+Neo4j writer/reader, the Postgres batch/ledger/execution-log stores, source
+connectors, and the reconciliation agent — that backs the FastAPI surface in
+``adapters/inbound/http``. It is intentionally kept separate while the pipeline
+is migrated onto ``HostShell``; nothing on the CLI path imports it.
+"""
 
 from __future__ import annotations
 
@@ -24,8 +32,7 @@ from adapters.outbound.reconciliation.context_graph_tools import (
     ContextGraphReconciliationTools,
 )
 from adapters.outbound.graph import GraphWriterPort, Neo4jGraphWriter
-from adapters.outbound.graph.neo4j_reader import Neo4jClaimQueryStore
-from application.services.read_orchestrator import ReadOrchestrator
+from adapters.outbound.graph.backends.neo4j_backend import Neo4jGraphBackend
 from adapters.outbound.policy import DefaultPolicyAdapter
 from adapters.outbound.postgres.agent_checkpoint_store import (
     SqlAlchemyAgentCheckpointStore,
@@ -45,13 +52,7 @@ from adapters.outbound.postgres.ledger import SqlAlchemyIngestionLedger
 from adapters.outbound.postgres.reconciliation_ledger import (
     SqlAlchemyReconciliationLedger,
 )
-from adapters.outbound.query_agent.null_agent import NullQueryAgent
-from adapters.outbound.query_agent.pydantic_query_agent import PydanticQueryAgent
 from adapters.outbound.settings_env import EnvContextEngineSettings
-from adapters.outbound.synthesis.null import NullAnswerSynthesizer
-from adapters.outbound.synthesis.pydantic_ai_answer import (
-    PydanticAIAnswerSynthesizer,
-)
 from application.services.source_connector_registry import SourceConnectorRegistry
 from domain.ports.event_query_service import EventQueryService
 from domain.ports.event_stream import (
@@ -76,7 +77,7 @@ from domain.source_references import SourceReferenceRecord
 
 
 @dataclass
-class ContextEngineContainer:
+class IngestionServerContainer:
     """Wired dependencies for use cases.
 
     Phase 2 collapsed the source-shaped slots (``source_for_repo``,
@@ -186,32 +187,7 @@ def _attach_reconciliation_context(
         graph_setter(context_graph)
 
 
-def _build_answer_synthesizer(*, telemetry: TelemetryPort | None = None):
-    """Return an LLM synthesizer when CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL is set, else Null."""
-    import os
-
-    if os.getenv("CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL"):
-        return PydanticAIAnswerSynthesizer(telemetry=telemetry)
-    return NullAnswerSynthesizer()
-
-
-def _build_query_agent(*, telemetry: TelemetryPort | None = None):
-    """Return the agentic read-side query loop when an LLM model is configured.
-
-    Enabled by CONTEXT_ENGINE_QUERY_AGENT_MODEL, or it reuses the synthesis
-    model (CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL) so one env var lights up the
-    whole read-side LLM surface. Falls back to Null (deterministic resolve).
-    """
-    import os
-
-    if os.getenv("CONTEXT_ENGINE_QUERY_AGENT_MODEL") or os.getenv(
-        "CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL"
-    ):
-        return PydanticQueryAgent(telemetry=telemetry)
-    return NullQueryAgent()
-
-
-def build_container(
+def build_ingestion_server(
     *,
     settings: ContextEngineSettingsPort | None = None,
     pots: PotResolutionPort,
@@ -221,7 +197,7 @@ def build_container(
     telemetry: TelemetryPort | None = None,
     observability: ObservabilityPort | None = None,
     event_stream_publisher: EventStreamPublisherPort | None = None,
-) -> ContextEngineContainer:
+) -> IngestionServerContainer:
     s = settings or EnvContextEngineSettings()
     telemetry_sink = telemetry or _default_telemetry()
     observability_sink = observability or _default_observability()
@@ -244,25 +220,21 @@ def build_container(
     stream_publisher = event_stream_publisher or _default_event_stream_publisher()
     graph_writer = Neo4jGraphWriter(s)
     registry = connectors or SourceConnectorRegistry()
-    # One read trunk: P9 readers over the canonical claim store → ranking →
-    # AgentEnvelope. Neo4jClaimQueryStore is the production claim surface.
-    orchestrator = ReadOrchestrator(claim_query=Neo4jClaimQueryStore(s))
-    # Fail fast if the orchestrator's reader set has drifted from the
-    # advertised ``READER_BACKED_INCLUDES`` (see domain.coherence).
+    # One graph substrate: the Neo4j GraphBackend (claim_query read trunk +
+    # mutation write door). Share the one writer so the ingestion scan path
+    # (container.graph_writer) and ContextGraphService don't open two pools.
+    backend = Neo4jGraphBackend(s, writer=graph_writer)
+    context_graph = ContextGraphService(backend=backend)
+    # Fail fast if the read trunk's reader set has drifted from the advertised
+    # ``READER_BACKED_INCLUDES`` (see domain.coherence).
     from domain.coherence import assert_runtime_coherence
 
-    assert_runtime_coherence(reader_backed_includes=orchestrator.backed_includes)
-    context_graph = ContextGraphService(
-        graph_writer=graph_writer,
-        orchestrator=orchestrator,
-        answer_synthesizer=_build_answer_synthesizer(telemetry=telemetry_sink),
-        query_agent=_build_query_agent(telemetry=telemetry_sink),
-    )
+    assert_runtime_coherence(reader_backed_includes=context_graph.backed_includes)
     _attach_reconciliation_context(reconciliation_agent, context_graph)
     _attach_reconciliation_telemetry(reconciliation_agent, telemetry_sink)
     _attach_reconciliation_observability(reconciliation_agent, observability_sink)
     _attach_reconciliation_event_stream(reconciliation_agent, stream_publisher)
-    return ContextEngineContainer(
+    return IngestionServerContainer(
         settings=s,
         graph_writer=graph_writer,
         context_graph=context_graph,
@@ -414,14 +386,14 @@ def _default_repo_resolver(
     return _resolve
 
 
-def build_container_with_github_token(
+def build_ingestion_server_with_github_token(
     *,
     token: str,
     pots: PotResolutionPort,
     settings: ContextEngineSettingsPort | None = None,
     reconciliation_agent: ReconciliationAgentPort | None = None,
     jobs: ContextGraphJobQueuePort | None = None,
-) -> ContextEngineContainer:
+) -> IngestionServerContainer:
     """Build a container with the GitHub + Notion connectors pre-wired.
 
     Hosts that need Linear (or any other source) register their connector
@@ -467,7 +439,7 @@ def build_container_with_github_token(
     registry.register(AlertingStubConnector())
     registry.register(DeployStubConnector())
 
-    return build_container(
+    return build_ingestion_server(
         settings=settings,
         pots=pots,
         connectors=registry,

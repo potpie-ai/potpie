@@ -43,7 +43,7 @@ from domain.ports.observability import (
 logger = logging.getLogger(__name__)
 
 # Guard so repeated OtelObservability() never double-attaches a processor to
-# the same provider (build_container can run more than once per process).
+# the same provider (build_ingestion_server can run more than once per process).
 _ATTACHED_PROVIDERS: set[int] = set()
 _SETUP_LOCK = threading.Lock()
 _OPENAI_INSTRUMENTED = False
