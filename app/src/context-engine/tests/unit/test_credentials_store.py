@@ -217,3 +217,137 @@ def test_resolve_cli_pot_ref_uuid_normalizes() -> None:
     got, err = cs.resolve_cli_pot_ref(s)
     assert err == ""
     assert got == "550e8400-e29b-41d4-a716-446655440000"
+
+
+@pytest.fixture
+def fake_keyring(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
+    store: dict[tuple[str, str], str] = {}
+
+    def _set_password(service: str, username: str, password: str) -> None:
+        store[(service, username)] = password
+
+    def _get_password(service: str, username: str) -> str | None:
+        return store.get((service, username))
+
+    def _delete_password(service: str, username: str) -> None:
+        store.pop((service, username), None)
+
+    monkeypatch.setattr(cs.keyring, "set_password", _set_password)
+    monkeypatch.setattr(cs.keyring, "get_password", _get_password)
+    monkeypatch.setattr(cs.keyring, "delete_password", _delete_password)
+    return store
+
+
+def test_write_provider_credentials_preserves_existing_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fake_keyring: dict[tuple[str, str], str]
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_credentials(api_key="secret-token", api_base_url="http://localhost:9999")
+    cs.set_active_pot_id("11111111-1111-1111-1111-111111111111")
+    cs.register_pot_alias("demo", "22222222-2222-2222-2222-222222222222")
+
+    cs.write_provider_credentials(
+        "github",
+        {
+            "provider": "github",
+            "provider_host": "github.com",
+            "access_token": "plaintext-token",
+            "token_type": "bearer",
+            "scopes": ["repo", "read:org", "read:user"],
+            "account": {"login": "octocat", "id": 1, "name": None, "email": None},
+            "created_at": "2026-05-29T00:00:00+00:00",
+            "updated_at": "2026-05-29T00:00:00+00:00",
+            "expires_at": None,
+            "metadata": {"auth_flow": "device"},
+        },
+    )
+
+    path = cs.credentials_path()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["api_key"] == "secret-token"
+    assert data["api_base_url"] == "http://localhost:9999"
+    assert data["active_pot_id"] == "11111111-1111-1111-1111-111111111111"
+    assert data["pot_aliases"] == {"demo": "22222222-2222-2222-2222-222222222222"}
+    assert "access_token" not in data["integrations"]["github"]
+    assert data["integrations"]["github"]["token_storage"] == "keychain"
+    assert fake_keyring[("potpie", "github_token")] == "plaintext-token"
+    assert cs.get_provider_credentials("github")["access_token"] == "plaintext-token"
+
+
+def test_get_provider_credentials_reads_from_keychain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fake_keyring: dict[tuple[str, str], str]
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_provider_credentials(
+        "github",
+        {
+            "provider": "github",
+            "provider_host": "github.com",
+            "access_token": "plaintext-token",
+            "token_type": "bearer",
+            "scopes": ["repo"],
+            "account": {"login": "octocat", "id": 1, "name": None, "email": None},
+            "created_at": "2026-05-29T00:00:00+00:00",
+            "updated_at": "2026-05-29T00:00:00+00:00",
+            "expires_at": None,
+            "metadata": {"auth_flow": "device"},
+        },
+    )
+
+    fake_keyring[("potpie", "github_token")] = "from-keychain"
+
+    assert cs.get_provider_credentials("github")["access_token"] == "from-keychain"
+
+
+def test_get_provider_credentials_raises_when_keychain_token_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_integration_metadata(
+        "github",
+        {
+            "provider": "github",
+            "provider_host": "github.com",
+            "token_storage": "keychain",
+            "account": {"login": "octocat", "id": 1},
+        },
+    )
+    monkeypatch.setattr(cs.keyring, "get_password", lambda _service, _username: None)
+
+    with pytest.raises(cs.ProviderCredentialError) as exc:
+        cs.get_provider_credentials("github")
+
+    assert str(exc.value) == (
+        "GitHub token not found in system keychain. Run: potpie auth github login"
+    )
+
+
+def test_write_provider_credentials_raises_on_keychain_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    def _fail(_service: str, _username: str, _password: str) -> None:
+        raise KeyringError("backend unavailable")
+
+    monkeypatch.setattr(cs.keyring, "set_password", _fail)
+
+    with pytest.raises(cs.ProviderCredentialError) as exc:
+        cs.write_provider_credentials(
+            "github",
+            {
+                "provider": "github",
+                "provider_host": "github.com",
+                "access_token": "plaintext-token",
+                "token_type": "bearer",
+                "scopes": ["repo"],
+                "account": {"login": "octocat", "id": 1, "name": None, "email": None},
+                "created_at": "2026-05-29T00:00:00+00:00",
+                "updated_at": "2026-05-29T00:00:00+00:00",
+                "expires_at": None,
+                "metadata": {"auth_flow": "device"},
+            },
+        )
+
+    assert "Failed to store GitHub token in system keychain" in str(exc.value)
