@@ -1,9 +1,11 @@
 """Canonical agent envelope (rebuild plan P8).
 
-The plan calls for one envelope shape across ``goal=answer|retrieve``
-and across MCP ``context_resolve`` / ``context_search``. This module
-defines that shape; the application layer's :class:`EnvelopeBuilder`
-produces it from ranked reader responses.
+The one read-result shape, returned by both ``context_resolve`` and
+``context_search`` across every surface (CLI / MCP / managed HTTP). It carries
+ranked evidence items + coverage; there is no server-side answer synthesis —
+the agent reasons over the evidence. This module defines that shape; the
+application layer's :class:`EnvelopeBuilder` produces it from ranked reader
+responses.
 
 The intent / include *vocabulary* lives in one place — ``domain.agent_context_port``
 (``CONTEXT_INTENTS`` + the reader-backed include tiers). This module used to

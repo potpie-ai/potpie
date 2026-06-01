@@ -10,9 +10,11 @@ from pydantic import BaseModel, Field
 
 
 class ContextGraphGoal(StrEnum):
+    # Structural read hint only — never selects a different read path. The
+    # former ANSWER/INVESTIGATE members (server-side synthesis / agentic loop)
+    # were removed when the engine collapsed onto one evidence-envelope read
+    # contract; the agent synthesises answers from the returned evidence.
     RETRIEVE = "retrieve"
-    ANSWER = "answer"
-    INVESTIGATE = "investigate"
     NEIGHBORHOOD = "neighborhood"
     TIMELINE = "timeline"
     AGGREGATE = "aggregate"
