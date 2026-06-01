@@ -1,4 +1,4 @@
-"""MCP server: context graph tools via Potpie POST /api/v2/context (X-API-Key)."""
+"""MCP server: context graph tools via Potpie POST /api/v2/context."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from datetime import datetime
 from mcp.server.fastmcp import FastMCP
 
 from adapters.inbound.cli.potpie_api_config import (
+    resolve_potpie_auth_config,
     resolve_potpie_api_base_url,
-    resolve_potpie_api_key,
 )
 from adapters.inbound.mcp.project_access import assert_mcp_pot_allowed
 from adapters.outbound.http.potpie_context_api_client import (
@@ -36,9 +36,10 @@ def _mcp_client_name() -> str:
 
 
 def _client() -> PotpieContextApiClient:
+    auth_config = resolve_potpie_auth_config()
     return PotpieContextApiClient(
         resolve_potpie_api_base_url(),
-        resolve_potpie_api_key(),
+        auth_headers=auth_config.headers,
         client_surface="mcp",
         client_name=_mcp_client_name(),
     )

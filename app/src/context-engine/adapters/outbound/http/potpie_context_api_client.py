@@ -1,9 +1,10 @@
-"""HTTP client for Potpie /api/v2/context (X-API-Key)."""
+"""HTTP client for Potpie /api/v2/context (API key or Firebase Bearer)."""
 
 from __future__ import annotations
 
 import json
 from datetime import datetime
+from collections.abc import Callable
 from typing import Any, Optional
 from urllib.parse import quote
 
@@ -48,14 +49,18 @@ class PotpieContextApiClient:
     def __init__(
         self,
         base_url: str,
-        api_key: str,
+        api_key: str | None = None,
         *,
+        auth_headers: dict[str, str] | None = None,
+        auth_headers_provider: Callable[[], dict[str, str]] | None = None,
         timeout: float = 120.0,
         client_surface: str | None = None,
         client_name: str | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
-        self._api_key = api_key.strip()
+        self._api_key = (api_key or "").strip()
+        self._auth_headers = dict(auth_headers or {})
+        self._auth_headers_provider = auth_headers_provider
         self._timeout = timeout
         self._client_surface = (client_surface or "").strip() or None
         self._client_name = (client_name or "").strip() or None
@@ -73,13 +78,25 @@ class PotpieContextApiClient:
         return h
 
     def _headers(self) -> dict[str, str]:
+        auth_headers = (
+            self._auth_headers_provider()
+            if self._auth_headers_provider is not None
+            else dict(self._auth_headers)
+        )
+        if not auth_headers and self._api_key:
+            auth_headers = {"X-API-Key": self._api_key}
         base = {
-            "X-API-Key": self._api_key,
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+        base.update(auth_headers)
         base.update(self._client_headers())
         return base
+
+    def _get_headers(self) -> dict[str, str]:
+        headers = self._headers()
+        headers.pop("Content-Type", None)
+        return headers
 
     def _raise_for_status(self, r: httpx.Response) -> None:
         if r.is_success:
@@ -96,10 +113,7 @@ class PotpieContextApiClient:
         with httpx.Client(timeout=self._timeout) as client:
             r = client.get(
                 self._url("/pots"),
-                headers={
-                    "X-API-Key": self._api_key,
-                    "Accept": "application/json",
-                },
+                headers=self._get_headers(),
             )
         self._raise_for_status(r)
         data = r.json()
@@ -134,10 +148,7 @@ class PotpieContextApiClient:
         with httpx.Client(timeout=self._timeout) as client:
             r = client.get(
                 self._url(f"/pots/slug-availability/{encoded_slug}"),
-                headers={
-                    "X-API-Key": self._api_key,
-                    "Accept": "application/json",
-                },
+                headers=self._get_headers(),
             )
         self._raise_for_status(r)
         out = r.json()
@@ -158,10 +169,7 @@ class PotpieContextApiClient:
         with httpx.Client(timeout=self._timeout) as client:
             r = client.get(
                 self._url(f"/pots/{pot_id}/repositories"),
-                headers={
-                    "X-API-Key": self._api_key,
-                    "Accept": "application/json",
-                },
+                headers=self._get_headers(),
             )
         self._raise_for_status(r)
         data = r.json()
@@ -228,10 +236,7 @@ class PotpieContextApiClient:
         with httpx.Client(timeout=self._timeout) as client:
             return client.get(
                 self._url(path),
-                headers={
-                    "X-API-Key": self._api_key,
-                    "Accept": "application/json",
-                },
+                headers=self._get_headers(),
                 params=params,
             )
 

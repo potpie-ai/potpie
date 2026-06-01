@@ -9,6 +9,7 @@ from google.cloud import secretmanager
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.modules.auth.api_key_deps import get_firebase_or_api_key_user
 from app.modules.auth.api_key_service import APIKeyService
 from app.modules.auth.auth_service import AuthService
 from app.modules.key_management.secrets_schema import (
@@ -999,18 +1000,19 @@ class SecretManager:
 
     @router.delete("/api-keys")
     async def revoke_api_key(
-        user=Depends(AuthService.check_auth),
+        user=Depends(get_firebase_or_api_key_user),
         db: Session = Depends(get_db),
     ):
-        success = await APIKeyService.revoke_api_key(user["user_id"], db)
+        user_id = user.get("user_id") or user.get("uid")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        success = await APIKeyService.revoke_api_key(user_id, db)
         if not success:
             raise HTTPException(
                 status_code=404, detail="No API key found for this user"
             )
 
-        PostHogClient().send_event(
-            user["user_id"], "api_key_revocation", {"success": True}
-        )
+        PostHogClient().send_event(user_id, "api_key_revocation", {"success": True})
         return {"message": "API key revoked successfully"}
 
     @router.get("/api-keys", response_model=APIKeyResponse)

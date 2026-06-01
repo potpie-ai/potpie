@@ -10,6 +10,7 @@ requires-python = ">=3.10,<3.14"
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
+    "keyring>=25.0.0",
     "mcp>=1.0.0",
     "rich>=13.0",
     "typer>=0.15.0",
@@ -73,6 +74,7 @@ potpie-mcp = "adapters.inbound.mcp.server:main"
 [tool.hatch.build.targets.wheel]
 packages = ["domain", "application", "adapters", "bootstrap", "benchmarks"]
 include = [
+    ".env.cli",
     "adapters/inbound/cli/templates/**/*.md",
     "adapters/inbound/cli/templates/**/*.yaml",
     "scripts/**/*.py",
@@ -84,6 +86,7 @@ include = [
 
 [tool.hatch.build.targets.sdist]
 include = [
+    ".env.cli",
     "domain",
     "application",
     "adapters",

@@ -9,9 +9,28 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+import keyring
+from keyring.errors import KeyringError
+
 _CREDENTIALS_FILENAME = "credentials.json"
 _CONFIG_DIR_NAME = "potpie"
 _LEGACY_CONFIG_DIR_NAME = "context-engine"
+_KEYRING_SERVICE = "potpie"
+_GITHUB_TOKEN_USERNAME = "github_token"
+_POTPIE_API_KEY_USERNAME = "potpie_api_key"
+_POTPIE_FIREBASE_REFRESH_TOKEN_USERNAME = "potpie_firebase_refresh_token"
+_POTPIE_FIREBASE_API_KEY_USERNAME = "potpie_firebase_api_key"
+_LINEAR_ACCESS_TOKEN_USERNAME = "linear_access_token"
+_LINEAR_REFRESH_TOKEN_USERNAME = "linear_refresh_token"
+_ATLASSIAN_API_TOKEN_USERNAME = "atlassian_api_token"
+_JIRA_API_TOKEN_USERNAME = "jira_api_token"
+_CONFLUENCE_API_TOKEN_USERNAME = "confluence_api_token"
+_JIRA_CREDENTIALS_KEY = "jira"
+_CONFLUENCE_CREDENTIALS_KEY = "confluence"
+
+
+class ProviderCredentialError(Exception):
+    """Provider credential storage or retrieval failure."""
 
 
 def config_dir() -> Path:
@@ -59,7 +78,227 @@ def read_credentials() -> dict[str, Any]:
         return {}
 
 
+def _write_payload(payload: dict[str, Any]) -> None:
+    d = config_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    path = credentials_path()
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def _store_github_token(access_token: str) -> None:
+    try:
+        keyring.set_password(_KEYRING_SERVICE, _GITHUB_TOKEN_USERNAME, access_token)
+    except KeyringError as exc:
+        raise ProviderCredentialError(
+            f"Failed to store GitHub token in system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to store GitHub token in system keychain: {exc}"
+        ) from exc
+
+
+def _load_github_token() -> str:
+    try:
+        access_token = keyring.get_password(_KEYRING_SERVICE, _GITHUB_TOKEN_USERNAME)
+    except KeyringError as exc:
+        raise ProviderCredentialError(
+            f"Failed to read GitHub token from system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to read GitHub token from system keychain: {exc}"
+        ) from exc
+    if access_token is None:
+        raise ProviderCredentialError(
+            "GitHub token not found in system keychain. Run: potpie auth github login"
+        )
+    return access_token
+
+
+def _delete_github_token() -> None:
+    try:
+        keyring.delete_password(_KEYRING_SERVICE, _GITHUB_TOKEN_USERNAME)
+    except KeyringError:
+        pass
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to remove GitHub token from system keychain: {exc}"
+        ) from exc
+
+
+def _store_potpie_api_key(api_key: str) -> None:
+    try:
+        keyring.set_password(_KEYRING_SERVICE, _POTPIE_API_KEY_USERNAME, api_key)
+    except KeyringError as exc:
+        raise ProviderCredentialError(
+            f"Failed to store Potpie API key in system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to store Potpie API key in system keychain: {exc}"
+        ) from exc
+
+
+def _load_potpie_api_key() -> str | None:
+    try:
+        return keyring.get_password(_KEYRING_SERVICE, _POTPIE_API_KEY_USERNAME)
+    except KeyringError as exc:
+        raise ProviderCredentialError(
+            f"Failed to read Potpie API key from system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to read Potpie API key from system keychain: {exc}"
+        ) from exc
+
+
+def _delete_potpie_api_key() -> None:
+    try:
+        keyring.delete_password(_KEYRING_SERVICE, _POTPIE_API_KEY_USERNAME)
+    except KeyringError:
+        pass
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to remove Potpie API key from system keychain: {exc}"
+        ) from exc
+
+
+def _store_potpie_firebase_refresh_token(refresh_token: str) -> None:
+    try:
+        keyring.set_password(
+            _KEYRING_SERVICE,
+            _POTPIE_FIREBASE_REFRESH_TOKEN_USERNAME,
+            refresh_token,
+        )
+    except KeyringError as exc:
+        raise ProviderCredentialError(
+            f"Failed to store Potpie refresh token in system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to store Potpie refresh token in system keychain: {exc}"
+        ) from exc
+
+
+def _store_potpie_firebase_api_key(firebase_api_key: str) -> None:
+    try:
+        keyring.set_password(
+            _KEYRING_SERVICE,
+            _POTPIE_FIREBASE_API_KEY_USERNAME,
+            firebase_api_key,
+        )
+    except KeyringError as exc:
+        raise ProviderCredentialError(
+            f"Failed to store Potpie Firebase API key in system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to store Potpie Firebase API key in system keychain: {exc}"
+        ) from exc
+
+
+def get_potpie_firebase_refresh_token() -> str:
+    try:
+        token = keyring.get_password(
+            _KEYRING_SERVICE,
+            _POTPIE_FIREBASE_REFRESH_TOKEN_USERNAME,
+        )
+    except KeyringError as exc:
+        raise ProviderCredentialError(
+            f"Failed to read Potpie refresh token from system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to read Potpie refresh token from system keychain: {exc}"
+        ) from exc
+    return str(token or "").strip()
+
+
+def _load_potpie_firebase_api_key() -> str | None:
+    try:
+        return keyring.get_password(
+            _KEYRING_SERVICE,
+            _POTPIE_FIREBASE_API_KEY_USERNAME,
+        )
+    except KeyringError as exc:
+        raise ProviderCredentialError(
+            f"Failed to read Potpie Firebase API key from system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to read Potpie Firebase API key from system keychain: {exc}"
+        ) from exc
+
+
+def _delete_potpie_firebase_refresh_token() -> None:
+    try:
+        keyring.delete_password(_KEYRING_SERVICE, _POTPIE_FIREBASE_REFRESH_TOKEN_USERNAME)
+    except KeyringError:
+        pass
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to remove Potpie refresh token from system keychain: {exc}"
+        ) from exc
+
+
+def _delete_potpie_firebase_api_key() -> None:
+    try:
+        keyring.delete_password(_KEYRING_SERVICE, _POTPIE_FIREBASE_API_KEY_USERNAME)
+    except KeyringError:
+        pass
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to remove Potpie Firebase API key from system keychain: {exc}"
+        ) from exc
+
+
+def _store_keychain_secret(label: str, username: str, secret: str) -> None:
+    try:
+        keyring.set_password(_KEYRING_SERVICE, username, secret)
+    except KeyringError as exc:
+        raise ProviderCredentialError(
+            f"Failed to store {label} in system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to store {label} in system keychain: {exc}"
+        ) from exc
+
+
+def _load_keychain_secret(label: str, username: str) -> str:
+    try:
+        secret = keyring.get_password(_KEYRING_SERVICE, username)
+    except KeyringError as exc:
+        raise ProviderCredentialError(
+            f"Failed to read {label} from system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to read {label} from system keychain: {exc}"
+        ) from exc
+    return str(secret or "").strip()
+
+
+def _delete_keychain_secret(label: str, username: str) -> None:
+    try:
+        keyring.delete_password(_KEYRING_SERVICE, username)
+    except KeyringError:
+        pass
+    except Exception as exc:
+        raise ProviderCredentialError(
+            f"Failed to remove {label} from system keychain: {exc}"
+        ) from exc
+
+
 def get_stored_api_key() -> str:
+    try:
+        from_keychain = _load_potpie_api_key()
+        if from_keychain and from_keychain.strip():
+            return from_keychain.strip()
+    except ProviderCredentialError:
+        pass
     v = read_credentials().get("api_key")
     return str(v).strip() if v else ""
 
@@ -77,9 +316,6 @@ def write_credentials(*, api_key: str, api_base_url: Optional[str] = None) -> No
     Merges with existing file: if ``api_base_url`` is ``None``, any stored ``api_base_url`` is kept.
     Pass ``api_base_url=""`` to clear the stored base URL.
     """
-    d = config_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    path = credentials_path()
     payload: dict[str, Any] = dict(read_credentials())
     payload["api_key"] = api_key.strip()
     if api_base_url is not None:
@@ -88,12 +324,121 @@ def write_credentials(*, api_key: str, api_base_url: Optional[str] = None) -> No
             payload["api_base_url"] = u
         else:
             payload.pop("api_base_url", None)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    _write_payload(payload)
+
+
+def write_potpie_auth_metadata(
+    *,
+    created_at: str,
+    auth_type: str = "api_key",
+) -> None:
+    """Persist Potpie CLI auth metadata only (secrets stay in keychain)."""
+    payload: dict[str, Any] = dict(read_credentials())
+    integrations = dict(payload.get("integrations") or {})
+    if not isinstance(integrations, dict):
+        integrations = {}
+    potpie_metadata = {
+        "auth_type": auth_type,
+        "token_storage": "keychain",
+        "created_at": created_at,
+    }
+    integrations["potpie"] = potpie_metadata
+    payload["integrations"] = integrations
+    _write_payload(payload)
+
+
+def clear_potpie_auth(*, clear_api_key: bool = False) -> None:
+    """Remove Potpie auth secrets from keychain and drop integrations.potpie metadata."""
+    if clear_api_key:
+        _delete_potpie_api_key()
+    _delete_potpie_firebase_refresh_token()
+    _delete_potpie_firebase_api_key()
+    payload: dict[str, Any] = dict(read_credentials())
+    integrations = dict(payload.get("integrations") or {})
+    if isinstance(integrations, dict):
+        integrations.pop("potpie", None)
+        if integrations:
+            payload["integrations"] = integrations
+        else:
+            payload.pop("integrations", None)
+    if not payload:
+        path = credentials_path()
+        try:
+            path.unlink(missing_ok=True)
+        except TypeError:
+            if path.is_file():
+                path.unlink()
+        return
+    _write_payload(payload)
+
+
+def store_potpie_api_key(api_key: str, *, created_at: str) -> None:
+    """Store Potpie API key in keychain and write metadata to credentials.json."""
+    key = api_key.strip()
+    if not key.startswith("sk-"):
+        raise ProviderCredentialError("Potpie API key must start with sk-.")
+    _store_potpie_api_key(key)
+    write_potpie_auth_metadata(created_at=created_at, auth_type="api_key")
+
+
+def store_potpie_firebase_refresh_token(
+    refresh_token: str,
+    *,
+    created_at: str,
+    firebase_api_key: str | None = None,
+) -> None:
+    """Store Firebase refresh token in keychain and write metadata only."""
+    token = refresh_token.strip()
+    if not token:
+        raise ProviderCredentialError("Potpie Firebase refresh token is required.")
+    _store_potpie_firebase_refresh_token(token)
+    if firebase_api_key and firebase_api_key.strip():
+        _store_potpie_firebase_api_key(firebase_api_key.strip())
+    write_potpie_auth_metadata(
+        created_at=created_at,
+        auth_type="firebase_session",
+    )
+
+
+def update_potpie_firebase_refresh_token(refresh_token: str) -> None:
+    """Update rotated Firebase refresh token without touching metadata."""
+    token = refresh_token.strip()
+    if not token:
+        raise ProviderCredentialError("Potpie Firebase refresh token is required.")
+    _store_potpie_firebase_refresh_token(token)
+
+
+def get_potpie_auth_type() -> str:
+    integrations = read_credentials().get("integrations")
+    if not isinstance(integrations, dict):
+        return ""
+    payload = integrations.get("potpie")
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("auth_type") or "").strip()
+
+
+def get_potpie_firebase_api_key() -> str:
+    try:
+        from_keychain = _load_potpie_firebase_api_key()
+        if from_keychain and from_keychain.strip():
+            return from_keychain.strip()
+    except ProviderCredentialError:
+        pass
+    integrations = read_credentials().get("integrations")
+    if not isinstance(integrations, dict):
+        return ""
+    payload = integrations.get("potpie")
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("firebase_api_key") or "").strip()
 
 
 def clear_credentials() -> None:
     """Remove credentials file if it exists."""
+    _delete_potpie_api_key()
+    _delete_potpie_firebase_refresh_token()
+    _delete_potpie_firebase_api_key()
     path = credentials_path()
     try:
         path.unlink(missing_ok=True)
@@ -117,8 +462,7 @@ def clear_pot_scope_state() -> None:
             if path.is_file():
                 path.unlink()
         return
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    _write_payload(payload)
 
 
 def get_active_pot_id() -> str:
@@ -129,13 +473,9 @@ def get_active_pot_id() -> str:
 
 def set_active_pot_id(pot_id: str) -> None:
     """Persist active pot id alongside API credentials."""
-    d = config_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    path = credentials_path()
     payload: dict[str, Any] = dict(read_credentials())
     payload["active_pot_id"] = pot_id.strip()
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    _write_payload(payload)
 
 
 def clear_active_pot_id() -> None:
@@ -148,8 +488,7 @@ def clear_active_pot_id() -> None:
     if not payload:
         path.unlink(missing_ok=True)
         return
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    _write_payload(payload)
 
 
 def _norm_alias_key(name: str) -> str:
@@ -179,17 +518,483 @@ def register_pot_alias(name: str, pot_id: str) -> None:
         uid = uuid.UUID(str(pot_id).strip())
     except ValueError as e:
         raise ValueError("pot_id must be a UUID") from e
-    d = config_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    path = credentials_path()
     payload: dict[str, Any] = dict(read_credentials())
     aliases = dict(payload.get("pot_aliases") or {})
     if not isinstance(aliases, dict):
         aliases = {}
     aliases[key] = str(uid)
     payload["pot_aliases"] = aliases
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    _write_payload(payload)
+
+
+def write_provider_credentials(provider: str, payload: dict[str, Any]) -> None:
+    key = str(provider or "").strip().lower()
+    if not key:
+        raise ValueError("provider must be non-empty")
+    stored_payload = dict(payload)
+    if key == "github":
+        access_token = str(stored_payload.pop("access_token", "") or "").strip()
+        if not access_token:
+            raise ProviderCredentialError("GitHub access token is required.")
+        _store_github_token(access_token)
+        stored_payload["token_storage"] = "keychain"
+    existing: dict[str, Any] = dict(read_credentials())
+    integrations = dict(existing.get("integrations") or {})
+    if not isinstance(integrations, dict):
+        integrations = {}
+    integrations[key] = stored_payload
+    existing["integrations"] = integrations
+    _write_payload(existing)
+
+
+def get_provider_credentials(provider: str) -> dict[str, Any]:
+    key = str(provider or "").strip().lower()
+    if not key:
+        return {}
+    integrations = read_credentials().get("integrations")
+    if not isinstance(integrations, dict):
+        return {}
+    payload = integrations.get(key)
+    if not isinstance(payload, dict):
+        return {}
+    result = dict(payload)
+    if key == "github":
+        result["access_token"] = _load_github_token()
+    return result
+
+
+def clear_provider_credentials(provider: str) -> None:
+    """Remove provider secrets from keychain and drop integrations metadata."""
+    key = str(provider or "").strip().lower()
+    if not key:
+        raise ValueError("provider must be non-empty")
+    if key == "github":
+        _delete_github_token()
+    payload: dict[str, Any] = dict(read_credentials())
+    integrations = dict(payload.get("integrations") or {})
+    if isinstance(integrations, dict):
+        integrations.pop(key, None)
+        if integrations:
+            payload["integrations"] = integrations
+        else:
+            payload.pop("integrations", None)
+    if not payload:
+        path = credentials_path()
+        try:
+            path.unlink(missing_ok=True)
+        except TypeError:
+            if path.is_file():
+                path.unlink()
+        return
+    _write_payload(payload)
+
+
+_INTEGRATION_PROVIDERS = frozenset({"atlassian", "jira", "confluence", "linear"})
+_ATLASSIAN_PRODUCTS = frozenset({"jira", "confluence"})
+_ATLASSIAN_CREDENTIALS_KEY = "atlassian"
+_OAUTH_PROVIDERS = frozenset({"linear"})
+_ATLASSIAN_PRODUCT_KEYCHAIN: dict[str, tuple[str, str]] = {
+    "jira": ("Jira API token", _JIRA_API_TOKEN_USERNAME),
+    "confluence": ("Confluence API token", _CONFLUENCE_API_TOKEN_USERNAME),
+}
+def _norm_integration_provider(provider: str) -> str:
+    key = provider.strip().lower()
+    if key not in _INTEGRATION_PROVIDERS:
+        raise ValueError(
+            f"Unknown integration provider {provider!r} "
+            f"(expected one of: {', '.join(sorted(_INTEGRATION_PROVIDERS))})."
+        )
+    return key
+
+
+def _read_integrations(payload: dict[str, Any]) -> dict[str, Any]:
+    integrations = payload.get("integrations")
+    return dict(integrations) if isinstance(integrations, dict) else {}
+
+
+def _read_integration_metadata(key: str) -> dict[str, Any]:
+    integrations = _read_integrations(read_credentials())
+    entry = integrations.get(key)
+    return dict(entry) if isinstance(entry, dict) else {}
+
+
+def _write_integration_metadata(key: str, metadata: dict[str, Any]) -> None:
+    payload: dict[str, Any] = dict(read_credentials())
+    integrations = _read_integrations(payload)
+    integrations[key] = metadata
+    payload["integrations"] = integrations
+    payload.pop("linear", None)
+    payload.pop("atlassian", None)
+    payload.pop("jira", None)
+    payload.pop("confluence", None)
+    _write_payload(payload)
+
+
+def _remove_integration_metadata(*keys: str) -> None:
+    payload: dict[str, Any] = dict(read_credentials())
+    integrations = _read_integrations(payload)
+    for key in keys:
+        integrations.pop(key, None)
+        payload.pop(key, None)
+    payload.pop("jira", None)
+    payload.pop("confluence", None)
+    if integrations:
+        payload["integrations"] = integrations
+    else:
+        payload.pop("integrations", None)
+    if not payload:
+        path = credentials_path()
+        try:
+            path.unlink(missing_ok=True)
+        except TypeError:
+            if path.is_file():
+                path.unlink()
+        return
+    _write_payload(payload)
+
+
+def _norm_atlassian_product(product: str) -> str:
+    key = product.strip().lower()
+    if key in {"wiki", "conf"}:
+        return "confluence"
+    if key not in _ATLASSIAN_PRODUCTS:
+        raise ValueError(
+            f"Unknown Atlassian product {product!r} (expected 'jira' or 'confluence')."
+        )
+    return key
+
+
+def _legacy_atlassian_metadata() -> dict[str, Any]:
+    return _read_integration_metadata(_ATLASSIAN_CREDENTIALS_KEY)
+
+
+def _save_product_credentials(product: str, credentials: dict[str, Any]) -> None:
+    from adapters.inbound.cli.integration_profile import (
+        atlassian_site_from_entry,
+        build_product_integration_record,
+    )
+
+    key = _norm_atlassian_product(product)
+    label, username = _ATLASSIAN_PRODUCT_KEYCHAIN[key]
+    api_token = str(credentials.get("api_token") or "").strip()
+    if not api_token:
+        raise ProviderCredentialError(f"{key.capitalize()} API token is required.")
+    _store_keychain_secret(label, username, api_token)
+    prior = _read_integration_metadata(key)
+    merged = {**prior, **credentials}
+    site = atlassian_site_from_entry(merged)
+    if site.get("site_url") and not merged.get("site_url"):
+        merged["site_url"] = site["site_url"]
+    metadata = build_product_integration_record(key, merged)
+    _write_integration_metadata(key, metadata)
+
+
+def _get_product_credentials(product: str) -> dict[str, Any]:
+    key = _norm_atlassian_product(product)
+    metadata = _read_integration_metadata(key)
+    if not metadata:
+        legacy = _legacy_atlassian_metadata()
+        if legacy:
+            metadata = dict(legacy)
+    if not metadata:
+        return {}
+    label, username = _ATLASSIAN_PRODUCT_KEYCHAIN[key]
+    api_token = _load_keychain_secret(label, username)
+    if not api_token:
+        legacy_token = _load_keychain_secret(
+            "Atlassian API token",
+            _ATLASSIAN_API_TOKEN_USERNAME,
+        )
+        api_token = legacy_token
+    if not api_token:
+        return {}
+    return {**metadata, "api_token": api_token}
+
+
+def _clear_product_credentials(product: str) -> None:
+    key = _norm_atlassian_product(product)
+    label, username = _ATLASSIAN_PRODUCT_KEYCHAIN[key]
+    _delete_keychain_secret(label, username)
+    _remove_integration_metadata(key)
+
+
+def save_jira_credentials(credentials: dict[str, Any]) -> None:
+    """Store Jira API token in keychain and metadata in credentials.json."""
+    _save_product_credentials("jira", credentials)
+
+
+def get_jira_credentials() -> dict[str, Any]:
+    """Return Jira credentials with API token loaded from keychain."""
+    return _get_product_credentials("jira")
+
+
+def clear_jira_credentials() -> None:
+    """Remove Jira credentials from keychain and metadata."""
+    _clear_product_credentials("jira")
+
+
+def save_confluence_credentials(credentials: dict[str, Any]) -> None:
+    """Store Confluence API token in keychain and metadata in credentials.json."""
+    _save_product_credentials("confluence", credentials)
+
+
+def get_confluence_credentials() -> dict[str, Any]:
+    """Return Confluence credentials with API token loaded from keychain."""
+    return _get_product_credentials("confluence")
+
+
+def clear_confluence_credentials() -> None:
+    """Remove Confluence credentials from keychain and metadata."""
+    _clear_product_credentials("confluence")
+
+
+def save_atlassian_credentials(credentials: dict[str, Any]) -> None:
+    """Deprecated: saves to legacy atlassian key only. Prefer save_jira_credentials."""
+    from adapters.inbound.cli.integration_profile import (
+        atlassian_site_from_entry,
+        build_atlassian_integration_record,
+    )
+
+    api_token = str(credentials.get("api_token") or "").strip()
+    if not api_token:
+        raise ProviderCredentialError("Atlassian API token is required.")
+    _store_keychain_secret(
+        "Atlassian API token",
+        _ATLASSIAN_API_TOKEN_USERNAME,
+        api_token,
+    )
+    prior = _legacy_atlassian_metadata()
+    merged = {**prior, **credentials}
+    site = atlassian_site_from_entry(merged)
+    if site.get("site_url") and not merged.get("site_url"):
+        merged["site_url"] = site["site_url"]
+    metadata = build_atlassian_integration_record(merged)
+    _write_integration_metadata(_ATLASSIAN_CREDENTIALS_KEY, metadata)
+
+
+def get_atlassian_credentials() -> dict[str, Any]:
+    """Return credentials from jira, confluence, or legacy atlassian metadata."""
+    jira = get_jira_credentials()
+    if jira:
+        return jira
+    confluence = get_confluence_credentials()
+    if confluence:
+        return confluence
+    metadata = _legacy_atlassian_metadata()
+    if not metadata:
+        return {}
+    api_token = _load_keychain_secret(
+        "Atlassian API token",
+        _ATLASSIAN_API_TOKEN_USERNAME,
+    )
+    if not api_token:
+        return {}
+    return {**metadata, "api_token": api_token}
+
+
+def save_jira_workspace_prefs(*, project_key: str) -> None:
+    """Persist selected Jira project key."""
+    prior = get_jira_credentials()
+    if not prior.get("api_token"):
+        raise ProviderCredentialError(
+            "Jira is not connected. Run: potpie auth jira login"
+        )
+    workspaces = dict(prior.get("workspaces") or {})
+    workspaces["jira_project"] = project_key.strip().upper()
+    save_jira_credentials({**prior, "workspaces": workspaces})
+
+
+def save_confluence_workspace_prefs(*, space_key: str) -> None:
+    """Persist selected Confluence space key."""
+    prior = get_confluence_credentials()
+    if not prior.get("api_token"):
+        raise ProviderCredentialError(
+            "Confluence is not connected. Run: potpie auth confluence login"
+        )
+    workspaces = dict(prior.get("workspaces") or {})
+    workspaces["confluence_space"] = space_key.strip().upper()
+    save_confluence_credentials({**prior, "workspaces": workspaces})
+
+
+def save_atlassian_workspace_prefs(
+    *,
+    jira_project: str | None = None,
+    confluence_space: str | None = None,
+) -> None:
+    """Persist workspace prefs on the matching product integration."""
+    if jira_project:
+        save_jira_workspace_prefs(project_key=jira_project)
+    if confluence_space:
+        save_confluence_workspace_prefs(space_key=confluence_space)
+
+
+def clear_atlassian_credentials() -> None:
+    """Remove legacy atlassian, jira, and confluence credentials."""
+    _delete_keychain_secret("Atlassian API token", _ATLASSIAN_API_TOKEN_USERNAME)
+    for label, username in _ATLASSIAN_PRODUCT_KEYCHAIN.values():
+        _delete_keychain_secret(label, username)
+    _remove_integration_metadata(
+        _ATLASSIAN_CREDENTIALS_KEY,
+        "atlassian",
+        _JIRA_CREDENTIALS_KEY,
+        _CONFLUENCE_CREDENTIALS_KEY,
+    )
+
+
+def save_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
+    """Store OAuth tokens in keychain and non-secret metadata in credentials.json."""
+    from adapters.inbound.cli.integration_profile import build_linear_integration_record
+
+    key = _norm_integration_provider(provider)
+    if key not in _OAUTH_PROVIDERS:
+        raise ValueError(f"{provider!r} does not use OAuth token storage.")
+
+    access_token = str(tokens.get("access_token") or "").strip()
+    if access_token:
+        _store_keychain_secret(
+            "Linear access token",
+            _LINEAR_ACCESS_TOKEN_USERNAME,
+            access_token,
+        )
+    refresh_token = str(tokens.get("refresh_token") or "").strip()
+    if refresh_token:
+        _store_keychain_secret(
+            "Linear refresh token",
+            _LINEAR_REFRESH_TOKEN_USERNAME,
+            refresh_token,
+        )
+
+    prior = _read_integration_metadata(key)
+    metadata = build_linear_integration_record(tokens, existing=prior)
+    _write_integration_metadata(key, metadata)
+
+
+def write_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
+    """Alias for :func:`save_integration_tokens`."""
+    save_integration_tokens(provider, tokens)
+
+
+def get_integration_tokens(provider: str) -> dict[str, Any]:
+    """Return credentials for an integration provider with secrets loaded from keychain."""
+    key = _norm_integration_provider(provider)
+    if key in _ATLASSIAN_PRODUCTS:
+        creds = _get_product_credentials(key)
+        return {"auth_type": "api_token", **creds} if creds else {}
+    if key == _ATLASSIAN_CREDENTIALS_KEY:
+        creds = get_atlassian_credentials()
+        return {"auth_type": "api_token", **creds} if creds else {}
+
+    metadata = _read_integration_metadata(key)
+    if not metadata:
+        return {}
+    access_token = _load_keychain_secret(
+        "Linear access token",
+        _LINEAR_ACCESS_TOKEN_USERNAME,
+    )
+    if not access_token:
+        return {}
+    refresh_token = _load_keychain_secret(
+        "Linear refresh token",
+        _LINEAR_REFRESH_TOKEN_USERNAME,
+    )
+    credentials = {**metadata, "access_token": access_token}
+    if refresh_token:
+        credentials["refresh_token"] = refresh_token
+    return credentials
+
+
+def clear_integration_tokens(provider: str) -> None:
+    """Remove stored credentials for an integration provider."""
+    key = _norm_integration_provider(provider)
+    if key == "jira":
+        clear_jira_credentials()
+        return
+    if key == "confluence":
+        clear_confluence_credentials()
+        return
+    if key == _ATLASSIAN_CREDENTIALS_KEY:
+        clear_atlassian_credentials()
+        return
+    _delete_keychain_secret("Linear access token", _LINEAR_ACCESS_TOKEN_USERNAME)
+    _delete_keychain_secret("Linear refresh token", _LINEAR_REFRESH_TOKEN_USERNAME)
+    _remove_integration_metadata(key)
+
+
+def list_integration_providers() -> list[str]:
+    """Return integration providers with stored metadata."""
+    integrations = _read_integrations(read_credentials())
+    found: list[str] = []
+    if isinstance(integrations.get(_JIRA_CREDENTIALS_KEY), dict):
+        found.append("jira")
+    if isinstance(integrations.get(_CONFLUENCE_CREDENTIALS_KEY), dict):
+        found.append("confluence")
+    if isinstance(integrations.get(_ATLASSIAN_CREDENTIALS_KEY), dict):
+        found.append("atlassian")
+    if isinstance(integrations.get("linear"), dict):
+        found.append("linear")
+    return found
+
+
+def get_integration_status(provider: str) -> dict[str, Any]:
+    """Return non-secret status metadata for an integration provider."""
+    from adapters.inbound.cli.integration_profile import (
+        atlassian_account_from_entry,
+        atlassian_site_from_entry,
+        linear_account_from_entry,
+    )
+
+    key = _norm_integration_provider(provider)
+
+    if key in _ATLASSIAN_PRODUCTS or key == _ATLASSIAN_CREDENTIALS_KEY:
+        if key in _ATLASSIAN_PRODUCTS:
+            creds = _get_product_credentials(key)
+            entry = _read_integration_metadata(key) or _legacy_atlassian_metadata()
+        else:
+            creds = get_atlassian_credentials()
+            entry = _legacy_atlassian_metadata() or creds
+        site = atlassian_site_from_entry(entry or creds)
+        if not creds or not site.get("site_url"):
+            return {
+                "provider": key,
+                "authenticated": False,
+                "auth_type": "api_token",
+            }
+        account = atlassian_account_from_entry(entry or creds)
+        return {
+            "provider": key,
+            "authenticated": True,
+            "auth_type": "api_token",
+            "email": account.get("email") or (entry or creds).get("email"),
+            "site_url": site.get("site_url") or (entry or creds).get("site_url"),
+            "site_name": site.get("site_name") or (entry or creds).get("site_name"),
+            "cloud_id": site.get("cloud_id") or (entry or creds).get("cloud_id"),
+            "stored_at": (entry or creds).get("stored_at"),
+            "token_storage": (entry or creds).get("token_storage"),
+        }
+
+    entry = _read_integration_metadata(key)
+    if not entry:
+        return {"provider": key, "authenticated": False, "auth_type": "oauth"}
+    account = linear_account_from_entry(entry)
+    organization = entry.get("organization")
+    org_name = organization.get("name") if isinstance(organization, dict) else None
+    scopes = entry.get("scopes")
+    scope = entry.get("scope")
+    if scopes is None and scope is not None:
+        scopes = scope
+    return {
+        "provider": key,
+        "authenticated": True,
+        "auth_type": "oauth",
+        "login": account.get("name") or account.get("email"),
+        "email": account.get("email"),
+        "site_name": org_name,
+        "expires_at": entry.get("expires_at"),
+        "scope": scopes,
+        "cloud_id": entry.get("cloud_id"),
+        "stored_at": entry.get("stored_at"),
+        "token_storage": entry.get("token_storage"),
+    }
 
 
 def resolve_cli_pot_ref(ref: str) -> tuple[str | None, str]:
