@@ -29,6 +29,12 @@ benchmarks = [
 graph = [
     "neo4j>=5.28.0",
 ]
+falkordb = [
+    # FalkorDBLite (embedded) requires Python >= 3.12; marker keeps resolution
+    # valid across the project's wider requires-python range.
+    "falkordblite>=0.10.0; python_version >= '3.12'",
+    "redis>=7.1,<8",
+]
 github = [
     "pygithub>=2.8.0",
 ]

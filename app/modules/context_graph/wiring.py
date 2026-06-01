@@ -81,6 +81,33 @@ class PotpieContextEngineSettings(ContextEngineSettingsPort):
         c = self._cp.get_neo4j_config()
         return c.get("password")
 
+    def graph_db_backend(self) -> str:
+        return (os.getenv("GRAPH_DB_BACKEND") or "neo4j").strip().lower() or "neo4j"
+
+    def falkordb_url(self) -> str | None:
+        v = (os.getenv("CONTEXT_ENGINE_FALKORDB_URL") or os.getenv("FALKORDB_URL") or "").strip()
+        return v or None
+
+    def falkordb_graph_name(self) -> str:
+        v = (
+            os.getenv("CONTEXT_ENGINE_FALKORDB_GRAPH_NAME")
+            or os.getenv("FALKORDB_GRAPH_NAME")
+            or ""
+        ).strip()
+        return v or "context_graph"
+
+    def falkordb_mode(self) -> str:
+        v = (os.getenv("CONTEXT_ENGINE_FALKORDB_MODE") or os.getenv("FALKORDB_MODE") or "").strip().lower()
+        return v or "lite"
+
+    def falkordb_lite_path(self) -> str:
+        v = (
+            os.getenv("CONTEXT_ENGINE_FALKORDB_LITE_PATH")
+            or os.getenv("FALKORDB_LITE_PATH")
+            or ""
+        ).strip()
+        return v or ".potpie/context_graph/falkordb.db"
+
     def backfill_max_prs_per_run(self) -> int:
         return int(self._cp.get_context_graph_config().get("backfill_max_prs_per_run", 100))
 
