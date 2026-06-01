@@ -9,9 +9,17 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+import keyring
+from keyring.errors import KeyringError
+
 _CREDENTIALS_FILENAME = "credentials.json"
 _CONFIG_DIR_NAME = "potpie"
 _LEGACY_CONFIG_DIR_NAME = "context-engine"
+_KEYRING_SERVICE = "potpie"
+
+
+class CredentialStoreError(Exception):
+    """Credential metadata or secure secret storage failure."""
 
 
 def config_dir() -> Path:
@@ -59,6 +67,125 @@ def read_credentials() -> dict[str, Any]:
         return {}
 
 
+def _write_payload(payload: dict[str, Any]) -> None:
+    d = config_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    path = credentials_path()
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def _norm_secret_name(name: str) -> str:
+    key = str(name or "").strip()
+    if not key:
+        raise ValueError("secret name must be non-empty")
+    return key
+
+
+def store_secure_secret(name: str, secret: str, *, label: str | None = None) -> None:
+    """Store a secret in the system keychain under the Potpie CLI service."""
+    key = _norm_secret_name(name)
+    try:
+        keyring.set_password(_KEYRING_SERVICE, key, secret)
+    except KeyringError as exc:
+        raise CredentialStoreError(
+            f"Failed to store {label or key} in system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise CredentialStoreError(
+            f"Failed to store {label or key} in system keychain: {exc}"
+        ) from exc
+
+
+def load_secure_secret(name: str, *, label: str | None = None) -> str:
+    """Load a secret from the system keychain, returning an empty string if absent."""
+    key = _norm_secret_name(name)
+    try:
+        secret = keyring.get_password(_KEYRING_SERVICE, key)
+    except KeyringError as exc:
+        raise CredentialStoreError(
+            f"Failed to read {label or key} from system keychain: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise CredentialStoreError(
+            f"Failed to read {label or key} from system keychain: {exc}"
+        ) from exc
+    return secret or ""
+
+
+def delete_secure_secret(name: str, *, label: str | None = None) -> None:
+    """Remove a secret from the system keychain if the backend permits it."""
+    key = _norm_secret_name(name)
+    try:
+        keyring.delete_password(_KEYRING_SERVICE, key)
+    except KeyringError:
+        pass
+    except Exception as exc:
+        raise CredentialStoreError(
+            f"Failed to remove {label or key} from system keychain: {exc}"
+        ) from exc
+
+
+def _norm_integration_key(provider: str) -> str:
+    key = str(provider or "").strip().lower()
+    if not key:
+        raise ValueError("integration provider must be non-empty")
+    return key
+
+
+def _read_integrations(payload: dict[str, Any]) -> dict[str, Any]:
+    integrations = payload.get("integrations")
+    return dict(integrations) if isinstance(integrations, dict) else {}
+
+
+def get_integration_metadata(provider: str) -> dict[str, Any]:
+    """Return non-secret integration metadata from credentials.json."""
+    key = _norm_integration_key(provider)
+    entry = _read_integrations(read_credentials()).get(key)
+    return dict(entry) if isinstance(entry, dict) else {}
+
+
+def write_integration_metadata(provider: str, metadata: dict[str, Any]) -> None:
+    """Persist non-secret integration metadata under ``integrations.<provider>``."""
+    key = _norm_integration_key(provider)
+    payload: dict[str, Any] = dict(read_credentials())
+    integrations = _read_integrations(payload)
+    integrations[key] = dict(metadata)
+    payload["integrations"] = integrations
+    _write_payload(payload)
+
+
+def clear_integration_metadata(provider: str) -> None:
+    """Remove non-secret integration metadata for a provider."""
+    key = _norm_integration_key(provider)
+    payload: dict[str, Any] = dict(read_credentials())
+    integrations = _read_integrations(payload)
+    integrations.pop(key, None)
+    if integrations:
+        payload["integrations"] = integrations
+    else:
+        payload.pop("integrations", None)
+    if not payload:
+        path = credentials_path()
+        try:
+            path.unlink(missing_ok=True)
+        except TypeError:
+            if path.is_file():
+                path.unlink()
+        return
+    _write_payload(payload)
+
+
+def list_integration_metadata() -> dict[str, dict[str, Any]]:
+    """Return all stored non-secret integration metadata keyed by provider."""
+    integrations = _read_integrations(read_credentials())
+    return {
+        str(key): dict(value)
+        for key, value in integrations.items()
+        if isinstance(key, str) and isinstance(value, dict)
+    }
+
+
 def get_stored_api_key() -> str:
     v = read_credentials().get("api_key")
     return str(v).strip() if v else ""
@@ -77,9 +204,6 @@ def write_credentials(*, api_key: str, api_base_url: Optional[str] = None) -> No
     Merges with existing file: if ``api_base_url`` is ``None``, any stored ``api_base_url`` is kept.
     Pass ``api_base_url=""`` to clear the stored base URL.
     """
-    d = config_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    path = credentials_path()
     payload: dict[str, Any] = dict(read_credentials())
     payload["api_key"] = api_key.strip()
     if api_base_url is not None:
@@ -88,8 +212,7 @@ def write_credentials(*, api_key: str, api_base_url: Optional[str] = None) -> No
             payload["api_base_url"] = u
         else:
             payload.pop("api_base_url", None)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    _write_payload(payload)
 
 
 def clear_credentials() -> None:
@@ -117,8 +240,7 @@ def clear_pot_scope_state() -> None:
             if path.is_file():
                 path.unlink()
         return
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    _write_payload(payload)
 
 
 def get_active_pot_id() -> str:
@@ -129,13 +251,9 @@ def get_active_pot_id() -> str:
 
 def set_active_pot_id(pot_id: str) -> None:
     """Persist active pot id alongside API credentials."""
-    d = config_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    path = credentials_path()
     payload: dict[str, Any] = dict(read_credentials())
     payload["active_pot_id"] = pot_id.strip()
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    _write_payload(payload)
 
 
 def clear_active_pot_id() -> None:
@@ -148,8 +266,7 @@ def clear_active_pot_id() -> None:
     if not payload:
         path.unlink(missing_ok=True)
         return
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    _write_payload(payload)
 
 
 def _norm_alias_key(name: str) -> str:
@@ -179,17 +296,13 @@ def register_pot_alias(name: str, pot_id: str) -> None:
         uid = uuid.UUID(str(pot_id).strip())
     except ValueError as e:
         raise ValueError("pot_id must be a UUID") from e
-    d = config_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    path = credentials_path()
     payload: dict[str, Any] = dict(read_credentials())
     aliases = dict(payload.get("pot_aliases") or {})
     if not isinstance(aliases, dict):
         aliases = {}
     aliases[key] = str(uid)
     payload["pot_aliases"] = aliases
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    _write_payload(payload)
 
 
 def resolve_cli_pot_ref(ref: str) -> tuple[str | None, str]:

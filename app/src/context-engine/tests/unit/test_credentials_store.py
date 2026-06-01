@@ -5,6 +5,7 @@ import stat
 from pathlib import Path
 
 import pytest
+from keyring.errors import KeyringError
 
 from adapters.inbound.cli import credentials_store as cs
 
@@ -97,10 +98,122 @@ def test_clear_pot_scope_state_keeps_api_key(monkeypatch: pytest.MonkeyPatch, tm
     assert cs.get_pot_aliases() == {}
 
 
+def test_integration_metadata_roundtrip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_credentials(api_key="secret")
+    cs.write_integration_metadata(
+        "Example",
+        {"auth_type": "oauth", "token_storage": "keychain"},
+    )
+    assert cs.get_stored_api_key() == "secret"
+    assert cs.get_integration_metadata("example") == {
+        "auth_type": "oauth",
+        "token_storage": "keychain",
+    }
+    assert cs.list_integration_metadata() == {
+        "example": {"auth_type": "oauth", "token_storage": "keychain"}
+    }
+
+
+def test_clear_integration_metadata_preserves_credentials(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_credentials(api_key="secret")
+    cs.write_integration_metadata("example", {"auth_type": "oauth"})
+    cs.clear_integration_metadata("example")
+    assert cs.get_integration_metadata("example") == {}
+    assert cs.get_stored_api_key() == "secret"
+
+
+def test_clear_integration_metadata_removes_file_when_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_integration_metadata("example", {"auth_type": "oauth"})
+    cs.clear_integration_metadata("example")
+    assert not cs.credentials_path().is_file()
+
+
+def test_integration_metadata_rejects_empty_provider() -> None:
+    with pytest.raises(ValueError, match="integration provider must be non-empty"):
+        cs.get_integration_metadata(" ")
+
+
+def test_secure_secret_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
+    stored: dict[tuple[str, str], str] = {}
+
+    def set_password(service: str, username: str, password: str) -> None:
+        stored[(service, username)] = password
+
+    def get_password(service: str, username: str) -> str | None:
+        return stored.get((service, username))
+
+    def delete_password(service: str, username: str) -> None:
+        stored.pop((service, username), None)
+
+    monkeypatch.setattr(cs.keyring, "set_password", set_password)
+    monkeypatch.setattr(cs.keyring, "get_password", get_password)
+    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
+
+    cs.store_secure_secret("example_access_token", "secret-token")
+    assert cs.load_secure_secret("example_access_token") == "secret-token"
+    cs.delete_secure_secret("example_access_token")
+    assert cs.load_secure_secret("example_access_token") == ""
+
+
+def test_secure_secret_rejects_empty_name() -> None:
+    with pytest.raises(ValueError, match="secret name must be non-empty"):
+        cs.store_secure_secret(" ", "secret")
+
+
+def test_secure_secret_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    def set_password(service: str, username: str, password: str) -> None:
+        raise KeyringError("backend unavailable")
+
+    monkeypatch.setattr(cs.keyring, "set_password", set_password)
+
+    with pytest.raises(cs.CredentialStoreError, match="Failed to store Example token"):
+        cs.store_secure_secret("example_token", "secret", label="Example token")
+
+
+def test_secure_secret_read_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    def get_password(service: str, username: str) -> str | None:
+        raise KeyringError("backend unavailable")
+
+    monkeypatch.setattr(cs.keyring, "get_password", get_password)
+
+    with pytest.raises(cs.CredentialStoreError, match="Failed to read Example token"):
+        cs.load_secure_secret("example_token", label="Example token")
+
+
+def test_secure_secret_delete_unexpected_errors_are_wrapped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def delete_password(service: str, username: str) -> None:
+        raise RuntimeError("backend unavailable")
+
+    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
+
+    with pytest.raises(cs.CredentialStoreError, match="Failed to remove Example token"):
+        cs.delete_secure_secret("example_token", label="Example token")
+
+
+def test_secure_secret_delete_keyring_error_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def delete_password(service: str, username: str) -> None:
+        raise KeyringError("not found")
+
+    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
+
+    cs.delete_secure_secret("example_token")
+
+
 def test_resolve_cli_pot_ref_uuid_normalizes() -> None:
     s = "550E8400-E29B-41D4-A716-446655440000"
     got, err = cs.resolve_cli_pot_ref(s)
     assert err == ""
     assert got == "550e8400-e29b-41d4-a716-446655440000"
-
-
