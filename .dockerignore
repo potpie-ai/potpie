@@ -8,16 +8,9 @@
 # Frontend app (separate Docker build under potpie-ui/)
 potpie-ui
 
-# Not required at runtime for API / Celery / Convo images (root only — do not
-# exclude app/src/*/scripts or app/src/*/docs needed by packages)
-/docs
-/tests
-/scripts
-/seed
-/specs
-/cli
-/deploy
-/assets
+# Not required at runtime for API / Celery / Convo images
+docs
+seed
 
 # deployment/ is intentionally NOT listed — prod/stage Dockerfiles COPY
 # supervisord configs from deployment/{prod,stage}/...
