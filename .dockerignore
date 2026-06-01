@@ -1,0 +1,83 @@
+# Docker does not use .gitignore — without this file, the full .git directory
+# (~hundreds of MB) is sent as build context and copied into the image via COPY . .
+
+# Version control and CI metadata
+.git
+.github
+
+# Frontend app (separate Docker build under potpie-ui/)
+potpie-ui
+
+# Not required at runtime for API / Celery / Convo images (root only — do not
+# exclude app/src/*/scripts or app/src/*/docs needed by packages)
+/docs
+/tests
+/scripts
+/seed
+/specs
+/cli
+/deploy
+/assets
+
+# deployment/ is intentionally NOT listed — prod/stage Dockerfiles COPY
+# supervisord configs from deployment/{prod,stage}/...
+
+# Secrets and local environment
+.env
+.env.*
+!.env.template
+firebase_service_account.json
+*.pem
+
+# Python / Node / Rust build outputs and caches
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.hypothesis
+htmlcov
+coverage
+.mypy_cache
+*.egg-info
+node_modules
+.next
+out
+build
+target
+**/*.rs.bk
+**/mutants.out*/
+
+# Editor and local tooling
+.idea
+.vscode
+.cursor
+.claude
+.codex
+.taskmaster
+.DS_Store
+*.swp
+*~
+
+# Local state and scratch paths
+.worktrees
+.repos
+.repos_local
+.data
+.debug
+db
+.momentum
+/projects
+thoughts
+worktrees
+
+# Logs and temp files
+*.log
+temp.txt
+debug
+
+# Docker definitions (not needed inside the application image)
+dockerfile
+Dockerfile*
+**/.dockerignore
