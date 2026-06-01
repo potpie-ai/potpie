@@ -27,7 +27,7 @@ def build_github_tools(
     Args:
         source_for_repo: Resolves ``repo_name`` ("owner/repo") to a
             :class:`GitHubReadPort`. Typically
-            :attr:`ContextEngineContainer.source_for_repo`.
+            :attr:`IngestionServerContainer.source_for_repo`.
         allowed_repos_for_pot: Resolves the pot id being reconciled to the
             set of ``owner/repo`` names attached to that pot. **Required for
             tenant isolation**: every tool rejects a model-supplied

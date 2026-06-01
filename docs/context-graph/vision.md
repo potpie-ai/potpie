@@ -38,11 +38,11 @@ There are three product boundaries:
 
 | Boundary | Description |
 |---|---|
-| Local OSS self-serve | Installed with the Potpie CLI. A local daemon hosts Pot Management, Graph Service, GraphBackend, and Skill Manager on local stores. State stays local by default. |
-| Managed Potpie graph | Managed API server hosts the same Pot Management, Graph Service, and Skill Manager modules on hosted stores, with hosted auth and collaboration controls. |
-| Event Ledger | Managed or self-hostable source-event service for webhooks, integration polling, replayable event history, and cursors. Local or managed graphs pull/consume from it. |
+| Local OSS self-serve | Installed with the Potpie CLI. `potpie setup` installs/starts a local daemon; the daemon-hosted setup flow provisions config, local stores, the active pot, skills, and scan dependencies. State stays local by default. |
+| Managed Potpie graph | A managed backend API hosts the same Pot Management, Graph Service, and Skill Manager modules on hosted stores, with hosted auth and collaboration controls. `potpie login` authenticates to this backend; the backend URL can point at Potpie managed or a compatible self-hosted backend. |
+| Event Ledger | Managed or self-hostable source-event service for webhooks, integration polling, replayable event history, event query/filter, and event-page replay tokens. Local or managed graphs pull/consume from it and track their own enqueue/apply/retry state. |
 
-Local and managed graph profiles are deployments of the same graph model, not
+Local and managed graph deployments share the same graph model; they are not
 separate products. The Event Ledger is adjacent infrastructure for source events,
 not another graph model.
 
@@ -50,12 +50,12 @@ not another graph model.
 
 | Concept | Meaning |
 |---|---|
-| Pot | Unit of isolation and context. First local setup creates an active `default` pot. |
+| Pot | Unit of isolation and context. A pot can live in the local daemon or a managed backend; CLI commands address both through the same pot surface. First local setup creates an active local `default` pot. |
 | Entity | Stable project object such as a service, feature, decision, issue, owner, runbook, or incident. |
 | Claim | Canonical fact about an entity or relationship, with provenance and time fields. |
 | Source ref | Pointer back to evidence: file path, PR, ticket, doc URL, alert, deploy, scanner output. |
 | Record | Agent-facing durable write that lowers into claims. |
-| Event | Source-system change captured by an Event Ledger, then reconciled into records/claims. |
+| Event | Source-system change captured by an Event Ledger, then processed by ingestion into records/claims. |
 
 The graph stores compact facts and references, not full PR diffs, document
 bodies, chat transcripts, logs, webhook payload archives, or telemetry streams.
@@ -115,5 +115,6 @@ potpie setup --repo . --agent claude --scan
 
 After setup, agents can resolve context, record durable memory, and rescan when
 sources change. Managed graph hosting adds collaboration without changing the
-graph contract. Managed or self-hosted Event Ledger deployments add integration
-events that local and managed graphs can consume explicitly.
+graph contract: users run `potpie login`, then can `potpie use` either a local
+pot or a managed pot. Managed or self-hosted Event Ledger deployments add
+integration events that local and managed graphs can consume explicitly.
