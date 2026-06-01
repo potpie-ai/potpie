@@ -13,7 +13,7 @@ from typing import Any, Mapping
 
 from sqlalchemy.orm import Session
 
-from bootstrap.container import ContextEngineContainer
+from bootstrap.ingestion_server import IngestionServerContainer
 from domain.agent_context_port import (
     DEFAULT_INTENT_INCLUDES,
     READER_BACKED_INCLUDES,
@@ -49,7 +49,7 @@ class StatusReport:
 
 
 def report_status(
-    container: ContextEngineContainer,
+    container: IngestionServerContainer,
     *,
     pot_id: str,
     scope: Mapping[str, Any],

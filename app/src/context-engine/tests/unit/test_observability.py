@@ -7,7 +7,7 @@ import logging
 import pytest
 
 from adapters.outbound.observability.console import ConsoleObservability
-from bootstrap.container import _default_observability
+from bootstrap.ingestion_server import _default_observability
 from bootstrap.observability_context import (
     bind_correlation,
     correlation_scope,

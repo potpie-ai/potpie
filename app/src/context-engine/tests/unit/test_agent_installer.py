@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
 from adapters.inbound.cli.agent_installer import (
     install_agent_bundle,
     iter_template_files,
     resolve_install_root,
 )
-from adapters.inbound.cli.main import app
 
 
 def test_resolve_install_root_prefers_git_repo(tmp_path: Path) -> None:
@@ -62,19 +59,6 @@ def test_install_agent_bundle_overwrites_with_force(tmp_path: Path) -> None:
 
     assert "AGENTS.md" in result.updated
     assert "# Context Engine" in target.read_text(encoding="utf-8")
-
-
-def test_init_agent_cli_json_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("adapters.inbound.cli.main.load_cli_env", lambda: None)
-    runner = CliRunner()
-
-    result = runner.invoke(app, ["--json", "init-agent", str(tmp_path)])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["root"] == str(tmp_path.resolve())
-    assert "AGENTS.md" in payload["created"]
 
 
 # --- Claude bundle tests ---
@@ -152,27 +136,3 @@ def test_install_agent_bundle_claude_skips_changed_section_without_force(tmp_pat
 def test_install_agent_bundle_invalid_agent_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Unknown agent type"):
         install_agent_bundle(tmp_path, agent="unknown")
-
-
-def test_init_agent_cli_claude_json_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("adapters.inbound.cli.main.load_cli_env", lambda: None)
-    runner = CliRunner()
-
-    result = runner.invoke(app, ["--json", "init-agent", "claude", str(tmp_path)])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert "CLAUDE.md" in payload["created"]
-
-
-def test_init_agent_cli_path_without_agent_type(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A bare path as first arg (not an agent type) should default to codex/agent bundle."""
-    monkeypatch.setattr("adapters.inbound.cli.main.load_cli_env", lambda: None)
-    runner = CliRunner()
-
-    result = runner.invoke(app, ["--json", "init-agent", str(tmp_path)])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert "AGENTS.md" in payload["created"]

@@ -21,7 +21,6 @@ from typing import Any
 
 from domain.ontology import (
     PUBLIC_RECORD_TYPES,
-    STRUCTURAL_INCLUDES,
     advertised_include_families,
 )
 

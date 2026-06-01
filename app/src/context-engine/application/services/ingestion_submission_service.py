@@ -41,7 +41,7 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
     """Persist context events into the debounced batch queue.
 
     The service is constructed with ports only. Hosts (or
-    :func:`bootstrap.container.ContextEngineContainer.ingestion_submission`)
+    :func:`bootstrap.ingestion_server.IngestionServerContainer.ingestion_submission`)
     are responsible for binding sessions to the concrete adapters and
     handing them in.
     """
