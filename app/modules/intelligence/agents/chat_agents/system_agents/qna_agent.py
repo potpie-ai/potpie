@@ -21,6 +21,9 @@ from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 
 logger = get_logger(__name__)
 
+FILE_STRUCTURE_CONTEXT_MARKER = "[[repo_structure_context_v1]]"
+FILE_STRUCTURE_HEADER = "File Structure of the project:\n"
+
 
 class QnAAgent(ChatAgent):
     def __init__(
@@ -33,14 +36,19 @@ class QnAAgent(ChatAgent):
         self.tools_provider = tools_provider
         self.prompt_provider = prompt_provider
 
-    def _build_agent(self, ctx: Optional[ChatContext] = None) -> ChatAgent:
+    @staticmethod
+    def _has_complete_prefetch(ctx: Optional[ChatContext]) -> bool:
         bundle = getattr(ctx, "context_intelligence_bundle", None) if ctx else None
-        cov = (bundle or {}).get("coverage") or {} if isinstance(bundle, dict) else {}
-        prefetch_complete = (
-            isinstance(cov, dict) and str(cov.get("status") or "").upper() == "COMPLETE"
+        if not isinstance(bundle, dict):
+            return False
+        coverage = bundle.get("coverage") or {}
+        return (
+            isinstance(coverage, dict)
+            and str(coverage.get("status") or "").upper() == "COMPLETE"
         )
 
-        if bundle and prefetch_complete:
+    def _build_agent(self, ctx: Optional[ChatContext] = None) -> ChatAgent:
+        if self._has_complete_prefetch(ctx):
             goal = (
                 "Answer questions using prefetched CONTEXT INTELLIGENCE first when coverage is COMPLETE; "
                 "avoid redundant graph tools; use code-level tools only when source is needed."
@@ -171,6 +179,8 @@ class QnAAgent(ChatAgent):
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
+        ctx.additional_context = ctx.additional_context or ""
+
         # Start from the same minimal context port exposed through MCP and CLI.
         # This replaces the older specialized graph-tool prefetches.
         try:
@@ -202,9 +212,6 @@ class QnAAgent(ChatAgent):
         except Exception:
             logger.exception("Failed prefetching context via context_resolve")
 
-        if ctx.node_ids and len(ctx.node_ids) > 0:
-            return await self._append_code_and_structure(ctx)
-
         return await self._append_code_and_structure(ctx)
 
     async def _append_code_and_structure(self, ctx: ChatContext) -> ChatContext:
@@ -216,12 +223,16 @@ class QnAAgent(ChatAgent):
                 f"Code context of the node_ids in query:\n {code_results}"
             )
 
-        file_structure = (
-            await self.tools_provider.file_structure_tool.fetch_repo_structure(
-                ctx.project_id
+        if FILE_STRUCTURE_CONTEXT_MARKER not in ctx.additional_context:
+            file_structure = (
+                await self.tools_provider.file_structure_tool.fetch_repo_structure(
+                    ctx.project_id
+                )
             )
-        )
-        ctx.additional_context += f"File Structure of the project:\n {file_structure}"
+            ctx.additional_context += (
+                f"\n{FILE_STRUCTURE_CONTEXT_MARKER}\n"
+                f"{FILE_STRUCTURE_HEADER} {file_structure}"
+            )
 
         return ctx
 

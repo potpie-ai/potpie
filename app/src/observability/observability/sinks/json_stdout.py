@@ -23,6 +23,16 @@ from ..redaction import redact
 _STD = set(vars(logging.makeLogRecord({})))
 
 
+def truncate_traceback_text(text: str, max_lines: int = 10) -> str:
+    """Keep the traceback tail so production JSON logs stay bounded."""
+    if max_lines < 1:
+        max_lines = 1
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return text
+    return "\n".join(lines[-max_lines:])
+
+
 class JsonFormatter(logging.Formatter):
     def __init__(self, redact_exc: bool) -> None:
         super().__init__()
@@ -47,7 +57,9 @@ class JsonFormatter(logging.Formatter):
                     data[target_key] = value
         if record.exc_info:
             etype, eval_, _ = record.exc_info
-            tb = "".join(traceback.format_exception(*record.exc_info))
+            tb = truncate_traceback_text(
+                "".join(traceback.format_exception(*record.exc_info))
+            )
             data["exception"] = {
                 "type": getattr(etype, "__name__", str(etype)),
                 "value": redact(str(eval_)) if self._redact_exc else str(eval_),

@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
 from firebase_admin import auth
@@ -11,9 +11,14 @@ from sqlalchemy.orm import Session
 
 from app.modules.users.user_model import User
 from app.modules.users.user_schema import CreateUser, UserProfileResponse
-from observability import get_logger
+from app.modules.utils.logger import setup_logger
 
-logger = get_logger(__name__)
+logger = setup_logger(__name__)
+
+
+def utc_now() -> datetime:
+    """Return the current UTC time as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
 
 
 class UserServiceError(Exception):
@@ -25,13 +30,13 @@ class UserService:
         self.db = db
 
     def update_last_login(self, uid: str, oauth_token: str):
-        logger.info(f"Updating last login time for user with UID: {uid}", uid=uid)
+        logger.info(f"Updating last login time for user with UID: {uid}")
         message: str = ""
         error: bool = False
         try:
             user = self.db.query(User).filter(User.uid == uid).first()
             if user:
-                user.last_login_at = datetime.utcnow()
+                user.last_login_at = utc_now()
 
                 # Safely update provider_info with OAuth token
                 if user.provider_info is None:
@@ -52,7 +57,7 @@ class UserService:
                 error = True
                 message = "User not found"
         except Exception as e:
-            logger.error(f"Error updating last login time: {e}", e=e)
+            logger.error(f"Error updating last login time: {e}")
             message = "Error updating last login time"
             error = True
 
@@ -62,7 +67,7 @@ class UserService:
         logger.info(
             f"Creating user with email: {user_details.email} | display_name:"
             f" {user_details.display_name}"
-        , user_details_email=user_details.email, user_details_display_name=user_details.display_name)
+        )
         new_user = User(
             uid=user_details.uid,
             email=user_details.email,
@@ -84,7 +89,7 @@ class UserService:
             uid = new_user.uid
 
         except Exception as e:
-            logger.error(f"Error creating user: {e}", e=e)
+            logger.error(f"Error creating user: {e}")
             message = "error creating user"
             error = True
             uid = ""
@@ -99,39 +104,37 @@ class UserService:
             print("Dummy user already exists")
             return
         else:
+            now = utc_now()
             user = CreateUser(
                 uid=defaultUserId,
                 email="defaultuser@potpie.ai",
                 display_name="Dummy User",
                 email_verified=True,
-                created_at=datetime.utcnow(),
-                last_login_at=datetime.utcnow(),
+                created_at=now,
+                last_login_at=now,
                 provider_info={"access_token": "dummy_token"},
                 provider_username="self",
             )
             uid, message, error = user_service.create_user(user)
-
-        uid, _, _ = user_service.create_user(user)
-        logger.info(f"Created dummy user with uid: {uid}", uid=uid)
+        logger.info(f"Created dummy user with uid: {uid}")
 
     def get_user_by_uid(self, uid: str):
         try:
             user = self.db.query(User).filter(User.uid == uid).first()
             return user
         except Exception as e:
-            logger.error(f"Error fetching user: {e}", e=e)
+            logger.error(f"Error fetching user: {e}")
             return None
 
-    def get_user_id_by_email(self, email: str) -> str:
+    def get_user_id_by_email(self, email: str) -> Optional[str]:
         try:
             user = self.db.query(User).filter(User.email == email).first()
             if user:
                 return user.uid
             else:
-                logger.debug("user_id_by_email: no user found")
                 return None
-        except Exception:
-            logger.exception("user_id_by_email: lookup failed")
+        except Exception as e:
+            logger.error(f"Error fetching user ID by email: {e}")
             return None
 
     async def get_user_by_email(self, email: str) -> User:
@@ -145,24 +148,20 @@ class UserService:
             try:
                 return self.db.query(User).filter(User.email == email).first()
             except SQLAlchemyError as e:
-                logger.error(f"Database error fetching user by email {email}: {e}", email=email, e=e)
+                logger.error(f"Database error fetching user by email {email}: {e}")
                 return None
             except Exception as e:
-                logger.error(f"Unexpected error fetching user by email {email}: {e}", email=email, e=e)
+                logger.error(f"Unexpected error fetching user by email {email}: {e}")
                 return None
 
         return await asyncio.get_running_loop().run_in_executor(None, _query)
 
-    def get_user_ids_by_emails(self, emails: List[str]) -> List[str]:
+    def get_user_ids_by_emails(self, emails: List[str]) -> Optional[List[str]]:
         try:
             users = self.db.query(User).filter(User.email.in_(emails)).all()
-            if users:
-                return [user.uid for user in users]
-            else:
-                logger.debug("user_ids_by_emails: no users found", count=len(emails))
-                return None
-        except Exception:
-            logger.exception("user_ids_by_emails: lookup failed", count=len(emails))
+            return [user.uid for user in users]
+        except Exception as e:
+            logger.error(f"Error fetching user IDs by emails: {e}")
             return None
 
     async def get_user_profile_pic(self, uid: str) -> UserProfileResponse:
@@ -171,7 +170,7 @@ class UserService:
             profile_pic_url = user_record.photo_url
             return {"user_id": user_record.uid, "profile_pic_url": profile_pic_url}
         except Exception as e:
-            logger.error(f"Error retrieving user profile picture: {e}", e=e)
+            logger.error(f"Error retrieving user profile picture: {e}")
             return None
 
 
@@ -219,16 +218,12 @@ class AsyncUserService:
             stmt = select(User).where(User.email.in_(emails))
             result = await self.session.execute(stmt)
             users = result.scalars().all()
-            if users:
-                return [u.uid for u in users]
-            return None
+            return [u.uid for u in users]
         except Exception as e:
             logger.error("Error fetching user IDs by emails %s: %s", emails, e)
             return None
 
-    async def create_user(
-        self, user_details: CreateUser
-    ) -> Tuple[str, str, bool]:
+    async def create_user(self, user_details: CreateUser) -> Tuple[str, str, bool]:
         new_user = User(
             uid=user_details.uid,
             email=user_details.email,
@@ -249,16 +244,14 @@ class AsyncUserService:
             await self.session.rollback()
             return "", "error creating user", True
 
-    async def update_last_login(
-        self, uid: str, oauth_token: str
-    ) -> Tuple[str, bool]:
+    async def update_last_login(self, uid: str, oauth_token: str) -> Tuple[str, bool]:
         try:
             stmt = select(User).where(User.uid == uid).limit(1)
             result = await self.session.execute(stmt)
             user = result.scalar_one_or_none()
             if not user:
                 return "User not found", True
-            user.last_login_at = datetime.utcnow()
+            user.last_login_at = utc_now()
             if user.provider_info is None:
                 user.provider_info = {}
             provider_info = (

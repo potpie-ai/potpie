@@ -11,7 +11,6 @@ Tests cover:
 
 import os
 import pytest
-from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
@@ -53,11 +52,11 @@ class TestAuthServiceLogin:
     def test_login_http_status_error(self):
         """Test login raises HTTPException on auth failure"""
         service = AuthService()
-        
+
         mock_response = MagicMock()
         mock_response.status_code = 401
         mock_response.json.return_value = {"error": {"message": "INVALID_PASSWORD"}}
-        
+
         http_error = httpx.HTTPStatusError(
             "Auth failed",
             request=MagicMock(),
@@ -108,7 +107,9 @@ class TestAuthServiceLoginAsync:
         }
         mock_response.raise_for_status = MagicMock()
 
-        with patch("app.modules.auth.auth_service.httpx.AsyncClient") as mock_client_class:
+        with patch(
+            "app.modules.auth.auth_service.httpx.AsyncClient"
+        ) as mock_client_class:
             mock_client = AsyncMock()
             mock_client.__aenter__.return_value = mock_client
             mock_client.__aexit__.return_value = None
@@ -135,7 +136,9 @@ class TestAuthServiceLoginAsync:
             response=mock_response,
         )
 
-        with patch("app.modules.auth.auth_service.httpx.AsyncClient") as mock_client_class:
+        with patch(
+            "app.modules.auth.auth_service.httpx.AsyncClient"
+        ) as mock_client_class:
             mock_client = AsyncMock()
             mock_client.__aenter__.return_value = mock_client
             mock_client.__aexit__.return_value = None
@@ -155,7 +158,9 @@ class TestAuthServiceLoginAsync:
         """Test async login raises 502 on network error"""
         service = AuthService()
 
-        with patch("app.modules.auth.auth_service.httpx.AsyncClient") as mock_client_class:
+        with patch(
+            "app.modules.auth.auth_service.httpx.AsyncClient"
+        ) as mock_client_class:
             mock_client = AsyncMock()
             mock_client.__aenter__.return_value = mock_client
             mock_client.__aexit__.return_value = None
@@ -178,8 +183,12 @@ class TestAuthServiceSignup:
         mock_user.uid = "new-user-123"
         mock_user.email = "newuser@example.com"
 
-        with patch("app.modules.auth.auth_service.auth.create_user", return_value=mock_user):
-            result, error = service.signup("newuser@example.com", "securepass", "New User")
+        with patch(
+            "app.modules.auth.auth_service.auth.create_user", return_value=mock_user
+        ):
+            result, error = service.signup(
+                "newuser@example.com", "securepass", "New User"
+            )
 
             assert error is None
             assert result["user"].uid == "new-user-123"
@@ -240,7 +249,9 @@ class TestAuthServiceCreateCustomToken:
 
     def test_create_custom_token_success_bytes(self):
         """Test creating custom token (bytes response)"""
-        with patch("app.modules.auth.auth_service.auth.create_custom_token") as mock_create:
+        with patch(
+            "app.modules.auth.auth_service.auth.create_custom_token"
+        ) as mock_create:
             mock_create.return_value = b"custom-token-bytes"
 
             token = AuthService.create_custom_token("user-123")
@@ -250,7 +261,9 @@ class TestAuthServiceCreateCustomToken:
 
     def test_create_custom_token_success_string(self):
         """Test creating custom token (string response)"""
-        with patch("app.modules.auth.auth_service.auth.create_custom_token") as mock_create:
+        with patch(
+            "app.modules.auth.auth_service.auth.create_custom_token"
+        ) as mock_create:
             mock_create.return_value = "custom-token-string"
 
             token = AuthService.create_custom_token("user-456")
@@ -259,7 +272,9 @@ class TestAuthServiceCreateCustomToken:
 
     def test_create_custom_token_error(self):
         """Test custom token returns None on error"""
-        with patch("app.modules.auth.auth_service.auth.create_custom_token") as mock_create:
+        with patch(
+            "app.modules.auth.auth_service.auth.create_custom_token"
+        ) as mock_create:
             mock_create.side_effect = Exception("Token creation failed")
 
             token = AuthService.create_custom_token("user-789")
@@ -276,9 +291,12 @@ class TestAuthServiceCheckAuth:
         mock_request = MagicMock()
         mock_request.headers.get.return_value = None
         mock_request.state = MagicMock()
+        mock_response = MagicMock()
 
-        with patch.dict(os.environ, {"isDevelopmentMode": "enabled", "defaultUsername": "dev-user"}):
-            result = await AuthService.check_auth(mock_request, None, None)
+        with patch.dict(
+            os.environ, {"isDevelopmentMode": "enabled", "defaultUsername": "dev-user"}
+        ):
+            result = await AuthService.check_auth(mock_request, mock_response, None)
 
             assert result["user_id"] == "dev-user"
             assert result["email"] == "defaultuser@potpie.ai"
@@ -288,10 +306,11 @@ class TestAuthServiceCheckAuth:
         """Test check_auth raises 401 when no credential and not in dev mode"""
         mock_request = MagicMock()
         mock_request.headers.get.return_value = None
+        mock_response = MagicMock()
 
         with patch.dict(os.environ, {"isDevelopmentMode": "disabled"}, clear=False):
             with pytest.raises(HTTPException) as exc_info:
-                await AuthService.check_auth(mock_request, None, None)
+                await AuthService.check_auth(mock_request, mock_response, None)
 
             assert exc_info.value.status_code == 401
             assert "Bearer authentication" in exc_info.value.detail
@@ -310,27 +329,69 @@ class TestAuthServiceCheckAuth:
         }
 
         with patch.dict(os.environ, {"isDevelopmentMode": "disabled"}, clear=False):
-            with patch("app.modules.auth.auth_service.auth.verify_id_token", return_value=decoded_token):
-                credential = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid-token")
-                result = await AuthService.check_auth(mock_request, mock_response, credential)
+            with patch(
+                "app.modules.auth.auth_service.auth.verify_id_token",
+                return_value=decoded_token,
+            ):
+                credential = HTTPAuthorizationCredentials(
+                    scheme="Bearer", credentials="valid-token"
+                )
+                result = await AuthService.check_auth(
+                    mock_request, mock_response, credential
+                )
 
                 assert result["uid"] == "firebase-user-123"
                 assert result["user_id"] == "firebase-user-123"
                 assert result["email"] == "user@example.com"
 
     @pytest.mark.asyncio
+    async def test_check_auth_does_not_log_token_contents(self):
+        """Auth checks should not emit bearer token contents to logs."""
+        mock_request = MagicMock()
+        mock_request.headers.get.return_value = "Bearer sensitive-token"
+        mock_request.state = MagicMock()
+        mock_response = MagicMock()
+        decoded_token = {"uid": "firebase-user-123", "email": "user@example.com"}
+
+        with patch.dict(os.environ, {"isDevelopmentMode": "disabled"}, clear=False):
+            with patch(
+                "app.modules.auth.auth_service.auth.verify_id_token",
+                return_value=decoded_token,
+            ):
+                with patch("app.modules.auth.auth_service.logging") as mock_logging:
+                    credential = HTTPAuthorizationCredentials(
+                        scheme="Bearer", credentials="sensitive-token"
+                    )
+                    await AuthService.check_auth(
+                        mock_request, mock_response, credential
+                    )
+
+        assert not any(
+            "sensitive-token" in str(value)
+            for call in mock_logging.mock_calls
+            for value in [*call.args, *call.kwargs.values()]
+        )
+
+    @pytest.mark.asyncio
     async def test_check_auth_invalid_token(self):
         """Test check_auth raises 401 on invalid token"""
         mock_request = MagicMock()
         mock_request.headers.get.return_value = "Bearer invalid-token"
+        mock_response = MagicMock()
 
         with patch.dict(os.environ, {"isDevelopmentMode": "disabled"}, clear=False):
-            with patch("app.modules.auth.auth_service.auth.verify_id_token") as mock_verify:
+            with patch(
+                "app.modules.auth.auth_service.auth.verify_id_token"
+            ) as mock_verify:
                 mock_verify.side_effect = Exception("Token expired")
-                credential = HTTPAuthorizationCredentials(scheme="Bearer", credentials="invalid-token")
+                credential = HTTPAuthorizationCredentials(
+                    scheme="Bearer", credentials="invalid-token"
+                )
 
                 with pytest.raises(HTTPException) as exc_info:
-                    await AuthService.check_auth(mock_request, None, credential)
+                    await AuthService.check_auth(
+                        mock_request, mock_response, credential
+                    )
 
                 assert exc_info.value.status_code == 401
                 assert "Invalid authentication" in exc_info.value.detail
@@ -346,9 +407,14 @@ class TestAuthServiceCheckAuth:
         decoded_token = {"uid": "manual-user", "email": "manual@example.com"}
 
         with patch.dict(os.environ, {"isDevelopmentMode": "disabled"}, clear=False):
-            with patch("app.modules.auth.auth_service.auth.verify_id_token", return_value=decoded_token):
+            with patch(
+                "app.modules.auth.auth_service.auth.verify_id_token",
+                return_value=decoded_token,
+            ):
                 # Pass a non-HTTPAuthorizationCredentials object (simulates Depends() default)
-                result = await AuthService.check_auth(mock_request, mock_response, "not-a-credential")
+                result = await AuthService.check_auth(
+                    mock_request, mock_response, "not-a-credential"
+                )
 
                 assert result["uid"] == "manual-user"
                 assert result["user_id"] == "manual-user"
