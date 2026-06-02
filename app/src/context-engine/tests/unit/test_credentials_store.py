@@ -291,7 +291,7 @@ def test_store_potpie_firebase_refresh_token_metadata_only(
 
     assert fake_keyring[("potpie", "potpie_firebase_refresh_token")] == "refresh-token"
     assert fake_keyring[("potpie", "potpie_firebase_api_key")] == "firebase-key"
-    assert cs.get_potpie_auth_type() == "firebase_session"
+    assert cs.get_potpie_auth_type() == "potpie"
     assert cs.get_potpie_firebase_refresh_token() == "refresh-token"
     assert cs.get_potpie_firebase_api_key() == "firebase-key"
 

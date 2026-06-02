@@ -293,7 +293,7 @@ def store_potpie_firebase_refresh_token(
         )
     write_potpie_auth_metadata(
         created_at=created_at,
-        auth_type="firebase_session",
+        auth_type="potpie",
     )
 
 

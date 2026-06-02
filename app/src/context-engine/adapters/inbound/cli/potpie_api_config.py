@@ -100,10 +100,10 @@ def resolve_potpie_auth_config() -> PotpieAuthConfig:
     refresh_token = get_potpie_firebase_refresh_token()
     stored_api_key = get_stored_api_key()
 
-    if auth_type == "firebase_session" and refresh_token:
+    if auth_type in {"potpie", "firebase_session"} and refresh_token:
         session = resolve_potpie_firebase_session(refresh_token)
         return PotpieAuthConfig(
-            mode="firebase_session",
+            mode="potpie",
             headers={"Authorization": f"Bearer {session.id_token}"},
         )
 
@@ -113,7 +113,7 @@ def resolve_potpie_auth_config() -> PotpieAuthConfig:
     if refresh_token:
         session = resolve_potpie_firebase_session(refresh_token)
         return PotpieAuthConfig(
-            mode="firebase_session",
+            mode="potpie",
             headers={"Authorization": f"Bearer {session.id_token}"},
         )
 

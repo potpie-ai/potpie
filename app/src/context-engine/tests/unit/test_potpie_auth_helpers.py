@@ -903,7 +903,7 @@ def test_login_api_key_command_stores_api_key_securely(monkeypatch) -> None:
 
 def test_logout_clears_potpie_auth_only(monkeypatch) -> None:
     cleared: list[bool] = []
-    monkeypatch.setattr(cli_main, "get_potpie_auth_type", lambda: "firebase_session")
+    monkeypatch.setattr(cli_main, "get_potpie_auth_type", lambda: "potpie")
     monkeypatch.setattr(
         cli_main,
         "clear_potpie_auth",
@@ -958,5 +958,5 @@ def test_auth_test_pots_lists_context_pots(monkeypatch: pytest.MonkeyPatch) -> N
 
     assert result.exit_code == 0, result.stdout
     assert '"ok": true' in result.stdout
-    assert '"auth_type": "firebase_session"' in result.stdout
+    assert '"auth_type": "potpie"' in result.stdout
     assert '"slug": "demo-pot"' in result.stdout

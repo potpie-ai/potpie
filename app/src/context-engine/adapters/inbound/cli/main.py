@@ -261,7 +261,7 @@ def _potpie_login_impl() -> None:
 
     if j:
         print_json_blob(
-            {"ok": True, "auth_type": "firebase_session", "token_storage": "keychain"},
+            {"ok": True, "auth_type": "potpie", "token_storage": "keychain"},
             as_json=True,
         )
         return
@@ -391,7 +391,7 @@ def auth_status_cmd() -> None:
         print_json_blob(
             {
                 "logged_in": True,
-                "auth_type": "firebase_session" if id_token else "api_key",
+                "auth_type": "potpie" if id_token else "api_key",
                 "email": email,
                 "display_name": display_name,
                 "user_id": user_id,
@@ -435,7 +435,7 @@ def auth_test_pots_cmd() -> None:
         print_json_blob(
             {
                 "ok": True,
-                "auth_type": "firebase_session",
+                "auth_type": "potpie",
                 "count": len(rows),
                 "context_pots": rows,
             },
@@ -444,7 +444,7 @@ def auth_test_pots_cmd() -> None:
         return
 
     print_plain_line(
-        f"Potpie auth works (firebase_session). Found {len(rows)} context pot(s).",
+        f"Potpie auth works (potpie). Found {len(rows)} context pot(s).",
         as_json=False,
     )
     for p in rows:

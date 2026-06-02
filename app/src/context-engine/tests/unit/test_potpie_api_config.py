@@ -70,7 +70,7 @@ def test_resolve_potpie_api_key_errors_when_missing(monkeypatch) -> None:
 
 def test_resolve_auth_config_prefers_env_api_key(monkeypatch) -> None:
     monkeypatch.setenv("POTPIE_API_KEY", "sk-env")
-    monkeypatch.setattr(config, "get_potpie_auth_type", lambda: "firebase_session")
+    monkeypatch.setattr(config, "get_potpie_auth_type", lambda: "potpie")
     monkeypatch.setattr(config, "get_potpie_firebase_refresh_token", lambda: "refresh")
     monkeypatch.setattr(config, "get_stored_api_key", lambda: "sk-stored")
 
@@ -82,7 +82,7 @@ def test_resolve_auth_config_prefers_env_api_key(monkeypatch) -> None:
 
 def test_resolve_auth_config_prefers_firebase_session_metadata(monkeypatch) -> None:
     monkeypatch.delenv("POTPIE_API_KEY", raising=False)
-    monkeypatch.setattr(config, "get_potpie_auth_type", lambda: "firebase_session")
+    monkeypatch.setattr(config, "get_potpie_auth_type", lambda: "potpie")
     monkeypatch.setattr(config, "get_stored_api_key", lambda: "sk-existing")
     monkeypatch.setattr(config, "get_potpie_firebase_refresh_token", lambda: "refresh")
     monkeypatch.setattr(config, "get_potpie_firebase_id_token", lambda: "")
@@ -107,7 +107,7 @@ def test_resolve_auth_config_prefers_firebase_session_metadata(monkeypatch) -> N
 
     auth = config.resolve_potpie_auth_config()
 
-    assert auth.mode == "firebase_session"
+    assert auth.mode == "potpie"
     assert auth.headers == {"Authorization": "Bearer id-token"}
     assert refresh_calls == [("refresh", "firebase-key")]
     assert updated == ["new-refresh"]
@@ -116,7 +116,7 @@ def test_resolve_auth_config_prefers_firebase_session_metadata(monkeypatch) -> N
 
 def test_resolve_auth_config_uses_cached_valid_firebase_id_token(monkeypatch) -> None:
     monkeypatch.delenv("POTPIE_API_KEY", raising=False)
-    monkeypatch.setattr(config, "get_potpie_auth_type", lambda: "firebase_session")
+    monkeypatch.setattr(config, "get_potpie_auth_type", lambda: "potpie")
     monkeypatch.setattr(config, "get_stored_api_key", lambda: "sk-existing")
     monkeypatch.setattr(config, "get_potpie_firebase_refresh_token", lambda: "refresh")
     monkeypatch.setattr(config, "get_potpie_firebase_id_token", lambda: "cached-id-token")
@@ -130,7 +130,7 @@ def test_resolve_auth_config_uses_cached_valid_firebase_id_token(monkeypatch) ->
 
     auth = config.resolve_potpie_auth_config()
 
-    assert auth.mode == "firebase_session"
+    assert auth.mode == "potpie"
     assert auth.headers == {"Authorization": "Bearer cached-id-token"}
     assert refresh_calls == []
 
@@ -170,7 +170,7 @@ def test_resolve_auth_config_uses_refresh_token_without_metadata(monkeypatch) ->
 
     auth = config.resolve_potpie_auth_config()
 
-    assert auth.mode == "firebase_session"
+    assert auth.mode == "potpie"
     assert auth.headers == {"Authorization": "Bearer id-token"}
     assert updated == ["new-refresh"]
     assert cached_id_tokens == ["id-token"]
