@@ -41,6 +41,7 @@ from adapters.inbound.cli.credentials_store import (
     write_api_base_url,
 )
 from adapters.inbound.cli.agent_installer import AGENT_TYPES, install_agent_bundle
+from adapters.inbound.cli.auth.github_commands import register_github_commands
 from adapters.inbound.cli.auth_commands import auth_app
 from adapters.inbound.cli.env_bootstrap import load_cli_env
 from adapters.inbound.cli.git_project import (
@@ -1027,6 +1028,7 @@ def pot_hard_reset(
 
 app.add_typer(pot_app, name="pot")
 auth_app.add_typer(auth_test_app, name="test")
+register_github_commands(app)
 app.add_typer(auth_app, name="auth")
 
 

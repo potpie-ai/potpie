@@ -20,10 +20,15 @@ _POTPIE_API_KEY_SECRET = "potpie_api_key"
 _POTPIE_FIREBASE_ID_TOKEN_SECRET = "potpie_firebase_id_token"
 _POTPIE_FIREBASE_REFRESH_TOKEN_SECRET = "potpie_firebase_refresh_token"
 _POTPIE_FIREBASE_API_KEY_SECRET = "potpie_firebase_api_key"
+_GITHUB_TOKEN_SECRET = "github_token"
 
 
 class CredentialStoreError(Exception):
     """Credential metadata or secure secret storage failure."""
+
+
+# Alias used by GitHub CLI auth (matches integration branch naming).
+ProviderCredentialError = CredentialStoreError
 
 
 def config_dir() -> Path:
@@ -514,3 +519,48 @@ def resolve_cli_pot_ref(ref: str) -> tuple[str | None, str]:
         f"Unknown pot {s!r}. Run `potpie pot create <slug>` (server pot + alias), "
         f"or `potpie pot pots` for slugs/ids, then `pot use` / `pot alias`."
     )
+
+
+def write_provider_credentials(provider: str, payload: dict[str, Any]) -> None:
+    """Persist provider credentials (GitHub only on this branch)."""
+    key = _norm_integration_key(provider)
+    if key != "github":
+        raise ValueError(f"Unsupported provider {provider!r}; expected 'github'.")
+    stored_payload = dict(payload)
+    access_token = str(stored_payload.pop("access_token", "") or "").strip()
+    if not access_token:
+        raise ProviderCredentialError("GitHub access token is required.")
+    store_secure_secret(
+        _GITHUB_TOKEN_SECRET,
+        access_token,
+        label="GitHub token",
+    )
+    stored_payload["token_storage"] = "keychain"
+    write_integration_metadata(key, stored_payload)
+
+
+def get_provider_credentials(provider: str) -> dict[str, Any]:
+    """Return provider metadata merged with secrets from keychain."""
+    key = _norm_integration_key(provider)
+    if key != "github":
+        return {}
+    metadata = get_integration_metadata(key)
+    if not metadata:
+        return {}
+    result = dict(metadata)
+    token = load_secure_secret(_GITHUB_TOKEN_SECRET, label="GitHub token")
+    if not token:
+        raise ProviderCredentialError(
+            "GitHub token not found in system keychain. Run: potpie auth github login"
+        )
+    result["access_token"] = token
+    return result
+
+
+def clear_provider_credentials(provider: str) -> None:
+    """Remove provider secrets from keychain and drop integration metadata."""
+    key = _norm_integration_key(provider)
+    if key != "github":
+        raise ValueError(f"Unsupported provider {provider!r}; expected 'github'.")
+    delete_secure_secret(_GITHUB_TOKEN_SECRET, label="GitHub token")
+    clear_integration_metadata(key)
