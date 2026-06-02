@@ -198,6 +198,9 @@ class PyGithubSourceControl(GitHubReadPort):
     def get_issue(self, repo_name: str, issue_number: int) -> dict[str, Any]:
         repo = self._client.get_repo(repo_name)
         issue = repo.get_issue(issue_number)
+        labels: List[dict[str, Any]] = []
+        for lb in issue.labels or []:
+            labels.append({"name": lb.name})
         return {
             "number": issue.number,
             "title": issue.title,
@@ -207,6 +210,7 @@ class PyGithubSourceControl(GitHubReadPort):
             "updated_at": issue.updated_at.isoformat() if issue.updated_at else None,
             "url": issue.html_url,
             "author": issue.user.login if issue.user else "unknown",
+            "labels": labels,
         }
 
     def iter_closed_pulls(self, repo_name: str) -> Iterator[Any]:
@@ -286,6 +290,9 @@ class PyGithubSourceControl(GitHubReadPort):
             if getattr(issue, "pull_request", None) is not None:
                 continue  # a PR masquerading as an issue
             updated = getattr(issue, "updated_at", None)
+            labels: List[dict[str, Any]] = []
+            for lb in issue.labels or []:
+                labels.append({"name": lb.name})
             out.append(
                 {
                     "number": issue.number,
@@ -297,6 +304,7 @@ class PyGithubSourceControl(GitHubReadPort):
                     "updated_at": updated.isoformat() if updated else None,
                     "url": issue.html_url,
                     "author": issue.user.login if issue.user else None,
+                    "labels": labels,
                     "comments": getattr(issue, "comments", None),
                 }
             )

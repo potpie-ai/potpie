@@ -190,6 +190,61 @@ class PotpieContextApiClient:
         out = r.json()
         return out if isinstance(out, dict) else {}
 
+    def submit_event(
+        self,
+        *,
+        pot_id: str,
+        source_system: str,
+        event_type: str,
+        action: str,
+        repo_name: str,
+        source_id: str,
+        payload: dict[str, Any] | None = None,
+        provider: str = "github",
+        provider_host: str = "github.com",
+        event_id: str | None = None,
+        ingestion_kind: str | None = None,
+        occurred_at: datetime | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """POST /api/v2/context/events/reconcile.
+
+        Used by host-side triggers (CLI, scripts) to drop a normalized context
+        event into the ingestion submission pipeline. Returns the raw status +
+        body so callers can branch on 202 (queued) vs 409 (duplicate).
+        """
+        body: dict[str, Any] = {
+            "pot_id": pot_id,
+            "source_system": source_system,
+            "event_type": event_type,
+            "action": action,
+            "repo_name": repo_name,
+            "source_id": source_id,
+            "provider": provider,
+            "provider_host": provider_host,
+            "payload": payload or {},
+        }
+        if event_id is not None:
+            body["event_id"] = event_id
+        if ingestion_kind is not None:
+            body["ingestion_kind"] = ingestion_kind
+        if occurred_at is not None:
+            body["occurred_at"] = occurred_at
+        r = self.post_context("/events/reconcile", json_body=body)
+        if r.status_code in (200, 202):
+            try:
+                return r.status_code, r.json()
+            except json.JSONDecodeError:
+                raise PotpieContextApiError(r.status_code, r.text) from None
+        if r.status_code == 409:
+            try:
+                detail = r.json().get("detail", {})
+            except Exception:
+                detail = {}
+            if isinstance(detail, dict) and detail.get("error") == "duplicate_event":
+                return r.status_code, detail
+        self._raise_for_status(r)
+        return r.status_code, {}
+
     def get_health(self) -> tuple[int, Optional[dict[str, Any]]]:
         """GET /health on the same host as base_url."""
         with httpx.Client(timeout=min(self._timeout, 30.0)) as client:
