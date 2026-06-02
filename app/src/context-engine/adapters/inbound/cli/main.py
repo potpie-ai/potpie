@@ -778,6 +778,106 @@ def pot_repo_add_cmd(
         )
 
 
+@pot_repo_app.command("ingest")
+def pot_repo_ingest_cmd(
+    owner_repo: str = typer.Argument(
+        ...,
+        help="GitHub repository as owner/repo (must already be attached to the pot).",
+    ),
+    pot_opt: str | None = typer.Option(
+        None,
+        "--pot",
+        help="Pot UUID or alias (default: active pot / git cwd).",
+    ),
+    count: int = typer.Option(
+        50,
+        "--count",
+        "-n",
+        min=1,
+        max=500,
+        help=(
+            "Number of recent merged PRs and standalone issues to ingest "
+            "(default 50 per kind, server may cap)."
+        ),
+    ),
+    cwd: str | None = typer.Option(
+        None,
+        "--cwd",
+        help="Git repo directory for pot inference when --pot is omitted.",
+    ),
+) -> None:
+    """Trigger one-shot PR + issue history ingestion of an attached repo.
+
+    Submits a single `(github, repository, one_shot_ingest)` event to
+    `/api/v2/context/events/reconcile`. The reconciliation agent picks it up
+    asynchronously and follows the `repo_one_shot_ingestion` playbook to
+    backfill recent merged PRs and standalone issues into the context graph.
+    Re-running creates a fresh event; idempotency for already-ingested items
+    comes from stable Activity entity keys in the playbook, not from
+    event-level dedupe.
+    """
+    load_cli_env()
+    j, v = _flags()
+    raw = owner_repo.strip()
+    if "/" not in raw:
+        emit_error("Invalid repo", "Use owner/repo (e.g. org/service).", verbose=v)
+        raise typer.Exit(code=1)
+    o, rn = raw.split("/", 1)
+    o, rn = o.strip().lower(), rn.strip().lower()
+    if not o or not rn:
+        emit_error("Invalid repo", "owner and repo name required.", verbose=v)
+        raise typer.Exit(code=1)
+    pid = _pot_id_or_git(pot_opt, cwd=cwd)
+    client = _cli_client_or_exit(v)
+    # Fresh source_id per invocation — Activity entity keys handle dedupe.
+    now = datetime.now(timezone.utc)
+    source_id = f"one_shot_ingest:{o}/{rn}:{int(now.timestamp() * 1000)}"
+    try:
+        status, body = client.submit_event(
+            pot_id=pid,
+            source_system="github",
+            event_type="repository",
+            action="one_shot_ingest",
+            repo_name=f"{o}/{rn}",
+            source_id=source_id,
+            payload={"owner": o, "repo": rn, "count": count},
+            occurred_at=now,
+        )
+    except PotpieContextApiError as exc:
+        emit_error(
+            "Could not start one-shot ingestion",
+            _format_api_error(exc),
+            verbose=v,
+        )
+        raise typer.Exit(code=1) from exc
+    if j:
+        print_json_blob(
+            {
+                "pot_id": pid,
+                "repo": f"{o}/{rn}",
+                "count": count,
+                "status_code": status,
+                "result": body,
+            },
+            as_json=True,
+        )
+    else:
+        event_id = body.get("event_id") or "?"
+        batch_id = body.get("batch_id") or "?"
+        if status == 409:
+            print_plain_line(
+                f"Duplicate event for {o}/{rn} (event_id {event_id}); "
+                f"already queued.",
+                as_json=False,
+            )
+        else:
+            print_plain_line(
+                f"Queued one-shot ingestion of {o}/{rn} on pot {pid} "
+                f"(event_id {event_id}, batch_id {batch_id}, count={count}).",
+                as_json=False,
+            )
+
+
 pot_app.add_typer(pot_repo_app, name="repo")
 
 

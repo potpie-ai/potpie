@@ -29,6 +29,12 @@ benchmarks = [
 graph = [
     "neo4j>=5.28.0",
 ]
+falkordb = [
+    # FalkorDBLite (embedded) requires Python >= 3.12; marker keeps resolution
+    # valid across the project's wider requires-python range.
+    "falkordblite>=0.10.0; python_version >= '3.12'",
+    "redis>=7.1,<8",
+]
 github = [
     "pygithub>=2.8.0",
 ]
@@ -72,6 +78,7 @@ packages = ["domain", "application", "adapters", "bootstrap", "benchmarks"]
 include = [
     "adapters/inbound/cli/assets/**/*.json",
     "adapters/inbound/cli/assets/**/*.svg",
+    "domain/playbooks/**/*.md",
     "adapters/inbound/cli/templates/**/*.md",
     "adapters/inbound/cli/templates/**/*.yaml",
     "scripts/**/*.py",
@@ -91,6 +98,7 @@ include = [
     "benchmarks",
     "adapters/inbound/cli/assets/**/*.json",
     "adapters/inbound/cli/assets/**/*.svg",
+    "domain/playbooks/**/*.md",
     "adapters/inbound/cli/templates/**/*.md",
     "adapters/inbound/cli/templates/**/*.yaml",
     "scripts/**/*.py",

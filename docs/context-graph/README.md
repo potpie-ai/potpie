@@ -72,6 +72,67 @@ potpie cloud pull
 potpie cloud status
 ```
 
+## Local graph backend: FalkorDBLite (lightweight alternative to Neo4j)
+
+The context graph defaults to **Neo4j** (production). For local/self-hosted
+single-user development you can switch the context graph to **FalkorDBLite** —
+an embedded Redis-module graph DB (via `redislite`) backed by a local file, so
+there's **no server and no Docker**. Only the context graph is affected; the
+code knowledge graph still uses Neo4j.
+
+```bash
+pip install "context-engine[falkordb]"   # installs falkordblite + redis<8
+export GRAPH_DB_BACKEND=falkordb
+# optional overrides:
+# export FALKORDB_LITE_PATH=.potpie/context_graph/falkordb.db
+# export FALKORDB_GRAPH_NAME=context_graph
+```
+
+`GRAPH_DB_BACKEND` (default `neo4j`) is read by the context-engine settings and
+`build_container` selects the writer + claim store together, injecting a single
+shared embedded graph handle into both. The FalkorDBLite dependency is an
+optional extra, imported lazily, so the default Neo4j install doesn't require
+it. The embedded database is created on first use at `FALKORDB_LITE_PATH`.
+
+Server/container FalkorDB (over a redis URL, `FALKORDB_MODE=server` +
+`FALKORDB_URL`) exists as a deferred profile in code but is not part of the
+default local path; it needs the separate `falkordb` client.
+
+Troubleshooting:
+
+- **`ModuleNotFoundError: redislite` / `falkordb`** — install the optional
+  extra above (`context-engine[falkordb]`).
+- **Redis 8 startup error** (`Cannot enable maintenance notifications…`) —
+  FalkorDBLite needs `redis<8`; the extra pins `redis>=7.1,<8`.
+- **Index/vector DDL differences** — index creation is best-effort and
+  non-fatal; `fact_query` currently uses the Python token-overlap fallback
+  (native vector KNN is available on FalkorDB and is a planned follow-up).
+- **Fall back** — unset `GRAPH_DB_BACKEND` (or set it to `neo4j`).
+
+## Ontology Import Surface
+
+Most graph vocabulary is derived from `domain.ontology`:
+
+```python
+from domain.ontology import (
+    ENTITY_TYPES, EDGE_TYPES, RECORD_TYPES,
+    CANONICAL_LABELS, CANONICAL_EDGE_TYPES, SYSTEM_EDGE_TYPES, ALL_EDGE_TYPES,
+    SCOPE_LABELS, ACTIVITY_LABELS,
+    ENTITY_PROJECT_MAP_FAMILY, ENTITY_DEBUGGING_FAMILY, ENTITY_FACT_FAMILY,
+    FACT_FAMILY_FRESHNESS_TTL_HOURS, SOURCE_OF_TRUTH_POLICIES,
+    ENTITY_TEXT_CLASSIFIERS, ENTITY_PROPERTY_SIGNATURES,
+    EDGE_ENDPOINT_INFERRED_LABELS, PREDICATE_FAMILY_EDGE_NAMES,
+    SINGLETON_EDGE_TYPES, STRUCTURAL_INCLUDES, PUBLIC_RECORD_TYPES,
+    validate_entity_upsert, validate_edge_upsert, validate_structural_mutations,
+    entity_spec, edge_spec, record_type_spec, record_types_for_include,
+    advertised_include_families,
+    is_canonical_entity_label, is_canonical_edge_type,
+    project_map_family_for_label, debugging_family_for_label, fact_family_for_label,
+    is_scope_label, is_activity_label, allowed_edge_types_between,
+    canonical_entity_labels,
+    normalize_edge_name, inferred_labels_for_episodic_edge_endpoint,
+    predicate_family_for_edge_name, predicate_family_for_episodic_supersede,
+)
 Managed or self-hosted integration events are also opt-in:
 
 ```bash

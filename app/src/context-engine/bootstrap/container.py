@@ -242,11 +242,31 @@ def build_container(
             telemetry_sink, observability_sink
         )
     stream_publisher = event_stream_publisher or _default_event_stream_publisher()
-    graph_writer = Neo4jGraphWriter(s)
+    # Backend selection (default neo4j; falkordb = lightweight local backend).
+    # Switch writer + claim store together: the writer feeds ContextGraphService,
+    # the claim store feeds ReadOrchestrator — everything above the ports is
+    # backend-agnostic. FalkorDB adapters import lazily so the optional client
+    # is only required when actually selected.
+    backend = (s.graph_db_backend() or "neo4j").strip().lower()
+    if backend == "falkordb":
+        from adapters.outbound.graph.falkordb_reader import FalkorDBClaimQueryStore
+        from adapters.outbound.graph.falkordb_writer import (
+            FalkorDBGraphProvider,
+            FalkorDBGraphWriter,
+        )
+
+        # One shared (lazily built) graph handle: with embedded FalkorDBLite the
+        # writer and reader must talk to the same instance/file.
+        graph_provider = FalkorDBGraphProvider(s)
+        graph_writer = FalkorDBGraphWriter(s, graph_provider=graph_provider)
+        claim_query = FalkorDBClaimQueryStore(s, graph_provider=graph_provider)
+    else:
+        graph_writer = Neo4jGraphWriter(s)
+        claim_query = Neo4jClaimQueryStore(s)
     registry = connectors or SourceConnectorRegistry()
     # One read trunk: P9 readers over the canonical claim store → ranking →
-    # AgentEnvelope. Neo4jClaimQueryStore is the production claim surface.
-    orchestrator = ReadOrchestrator(claim_query=Neo4jClaimQueryStore(s))
+    # AgentEnvelope.
+    orchestrator = ReadOrchestrator(claim_query=claim_query)
     # Fail fast if the orchestrator's reader set has drifted from the
     # advertised ``READER_BACKED_INCLUDES`` (see domain.coherence).
     from domain.coherence import assert_runtime_coherence
