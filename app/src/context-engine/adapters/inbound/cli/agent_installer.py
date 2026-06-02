@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass, field
 from importlib import resources
 from pathlib import Path
 
+from adapters.inbound.cli.skill_manager import SkillManager, SkillManagerError
+
 _CLAUDE_MARKER_RE = re.compile(
     r"<!-- (?:context-engine|potpie)-start -->.*?<!-- (?:context-engine|potpie)-end -->",
     re.DOTALL,
@@ -82,8 +84,11 @@ def _install_bundle(
     result: InstallResult,
     *,
     force: bool,
+    skip_skill_files: bool = False,
 ) -> None:
     for rel_path, content in _iter_bundle_files(bundle_name):
+        if skip_skill_files and rel_path.parts[:2] == (".agents", "skills"):
+            continue
         target = install_root / rel_path
 
         # Special handling: merge CLAUDE.md section instead of overwriting
@@ -146,6 +151,33 @@ def install_agent_bundle(
     if normalized == "claude":
         _install_bundle(root, "claude_bundle", result, force=force)
     else:
-        _install_bundle(root, "agent_bundle", result, force=force)
+        _install_bundle(
+            root, "agent_bundle", result, force=force, skip_skill_files=True
+        )
+        manager = SkillManager(root, agent=normalized)
+        available = manager.list_skills(mode="available")["skills"]
+        installed: list[dict[str, object]] = []
+        skipped_ids: list[str] = []
+        for row in available:
+            skill_id = str(row["id"])
+            try:
+                payload = manager.install(skill_id, yes=force, force=force)
+            except SkillManagerError:
+                skipped_ids.append(skill_id)
+                continue
+            installed.extend(payload.get("installed", []))
+        for item in installed:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            sid = str(item["id"])
+            rel_dir = f".agents/skills/{sid}"
+            if item.get("status") == "updated":
+                result.updated.append(rel_dir)
+            elif item.get("status") == "unchanged":
+                result.unchanged.append(rel_dir)
+            else:
+                result.created.append(rel_dir)
+        for sid in skipped_ids:
+            result.skipped.append(f".agents/skills/{sid}")
 
     return result

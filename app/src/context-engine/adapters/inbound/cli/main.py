@@ -51,6 +51,7 @@ from adapters.inbound.cli.potpie_api_config import (
     resolve_potpie_api_base_url,
     resolve_potpie_api_key,
 )
+from adapters.inbound.cli.skill_manager import SkillManager, SkillManagerError
 from adapters.outbound.http.potpie_context_api_client import (
     IngestRejectedError,
     PotpieContextApiClient,
@@ -74,7 +75,7 @@ app = typer.Typer(
 pot_app = typer.Typer(help="Active pot and local pot helpers.")
 pot_repo_app = typer.Typer(help="Repositories attached to a context pot (Potpie API).")
 event_app = typer.Typer(help="Inspect and wait for ingestion events.")
-conflict_app = typer.Typer(help="Predicate-family conflicts (QualityIssue).")
+skills_app = typer.Typer(help="Manage repo-local Potpie agent skills.")
 
 # Set by root callback; read by all subcommands (including nested `pot`).
 _cli_state: dict[str, Any] = {"json": False, "verbose": False, "source": None}
@@ -142,7 +143,7 @@ def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str
     if status_code == 202:
         return {
             "status": "queued",
-            "episode_uuid": data.get("episode_uuid"),
+            "mutation_id": data.get("mutation_id"),
             "event_id": data.get("event_id"),
             "job_id": data.get("job_id"),
             "downgrades": list(data.get("downgrades") or []),
@@ -150,7 +151,7 @@ def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str
     if "event_id" in data or "job_id" in data:
         return {
             "status": data.get("status") or "applied",
-            "episode_uuid": data.get("episode_uuid"),
+            "mutation_id": data.get("mutation_id"),
             "event_id": data.get("event_id"),
             "job_id": data.get("job_id"),
             "downgrades": list(data.get("downgrades") or []),
@@ -158,7 +159,7 @@ def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str
         }
     return {
         "status": "applied",
-        "episode_uuid": data.get("episode_uuid"),
+        "mutation_id": data.get("mutation_id"),
         "event_id": data.get("event_id"),
         "job_id": data.get("job_id"),
         "downgrades": list(data.get("downgrades") or []),
@@ -248,16 +249,6 @@ def doctor_cmd() -> None:
     s = EnvContextEngineSettings()
     cg = s.is_enabled()
     neo = bool(s.neo4j_uri())
-    ce_neo = bool(
-        os.getenv("CONTEXT_ENGINE_NEO4J_URI") or os.getenv("CONTEXT_ENGINE_NEO4J_URL")
-    )
-    legacy_neo = bool(os.getenv("NEO4J_URI") or os.getenv("NEO4J_URL"))
-    if ce_neo:
-        neo_src = "context_engine"
-    elif legacy_neo:
-        neo_src = "legacy"
-    else:
-        neo_src = "missing"
 
     has_potpie_key_env = bool(os.getenv("POTPIE_API_KEY"))
     has_stored_key = bool(get_stored_api_key())
@@ -306,7 +297,7 @@ def doctor_cmd() -> None:
 
     summary: list[str] = [
         "[dim]search / ingest / pot hard-reset call Potpie POST /api/v2/context/* with X-API-Key.[/dim]",
-        "[dim]Local Neo4j/Graphiti is not required on this machine.[/dim]",
+        "[dim]Local Neo4j is not required on this machine.[/dim]",
     ]
     if health_ok is True:
         summary.append("[green]GET /health on Potpie base URL succeeded.[/green]")
@@ -320,7 +311,6 @@ def doctor_cmd() -> None:
     snap = DoctorSnapshot(
         context_graph_enabled=cg,
         neo4j_effective_set=neo,
-        neo4j_source=neo_src,
         pot_maps_set=maps_set,
         active_pot_id=get_active_pot_id() or None,
         potpie_api_key_env=has_potpie_key_env,
@@ -409,6 +399,215 @@ def init_agent_cmd(
         print_plain_line(
             f"skipped {rel_path} (use --force to overwrite)", as_json=False
         )
+
+
+def _skill_manager_or_exit(path: str, agent: str) -> SkillManager:
+    j, _ = _flags()
+    try:
+        return SkillManager(path, agent=agent)
+    except SkillManagerError as exc:
+        _emit_skill_error(exc, as_json=j)
+        raise typer.Exit(code=1) from exc
+
+
+def _emit_skill_error(exc: SkillManagerError, *, as_json: bool) -> None:
+    if as_json:
+        print_json_blob(exc.to_payload(), as_json=True)
+        return
+    hint = f"Try: {exc.recommended_command}" if exc.recommended_command else None
+    emit_error(exc.code, exc.message, hint=hint)
+
+
+def _skill_payload_or_exit(action: Any, *, success_exit: int = 0) -> dict[str, Any]:
+    j, _ = _flags()
+    try:
+        return action()
+    except SkillManagerError as exc:
+        _emit_skill_error(exc, as_json=j)
+        raise typer.Exit(code=1) from exc
+
+
+def _print_skills_status(payload: dict[str, Any], *, as_json: bool) -> None:
+    if as_json:
+        print_json_blob(payload, as_json=True)
+        return
+    print_plain_line(f"Skills root: {payload['root']}", as_json=False)
+    print_plain_line(f"Agent: {payload['agent']}", as_json=False)
+    print_plain_line(
+        "Installed: "
+        f"{len(payload['installed'])}; missing: {len(payload['missing'])}; "
+        f"outdated: {len(payload['outdated'])}; "
+        f"locally modified: {len(payload['locallyModified'])}",
+        as_json=False,
+    )
+    actions = payload.get("nextActions") or []
+    if actions:
+        print_plain_line("Next actions:", as_json=False)
+        for action in actions:
+            print_plain_line(f"  {action['recommendedCommand']}", as_json=False)
+    else:
+        print_plain_line("Skills are up to date for this agent.", as_json=False)
+
+
+def _print_skills_list(payload: dict[str, Any], *, as_json: bool) -> None:
+    if as_json:
+        print_json_blob(payload, as_json=True)
+        return
+    print_plain_line(
+        f"{payload['mode']} skills for {payload['agent']} at {payload['root']}:",
+        as_json=False,
+    )
+    for row in payload["skills"]:
+        desc = row.get("description") or ""
+        print_plain_line(f"  {row['id']} - {desc}", as_json=False)
+
+
+def _print_skills_mutation(payload: dict[str, Any], *, as_json: bool) -> None:
+    if as_json:
+        print_json_blob(payload, as_json=True)
+        return
+    for key in ("installed", "updated", "removed", "skipped"):
+        for row in payload.get(key, []) or []:
+            status = row.get("status", key.rstrip("d"))
+            suffix = f" ({row['reason']})" if row.get("reason") else ""
+            print_plain_line(f"{status} {row['id']}{suffix}", as_json=False)
+            command = row.get("recommendedCommand")
+            if command:
+                print_plain_line(f"  next: {command}", as_json=False)
+
+
+def _print_skills_doctor(payload: dict[str, Any], *, as_json: bool) -> None:
+    if as_json:
+        print_json_blob(payload, as_json=True)
+        return
+    print_plain_line(
+        f"Skill doctor: {'ok' if payload['ok'] else 'issues found'}",
+        as_json=False,
+    )
+    for diag in payload.get("diagnostics", []):
+        skill = f" {diag['skillId']}" if diag.get("skillId") else ""
+        print_plain_line(
+            f"  {diag['code']}{skill}: {diag.get('message', '')}", as_json=False
+        )
+    if payload.get("recommendedCommand"):
+        print_plain_line(f"Next: {payload['recommendedCommand']}", as_json=False)
+
+
+@skills_app.command("status")
+def skills_status_cmd(
+    agent: str = typer.Option(
+        "default",
+        "--agent",
+        help="Agent harness: default, codex, claude, claude-code, or cursor.",
+    ),
+    path: str = typer.Option(".", "--path", help="Repository path."),
+) -> None:
+    """Read skill health without mutating files."""
+    j, _ = _flags()
+    manager = _skill_manager_or_exit(path, agent)
+    payload = _skill_payload_or_exit(manager.status)
+    _print_skills_status(payload, as_json=j)
+
+
+@skills_app.command("list")
+def skills_list_cmd(
+    available: bool = typer.Option(False, "--available", help="List bundled skills."),
+    installed: bool = typer.Option(
+        False, "--installed", help="List installed repo-local skills."
+    ),
+    recommended: bool = typer.Option(
+        False, "--recommended", help="List recommended skills for the agent."
+    ),
+    agent: str = typer.Option("default", "--agent"),
+    path: str = typer.Option(".", "--path", help="Repository path."),
+) -> None:
+    """List available, installed, or recommended skills."""
+    j, _ = _flags()
+    selected = [available, installed, recommended]
+    if sum(1 for flag in selected if flag) > 1:
+        exc = SkillManagerError(
+            "INVALID_ARGUMENTS",
+            "Choose only one of --available, --installed, or --recommended.",
+        )
+        _emit_skill_error(exc, as_json=j)
+        raise typer.Exit(code=1)
+    mode = "available" if available else "recommended" if recommended else "installed"
+    manager = _skill_manager_or_exit(path, agent)
+    payload = _skill_payload_or_exit(lambda: manager.list_skills(mode=mode))
+    _print_skills_list(payload, as_json=j)
+
+
+@skills_app.command("install")
+def skills_install_cmd(
+    skill_id: str | None = typer.Argument(
+        None, help="Bundled skill id. Omit to install the recommended set."
+    ),
+    agent: str = typer.Option("default", "--agent"),
+    path: str = typer.Option(".", "--path", help="Repository path."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm overwrites."),
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite locally modified owned skills."
+    ),
+) -> None:
+    """Install bundled Potpie skills into `.agents/skills`."""
+    j, _ = _flags()
+    manager = _skill_manager_or_exit(path, agent)
+    payload = _skill_payload_or_exit(
+        lambda: manager.install(skill_id, yes=yes, force=force)
+    )
+    _print_skills_mutation(payload, as_json=j)
+
+
+@skills_app.command("update")
+def skills_update_cmd(
+    skill_id: str | None = typer.Argument(
+        None, help="Installed skill id. Omit to update outdated skills."
+    ),
+    all_: bool = typer.Option(
+        False, "--all", help="Check every installed bundled skill."
+    ),
+    agent: str = typer.Option("default", "--agent"),
+    path: str = typer.Option(".", "--path", help="Repository path."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm updates."),
+) -> None:
+    """Update installed bundled skills when templates changed."""
+    j, _ = _flags()
+    manager = _skill_manager_or_exit(path, agent)
+    payload = _skill_payload_or_exit(
+        lambda: manager.update(skill_id, all_=all_, yes=yes)
+    )
+    _print_skills_mutation(payload, as_json=j)
+
+
+@skills_app.command("remove")
+def skills_remove_cmd(
+    skill_id: str = typer.Argument(..., help="Installed skill id to remove."),
+    agent: str = typer.Option("default", "--agent"),
+    path: str = typer.Option(".", "--path", help="Repository path."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm removal."),
+) -> None:
+    """Remove a Potpie-owned installed skill."""
+    j, _ = _flags()
+    manager = _skill_manager_or_exit(path, agent)
+    payload = _skill_payload_or_exit(lambda: manager.remove(skill_id, yes=yes))
+    _print_skills_mutation(payload, as_json=j)
+
+
+@skills_app.command("doctor")
+def skills_doctor_cmd(
+    agent: str = typer.Option("default", "--agent"),
+    path: str = typer.Option(".", "--path", help="Repository path."),
+) -> None:
+    """Run read-only skill diagnostics."""
+    j, _ = _flags()
+    manager = _skill_manager_or_exit(path, agent)
+    payload = _skill_payload_or_exit(manager.doctor)
+    _print_skills_doctor(payload, as_json=j)
+    if not payload.get("ok", False):
+        raise typer.Exit(code=1)
+
+
+app.add_typer(skills_app, name="skills")
 
 
 def _pot_id_or_git(explicit: str | None, *, cwd: str | None = None) -> str:
@@ -1026,60 +1225,6 @@ def event_wait_cmd(
 app.add_typer(event_app, name="event")
 
 
-@conflict_app.command("list")
-def conflict_list_cmd(
-    cwd: str = typer.Option(
-        ".",
-        "--cwd",
-        help="Git working tree used when inferring pot from remote / env",
-    ),
-) -> None:
-    """List open predicate-family conflicts for the active pot."""
-    load_cli_env()
-    j, v = _flags()
-    cwd_resolved = str(Path(cwd).resolve())
-    pot_id = _pot_id_or_git(None, cwd=cwd_resolved)
-    client = _cli_client_or_exit(v)
-    try:
-        out = client.conflicts_list(pot_id)
-    except PotpieContextApiError as exc:
-        emit_error("Could not list conflicts", _format_api_error(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
-    print_json_blob(out, as_json=j)
-
-
-@conflict_app.command("resolve")
-def conflict_resolve_cmd(
-    issue_uuid: str = typer.Argument(..., help="QualityIssue uuid"),
-    action: str = typer.Option(
-        "supersede_older",
-        "--action",
-        "-a",
-        help="Resolution strategy (supersede_older stamps invalid_at on the older edge)",
-    ),
-    cwd: str = typer.Option(
-        ".",
-        "--cwd",
-        help="Git working tree used when inferring pot from remote / env",
-    ),
-) -> None:
-    """Resolve one open conflict (default: supersede the older episodic edge)."""
-    load_cli_env()
-    j, v = _flags()
-    cwd_resolved = str(Path(cwd).resolve())
-    pot_id = _pot_id_or_git(None, cwd=cwd_resolved)
-    client = _cli_client_or_exit(v)
-    try:
-        out = client.conflicts_resolve(pot_id, issue_uuid, action=action)
-    except PotpieContextApiError as exc:
-        emit_error("Could not resolve conflict", _format_api_error(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
-    print_json_blob(out, as_json=j)
-
-
-app.add_typer(conflict_app, name="conflict")
-
-
 @app.command("add")
 def add_repo_cmd(
     path: str = typer.Argument(
@@ -1130,7 +1275,7 @@ def search(
     node_labels: str | None = typer.Option(
         None,
         "--node-labels",
-        help="Optional comma-separated Graphiti labels, e.g. PullRequest,Decision",
+        help="Optional comma-separated entity labels, e.g. PullRequest,Decision",
     ),
     repo_name: str | None = typer.Option(
         None,
@@ -1147,7 +1292,7 @@ def search(
     include_invalidated: bool = typer.Option(
         False,
         "--include-invalidated",
-        help="Return superseded facts too (Graphiti edges with invalid_at set). Ignored when --as-of is set.",
+        help="Return superseded facts too (edges with invalid_at set). Ignored when --as-of is set.",
     ),
     with_temporal: bool = typer.Option(
         False,
@@ -1159,16 +1304,16 @@ def search(
         "--as-of",
         help="ISO 8601 instant; restrict results to edges valid at that time (valid_at/invalid_at window).",
     ),
-    episode_uuid: str | None = typer.Option(
+    mutation_id: str | None = typer.Option(
         None,
-        "--episode",
-        "-e",
-        help="Only facts linked to this ingested episode UUID (server-side filter).",
+        "--mutation-id",
+        "-m",
+        help="Only facts written by this apply-plan mutation UUID (server-side filter).",
     ),
     no_provenance: bool = typer.Option(
         False,
         "--no-provenance",
-        help="Hide source / reference_time / episode line in plain (non-JSON) output.",
+        help="Hide source / reference_time / mutation_id line in plain (non-JSON) output.",
     ),
     cwd: str = typer.Option(
         ".",
@@ -1206,8 +1351,8 @@ def search(
         "source_descriptions": [_resolved_source_label(source_description)]
         if _resolved_source_label(source_description)
         else [],
-        "episode_uuids": [episode_uuid.strip()]
-        if episode_uuid and episode_uuid.strip()
+        "mutation_ids": [mutation_id.strip()]
+        if mutation_id and mutation_id.strip()
         else [],
         "include_invalidated": include_invalidated,
         "as_of": as_of_dt,
@@ -1292,7 +1437,8 @@ def status_cmd(
 ) -> None:
     """Fetch readiness / capability envelope (POST /status)."""
     j, v = _flags()
-    pot_id = _pot_id_or_git(pot, cwd=str(Path(cwd).resolve()))
+    cwd_resolved = str(Path(cwd).resolve())
+    pot_id = _pot_id_or_git(pot, cwd=cwd_resolved)
     body: dict[str, Any] = {
         "pot_id": pot_id,
         "scope": _resolve_scope_body(
@@ -1309,6 +1455,15 @@ def status_cmd(
             "Status failed", _format_api_error(exc), verbose=v, exc=exc if v else None
         )
         raise typer.Exit(code=1) from exc
+    if isinstance(response, dict):
+        try:
+            response["skills"] = SkillManager(cwd_resolved).context_status_advisory()
+        except SkillManagerError as exc:
+            response["skills"] = {
+                "ok": False,
+                "error": exc.to_payload()["error"],
+                "doNotEditInstalledSkillsDirectly": True,
+            }
     print_json_blob(response, as_json=j)
 
 
@@ -1399,14 +1554,14 @@ def overview_cmd(
     limit: int = typer.Option(12, "--limit", "-n"),
     cwd: str = typer.Option(".", "--cwd"),
 ) -> None:
-    """Fetch graph-wide readiness / activity snapshot (goal=aggregate, include=[graph_overview])."""
+    """Fetch the project's infra/topology snapshot (services, datastores, deps)."""
     j, v = _flags()
     pot_id = _pot_id_or_git(pot, cwd=str(Path(cwd).resolve()))
     body: dict[str, Any] = {
         "pot_id": pot_id,
-        "goal": "aggregate",
+        "goal": "retrieve",
         "strategy": "auto",
-        "include": ["graph_overview"],
+        "include": ["infra_topology"],
         "limit": limit,
         "scope": _resolve_scope_body(repo_name=repo_name),
     }
@@ -1714,7 +1869,7 @@ def ingest_cmd(
         raise typer.Exit(code=2)
     if (
         out["status"] == "applied"
-        and not out.get("episode_uuid")
+        and not out.get("mutation_id")
         and not out.get("event_id")
     ):
         emit_error(
@@ -1728,6 +1883,9 @@ def ingest_cmd(
 
 
 def main() -> None:
+    from bootstrap.logging_setup import configure_logging
+
+    configure_logging()
     app()
 
 
