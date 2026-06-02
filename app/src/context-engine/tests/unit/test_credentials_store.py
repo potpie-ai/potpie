@@ -212,6 +212,19 @@ def test_secure_secret_delete_keyring_error_is_ignored(
     cs.delete_secure_secret("example_token")
 
 
+def test_resolve_cli_pot_ref_invalid_stored_uuid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    payload = {"pot_aliases": {"broken": "not-a-uuid"}}
+    path = cs.credentials_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    got, err = cs.resolve_cli_pot_ref("broken")
+    assert got is None
+    assert "not a valid UUID" in err
+
+
 def test_resolve_cli_pot_ref_uuid_normalizes() -> None:
     s = "550E8400-E29B-41D4-A716-446655440000"
     got, err = cs.resolve_cli_pot_ref(s)
