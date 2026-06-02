@@ -130,7 +130,7 @@ def test_all_required_sections_present() -> None:
         "Inputs",
         "Tools assumed available",
         "Procedure",
-        "Mutations (per PR)",
+        "Mutations (per item)",
         "Bounds and budget",
         "Anti-patterns",
         "Single-event contract",
@@ -280,7 +280,7 @@ def test_skill_uses_real_pr_response_fields() -> None:
 
 def test_all_referenced_entity_labels_are_canonical() -> None:
     _, body = _read_skill()
-    section = _section(body, "Mutations (per PR)")
+    section = _section(body, "Mutations (per item)")
     labels = _all_entity_labels_in(section)
     # Sanity: skill should reference at least these.
     expected = {
@@ -300,7 +300,7 @@ def test_all_referenced_entity_labels_are_canonical() -> None:
 
 def test_all_referenced_edge_types_are_canonical() -> None:
     _, body = _read_skill()
-    section = _section(body, "Mutations (per PR)")
+    section = _section(body, "Mutations (per item)")
     edges = _all_edge_types_in(section)
     expected = {
         "PERFORMED",
@@ -348,7 +348,7 @@ def test_skill_edge_endpoints_match_ontology(
 def test_repository_key_is_slug_format_not_url_format() -> None:
     """Repository is SLUG_ALIAS — `repo:github.com/owner/repo` would be invalid."""
     _, body = _read_skill()
-    section = _section(body, "Mutations (per PR)")
+    section = _section(body, "Mutations (per item)")
     # Skill must NOT positively recommend the URL-style key. Mentions inside
     # an explicit "INVALID" / "do NOT" guard are fine (they teach the rule).
     for m in re.finditer(r"repo:github\.com/", section):
@@ -370,7 +370,7 @@ def test_repository_key_is_slug_format_not_url_format() -> None:
 def test_fix_and_decision_keys_are_content_hash() -> None:
     """Fix and Decision are CONTENT_HASH — keys must be `<prefix>:<12-hex>`."""
     _, body = _read_skill()
-    section = _section(body, "Mutations (per PR)")
+    section = _section(body, "Mutations (per item)")
     # Skill must NOT recommend PR-number-encoded keys.
     assert "fix:github:pr:" not in section, (
         "Fix is CONTENT_HASH; key body must be a hash, not `github:pr:<owner>/<repo>:<n>`"
@@ -387,7 +387,7 @@ def test_fix_and_decision_keys_are_content_hash() -> None:
 
 def test_period_key_matches_production_builder() -> None:
     _, body = _read_skill()
-    section = _section(body, "Mutations (per PR)")
+    section = _section(body, "Mutations (per item)")
     assert "timeline:period:daily:<pot>:<yyyy-mm-dd>" in section, (
         "Period key must match production builder "
         "(timeline_plan._period_key)"
@@ -396,7 +396,7 @@ def test_period_key_matches_production_builder() -> None:
 
 def test_activity_key_external_id_form() -> None:
     _, body = _read_skill()
-    section = _section(body, "Mutations (per PR)")
+    section = _section(body, "Mutations (per item)")
     # The example key from the skill must pass _EXTERNAL_ID_SAFE_RE for each
     # post-prefix segment.
     example = "activity:github:pr:acme/api:1042"
@@ -412,7 +412,7 @@ def test_activity_key_external_id_form() -> None:
 
 def test_person_key_is_slug_safe_for_typical_github_handles() -> None:
     _, body = _read_skill()
-    section = _section(body, "Mutations (per PR)")
+    section = _section(body, "Mutations (per item)")
     assert "person:<handle" in section
     # Typical GitHub handles slugify cleanly.
     for handle in ("alice", "bob-smith", "user123"):
@@ -422,7 +422,7 @@ def test_person_key_is_slug_safe_for_typical_github_handles() -> None:
 
 def test_bug_pattern_key_segments_are_slugs() -> None:
     _, body = _read_skill()
-    section = _section(body, "Mutations (per PR)")
+    section = _section(body, "Mutations (per item)")
     assert "bug_pattern:<repo-slug>:<symptom-slug>" in section, (
         "skill should clarify BugPattern key uses slug segments"
     )
@@ -473,10 +473,20 @@ def test_skill_explicitly_forbids_repository_added_reemit() -> None:
     assert "do not" in anti.lower(), "Anti-patterns section should be imperative"
 
 
-def test_skill_caps_list_pagination_to_one_call() -> None:
+def test_skill_caps_list_pagination_to_two_calls_one_per_kind() -> None:
+    """Two list calls total — one for PRs, one for issues. No pagination."""
     _, body = _read_skill()
     bounds = _section(body, "Bounds and budget")
-    assert "ONE" in bounds and "github_list_pull_requests" in bounds
+    # Either "Two" or explicit per-tool "one" each is acceptable phrasing.
+    assert (
+        "Two" in bounds
+        or "two" in bounds
+        or ("one `github_list_pull_requests`" in bounds
+            and "one `github_list_issues`" in bounds)
+    ), "Bounds must state two list calls (one per kind)"
+    assert "github_list_pull_requests" in bounds
+    assert "github_list_issues" in bounds
+    assert "No pagination" in bounds or "no pagination" in bounds.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +522,7 @@ def test_one_shot_playbook_extract_is_the_markdown_body() -> None:
     # rendered playbook so they end up in the agent prompt.
     for marker in (
         "# Repo one-shot ingestion",
-        "## Mutations (per PR)",
+        "## Mutations (per item)",
         "## Anti-patterns",
         "Source-priority rationale",
         "Single-event contract",
@@ -562,7 +572,7 @@ def test_one_shot_playbook_renders_into_agent_prompt() -> None:
     pb = find_playbook("github", "repository", "one_shot_ingest")
     rendered = render_playbooks_section([pb])
     assert "github / repository / one_shot_ingest" in rendered
-    assert "## Mutations (per PR)" in rendered
+    assert "## Mutations (per item)" in rendered
     assert "Anti-patterns" in rendered
 
 
@@ -586,3 +596,119 @@ def test_skill_documents_source_priority_order() -> None:
             f"source priority broken: {earlier!r} must come before {later!r}"
         )
     assert "LAST RESORT" in proc, "Procedure must call code-reading LAST RESORT"
+
+
+# ---------------------------------------------------------------------------
+# Issue ingestion path (expansion: PRs + issues)
+# ---------------------------------------------------------------------------
+
+
+def test_skill_covers_both_prs_and_issues() -> None:
+    """Frontmatter + body must announce the two-kind scope."""
+    fm, body = _read_skill()
+    assert "issues" in fm["description"].lower()
+    assert "pull request" in fm["description"].lower() or "pr" in fm["description"].lower()
+    assert "github_list_issues" in body
+    assert "github_get_issue" in body
+    assert "activity:github:issue:" in body
+    assert "activity:github:pr:" in body
+
+
+def test_skill_phase_1_calls_both_list_tools_with_limit_count() -> None:
+    """count is read from event.payload.count and passed as limit on BOTH lists."""
+    _, body = _read_skill()
+    assert "event.payload.count" in body, (
+        "skill must tell the agent to read count from event.payload.count"
+    )
+    assert "github_list_pull_requests(repo, limit=count)" in body
+    assert "github_list_issues(repo, limit=count)" in body
+
+
+def test_phase_0_initializes_two_todos_one_per_kind() -> None:
+    _, body = _read_skill()
+    proc = _section(body, "Procedure")
+    # Both enumeration todos must be initialized in Phase 0.
+    assert "Enumerate" in proc and "merged PRs" in proc
+    assert "Enumerate" in proc and "issues" in proc
+
+
+def test_issue_activity_key_form_documented() -> None:
+    _, body = _read_skill()
+    section = _section(body, "Mutations (per item)")
+    assert "activity:github:issue:<owner>/<repo>:<n>" in section, (
+        "issue Activity key must be activity:github:issue:<owner>/<repo>:<n>"
+    )
+
+
+def test_issue_verb_class_uses_state() -> None:
+    _, body = _read_skill()
+    section = _section(body, "Mutations (per item)")
+    # verb_class value pattern (not a tool name).
+    assert "github_issue_<state>" in section or "github_issue_open" in section
+    assert "github_issue_closed" in section or "github_issue_<state>" in section
+
+
+def test_no_fix_emitted_from_issues() -> None:
+    """Fix is reserved for merged PRs; issues never emit Fix."""
+    _, body = _read_skill()
+    anti = _section(body, "Anti-patterns")
+    assert "Do NOT emit `Fix` for an issue" in anti, (
+        "Anti-patterns must explicitly forbid Fix from issue filings"
+    )
+    section = _section(body, "Mutations (per item)")
+    # Inside the per-issue conditional block, must call this out too.
+    issue_block_start = section.find("### Per issue — conditionally emit")
+    assert issue_block_start >= 0, "Per issue — conditionally emit block missing"
+    issue_block = section[issue_block_start:]
+    assert "Do NOT emit `Fix`" in issue_block, (
+        "Per-issue conditional must say Do NOT emit Fix"
+    )
+
+
+def test_playbook_tool_hints_include_issue_tools() -> None:
+    """Playbook registration must expose the issue-side tools."""
+    from domain.event_playbooks import find_playbook
+
+    pb = find_playbook("github", "repository", "one_shot_ingest")
+    assert "github_list_issues" in pb.tool_hints
+    assert "github_get_issue" in pb.tool_hints
+    # Sandbox attach-check must also be allowlisted (per prior review fix).
+    assert "sandbox_list_repos" in pb.tool_hints
+
+
+def test_skill_documents_issue_source_priority_order() -> None:
+    """For issues: labels > state > title > body."""
+    _, body = _read_skill()
+    proc = _section(body, "Procedure")
+    # Anchor on the issue items section to scope the search.
+    issue_idx = proc.find("Issue items")
+    assert issue_idx >= 0, "Procedure must have an Issue items subsection"
+    issue_section = proc[issue_idx:]
+    for earlier, later in [
+        ("Labels", "State"),
+        ("State", "Title"),
+        ("Title", "Body"),
+    ]:
+        i_e = issue_section.find(earlier)
+        i_l = issue_section.find(later)
+        assert i_e >= 0 and i_l >= 0, (
+            f"Issue procedure missing priority label: {earlier!r}/{later!r}"
+        )
+        assert i_e < i_l, (
+            f"issue source priority broken: {earlier!r} must precede {later!r}"
+        )
+
+
+def test_discussions_explicitly_out_of_scope() -> None:
+    """GitHub Discussions have no connector tool; skill must call this out."""
+    _, body = _read_skill()
+    assert "Discussions" in body
+    anti = _section(body, "Anti-patterns")
+    assert "Discussions" in anti and "unsupported" in anti.lower()
+
+
+def test_issue_anti_pattern_no_invented_issue_comments() -> None:
+    """There's no separate issue-comments tool; skill must forbid inventing them."""
+    _, body = _read_skill()
+    anti = _section(body, "Anti-patterns")
+    assert "issue comments" in anti.lower() or "issue-comments" in anti.lower()

@@ -200,7 +200,7 @@ _register(
 )
 
 
-# --- github / repository / one_shot_ingest (PR-history backfill skill) -----
+# --- github / repository / one_shot_ingest (PR + issue backfill skill) -----
 # Source of truth lives in ``domain/playbooks/repo_one_shot_ingestion.md`` so
 # Claude Code and the internal reconciliation agent read the exact same prompt.
 # The markdown body is embedded into ``extract`` at module import.
@@ -210,28 +210,34 @@ _register(
         event_type="repository",
         action="one_shot_ingest",
         summary=(
-            "One-time PR-history ingestion of a repository into the context "
-            "graph. Not incremental — live updates continue via the "
-            "github/pull_request/merged webhook path."
+            "One-time backfill of a repository's recent merged pull requests "
+            "and standalone GitHub issues into the context graph. Not "
+            "incremental — live updates continue via the "
+            "github/pull_request/merged and github/issue/opened webhook paths."
         ),
         available_data=(
-            "The full procedure, tool surface, key formats, mutation shapes, "
-            "bounds, and anti-patterns are spelled out in the embedded skill "
-            "below. Follow it as the authoritative playbook for this event."
+            "Payload may include owner, repo, and count (per-kind list "
+            "limit). The embedded skill below is authoritative for procedure, "
+            "tool surface, key formats, and mutation shapes."
         ),
         extract=_load_skill_body("repo_one_shot_ingestion.md"),
         skip=(
-            "Do NOT re-emit github/repository/added from this path. Do NOT "
-            "page past one github_list_pull_requests call. Do NOT read code "
-            "unless commit + branch + title + body all leave intent unclear."
+            "Do NOT re-emit github/repository/added. Do NOT page past one "
+            "list call per kind (one github_list_pull_requests + one "
+            "github_list_issues). Do NOT read code diffs unless commit + "
+            "branch + title + body + review comments all leave intent "
+            "unclear. Do NOT emit Fix nodes from issue filings alone — Fix "
+            "is reserved for merged PRs."
         ),
         tool_hints=(
             "sandbox_list_repos",
             "github_list_pull_requests",
+            "github_list_issues",
             "github_get_pull_request",
             "github_get_pull_request_commits",
             "github_get_pull_request_review_comments",
             "github_get_pull_request_issue_comments",
+            "github_get_issue",
             "apply_graph_mutations",
             "mark_event_processed",
             "finish_batch",
