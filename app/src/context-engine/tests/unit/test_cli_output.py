@@ -20,6 +20,7 @@ def test_configure_cli_logging_no_crash() -> None:
     configure_cli_logging(verbose=True)
     assert logging.getLogger("neo4j").level == logging.DEBUG
     assert logging.getLogger("httpx").level == logging.DEBUG
+    assert logging.getLogger("httpcore").level == logging.DEBUG
 
 
 def test_print_doctor_json_mode(capsys) -> None:
