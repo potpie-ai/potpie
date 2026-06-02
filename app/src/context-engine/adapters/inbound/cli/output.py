@@ -171,6 +171,63 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
         _out.print(line)
 
 
+def print_unified_status_report(
+    data: DoctorSnapshot,
+    *,
+    as_json: bool,
+    quick: bool,
+    pot_id: str | None = None,
+    pot_status: dict[str, Any] | None = None,
+    pot_status_error: str | None = None,
+) -> None:
+    """CLI config/connectivity (doctor) plus optional ``POST /status`` for a pot."""
+    if as_json:
+        payload: dict[str, Any] = {
+            "doctor": {
+                "context_graph_enabled": data.context_graph_enabled,
+                "neo4j_effective_set": data.neo4j_effective_set,
+                "pot_maps_set": data.pot_maps_set,
+                "active_pot_id": data.active_pot_id,
+                "potpie_api_key_env": data.potpie_api_key_env,
+                "potpie_stored_token": data.potpie_stored_token,
+                "potpie_base_url": data.potpie_base_url,
+                "potpie_port_hint": data.potpie_port_hint,
+                "database_url_set": data.database_url_set,
+                "github_token_set": data.github_token_set,
+                "potpie_health_ok": data.potpie_health_ok,
+                "potpie_health_message": data.potpie_health_message,
+                "potpie_auth_ok": data.potpie_auth_ok,
+                "potpie_auth_message": data.potpie_auth_message,
+                "summary": data.summary_lines,
+            },
+            "quick": quick,
+            "pot_id": pot_id,
+            "pot_status": pot_status,
+            "pot_status_error": pot_status_error,
+        }
+        print(json.dumps(payload))
+        return
+
+    print_doctor_report(data, as_json=False)
+    if quick:
+        _out.print(
+            "[dim]Pot readiness skipped (--quick). Run `potpie status` without --quick.[/dim]"
+        )
+        return
+    if pot_status is not None:
+        _out.print()
+        _out.print(
+            Panel(
+                Syntax(json.dumps(pot_status, indent=2), "json", theme="ansi_dark"),
+                title=f"Pot readiness (POST /status){f' · {pot_id}' if pot_id else ''}",
+                border_style="green",
+            )
+        )
+    elif pot_status_error:
+        _out.print()
+        _out.print(f"[yellow]Pot readiness:[/yellow] [dim]{pot_status_error}[/dim]")
+
+
 def _short_temporal_cell(value: Any) -> str:
     if value is None or value == "":
         return "—"

@@ -35,6 +35,34 @@ potpie -v search "query here"
 
 ## Commands
 
+### `setup` (POC)
+
+Local onboarding wizard (Phase 0): static SVG-derived ASCII logo intro (`assets/potpie-logo-static.json`, centered), live checklist, stub provisioning. Suggests **`potpie status`** when done (does not run it for you).
+
+Regenerate logo ASCII (same algorithm as `potpie-vscode-extension/scripts/generate-potpie-ascii.mjs`):
+
+```bash
+cd app/src/context-engine
+npm install --save-dev sharp
+node scripts/generate-potpie-ascii.mjs
+```
+
+Edit `assets/potpie.svg` or `WIDTH`/`HEIGHT` in the script, then re-run. Uses the same ` .:-=+*#%@` density ramp as the VS Code extension. **Font size** in the terminal is controlled by your terminal app (not the CLI).
+
+```bash
+# Interactive TTY: intro → live checklist → “Potpie is ready” summary
+potpie setup --repo . --agent claude --scan
+
+# Automation (no Rich, no animation)
+potpie --json setup --repo . --yes --scan
+potpie --json setup --repo . --yes
+```
+
+- Global `--json` must appear **before** `setup`.
+- Do not put shell `# comments` on the same line in zsh unless `setopt interactivecomments`.
+- Verbose failures: `potpie -v setup --repo . --scan`
+- Then run **`potpie status`** yourself (or **`potpie status --quick`** for local checks only).
+
 ### `init-agent`
 
 Install the packaged agent bundle into the current repository. This writes a top-level `AGENTS.md` plus the repo-local `.agents/skills/potpie-*` files used by Codex-style agent workflows.
@@ -64,19 +92,22 @@ Persist a **Potpie API key** and optional base URL — **required** for **`searc
 | `potpie pot pots` | List context pots (`GET /api/v2/context/pots`). |
 | `potpie pot repo list` / `pot repo add` | List or attach repositories on a pot (`GET`/`POST` `/api/v2/context/pots/.../repositories`). The repository routes are a CLI/GitHub compatibility surface; the server mirrors the new repository into the pot's source list automatically. Non-GitHub source kinds (Linear teams, docs, etc.) should be attached via the source-first API at `/api/v2/context/pots/{pot_id}/sources/*`. |
 | `potpie event list` / `event show` / `event wait` | Inspect recent ingestion events, fetch one event, or wait for a queued ingest to finish. |
-| `potpie status [POT] [--intent STR --repo O/R --file PATH --pr N]` | Readiness / capability envelope (`POST /status`). |
+| `potpie status [POT] [--quick] [--intent … --repo …]` | CLI health + pot readiness (`POST /status` unless `--quick`). `doctor` is an alias. |
 | `potpie resolve [POT] QUERY [--file … --services a,b --include …]` | Answer a query with synthesized summary + evidence (`goal=answer`). Plain mode prints `answer.summary`; `--json` returns the full envelope. |
 | `potpie overview [POT] [--repo O/R]` | Project infra/topology snapshot — services, datastores, deps (`goal=retrieve`, `include=[infra_topology]`). |
 | `potpie record --type TYPE --summary STR [--details '{…}' --source-refs pr:7,issue:12 --sync]` | Record a durable context fact (`POST /record`). |
 
 **Precedence:** `POTPIE_API_KEY` in the environment **overrides** the stored token (useful for CI). For base URL: **`POTPIE_API_URL` / `POTPIE_BASE_URL`** override a stored URL; otherwise the stored URL from `login --url` is used before `POTPIE_PORT` and localhost guesses.
 
-### `doctor`
+### `status` (includes former `doctor`)
 
-Shows Potpie API URL/key presence, local pot maps, **`GET /health`** on the Potpie host, and an authenticated **`GET /api/v2/context/pots`** probe when URL+key are set. Local Neo4j/Graphiti lines are informational only for other workflows.
+One readiness report: **CLI config + connectivity** (API key, base URL, `GET /health`, auth probe) and, when authenticated, **`POST /status`** for the active pot (scope / intent). Use **`--quick`** for local checks only.
 
 ```bash
-uv run potpie doctor
+uv run potpie status
+uv run potpie status --quick
+uv run potpie status --intent debugging --repo my-org/my-repo
+uv run potpie doctor   # alias for status
 ```
 
 ### `pot hard-reset`

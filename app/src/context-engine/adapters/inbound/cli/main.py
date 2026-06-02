@@ -1,6 +1,7 @@
 import importlib.metadata
 import json
 import os
+import sys
 import time
 import uuid
 from datetime import datetime, timezone
@@ -36,16 +37,16 @@ from adapters.inbound.cli.ingest_args import (
     merge_file_body_into_ingest,
     resolve_ingest_body_and_pot,
 )
+from adapters.inbound.cli.doctor_snapshot import build_doctor_snapshot
 from adapters.inbound.cli.output import (
-    DoctorSnapshot,
     configure_error_output,
     configure_cli_logging,
     emit_error,
-    print_doctor_report,
     print_json_blob,
     print_ingest_result,
     print_plain_line,
     print_search_results,
+    print_unified_status_report,
 )
 from adapters.inbound.cli.potpie_api_config import (
     resolve_potpie_api_base_url,
@@ -239,95 +240,147 @@ def logout_cmd() -> None:
     )
 
 
-@app.command("doctor")
-def doctor_cmd() -> None:
-    """Print Potpie API + local hints (CLI uses HTTP, not local Neo4j)."""
-    load_cli_env()
+@app.command("setup")
+def setup_cmd(
+    repo: Path = typer.Option(
+        Path("."),
+        "--repo",
+        help="Repository root to register as a source.",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True,
+    ),
+    pot: str = typer.Option(
+        "default",
+        "--pot",
+        help="Name for the initial pot (first run only).",
+    ),
+    agent: str = typer.Option(
+        "claude",
+        "--agent",
+        help="Agent harness for skill install hints (POC: stub step).",
+    ),
+    scan: bool = typer.Option(
+        False,
+        "--scan",
+        help="Run a stub repository scan after provisioning.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Non-interactive: skip confirmation prompts.",
+    ),
+) -> None:
+    """POC: Local onboarding wizard (preflight + stub daemon/DB provisioning)."""
+    from adapters.inbound.cli.setup_poc import run_setup_poc
+
     j, _ = _flags()
-    s = EnvContextEngineSettings()
-    cg = s.is_enabled()
-    neo = bool(s.neo4j_uri())
-
-    has_potpie_key_env = bool(os.getenv("POTPIE_API_KEY"))
-    has_stored_key = bool(get_stored_api_key())
-    base_env = os.getenv("POTPIE_API_URL") or os.getenv("POTPIE_BASE_URL")
-    base_stored = get_stored_api_base_url()
-    port = os.getenv("POTPIE_PORT") or os.getenv("POTPIE_API_PORT")
-    db = _database_url_env_set()
-    gh = bool(os.getenv("CONTEXT_ENGINE_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN"))
-
-    maps_set = bool(
-        os.getenv("CONTEXT_ENGINE_REPO_TO_POT") or os.getenv("CONTEXT_ENGINE_POTS")
+    run_setup_poc(
+        repo=repo,
+        pot_name=pot.strip() or "default",
+        agent=agent.strip() or "claude",
+        scan=scan,
+        yes=yes or not sys.stdin.isatty(),
+        as_json=j,
     )
 
-    health_ok: bool | None = None
-    health_msg: str | None = None
-    auth_ok: bool | None = None
-    auth_msg: str | None = None
+
+def _try_resolve_pot_id(explicit: str | None, *, cwd: str) -> tuple[str | None, str | None]:
     try:
-        c = PotpieContextApiClient(
-            resolve_potpie_api_base_url(),
-            resolve_potpie_api_key(),
-            timeout=15.0,
-            client_surface="cli",
-            client_name=_cli_client_name(),
-        )
-        code, payload = c.get_health()
-        health_ok = code == 200
-        health_msg = None if health_ok else f"HTTP {code}"
-        try:
-            c.list_context_pots()
-            auth_ok = True
-            auth_msg = None
-        except PotpieContextApiError as exc:
-            auth_ok = False
-            auth_msg = f"HTTP {exc.status_code}: {_format_api_error(exc)}"
-    except ValueError:
-        health_ok = None
-        health_msg = "skipped (no base URL / API key)"
-        auth_ok = None
-        auth_msg = "skipped (no base URL / API key)"
-    except OSError as exc:
-        health_ok = False
-        health_msg = str(exc)
-        auth_ok = False
-        auth_msg = str(exc)
-
-    summary: list[str] = [
-        "[dim]search / ingest / pot hard-reset call Potpie POST /api/v2/context/* with X-API-Key.[/dim]",
-        "[dim]Local Neo4j is not required on this machine.[/dim]",
-    ]
-    if health_ok is True:
-        summary.append("[green]GET /health on Potpie base URL succeeded.[/green]")
-    if auth_ok is True:
-        summary.append("[green]Authenticated /api/v2/context probe succeeded.[/green]")
-    elif auth_ok is False:
-        summary.append(
-            "[red]Authenticated /api/v2/context probe failed; search / ingest / MCP calls will fail.[/red]"
+        return _pot_id_or_git(explicit, cwd=cwd), None
+    except typer.Exit:
+        return (
+            None,
+            "Could not resolve pot (use `potpie pot use`, pass POT, or run from a mapped git repo).",
         )
 
-    snap = DoctorSnapshot(
-        context_graph_enabled=cg,
-        neo4j_effective_set=neo,
-        pot_maps_set=maps_set,
-        active_pot_id=get_active_pot_id() or None,
-        potpie_api_key_env=has_potpie_key_env,
-        potpie_stored_token=has_stored_key,
-        potpie_base_url=base_env or base_stored or None,
-        potpie_port_hint=(
-            f"http://127.0.0.1:{port}"
-            if port and not (base_env or base_stored)
-            else None
-        ),
-        database_url_set=db,
-        github_token_set=gh,
-        potpie_health_ok=health_ok,
-        potpie_health_message=health_msg,
-        potpie_auth_ok=auth_ok,
-        potpie_auth_message=auth_msg,
-        summary_lines=summary,
+
+def _run_unified_status(
+    *,
+    pot: str | None,
+    intent: str | None,
+    repo_name: str | None,
+    file_path: str | None,
+    pr_number: int | None,
+    cwd: str,
+    quick: bool,
+) -> None:
+    j, v = _flags()
+    snap = build_doctor_snapshot()
+
+    pot_id: str | None = None
+    pot_status: dict[str, Any] | None = None
+    pot_status_error: str | None = None
+
+    if not quick:
+        if snap.potpie_auth_ok is not True:
+            pot_status_error = "skipped (fix API URL/key and auth probe above)"
+        else:
+            cwd_resolved = str(Path(cwd).resolve())
+            pot_id, resolve_err = _try_resolve_pot_id(pot, cwd=cwd_resolved)
+            if resolve_err:
+                pot_status_error = resolve_err
+            else:
+                body: dict[str, Any] = {
+                    "pot_id": pot_id,
+                    "scope": _resolve_scope_body(
+                        repo_name=repo_name,
+                        file_path=file_path,
+                        pr_number=pr_number,
+                    ),
+                }
+                if intent:
+                    body["intent"] = intent
+                try:
+                    client = _cli_client_or_exit(v)
+                    pot_status = client.status(body)
+                except PotpieContextApiError as exc:
+                    pot_status_error = _format_api_error(exc)
+                    if not j:
+                        emit_error(
+                            "Status failed",
+                            pot_status_error,
+                            verbose=v,
+                            exc=exc if v else None,
+                        )
+                        raise typer.Exit(code=1) from exc
+
+    print_unified_status_report(
+        snap,
+        as_json=j,
+        quick=quick,
+        pot_id=pot_id,
+        pot_status=pot_status,
+        pot_status_error=pot_status_error,
     )
-    print_doctor_report(snap, as_json=j)
+
+
+@app.command("doctor", hidden=True)
+def doctor_cmd(
+    pot: str | None = typer.Argument(None, help="Pot UUID or alias (optional)."),
+    intent: str | None = typer.Option(None, "--intent"),
+    repo_name: str | None = typer.Option(None, "--repo", "-r"),
+    file_path: str | None = typer.Option(None, "--file", "-f"),
+    pr_number: int | None = typer.Option(None, "--pr"),
+    cwd: str = typer.Option(".", "--cwd"),
+    quick: bool = typer.Option(
+        False,
+        "--quick",
+        help="Local/connectivity checks only (no POST /status).",
+    ),
+) -> None:
+    """Alias for ``potpie status`` (config + connectivity + pot readiness)."""
+    _run_unified_status(
+        pot=pot,
+        intent=intent,
+        repo_name=repo_name,
+        file_path=file_path,
+        pr_number=pr_number,
+        cwd=cwd,
+        quick=quick,
+    )
 
 
 @app.command("init-agent")
@@ -1223,27 +1276,22 @@ def status_cmd(
     file_path: str | None = typer.Option(None, "--file", "-f"),
     pr_number: int | None = typer.Option(None, "--pr"),
     cwd: str = typer.Option(".", "--cwd"),
+    quick: bool = typer.Option(
+        False,
+        "--quick",
+        help="CLI/connectivity checks only (skip POST /status for the pot).",
+    ),
 ) -> None:
-    """Fetch readiness / capability envelope (POST /status)."""
-    j, v = _flags()
-    pot_id = _pot_id_or_git(pot, cwd=str(Path(cwd).resolve()))
-    body: dict[str, Any] = {
-        "pot_id": pot_id,
-        "scope": _resolve_scope_body(
-            repo_name=repo_name, file_path=file_path, pr_number=pr_number
-        ),
-    }
-    if intent:
-        body["intent"] = intent
-    client = _cli_client_or_exit(v)
-    try:
-        response = client.status(body)
-    except PotpieContextApiError as exc:
-        emit_error(
-            "Status failed", _format_api_error(exc), verbose=v, exc=exc if v else None
-        )
-        raise typer.Exit(code=1) from exc
-    print_json_blob(response, as_json=j)
+    """CLI health + optional pot readiness (merges former ``doctor`` + ``status``)."""
+    _run_unified_status(
+        pot=pot,
+        intent=intent,
+        repo_name=repo_name,
+        file_path=file_path,
+        pr_number=pr_number,
+        cwd=cwd,
+        quick=quick,
+    )
 
 
 @app.command("resolve")
