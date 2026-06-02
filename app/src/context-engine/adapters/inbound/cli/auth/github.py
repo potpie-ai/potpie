@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -13,7 +14,7 @@ from adapters.inbound.cli.auth.models import (
     ProviderCredentials,
 )
 
-GITHUB_CLIENT_ID = "Ov23lijYk3917lvotBPx"
+GITHUB_CLIENT_ID = os.getenv("POTPIE_GITHUB_CLIENT_ID", "Ov23lijYk3917lvotBPx")
 GITHUB_SCOPES = ("repo", "read:org", "read:user", "user:email")
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -108,9 +109,14 @@ def poll_for_access_token(
     if owns_client:
         client = httpx.Client(timeout=30.0)
     interval = device_code.interval
+    deadline = time.monotonic() + max(device_code.expires_in, 1)
     try:
         sleep_fn(interval)
         while True:
+            if time.monotonic() >= deadline:
+                raise GitHubDeviceFlowError(
+                    "GitHub device code expired before authorization completed."
+                )
             response = client.post(
                 GITHUB_TOKEN_URL,
                 headers={"Accept": "application/json"},
