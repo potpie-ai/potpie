@@ -29,7 +29,7 @@ def configure_error_output(*, as_json: bool) -> None:
 
 
 def configure_cli_logging(verbose: bool) -> None:
-    """Reduce third-party noise unless verbose diagnostics are requested."""
+    """Reduce driver and HTTP client noise unless verbose or debug env is enabled."""
     env_verbose = os.getenv(
         "CONTEXT_ENGINE_GRAPH_DRIVER_DEBUG", ""
     ).strip().lower() in (
@@ -39,17 +39,15 @@ def configure_cli_logging(verbose: bool) -> None:
     )
     noisy = verbose or env_verbose
     level = logging.DEBUG if noisy else logging.ERROR
-    for name in (
-        "neo4j",
-        "neo4j.io",
-        "neo4j.notifications",
-        "httpx",
-        "httpcore",
-    ):
+    for name in ("neo4j", "neo4j.io", "neo4j.notifications"):
         logging.getLogger(name).setLevel(level)
-    http_level = logging.INFO if verbose else logging.WARNING
-    for name in ("httpx", "httpcore", "urllib3", "openai", "LiteLLM", "litellm"):
+    # httpx logs every request at INFO; keep CLI auth/read output clean.
+    http_level = logging.DEBUG if noisy else logging.WARNING
+    for name in ("httpx", "httpcore"):
         logging.getLogger(name).setLevel(http_level)
+    llm_level = logging.INFO if verbose else logging.WARNING
+    for name in ("urllib3", "openai", "LiteLLM", "litellm"):
+        logging.getLogger(name).setLevel(llm_level)
 
 
 @dataclass
@@ -357,9 +355,13 @@ def print_json_blob(data: dict[str, Any], *, as_json: bool) -> None:
 
 
 def print_plain_line(
-    message: str, *, as_json: bool, json_payload: dict[str, Any] | None = None
+    message: str,
+    *,
+    as_json: bool,
+    json_payload: dict[str, Any] | None = None,
+    markup: bool = True,
 ) -> None:
     if as_json and json_payload is not None:
         print(json.dumps(json_payload))
     else:
-        _out.print(message)
+        _out.print(message, markup=markup)

@@ -21,14 +21,17 @@ _POTPIE_FIREBASE_ID_TOKEN_SECRET = "potpie_firebase_id_token"
 _POTPIE_FIREBASE_REFRESH_TOKEN_SECRET = "potpie_firebase_refresh_token"
 _POTPIE_FIREBASE_API_KEY_SECRET = "potpie_firebase_api_key"
 _GITHUB_TOKEN_SECRET = "github_token"
+_LINEAR_ACCESS_TOKEN_SECRET = "linear_access_token"
+_LINEAR_REFRESH_TOKEN_SECRET = "linear_refresh_token"
+_LINEAR_CREDENTIALS_KEY = "linear"
 
 
 class CredentialStoreError(Exception):
     """Credential metadata or secure secret storage failure."""
 
 
-# Alias used by GitHub CLI auth (matches integration branch naming).
-ProviderCredentialError = CredentialStoreError
+class ProviderCredentialError(CredentialStoreError):
+    """Provider credential storage or retrieval failure."""
 
 
 def config_dir() -> Path:
@@ -491,6 +494,170 @@ def register_pot_alias(name: str, pot_id: str) -> None:
     _write_payload(payload)
 
 
+def _get_secret_or_empty(name: str, *, label: str) -> str:
+    try:
+        return load_secure_secret(name, label=label)
+    except CredentialStoreError as exc:
+        raise ProviderCredentialError(str(exc)) from exc
+
+
+def _store_secret(name: str, secret: str, *, label: str) -> None:
+    try:
+        store_secure_secret(name, secret, label=label)
+    except CredentialStoreError as exc:
+        raise ProviderCredentialError(str(exc)) from exc
+
+
+def _delete_secret(name: str, *, label: str) -> None:
+    try:
+        delete_secure_secret(name, label=label)
+    except CredentialStoreError as exc:
+        raise ProviderCredentialError(str(exc)) from exc
+
+
+def _store_keychain_secret(label: str, username: str, secret: str) -> None:
+    _store_secret(username, secret, label=label)
+
+
+def _load_keychain_secret(label: str, username: str) -> str:
+    return _get_secret_or_empty(username, label=label)
+
+
+def _delete_keychain_secret(label: str, username: str) -> None:
+    _delete_secret(username, label=label)
+
+
+def _read_metadata_entry(key: str) -> dict[str, Any]:
+    return get_integration_metadata(key)
+
+
+def _write_metadata_entry(key: str, metadata: dict[str, Any]) -> None:
+    write_integration_metadata(key, metadata)
+
+
+def _clear_metadata_entries(*keys: str) -> None:
+    for key in keys:
+        clear_integration_metadata(key)
+
+
+def save_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
+    """Store Linear OAuth tokens in keychain and metadata on disk."""
+    key = _norm_integration_key(provider)
+    if key != _LINEAR_CREDENTIALS_KEY:
+        raise ValueError(f"{provider!r} does not use OAuth token storage.")
+
+    from adapters.inbound.cli.integration_profile import build_linear_integration_record
+
+    access_token = str(tokens.get("access_token") or "").strip()
+    if access_token:
+        _store_keychain_secret(
+            "Linear access token",
+            _LINEAR_ACCESS_TOKEN_SECRET,
+            access_token,
+        )
+    refresh_token = str(tokens.get("refresh_token") or "").strip()
+    if refresh_token:
+        _store_keychain_secret(
+            "Linear refresh token",
+            _LINEAR_REFRESH_TOKEN_SECRET,
+            refresh_token,
+        )
+
+    prior = _read_metadata_entry(_LINEAR_CREDENTIALS_KEY)
+    _write_metadata_entry(
+        _LINEAR_CREDENTIALS_KEY,
+        build_linear_integration_record(tokens, existing=prior),
+    )
+
+
+def write_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
+    save_integration_tokens(provider, tokens)
+
+
+def get_integration_tokens(provider: str) -> dict[str, Any]:
+    """Return integration credentials with secrets loaded from keychain."""
+    key = _norm_integration_key(provider)
+    if key == _LINEAR_CREDENTIALS_KEY:
+        metadata = _read_metadata_entry(key)
+        if not metadata:
+            return {}
+        access_token = _load_keychain_secret(
+            "Linear access token",
+            _LINEAR_ACCESS_TOKEN_SECRET,
+        )
+        if not access_token:
+            return {}
+        refresh_token = _load_keychain_secret(
+            "Linear refresh token",
+            _LINEAR_REFRESH_TOKEN_SECRET,
+        )
+        payload = {**metadata, "access_token": access_token}
+        if refresh_token:
+            payload["refresh_token"] = refresh_token
+        return payload
+
+    raise ValueError(f"Unknown integration provider {provider!r}.")
+
+
+def clear_integration_tokens(provider: str) -> None:
+    """Remove stored credentials for an integration provider."""
+    key = _norm_integration_key(provider)
+    if key == _LINEAR_CREDENTIALS_KEY:
+        _delete_keychain_secret("Linear access token", _LINEAR_ACCESS_TOKEN_SECRET)
+        _delete_keychain_secret("Linear refresh token", _LINEAR_REFRESH_TOKEN_SECRET)
+        _clear_metadata_entries(_LINEAR_CREDENTIALS_KEY)
+        return
+    raise ValueError(f"Unknown integration provider {provider!r}.")
+
+
+def list_integration_providers() -> list[str]:
+    integrations = list_integration_metadata()
+    found: list[str] = []
+    for key in (_LINEAR_CREDENTIALS_KEY,):
+        if isinstance(integrations.get(key), dict):
+            found.append(key)
+    return found
+
+
+def get_integration_status(provider: str) -> dict[str, Any]:
+    from adapters.inbound.cli.integration_profile import linear_account_from_entry
+
+    key = _norm_integration_key(provider)
+
+    if key == _LINEAR_CREDENTIALS_KEY:
+        entry = _read_metadata_entry(_LINEAR_CREDENTIALS_KEY)
+        if not entry:
+            return {"provider": key, "authenticated": False, "auth_type": "oauth"}
+        access_token = _load_keychain_secret(
+            "Linear access token",
+            _LINEAR_ACCESS_TOKEN_SECRET,
+        )
+        if not access_token:
+            return {"provider": key, "authenticated": False, "auth_type": "oauth"}
+        account = linear_account_from_entry(entry)
+        organization = entry.get("organization")
+        org_name = organization.get("name") if isinstance(organization, dict) else None
+        scopes = entry.get("scopes")
+        scope = entry.get("scope")
+        if scopes is None and scope is not None:
+            scopes = scope
+        return {
+            "provider": key,
+            "authenticated": True,
+            "auth_type": "oauth",
+            "login": account.get("name") or account.get("email"),
+            "email": account.get("email"),
+            "site_name": org_name,
+            "expires_at": entry.get("expires_at"),
+            "scope": scopes,
+            "cloud_id": entry.get("cloud_id"),
+            "stored_at": entry.get("stored_at"),
+            "token_storage": entry.get("token_storage"),
+        }
+
+    raise ValueError(f"Unknown integration provider {provider!r}.")
+
+
 def resolve_cli_pot_ref(ref: str) -> tuple[str | None, str]:
     """Resolve a pot argument to a canonical UUID string.
 
@@ -530,11 +697,7 @@ def write_provider_credentials(provider: str, payload: dict[str, Any]) -> None:
     access_token = str(stored_payload.pop("access_token", "") or "").strip()
     if not access_token:
         raise ProviderCredentialError("GitHub access token is required.")
-    store_secure_secret(
-        _GITHUB_TOKEN_SECRET,
-        access_token,
-        label="GitHub token",
-    )
+    _store_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET, access_token)
     stored_payload["token_storage"] = "keychain"
     write_integration_metadata(key, stored_payload)
 
@@ -548,7 +711,7 @@ def get_provider_credentials(provider: str) -> dict[str, Any]:
     if not metadata:
         return {}
     result = dict(metadata)
-    token = load_secure_secret(_GITHUB_TOKEN_SECRET, label="GitHub token")
+    token = _load_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
     if not token:
         raise ProviderCredentialError(
             "GitHub token not found in system keychain. Run: potpie auth github login"
@@ -562,5 +725,5 @@ def clear_provider_credentials(provider: str) -> None:
     key = _norm_integration_key(provider)
     if key != "github":
         raise ValueError(f"Unsupported provider {provider!r}; expected 'github'.")
-    delete_secure_secret(_GITHUB_TOKEN_SECRET, label="GitHub token")
+    _delete_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
     clear_integration_metadata(key)
