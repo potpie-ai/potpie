@@ -40,7 +40,11 @@ agent (loaded as a playbook).
 
 - `github_list_pull_requests(repo)` — bounded enumeration (window + cap, newest
   first). ONE call.
-- `github_get_pull_request(repo, pr_number)` — full PR metadata.
+- `github_get_pull_request(repo, pr_number)` — full PR metadata (no diff by
+  default). Same tool accepts optional `include_diff=true`; when set, the
+  response also includes a `files` array of per-file objects with `filename`,
+  `status`, `additions`, `deletions`, and `patch` (use only as a last resort;
+  see Phase 2).
 - `github_get_pull_request_commits(repo, pr_number)` — commit messages.
 - `github_get_pull_request_review_comments(repo, pr_number)` — inline review.
 - `github_get_pull_request_issue_comments(repo, pr_number)` — discussion.
@@ -98,9 +102,12 @@ For each batch todo (process them sequentially; within a batch parallelize):
          `Why:` / `Fixes #` / `Closes #` / linked issues.
       5. **Review / issue comments** — only if higher signals are ambiguous.
       6. **Code diff** — LAST RESORT. If needed, call
-         `github_get_pull_request(repo, n, include_diff=true)` and inspect the
-         returned `files` list. Reading code burns budget rediscovering intent
-         the author already wrote.
+         `github_get_pull_request(repo, n, include_diff=true)` (optional
+         `include_diff` boolean on the same tool as step 2a). The response adds
+         a `files` array; each element is an object with `filename`, `status`,
+         `additions`, `deletions`, and `patch` — use `filename` for path-based
+         reasoning, not a separate path/id field. Reading patches burns budget
+         rediscovering intent the author already wrote.
    c. Classify the PR:
       - **Author handle(s)** — primary author + co-authors (from
         `Co-authored-by:` trailers).
@@ -226,10 +233,12 @@ Identity rules to respect (these are NOT free-form strings):
     the PR clearly touches a single known Service).
   - **Edge** `AFFECTS` — decision key → repository key.
 
-Touched services (optional, only if obvious): if an optional `include_diff=true`
-fetch returns `files` whose paths clearly map to an existing `Service` entity
-(e.g. all changes in `services/auth/`), emit an extra `TOUCHED` edge activity
-→ that service. Do NOT invent Services that don't already exist in the graph.
+Touched services (optional, only if obvious): if an optional
+`github_get_pull_request(repo, n, include_diff=true)` fetch returns `files`,
+inspect each entry's `filename` (repo-relative path). When those paths clearly
+map to an existing `Service` entity (e.g. every changed `filename` under
+`services/auth/`), emit an extra `TOUCHED` edge activity → that service. Do
+NOT invent Services that don't already exist in the graph.
 
 ## Source-priority rationale (why)
 

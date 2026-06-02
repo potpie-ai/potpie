@@ -227,6 +227,18 @@ def test_github_tool_names_match_adapter() -> None:
     )
 
 
+def test_skill_documents_include_diff_files_contract() -> None:
+    """include_diff=true must match PyGithubSourceControl.get_pull_request."""
+    _, body = _read_skill()
+    assert "include_diff=true" in body
+    proc = _section(body, "Procedure")
+    assert "LAST RESORT" in proc
+    for fld in ("filename", "status", "additions", "deletions", "patch"):
+        assert fld in proc, f"Procedure must document diff file field {fld!r}"
+    touched = body[body.find("Touched services") : body.find("## Source-priority")]
+    assert "filename" in touched, "Touched services must reference filename"
+
+
 def test_skill_uses_real_pr_response_fields() -> None:
     """The skill must reference the real field names in get_pull_request."""
     _, body = _read_skill()
