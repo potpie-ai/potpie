@@ -424,7 +424,7 @@ def auth_test_pots_cmd() -> None:
             client_name=_cli_client_name(),
         )
         rows = client.list_context_pots()
-    except (ValueError, CredentialStoreError) as exc:
+    except (ValueError, CredentialStoreError, FirebaseSessionError) as exc:
         emit_error("Potpie auth test failed", str(exc), verbose=v)
         raise typer.Exit(code=1) from exc
     except PotpieContextApiError as exc:

@@ -960,3 +960,24 @@ def test_auth_test_pots_lists_context_pots(monkeypatch: pytest.MonkeyPatch) -> N
     assert '"ok": true' in result.stdout
     assert '"auth_type": "potpie"' in result.stdout
     assert '"slug": "demo-pot"' in result.stdout
+
+
+def test_auth_test_pots_handles_firebase_refresh_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cli_main, "get_potpie_firebase_refresh_token", lambda: "refresh")
+
+    def _raise_refresh_error(token: str) -> FirebaseSession:
+        raise FirebaseSessionError("refresh failed")
+
+    monkeypatch.setattr(
+        cli_main,
+        "resolve_potpie_firebase_session",
+        _raise_refresh_error,
+    )
+
+    result = runner.invoke(cli_main.app, ["auth", "test", "pots"])
+
+    assert result.exit_code == 1
+    assert "Potpie auth test failed" in result.stdout
+    assert "refresh failed" in result.stdout

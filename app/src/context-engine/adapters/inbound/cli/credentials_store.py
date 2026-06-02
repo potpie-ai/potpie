@@ -355,10 +355,11 @@ def clear_potpie_auth(*, clear_api_key: bool = False) -> None:
     """Remove Potpie session secrets and drop integrations.potpie metadata."""
     if clear_api_key:
         delete_secure_secret(_POTPIE_API_KEY_SECRET, label="Potpie API key")
-        path = readable_credentials_path()
-        if path.is_file():
-            payload: dict[str, Any] = dict(read_credentials())
-            payload.pop("api_key", None)
+    path = readable_credentials_path()
+    if path.is_file():
+        payload: dict[str, Any] = dict(read_credentials())
+        removed = payload.pop("api_key", None) is not None
+        if removed:
             if payload:
                 _write_payload_to_path(path, payload)
             else:
