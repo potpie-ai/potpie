@@ -9,7 +9,7 @@ import sys
 import time
 import webbrowser
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -53,12 +53,23 @@ class AtlassianAuthErrorKind(enum.StrEnum):
     UNKNOWN = "unknown"
 
 
+AtlassianAuthScheme = Literal["basic", "bearer"]
+
+
 @dataclass(frozen=True)
 class AtlassianVerifyResult:
     ok: bool
     error_kind: AtlassianAuthErrorKind | None = None
     http_status: int | None = None
     display_name: str = ""
+    succeeded_scheme: AtlassianAuthScheme | None = None
+
+
+def token_style_from_succeeded_scheme(scheme: AtlassianAuthScheme | None) -> str:
+    """Map gateway auth scheme to stored token_style metadata."""
+    if scheme == "bearer":
+        return "bearer"
+    return "classic"
 
 
 def atlassian_basic_auth_header(email: str, api_token: str) -> str:
@@ -70,17 +81,25 @@ def atlassian_bearer_auth_header(api_token: str) -> str:
     return f"Bearer {api_token.strip()}"
 
 
-def _auth_header_variants(email: str, api_token: str) -> list[dict[str, str]]:
+def _auth_header_variants(
+    email: str, api_token: str
+) -> list[tuple[AtlassianAuthScheme, dict[str, str]]]:
     accept = {"Accept": "application/json"}
     return [
-        {
-            **accept,
-            "Authorization": atlassian_basic_auth_header(email, api_token),
-        },
-        {
-            **accept,
-            "Authorization": atlassian_bearer_auth_header(api_token),
-        },
+        (
+            "basic",
+            {
+                **accept,
+                "Authorization": atlassian_basic_auth_header(email, api_token),
+            },
+        ),
+        (
+            "bearer",
+            {
+                **accept,
+                "Authorization": atlassian_bearer_auth_header(api_token),
+            },
+        ),
     ]
 
 
@@ -185,7 +204,7 @@ def verify_gateway_product(
     with httpx.Client(timeout=_SITE_PROBE_TIMEOUT) as client:
         for path in _gateway_probe_paths(product):
             url = f"{base}{path}"
-            for headers in _auth_header_variants(email, api_token):
+            for scheme, headers in _auth_header_variants(email, api_token):
                 try:
                     response = client.get(url, headers=headers)
                 except httpx.HTTPError:
@@ -202,6 +221,7 @@ def verify_gateway_product(
                             product=product,
                             path=path,
                         ),
+                        succeeded_scheme=scheme,
                     )
                 kind = _classify_gateway_status(response.status_code)
                 last_kind = kind
@@ -265,27 +285,22 @@ def _fetch_accessible_resources(
     api_token: str,
 ) -> list[dict[str, Any]]:
     with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        basic_response = client.get(
-            ATLASSIAN_ACCESSIBLE_RESOURCES_URL,
-            headers={
-                "Authorization": atlassian_basic_auth_header(email, api_token),
-                "Accept": "application/json",
-            },
-        )
-        if basic_response.status_code == 200:
-            sites = _parse_accessible_resources(basic_response.json())
+        for _scheme, headers in _auth_header_variants(email, api_token):
+            try:
+                response = client.get(
+                    ATLASSIAN_ACCESSIBLE_RESOURCES_URL,
+                    headers=headers,
+                )
+            except httpx.HTTPError:
+                continue
+            if response.status_code != 200:
+                continue
+            try:
+                sites = _parse_accessible_resources(response.json())
+            except ValueError:
+                continue
             if sites:
                 return sites
-
-        bearer_response = client.get(
-            ATLASSIAN_ACCESSIBLE_RESOURCES_URL,
-            headers={
-                "Authorization": atlassian_bearer_auth_header(api_token),
-                "Accept": "application/json",
-            },
-        )
-        if bearer_response.status_code == 200:
-            return _parse_accessible_resources(bearer_response.json())
     return []
 
 
@@ -516,7 +531,11 @@ def _finalize_selected_site(
     if not result.ok:
         return None, result.error_kind
 
-    site = {**site, "cloud_id": cloud_id}
+    site = {
+        **site,
+        "cloud_id": cloud_id,
+        "token_style": token_style_from_succeeded_scheme(result.succeeded_scheme),
+    }
     return site, None
 
 
@@ -673,9 +692,10 @@ def run_atlassian_api_token_auth(
         )
         raise typer.Exit(code=1)
 
+    token_style = str(site.get("token_style") or "").strip() or "classic"
     payload = {
         "auth_type": "api_token",
-        "token_style": "classic",
+        "token_style": token_style,
         "email": email,
         "api_token": api_token,
         "cloud_id": str(site.get("cloud_id") or "").strip(),
@@ -699,7 +719,7 @@ def run_atlassian_api_token_auth(
         json_payload={
             "ok": True,
             "provider": product,
-            "token_style": "classic",
+            "token_style": token_style,
             "site_url": site["site_url"],
             "site_name": site["site_name"],
             "cloud_id": payload["cloud_id"],

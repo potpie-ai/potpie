@@ -108,7 +108,9 @@ def test_flags_delegates_to_main(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert auth_commands._flags() == (True, True)
 
-def test_auth_logout_not_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auth_logout_not_authenticated_still_clears_stale_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
@@ -116,18 +118,18 @@ def test_auth_logout_not_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
         "get_integration_status",
         lambda _p: {"authenticated": False},
     )
-    captured: list[tuple[str, str]] = []
+    cleared: list[str] = []
     monkeypatch.setattr(
         auth_commands,
-        "emit_error",
-        lambda title, message, **kwargs: captured.append((title, message)),
+        "clear_integration_tokens",
+        lambda provider: cleared.append(provider),
     )
 
     result = runner.invoke(auth_commands.auth_app, ["logout", "jira"])
 
-    assert result.exit_code == 1
-    assert captured
-    assert "not authenticated" in captured[0][0]
+    assert result.exit_code == 0
+    assert cleared == ["jira"]
+    assert "stale" in result.stdout.lower()
 
 def test_auth_logout_wiki_alias(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
@@ -332,6 +334,33 @@ def test_run_product_use_result_json(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     assert blobs[0]["workspace_key"] == "ENG"
+    assert blobs[0]["provider"] == "jira"
+
+
+def test_run_product_use_result_json_maps_wiki_to_confluence_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
+    blobs: list[dict] = []
+    monkeypatch.setattr(
+        auth_commands,
+        "print_json_blob",
+        lambda payload, **kwargs: blobs.append(payload),
+    )
+
+    auth_commands._run_product_use_result(
+        {
+            "product": "wiki",
+            "workspace_key": "DOCS",
+            "workspace_name": "Docs",
+            "items": [],
+        },
+        product_label="Confluence",
+    )
+
+    assert blobs[0]["product"] == "wiki"
+    assert blobs[0]["provider"] == "confluence"
 
 # --- test_auth_commands_status.py ---
 
@@ -954,42 +983,69 @@ def test_get_integration_status_reads_legacy_atlassian_flat_fields(
     assert status["email"] == "legacy@example.com"
     assert status["site_url"] == "https://legacy.atlassian.net"
 
-def test_clear_jira_credentials_removes_legacy_fallback(
+def test_clear_jira_credentials_preserves_shared_legacy_for_confluence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
+    keychain: dict,
 ) -> None:
-    cred_path = tmp_path / "credentials.json"
-    deleted: list[str] = []
-    monkeypatch.setattr(cs, "credentials_path", lambda: cred_path)
-    monkeypatch.setattr(
-        cs,
-        "_delete_keychain_secret",
-        lambda _label, name: deleted.append(name),
-    )
-    monkeypatch.setattr(cs, "_load_keychain_secret", lambda *_a, **_k: "legacy-token")
-    monkeypatch.setattr(cs, "_store_keychain_secret", lambda *_a, **_k: None)
-    cs._write_payload(
+    """Product logout must not remove legacy storage still used by the other product."""
+    monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
+    cs.save_atlassian_credentials(
         {
-            "integrations": {
-                "atlassian": {
-                    "provider": "atlassian",
-                    "auth_type": "api_token",
-                    "email": "legacy@example.com",
-                    "site_url": "https://legacy.atlassian.net",
-                    "cloud_id": "cloud-1",
-                }
-            }
+            "email": "shared@example.com",
+            "api_token": "shared-tok",
+            "site_url": "https://team.atlassian.net",
+            "cloud_id": "cloud-shared",
+        }
+    )
+    cs.save_confluence_credentials(
+        {
+            "email": "wiki@example.com",
+            "api_token": "wiki-tok",
+            "site_url": "https://team.atlassian.net",
+            "cloud_id": "c2",
+        }
+    )
+    cs.save_jira_credentials(
+        {
+            "email": "jira@example.com",
+            "api_token": "jira-tok",
+            "site_url": "https://team.atlassian.net",
+            "cloud_id": "c1",
+        }
+    )
+
+    cs.clear_jira_credentials()
+
+    assert cs.get_confluence_credentials().get("api_token") == "wiki-tok"
+    integrations = cs.read_credentials().get("integrations", {})
+    assert "atlassian" in integrations
+    assert "confluence" in integrations
+    assert "jira" not in integrations
+    assert cs._JIRA_TOKEN_SECRET not in {k[1] for k in keychain}
+    assert cs._ATLASSIAN_LEGACY_TOKEN_SECRET in {k[1] for k in keychain}
+
+
+def test_clear_atlassian_credentials_removes_shared_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    keychain: dict,
+) -> None:
+    monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
+    cs.save_atlassian_credentials(
+        {
+            "email": "legacy@example.com",
+            "api_token": "legacy-token",
+            "site_url": "https://legacy.atlassian.net",
+            "cloud_id": "cloud-1",
         }
     )
     assert cs.get_jira_credentials().get("api_token") == "legacy-token"
 
-    cs.clear_jira_credentials()
+    cs.clear_atlassian_credentials()
 
     assert cs.get_jira_credentials() == {}
-    assert cs._JIRA_TOKEN_SECRET in deleted
-    assert cs._ATLASSIAN_LEGACY_TOKEN_SECRET in deleted
     assert "atlassian" not in cs.read_credentials().get("integrations", {})
-    assert "jira" not in cs.read_credentials().get("integrations", {})
 
 def test_atlassian_account_from_entry_email_only() -> None:
     from adapters.inbound.cli.integration_profile import atlassian_account_from_entry

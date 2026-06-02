@@ -488,14 +488,17 @@ def _get_atlassian_product_credentials(product: str) -> dict[str, Any]:
     return {**metadata, "api_token": api_token}
 
 
+def _clear_shared_atlassian_legacy_credentials() -> None:
+    """Remove legacy shared Atlassian keychain secret and metadata (both products)."""
+    _delete_keychain_secret("Atlassian API token", _ATLASSIAN_LEGACY_TOKEN_SECRET)
+    _clear_metadata_entries(_ATLASSIAN_CREDENTIALS_KEY)
+
+
 def _clear_atlassian_product_credentials(product: str) -> None:
     key = _norm_atlassian_product(product)
     secret_name, label = _product_secret_name(key)
     _delete_keychain_secret(label, secret_name)
     _clear_metadata_entries(_product_metadata_key(key))
-    # Migrated installs may still resolve via legacy shared Atlassian storage.
-    _delete_keychain_secret("Atlassian API token", _ATLASSIAN_LEGACY_TOKEN_SECRET)
-    _clear_metadata_entries(_ATLASSIAN_CREDENTIALS_KEY)
 
 
 def save_atlassian_credentials(credentials: dict[str, Any]) -> None:
@@ -545,11 +548,10 @@ def get_atlassian_credentials() -> dict[str, Any]:
 
 
 def clear_atlassian_credentials() -> None:
-    _delete_keychain_secret("Atlassian API token", _ATLASSIAN_LEGACY_TOKEN_SECRET)
+    _clear_shared_atlassian_legacy_credentials()
     _delete_keychain_secret("Jira API token", _JIRA_TOKEN_SECRET)
     _delete_keychain_secret("Confluence API token", _CONFLUENCE_TOKEN_SECRET)
     _clear_metadata_entries(
-        _ATLASSIAN_CREDENTIALS_KEY,
         _JIRA_CREDENTIALS_KEY,
         _CONFLUENCE_CREDENTIALS_KEY,
     )

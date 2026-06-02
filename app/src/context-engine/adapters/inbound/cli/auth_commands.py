@@ -37,6 +37,14 @@ confluence_app = typer.Typer(help="Confluence authentication and read.")
 _ALL_PROVIDERS: tuple[str, ...] = ("jira", "confluence")
 
 
+def _canonical_provider_for_json(product: str) -> str:
+    """Map CLI product aliases to provider keys used in JSON output."""
+    key = product.strip().lower()
+    if key in {"wiki", "conf", "confluence"}:
+        return "confluence"
+    return key
+
+
 def register_provider_app(name: str, provider_app: typer.Typer) -> None:
     """Register a provider-specific auth sub-application."""
     key = str(name or "").strip().lower()
@@ -155,13 +163,7 @@ def auth_logout(
         raise typer.Exit(code=1)
 
     existing = get_integration_status(key)
-    if not existing.get("authenticated"):
-        emit_error(
-            f"{key} not authenticated",
-            "No stored credentials to revoke.",
-            verbose=v,
-        )
-        raise typer.Exit(code=1)
+    was_authenticated = bool(existing.get("authenticated"))
 
     try:
         clear_integration_tokens(key)
@@ -169,11 +171,16 @@ def auth_logout(
         emit_error(f"{key} logout failed", str(exc), verbose=v)
         raise typer.Exit(code=1) from exc
 
-    message = f"Logged out of {key}."
+    if was_authenticated:
+        message = f"Logged out of {key}."
+    else:
+        message = (
+            f"No active {key} session; removed any stale local credentials."
+        )
     print_plain_line(
         message,
         as_json=j,
-        json_payload={"ok": True, "provider": key},
+        json_payload={"ok": True, "provider": key, "cleared_stale": not was_authenticated},
     )
 
 
@@ -314,8 +321,9 @@ def _run_product_use_result(
     load_cli_env()
     j, _ = _flags()
     if j:
+        provider = _canonical_provider_for_json(str(result.get("product") or ""))
         print_json_blob(
-            {"ok": True, "provider": result["product"], **result},
+            {"ok": True, **result, "provider": provider},
             as_json=True,
         )
         return
@@ -339,11 +347,34 @@ def jira_login(
         "--force",
         help="Re-authenticate even if Jira is already connected.",
     ),
+    email: str | None = typer.Option(
+        None,
+        "--email",
+        help="Atlassian account email (non-interactive login).",
+    ),
+    api_token: str | None = typer.Option(
+        None,
+        "--api-token",
+        help="Atlassian API token (non-interactive login).",
+    ),
+    site_subdomain: str | None = typer.Option(
+        None,
+        "--site-subdomain",
+        help="Atlassian site subdomain, e.g. myteam for myteam.atlassian.net.",
+    ),
 ) -> None:
     """Connect Jira with an Atlassian API token (Jira access only)."""
     load_cli_env()
     j, v = _flags()
-    run_atlassian_api_token_auth("jira", force=force, as_json=j, verbose=v)
+    run_atlassian_api_token_auth(
+        "jira",
+        force=force,
+        as_json=j,
+        verbose=v,
+        email=email,
+        api_token=api_token,
+        site_subdomain=site_subdomain,
+    )
 
 
 @jira_app.command("logout")
@@ -416,11 +447,34 @@ def confluence_login(
         "--force",
         help="Re-authenticate even if Confluence is already connected.",
     ),
+    email: str | None = typer.Option(
+        None,
+        "--email",
+        help="Atlassian account email (non-interactive login).",
+    ),
+    api_token: str | None = typer.Option(
+        None,
+        "--api-token",
+        help="Atlassian API token (non-interactive login).",
+    ),
+    site_subdomain: str | None = typer.Option(
+        None,
+        "--site-subdomain",
+        help="Atlassian site subdomain, e.g. myteam for myteam.atlassian.net.",
+    ),
 ) -> None:
     """Connect Confluence with an Atlassian API token (Confluence access only)."""
     load_cli_env()
     j, v = _flags()
-    run_atlassian_api_token_auth("confluence", force=force, as_json=j, verbose=v)
+    run_atlassian_api_token_auth(
+        "confluence",
+        force=force,
+        as_json=j,
+        verbose=v,
+        email=email,
+        api_token=api_token,
+        site_subdomain=site_subdomain,
+    )
 
 
 @confluence_app.command("logout")

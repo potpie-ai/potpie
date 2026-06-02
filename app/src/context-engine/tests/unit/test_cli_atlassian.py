@@ -156,6 +156,32 @@ def test_verify_gateway_product_success() -> None:
 
     assert result.ok is True
     assert result.display_name == "Ada"
+    assert result.succeeded_scheme == "basic"
+
+
+def test_verify_gateway_product_bearer_after_basic_401() -> None:
+    basic = MagicMock()
+    basic.status_code = 401
+    bearer = MagicMock()
+    bearer.status_code = 200
+    bearer.content = b'{"displayName":"Bearer User"}'
+    bearer.json.return_value = {"displayName": "Bearer User"}
+    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_client_cls:
+        client = MagicMock()
+        mock_client_cls.return_value.__enter__.return_value = client
+        client.get.side_effect = [basic, bearer]
+
+        result = verify_gateway_product(
+            "user@example.com",
+            "secret-token",
+            "cloud-id-1",
+            "jira",
+        )
+
+    assert result.ok is True
+    assert result.succeeded_scheme == "bearer"
+    assert result.display_name == "Bearer User"
+
 
 def test_fetch_cloud_id_for_site_success() -> None:
     response = MagicMock()
@@ -190,7 +216,11 @@ def test_finalize_selected_site_success() -> None:
     }
     with patch(
         "adapters.inbound.cli.atlassian_auth.verify_gateway_product",
-        return_value=AtlassianVerifyResult(ok=True, display_name="Ada"),
+        return_value=AtlassianVerifyResult(
+            ok=True,
+            display_name="Ada",
+            succeeded_scheme="bearer",
+        ),
     ):
         finalized, err = _finalize_selected_site(
             "user@example.com",
@@ -201,6 +231,7 @@ def test_finalize_selected_site_success() -> None:
     assert err is None
     assert finalized is not None
     assert finalized["cloud_id"]
+    assert finalized["token_style"] == "bearer"
 
 def test_finalize_selected_site_gateway_failure() -> None:
     site = {"site_url": "https://team.atlassian.net", "cloud_id": "c1"}
@@ -480,6 +511,7 @@ def test_run_atlassian_auth_supplied_credentials_success(
         "site_url": "https://team.atlassian.net",
         "site_name": "team",
         "cloud_id": "cloud-1",
+        "token_style": "bearer",
     }
     monkeypatch.setattr(
         atlassian_auth,
@@ -491,11 +523,11 @@ def test_run_atlassian_auth_supplied_credentials_success(
         "_finalize_selected_site",
         lambda *_args: (site, None),
     )
-    saved: list[str] = []
+    saved: list[tuple[str, dict]] = []
     monkeypatch.setattr(
         atlassian_auth,
         "_save_product_credentials",
-        lambda product, _payload: saved.append(product),
+        lambda product, payload: saved.append((product, payload)),
     )
     printed: list[dict] = []
     monkeypatch.setattr(
@@ -513,7 +545,9 @@ def test_run_atlassian_auth_supplied_credentials_success(
         site_subdomain="team",
     )
 
-    assert saved == ["confluence"]
+    assert saved and saved[0][0] == "confluence"
+    assert saved[0][1]["token_style"] == "bearer"
+    assert printed[-1].get("token_style") == "bearer"
     assert printed[-1].get("ok") is True
 
 def test_run_atlassian_auth_emits_site_discovery_error_on_tenant_http_error(
@@ -594,6 +628,39 @@ def test_fetch_accessible_resources_basic_success() -> None:
         client.get.return_value = response
         sites = _fetch_accessible_resources("user@example.com", "token")
     assert len(sites) == 1
+
+
+def test_fetch_accessible_resources_http_error_tries_next_scheme() -> None:
+    bearer = MagicMock()
+    bearer.status_code = 200
+    bearer.json.return_value = [
+        {"id": "c2", "url": "https://other.atlassian.net", "name": "Other"},
+    ]
+    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_cls:
+        client = MagicMock()
+        mock_cls.return_value.__enter__.return_value = client
+        client.get.side_effect = [httpx.ConnectError("down"), bearer]
+        sites = _fetch_accessible_resources("user@example.com", "token")
+    assert len(sites) == 1
+    assert sites[0]["cloud_id"] == "c2"
+
+
+def test_fetch_accessible_resources_invalid_json_tries_next_scheme() -> None:
+    bad_json = MagicMock()
+    bad_json.status_code = 200
+    bad_json.json.side_effect = ValueError("not json")
+    good = MagicMock()
+    good.status_code = 200
+    good.json.return_value = [
+        {"id": "c1", "url": "https://team.atlassian.net", "name": "Team"},
+    ]
+    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_cls:
+        client = MagicMock()
+        mock_cls.return_value.__enter__.return_value = client
+        client.get.side_effect = [bad_json, good]
+        sites = _fetch_accessible_resources("user@example.com", "token")
+    assert len(sites) == 1
+
 
 def test_discover_sites_with_api_token_filters_by_gateway() -> None:
     from adapters.inbound.cli.atlassian_auth import AtlassianVerifyResult
@@ -709,7 +776,31 @@ def test_get_json_raises_atlassian_read_error_on_http_error() -> None:
             )
 
     assert "/rest/api/3/myself" in str(exc_info.value)
-    assert "team.atlassian.net" in str(exc_info.value)
+    assert "cid-1" in str(exc_info.value)
+
+
+def test_get_json_retries_after_transport_error_on_first_variant() -> None:
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.__exit__.return_value = None
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.json.return_value = {"issues": []}
+    client.get.side_effect = [httpx.ConnectError("down"), ok]
+
+    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+        data = _get_json(
+            email="user@example.com",
+            api_token="secret",
+            product="jira",
+            cloud_id="cid-1",
+            site_url="https://team.atlassian.net",
+            path="/rest/api/3/search",
+            site_first=True,
+        )
+
+    assert data == {"issues": []}
+
 
 def test_post_json_raises_atlassian_read_error_on_http_error() -> None:
     client = MagicMock()

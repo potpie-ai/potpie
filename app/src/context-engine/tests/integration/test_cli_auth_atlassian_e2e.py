@@ -1,6 +1,7 @@
-"""Live E2E checks for CLI auth integrations (Jira and Confluence).
+"""Live E2E checks for CLI Atlassian auth (Jira and Confluence).
 
-REVERT: delete this file and remove the ``cli_auth_e2e`` marker from ``pyproject.toml``.
+REVERT: delete ``tests/integration/test_cli_auth_atlassian_e2e.py`` and remove the
+``cli_auth_e2e`` marker from ``pyproject.toml``.
 
 Opt-in only — does not run in default pytest/CI. Uses an isolated ``XDG_CONFIG_HOME`` so
 your real Potpie credentials are not modified.
@@ -10,10 +11,10 @@ Enable:
 
 From ``potpie/app/src/context-engine``:
 
-  uv run pytest tests/integration/test_cli_auth_integrations_e2e.py -v
+  uv run pytest tests/integration/test_cli_auth_atlassian_e2e.py -v
 
-Required env (see below). ``load_cli_env()`` still merges repo ``potpie/.env`` for
-``LINEAR_CLIENT_ID`` and related vars.
+Required env (see below). ``load_cli_env()`` may still merge repo ``potpie/.env`` when
+present.
 
 Environment variables
 ---------------------
@@ -29,10 +30,6 @@ Confluence (same site/token as Jira is typical):
   CLI_AUTH_E2E_CONFLUENCE_EMAIL           (optional; defaults to Jira email)
   CLI_AUTH_E2E_CONFLUENCE_API_TOKEN       (optional; defaults to Jira token)
   CLI_AUTH_E2E_ATLASSIAN_SITE_SUBDOMAIN   (shared)
-
-  LINEAR_CLIENT_ID                        (from .env)
-
-Linear interactive OAuth (opens browser — local only):
 """
 
 from __future__ import annotations
@@ -134,6 +131,32 @@ def _parse_json_stdout(proc: subprocess.CompletedProcess[str]) -> Any:
     return json.loads(proc.stdout)
 
 
+def _login_product_via_cli(
+    product: str,
+    *,
+    email: str,
+    api_token: str,
+    site_subdomain: str,
+    env: dict[str, str],
+) -> None:
+    proc = _run_potpie(
+        "--json",
+        "auth",
+        product,
+        "login",
+        "--force",
+        "--email",
+        email,
+        "--api-token",
+        api_token,
+        "--site-subdomain",
+        site_subdomain,
+        env=env,
+    )
+    payload = _parse_json_stdout(proc)
+    assert payload.get("ok") is True
+
+
 def test_e2e_jira_api_token_login_and_list_projects(isolated_cli_env: dict[str, str]) -> None:
     """Login with API token (real Atlassian) then list projects via CLI."""
     creds = _jira_creds()
@@ -144,15 +167,12 @@ def test_e2e_jira_api_token_login_and_list_projects(isolated_cli_env: dict[str, 
         )
     email, api_token, subdomain = creds
 
-    from adapters.inbound.cli.atlassian_auth import run_atlassian_api_token_auth
-
-    run_atlassian_api_token_auth(
+    _login_product_via_cli(
         "jira",
-        force=True,
-        as_json=True,
         email=email,
         api_token=api_token,
         site_subdomain=subdomain,
+        env=isolated_cli_env,
     )
 
     proc = _run_potpie("--json", "auth", "jira", "ls", "-n", "5", env=isolated_cli_env)
@@ -170,15 +190,12 @@ def test_e2e_confluence_api_token_login_and_list_spaces(isolated_cli_env: dict[s
         )
     email, api_token, subdomain = creds
 
-    from adapters.inbound.cli.atlassian_auth import run_atlassian_api_token_auth
-
-    run_atlassian_api_token_auth(
+    _login_product_via_cli(
         "confluence",
-        force=True,
-        as_json=True,
         email=email,
         api_token=api_token,
         site_subdomain=subdomain,
+        env=isolated_cli_env,
     )
 
     proc = _run_potpie("--json", "auth", "confluence", "ls", "-n", "5", env=isolated_cli_env)

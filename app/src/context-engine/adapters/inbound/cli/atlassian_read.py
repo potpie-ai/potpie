@@ -148,6 +148,9 @@ def _get_json(
     bases = _ordered_bases(product, cloud_id, site_url, site_first=site_first)
     last_status: int | None = None
     last_body = ""
+    last_transport_exc: httpx.HTTPError | None = None
+    last_transport_base = ""
+    last_transport_path = ""
 
     with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
         for candidate_path in paths:
@@ -159,13 +162,10 @@ def _get_json(
                     try:
                         response = client.get(url, headers=headers)
                     except httpx.HTTPError as exc:
-                        raise _transport_read_error(
-                            exc,
-                            product=product,
-                            method="GET",
-                            base=base,
-                            path=candidate_path,
-                        ) from exc
+                        last_transport_exc = exc
+                        last_transport_base = base
+                        last_transport_path = candidate_path
+                        continue
                     last_status = response.status_code
                     if response.status_code == 200:
                         data = response.json()
@@ -173,6 +173,15 @@ def _get_json(
                             return data
                         return {"data": data}
                     last_body = response.text[:500]
+
+    if last_transport_exc is not None and last_status is None:
+        raise _transport_read_error(
+            last_transport_exc,
+            product=product,
+            method="GET",
+            base=last_transport_base,
+            path=last_transport_path,
+        ) from last_transport_exc
 
     raise AtlassianReadError(
         f"{product} read failed (HTTP {last_status}): {last_body or 'no response body'}"
