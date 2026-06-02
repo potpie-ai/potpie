@@ -399,8 +399,6 @@ def auth_logout(
     load_cli_env()
     j, v = _flags()
     key = provider.strip().lower()
-    if key in {"wiki", "conf"}:
-        key = "confluence"
     if key not in _ALL_PROVIDERS:
         emit_error(
             "Unknown provider",

@@ -3,8 +3,8 @@
 
 REVERT: delete this file and remove the ``cli_auth_e2e`` marker from ``pyproject.toml``.
 
-Opt-in only — does not run in default pytest/CI. Uses an isolated ``XDG_CONFIG_HOME`` so
-your real Potpie credentials are not modified.
+Opt-in only — does not run in default pytest/CI. Uses an isolated ``XDG_CONFIG_HOME`` and
+a disposable file keyring so your real Potpie credentials and system keychain are not modified.
 
 Enable:
   export RUN_CLI_AUTH_E2E=1
@@ -38,6 +38,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -48,6 +49,7 @@ pytestmark = [
 ]
 
 _CONTEXT_ENGINE_ROOT = Path(__file__).resolve().parents[2]
+_E2E_KEYRING_BACKEND = "adapters.inbound.cli.e2e_keyring.E2EKeyring"
 
 
 def _truthy(name: str) -> bool:
@@ -68,8 +70,68 @@ def _parse_json_stdout(proc: subprocess.CompletedProcess[str]) -> Any:
     return json.loads(proc.stdout)
 
 
+def _activate_e2e_keyring() -> None:
+    import keyring.core as keyring_core
+
+    keyring_core.set_keyring(keyring_core.load_keyring(os.environ["PYTHON_KEYRING_BACKEND"]))
+
+
+def _run_potpie(
+    *args: str,
+    env: dict[str, str],
+    timeout: int = 120,
+) -> subprocess.CompletedProcess[str]:
+    cmd = ["uv", "run", "potpie", *args]
+    return subprocess.run(
+        cmd,
+        cwd=str(_CONTEXT_ENGINE_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+@pytest.fixture()
+def isolated_cli_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[dict[str, str]]:
+    """Isolated credentials dir + repo .env merged via load_cli_env."""
+    _require_e2e_enabled()
+    import adapters.inbound.cli.env_bootstrap as env_bootstrap
+
+    saved_loaded = env_bootstrap._loaded
+    saved_environ = os.environ.copy()
+
+    xdg = tmp_path / "xdg"
+    xdg.mkdir(parents=True, exist_ok=True)
+    keyring_file = xdg / "e2e_keyring.json"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.setenv("POTPIE_E2E_KEYRING_FILE", str(keyring_file))
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", _E2E_KEYRING_BACKEND)
+    env_bootstrap._loaded = False
+    from adapters.inbound.cli.env_bootstrap import load_cli_env
+
+    load_cli_env()
+    _activate_e2e_keyring()
+    merged = os.environ.copy()
+    merged["XDG_CONFIG_HOME"] = str(xdg)
+    merged["POTPIE_E2E_KEYRING_FILE"] = str(keyring_file)
+    merged["PYTHON_KEYRING_BACKEND"] = _E2E_KEYRING_BACKEND
+    merged["PYTHONPATH"] = str(_CONTEXT_ENGINE_ROOT)
+    yield merged
+    os.environ.clear()
+    os.environ.update(saved_environ)
+    env_bootstrap._loaded = saved_loaded
+    import keyring.core as keyring_core
+
+    keyring_core._keyring_backend = None
+
+
 def test_e2e_linear_status_and_verify_with_seeded_tokens(isolated_cli_env: dict[str, str]) -> None:
     """Seed Linear tokens from env, then run status --verify against Linear API."""
+    _require_e2e_enabled()
     if not _env("LINEAR_CLIENT_ID"):
         pytest.skip("LINEAR_CLIENT_ID not set (load potpie/.env or export it)")
 
@@ -104,6 +166,7 @@ def test_e2e_linear_status_and_verify_with_seeded_tokens(isolated_cli_env: dict[
 )
 def test_e2e_linear_oauth_login_interactive(isolated_cli_env: dict[str, str]) -> None:
     """Optional: full Linear OAuth via CLI (requires browser; local developer only)."""
+    _require_e2e_enabled()
     if not _env("LINEAR_CLIENT_ID"):
         pytest.skip("LINEAR_CLIENT_ID not set")
 

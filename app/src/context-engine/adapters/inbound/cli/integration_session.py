@@ -31,13 +31,7 @@ def token_needs_refresh(
 
 def ensure_valid_integration_tokens(provider: Provider) -> dict[str, Any]:
     """Return stored tokens, refreshing OAuth access tokens for Linear when near expiry."""
-    if provider in ("jira", "confluence"):
-        return get_integration_tokens(provider)
-
-    if provider != "linear":
-        return get_integration_tokens(provider)
-
-    tokens = get_integration_tokens("linear")
+    tokens = get_integration_tokens(provider)
     access_token = str(tokens.get("access_token") or "").strip()
     if not access_token:
         return tokens

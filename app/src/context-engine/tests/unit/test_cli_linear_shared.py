@@ -1061,6 +1061,16 @@ def test_get_callback_port_invalid_env_falls_back_to_redirect(
     monkeypatch.setenv("POTPIE_CLI_OAUTH_CALLBACK_PORT", "not-a-port")
     assert get_callback_port() == 8080
 
+
+def test_get_callback_port_out_of_range_falls_back_to_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POTPIE_CLI_OAUTH_REDIRECT_URI", "http://localhost:8080/callback")
+    monkeypatch.setenv("POTPIE_CLI_OAUTH_CALLBACK_PORT", "70000")
+    assert get_callback_port() == 8080
+    monkeypatch.setenv("POTPIE_CLI_OAUTH_CALLBACK_PORT", "0")
+    assert get_callback_port() == 8080
+
 def test_redirect_uri_hostname_not_localhost_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

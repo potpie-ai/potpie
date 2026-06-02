@@ -6,7 +6,7 @@ import os
 from typing import Literal
 from urllib.parse import urlparse
 
-Provider = Literal["github", "linear"]
+Provider = Literal["linear"]
 OAuthProvider = Literal["linear"]
 
 DEFAULT_CALLBACK_PORT = 8080
@@ -39,7 +39,9 @@ def get_callback_port() -> int:
     raw = os.getenv("POTPIE_CLI_OAUTH_CALLBACK_PORT", "").strip()
     if raw:
         try:
-            return int(raw)
+            port = int(raw)
+            if 1 <= port <= 65535:
+                return port
         except ValueError:
             pass
     return int(_parsed_redirect_uri().port or DEFAULT_CALLBACK_PORT)

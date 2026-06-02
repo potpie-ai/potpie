@@ -292,24 +292,6 @@ def test_token_needs_refresh_with_buffer() -> None:
     assert session.token_needs_refresh(None) is False
     assert session.token_needs_refresh("not-a-number") is False
 
-def test_ensure_valid_jira_delegates_to_store(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        session,
-        "get_integration_tokens",
-        lambda provider: {"api_token": provider},
-    )
-    assert session.ensure_valid_integration_tokens("jira") == {"api_token": "jira"}
-
-def test_ensure_valid_non_linear_provider_delegates(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        session,
-        "get_integration_tokens",
-        lambda provider: {"provider": provider},
-    )
-    assert session.ensure_valid_integration_tokens("github") == {"provider": "github"}
-
 def test_ensure_valid_linear_empty_access_token_returns_stored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
