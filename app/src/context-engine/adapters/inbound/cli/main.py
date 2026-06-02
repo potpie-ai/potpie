@@ -12,7 +12,6 @@ import typer
 from adapters.inbound.cli.auth.firebase_session import (
     FirebaseSessionError,
     exchange_custom_token,
-    refresh_id_token,
 )
 from adapters.inbound.cli.auth.potpie import (
     PotpieCliAuthError,
@@ -30,16 +29,16 @@ from adapters.inbound.cli.credentials_store import (
     get_active_pot_id,
     get_pot_aliases,
     get_potpie_auth_type,
-    get_potpie_firebase_api_key,
     get_potpie_firebase_refresh_token,
     get_stored_api_base_url,
     get_stored_api_key,
     register_pot_alias,
     resolve_cli_pot_ref,
     set_active_pot_id,
+    store_potpie_api_key,
+    store_potpie_firebase_id_token,
     store_potpie_firebase_refresh_token,
-    update_potpie_firebase_refresh_token,
-    write_credentials,
+    write_api_base_url,
 )
 from adapters.inbound.cli.agent_installer import AGENT_TYPES, install_agent_bundle
 from adapters.inbound.cli.auth_commands import auth_app
@@ -67,6 +66,7 @@ from adapters.inbound.cli.output import (
     print_search_results,
 )
 from adapters.inbound.cli.potpie_api_config import (
+    resolve_potpie_firebase_session,
     resolve_potpie_auth_config,
     resolve_potpie_api_base_url,
 )
@@ -248,6 +248,7 @@ def _potpie_login_impl() -> None:
             created_at=datetime.now(timezone.utc).isoformat(),
             firebase_api_key=result.firebase_api_key,
         )
+        store_potpie_firebase_id_token(session.id_token)
     except PotpieCliAuthError as exc:
         emit_error("Potpie login failed", str(exc), verbose=v)
         raise typer.Exit(code=1) from exc
@@ -319,10 +320,14 @@ def login_api_key_cmd(
     ),
 ) -> None:
     """Save Potpie API key and optional base URL (legacy automation)."""
-    write_credentials(api_key=token, api_base_url=url)
+    store_potpie_api_key(
+        token,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    write_api_base_url(url)
     j, _ = _flags()
     print_plain_line(
-        f"Saved credentials to {credentials_path()} (mode 600).",
+        f"Saved credentials to keyring and {credentials_path()} (mode 600).",
         as_json=j,
         json_payload={"ok": True, "path": str(credentials_path())},
     )
@@ -354,7 +359,6 @@ def auth_status_cmd() -> None:
     try:
         api_key = get_stored_api_key()
         refresh_token = get_potpie_firebase_refresh_token()
-        firebase_api_key = get_potpie_firebase_api_key()
     except CredentialStoreError as exc:
         emit_error("Potpie auth status failed", str(exc), verbose=v)
         raise typer.Exit(code=1) from exc
@@ -369,11 +373,7 @@ def auth_status_cmd() -> None:
 
     try:
         if refresh_token:
-            session = refresh_id_token(
-                refresh_token,
-                firebase_api_key=firebase_api_key or None,
-            )
-            update_potpie_firebase_refresh_token(session.refresh_token)
+            session = resolve_potpie_firebase_session(refresh_token)
             id_token = session.id_token
         account = fetch_account_me(
             api_base_url=resolve_potpie_api_url_for_auth(),
@@ -415,12 +415,7 @@ def auth_test_pots_cmd() -> None:
         refresh_token = get_potpie_firebase_refresh_token()
         if not refresh_token:
             raise ValueError("Firebase session missing. Run `potpie login`.")
-        firebase_api_key = get_potpie_firebase_api_key()
-        session = refresh_id_token(
-            refresh_token,
-            firebase_api_key=firebase_api_key or None,
-        )
-        update_potpie_firebase_refresh_token(session.refresh_token)
+        session = resolve_potpie_firebase_session(refresh_token)
         client = PotpieContextApiClient(
             resolve_potpie_api_base_url(),
             auth_headers={"Authorization": f"Bearer {session.id_token}"},

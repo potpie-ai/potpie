@@ -113,6 +113,27 @@ def pick_callback_port() -> int:
     )
 
 
+def reserve_callback_socket() -> tuple[socket.socket, int]:
+    lo, hi = _callback_port_bounds()
+    host = _callback_host()
+    candidates = list(range(lo, hi + 1))
+    random.shuffle(candidates)
+    for port in candidates:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+            sock.listen(5)
+            return sock, port
+        except OSError:
+            sock.close()
+            continue
+    raise PotpieCliAuthError(
+        f"No available port in range {lo}-{hi} on {host}. "
+        "Set POTPIE_CLI_CALLBACK_PORT_MIN/MAX or free a port."
+    )
+
+
 def build_sign_in_url(*, ui_base_url: str, callback_url: str, state: str) -> str:
     params = urlencode({"cli_callback": callback_url, "state": state})
     return f"{ui_base_url.rstrip('/')}/sign-in?{params}"
@@ -248,8 +269,21 @@ class _OneShotCallbackServer(HTTPServer):
         expected_state: str,
         expected_path: str,
         allowed_origin: str,
+        listener_socket: socket.socket | None = None,
     ) -> None:
-        super().__init__(server_address, _OneShotCallbackHandler)
+        if listener_socket is None:
+            super().__init__(server_address, _OneShotCallbackHandler)
+        else:
+            super().__init__(
+                server_address,
+                _OneShotCallbackHandler,
+                bind_and_activate=False,
+            )
+            self.socket.close()
+            self.socket = listener_socket
+            self.server_address = listener_socket.getsockname()
+            self.server_name = socket.getfqdn(self.server_address[0])
+            self.server_port = self.server_address[1]
         self.received = threading.Event()
         self.result: CliCallbackResult | None = None
         self.error: Exception | None = None
@@ -266,13 +300,20 @@ def wait_for_cli_callback(
     state: str,
     allowed_origin: str,
     timeout_seconds: float,
+    listener_socket: socket.socket | None = None,
 ) -> CliCallbackResult:
-    server = _OneShotCallbackServer(
-        (host, port),
-        expected_state=state,
-        expected_path=path if path.startswith("/") else f"/{path}",
-        allowed_origin=allowed_origin,
-    )
+    try:
+        server = _OneShotCallbackServer(
+            (host, port),
+            expected_state=state,
+            expected_path=path if path.startswith("/") else f"/{path}",
+            allowed_origin=allowed_origin,
+            listener_socket=listener_socket,
+        )
+    except OSError as exc:
+        if listener_socket is not None:
+            listener_socket.close()
+        raise PotpieCliAuthError(f"Unable to start CLI callback server: {exc}") from exc
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -294,7 +335,7 @@ def wait_for_cli_callback(
 
 def run_browser_login_flow() -> CliCallbackResult:
     host = _callback_host()
-    port = pick_callback_port()
+    listener_socket, port = reserve_callback_socket()
     state = secrets.token_urlsafe(32)
     callback_path = f"/{secrets.token_urlsafe(24)}"
     callback_url = f"http://{host}:{port}{callback_path}"
@@ -317,6 +358,7 @@ def run_browser_login_flow() -> CliCallbackResult:
         state=state,
         allowed_origin=_origin_from_url(ui_url),
         timeout_seconds=timeout_seconds,
+        listener_socket=listener_socket,
     )
 
 
@@ -329,11 +371,16 @@ def _origin_from_url(url: str) -> str:
 
 def revoke_api_key_on_server(*, api_base_url: str, api_key: str) -> None:
     url = f"{api_base_url.rstrip('/')}/api/v1/api-keys"
-    with httpx.Client(timeout=30.0) as client:
-        response = client.delete(
-            url,
-            headers={"X-API-Key": api_key.strip()},
-        )
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.delete(
+                url,
+                headers={"X-API-Key": api_key.strip()},
+            )
+    except httpx.RequestError as exc:
+        raise PotpieCliAuthError(
+            f"Failed to revoke API key on server: {exc}"
+        ) from exc
     if response.status_code == 404:
         return
     if response.status_code >= 300:
@@ -359,8 +406,11 @@ def fetch_account_me(
         headers["X-API-Key"] = api_key.strip()
     else:
         raise PotpieCliAuthError("No Potpie auth token available.")
-    with httpx.Client(timeout=30.0) as client:
-        response = client.get(url, headers=headers)
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.get(url, headers=headers)
+    except httpx.RequestError as exc:
+        raise PotpieCliAuthError(f"Failed to fetch account: {exc}") from exc
     if response.status_code == 401:
         raise PotpieCliAuthError("Potpie session is invalid or expired.")
     if response.status_code >= 300:

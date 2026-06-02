@@ -1,4 +1,4 @@
-"""FastAPI dependencies for Potpie API key auth (shared by /api/v2 routes and context graph)."""
+"""FastAPI dependencies for Potpie API auth (shared by /api/v2 routes and context graph)."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def is_development_mode() -> bool:
     return os.getenv("isDevelopmentMode", "").strip().lower() == "enabled"
 
 
-async def get_api_key_user(
+async def _get_x_api_key_user(
     x_api_key: str | None = Header(None),
     x_user_id: str | None = Header(None),
     db: Session = Depends(get_db),
@@ -71,7 +71,7 @@ async def get_api_key_user(
     return user
 
 
-async def get_firebase_or_api_key_user(
+async def get_api_key_user(
     request: Request,
     res: Response,
     credential: HTTPAuthorizationCredentials | None = Depends(_bearer),
@@ -80,7 +80,11 @@ async def get_firebase_or_api_key_user(
     db: Session = Depends(get_db),
     async_db: AsyncSession = Depends(get_async_db),
 ) -> dict:
-    """Authenticate via X-API-Key when present, otherwise Firebase Bearer token."""
+    """Authenticate via the supported API token headers.
+
+    X-API-Key takes precedence for CLI/MCP clients. Otherwise, Firebase Bearer auth is
+    used for browser-backed CLI sessions.
+    """
     if (x_api_key or "").strip():
-        return await get_api_key_user(x_api_key, x_user_id, db, async_db)
+        return await _get_x_api_key_user(x_api_key, x_user_id, db, async_db)
     return await AuthService.check_auth(request, res, credential)

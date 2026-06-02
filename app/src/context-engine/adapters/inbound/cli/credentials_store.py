@@ -17,6 +17,7 @@ _CONFIG_DIR_NAME = "potpie"
 _LEGACY_CONFIG_DIR_NAME = "context-engine"
 _KEYRING_SERVICE = "potpie"
 _POTPIE_API_KEY_SECRET = "potpie_api_key"
+_POTPIE_FIREBASE_ID_TOKEN_SECRET = "potpie_firebase_id_token"
 _POTPIE_FIREBASE_REFRESH_TOKEN_SECRET = "potpie_firebase_refresh_token"
 _POTPIE_FIREBASE_API_KEY_SECRET = "potpie_firebase_api_key"
 
@@ -74,6 +75,11 @@ def _write_payload(payload: dict[str, Any]) -> None:
     d = config_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = credentials_path()
+    _write_payload_to_path(path, payload)
+
+
+def _write_payload_to_path(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
@@ -210,6 +216,18 @@ def get_stored_api_base_url() -> str:
     return str(v).strip().rstrip("/")
 
 
+def write_api_base_url(api_base_url: Optional[str]) -> None:
+    """Persist non-secret Potpie API base URL without touching stored secrets."""
+    payload: dict[str, Any] = dict(read_credentials())
+    if api_base_url is not None:
+        u = api_base_url.strip().rstrip("/")
+        if u:
+            payload["api_base_url"] = u
+        else:
+            payload.pop("api_base_url", None)
+    _write_payload(payload)
+
+
 def write_credentials(*, api_key: str, api_base_url: Optional[str] = None) -> None:
     """Write credentials file with mode 0o600.
 
@@ -279,6 +297,18 @@ def store_potpie_firebase_refresh_token(
     )
 
 
+def store_potpie_firebase_id_token(id_token: str) -> None:
+    """Store Firebase ID token in secure storage."""
+    token = id_token.strip()
+    if not token:
+        raise CredentialStoreError("Potpie Firebase ID token is required.")
+    store_secure_secret(
+        _POTPIE_FIREBASE_ID_TOKEN_SECRET,
+        token,
+        label="Potpie Firebase ID token",
+    )
+
+
 def update_potpie_firebase_refresh_token(refresh_token: str) -> None:
     """Update rotated Firebase refresh token without touching metadata."""
     token = refresh_token.strip()
@@ -303,6 +333,13 @@ def get_potpie_firebase_refresh_token() -> str:
     ).strip()
 
 
+def get_potpie_firebase_id_token() -> str:
+    return load_secure_secret(
+        _POTPIE_FIREBASE_ID_TOKEN_SECRET,
+        label="Potpie Firebase ID token",
+    ).strip()
+
+
 def get_potpie_firebase_api_key() -> str:
     from_keychain = load_secure_secret(
         _POTPIE_FIREBASE_API_KEY_SECRET,
@@ -318,6 +355,22 @@ def clear_potpie_auth(*, clear_api_key: bool = False) -> None:
     """Remove Potpie session secrets and drop integrations.potpie metadata."""
     if clear_api_key:
         delete_secure_secret(_POTPIE_API_KEY_SECRET, label="Potpie API key")
+        path = readable_credentials_path()
+        if path.is_file():
+            payload: dict[str, Any] = dict(read_credentials())
+            payload.pop("api_key", None)
+            if payload:
+                _write_payload_to_path(path, payload)
+            else:
+                try:
+                    path.unlink(missing_ok=True)
+                except TypeError:
+                    if path.is_file():
+                        path.unlink()
+    delete_secure_secret(
+        _POTPIE_FIREBASE_ID_TOKEN_SECRET,
+        label="Potpie Firebase ID token",
+    )
     delete_secure_secret(
         _POTPIE_FIREBASE_REFRESH_TOKEN_SECRET,
         label="Potpie refresh token",
@@ -332,6 +385,10 @@ def clear_potpie_auth(*, clear_api_key: bool = False) -> None:
 def clear_credentials() -> None:
     """Remove credentials file if it exists."""
     delete_secure_secret(_POTPIE_API_KEY_SECRET, label="Potpie API key")
+    delete_secure_secret(
+        _POTPIE_FIREBASE_ID_TOKEN_SECRET,
+        label="Potpie Firebase ID token",
+    )
     delete_secure_secret(
         _POTPIE_FIREBASE_REFRESH_TOKEN_SECRET,
         label="Potpie refresh token",

@@ -85,6 +85,7 @@ def test_resolve_auth_config_prefers_firebase_session_metadata(monkeypatch) -> N
     monkeypatch.setattr(config, "get_potpie_auth_type", lambda: "firebase_session")
     monkeypatch.setattr(config, "get_stored_api_key", lambda: "sk-existing")
     monkeypatch.setattr(config, "get_potpie_firebase_refresh_token", lambda: "refresh")
+    monkeypatch.setattr(config, "get_potpie_firebase_id_token", lambda: "")
     monkeypatch.setattr(config, "get_potpie_firebase_api_key", lambda: "firebase-key")
     refresh_calls: list[tuple[str, str | None]] = []
 
@@ -101,6 +102,8 @@ def test_resolve_auth_config_prefers_firebase_session_metadata(monkeypatch) -> N
     monkeypatch.setattr(config, "refresh_id_token", _refresh_id_token)
     updated: list[str] = []
     monkeypatch.setattr(config, "update_potpie_firebase_refresh_token", updated.append)
+    cached_id_tokens: list[str] = []
+    monkeypatch.setattr(config, "store_potpie_firebase_id_token", cached_id_tokens.append)
 
     auth = config.resolve_potpie_auth_config()
 
@@ -108,6 +111,28 @@ def test_resolve_auth_config_prefers_firebase_session_metadata(monkeypatch) -> N
     assert auth.headers == {"Authorization": "Bearer id-token"}
     assert refresh_calls == [("refresh", "firebase-key")]
     assert updated == ["new-refresh"]
+    assert cached_id_tokens == ["id-token"]
+
+
+def test_resolve_auth_config_uses_cached_valid_firebase_id_token(monkeypatch) -> None:
+    monkeypatch.delenv("POTPIE_API_KEY", raising=False)
+    monkeypatch.setattr(config, "get_potpie_auth_type", lambda: "firebase_session")
+    monkeypatch.setattr(config, "get_stored_api_key", lambda: "sk-existing")
+    monkeypatch.setattr(config, "get_potpie_firebase_refresh_token", lambda: "refresh")
+    monkeypatch.setattr(config, "get_potpie_firebase_id_token", lambda: "cached-id-token")
+    monkeypatch.setattr(config, "id_token_expires_at", lambda token: config.time.time() + 60)
+    refresh_calls: list[str] = []
+    monkeypatch.setattr(
+        config,
+        "refresh_id_token",
+        lambda token, *, firebase_api_key=None: refresh_calls.append(token),
+    )
+
+    auth = config.resolve_potpie_auth_config()
+
+    assert auth.mode == "firebase_session"
+    assert auth.headers == {"Authorization": "Bearer cached-id-token"}
+    assert refresh_calls == []
 
 
 def test_resolve_auth_config_falls_back_to_stored_api_key(monkeypatch) -> None:
@@ -127,6 +152,7 @@ def test_resolve_auth_config_uses_refresh_token_without_metadata(monkeypatch) ->
     monkeypatch.setattr(config, "get_potpie_auth_type", lambda: "")
     monkeypatch.setattr(config, "get_stored_api_key", lambda: "")
     monkeypatch.setattr(config, "get_potpie_firebase_refresh_token", lambda: "refresh")
+    monkeypatch.setattr(config, "get_potpie_firebase_id_token", lambda: "")
     monkeypatch.setattr(config, "get_potpie_firebase_api_key", lambda: "")
     monkeypatch.setattr(
         config,
@@ -139,12 +165,15 @@ def test_resolve_auth_config_uses_refresh_token_without_metadata(monkeypatch) ->
     )
     updated: list[str] = []
     monkeypatch.setattr(config, "update_potpie_firebase_refresh_token", updated.append)
+    cached_id_tokens: list[str] = []
+    monkeypatch.setattr(config, "store_potpie_firebase_id_token", cached_id_tokens.append)
 
     auth = config.resolve_potpie_auth_config()
 
     assert auth.mode == "firebase_session"
     assert auth.headers == {"Authorization": "Bearer id-token"}
     assert updated == ["new-refresh"]
+    assert cached_id_tokens == ["id-token"]
 
 
 def test_resolve_auth_config_errors_when_missing(monkeypatch) -> None:

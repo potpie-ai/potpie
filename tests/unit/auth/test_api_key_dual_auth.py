@@ -7,21 +7,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.modules.auth.api_key_deps import get_firebase_or_api_key_user
+from app.modules.auth.api_key_deps import _get_x_api_key_user, get_api_key_user
 
 
 @pytest.mark.asyncio
-async def test_get_firebase_or_api_key_user_prefers_api_key_header() -> None:
+async def test_get_api_key_user_prefers_api_key_header() -> None:
     request = MagicMock()
     res = MagicMock()
     expected = {"user_id": "user-1", "email": "a@b.com", "auth_type": "api_key"}
 
     with patch(
-        "app.modules.auth.api_key_deps.get_api_key_user",
+        "app.modules.auth.api_key_deps._get_x_api_key_user",
         new_callable=AsyncMock,
         return_value=expected,
     ) as mock_api:
-        result = await get_firebase_or_api_key_user(
+        result = await get_api_key_user(
             request,
             res,
             credential=None,
@@ -36,7 +36,7 @@ async def test_get_firebase_or_api_key_user_prefers_api_key_header() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_firebase_or_api_key_user_falls_back_to_firebase() -> None:
+async def test_get_api_key_user_falls_back_to_firebase() -> None:
     request = MagicMock()
     res = MagicMock()
     expected = {"user_id": "firebase-user", "uid": "firebase-user"}
@@ -46,7 +46,7 @@ async def test_get_firebase_or_api_key_user_falls_back_to_firebase() -> None:
         new_callable=AsyncMock,
         return_value=expected,
     ) as mock_firebase:
-        result = await get_firebase_or_api_key_user(
+        result = await get_api_key_user(
             request,
             res,
             credential=None,
@@ -61,11 +61,9 @@ async def test_get_firebase_or_api_key_user_falls_back_to_firebase() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_api_key_user_requires_header() -> None:
-    from app.modules.auth.api_key_deps import get_api_key_user
-
+async def test_get_x_api_key_user_requires_header() -> None:
     with pytest.raises(HTTPException) as exc:
-        await get_api_key_user(
+        await _get_x_api_key_user(
             x_api_key=None,
             x_user_id=None,
             db=MagicMock(),

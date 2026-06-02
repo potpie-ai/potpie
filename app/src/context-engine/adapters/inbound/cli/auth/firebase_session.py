@@ -89,17 +89,27 @@ def exchange_custom_token(
         "https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken"
         f"?key={api_key}"
     )
-    with httpx.Client(timeout=30.0) as client:
-        response = client.post(
-            url,
-            json={"token": token, "returnSecureToken": True},
-            headers={"Content-Type": "application/json"},
-        )
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                url,
+                json={"token": token, "returnSecureToken": True},
+                headers={"Content-Type": "application/json"},
+            )
+    except httpx.RequestError as exc:
+        raise FirebaseSessionError(
+            f"Firebase custom token exchange request failed: {exc}"
+        ) from exc
     if response.status_code >= 300:
         raise FirebaseSessionError(
             f"Firebase custom token exchange failed: {_json_or_text(response)!r}"
         )
-    data = response.json()
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise FirebaseSessionError(
+            f"Firebase custom token exchange response parsing failed: {exc}"
+        ) from exc
     id_token = str(data.get("idToken") or "").strip()
     refresh_token = str(data.get("refreshToken") or "").strip()
     if not id_token or not refresh_token:
@@ -122,17 +132,27 @@ def refresh_id_token(
     api_key = (firebase_api_key or resolve_firebase_api_key()).strip()
     url = f"https://securetoken.googleapis.com/v1/token?key={api_key}"
     body = f"grant_type=refresh_token&refresh_token={quote_plus(token)}"
-    with httpx.Client(timeout=30.0) as client:
-        response = client.post(
-            url,
-            content=body,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                url,
+                content=body,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+    except httpx.RequestError as exc:
+        raise FirebaseSessionError(
+            f"Firebase token refresh request failed: {exc}"
+        ) from exc
     if response.status_code >= 300:
         raise FirebaseSessionError(
             f"Firebase token refresh failed: {_json_or_text(response)!r}"
         )
-    data = response.json()
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise FirebaseSessionError(
+            f"Firebase token refresh response parsing failed: {exc}"
+        ) from exc
     id_token = str(data.get("id_token") or "").strip()
     new_refresh_token = str(data.get("refresh_token") or "").strip()
     if not id_token or not new_refresh_token:

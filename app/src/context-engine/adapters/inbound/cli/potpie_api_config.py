@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 
 from adapters.inbound.cli.auth.firebase_session import (
     FirebaseSessionError,
+    FirebaseSession,
+    id_token_expires_at,
     refresh_id_token,
 )
 from adapters.inbound.cli.credentials_store import (
     get_potpie_auth_type,
     get_potpie_firebase_api_key,
+    get_potpie_firebase_id_token,
     get_potpie_firebase_refresh_token,
     get_stored_api_base_url,
     get_stored_api_key,
+    store_potpie_firebase_id_token,
     update_potpie_firebase_refresh_token,
 )
 
@@ -60,6 +65,32 @@ def resolve_potpie_api_key() -> str:
     return k
 
 
+def resolve_potpie_firebase_session(refresh_token: str) -> FirebaseSession:
+    token = refresh_token.strip()
+    if not token:
+        raise ValueError("Potpie Firebase refresh token missing.")
+
+    cached_id_token = get_potpie_firebase_id_token()
+    if cached_id_token and id_token_expires_at(cached_id_token) > time.time():
+        return FirebaseSession(
+            id_token=cached_id_token,
+            refresh_token=token,
+            expires_at=id_token_expires_at(cached_id_token),
+        )
+
+    try:
+        firebase_api_key = get_potpie_firebase_api_key()
+        session = refresh_id_token(
+            token,
+            firebase_api_key=firebase_api_key or None,
+        )
+    except FirebaseSessionError as exc:
+        raise ValueError(f"Potpie Firebase session refresh failed: {exc}") from exc
+    update_potpie_firebase_refresh_token(session.refresh_token)
+    store_potpie_firebase_id_token(session.id_token)
+    return session
+
+
 def resolve_potpie_auth_config() -> PotpieAuthConfig:
     api_key = (os.getenv("POTPIE_API_KEY") or "").strip()
     if api_key:
@@ -70,15 +101,7 @@ def resolve_potpie_auth_config() -> PotpieAuthConfig:
     stored_api_key = get_stored_api_key()
 
     if auth_type == "firebase_session" and refresh_token:
-        try:
-            firebase_api_key = get_potpie_firebase_api_key()
-            session = refresh_id_token(
-                refresh_token,
-                firebase_api_key=firebase_api_key or None,
-            )
-        except FirebaseSessionError as exc:
-            raise ValueError(f"Potpie Firebase session refresh failed: {exc}") from exc
-        update_potpie_firebase_refresh_token(session.refresh_token)
+        session = resolve_potpie_firebase_session(refresh_token)
         return PotpieAuthConfig(
             mode="firebase_session",
             headers={"Authorization": f"Bearer {session.id_token}"},
@@ -88,15 +111,7 @@ def resolve_potpie_auth_config() -> PotpieAuthConfig:
         return PotpieAuthConfig(mode="api_key", headers={"X-API-Key": stored_api_key})
 
     if refresh_token:
-        try:
-            firebase_api_key = get_potpie_firebase_api_key()
-            session = refresh_id_token(
-                refresh_token,
-                firebase_api_key=firebase_api_key or None,
-            )
-        except FirebaseSessionError as exc:
-            raise ValueError(f"Potpie Firebase session refresh failed: {exc}") from exc
-        update_potpie_firebase_refresh_token(session.refresh_token)
+        session = resolve_potpie_firebase_session(refresh_token)
         return PotpieAuthConfig(
             mode="firebase_session",
             headers={"Authorization": f"Bearer {session.id_token}"},

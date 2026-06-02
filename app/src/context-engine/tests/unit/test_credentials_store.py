@@ -39,6 +39,19 @@ def test_write_preserves_base_url_when_url_not_passed(
     assert cs.get_stored_api_base_url() == "http://x"
 
 
+def test_write_api_base_url_does_not_touch_api_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_credentials(api_key="legacy-file-key", api_base_url="http://old")
+
+    cs.write_api_base_url("https://api.example.com/")
+
+    data = cs.read_credentials()
+    assert data["api_key"] == "legacy-file-key"
+    assert data["api_base_url"] == "https://api.example.com"
+
+
 def test_clear_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.write_credentials(api_key="x")
@@ -308,6 +321,20 @@ def test_update_potpie_firebase_refresh_token_keeps_metadata(
     )
 
 
+def test_store_potpie_firebase_id_token_uses_keyring(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    cs.store_potpie_firebase_id_token("id-token")
+
+    assert fake_keyring[("potpie", "potpie_firebase_id_token")] == "id-token"
+    assert cs.get_potpie_firebase_id_token() == "id-token"
+    assert cs.read_credentials() == {}
+
+
 def test_clear_potpie_auth_preserves_api_key_by_default(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -333,8 +360,13 @@ def test_clear_potpie_auth_can_clear_api_key(
     fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_credentials(
+        api_key="legacy-file-key",
+        api_base_url="http://localhost:8000",
+    )
     cs.store_potpie_api_key("sk-chain-key", created_at="2026-05-29T12:00:00+00:00")
 
     cs.clear_potpie_auth(clear_api_key=True)
 
     assert cs.get_stored_api_key() == ""
+    assert cs.read_credentials() == {"api_base_url": "http://localhost:8000"}
