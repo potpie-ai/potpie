@@ -1578,5 +1578,5 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
     return r
 
 
-# v2 router (X-API-Key auth) — keeps backward compatibility for api/router.py
+# v2 router (X-API-Key or Firebase Bearer auth) — keeps backward compatibility for api/router.py
 router = make_pot_router(get_api_key_user)

@@ -1,10 +1,35 @@
-"""Resolve Potpie API base URL and API key for thin CLI / MCP (X-API-Key on /api/v2)."""
+"""Resolve Potpie API base URL and auth headers for thin CLI / MCP."""
 
 from __future__ import annotations
 
 import os
+import time
+from dataclasses import dataclass
 
-from adapters.inbound.cli.credentials_store import get_stored_api_base_url, get_stored_api_key
+from adapters.inbound.cli.auth.firebase_session import (
+    FirebaseSessionError,
+    FirebaseSession,
+    id_token_expires_at,
+    refresh_id_token,
+)
+from adapters.inbound.cli.credentials_store import (
+    get_potpie_auth_type,
+    get_potpie_firebase_api_key,
+    get_potpie_firebase_id_token,
+    get_potpie_firebase_refresh_token,
+    get_stored_api_base_url,
+    get_stored_api_key,
+    store_potpie_firebase_id_token,
+    update_potpie_firebase_refresh_token,
+)
+
+_DEFAULT_API_URL = "http://localhost:8001"
+
+
+@dataclass(frozen=True)
+class PotpieAuthConfig:
+    mode: str
+    headers: dict[str, str]
 
 
 def resolve_potpie_api_base_url() -> str:
@@ -12,17 +37,21 @@ def resolve_potpie_api_base_url() -> str:
     u = (
         os.getenv("POTPIE_API_URL")
         or os.getenv("POTPIE_BASE_URL")
+        or os.getenv("POTPIE_CLI_API_BASE_URL")
+        or os.getenv("POTPIE_CLI_BASE_URL")
         or get_stored_api_base_url()
         or ""
     ).strip()
     port = (os.getenv("POTPIE_PORT") or os.getenv("POTPIE_API_PORT") or "").strip()
     if not u and port:
         u = f"http://127.0.0.1:{port}"
+    if not u:
+        u = _DEFAULT_API_URL
     u = u.rstrip("/")
     if not u:
         raise ValueError(
             "Potpie API base URL missing. Set POTPIE_API_URL or POTPIE_BASE_URL, "
-            "use `potpie login --url …`, or set POTPIE_PORT for http://127.0.0.1:<port>."
+            "or set POTPIE_PORT for http://127.0.0.1:<port>."
         )
     return u
 
@@ -31,6 +60,64 @@ def resolve_potpie_api_key() -> str:
     k = (os.getenv("POTPIE_API_KEY") or get_stored_api_key() or "").strip()
     if not k:
         raise ValueError(
-            "Potpie API key missing. Set POTPIE_API_KEY or run `potpie login <key>`."
+            "Potpie API key missing. Set POTPIE_API_KEY or run `potpie login-api-key <key>`."
         )
     return k
+
+
+def resolve_potpie_firebase_session(refresh_token: str) -> FirebaseSession:
+    token = refresh_token.strip()
+    if not token:
+        raise ValueError("Potpie Firebase refresh token missing.")
+
+    cached_id_token = get_potpie_firebase_id_token()
+    if cached_id_token and id_token_expires_at(cached_id_token) > time.time():
+        return FirebaseSession(
+            id_token=cached_id_token,
+            refresh_token=token,
+            expires_at=id_token_expires_at(cached_id_token),
+        )
+
+    try:
+        firebase_api_key = get_potpie_firebase_api_key()
+        session = refresh_id_token(
+            token,
+            firebase_api_key=firebase_api_key or None,
+        )
+    except FirebaseSessionError as exc:
+        raise ValueError(f"Potpie Firebase session refresh failed: {exc}") from exc
+    update_potpie_firebase_refresh_token(session.refresh_token)
+    store_potpie_firebase_id_token(session.id_token)
+    return session
+
+
+def resolve_potpie_auth_config() -> PotpieAuthConfig:
+    api_key = (os.getenv("POTPIE_API_KEY") or "").strip()
+    if api_key:
+        return PotpieAuthConfig(mode="api_key", headers={"X-API-Key": api_key})
+
+    auth_type = get_potpie_auth_type()
+    refresh_token = get_potpie_firebase_refresh_token()
+    stored_api_key = get_stored_api_key()
+
+    if auth_type in {"potpie", "firebase_session"} and refresh_token:
+        session = resolve_potpie_firebase_session(refresh_token)
+        return PotpieAuthConfig(
+            mode="potpie",
+            headers={"Authorization": f"Bearer {session.id_token}"},
+        )
+
+    if stored_api_key:
+        return PotpieAuthConfig(mode="api_key", headers={"X-API-Key": stored_api_key})
+
+    if refresh_token:
+        session = resolve_potpie_firebase_session(refresh_token)
+        return PotpieAuthConfig(
+            mode="potpie",
+            headers={"Authorization": f"Bearer {session.id_token}"},
+        )
+
+    raise ValueError(
+        "Potpie auth missing. Set POTPIE_API_KEY, run `potpie login-api-key <key>`, "
+        "or run `potpie login`."
+    )

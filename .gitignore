@@ -109,3 +109,6 @@ target
 # Contains mutation testing data
 **/mutants.out*/
 seed/.state/
+
+cli-integration-auth-handoff.zip
+cli-integration-auth-handoff/

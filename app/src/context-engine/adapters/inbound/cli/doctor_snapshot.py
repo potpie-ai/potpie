@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 
-from adapters.inbound.cli.credentials_store import get_active_pot_id, get_stored_api_base_url, get_stored_api_key
+from adapters.inbound.cli.credentials_store import get_active_pot_id, get_stored_api_base_url, get_stored_api_key, get_potpie_firebase_refresh_token
 from adapters.inbound.cli.env_bootstrap import load_cli_env
 from adapters.inbound.cli.output import DoctorSnapshot
-from adapters.inbound.cli.potpie_api_config import resolve_potpie_api_base_url, resolve_potpie_api_key
+from adapters.inbound.cli.potpie_api_config import resolve_potpie_api_base_url, resolve_potpie_auth_config
 from adapters.outbound.http.potpie_context_api_client import PotpieContextApiClient, PotpieContextApiError
 from adapters.outbound.settings_env import EnvContextEngineSettings
 
@@ -51,7 +51,8 @@ def build_doctor_snapshot() -> DoctorSnapshot:
     neo = bool(s.neo4j_uri())
 
     has_potpie_key_env = bool(os.getenv("POTPIE_API_KEY"))
-    has_stored_key = bool(get_stored_api_key())
+    # Stored token: any form of saved auth (API key OR Firebase session).
+    has_stored_key = bool(get_stored_api_key() or get_potpie_firebase_refresh_token())
     base_env = os.getenv("POTPIE_API_URL") or os.getenv("POTPIE_BASE_URL")
     base_stored = get_stored_api_base_url()
     port = os.getenv("POTPIE_PORT") or os.getenv("POTPIE_API_PORT")
@@ -66,9 +67,10 @@ def build_doctor_snapshot() -> DoctorSnapshot:
     auth_ok: bool | None = None
     auth_msg: str | None = None
     try:
+        auth_config = resolve_potpie_auth_config()
         c = PotpieContextApiClient(
             resolve_potpie_api_base_url(),
-            resolve_potpie_api_key(),
+            auth_headers_provider=lambda: auth_config.headers,
             timeout=15.0,
             client_surface="cli",
             client_name=_cli_client_name(),
@@ -94,7 +96,7 @@ def build_doctor_snapshot() -> DoctorSnapshot:
         auth_msg = str(exc)
 
     summary: list[str] = [
-        "[dim]search / ingest / pot hard-reset call Potpie POST /api/v2/context/* with X-API-Key.[/dim]",
+        "[dim]search / ingest / pot hard-reset call Potpie POST /api/v2/context/* with Potpie auth headers.[/dim]",
         "[dim]Local Neo4j is not required on this machine.[/dim]",
     ]
     if health_ok is True:

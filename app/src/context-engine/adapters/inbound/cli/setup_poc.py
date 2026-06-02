@@ -379,6 +379,10 @@ def run_setup_poc(
             }
         )
 
+    # Offer GitHub login after successful setup (interactive mode only)
+    if not as_json and is_interactive_tty():
+        _prompt_github_login()
+
     _emit_result(
         wizard=wizard,
         as_json=as_json,
@@ -386,6 +390,22 @@ def run_setup_poc(
         already_setup=already_complete,
         pot_name=pot_name,
     )
+
+
+def _prompt_github_login() -> None:
+    """After setup, offer to connect GitHub via device flow."""
+    from adapters.inbound.cli.auth.github_commands import github_login_impl
+
+    try:
+        confirmed = typer.confirm(
+            "\nWould you like to log in to GitHub now?",
+            default=True,
+        )
+    except typer.Abort:
+        confirmed = False
+
+    if confirmed:
+        github_login_impl()
 
 
 def _emit_preflight_fail(wizard: SetupWizardUI, *, as_json: bool) -> None:

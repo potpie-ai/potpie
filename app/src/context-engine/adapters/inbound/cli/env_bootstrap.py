@@ -63,7 +63,24 @@ def load_cli_env() -> None:
             candidate = cur / ".env"
             if candidate.is_file():
                 _load_env_file(candidate)
+            _load_monorepo_potpie_env(cur)
             return
         if cur.parent == cur:
             break
         cur = cur.parent
+
+
+def _load_monorepo_potpie_env(start: Path) -> None:
+    """Merge ``potpie/.env`` when the CLI runs inside the Potpie monorepo."""
+    for ancestor in [start, *start.parents]:
+        potpie_root = ancestor / "potpie"
+        if not potpie_root.is_dir():
+            continue
+        if not (potpie_root / "pyproject.toml").is_file() and not (
+            potpie_root / "app" / "main.py"
+        ).is_file():
+            continue
+        env_file = potpie_root / ".env"
+        if env_file.is_file():
+            _load_env_file(env_file)
+            return
