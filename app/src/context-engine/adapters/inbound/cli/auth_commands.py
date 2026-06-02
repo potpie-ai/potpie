@@ -12,12 +12,23 @@ from typing import Any
 import typer
 from rich.markup import escape
 
+from adapters.inbound.cli.atlassian_auth import run_atlassian_api_token_auth
+from adapters.inbound.cli.atlassian_read import (
+    AtlassianReadError,
+    fetch_confluence_content_sample,
+    fetch_confluence_spaces_sample,
+    fetch_jira_issues_sample,
+    fetch_jira_projects,
+    run_confluence_use_flow,
+    run_jira_use_flow,
+)
 from adapters.inbound.cli.callback_server import OAuthCallbackResult, wait_for_oauth_callback
 from adapters.inbound.cli.credentials_store import (
     ProviderCredentialError,
     clear_integration_tokens,
     credentials_path,
     get_integration_status,
+    get_integration_tokens,
     save_integration_tokens,
 )
 from adapters.inbound.cli.env_bootstrap import load_cli_env
@@ -42,9 +53,19 @@ from adapters.inbound.cli.token_exchange import exchange_authorization_code
 
 auth_app = typer.Typer(help="Authenticate CLI integrations.")
 linear_app = typer.Typer(help="Linear authentication.")
+jira_app = typer.Typer(help="Jira authentication and read.")
+confluence_app = typer.Typer(help="Confluence authentication and read.")
 
 _OAUTH_CALLBACK_TIMEOUT = 300.0
-_ALL_PROVIDERS: tuple[str, ...] = ("linear",)
+_ALL_PROVIDERS: tuple[str, ...] = ("linear", "jira", "confluence")
+
+
+def _canonical_provider_for_json(product: str) -> str:
+    """Map CLI product aliases to provider keys used in JSON output."""
+    key = product.strip().lower()
+    if key in {"wiki", "conf", "confluence"}:
+        return "confluence"
+    return key
 
 
 def register_provider_app(name: str, provider_app: typer.Typer) -> None:
@@ -59,7 +80,6 @@ def _flags() -> tuple[bool, bool]:
     from adapters.inbound.cli.main import _flags as main_flags
 
     return main_flags()
-
 
 def _build_linear_authorization_url(
     *,
@@ -323,6 +343,27 @@ def _run_linear_oauth_flow(*, force: bool = False) -> None:
     _print_linear_login_success(get_integration_status("linear"), tokens=tokens)
 
 
+
+def _handle_already_connected(provider: Provider, status: dict[str, Any]) -> None:
+    j, _ = _flags()
+    name = provider.capitalize()
+    print_plain_line(
+        f"{name} is already connected.",
+        as_json=j,
+        json_payload={
+            "ok": True,
+            "already_connected": True,
+            "provider": provider,
+            "auth_type": status.get("auth_type"),
+            "expires_at": status.get("expires_at"),
+            "cloud_id": status.get("cloud_id"),
+            "site_url": status.get("site_url"),
+            "site_name": status.get("site_name"),
+            "token_storage": status.get("token_storage"),
+        },
+    )
+
+
 @auth_app.command("status")
 def auth_status(
     verify: bool = typer.Option(
@@ -341,7 +382,10 @@ def auth_status(
         row = dict(meta)
         if verify and meta.get("authenticated"):
             try:
-                credentials = ensure_valid_integration_tokens(provider)
+                if provider == "linear":
+                    credentials = ensure_valid_integration_tokens(provider)
+                else:
+                    credentials = get_integration_tokens(provider)
             except (ValueError, RuntimeError, ProviderCredentialError) as exc:
                 row["verified"] = False
                 row["verify_message"] = str(exc)
@@ -392,13 +436,15 @@ def auth_status(
 def auth_logout(
     provider: str = typer.Argument(
         ...,
-        help="Provider to log out: linear.",
+        help="Provider to log out: linear, jira, or confluence.",
     ),
 ) -> None:
     """Remove locally stored credentials for a provider."""
     load_cli_env()
     j, v = _flags()
     key = provider.strip().lower()
+    if key in {"wiki", "conf"}:
+        key = "confluence"
     if key not in _ALL_PROVIDERS:
         emit_error(
             "Unknown provider",
@@ -408,7 +454,9 @@ def auth_logout(
         raise typer.Exit(code=1)
 
     existing = get_integration_status(key)
-    if not existing.get("authenticated"):
+    was_authenticated = bool(existing.get("authenticated"))
+
+    if key == "linear" and not was_authenticated:
         emit_error(
             f"{key} not authenticated",
             "No stored credentials to revoke.",
@@ -422,11 +470,22 @@ def auth_logout(
         emit_error(f"{key} logout failed", str(exc), verbose=v)
         raise typer.Exit(code=1) from exc
 
-    message = f"Logged out of {key}."
+    if was_authenticated:
+        message = f"Logged out of {key}."
+        json_payload: dict[str, Any] = {"ok": True, "provider": key}
+    else:
+        message = (
+            f"No active {key} session; removed any stale local credentials."
+        )
+        json_payload = {
+            "ok": True,
+            "provider": key,
+            "cleared_stale": True,
+        }
     print_plain_line(
         message,
         as_json=j,
-        json_payload={"ok": True, "provider": key},
+        json_payload=json_payload,
     )
 
 
@@ -439,8 +498,6 @@ def auth_revoke(
 ) -> None:
     """Deprecated alias for `potpie auth logout`."""
     auth_logout(provider)
-
-
 
 
 @auth_app.command("linear-login", hidden=True)
@@ -486,3 +543,335 @@ def linear_logout() -> None:
 
 
 register_provider_app("linear", linear_app)
+
+def _print_jira_issue_row(row: dict[str, Any]) -> None:
+    _print_remote_line(
+        f"\n{_esc(row.get('key'))}  {_esc(row.get('summary'))}".rstrip(),
+    )
+    if row.get("project"):
+        _print_remote_line(f"  Project: {_esc(row.get('project'))}")
+    if row.get("status"):
+        _print_remote_line(f"  Status: {_esc(row.get('status'))}")
+    if row.get("type"):
+        _print_remote_line(f"  Type: {_esc(row.get('type'))}")
+    if row.get("assignee"):
+        _print_remote_line(f"  Assignee: {_esc(row.get('assignee'))}")
+    if row.get("priority"):
+        _print_remote_line(f"  Priority: {_esc(row.get('priority'))}")
+    if row.get("created"):
+        created_line = f"  Created: {_esc(row.get('created'))}"
+        if row.get("reporter"):
+            created_line = f"{created_line} · {_esc(row.get('reporter'))}"
+        _print_remote_line(created_line)
+    if row.get("updated"):
+        _print_remote_line(f"  Updated: {_esc(row.get('updated'))}")
+    if row.get("description"):
+        _print_remote_line(f"  Description: {_esc(row.get('description'))}")
+    if row.get("url"):
+        _print_remote_line(f"  URL: {_esc(row.get('url'))}")
+
+
+def _print_wiki_row(row: dict[str, Any], *, pages: bool) -> None:
+    if pages:
+        _print_remote_line(f"\n{_esc(row.get('title'))}")
+        if row.get("space"):
+            _print_remote_line(f"  Space: {_esc(row.get('space'))}")
+        if row.get("status"):
+            _print_remote_line(f"  Status: {_esc(row.get('status'))}")
+        if row.get("created"):
+            created_line = f"  Created: {_esc(row.get('created'))}"
+            if row.get("created_by"):
+                created_line = f"{created_line} · {_esc(row.get('created_by'))}"
+            _print_remote_line(created_line)
+        if row.get("updated"):
+            updated_line = f"  Updated: {_esc(row.get('updated'))}"
+            if row.get("updated_by"):
+                updated_line = f"{updated_line} · {_esc(row.get('updated_by'))}"
+            _print_remote_line(updated_line)
+        if row.get("excerpt"):
+            _print_remote_line(f"  Excerpt: {_esc(row.get('excerpt'))}")
+        if row.get("url"):
+            _print_remote_line(f"  URL: {_esc(row.get('url'))}")
+        return
+    line = f"  {_esc(row.get('key'))}\t{_esc(row.get('name'))}\t{_esc(row.get('type'))}"
+    _print_remote_line(line)
+    if row.get("url"):
+        _print_remote_line(f"    {_esc(row.get('url'))}")
+
+
+def _run_atlassian_quick_read(
+    *,
+    product: str,
+    fetcher,
+    limit: int,
+    hint_cmd: str = "potpie auth jira use",
+    display_name: str | None = None,
+) -> None:
+    load_cli_env()
+    j, v = _flags()
+    name = display_name or ("Confluence" if product == "wiki" else product.capitalize())
+    try:
+        rows = fetcher(limit=limit)
+    except AtlassianReadError as exc:
+        emit_error(f"{name} read failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    if j:
+        print_json_blob(
+            {
+                "ok": True,
+                "provider": "jira" if product == "jira" else "confluence",
+                "product": product,
+                "count": len(rows),
+                "items": rows,
+            },
+            as_json=True,
+        )
+        return
+
+    pages = product == "wiki" and rows and "title" in (rows[0] or {})
+    row_label = "pages" if pages else ("issues" if product == "jira" else "spaces")
+    print_plain_line(f"{name} ({len(rows)} {row_label}):", as_json=False)
+    if not rows:
+        print_plain_line(f"  (no results — run: {hint_cmd})", as_json=False)
+        return
+    for row in rows:
+        if product == "jira":
+            if row.get("description") or row.get("url"):
+                _print_jira_issue_row(row)
+            else:
+                _print_remote_line(
+                    f"  {_esc(row.get('key'))}\t{_esc(row.get('status'))}"
+                    f"\t{_esc(row.get('project'))}\t{_esc(row.get('summary'))}",
+                )
+        else:
+            _print_wiki_row(row, pages=pages)
+
+
+def _run_product_use_result(
+    result: dict[str, Any],
+    *,
+    product_label: str,
+) -> None:
+    load_cli_env()
+    j, _ = _flags()
+    if j:
+        provider = _canonical_provider_for_json(str(result.get("product") or ""))
+        print_json_blob(
+            {"ok": True, **result, "provider": provider},
+            as_json=True,
+        )
+        return
+    _print_remote_line(
+        f"{product_label} workspace: {_esc(result.get('workspace_key'))} "
+        f"({_esc(result.get('workspace_name'))})",
+    )
+    rows = result.get("items") or []
+    print_plain_line(f"{len(rows)} item(s):", as_json=False)
+    for row in rows:
+        if result["product"] == "jira":
+            _print_jira_issue_row(row)
+        else:
+            _print_wiki_row(row, pages=True)
+
+
+@jira_app.command("login")
+def jira_login(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Re-authenticate even if Jira is already connected.",
+    ),
+    email: str | None = typer.Option(
+        None,
+        "--email",
+        help="Atlassian account email (non-interactive login).",
+    ),
+    api_token: str | None = typer.Option(
+        None,
+        "--api-token",
+        help="Atlassian API token (non-interactive login).",
+    ),
+    site_subdomain: str | None = typer.Option(
+        None,
+        "--site-subdomain",
+        help="Atlassian site subdomain, e.g. myteam for myteam.atlassian.net.",
+    ),
+) -> None:
+    """Connect Jira with an Atlassian API token (Jira access only)."""
+    load_cli_env()
+    j, v = _flags()
+    run_atlassian_api_token_auth(
+        "jira",
+        force=force,
+        as_json=j,
+        verbose=v,
+        email=email,
+        api_token=api_token,
+        site_subdomain=site_subdomain,
+    )
+
+
+@jira_app.command("logout")
+def jira_logout() -> None:
+    """Remove stored Jira credentials."""
+    auth_logout("jira")
+
+
+@jira_app.command("ls")
+def jira_ls(
+    limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
+) -> None:
+    """List Jira projects you can access."""
+    load_cli_env()
+    j, v = _flags()
+    try:
+        rows = fetch_jira_projects(limit=limit)
+    except AtlassianReadError as exc:
+        emit_error("Jira workspace list failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    if j:
+        print_json_blob({"ok": True, "provider": "jira", "projects": rows}, as_json=True)
+        return
+    print_plain_line("Jira projects:", as_json=False)
+    if not rows:
+        print_plain_line("  (none)", as_json=False)
+    for row in rows:
+        _print_remote_line(
+            f"  {_esc(row.get('key'))}\t{_esc(row.get('name'))}\t{_esc(row.get('type'))}",
+        )
+        if row.get("url"):
+            _print_remote_line(f"    {_esc(row.get('url'))}")
+    print_plain_line("\nFetch issues: potpie auth jira use", as_json=False)
+
+
+@jira_app.command("use")
+def jira_use(
+    key: str | None = typer.Option(None, "--key", "-k", help="Jira project key."),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
+) -> None:
+    """Select a Jira project and fetch issues in the terminal."""
+    load_cli_env()
+    j, v = _flags()
+    try:
+        result = run_jira_use_flow(workspace_key=key, limit=limit)
+    except AtlassianReadError as exc:
+        emit_error("Jira fetch failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    _run_product_use_result(result, product_label="Jira")
+
+
+@jira_app.command("issues")
+def jira_issues(
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
+) -> None:
+    """Fetch recent Jira issues (saved project, or first project)."""
+    _run_atlassian_quick_read(
+        product="jira",
+        fetcher=fetch_jira_issues_sample,
+        limit=limit,
+        hint_cmd="potpie auth jira use",
+        display_name="Jira",
+    )
+
+
+@confluence_app.command("login")
+def confluence_login(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Re-authenticate even if Confluence is already connected.",
+    ),
+    email: str | None = typer.Option(
+        None,
+        "--email",
+        help="Atlassian account email (non-interactive login).",
+    ),
+    api_token: str | None = typer.Option(
+        None,
+        "--api-token",
+        help="Atlassian API token (non-interactive login).",
+    ),
+    site_subdomain: str | None = typer.Option(
+        None,
+        "--site-subdomain",
+        help="Atlassian site subdomain, e.g. myteam for myteam.atlassian.net.",
+    ),
+) -> None:
+    """Connect Confluence with an Atlassian API token (Confluence access only)."""
+    load_cli_env()
+    j, v = _flags()
+    run_atlassian_api_token_auth(
+        "confluence",
+        force=force,
+        as_json=j,
+        verbose=v,
+        email=email,
+        api_token=api_token,
+        site_subdomain=site_subdomain,
+    )
+
+
+@confluence_app.command("logout")
+def confluence_logout() -> None:
+    """Remove stored Confluence credentials."""
+    auth_logout("confluence")
+
+
+@confluence_app.command("ls")
+def confluence_ls(
+    limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
+) -> None:
+    """List Confluence spaces you can access."""
+    load_cli_env()
+    j, v = _flags()
+    try:
+        rows = fetch_confluence_spaces_sample(limit=limit)
+    except AtlassianReadError as exc:
+        emit_error("Confluence workspace list failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    if j:
+        print_json_blob({"ok": True, "provider": "confluence", "spaces": rows}, as_json=True)
+        return
+    print_plain_line("Confluence spaces:", as_json=False)
+    if not rows:
+        print_plain_line("  (none)", as_json=False)
+    for row in rows:
+        _print_remote_line(
+            f"  {_esc(row.get('key'))}\t{_esc(row.get('name'))}\t{_esc(row.get('type'))}",
+        )
+    print_plain_line("\nFetch pages: potpie auth confluence use", as_json=False)
+
+
+@confluence_app.command("use")
+def confluence_use(
+    key: str | None = typer.Option(None, "--key", "-k", help="Confluence space key."),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
+) -> None:
+    """Select a Confluence space and fetch pages in the terminal."""
+    load_cli_env()
+    j, v = _flags()
+    try:
+        result = run_confluence_use_flow(workspace_key=key, limit=limit)
+    except AtlassianReadError as exc:
+        emit_error("Confluence fetch failed", str(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    _run_product_use_result(result, product_label="Confluence")
+
+
+@confluence_app.command("pages")
+def confluence_pages(
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
+) -> None:
+    """Fetch Confluence pages (saved space) or list spaces if none saved."""
+    _run_atlassian_quick_read(
+        product="wiki",
+        fetcher=fetch_confluence_content_sample,
+        limit=limit,
+        hint_cmd="potpie auth confluence use",
+        display_name="Confluence",
+    )
+
+
+register_provider_app("jira", jira_app)
+register_provider_app("confluence", confluence_app)

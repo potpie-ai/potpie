@@ -155,6 +155,102 @@ def build_linear_integration_record(
     return record
 
 
+def build_product_integration_record(
+    product: str, credentials: dict[str, Any]
+) -> dict[str, Any]:
+    """Build metadata for a single Atlassian product (jira or confluence)."""
+    record = build_atlassian_integration_record(credentials)
+    record["provider"] = product.strip().lower()
+    return record
+
+
+def _stored_at_from_credentials(credentials: dict[str, Any]) -> Any:
+    stored_at = credentials.get("stored_at")
+    return time.time() if stored_at is None else stored_at
+
+
+def _atlassian_site_metadata(
+    cloud_id: str,
+    site_url: str,
+    site_name: str,
+) -> dict[str, Any]:
+    site: dict[str, Any] = {}
+    if cloud_id:
+        site["cloud_id"] = cloud_id
+    if site_url:
+        site["site_url"] = site_url
+    if site_name:
+        site["site_name"] = site_name
+    return site
+
+
+def _apply_atlassian_identity_fields(
+    record: dict[str, Any],
+    *,
+    email: str,
+    cloud_id: str,
+    site_url: str,
+    site_name: str,
+    account: dict[str, Any],
+    site: dict[str, Any],
+) -> None:
+    if account:
+        record["account"] = account
+    if site:
+        record["site"] = site
+    for key, value in (
+        ("email", email),
+        ("cloud_id", cloud_id),
+        ("site_url", site_url),
+        ("site_name", site_name),
+    ):
+        if value:
+            record[key] = value
+
+
+def build_atlassian_integration_record(credentials: dict[str, Any]) -> dict[str, Any]:
+    """Build non-secret Atlassian metadata with nested account/site plus flat fields."""
+    now = utc_now_iso()
+    email = str(credentials.get("email") or "").strip()
+    cloud_id = str(credentials.get("cloud_id") or "").strip()
+    site_url = str(credentials.get("site_url") or "").strip()
+    site_name = str(credentials.get("site_name") or "").strip()
+    account = {"email": email} if email else {}
+    site = _atlassian_site_metadata(cloud_id, site_url, site_name)
+    token_style = str(credentials.get("token_style") or "classic").strip() or "classic"
+
+    record: dict[str, Any] = {
+        "provider": "atlassian",
+        "provider_host": "atlassian.net",
+        "auth_type": "api_token",
+        "token_style": token_style,
+        "token_storage": "keychain",
+        "stored_at": _stored_at_from_credentials(credentials),
+        "created_at": credentials.get("created_at") or now,
+        "updated_at": now,
+        "metadata": {"auth_flow": "classic_api_token"},
+    }
+    _apply_atlassian_identity_fields(
+        record,
+        email=email,
+        cloud_id=cloud_id,
+        site_url=site_url,
+        site_name=site_name,
+        account=account,
+        site=site,
+    )
+    workspaces = credentials.get("workspaces")
+    if isinstance(workspaces, dict) and workspaces:
+        record["workspaces"] = workspaces
+    return record
+
+
+def atlassian_workspaces_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    workspaces = entry.get("workspaces")
+    if isinstance(workspaces, dict):
+        return workspaces
+    return {}
+
 
 
 def linear_account_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
@@ -162,3 +258,25 @@ def linear_account_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
     if isinstance(account, dict):
         return account
     return {}
+
+
+def atlassian_account_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    account = entry.get("account")
+    if isinstance(account, dict):
+        return account
+    email = entry.get("email")
+    if email:
+        return {"email": email}
+    return {}
+
+
+def atlassian_site_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    site = entry.get("site")
+    if isinstance(site, dict):
+        return site
+    out: dict[str, Any] = {}
+    for key in ("cloud_id", "site_url", "site_name"):
+        value = entry.get(key)
+        if value:
+            out[key] = value
+    return out

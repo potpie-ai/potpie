@@ -1,4 +1,4 @@
-"""OAuth provider constants and env-backed configuration for CLI integration auth."""
+"""OAuth and Atlassian API configuration for CLI integration auth."""
 
 from __future__ import annotations
 
@@ -6,8 +6,9 @@ import os
 from typing import Literal
 from urllib.parse import urlparse
 
-Provider = Literal["linear"]
+Provider = Literal["linear", "github", "atlassian", "jira", "confluence"]
 OAuthProvider = Literal["linear"]
+AtlassianProduct = Literal["jira", "confluence"]
 
 DEFAULT_CALLBACK_PORT = 8080
 DEFAULT_CALLBACK_PATH = "/callback"
@@ -17,6 +18,12 @@ DEFAULT_CALLBACK_HOST = "localhost"
 LINEAR_AUTH_URL = "https://linear.app/oauth/authorize"
 LINEAR_TOKEN_URL = "https://api.linear.app/oauth/token"
 LINEAR_DEFAULT_SCOPE = "read"
+
+ATLASSIAN_API_TOKEN_PAGE = "https://id.atlassian.com/manage-profile/security/api-tokens"
+ATLASSIAN_API_GATEWAY = "https://api.atlassian.com"
+ATLASSIAN_ACCESSIBLE_RESOURCES_URL = (
+    f"{ATLASSIAN_API_GATEWAY}/oauth/token/accessible-resources"
+)
 
 
 def get_redirect_uri() -> str:
@@ -82,3 +89,11 @@ def token_url(provider: OAuthProvider) -> str:
     if provider != "linear":
         raise ValueError(f"Unsupported OAuth provider: {provider!r}")
     return LINEAR_TOKEN_URL
+
+
+def atlassian_jira_gateway_url(cloud_id: str) -> str:
+    return f"{ATLASSIAN_API_GATEWAY}/ex/jira/{cloud_id.strip()}"
+
+
+def atlassian_confluence_gateway_url(cloud_id: str) -> str:
+    return f"{ATLASSIAN_API_GATEWAY}/ex/confluence/{cloud_id.strip()}"
