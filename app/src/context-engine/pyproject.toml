@@ -102,6 +102,7 @@ asyncio_mode = "auto"
 markers = [
     "unit: unit tests",
     "integration: integration tests (no external services required, but exercise real third-party libs)",
+    "cli_auth_e2e: opt-in live CLI auth tests (Linear/Jira/Confluence); requires RUN_CLI_AUTH_E2E=1",
 ]
 
 [dependency-groups]
