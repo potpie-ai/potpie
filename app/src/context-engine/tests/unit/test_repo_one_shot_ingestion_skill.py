@@ -273,6 +273,28 @@ def test_skill_uses_real_pr_response_fields() -> None:
             )
 
 
+def test_skill_uses_real_issue_response_fields() -> None:
+    """The issue path must rely only on fields returned by get_issue."""
+    _, body = _read_skill()
+    issue_section = _section(body, "Procedure")
+    issue_idx = issue_section.find("Issue items")
+    assert issue_idx >= 0, "Procedure must have an Issue items subsection"
+    issue_section = issue_section[issue_idx:]
+    for fld in (
+        "title",
+        "body",
+        "state",
+        "author",
+        "labels",
+        "created_at",
+        "updated_at",
+        "url",
+    ):
+        assert fld in issue_section, (
+            f"issue procedure should mention real issue field {fld!r}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Ontology references
 # ---------------------------------------------------------------------------

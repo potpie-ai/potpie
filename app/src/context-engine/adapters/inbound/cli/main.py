@@ -742,7 +742,10 @@ def pot_repo_ingest_cmd(
         "-n",
         min=1,
         max=500,
-        help="Number of recent merged PRs to ingest (default 50, server may cap).",
+        help=(
+            "Number of recent merged PRs and standalone issues to ingest "
+            "(default 50 per kind, server may cap)."
+        ),
     ),
     cwd: str | None = typer.Option(
         None,
@@ -750,14 +753,15 @@ def pot_repo_ingest_cmd(
         help="Git repo directory for pot inference when --pot is omitted.",
     ),
 ) -> None:
-    """Trigger one-shot PR-history ingestion of an attached repo.
+    """Trigger one-shot PR + issue history ingestion of an attached repo.
 
     Submits a single `(github, repository, one_shot_ingest)` event to
     `/api/v2/context/events/reconcile`. The reconciliation agent picks it up
     asynchronously and follows the `repo_one_shot_ingestion` playbook to
-    backfill recent merged PRs into the context graph. Re-running creates a
-    fresh event; idempotency for already-ingested PRs comes from stable
-    Activity entity keys in the playbook, not from event-level dedupe.
+    backfill recent merged PRs and standalone issues into the context graph.
+    Re-running creates a fresh event; idempotency for already-ingested items
+    comes from stable Activity entity keys in the playbook, not from
+    event-level dedupe.
     """
     load_cli_env()
     j, v = _flags()

@@ -109,16 +109,29 @@ class _FakePull:
         self.user = _FakeUser("octocat")
 
 
+class _FakeLabel:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
 class _FakeIssue:
-    def __init__(self, number: int, updated: datetime, is_pr: bool = False) -> None:
+    def __init__(
+        self,
+        number: int,
+        updated: datetime,
+        is_pr: bool = False,
+        labels: list[str] | None = None,
+    ) -> None:
         self.number = number
         self.title = f"Issue {number}"
+        self.body = f"Body {number}"
         self.state = "open"
         self.created_at = updated
         self.updated_at = updated
         self.html_url = f"https://x/i/{number}"
         self.user = _FakeUser("octocat")
         self.comments = 0
+        self.labels = [_FakeLabel(name) for name in (labels or [])]
         # PyGithub sets .pull_request on issues that are actually PRs.
         self.pull_request = object() if is_pr else None
 
@@ -133,6 +146,12 @@ class _FakeRepo:
 
     def get_issues(self, **_kw):
         return list(self._issues)
+
+    def get_issue(self, issue_number: int):
+        for issue in self._issues:
+            if issue.number == issue_number:
+                return issue
+        raise KeyError(issue_number)
 
 
 class _FakeGithub:
@@ -190,6 +209,19 @@ def test_list_issues_excludes_pull_requests(
     ]
     out = _client(issues=issues).list_issues("o/r")
     assert [i["number"] for i in out] == [1, 3]
+
+
+def test_issue_reads_include_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_BACKFILL_WINDOW_DAYS", "0")
+    monkeypatch.setenv("CONTEXT_ENGINE_BACKFILL_MAX_ITEMS", "100")
+    now = datetime.now(timezone.utc)
+    client = _client(issues=[_FakeIssue(1, now, labels=["bug", "question"])])
+
+    listed = client.list_issues("o/r")
+    hydrated = client.get_issue("o/r", 1)
+
+    assert listed[0]["labels"] == [{"name": "bug"}, {"name": "question"}]
+    assert hydrated["labels"] == [{"name": "bug"}, {"name": "question"}]
 
 
 def test_list_handles_naive_datetimes(monkeypatch: pytest.MonkeyPatch) -> None:
