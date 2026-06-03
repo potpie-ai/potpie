@@ -13,7 +13,7 @@ from app.modules.auth.api_key_deps import get_api_key_user
 from app.modules.auth.auth_service import AuthService
 from app.modules.context_graph.context_pot_routes import make_pot_router
 from app.modules.context_graph.wiring import build_container_for_user_session
-from bootstrap.container import ContextEngineContainer
+from bootstrap.ingestion_server import IngestionServerContainer
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +21,14 @@ logger = logging.getLogger(__name__)
 def get_context_engine_container(
     db: Session = Depends(get_db),
     user: dict = Depends(AuthService.check_auth),
-) -> ContextEngineContainer:
+) -> IngestionServerContainer:
     return build_container_for_user_session(db, user["user_id"])
 
 
 def get_context_engine_container_for_api_key(
     user: dict = Depends(get_api_key_user),
     db: Session = Depends(get_db),
-) -> ContextEngineContainer:
+) -> IngestionServerContainer:
     """Same container shape as Firebase auth, for /api/v2/context (X-API-Key)."""
     return build_container_for_user_session(db, user["user_id"])
 

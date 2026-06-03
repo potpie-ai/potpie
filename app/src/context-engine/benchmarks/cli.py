@@ -526,13 +526,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Run N scenarios in parallel (pots are isolated; safe up to engine capacity).",
     )
     p_run.add_argument("--skip-judge", action="store_true", help="Skip the LLM-judge axis (cheap dry runs)")
+    # Invariant (schema-independent) grading is the default: the read path
+    # returns a pure evidence envelope (no server-side answer.summary), so the
+    # judge grades the agent's answer against the scenario's input events alone
+    # (faithfulness/coverage/clarity/usefulness). Ingestion and retrieval axes
+    # stay in the report as diagnostics but do not gate.
     p_run.add_argument(
-        "--invariant",
-        action="store_true",
-        help="Schema-independent grading: replace the per-rubric synthesis judge "
-        "with an LLM call that grades the agent's answer against the scenario's "
-        "input events alone (faithfulness/coverage/clarity/usefulness). Ingestion "
-        "and retrieval axes stay in the report as diagnostics but do not gate.",
+        "--rubric",
+        dest="invariant",
+        action="store_false",
+        help="Opt out of invariant grading and use the legacy per-rubric "
+        "synthesis judge (deprecated; requires a server-synthesised answer).",
     )
     p_run.add_argument(
         "--local",
@@ -541,7 +545,7 @@ def main(argv: list[str] | None = None) -> int:
         "reuses Postgres/Neo4j and reconciles inline). Equivalent to POTPIE_BENCH_INPROCESS=1.",
     )
     p_run.add_argument("--verbose", "-v", action="store_true")
-    p_run.set_defaults(func=_cmd_run, light_only=False)
+    p_run.set_defaults(func=_cmd_run, light_only=False, invariant=True)
 
     # --- run-light: curated 5-scenario subset, 5-way parallel, invariant judge.
     p_light = sub.add_parser(

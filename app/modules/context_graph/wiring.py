@@ -34,7 +34,10 @@ from adapters.outbound.connectors.github import GitHubConnector
 from adapters.outbound.connectors.linear.connector import LinearConnector
 from adapters.outbound.connectors.notion import NotionConnector
 from application.services.source_connector_registry import SourceConnectorRegistry
-from bootstrap.container import ContextEngineContainer, build_container
+from bootstrap.ingestion_server import (
+    IngestionServerContainer,
+    build_ingestion_server,
+)
 from domain.context_status import StatusSource
 from domain.source_references import SourceReferenceRecord
 from domain.ports.pot_resolution import (
@@ -677,14 +680,14 @@ def _attach_agent_tools(agent, db: Session, *, source_for_repo) -> None:
         attach(builders)
 
 
-def build_container_for_session(db: Session) -> ContextEngineContainer:
+def build_container_for_session(db: Session) -> IngestionServerContainer:
     def source_for_repo(repo_name: str):
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         return CodeProviderSourceControl(provider)
 
     agent = try_pydantic_deep_reconciliation_agent()
     _attach_agent_tools(agent, db, source_for_repo=source_for_repo)
-    container = build_container(
+    container = build_ingestion_server(
         settings=PotpieContextEngineSettings(),
         pots=SqlalchemyPotResolution(db),
         connectors=_build_connector_registry(db, source_for_repo),
@@ -695,14 +698,14 @@ def build_container_for_session(db: Session) -> ContextEngineContainer:
     return container
 
 
-def build_container_for_user_session(db: Session, user_id: str) -> ContextEngineContainer:
+def build_container_for_user_session(db: Session, user_id: str) -> IngestionServerContainer:
     def source_for_repo(repo_name: str):
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         return CodeProviderSourceControl(provider)
 
     agent = try_pydantic_deep_reconciliation_agent()
     _attach_agent_tools(agent, db, source_for_repo=source_for_repo)
-    container = build_container(
+    container = build_ingestion_server(
         settings=PotpieContextEngineSettings(),
         pots=UserScopedContextGraphPotResolution(db, user_id),
         connectors=_build_connector_registry(db, source_for_repo),
