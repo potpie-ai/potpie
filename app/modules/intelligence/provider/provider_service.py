@@ -1364,7 +1364,7 @@ class ProviderService:
             "claude-sonnet-4",
             "claude-opus-4-1",
             "claude-haiku-4-5",
-            "claude-sonnet-4-5",
+            "claude-sonnet-4-6",
             # Google models
             "gemini-pro-vision",
             "gemini-1.5",

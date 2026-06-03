@@ -120,24 +120,57 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
     if error_type == "tunnel_unreachable" or (
         tunnel_url and error_type in ["timeout", "connection_error"]
     ):
-        # Workspace socket was registered but request failed
+        # Re-check after RPC may have cleared a stale registration
+        still_registered = bool(
+            tunnel_service.get_tunnel_url(
+                user_id,
+                conversation_id,
+                repository=_get_repository(),
+                branch=_get_branch(),
+            )
+        )
         logger.warning(
-            f"⚠️ [execute_terminal_command] Workspace socket registered ({tunnel_url}) but not reachable (error: {error_type})"
-        , tunnel_url=tunnel_url, error_type=error_type)
+            "⚠️ [execute_terminal_command] Workspace socket {} (error: {})",
+            "still registered as " + (tunnel_url or "unknown")
+            if still_registered
+            else "stale registration cleared",
+            error_type,
+        )
+        if error_type == "timeout" and still_registered:
+            return (
+                f"❌ **Terminal command timed out**\n\n"
+                f"The extension is still registered (`{tunnel_url}`), but the command "
+                f"did not return before the timeout.\n\n"
+                f"**What this means:**\n"
+                f"- The tunnel was not cleared\n"
+                f"- The command may still have completed locally after the response timed out\n"
+                f"- For long-running commands, run it again with `mode=\"async\"` and poll the session output\n\n"
+                f"**Command:** `{input_data.command}`"
+            )
+        if still_registered:
+            return (
+                f"❌ **Workspace socket connection error**\n\n"
+                f"The extension is registered (`{tunnel_url}`) but the request failed.\n\n"
+                f"**Possible causes:**\n"
+                f"- The extension Socket.IO connection was interrupted or disconnected\n"
+                f"- Network connectivity issues\n"
+                f"- Temporary connection timeout\n\n"
+                f"**To fix:**\n"
+                f"1. Ensure the VS Code extension is running and connected\n"
+                f"2. Check the extension shows a connected status in the Trace panel\n"
+                f"3. Reload the VS Code window if needed, then reply `ready`\n"
+                f"4. Try the command again once reconnected\n"
+                f"5. If the issue persists, check the VS Code extension logs\n\n"
+                f"**Note:** Stale registrations are cleared automatically; reconnecting refreshes the tunnel."
+            )
         return (
-            f"❌ **Workspace socket connection error**\n\n"
-            f"The extension is registered (`{tunnel_url}`) but the request failed.\n\n"
-            f"**Possible causes:**\n"
-            f"- The extension Socket.IO connection was interrupted or disconnected\n"
-            f"- Network connectivity issues\n"
-            f"- Temporary connection timeout\n\n"
-            f"**To fix:**\n"
-            f"1. Ensure the VS Code extension is running and connected\n"
-            f"2. Check the extension shows a connected status\n"
-            f"3. Try the command again - this may be a transient connection issue\n"
-            f"4. The extension should automatically reconnect if needed\n"
-            f"5. If the issue persists, check the VS Code extension logs\n\n"
-            f"**Note:** The workspace socket may be temporarily unavailable. The extension will automatically reconnect."
+            "❌ **VS Code extension disconnected**\n\n"
+            "The workspace tunnel was registered but the connection dropped before "
+            "this command could run. The stale registration has been cleared.\n\n"
+            "**To fix:**\n"
+            "1. Open VS Code and ensure the Potpie extension is running\n"
+            "2. Confirm **Connected** in the Trace panel\n"
+            "3. Reply `ready` and retry — the extension will re-register automatically"
         )
     elif error_type == "tunnel_expired":
         # Workspace registration was expired and cleaned up

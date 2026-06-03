@@ -24,7 +24,11 @@ class MultiAgentConfig:
         "code_generation_agent": os.getenv("CODE_GEN_MULTI_AGENT", "true").lower()
         == "true",
         "codebase_qna_agent": os.getenv("QNA_MULTI_AGENT", "true").lower() == "true",
-        "debugging_agent": os.getenv("DEBUG_MULTI_AGENT", "true").lower() == "true",
+        # A7.1: Default to single-agent (PydanticRagAgent) for debugging_agent.
+        # The DAP loop is stateful; round-tripping through THINK_EXECUTE delegation
+        # risks losing tool-call context.  To re-enable multi-agent mode set the env
+        # var: DEBUG_MULTI_AGENT=true
+        "debugging_agent": os.getenv("DEBUG_MULTI_AGENT", "false").lower() == "true",
         "unit_test_agent": os.getenv("UNIT_TEST_MULTI_AGENT", "true").lower() == "true",
         "integration_test_agent": os.getenv(
             "INTEGRATION_TEST_MULTI_AGENT", "true"
@@ -102,7 +106,7 @@ ENABLE_MULTI_AGENT=true
 GENERAL_PURPOSE_MULTI_AGENT=true
 CODE_GEN_MULTI_AGENT=true
 QNA_MULTI_AGENT=true
-DEBUG_MULTI_AGENT=true
+DEBUG_MULTI_AGENT=false  # default false (A7.1) — set to true to re-enable multi-agent for debugging_agent
 UNIT_TEST_MULTI_AGENT=true
 INTEGRATION_TEST_MULTI_AGENT=true
 LLD_MULTI_AGENT=true

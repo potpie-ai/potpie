@@ -488,23 +488,20 @@ class CachingAnthropicModel(AnthropicModel):
     async def request(
         self,
         messages: list[ModelMessage],
-        *,
         model_settings: ModelSettings | None = None,
-    ):
+        model_request_parameters: ModelRequestParameters | None = None,
+    ) -> ModelResponse:
         """
-        Override request to intercept and log cache metrics from both
-        non-streaming and streaming responses.
+        Match pydantic-ai's current Model.request contract.
+
+        Cache metrics are logged by _process_response, so the parent request
+        flow can be used directly after the custom _messages_create hook runs.
         """
-        # Call parent's request method
-        result = await super().request(messages, model_settings=model_settings)
-
-        # For non-streaming responses, cache metrics are already logged in _process_response
-        # For streaming responses, we need to wrap the result to log metrics
-        if hasattr(result, "__aiter__"):
-            # This is a streaming response - wrap it to log metrics
-            return self._wrap_streaming_response(result)
-
-        return result
+        if model_request_parameters is None:
+            model_request_parameters = ModelRequestParameters()
+        return await super().request(
+            messages, model_settings, model_request_parameters
+        )
 
     async def _wrap_streaming_response(self, stream_response):
         """
@@ -612,8 +609,20 @@ class CachingAnthropicModel(AnthropicModel):
                 if self._cache_ttl != "5m":
                     cache_control["ttl"] = self._cache_ttl
 
-                # Check if system prompt contains the cache breakpoint marker
-                if CACHE_BREAKPOINT_MARKER in system_prompt:
+                # pydantic-ai may return either a plain string or structured
+                # Anthropic text blocks. Preserve structured blocks instead of
+                # nesting them into a new text field.
+                if isinstance(system_prompt, list):
+                    system_blocks = [dict(block) for block in system_prompt]
+                    text_block_indexes = [
+                        i
+                        for i, block in enumerate(system_blocks)
+                        if block.get("type") == "text" and isinstance(block.get("text"), str)
+                    ]
+                    if text_block_indexes:
+                        system_blocks[text_block_indexes[-1]]["cache_control"] = cache_control
+                    system_param = system_blocks
+                elif CACHE_BREAKPOINT_MARKER in system_prompt:
                     # Split at marker: cache static part, don't cache dynamic part
                     parts = system_prompt.split(CACHE_BREAKPOINT_MARKER, 1)
                     static_content = parts[0].strip()
