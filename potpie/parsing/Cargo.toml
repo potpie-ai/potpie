@@ -11,11 +11,15 @@ repository = "https://github.com/potpie-ai/potpie"
 name = "parsing_rs"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
+
 [package.metadata.maturin]
 name = "parsing_rs"
 
 [dependencies]
-pyo3 = { version = "0.28.2", features = ["extension-module"] }
+pyo3 = { version = "0.28.2" }
 walkdir = "2"
 jwalk = "0.8"
 log = "0.4"

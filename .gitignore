@@ -10,6 +10,9 @@ venv/
 .env
 *.json
 !seed/data/**/*.json
+!potpie/context-engine/benchmarks/data/**/*.json
+!potpie/context-engine/tests/data/**/*.json
+!potpie/context-engine/tests/fixtures/**/*.json
 .momentum
 db
 cli/momentum_cli/.momentum

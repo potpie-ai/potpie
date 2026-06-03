@@ -28,7 +28,9 @@ jobs:
         run: uv sync --frozen --all-packages --no-cache
 
       - name: Run parsing_rs Rust tests
-        run: cargo test --manifest-path potpie/parsing/Cargo.toml
+        env:
+          PYO3_PYTHON: ${{ github.workspace }}/.venv/bin/python
+        run: cargo test --manifest-path potpie/parsing/Cargo.toml --no-default-features
 
       - name: Check for Python package tests
         working-directory: potpie/parsing
@@ -106,11 +108,11 @@ jobs:
 
       - name: Run sandbox unit tests
         working-directory: potpie/sandbox
-        run: uv run --project . pytest tests/unit
+        run: uv run --project . --extra daytona pytest tests/unit
 
       - name: Run sandbox local integration tests
         working-directory: potpie/sandbox
-        run: uv run --project . pytest tests/integration/test_docker_runtime.py tests/e2e/test_local_subprocess_e2e.py
+        run: uv run --project . --extra daytona pytest tests/integration/test_docker_runtime.py tests/e2e/test_local_subprocess_e2e.py
 
   legacy-regression:
     runs-on: ubuntu-latest

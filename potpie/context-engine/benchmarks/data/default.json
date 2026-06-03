@@ -1,0 +1,160 @@
+{
+  "seed_episodes": [],
+  "seed_records": [],
+  "scenarios": [],
+  "thresholds": {},
+  "linear_issues": [
+    {
+      "issue": {
+        "identifier": "ENG-42",
+        "title": "Context resolver loses source provenance"
+      }
+    },
+    {
+      "issue": {
+        "identifier": "ENG-128",
+        "title": "Hybrid search drops timeline facts"
+      }
+    }
+  ],
+  "pr_bundles": [
+    {
+      "repo_name": "potpie/api",
+      "pr_data": {
+        "number": 42,
+        "title": "Preserve context resolver provenance",
+        "author": "dev-a",
+        "head_branch": "fix/context-provenance",
+        "base_branch": "main",
+        "merged_at": "2026-04-22T12:00:00Z",
+        "body": "Fixes provenance loss in context resolution.",
+        "files": [
+          {
+            "filename": "application/services/context_resolution.py",
+            "patch": "@@ context provenance @@"
+          }
+        ],
+        "labels": [
+          {
+            "name": "context"
+          }
+        ]
+      },
+      "commits": [
+        {
+          "sha": "abc1234",
+          "message": "Preserve provenance metadata"
+        }
+      ],
+      "review_comments": [
+        {
+          "path": "application/services/context_resolution.py",
+          "line": 44,
+          "diff_hunk": "@@",
+          "comments": [
+            {
+              "author": "reviewer-a",
+              "body": "Keep source refs attached."
+            }
+          ]
+        }
+      ],
+      "issue_comments": [
+        {
+          "user": {
+            "login": "reviewer-b"
+          },
+          "body": "Verified locally."
+        }
+      ],
+      "linked_issues": [
+        {
+          "number": 42,
+          "title": "Context provenance missing",
+          "body": "Context answers should show provenance."
+        }
+      ]
+    },
+    {
+      "repo_name": "potpie/api",
+      "pr_data": {
+        "number": 84,
+        "title": "Backfill source references",
+        "author": "dev-b",
+        "head_branch": "feat/source-ref-backfill",
+        "base_branch": "main",
+        "merged_at": "2026-04-23T12:00:00Z",
+        "body": "Adds backfill for source refs.",
+        "files": [
+          {
+            "filename": "application/use_cases/backfill_pot.py",
+            "patch": "@@ backfill @@"
+          }
+        ]
+      },
+      "commits": [
+        {
+          "sha": "def5678",
+          "message": "Backfill source refs"
+        }
+      ],
+      "review_comments": [],
+      "issue_comments": [],
+      "linked_issues": []
+    },
+    {
+      "repo_name": "potpie/api",
+      "pr_data": {
+        "number": 101,
+        "title": "Rate limit context ingestion",
+        "author": "dev-c",
+        "head_branch": "feat/rate-limit-ingestion",
+        "base_branch": "main",
+        "merged_at": "2026-04-24T12:00:00Z",
+        "body": "Adds rate limiting for ingestion workers.",
+        "files": [
+          {
+            "filename": "application/services/ingestion_submission_service.py",
+            "patch": "@@ rate @@"
+          }
+        ]
+      },
+      "commits": [
+        {
+          "sha": "fed9876",
+          "message": "Rate limit ingestion"
+        }
+      ],
+      "review_comments": [],
+      "issue_comments": [],
+      "linked_issues": []
+    },
+    {
+      "repo_name": "potpie/api",
+      "pr_data": {
+        "number": 128,
+        "title": "Hybrid context graph search",
+        "author": "dev-d",
+        "head_branch": "feat/hybrid-context-search",
+        "base_branch": "main",
+        "merged_at": "2026-04-25T12:00:00Z",
+        "body": "Adds hybrid semantic and timeline search.",
+        "files": [
+          {
+            "filename": "application/services/graph_query_planner.py",
+            "patch": "@@ hybrid @@"
+          }
+        ]
+      },
+      "commits": [
+        {
+          "sha": "cafe128",
+          "message": "Add hybrid context graph search"
+        }
+      ],
+      "review_comments": [],
+      "issue_comments": [],
+      "linked_issues": []
+    }
+  ]
+}

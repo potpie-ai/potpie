@@ -29,7 +29,7 @@ def test_allowed_lifecycle_statuses_export() -> None:
 
 
 def test_phase_one_catalog_contains_project_context_domains() -> None:
-    assert ONTOLOGY_VERSION == "2026-04-phase-7"
+    assert ONTOLOGY_VERSION == "2026-04-phase-8-timeline"
     for label in (
         "Pot",
         "Repository",

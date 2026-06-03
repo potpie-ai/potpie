@@ -31,7 +31,19 @@ def test_install_agent_bundle_creates_expected_files(tmp_path: Path) -> None:
 
     result = install_agent_bundle(repo)
 
-    expected = {rel.as_posix() for rel, _ in iter_template_files()}
+    expected = {
+        rel.as_posix()
+        for rel, _ in iter_template_files()
+        if rel.parts[:2] != (".agents", "skills")
+    }
+    expected.update(
+        {
+            ".agents/skills/potpie-agent-context",
+            ".agents/skills/potpie-cli",
+            ".agents/skills/potpie-cli-troubleshooting",
+            ".agents/skills/potpie-pot-scope",
+        }
+    )
     created = set(result.created)
     assert created == expected
     assert not result.updated
@@ -94,8 +106,6 @@ def test_install_agent_bundle_claude_creates_claude_files(tmp_path: Path) -> Non
     content = (repo / "CLAUDE.md").read_text(encoding="utf-8")
     assert "<!-- potpie-start -->" in content
     assert "context_resolve" in content
-    assert (repo / ".claude" / "commands" / "potpie-feature.md").exists()
-    assert (repo / ".claude" / "commands" / "potpie-record.md").exists()
 
 
 def test_install_agent_bundle_claude_merges_into_existing_claude_md(

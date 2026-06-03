@@ -501,6 +501,7 @@ mod tests {
             repo_path,
             &["config", "user.email", "potpie-tests@example.com"],
         );
+        assert_git_ok(repo_path, &["config", "commit.gpgsign", "false"]);
 
         for (relative_path, contents) in files {
             let file_path = repo_path.join(relative_path);

@@ -58,6 +58,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+markers = [
+    "unit: unit tests",
+]
 
 [tool.uv]
 constraint-dependencies = [
