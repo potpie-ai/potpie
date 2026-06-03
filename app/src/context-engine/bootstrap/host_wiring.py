@@ -51,6 +51,14 @@ def default_backend_profile() -> str:
     return (os.getenv("CONTEXT_ENGINE_BACKEND") or "embedded").strip().lower()
 
 
+def default_host_mode() -> str:
+    # 'in_process' is the default (host runs in the CLI process); $CONTEXT_ENGINE_HOST_MODE
+    # = 'daemon' opts into the real detached background daemon. The 'setup' command also
+    # flips this per-run via --daemon. When detached, the daemon/installer setup steps
+    # become hard (see DefaultSetupOrchestrator._HOST_GATED).
+    return (os.getenv("CONTEXT_ENGINE_HOST_MODE") or "in_process").strip().lower()
+
+
 def build_host_shell(
     *,
     backend: GraphBackend | None = None,
@@ -88,7 +96,7 @@ def build_host_shell(
     )
 
     # Lifecycle components (each independently ownable; see the setup orchestrator).
-    daemon = Daemon()
+    daemon = Daemon(in_process=(default_host_mode() != "daemon"))
     config = LocalConfigService()
     installer = LocalInstaller()
     auth = LocalAuthService()

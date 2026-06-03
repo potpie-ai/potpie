@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import typer
 
-from adapters.inbound.cli.commands import bootstrap, cloud, daemon, graph, ledger, pots
+from adapters.inbound.cli.commands import bootstrap, cloud, daemon, graph, ledger, pots, service
 from adapters.inbound.cli.commands import ingest as ingest_cmds
 from adapters.inbound.cli.commands import query as query_cmds
 from adapters.inbound.cli.commands import skills as skills_cmds
@@ -40,6 +40,7 @@ def build_app() -> typer.Typer:
     app.add_typer(pots.pot_app, name="pot")
     app.add_typer(pots.source_app, name="source")
     app.add_typer(daemon.daemon_app, name="daemon")
+    app.add_typer(service.service_app, name="service")
     app.add_typer(ingest_cmds.ingest_app, name="ingest")
     app.add_typer(ledger.ledger_app, name="ledger")
     app.add_typer(graph.graph_app, name="graph")

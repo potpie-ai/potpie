@@ -31,6 +31,11 @@ def register(root: typer.Typer) -> None:
         scan: bool = typer.Option(False, "--scan"),
         dry_run: bool = typer.Option(False, "--dry-run", help="Show the steps without executing."),
         yes: bool = typer.Option(False, "--yes", "-y", help="Assume yes for prompts."),
+        daemon: bool = typer.Option(
+            None, "--daemon/--in-process",
+            help="Provision a real detached daemon (makes the daemon/installer steps hard). "
+                 "Defaults to $CONTEXT_ENGINE_HOST_MODE (in-process).",
+        ),
     ) -> None:
         """Idempotent first-run: provision config, storage, daemon, default pot, skills."""
         with contract():
@@ -44,6 +49,16 @@ def register(root: typer.Typer) -> None:
                 from bootstrap.host_wiring import build_host_shell
 
                 host = build_host_shell(backend=build_backend(backend), profile=host.profile)
+                set_host(host)
+            # --daemon/--in-process selects the host mode for this run. Like --backend it is
+            # a wiring-time choice, so rebuild the host with the matching Daemon when it differs.
+            if daemon is not None and getattr(host.daemon, "in_process", True) != (not daemon):
+                import os
+                from adapters.inbound.cli.commands._common import set_host
+                from bootstrap.host_wiring import build_host_shell
+
+                os.environ["CONTEXT_ENGINE_HOST_MODE"] = "daemon" if daemon else "in_process"
+                host = build_host_shell(backend=host.backend, profile=host.profile)
                 set_host(host)
             plan = SetupPlan(
                 mode=host.profile if host.profile in ("local", "managed") else "local",
