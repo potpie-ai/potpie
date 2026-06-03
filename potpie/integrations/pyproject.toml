@@ -8,10 +8,30 @@ version = "0.1.0"
 description = "Potpie external integrations (hexagonal layout, mirrors context-engine structure)."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
+license = "Apache-2.0"
+authors = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
+maintainers = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
+keywords = ["ai", "developer-tools", "integrations", "oauth", "webhooks"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://potpie.ai"
+Documentation = "https://docs.potpie.ai"
+Source = "https://github.com/potpie-ai/potpie"
+Issues = "https://github.com/potpie-ai/potpie/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["integrations"]
 
 [tool.hatch.build.targets.sdist]
-include = ["integrations"]
+include = ["README.md", "integrations"]

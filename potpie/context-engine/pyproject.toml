@@ -3,10 +3,27 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "context-engine"
+name = "potpie-context-engine"
 version = "0.1.0"
 description = "Context graph API, webhooks, CLI, and MCP (hexagonal)."
+readme = "README.md"
 requires-python = ">=3.10,<3.14"
+license = "Apache-2.0"
+authors = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
+maintainers = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
+keywords = ["ai", "agents", "context-graph", "knowledge-graph", "mcp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
@@ -16,6 +33,12 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.0",
 ]
+
+[project.urls]
+Homepage = "https://potpie.ai"
+Documentation = "https://docs.potpie.ai"
+Source = "https://github.com/potpie-ai/potpie"
+Issues = "https://github.com/potpie-ai/potpie/issues"
 
 [project.optional-dependencies]
 postgres = [
@@ -66,6 +89,7 @@ include = [
 
 [tool.hatch.build.targets.sdist]
 include = [
+    "README.md",
     "domain",
     "application",
     "adapters",

@@ -3,9 +3,27 @@ requires = ["maturin>=1.13,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "parsing"
+name = "potpie-parsing"
+version = "0.1.0"
+description = "Potpie parsing helpers and Rust-backed code graph extraction."
+readme = "README.md"
 requires-python = ">=3.10,<3.14"
-dynamic = ["version"]
+license = "Apache-2.0"
+authors = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
+maintainers = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
+keywords = ["ast", "code-intelligence", "parsing", "rust", "tree-sitter"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Software Development",
+]
 dependencies = [
     "grep-ast>=0.6.0",
     "loguru>=0.7.3",
@@ -14,6 +32,12 @@ dependencies = [
     "tree-sitter>=0.20.4",
     "tree-sitter-language-pack>=0.13.0,<1.6.1",
 ]
+
+[project.urls]
+Homepage = "https://potpie.ai"
+Documentation = "https://docs.potpie.ai"
+Source = "https://github.com/potpie-ai/potpie"
+Issues = "https://github.com/potpie-ai/potpie/issues"
 
 [tool.uv]
 package = true

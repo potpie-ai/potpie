@@ -1,16 +1,47 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
 [project]
-name = "potpie"
+name = "potpie-ai"
 version = "0.1.0"
 description = "Potpie core packages workspace (context-engine, parsing, sandbox, integrations)"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
-dependencies = [
-    "context-engine[all]",
-    "potpie-integrations",
-    "parsing",
-    "potpie-sandbox",
-    "observability",
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
+maintainers = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
+keywords = ["ai", "agents", "code-intelligence", "knowledge-graph", "developer-tools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
 ]
+dependencies = [
+    "potpie-context-engine[all]>=0.1.0,<0.2.0",
+    "potpie-integrations>=0.1.0,<0.2.0",
+    "potpie-parsing>=0.1.0,<0.2.0",
+    "potpie-sandbox>=0.1.0,<0.2.0",
+    "potpie-observability>=0.1.0,<0.2.0",
+]
+
+[project.urls]
+Homepage = "https://potpie.ai"
+Documentation = "https://docs.potpie.ai"
+Source = "https://github.com/potpie-ai/potpie"
+Issues = "https://github.com/potpie-ai/potpie/issues"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
 
 [tool.uv]
 # litellm>=1.83.10 clears CVE-2026-40217 (<1.83.10) but pins openai==2.24.0, which conflicts with
@@ -21,11 +52,11 @@ override-dependencies = ["python-dotenv>=1.2.2", "openai>=2.7.1", "idna>=3.15"]
 members = ["potpie/*", "legacy"]
 
 [tool.uv.sources]
-parsing = { workspace = true }
-context-engine = { workspace = true, editable = true }
+potpie-parsing = { workspace = true }
+potpie-context-engine = { workspace = true, editable = true }
 potpie-integrations = { workspace = true, editable = true }
 potpie-sandbox = { workspace = true, editable = true }
-observability = { workspace = true, editable = true }
+potpie-observability = { workspace = true, editable = true }
 potpie-legacy = { workspace = true }
 
 [dependency-groups]

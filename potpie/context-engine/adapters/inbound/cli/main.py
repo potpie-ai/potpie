@@ -61,7 +61,7 @@ from adapters.outbound.settings_env import EnvContextEngineSettings
 from bootstrap.http_projects import pot_map_from_env
 
 try:
-    __version__ = importlib.metadata.version("context-engine")
+    __version__ = importlib.metadata.version("potpie-context-engine")
 except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 

@@ -3,12 +3,34 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "observability"
+name = "potpie-observability"
 version = "0.1.0"
 description = "Liftable observability layer: structured logging + Sentry + logfire behind one contract. app.*-free."
+readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
+maintainers = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
+keywords = ["logging", "observability", "sentry", "logfire", "structured-logging"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Logging",
+]
 # Core is stdlib-only on purpose: max portability, survives a codebase rewrite.
 dependencies = []
+
+[project.urls]
+Homepage = "https://potpie.ai"
+Documentation = "https://docs.potpie.ai"
+Source = "https://github.com/potpie-ai/potpie"
+Issues = "https://github.com/potpie-ai/potpie/issues"
 
 [project.optional-dependencies]
 loguru = ["loguru>=0.7.3"]
@@ -20,3 +42,6 @@ dev = ["pytest>=9.0.3,<10.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["observability"]
+
+[tool.hatch.build.targets.sdist]
+include = ["README.md", "observability"]

@@ -2,6 +2,10 @@
 name = "parsing_rs"
 version = "0.1.0"
 edition = "2021"
+description = "Rust-backed parser and code graph extraction extension for Potpie."
+license = "Apache-2.0"
+homepage = "https://potpie.ai"
+repository = "https://github.com/potpie-ai/potpie"
 
 [lib]
 name = "parsing_rs"

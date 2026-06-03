@@ -6,8 +6,30 @@ build-backend = "hatchling.build"
 name = "potpie-sandbox"
 version = "0.1.0"
 description = "Potpie sandbox core with hexagonal workspace and runtime providers."
+readme = "README.md"
 requires-python = ">=3.10,<3.14"
+license = "Apache-2.0"
+authors = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
+maintainers = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
+keywords = ["ai", "developer-tools", "sandbox", "workspace", "runtime"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://potpie.ai"
+Documentation = "https://docs.potpie.ai"
+Source = "https://github.com/potpie-ai/potpie"
+Issues = "https://github.com/potpie-ai/potpie/issues"
 
 [project.optional-dependencies]
 daytona = ["daytona>=0.134.0"]
@@ -25,7 +47,7 @@ potpie-parse = "sandbox.parser_runner.__main__:main"
 packages = ["sandbox"]
 
 [tool.hatch.build.targets.sdist]
-include = ["sandbox", "tests"]
+include = ["README.md", "sandbox", "tests"]
 
 [tool.ruff]
 target-version = "py310"
