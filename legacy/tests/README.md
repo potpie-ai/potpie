@@ -12,7 +12,7 @@ From the project root, one command runs the full suite in order (unit → integr
 uv run python scripts/run_tests.py
 ```
 
-- **Modular:** The runner uses pytest discovery and markers only. New tests under `tests/unit/` or `tests/integration-tests/` are picked up automatically; no changes to the script are needed.
+- **Modular:** The runner uses pytest discovery and markers only. New legacy tests under `tests/unit/` or `tests/integration-tests/` are picked up automatically; no changes to the script are needed. Package-level tests under `../potpie/*/tests` run in their own CI jobs.
 - **Phases:** Unit → Integration (excluding stress/real_parse) → Real parse (optional) → Stress (optional). First failure stops the run.
 - **Environment (optional):**
   - `SKIP_REAL_PARSE=1` — Skip real_parse phase (e.g. CI without Neo4j).
@@ -40,7 +40,7 @@ uv run python scripts/run_tests.py
 SKIP_REAL_PARSE=1 ./scripts/run_tests.sh
 ```
 
-To add new tests later: add test files under `tests/unit/` or `tests/integration-tests/` with the appropriate marker (`unit`, `integration`, or `real_parse`). No changes to `scripts/run_tests.py` or `scripts/run_tests.sh` are required.
+To add new legacy tests later: add test files under `tests/unit/` or `tests/integration-tests/` with the appropriate marker (`unit`, `integration`, or `real_parse`). No changes to `scripts/run_tests.py` or `scripts/run_tests.sh` are required.
 
 ## Output and debugging
 
