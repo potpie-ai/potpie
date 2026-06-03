@@ -1,18 +1,18 @@
 """Neo4j ``GraphBackend`` — the shape-first production target.
 
-This is the canonical-store profile for the migration. The skeleton assembles
-it from capability adapters and delegates the two *source-of-truth* ports to the
-existing, battle-tested Neo4j code; the four rebuildable-projection ports are
-wired to fail-closed stubs until they are built out.
+This is the canonical-store profile for the migration. Assembled from capability
+adapters, with the two *source-of-truth* ports delegating to the existing,
+battle-tested Neo4j code (writer + reader); the four rebuildable-projection
+ports are wired to fail-closed stubs until they are built out.
 
     claim_query  -> Neo4jClaimQueryStore           (existing, real)
-    mutation     -> existing apply path             # TODO(stage-N)
+    mutation     -> _Neo4jMutation                  (writer + apply choreography)
     analytics    -> ClaimQueryAnalytics             (computed from claim_query, real)
     semantic     -> CapabilityNotImplemented        # TODO(stage-N): fold neo4j vector
     inspection   -> CapabilityNotImplemented        # TODO(stage-N): cypher traversal
     snapshot     -> CapabilityNotImplemented        # TODO(stage-N): portable export/import
 
-Neo4j imports are lazy so the skeleton (and the in_memory profile) load without
+Neo4j imports are lazy so the skeleton (and other backend profiles) load without
 the ``graph`` extra installed; a missing driver surfaces only when this profile
 is actually selected.
 """
@@ -65,17 +65,16 @@ class _Neo4jMutation:
 
     ``apply_async`` is the native door (it ``await``s the async writer directly);
     ``apply`` is a loop-aware sync bridge for CLI/tests. The writer is created
-    once and reused — its async driver binds to the loop that first ``await``s
-    it, which in managed is uvicorn's single request loop (the same pattern the
-    production ``ContextGraphService`` uses with one long-lived writer).
+    once on first use and reused — its async driver binds to the loop that
+    first ``await``s it, which in managed is uvicorn's single request loop.
     """
 
     settings: Any
-    writer: Any = None  # injected (shared) or lazily created on first use
+    writer: Any = None  # lazily created on first use
 
     def _get_writer(self) -> Any:
         if self.writer is None:
-            from adapters.outbound.graph import Neo4jGraphWriter
+            from adapters.outbound.graph.backends.neo4j.writer import Neo4jGraphWriter
 
             self.writer = Neo4jGraphWriter(self.settings)
         return self.writer
@@ -87,7 +86,9 @@ class _Neo4jMutation:
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
     ) -> ReconciliationResult:
-        from adapters.outbound.graph.apply_plan import apply_reconciliation_plan
+        from adapters.outbound.graph.backends._cypher_shared import (
+            apply_reconciliation_plan,
+        )
 
         return await apply_reconciliation_plan(
             self._get_writer(),
@@ -154,6 +155,8 @@ class Neo4jGraphBackend:
         from adapters.outbound.graph.neo4j_reader import Neo4jClaimQueryStore
 
         self._claim_query = Neo4jClaimQueryStore(self.settings)
+        # Share an injected writer (the ingestion server hands the same handle
+        # to the scan path so they don't open two connection pools).
         self._mutation = _Neo4jMutation(self.settings, writer=self.writer)
 
     @property
@@ -205,12 +208,34 @@ class Neo4jGraphBackend:
         )
 
     def provision(self, plan: SetupPlan) -> StepResult:
-        from domain.errors import CapabilityNotImplemented
+        # Neo4j is provisioned out-of-band (the cluster/DB already runs). Setup's
+        # job here is to verify reachability and ensure the canonical Position-B
+        # indexes exist — both idempotent, so re-running setup is safe.
+        from domain.lifecycle import DONE, SKIPPED
 
-        raise CapabilityNotImplemented(
-            "graph.neo4j.provision",
-            detail="neo4j store provisioning (database create, indexes, native vector index) not implemented",
-            recommended_next_action="provision neo4j out-of-band, or run 'potpie setup --backend embedded'",
+        if not self._mutation._get_writer().enabled:
+            return StepResult(
+                step="backend.provision",
+                state=SKIPPED,
+                detail="neo4j disabled or unconfigured (set NEO4J_URI/USERNAME/PASSWORD)",
+                metadata={"profile": _PROFILE},
+            )
+        try:
+            _run_sync(self._mutation._get_writer().ensure_indexes())
+        except Exception as exc:  # noqa: BLE001 - surface as a failed step, never crash
+            from domain.lifecycle import FAILED
+
+            return StepResult(
+                step="backend.provision",
+                state=FAILED,
+                detail=f"neo4j unreachable or index setup failed: {exc}",
+                metadata={"profile": _PROFILE},
+            )
+        return StepResult(
+            step="backend.provision",
+            state=DONE,
+            detail="neo4j reachable; canonical indexes ensured",
+            metadata={"profile": _PROFILE},
         )
 
 

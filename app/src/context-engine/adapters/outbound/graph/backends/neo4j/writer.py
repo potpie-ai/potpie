@@ -1,17 +1,18 @@
-"""Graph writer port + Neo4j adapter.
+"""Neo4j implementation of the shared :class:`GraphWriterPort`.
 
-One writer, one substrate: the reconciliation agent emits a typed
-:class:`ReconciliationPlan` and ``apply_reconciliation_plan`` calls these
-methods directly. No episodic narrative tier, no LLM extraction, no
-sync→async bridge — the agent decides what changed, the writer executes
-the deterministic plan.
+The protocol itself lives in ``backends/_cypher_shared`` because both
+Neo4j and FalkorDB implement it; this file holds only the Neo4j-specific
+async-driver glue. External code reaches mutation through
+:class:`GraphMutationPort` exposed by ``Neo4jGraphBackend.mutation`` — never
+by importing ``GraphWriterPort``.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Coroutine, Protocol, TypeVar
+from typing import Any, Callable, Coroutine, TypeVar
 
+from adapters.outbound.graph.backends._cypher_shared.writer import GraphWriterPort
 from adapters.outbound.graph.cypher import (
     _require_valid_pot_id,
     apply_invalidations_async,
@@ -32,40 +33,6 @@ from domain.ports.settings import ContextEngineSettingsPort
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
-
-
-class GraphWriterPort(Protocol):
-    """The single graph mutation surface.
-
-    Every write to the project context graph goes through these five
-    verbs. Mutations are deterministic, idempotent on stable entity_keys,
-    and stamped with the provenance ref the caller threads in.
-    """
-
-    @property
-    def enabled(self) -> bool: ...
-
-    async def ensure_indexes(self) -> bool:
-        """Idempotently create entity / claim / vector indexes."""
-        ...
-
-    async def upsert_entities(
-        self, pot_id: str, items: list[EntityUpsert], provenance: ProvenanceRef
-    ) -> int: ...
-
-    async def upsert_edges(
-        self, pot_id: str, items: list[EdgeUpsert], provenance: ProvenanceRef
-    ) -> int: ...
-
-    async def delete_edges(
-        self, pot_id: str, items: list[EdgeDelete], provenance: ProvenanceRef
-    ) -> int: ...
-
-    async def invalidate(
-        self, pot_id: str, items: list[InvalidationOp], provenance: ProvenanceRef
-    ) -> int: ...
-
-    async def reset_pot(self, pot_id: str) -> dict[str, Any]: ...
 
 
 class Neo4jGraphWriter(GraphWriterPort):
@@ -203,4 +170,4 @@ class Neo4jGraphWriter(GraphWriterPort):
             return {"ok": False, "error": str(exc)}
 
 
-__all__ = ["GraphWriterPort", "Neo4jGraphWriter"]
+__all__ = ["Neo4jGraphWriter"]

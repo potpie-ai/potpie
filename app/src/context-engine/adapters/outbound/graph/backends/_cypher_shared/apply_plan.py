@@ -1,9 +1,13 @@
-"""Apply a validated :class:`ReconciliationPlan` to the graph.
+"""Apply a validated :class:`ReconciliationPlan` to a Cypher-speaking backend.
 
 One function, one async path. The agent produced the plan; this routine
 generates a per-apply ``mutation_id``, stamps it into provenance, and
-runs the four mutation verbs in order against the single
-:class:`GraphWriterPort`. No episodic narrative, no sync→async bridge.
+runs the four mutation verbs in order against a single
+:class:`GraphWriterPort`. The choreography is identical for every Cypher
+backend (Neo4j, FalkorDB) — they differ in `enabled`, `ensure_indexes`,
+and `reset_pot` (which this function never calls), so the apply path
+genuinely is shared. Non-Cypher backends (in-memory) implement
+``GraphMutationPort.apply`` directly and do not call this.
 """
 
 from __future__ import annotations
@@ -11,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from adapters.outbound.graph.neo4j_writer import GraphWriterPort
+from adapters.outbound.graph.backends._cypher_shared.writer import GraphWriterPort
 from application.services.reconciliation_validation import (
     validate_reconciliation_plan,
 )
@@ -104,3 +108,6 @@ async def apply_reconciliation_plan(
         error=None,
         downgrades=list(plan.ontology_downgrades),
     )
+
+
+__all__ = ["apply_reconciliation_plan"]

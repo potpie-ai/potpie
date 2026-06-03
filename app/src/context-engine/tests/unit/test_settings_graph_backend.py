@@ -1,7 +1,10 @@
-"""Unit tests for the GRAPH_DB_BACKEND + FalkorDB settings accessors.
+"""Unit tests for the FalkorDB settings accessors.
 
-Covers default (neo4j), backend selection, and the
-``CONTEXT_ENGINE_*`` → bare-env fallback precedence.
+Covers the default values + the ``CONTEXT_ENGINE_*`` → bare-env fallback
+precedence for ``falkordb_url`` / ``falkordb_graph_name`` /
+``falkordb_lite_path``. Profile selection itself is tested via
+``KNOWN_PROFILES`` / ``build_backend``; this only exercises the settings
+plumbing.
 """
 
 from __future__ import annotations
@@ -15,28 +18,14 @@ pytestmark = pytest.mark.unit
 
 def _clear(monkeypatch: pytest.MonkeyPatch) -> None:
     for var in (
-        "GRAPH_DB_BACKEND",
         "CONTEXT_ENGINE_FALKORDB_URL",
         "FALKORDB_URL",
         "CONTEXT_ENGINE_FALKORDB_GRAPH_NAME",
         "FALKORDB_GRAPH_NAME",
-        "CONTEXT_ENGINE_FALKORDB_MODE",
-        "FALKORDB_MODE",
         "CONTEXT_ENGINE_FALKORDB_LITE_PATH",
         "FALKORDB_LITE_PATH",
     ):
         monkeypatch.delenv(var, raising=False)
-
-
-def test_backend_defaults_to_neo4j(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear(monkeypatch)
-    assert EnvContextEngineSettings().graph_db_backend() == "neo4j"
-
-
-def test_backend_falkordb_lowercased(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear(monkeypatch)
-    monkeypatch.setenv("GRAPH_DB_BACKEND", "FalkorDB")
-    assert EnvContextEngineSettings().graph_db_backend() == "falkordb"
 
 
 def test_falkordb_url_none_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -62,13 +51,6 @@ def test_graph_name_default_and_override(monkeypatch: pytest.MonkeyPatch) -> Non
     assert EnvContextEngineSettings().falkordb_graph_name() == "context_graph"
     monkeypatch.setenv("FALKORDB_GRAPH_NAME", "my_graph")
     assert EnvContextEngineSettings().falkordb_graph_name() == "my_graph"
-
-
-def test_mode_default_lite_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear(monkeypatch)
-    assert EnvContextEngineSettings().falkordb_mode() == "lite"
-    monkeypatch.setenv("FALKORDB_MODE", "SERVER")
-    assert EnvContextEngineSettings().falkordb_mode() == "server"
 
 
 def test_lite_path_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,11 +1,11 @@
-"""FalkorDB :class:`GraphWriterPort` adapter (lightweight local backend).
+"""FalkorDB implementation of the shared :class:`GraphWriterPort`.
 
 Same Position-B substrate as the Neo4j writer, same five write verbs. The
-mutation Cypher (`MERGE` / `ON CREATE SET randomUUID()` / `timestamp()` /
-dynamic `SET e:Label`) is identical on FalkorDB (verified by the Phase-0
-spike), so this adapter **reuses** ``cypher.py``'s async mutation functions
-through a thin async-driver shim over the synchronous ``falkordb`` client —
-rather than duplicating the bitemporal / supersession logic.
+mutation Cypher (``MERGE`` / ``ON CREATE SET randomUUID()`` / ``timestamp()`` /
+dynamic ``SET e:Label``) is identical on FalkorDB, so this adapter **reuses**
+``cypher.py``'s async mutation functions through a thin async-driver shim over
+the synchronous ``falkordb`` client — rather than duplicating the bitemporal
+/ supersession logic.
 
 Only three things are FalkorDB-specific and live here:
 
@@ -15,19 +15,21 @@ Only three things are FalkorDB-specific and live here:
 3. ``reset_pot`` — FalkorDB has no ``CALL {} IN TRANSACTIONS``, so it deletes
    in a client-side batched loop scoped to ``group_id``.
 
-The default local backend is **FalkorDBLite** — an embedded Redis (via
-``redislite``) backed by a local file, so ``pip install`` is enough (no server
-or Docker). Server/container mode (``falkordb_url`` over a redis URL) is kept
-as a deferred profile and requires the optional ``falkordb`` client.
+The writer's runtime mode (``lite`` vs ``server``) is decided by the
+backend that constructs it; the writer itself never reads
+``settings.falkordb_mode()``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import Any, Callable, Coroutine, TypeVar
 
+from adapters.outbound.graph.backends._cypher_shared.writer import GraphWriterPort
+from adapters.outbound.graph.backends.falkor.graph_handle import (
+    build_falkordb_graph,
+)
 from adapters.outbound.graph.cypher import (
     _require_valid_pot_id,
     apply_invalidations_async,
@@ -35,7 +37,6 @@ from adapters.outbound.graph.cypher import (
     upsert_edges_async,
     upsert_entities_async,
 )
-from adapters.outbound.graph.neo4j_writer import GraphWriterPort
 from domain.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
@@ -125,68 +126,26 @@ class _FalkorAsyncDriver:
         return None
 
 
-def build_falkordb_graph(settings: ContextEngineSettingsPort) -> Any:
-    """Build a FalkorDB graph handle from settings.
-
-    Default (``lite``) → embedded FalkorDBLite via ``redislite``, backed by a
-    local file: no server, no Docker. ``server`` mode → connect to a running
-    FalkorDB over a redis URL (deferred profile; needs the optional
-    ``falkordb`` client). Both expose the same ``graph.query(...)`` →
-    ``result.header`` / ``result.result_set`` surface this adapter relies on.
-    """
-    name = settings.falkordb_graph_name()
-    if settings.falkordb_mode() == "server":
-        url = settings.falkordb_url()
-        if not url:
-            raise RuntimeError(
-                "falkordb server mode requires a URL — set FALKORDB_URL "
-                "(or CONTEXT_ENGINE_FALKORDB_URL), or use the default lite mode"
-            )
-        from falkordb import FalkorDB
-
-        return FalkorDB.from_url(url).select_graph(name)
-    # Lite (default): embedded FalkorDBLite over a local file — no server.
-    from redislite.falkordb_client import FalkorDB as LiteFalkorDB
-
-    path = settings.falkordb_lite_path()
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    return LiteFalkorDB(path).select_graph(name)
-
-
-class FalkorDBGraphProvider:
-    """Lazily build and memoize **one** shared FalkorDB graph handle.
-
-    The writer and reader must share a single handle so they talk to the same
-    embedded FalkorDBLite instance (two handles on one db file would each spawn
-    a redis-server). Lazy so ``build_container`` never connects at wiring time.
-    """
-
-    def __init__(self, settings: ContextEngineSettingsPort) -> None:
-        self._settings = settings
-        self._graph: Any | None = None
-
-    def __call__(self) -> Any:
-        if self._graph is None:
-            self._graph = build_falkordb_graph(self._settings)
-        return self._graph
-
-
 class FalkorDBGraphWriter(GraphWriterPort):
-    """Production-shaped writer for the lightweight FalkorDB local backend."""
+    """Production-shaped writer for the lightweight FalkorDB local backend.
+
+    ``mode`` is fixed at construction (the backend's choice) so the writer
+    never has to consult settings.falkordb_mode(); pass ``lite`` or ``server``.
+    """
 
     def __init__(
         self,
         settings: ContextEngineSettingsPort,
         *,
+        mode: str = "lite",
         graph: Any | None = None,
         graph_provider: Callable[[], Any] | None = None,
     ) -> None:
         self._settings = settings
+        self._mode = mode
         self._enabled = settings.is_enabled()
         self._graph = graph  # injectable for unit tests
-        self._graph_provider = graph_provider  # shared handle from the container
+        self._graph_provider = graph_provider  # shared handle from the backend
 
     @property
     def enabled(self) -> bool:
@@ -198,16 +157,16 @@ class FalkorDBGraphWriter(GraphWriterPort):
         # Otherwise mirror exactly what build_falkordb_graph can honor, so the
         # gate never reports enabled for a config the builder would reject:
         # server mode needs a URL; lite (default) needs no external config.
-        if self._settings.falkordb_mode() == "server":
+        if self._mode == "server":
             return bool(self._settings.falkordb_url())
-        return self._settings.falkordb_mode() == "lite"
+        return self._mode == "lite"
 
     def _get_graph(self) -> Any:
         if self._graph is None:
             self._graph = (
                 self._graph_provider()
                 if self._graph_provider is not None
-                else build_falkordb_graph(self._settings)
+                else build_falkordb_graph(self._settings, mode=self._mode)
             )
         return self._graph
 
@@ -320,4 +279,4 @@ class FalkorDBGraphWriter(GraphWriterPort):
         return int(rows[0][0]) if rows and rows[0] else 0
 
 
-__all__ = ["FalkorDBGraphProvider", "FalkorDBGraphWriter", "build_falkordb_graph"]
+__all__ = ["FalkorDBGraphWriter", "_records_from_result"]

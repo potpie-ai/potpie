@@ -87,7 +87,7 @@ async def test_neo4j_sync_apply_refuses_inside_event_loop():
     # would corrupt the driver if run on the caller's loop. Inside a loop it must
     # refuse (pointing callers at apply_async) rather than bind to a dead loop —
     # and must not even construct the writer (so no driver is required here).
-    from adapters.outbound.graph.backends.neo4j_backend import _Neo4jMutation
+    from adapters.outbound.graph.backends.neo4j.backend import _Neo4jMutation
 
     mutation = _Neo4jMutation(settings=object())
     with pytest.raises(RuntimeError, match="event loop"):

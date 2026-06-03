@@ -20,6 +20,7 @@ including supersession (T6), point-in-time queries (T4), corroboration
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -150,6 +151,25 @@ def _render_fact(
     if extra and isinstance(extra.get("fact"), str) and extra["fact"]:
         return extra["fact"]
     return f"{from_key} {predicate} {to_key}"
+
+
+def _coerce_edge_value(value: Any) -> Any:
+    """Make an ontology extra storable as a Neo4j relationship property.
+
+    Neo4j relationship properties must be scalars (str/int/float/bool) or
+    homogeneous scalar lists — a nested map (e.g. ``code_scope``) raises a
+    type error mid-write. Serialize anything non-scalar to a JSON string so
+    the extra persists losslessly; readers that want structure can decode it.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, (list, tuple)):
+        if all(isinstance(x, (str, int, float, bool)) for x in value):
+            return list(value)
+        return json.dumps(list(value), default=str)
+    return json.dumps(value, default=str)
 
 
 def _split_edge_properties(
@@ -316,9 +336,10 @@ async def upsert_edges_async(
             }
             if confidence is not None:
                 edge_props["confidence"] = confidence
-            # Carry the ontology-specific extras alongside POC fields.
+            # Carry the ontology-specific extras alongside POC fields, coercing
+            # any non-scalar (e.g. a ``code_scope`` map) to a Neo4j-storable form.
             for k, v in extras.items():
-                edge_props[k] = v
+                edge_props[k] = _coerce_edge_value(v)
             # Stamp a compact provenance pointer; full provenance is on
             # the source event that source_ref references.
             edge_props["provenance_source_event"] = provenance.source_event_id

@@ -2,11 +2,11 @@
 
 Uses the real embedded FalkorDBLite (via ``redislite``) — no server, no Docker
 — with one shared graph handle injected into both writer + reader, exactly how
-``build_container`` wires the Lite backend. Skips cleanly if FalkorDBLite isn't
-installed.
+``FalkorGraphBackend`` wires the Lite backend. Skips cleanly if FalkorDBLite
+isn't installed.
 
-This is the Phase-5 parity check: the same canonical Position-B operations the
-Neo4j adapters expose, exercised end to end on FalkorDBLite through the real
+This is the parity check: the same canonical Position-B operations the Neo4j
+adapters expose, exercised end to end on FalkorDBLite through the real
 adapters (no fakes).
 """
 
@@ -23,8 +23,12 @@ pytestmark = pytest.mark.integration
 # Import name is ``redislite`` (distribution: falkordblite); skip if absent.
 falkordb_client = pytest.importorskip("redislite.falkordb_client")
 
-from adapters.outbound.graph.falkordb_reader import FalkorDBClaimQueryStore  # noqa: E402
-from adapters.outbound.graph.falkordb_writer import FalkorDBGraphWriter  # noqa: E402
+from adapters.outbound.graph.backends.falkor.reader import (  # noqa: E402
+    FalkorDBClaimQueryStore,
+)
+from adapters.outbound.graph.backends.falkor.writer import (  # noqa: E402
+    FalkorDBGraphWriter,
+)
 from domain.graph_mutations import (  # noqa: E402
     EdgeUpsert,
     EntityUpsert,
@@ -43,6 +47,12 @@ class _Settings:
     def falkordb_graph_name(self) -> str:
         return "context_graph"
 
+    def falkordb_url(self) -> str | None:
+        return None
+
+    def falkordb_lite_path(self) -> str:
+        return ".potpie/context_graph/falkordb.db"
+
 
 @pytest.fixture()
 def shared_graph():
@@ -57,9 +67,9 @@ def shared_graph():
 
 def test_write_read_reset_roundtrip(shared_graph) -> None:
     settings = _Settings()
-    # One shared embedded handle into both adapters (as build_container does).
-    writer = FalkorDBGraphWriter(settings, graph=shared_graph)
-    reader = FalkorDBClaimQueryStore(settings, graph=shared_graph)
+    # One shared embedded handle into both adapters (as FalkorGraphBackend does).
+    writer = FalkorDBGraphWriter(settings, mode="lite", graph=shared_graph)
+    reader = FalkorDBClaimQueryStore(settings, mode="lite", graph=shared_graph)
     pot = "potA"
     prov = ProvenanceRef(pot_id=pot, source_event_id="e1", source_system="agent")
 

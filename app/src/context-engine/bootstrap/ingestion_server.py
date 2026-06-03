@@ -31,8 +31,9 @@ from adapters.outbound.graph.context_graph_service import ContextGraphService
 from adapters.outbound.reconciliation.context_graph_tools import (
     ContextGraphReconciliationTools,
 )
-from adapters.outbound.graph import GraphWriterPort, Neo4jGraphWriter
-from adapters.outbound.graph.backends.neo4j_backend import Neo4jGraphBackend
+from adapters.outbound.graph.backends._cypher_shared.writer import GraphWriterPort
+from adapters.outbound.graph.backends.neo4j import Neo4jGraphBackend
+from adapters.outbound.graph.backends.neo4j.writer import Neo4jGraphWriter
 from adapters.outbound.policy import DefaultPolicyAdapter
 from adapters.outbound.postgres.agent_checkpoint_store import (
     SqlAlchemyAgentCheckpointStore,
@@ -218,24 +219,23 @@ def build_ingestion_server(
             telemetry_sink, observability_sink
         )
     stream_publisher = event_stream_publisher or _default_event_stream_publisher()
-    # FalkorDB (#819) ships as code-in-tree but is not yet wrapped behind the
-    # GraphBackend port — follow-up. Until that adapter exists, only Neo4j can
-    # be assembled into a ContextGraphService here.
+    registry = connectors or SourceConnectorRegistry()
+    # One graph substrate behind the GraphBackend port. Share the one writer so
+    # the ingestion scan path (``container.graph_writer``) and the
+    # ContextGraphService talk to the same connection pool / embedded handle.
     backend_kind = (s.graph_db_backend() or "neo4j").strip().lower()
     if backend_kind == "falkordb":
-        raise NotImplementedError(
-            "FalkorDB GraphBackend adapter is not wired yet; the FalkorDB "
-            "reader/writer modules (#819) remain importable at "
-            "adapters.outbound.graph.falkordb_* but need a GraphBackend port "
-            "wrapper before they can plug into ContextGraphService. Use "
-            "GRAPH_DB_BACKEND=neo4j until the adapter lands."
-        )
-    graph_writer = Neo4jGraphWriter(s)
-    registry = connectors or SourceConnectorRegistry()
-    # One graph substrate: the Neo4j GraphBackend (claim_query read trunk +
-    # mutation write door). Share the one writer so the ingestion scan path
-    # (container.graph_writer) and ContextGraphService don't open two pools.
-    backend = Neo4jGraphBackend(s, writer=graph_writer)
+        # FalkorDB plugs in behind the GraphBackend port via build_backend; the
+        # mode (lite vs server) comes from settings. The backend owns a single
+        # shared graph handle, so derive the scan-path writer from it.
+        from adapters.outbound.graph.backends import build_backend
+
+        profile = "falkor_lite" if s.falkordb_mode() == "lite" else "falkor"
+        backend = build_backend(profile, settings=s)
+        graph_writer = backend.mutation._get_writer()
+    else:
+        graph_writer = Neo4jGraphWriter(s)
+        backend = Neo4jGraphBackend(s, writer=graph_writer)
     context_graph = ContextGraphService(backend=backend)
     # Fail fast if the read trunk's reader set has drifted from the advertised
     # ``READER_BACKED_INCLUDES`` (see domain.coherence).

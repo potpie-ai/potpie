@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.graph.falkordb_writer import (
+from adapters.outbound.graph.backends.falkor.graph_handle import (
+    build_falkordb_graph,
+)
+from adapters.outbound.graph.backends.falkor.writer import (
     FalkorDBGraphWriter,
     _records_from_result,
-    build_falkordb_graph,
 )
 from domain.graph_mutations import EntityUpsert, ProvenanceRef
 
@@ -50,11 +52,16 @@ class _FakeGraph:
 
 
 class _FakeSettings:
-    def __init__(self, *, enabled=True, url="redis://localhost:6379", name="g", mode="server"):
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        url: str | None = "redis://localhost:6379",
+        name: str = "g",
+    ):
         self._enabled = enabled
         self._url = url
         self._name = name
-        self._mode = mode
 
     def is_enabled(self) -> bool:
         return self._enabled
@@ -64,9 +71,6 @@ class _FakeSettings:
 
     def falkordb_graph_name(self) -> str:
         return self._name
-
-    def falkordb_mode(self) -> str:
-        return self._mode
 
     def falkordb_lite_path(self) -> str:
         return ".potpie/test/falkordb.db"
@@ -87,25 +91,25 @@ def test_enabled_false_when_context_graph_disabled() -> None:
     assert w.enabled is False
 
 
-def test_enabled_false_when_unconfigured() -> None:
+def test_enabled_false_when_server_mode_unconfigured() -> None:
     # Server mode with no url and no injected graph → not configured.
-    w = FalkorDBGraphWriter(_FakeSettings(url=None, mode="server"))
+    w = FalkorDBGraphWriter(_FakeSettings(url=None), mode="server")
     assert w.enabled is False
 
 
 def test_enabled_true_when_lite_mode() -> None:
-    # Lite is the default local path: needs no url/graph to be enabled.
-    w = FalkorDBGraphWriter(_FakeSettings(url=None, mode="lite"))
+    # Lite is the embedded path: needs no url/graph to be enabled.
+    w = FalkorDBGraphWriter(_FakeSettings(url=None), mode="lite")
     assert w.enabled is True
 
 
-def test_enabled_true_when_url_set() -> None:
-    w = FalkorDBGraphWriter(_FakeSettings(url="redis://localhost:6379"))
+def test_enabled_true_when_server_url_set() -> None:
+    w = FalkorDBGraphWriter(_FakeSettings(url="redis://localhost:6379"), mode="server")
     assert w.enabled is True
 
 
 def test_enabled_true_when_graph_injected() -> None:
-    w = FalkorDBGraphWriter(_FakeSettings(url=None), graph=_FakeGraph())
+    w = FalkorDBGraphWriter(_FakeSettings(url=None), mode="server", graph=_FakeGraph())
     assert w.enabled is True
 
 
@@ -175,15 +179,21 @@ async def test_upsert_entities_empty_is_noop() -> None:
 def test_build_falkordb_graph_server_mode_requires_url() -> None:
     # Server mode with no URL must fail loudly, not silently fall back to Lite.
     with pytest.raises(RuntimeError, match="server mode requires a URL"):
-        build_falkordb_graph(_FakeSettings(url=None, mode="server"))
+        build_falkordb_graph(_FakeSettings(url=None), mode="server")
 
 
 def test_enabled_false_server_mode_no_url_even_with_provider() -> None:
-    # The container always injects a shared graph_provider; the enabled gate must
-    # still report False for an unsatisfiable config (server mode, no URL), so it
-    # never disagrees with what build_falkordb_graph can actually honor.
+    # The backend always injects a shared graph_provider; the enabled gate must
+    # still report False for an unsatisfiable config (server mode, no URL), so
+    # it never disagrees with what build_falkordb_graph can actually honor.
     w = FalkorDBGraphWriter(
-        _FakeSettings(url=None, mode="server"),
+        _FakeSettings(url=None),
+        mode="server",
         graph_provider=lambda: _FakeGraph(),
     )
     assert w.enabled is False
+
+
+def test_build_falkordb_graph_rejects_unknown_mode() -> None:
+    with pytest.raises(ValueError, match="unknown falkor mode"):
+        build_falkordb_graph(_FakeSettings(), mode="bogus")

@@ -1,25 +1,25 @@
 """FalkorDB :class:`ClaimQueryPort` — read surface for the P9 readers.
 
 Parity with :class:`Neo4jClaimQueryStore`: same canonical ``:RELATES_TO``
-claim shape, same filters, same ``ClaimRow`` output. The Phase-0 spike proved
-the entire ``_FIND_CLAIMS_CYPHER`` (IN lists, IS NULL guards, temporal
-predicates, ``labels()`` filters) runs unchanged on FalkorDB, so this adapter
-**reuses** the Neo4j query constants and row-parsing helpers and only swaps the
-driver call + record normalization (FalkorDB returns ``result_set`` rows, not
+claim shape, same filters, same ``ClaimRow`` output. The entire
+``_FIND_CLAIMS_CYPHER`` (IN lists, IS NULL guards, temporal predicates,
+``labels()`` filters) runs unchanged on FalkorDB, so this adapter **reuses**
+the Neo4j query constants and row-parsing helpers and only swaps the driver
+call + record normalization (FalkorDB returns ``result_set`` rows, not
 Neo4j ``Record`` maps).
 
-``fact_query`` keeps the Python token-overlap scoring (the native relationship
-vector index is not on the hot path; see history-local-graph-db.md).
+``fact_query`` keeps the Python token-overlap scoring (the native
+relationship vector index is not on the hot path).
 """
 
 from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Mapping
 
-from adapters.outbound.graph.falkordb_writer import (
-    _records_from_result,
+from adapters.outbound.graph.backends.falkor.graph_handle import (
     build_falkordb_graph,
 )
+from adapters.outbound.graph.backends.falkor.writer import _records_from_result
 from adapters.outbound.graph.neo4j_reader import (
     _ENTITY_LABELS_CYPHER,
     _FIND_CLAIMS_CYPHER,
@@ -32,25 +32,30 @@ from domain.ports.settings import ContextEngineSettingsPort
 
 
 class FalkorDBClaimQueryStore:
-    """:class:`ClaimQueryPort` over canonical ``:RELATES_TO`` edges in FalkorDB."""
+    """:class:`ClaimQueryPort` over canonical ``:RELATES_TO`` edges in FalkorDB.
+
+    Like the writer, ``mode`` is fixed at construction by the backend.
+    """
 
     def __init__(
         self,
         settings: ContextEngineSettingsPort,
         *,
+        mode: str = "lite",
         graph: Any | None = None,
         graph_provider: Callable[[], Any] | None = None,
     ) -> None:
         self._settings = settings
+        self._mode = mode
         self._graph = graph  # injectable for unit tests
-        self._graph_provider = graph_provider  # shared handle from the container
+        self._graph_provider = graph_provider  # shared handle from the backend
 
     def _get_graph(self) -> Any:
         if self._graph is None:
             self._graph = (
                 self._graph_provider()
                 if self._graph_provider is not None
-                else build_falkordb_graph(self._settings)
+                else build_falkordb_graph(self._settings, mode=self._mode)
             )
         return self._graph
 
