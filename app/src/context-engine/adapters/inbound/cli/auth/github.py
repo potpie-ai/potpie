@@ -14,7 +14,6 @@ from adapters.inbound.cli.auth.models import (
     ProviderCredentials,
 )
 
-GITHUB_CLIENT_ID = os.getenv("POTPIE_GITHUB_CLIENT_ID", "Ov23lijYk3917lvotBPx")
 GITHUB_SCOPES = ("repo", "read:org", "read:user", "user:email")
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -28,6 +27,13 @@ GITHUB_VERIFICATION_URI = "https://github.com/login/device"
 
 class GitHubDeviceFlowError(Exception):
     """Expected GitHub auth flow failure."""
+
+
+def get_github_client_id() -> str:
+    client_id = (os.getenv("POTPIE_GITHUB_CLIENT_ID") or "").strip()
+    if not client_id:
+        raise GitHubDeviceFlowError("POTPIE_GITHUB_CLIENT_ID is not set.")
+    return client_id
 
 
 def _parse_scopes(raw: Any) -> list[str]:
@@ -64,10 +70,11 @@ def _json_list_or_error(response: httpx.Response) -> list[Any]:
 
 def request_device_code(
     *,
-    client_id: str = GITHUB_CLIENT_ID,
+    client_id: str | None = None,
     scopes: tuple[str, ...] = GITHUB_SCOPES,
     client: httpx.Client | None = None,
 ) -> DeviceCode:
+    client_id = client_id or get_github_client_id()
     owns_client = client is None
     if owns_client:
         client = httpx.Client(timeout=30.0)
@@ -101,10 +108,11 @@ def request_device_code(
 def poll_for_access_token(
     device_code: DeviceCode,
     *,
-    client_id: str = GITHUB_CLIENT_ID,
+    client_id: str | None = None,
     client: httpx.Client | None = None,
     sleep_fn: Any = time.sleep,
 ) -> AccessToken:
+    client_id = client_id or get_github_client_id()
     owns_client = client is None
     if owns_client:
         client = httpx.Client(timeout=30.0)
