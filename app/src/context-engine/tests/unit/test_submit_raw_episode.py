@@ -6,13 +6,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from application.use_cases.submit_raw_episode import submit_raw_episode
-from bootstrap.container import ContextEngineContainer
+from bootstrap.ingestion_server import IngestionServerContainer
 from domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
 
 
 def _container(
     episodic: MagicMock, *, jobs: MagicMock | None = None, context_graph: MagicMock | None = None
-) -> ContextEngineContainer:
+) -> IngestionServerContainer:
     settings = MagicMock()
     settings.is_enabled.return_value = True
     pots = MagicMock()
@@ -25,7 +25,7 @@ def _container(
     )
     pots.resolve_pot.return_value = ResolvedPot(pot_id="p1", name="n", repos=[repo])
     j = jobs if jobs is not None else MagicMock()
-    return ContextEngineContainer(
+    return IngestionServerContainer(
         settings=settings,
         graph_writer=episodic,
         pots=pots,

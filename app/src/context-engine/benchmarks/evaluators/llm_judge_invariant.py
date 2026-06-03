@@ -112,17 +112,29 @@ def _serialize_response(response: dict[str, Any]) -> str:
 
     We do NOT show the judge the engine's `coverage` / `includes_used` /
     `source_refs` schema — those are exactly the engine-internal fields
-    we want this judge to be invariant to. We show:
+    we want this judge to be invariant to.
 
-    - the answer summary + artifacts (the agent's actual words)
-    - the structured facts the engine surfaced as JSON
+    Under the one mode-based read contract the engine returns a pure evidence
+    envelope (``items[].payload``) and performs no server-side answer
+    synthesis. The bench has no LLM agent between the engine and the judge, so
+    the surfaced evidence IS the "agent answer" the judge grades: we hand the
+    judge each item's payload as a surfaced fact. The legacy ``answer.summary``
+    / ``facts`` shape is still accepted for back-compat with old captures.
     """
     env_or_none = response.get("result") if isinstance(response.get("result"), dict) else response
     env: dict[str, Any] = env_or_none if isinstance(env_or_none, dict) else {}
+
+    # Envelope shape (current): items[].payload are the surfaced facts.
+    items = env.get("items") or response.get("items") or []
+    surfaced_facts = [
+        item.get("payload", item)
+        for item in items
+        if isinstance(item, dict)
+    ]
+
+    # Legacy shape (old captures): explicit answer.summary + facts block.
     answer = env.get("answer") or response.get("answer") or {}
     facts = env.get("facts") or response.get("facts") or {}
-
-    summary = ""
     if isinstance(answer, dict):
         summary = str(answer.get("summary") or "")
         artifacts = answer.get("artifacts") or []
@@ -134,7 +146,9 @@ def _serialize_response(response: dict[str, Any]) -> str:
         {
             "summary": summary,
             "artifacts": artifacts[:10],
-            "facts": facts,
+            # Prefer the envelope's surfaced evidence; fall back to a legacy
+            # facts block when an old-shape response is replayed.
+            "facts": surfaced_facts or facts,
         },
         default=str,
         indent=2,

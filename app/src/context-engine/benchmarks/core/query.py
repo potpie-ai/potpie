@@ -13,9 +13,13 @@ def resolve_context(
     client: PotpieContextApiClient, pot_id: str, query: QuerySpec
 ) -> dict[str, Any]:
     """Issue a context_resolve call. Returns the agent envelope."""
+    # One mode-based read contract: request the canonical evidence envelope
+    # (goal=retrieve → _orchestrate → envelope_to_dict). There is no
+    # server-side answer synthesis; the invariant judge synthesises from the
+    # returned facts/evidence itself.
     body: dict[str, Any] = {
         "pot_id": pot_id,
-        "goal": "answer",
+        "goal": "retrieve",
         "intent": query.intent,
         "include": list(query.include),
         "mode": query.mode,

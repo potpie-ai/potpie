@@ -3,23 +3,25 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from adapters.outbound.graph.cypher import upsert_entities_async
 from adapters.outbound.graph.context_graph_service import ContextGraphService
-from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
-from application.services.read_orchestrator import ReadOrchestrator
 from domain.context_events import EventRef
 from domain.graph_mutations import EntityUpsert, ProvenanceRef
 from domain.reconciliation import MutationSummary, ReconciliationPlan, ReconciliationResult
 
 
-def test_context_graph_apply_plan_delegates_to_use_case() -> None:
-    writer = MagicMock()
-    graph = ContextGraphService(
-        graph_writer=writer,
-        orchestrator=ReadOrchestrator(claim_query=InMemoryClaimQueryStore()),
+def test_context_graph_apply_plan_delegates_to_backend_mutation() -> None:
+    expected = ReconciliationResult(
+        ok=True,
+        mutation_id="u1",
+        mutation_summary=MutationSummary(),
+        error=None,
     )
+    backend = MagicMock()
+    backend.mutation.apply_async = AsyncMock(return_value=expected)
+    graph = ContextGraphService(backend=backend)
 
     plan = ReconciliationPlan(
         event_ref=EventRef(event_id="e1", source_system="t", pot_id="p1"),
@@ -30,29 +32,17 @@ def test_context_graph_apply_plan_delegates_to_use_case() -> None:
         invalidations=[],
     )
 
-    expected = ReconciliationResult(
-        ok=True,
-        mutation_id="u1",
-        mutation_summary=MutationSummary(),
-        error=None,
-    )
-    with patch(
-        "adapters.outbound.graph.context_graph_service.apply_reconciliation_plan",
-        new=AsyncMock(return_value=expected),
-    ) as mock_apply:
-        out = graph.apply_plan(plan, expected_pot_id="p1")
-    mock_apply.assert_awaited_once()
+    out = graph.apply_plan(plan, expected_pot_id="p1")
+
+    backend.mutation.apply_async.assert_awaited_once()
     assert out.ok is True
     assert out.mutation_id == "u1"
 
 
-def test_context_graph_reset_pot_delegates_to_writer() -> None:
-    writer = MagicMock()
-    writer.reset_pot = AsyncMock(return_value={"ok": True})
-    graph = ContextGraphService(
-        graph_writer=writer,
-        orchestrator=ReadOrchestrator(claim_query=InMemoryClaimQueryStore()),
-    )
+def test_context_graph_reset_pot_delegates_to_backend() -> None:
+    backend = MagicMock()
+    backend.mutation.reset_pot.return_value = {"ok": True}
+    graph = ContextGraphService(backend=backend)
 
     out = graph.reset_pot("pot1")
 
@@ -61,16 +51,13 @@ def test_context_graph_reset_pot_delegates_to_writer() -> None:
         "ok": True,
         "graph_writer": {"ok": True},
     }
-    writer.reset_pot.assert_awaited_once_with("pot1")
+    backend.mutation.reset_pot.assert_called_once_with("pot1")
 
 
-def test_context_graph_reset_pot_stops_on_writer_failure() -> None:
-    writer = MagicMock()
-    writer.reset_pot = AsyncMock(return_value={"ok": False, "error": "bad"})
-    graph = ContextGraphService(
-        graph_writer=writer,
-        orchestrator=ReadOrchestrator(claim_query=InMemoryClaimQueryStore()),
-    )
+def test_context_graph_reset_pot_stops_on_backend_failure() -> None:
+    backend = MagicMock()
+    backend.mutation.reset_pot.return_value = {"ok": False, "error": "bad"}
+    graph = ContextGraphService(backend=backend)
 
     out = graph.reset_pot("pot1")
 

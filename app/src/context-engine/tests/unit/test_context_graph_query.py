@@ -4,10 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from adapters.outbound.graph.context_graph_service import ContextGraphService
-from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
-from application.services.read_orchestrator import ReadOrchestrator
-from bootstrap.container import ContextEngineContainer
+from bootstrap.ingestion_server import IngestionServerContainer
 from domain.graph_query import (
     ContextGraphGoal,
     ContextGraphQuery,
@@ -18,13 +17,8 @@ from domain.graph_query import (
 
 
 def _adapter(**kw) -> ContextGraphService:
-    episodic = kw.pop("episodic", MagicMock())
-    if not hasattr(episodic, "enabled") or episodic.enabled is None:
-        episodic.enabled = True
-    kw.setdefault(
-        "orchestrator", ReadOrchestrator(claim_query=InMemoryClaimQueryStore())
-    )
-    return ContextGraphService(graph_writer=episodic, **kw)
+    backend = kw.pop("backend", None) or InMemoryGraphBackend()
+    return ContextGraphService(backend=backend)
 
 
 def test_context_graph_presets_compile_reader_query_shapes() -> None:
@@ -64,23 +58,40 @@ def test_context_graph_presets_compile_reader_query_shapes() -> None:
     assert prefs.scope.file_path == "app.py"
 
 
-@pytest.mark.asyncio
-async def test_context_graph_adapter_sync_answer_query_rejects_running_loop() -> None:
+def test_context_graph_query_returns_envelope_for_any_goal() -> None:
+    # One read contract: query() always routes through the orchestrator to a
+    # ranked-evidence envelope. There is no agentic/answer path to special-case
+    # or reject — the agent synthesises from the returned evidence.
     adapter = _adapter()
 
-    with pytest.raises(RuntimeError, match="use query_async"):
-        adapter.query(
-            ContextGraphQuery(
-                pot_id="p1",
-                query="summarize auth",
-                goal=ContextGraphGoal.ANSWER,
-            )
+    result = adapter.query(
+        ContextGraphQuery(
+            pot_id="p1",
+            query="summarize auth",
+            goal=ContextGraphGoal.RETRIEVE,
         )
+    )
+
+    assert result.kind == "resolve"
+    assert result.meta["path"] == "resolve"
+    assert isinstance(result.result, dict) and "items" in result.result
+
+
+@pytest.mark.asyncio
+async def test_context_graph_query_async_returns_envelope() -> None:
+    adapter = _adapter()
+
+    result = await adapter.query_async(
+        ContextGraphQuery(pot_id="p1", query="auth", goal=ContextGraphGoal.RETRIEVE)
+    )
+
+    assert result.kind == "resolve"
+    assert isinstance(result.result, dict) and "items" in result.result
 
 
 def test_container_can_hold_unified_context_graph() -> None:
     graph = MagicMock()
-    c = ContextEngineContainer(
+    c = IngestionServerContainer(
         settings=MagicMock(),
         graph_writer=MagicMock(),
         pots=MagicMock(),

@@ -3,7 +3,7 @@
 The default bench client (:class:`PotpieContextApiClient`) drives the engine
 over HTTP, which means a gunicorn server must own port 8001 — the same port
 the app uses. This module provides an alternative client that drives the
-engine **in-process**: it builds the real ``ContextEngineContainer`` against
+engine **in-process**: it builds the real ``IngestionServerContainer`` against
 the shared datastores (Postgres / Neo4j) and reconciles **synchronously**
 in-process, so a bench run needs neither the API server nor a Celery worker.
 
@@ -262,7 +262,7 @@ class InProcessEngineClient:
             db2 = self._session()
             try:
                 handle_process_batch(
-                    db2, batch_id, build_container=build_container_for_session
+                    db2, batch_id, build_ingestion_server=build_container_for_session
                 )
                 db2.commit()
             except Exception:  # noqa: BLE001 — surfaced per-event via get_event

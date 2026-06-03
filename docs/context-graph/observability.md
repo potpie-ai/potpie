@@ -44,23 +44,27 @@ OTLP export belongs behind optional dependencies and explicit config.
 
 ## Trace Map
 
-| Span | Meaning |
-|---|---|
-| `daemon.request` | Local daemon request. |
-| `pot.status`, `pot.create`, `pot.reset`, `pot.export` | Pot Management operations. |
-| `context.resolve`, `context.search`, `context.record`, `context.status` | Four-tool Graph Service operations. |
-| `reader.{include}` | Reader execution. |
-| `scanner.{name}` | Scanner execution. |
-| `ledger.pull`, `ledger.cursor.update` | Local or managed graph consuming an Event Ledger. |
-| `graph.write`, `graph.query`, `graph.inspect` | Backend capability calls. |
-| `semantic.search` | Vector semantic retrieval. |
-| `snapshot.export`, `snapshot.import` | Portable pot snapshot operations. |
-| `skill.catalog.fetch`, `skill.install`, `skill.update`, `skill.remove` | Skill Manager operations. |
-| `event_ledger.receive`, `event_ledger.normalize`, `event_ledger.append` | Event Ledger connector/webhook work. |
-| `reconciliation.run` | Event batch to graph records/claims. |
+The `Code boundary` column names the module/port a span instruments, so spans
+attach to the same seams the Code Map (architecture.md) defines.
 
-Batch ingestion traces should link source events to reconciliation runs instead
-of pretending delayed fan-in is one synchronous request.
+| Span | Meaning | Code boundary |
+|---|---|---|
+| `daemon.request` | Local daemon request. | `host/shell.py`, `host/daemon.py` |
+| `pot.status`, `pot.create`, `pot.reset`, `pot.export` | Pot Management operations. | `PotManagementService` (`application/services/pot_management.py`) |
+| `context.resolve`, `context.search`, `context.record`, `context.status` | Four-tool operations. | `AgentContextPort` (`application/services/agent_context.py`) + `GraphService` |
+| `reader.{include}` | Reader execution. | `application/readers/`, `read_orchestrator.py` |
+| `scanner.{name}` | Scanner execution. | `adapters/outbound/scanners/` |
+| `ledger.query`, `ledger.pull`, `ledger.cursor.update` | Graph consuming an Event Ledger. | `LedgerFacade` (`host/shell.py`), `EventLedgerClientPort`, `LedgerCursorStorePort` |
+| `graph.write`, `graph.query`, `graph.inspect` | Backend capability calls. | `GraphBackend` ports (`domain/ports/graph/`) |
+| `semantic.search` | Vector semantic retrieval. | `SemanticSearchPort` (`domain/ports/graph/semantic.py`) |
+| `snapshot.export`, `snapshot.import` | Portable pot snapshot operations. | `GraphSnapshotPort` (`domain/ports/graph/snapshot.py`) |
+| `skill.catalog.fetch`, `skill.install`, `skill.update`, `skill.remove` | Skill Manager operations. | `SkillManager` + `AgentTargetPort` (`domain/ports/services/skill_manager.py`) |
+| `event_ledger.receive`, `event_ledger.normalize`, `event_ledger.append` | Event Ledger connector/webhook work. | Event Ledger service (external) |
+| `ingestion.ledger_events` | Pulled Event Ledger batch processed into graph records/claims. | consumer ingestion ledger + processing harness + `GraphService` |
+| `ingestion.retry`, `ingestion.dead_letter` | Consumer-side event retry/dead-letter handling. | consumer ingestion ledger |
+
+Batch ingestion traces should link source events to ingestion processing runs
+instead of pretending delayed fan-in is one synchronous request.
 
 ## Metrics
 
@@ -76,6 +80,10 @@ Minimum counters:
 - `ce.skill.operation_total{operation,result,agent}`
 - `ce.daemon.restart_total`
 - `ce.ledger.pull_total{result,source,binding}`
+- `ce.ledger.query_total{result,source,binding}`
+- `ce.ingestion.ledger_event_total{state,source,binding}`
+- `ce.ingestion.retry_total{result,source,binding}`
+- `ce.ingestion.dead_letter_total{source,binding}`
 - `ce.event_ledger.events_total{result,source}` for ledger deployments
 
 Useful latency histograms:
@@ -87,6 +95,8 @@ Useful latency histograms:
 - `ce.semantic.search_ms`
 - `ce.scanner.latency_ms{scanner}`
 - `ce.ledger.pull_ms{source,binding}`
+- `ce.ledger.query_ms{source,binding}`
+- `ce.ingestion.ledger_event_ms{source,binding}`
 - `ce.event_ledger.receive_ms{source}`
 
 Readiness gauges:
@@ -95,6 +105,8 @@ Readiness gauges:
 - `ce.dependency_up{dependency}`
 - `ce.graph_backend_up`
 - `ce.ledger_cursor_lag{source,binding}`
+- `ce.ingestion_retry_backlog{source,binding}`
+- `ce.ingestion_dead_letter_backlog{source,binding}`
 - `ce.event_ledger_up`
 
 ## Logging
@@ -102,8 +114,8 @@ Readiness gauges:
 Every request, daemon action, or ledger action should carry:
 
 - request id;
-- active pot id;
-- profile (`local` or `managed`);
+- active pot id and origin (`local` or `managed`);
+- profile (`local` or `managed`) and configured managed backend URL host when safe;
 - ledger binding (`none`, `managed`, or `self_hosted`) when relevant;
 - service boundary (`daemon`, `pot_management`, `graph_service`,
   `graph_backend`, `skill_manager`, `scanner`, `managed_api`,
@@ -119,6 +131,10 @@ potpie doctor
 
 ## Readiness
 
+Readiness is reported by the same owner sections used by `context_status`.
+`potpie doctor` may include deeper diagnostics, but it should preserve these
+boundaries instead of flattening every dependency into one status bit.
+
 Local readiness checks:
 
 - daemon process and version;
@@ -131,11 +147,12 @@ Local readiness checks:
 - semantic index and embedder;
 - scanner registry;
 - Skill Manager catalog and installed-vs-recommended skills.
-- optional Event Ledger binding, auth, source cursors, and cursor lag.
+- optional Event Ledger binding, auth, graph consumer cursors, cursor lag,
+  retry backlog, timed-out leases, and dead-letter backlog.
 
 Managed readiness adds:
 
-- managed API server hosting Pot Management, Graph Service, and Skill Manager;
+- managed backend API hosting Pot Management, Graph Service, and Skill Manager;
 - auth/policy dependencies;
 - hosted graph/search profile;
 - operational DB;
@@ -146,9 +163,10 @@ Event Ledger readiness is separate:
 
 - ledger API;
 - ledger store;
+- event query/filter API;
 - connector/webhook health;
 - configured source connectors;
-- per-source cursor/write lag;
+- per-source provider cursor/write lag;
 - auth to third-party providers.
 
 Liveness and readiness are separate. A daemon can be live while graph storage or
