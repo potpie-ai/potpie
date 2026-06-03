@@ -44,7 +44,7 @@ from adapters.outbound.http.potpie_context_api_client import (  # noqa: E402
 from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore  # noqa: E402
 from application.services.envelope_builder import envelope_to_dict  # noqa: E402
 from application.services.read_orchestrator import ReadOrchestrator  # noqa: E402
-from bootstrap.container import ContextEngineContainer  # noqa: E402
+from bootstrap.ingestion_server import IngestionServerContainer  # noqa: E402
 from bootstrap.http_projects import ExplicitPotResolution  # noqa: E402
 from domain.agent_context_port import (  # noqa: E402
     build_context_record_source_id,
@@ -431,7 +431,7 @@ def _run_api_smoke(args: argparse.Namespace) -> int:
 
 
 def _build_in_process_client(pot_id: str, repo_name: str) -> TestClient:
-    container = ContextEngineContainer(
+    container = IngestionServerContainer(
         settings=_LabSettings(),
         graph_writer=_InMemoryGraphWriter(),
         pots=ExplicitPotResolution({pot_id: repo_name}),

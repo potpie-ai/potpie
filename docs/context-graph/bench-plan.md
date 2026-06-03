@@ -199,6 +199,7 @@ PRs, or git history, not in this architecture doc.
 2. Keep the extended tier for nightly/backend comparison.
 3. Add conformance runs for every `GraphBackend`.
 4. Add Event Ledger replay scenarios for GitHub/Linear-style event ordering,
-   cursor replay, and out-of-order arrival.
+   consumer-cursor replay, query/filter behavior, retryable failures, timed-out
+   leases, and out-of-order arrival.
 5. Use baseline diffs as the main regression signal.
 6. Add real-data/redacted corpus only after the synthetic bench is stable.
