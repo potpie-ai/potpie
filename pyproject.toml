@@ -1,5 +1,5 @@
 [project]
-name = "potpie-core"
+name = "potpie"
 version = "0.1.0"
 description = "Potpie core packages workspace (context-engine, parsing, sandbox, integrations)"
 readme = "README.md"

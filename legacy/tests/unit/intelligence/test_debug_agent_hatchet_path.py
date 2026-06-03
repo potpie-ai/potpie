@@ -23,6 +23,7 @@ class _FakeAsyncRedis:
         self.task_ids.append(task_id)
 
 
+@pytest.mark.asyncio
 async def test_debugging_agent_routes_to_hatchet_with_local_mode(monkeypatch):
     """VS Code local_mode must survive enqueue → Hatchet worker → agent context."""
     monkeypatch.setenv("AGENT_TASK_BACKEND", "hatchet")
