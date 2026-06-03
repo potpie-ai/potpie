@@ -214,7 +214,7 @@ class ConversationAPI:
         user_agent = http_request.headers.get("user-agent", "")
         local_mode = _is_vscode_extension_user_agent(user_agent)
         logger.info(
-            "[DEBUG router] post_message user_agent={!r} local_mode={} conversation_id={}",
+            "[DEBUG router] post_message user_agent=%r local_mode=%s conversation_id=%s",
             user_agent,
             local_mode,
             conversation_id,

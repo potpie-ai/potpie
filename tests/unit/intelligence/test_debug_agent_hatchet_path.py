@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import copy_context
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -83,11 +84,17 @@ def test_pydantic_deep_debug_initializes_tunnel_context_in_local_mode():
         branch="unstable",
     )
     agent = PydanticDeepDebugAgent(MagicMock(), AgentConfig(role="r", goal="g", backstory="b", tasks=[]), [])
-    agent._set_sandbox_context(ctx)
 
-    assert _get_local_mode() is True
-    assert _get_user_id() == "user-1"
-    assert _get_repository() == "valkey-io/valkey"
+    # _set_sandbox_context mutates process-local ContextVars. Run it (and the
+    # assertions that read those vars) inside a copied context so the mutations
+    # don't leak into other tests on the same worker.
+    def _check():
+        agent._set_sandbox_context(ctx)
+        assert _get_local_mode() is True
+        assert _get_user_id() == "user-1"
+        assert _get_repository() == "valkey-io/valkey"
+
+    copy_context().run(_check)
 
 
 def test_socket_sync_rpc_reuses_event_loop_on_same_thread():

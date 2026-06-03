@@ -1160,6 +1160,17 @@ def route_workspace_debug_context(
             return None, "unknown_route"
         if response.status_code == 200:
             result = response.json()
+            # Mirror the socket branch: the extension may signal a structured
+            # error (e.g. unknown route) in a 200 body rather than via status code.
+            if isinstance(result, dict) and result.get("error") in (
+                "unknown_route",
+                "NOT_IMPLEMENTED",
+                "route_not_found",
+            ):
+                logger.info(
+                    f"[route_workspace_debug_context] HTTP extension returned unknown-route error: {result.get('error')}"
+                )
+                return None, "unknown_route"
             logger.info("[route_workspace_debug_context] HTTP RPC succeeded")
             return result, None
         logger.warning(

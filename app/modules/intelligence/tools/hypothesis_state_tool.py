@@ -145,7 +145,7 @@ class HypothesisStore:
             conversation_id=self.conversation_id,
         )
         self._records.append(rec)
-        logger.debug("hypothesis_state: recorded id={} title={!r}", rec.id, rec.title)
+        logger.debug("hypothesis_state: recorded id=%s title=%r", rec.id, rec.title)
         return rec
 
     def update_status(
@@ -157,7 +157,7 @@ class HypothesisStore:
         rec.status = status
         rec.updated_at = datetime.now(tz=timezone.utc)
         logger.debug(
-            "hypothesis_state: updated status id={} status={}", rec.id, status.value
+            "hypothesis_state: updated status id=%s status=%s", rec.id, status.value
         )
         return rec
 
@@ -168,7 +168,7 @@ class HypothesisStore:
         rec.evidence.append(evidence)
         rec.updated_at = datetime.now(tz=timezone.utc)
         logger.debug(
-            "hypothesis_state: appended evidence id={} total_entries={}", rec.id, len(rec.evidence)
+            "hypothesis_state: appended evidence id=%s total_entries=%s", rec.id, len(rec.evidence)
         )
         return rec
 

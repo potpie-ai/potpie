@@ -157,6 +157,13 @@ def _last_nonempty_line(output: str) -> str:
     return ""
 
 
+def _combine_output(result: dict) -> str:
+    """Join stdout and stderr with a newline so unrelated lines don't fuse into
+    one token (which would make _find_last_error_line miss the real failure line)."""
+    parts = [result.get("output") or "", result.get("error") or ""]
+    return "\n".join(part for part in parts if part)
+
+
 def _build_evidence_summary(
     status: str,
     wall_time: float,
@@ -250,7 +257,7 @@ def run_validation(
         exit_code: Optional[int] = None
         combined_output = ""
         if result:
-            combined_output = (result.get("output") or "") + (result.get("error") or "")
+            combined_output = _combine_output(result)
         output_excerpt = combined_output[:_MAX_EXCERPT_CHARS]
         summary = _build_evidence_summary("timed_out", wall_time, "", timeout_seconds)
 
@@ -280,19 +287,19 @@ def run_validation(
             status = "error"
             exit_code = None
             err_msg = result.get("error", "command blocked by security policy")
-            combined_output = (result.get("output") or "") + (result.get("error") or "")
+            combined_output = _combine_output(result)
             output_excerpt = combined_output[:_MAX_EXCERPT_CHARS]
             summary = _build_evidence_summary("error", wall_time, combined_output, timeout_seconds, err_msg)
         elif raw_exit == 0:
             status = "passed"
             exit_code = 0
-            combined_output = (result.get("output") or "") + (result.get("error") or "")
+            combined_output = _combine_output(result)
             output_excerpt = combined_output[:_MAX_EXCERPT_CHARS]
             summary = _build_evidence_summary("passed", wall_time, combined_output, timeout_seconds)
         else:
             status = "failed"
             exit_code = raw_exit if raw_exit is not None else 1
-            combined_output = (result.get("output") or "") + (result.get("error") or "")
+            combined_output = _combine_output(result)
             output_excerpt = combined_output[:_MAX_EXCERPT_CHARS]
             summary = _build_evidence_summary("failed", wall_time, combined_output, timeout_seconds)
 

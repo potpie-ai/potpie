@@ -87,7 +87,7 @@ class DebugAgent(ChatAgent):
     def _build_agent(self, ctx: Optional[ChatContext] = None) -> ChatAgent:
         local_mode = ctx.local_mode if ctx else False
         logger.info(
-            "[DEBUG DebugAgent] _build_agent called: local_mode={} user_id={} conversation_id={}",
+            "[DEBUG DebugAgent] _build_agent called: local_mode=%s user_id=%s conversation_id=%s",
             local_mode,
             getattr(ctx, "user_id", None),
             getattr(ctx, "conversation_id", None),
@@ -118,7 +118,6 @@ class DebugAgent(ChatAgent):
             + list(DEBUG_AGENT_DAP_TOOLS)
             + list(DEBUG_AGENT_TERMINAL_TOOLS),
         )
-        local_mode = ctx.local_mode if ctx else False
         if not local_mode:
             tools = [
                 tool
@@ -130,12 +129,7 @@ class DebugAgent(ChatAgent):
             )
 
         logger.info(
-            "DebugAgent routing",
-            supports_pydantic=supports_pydantic,
-            should_use_multi=should_use_multi,
-        )
-        logger.info(
-            "[DEBUG DebugAgent] tool names given to agent (local_mode={}): {}",
+            "[DEBUG DebugAgent] tool names given to agent (local_mode=%s): %s",
             local_mode,
             sorted(getattr(t, "name", str(t)) for t in tools),
         )

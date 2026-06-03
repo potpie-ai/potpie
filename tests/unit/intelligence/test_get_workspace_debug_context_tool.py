@@ -26,6 +26,8 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 import pytest
 from unittest.mock import patch
 
+from pydantic import ValidationError
+
 from app.modules.intelligence.tools.get_workspace_debug_context_tool import (
     LaunchConfig,
     InferredCommand,
@@ -446,17 +448,17 @@ def test_schema_round_trip_unavailable():
 
 
 def test_launch_config_requires_name():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         LaunchConfig(type="python", request="launch")  # type: ignore[call-arg]
 
 
 def test_launch_config_requires_type():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         LaunchConfig(name="Debug", request="launch")  # type: ignore[call-arg]
 
 
 def test_launch_config_requires_request():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         LaunchConfig(name="Debug", type="python")  # type: ignore[call-arg]
 
 
@@ -483,17 +485,17 @@ def test_launch_config_valid_minimal():
 
 
 def test_inferred_command_requires_label():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         InferredCommand(command="pytest", source="pyproject.toml")  # type: ignore[call-arg]
 
 
 def test_inferred_command_requires_command():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         InferredCommand(label="pytest", source="pyproject.toml")  # type: ignore[call-arg]
 
 
 def test_inferred_command_requires_source():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         InferredCommand(label="pytest", command="pytest tests/")  # type: ignore[call-arg]
 
 

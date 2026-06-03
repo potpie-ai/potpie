@@ -32,27 +32,60 @@ def test_invalidate_workspace_socket_deletes_forward_and_reverse_keys():
     assert svc.redis_client.delete.call_count == 2
 
 
-def test_get_tunnel_url_false_after_invalidation():
-    from app.modules.tunnel.tunnel_service import TunnelService
+def test_get_tunnel_url_false_after_invalidation(monkeypatch):
+    """Drive the online → offline transition through invalidate_workspace_socket()
+    and confirm get_tunnel_url() reflects it, instead of pre-forcing the result."""
+    from app.modules.tunnel.tunnel_service import (
+        TunnelService,
+        SOCKET_TUNNEL_PREFIX,
+    )
+    from app.modules.tunnel.socket_server import (
+        WORKSPACE_SOCKET_KEY_PREFIX,
+        SOCKET_WORKSPACE_KEY_PREFIX,
+    )
+    from app.modules.tunnel import socket_service as socket_service_mod
+
+    workspace_id = "wid123"
+
+    # In-memory redis backing: the workspace forward key marks the socket online.
+    store = {
+        f"{WORKSPACE_SOCKET_KEY_PREFIX}{workspace_id}": "sid-abc",
+        f"{SOCKET_WORKSPACE_KEY_PREFIX}sid-abc": workspace_id,
+    }
+
+    redis_client = MagicMock()
+    redis_client.get.side_effect = lambda key: store.get(key)
+
+    def _delete(key):
+        return 1 if store.pop(key, None) is not None else 0
+
+    redis_client.delete.side_effect = _delete
 
     svc = TunnelService.__new__(TunnelService)
-    svc.redis_client = MagicMock()
+    svc.redis_client = redis_client
     svc._in_memory_workspace_tunnel_records = {}
-    svc.get_workspace_id = MagicMock(return_value="wid123")
-    svc.redis_client.get.return_value = None
-    svc.redis_client.delete.return_value = 1
+    svc.get_workspace_id = MagicMock(return_value=workspace_id)
+    svc.get_workspace_tunnel_record = MagicMock(return_value=None)
 
-    from app.modules.tunnel.socket_service import get_socket_service
+    # Socket service reports online iff the forward key is still present in redis,
+    # so deleting it via invalidation flips the status. Scoped via monkeypatch.
+    socket_svc = MagicMock()
+    socket_svc.is_workspace_online.side_effect = lambda wid: bool(
+        store.get(f"{WORKSPACE_SOCKET_KEY_PREFIX}{wid}")
+    )
+    monkeypatch.setattr(socket_service_mod, "get_socket_service", lambda: socket_svc)
 
-    socket_svc = get_socket_service()
-    socket_svc.is_workspace_online = MagicMock(return_value=False)
-
-    svc.get_workspace_socket_status = lambda workspace_id: socket_svc.is_workspace_online(
-        workspace_id
+    # Online before invalidation.
+    assert (
+        svc.get_tunnel_url("user-1", "conv-1", repository="owner/repo")
+        == SOCKET_TUNNEL_PREFIX + workspace_id
     )
 
-    url = svc.get_tunnel_url("user-1", "conv-1", repository="owner/repo")
-    assert url is None
+    # Invalidation drives the state transition (deletes the forward key).
+    assert svc.invalidate_workspace_socket(workspace_id) is True
+
+    # Now offline → no tunnel URL.
+    assert svc.get_tunnel_url("user-1", "conv-1", repository="owner/repo") is None
 
 
 @pytest.mark.asyncio

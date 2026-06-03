@@ -167,18 +167,45 @@ def get_workspace_debug_context(
     # --- Success: extension returned data ---
     if result is not None:
         try:
-            # Deserialise each sub-field defensively; extension may return partial data.
-            launch_configs = [
-                LaunchConfig(**lc) for lc in (result.get("launch_configs") or [])
-            ]
+            # Deserialise each sub-field defensively; extension may return partial
+            # data. Parse per-item so one malformed entry (e.g. during a staggered
+            # backend/extension rollout) doesn't drop the whole debug context.
+            launch_configs = []
+            for lc in result.get("launch_configs") or []:
+                try:
+                    launch_configs.append(LaunchConfig(**lc))
+                except Exception as item_exc:
+                    logger.warning(
+                        "[get_workspace_debug_context] Skipping invalid launch config %r: %s",
+                        lc,
+                        item_exc,
+                    )
+
             debug_adapters: List[str] = result.get("debug_adapters") or []
-            recent_changes = [
-                RecentChange(**rc) for rc in (result.get("recent_changes") or [])
-            ]
+
+            recent_changes = []
+            for rc in result.get("recent_changes") or []:
+                try:
+                    recent_changes.append(RecentChange(**rc))
+                except Exception as item_exc:
+                    logger.warning(
+                        "[get_workspace_debug_context] Skipping invalid recent change %r: %s",
+                        rc,
+                        item_exc,
+                    )
+
             related_tests: List[str] = result.get("related_tests") or []
-            inferred_commands = [
-                InferredCommand(**ic) for ic in (result.get("inferred_commands") or [])
-            ]
+
+            inferred_commands = []
+            for ic in result.get("inferred_commands") or []:
+                try:
+                    inferred_commands.append(InferredCommand(**ic))
+                except Exception as item_exc:
+                    logger.warning(
+                        "[get_workspace_debug_context] Skipping invalid inferred command %r: %s",
+                        ic,
+                        item_exc,
+                    )
             return WorkspaceDebugContext(
                 launch_configs=launch_configs,
                 debug_adapters=debug_adapters,
