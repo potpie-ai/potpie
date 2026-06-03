@@ -63,13 +63,60 @@ def _workspace_socket_key(workspace_id: str) -> str:
 
 _socket_service_instance: Optional["WorkspaceSocketService"] = None
 _executor: Optional[ThreadPoolExecutor] = None
+# Reuse one event loop per executor thread — creating/closing a loop on every RPC
+# breaks AsyncRedisManager cross-process emits (Hatchet worker / Celery).
+_rpc_loop_local = threading.local()
 
 
 def _get_executor() -> ThreadPoolExecutor:
     global _executor
     if _executor is None:
-        _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="socket_rpc")
+        # Socket.IO / redis.asyncio objects are event-loop-bound. Keep sync RPCs on
+        # one dedicated loop thread so sequential tool calls do not hop between
+        # loops and reuse async state from the wrong loop.
+        _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="socket_rpc")
     return _executor
+
+
+def _get_rpc_event_loop() -> asyncio.AbstractEventLoop:
+    """Return a persistent event loop for the current executor thread."""
+    loop = getattr(_rpc_loop_local, "loop", None)
+    if loop is None or loop.is_closed():
+        loop = asyncio.new_event_loop()
+        _rpc_loop_local.loop = loop
+    asyncio.set_event_loop(loop)
+    return loop
+
+
+def _invalidate_workspace_after_rpc_failure(
+    workspace_id: str, reason: str, socket_id: Optional[str] = None
+) -> None:
+    """Drop stale Redis socket mapping so get_tunnel_url stops lying 'online'."""
+    try:
+        from app.modules.tunnel.tunnel_service import get_tunnel_service
+
+        get_tunnel_service().invalidate_workspace_socket(workspace_id)
+        logger.info(
+            "[WorkspaceSocketService] Cleared stale socket for workspace_id={} "
+            "(reason={}, socket_id={})",
+            workspace_id,
+            reason,
+            socket_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[WorkspaceSocketService] Could not invalidate workspace_id={}: {}",
+            workspace_id,
+            exc,
+        )
+
+
+def _is_async_loop_mismatch(exc: Exception) -> bool:
+    message = str(exc)
+    return (
+        "attached to a different loop" in message
+        or "bound to a different event loop" in message
+    )
 
 
 class WorkspaceSocketService:
@@ -118,6 +165,58 @@ class WorkspaceSocketService:
             logger.warning("[WorkspaceSocketService] Async Redis unavailable: %s", e)
             self._async_redis = None
             return None
+
+    async def _publish_tool_call(
+        self,
+        socket_id: str,
+        event_payload: Dict[str, Any],
+    ) -> None:
+        """Publish a Socket.IO emit command without reusing AsyncRedisManager state.
+
+        The Hatchet/debug tool path runs from sync code on a worker-thread event
+        loop. Calling ``sio.emit`` there can reuse the global AsyncRedisManager's
+        loop-bound Redis connection from another loop, which intermittently raises
+        "Future attached to a different loop" and causes false socket invalidation.
+        Publishing the manager message with a fresh loop-local Redis client keeps
+        the RPC cross-process behavior without touching the shared manager client.
+        """
+        manager = getattr(sio, "manager", None)
+        redis_url = getattr(manager, "redis_url", None)
+        channel = getattr(manager, "channel", None)
+        if not redis_url or not channel:
+            await sio.emit(
+                "tool_call",
+                event_payload,
+                room=socket_id,
+                namespace=WORKSPACE_NAMESPACE,
+            )
+            return
+
+        message = {
+            "method": "emit",
+            "event": "tool_call",
+            "data": [event_payload],
+            "binary": False,
+            "namespace": WORKSPACE_NAMESPACE,
+            "room": socket_id,
+            "skip_sid": None,
+            "callback": None,
+            # Do not use manager.host_id here. If this code runs in the same
+            # process as the Socket.IO server, the listener ignores messages from
+            # its own host_id. A distinct host_id makes the message deliverable.
+            "host_id": f"workspace-rpc:{uuid4()}",
+        }
+        json_module = getattr(manager, "json", json)
+        redis_options = getattr(manager, "redis_options", {}) or {}
+        publisher = aioredis.from_url(redis_url, **redis_options)
+        try:
+            await publisher.publish(channel, json_module.dumps(message))
+        finally:
+            close = getattr(publisher, "aclose", None)
+            if close is not None:
+                await close()
+            else:  # pragma: no cover - compatibility with older redis clients
+                await publisher.close()
 
     async def _get_socket_id(self, workspace_id: str) -> Optional[str]:
         """Resolve workspace_id to socket id from Redis."""
@@ -192,19 +291,30 @@ class WorkspaceSocketService:
         await pubsub.subscribe(channel)
 
         try:
-            await sio.emit(
-                "tool_call",
-                event_payload,
-                room=socket_id,
-                namespace=WORKSPACE_NAMESPACE,
-            )
+            await self._publish_tool_call(socket_id, event_payload)
         except Exception as e:
             await pubsub.unsubscribe(channel)
             await pubsub.close()
-            logger.warning("[WorkspaceSocketService] emit failed: %s", e)
+            loop_mismatch = _is_async_loop_mismatch(e)
+            logger.warning(
+                "[WorkspaceSocketService] emit failed for workspace_id={} socket_id={}: {}",
+                workspace_id,
+                socket_id,
+                e,
+            )
+            if loop_mismatch:
+                logger.warning(
+                    "[WorkspaceSocketService] Not invalidating workspace_id={} "
+                    "for backend async loop mismatch",
+                    workspace_id,
+                )
+            else:
+                _invalidate_workspace_after_rpc_failure(
+                    workspace_id, reason="emit_failed", socket_id=socket_id
+                )
             raise TunnelConnectionError(
                 f"Failed to send tool call to workspace {workspace_id}: {e}",
-                last_error=str(e),
+                last_error="backend_loop_mismatch" if loop_mismatch else "emit_failed",
             )
 
         async def _wait_one_response():
@@ -230,6 +340,15 @@ class WorkspaceSocketService:
         try:
             return await asyncio.wait_for(_wait_one_response(), timeout=timeout + 2.0)
         except asyncio.TimeoutError:
+            logger.warning(
+                "[WorkspaceSocketService] RPC timed out for workspace_id={} socket_id={} "
+                "endpoint={} after {:.1f}s; keeping socket registration because timeout "
+                "does not prove the extension disconnected",
+                workspace_id,
+                socket_id,
+                endpoint,
+                timeout,
+            )
             raise TunnelConnectionError(
                 f"Tool call timed out for workspace_id={workspace_id} (endpoint={endpoint})",
                 last_error="timeout",
@@ -318,16 +437,12 @@ class WorkspaceSocketService:
         """
 
         def _run() -> Dict[str, Any]:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(
-                    self._execute_tool_call_with_timeout(
-                        workspace_id, endpoint, payload, timeout
-                    )
+            loop = _get_rpc_event_loop()
+            return loop.run_until_complete(
+                self._execute_tool_call_with_timeout(
+                    workspace_id, endpoint, payload, timeout
                 )
-            finally:
-                loop.close()
+            )
 
         future = _get_executor().submit(_run)
         try:

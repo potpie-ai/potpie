@@ -63,7 +63,8 @@ def _get_local_tunnel_server_url() -> Optional[str]:
 def normalise_repo_url(repository: str) -> str:
     """
     Normalise repo identifier to a single form for workspace_id hashing.
-    Backend and extension must use the same rule: lowercase, strip protocol, strip .git, rstrip /.
+    Backend and extension must use the same rule: lowercase, strip protocol,
+    strip git host, strip .git, rstrip /.
     Accepts owner/repo or full URL (https://github.com/owner/repo or github.com/owner/repo).
     """
     if not repository or not isinstance(repository, str):
@@ -79,6 +80,11 @@ def normalise_repo_url(repository: str) -> str:
         s = s.replace(":", "/", 1)
     if s.endswith(".git"):
         s = s[: -len(".git")]
+    # Strip git host so "github.com/owner/repo" and "owner/repo" hash identically
+    for host in ("github.com/", "gitlab.com/", "bitbucket.org/"):
+        if s.startswith(host):
+            s = s[len(host) :]
+            break
     return s
 
 
@@ -528,6 +534,54 @@ class TunnelService:
         from app.modules.tunnel.socket_service import get_socket_service
 
         return get_socket_service().is_workspace_online(workspace_id)
+
+    def invalidate_workspace_socket(self, workspace_id: str) -> bool:
+        """Remove stale workspace socket registration when RPC cannot reach the extension.
+
+        Called when Socket.IO emit fails or the mapped socket_id is dead but Redis
+        still has workspace:socket:{id} (e.g. extension disconnected without cleanup).
+        """
+        if not workspace_id:
+            return False
+        try:
+            from app.modules.tunnel.socket_server import (
+                SOCKET_WORKSPACE_KEY_PREFIX,
+                WORKSPACE_SOCKET_KEY_PREFIX,
+            )
+
+            fwd_key = f"{WORKSPACE_SOCKET_KEY_PREFIX}{workspace_id}"
+            removed = False
+            sid = None
+            if self.redis_client:
+                sid = self.redis_client.get(fwd_key)
+                if sid:
+                    rev_key = f"{SOCKET_WORKSPACE_KEY_PREFIX}{sid}"
+                    self.redis_client.delete(rev_key)
+                removed = self.redis_client.delete(fwd_key) > 0
+            else:
+                removed = False
+            record = self.get_workspace_tunnel_record(workspace_id)
+            if record and record.get("user_id") and record.get("repo_url"):
+                self.set_workspace_tunnel_record(
+                    workspace_id=workspace_id,
+                    user_id=record["user_id"],
+                    repo_url=record["repo_url"],
+                    status="disconnected",
+                )
+            if removed:
+                logger.info(
+                    "[TunnelService] Invalidated stale workspace socket workspace_id={} sid={}",
+                    workspace_id,
+                    sid,
+                )
+            return removed
+        except Exception as e:
+            logger.warning(
+                "[TunnelService] Failed to invalidate workspace socket {}: {}",
+                workspace_id,
+                e,
+            )
+            return False
 
     def is_tunnel_available(
         self,

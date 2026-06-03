@@ -286,56 +286,69 @@ async def start_celery_task_and_stream(
     Start a background agent task on the selected backend and return a stream.
     Uses async Redis so the event loop is not blocked.
     """
-    # Set initial "queued" status before starting the task
-    await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
+    # `cursor` set ⇒ the client is reconnecting to replay an existing run's stream, so do
+    # NOT start another backend task. Re-dispatching on reconnect is harmless for Celery
+    # (the task dies with the request) but spawns duplicate *durable* Hatchet runs that
+    # keep executing and interleave into the same Redis stream. Mirror the router's
+    # `if not cursor` run_id guard: only a fresh request starts a new run.
+    if cursor is None:
+        # Set initial "queued" status before starting the task
+        await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
 
-    # Publish a queued event so the client knows the task is accepted
-    await async_redis_manager.publish_event(
-        conversation_id,
-        run_id,
-        "queued",
-        {
-            "status": "queued",
-            "message": "Task queued for processing",
-        },
-    )
+        # Publish a queued event so the client knows the task is accepted
+        await async_redis_manager.publish_event(
+            conversation_id,
+            run_id,
+            "queued",
+            {
+                "status": "queued",
+                "message": "Task queued for processing",
+            },
+        )
 
-    # Route to the selected backend (celery default, hatchet for allowlisted agents)
-    await _dispatch_agent_run(
-        conversation_id=conversation_id,
-        run_id=run_id,
-        user_id=user_id,
-        query=query,
-        agent_id=agent_id,
-        node_ids=node_ids,
-        attachment_ids=attachment_ids,
-        async_redis_manager=async_redis_manager,
-        local_mode=local_mode,
-        tunnel_url=tunnel_url,
-    )
+        # Route to the selected backend (celery default, hatchet for allowlisted agents)
+        await _dispatch_agent_run(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+            query=query,
+            agent_id=agent_id,
+            node_ids=node_ids,
+            attachment_ids=attachment_ids,
+            async_redis_manager=async_redis_manager,
+            local_mode=local_mode,
+            tunnel_url=tunnel_url,
+        )
 
-    # Wait for task to reach any terminal or active state (avoids blocking 30s if task goes straight to completed/error)
-    task_started = await async_redis_manager.wait_for_task_start(
-        conversation_id, run_id, timeout=30, require_running=False
-    )
-    if task_started:
-        status = await async_redis_manager.get_task_status(conversation_id, run_id)
-        if status in ("completed", "error"):
-            logger.info(
-                f"Task already {status} for {conversation_id}:{run_id} - stream will contain result",
-                status=status,
+        # Wait for task to reach any terminal or active state (avoids blocking 30s if task goes straight to completed/error)
+        task_started = await async_redis_manager.wait_for_task_start(
+            conversation_id, run_id, timeout=30, require_running=False
+        )
+        if task_started:
+            status = await async_redis_manager.get_task_status(conversation_id, run_id)
+            if status in ("completed", "error"):
+                logger.info(
+                    f"Task already {status} for {conversation_id}:{run_id} - stream will contain result",
+                    status=status,
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                )
+        logger.info(
+            f"Task start check done for {conversation_id}:{run_id} (started={task_started})",
+            conversation_id=conversation_id,
+            run_id=run_id,
+            task_started=task_started,
+        )
+        if not task_started:
+            logger.warning(
+                f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued",
                 conversation_id=conversation_id,
                 run_id=run_id,
             )
-    logger.info(
-        f"Task start check done for {conversation_id}:{run_id} (started={task_started})",
-        conversation_id=conversation_id,
-        run_id=run_id,
-        task_started=task_started,
-    )
-    if not task_started:
-        logger.warning(
-            f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued",
+    else:
+        logger.info(
+            f"Reconnect with cursor for {conversation_id}:{run_id} - attaching to "
+            f"existing stream (no re-dispatch)",
             conversation_id=conversation_id,
             run_id=run_id,
         )
@@ -359,42 +372,50 @@ async def start_regenerate_task_and_stream(
     local_mode: bool = False,
 ) -> StreamingResponse:
     """Start regenerate on the same backend selected for this conversation's agent."""
-    await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
-    await async_redis_manager.publish_event(
-        conversation_id,
-        run_id,
-        "queued",
-        {
-            "status": "queued",
-            "message": "Regeneration task queued for processing",
-        },
-    )
+    # See start_celery_task_and_stream: a cursor means reconnect/replay, so never
+    # re-dispatch (avoids duplicate durable Hatchet runs on the same stream).
+    if cursor is None:
+        await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
+        await async_redis_manager.publish_event(
+            conversation_id,
+            run_id,
+            "queued",
+            {
+                "status": "queued",
+                "message": "Regeneration task queued for processing",
+            },
+        )
 
-    await _dispatch_agent_run(
-        conversation_id=conversation_id,
-        run_id=run_id,
-        user_id=user_id,
-        query="",
-        agent_id=agent_id,
-        node_ids=node_ids,
-        attachment_ids=attachment_ids,
-        async_redis_manager=async_redis_manager,
-        local_mode=local_mode,
-        tunnel_url=None,
-        operation=AGENT_RUN_OPERATION_REGENERATE,
-    )
+        await _dispatch_agent_run(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+            query="",
+            agent_id=agent_id,
+            node_ids=node_ids,
+            attachment_ids=attachment_ids,
+            async_redis_manager=async_redis_manager,
+            local_mode=local_mode,
+            tunnel_url=None,
+            operation=AGENT_RUN_OPERATION_REGENERATE,
+        )
 
-    task_started = await async_redis_manager.wait_for_task_start(
-        conversation_id, run_id, timeout=30, require_running=False
-    )
-    logger.info(
-        f"Regenerate task start check done for {conversation_id}:{run_id} "
-        f"(started={task_started})"
-    )
-    if not task_started:
-        logger.warning(
-            f"Background regenerate task failed to start within 30s for "
-            f"{conversation_id}:{run_id} - may still be queued"
+        task_started = await async_redis_manager.wait_for_task_start(
+            conversation_id, run_id, timeout=30, require_running=False
+        )
+        logger.info(
+            f"Regenerate task start check done for {conversation_id}:{run_id} "
+            f"(started={task_started})"
+        )
+        if not task_started:
+            logger.warning(
+                f"Background regenerate task failed to start within 30s for "
+                f"{conversation_id}:{run_id} - may still be queued"
+            )
+    else:
+        logger.info(
+            f"Reconnect with cursor for {conversation_id}:{run_id} - attaching to "
+            f"existing regenerate stream (no re-dispatch)"
         )
 
     return StreamingResponse(

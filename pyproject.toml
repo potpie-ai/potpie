@@ -41,5 +41,9 @@ dev = [
     "ruff>=0.14.3",
 ]
 
+[tool.bandit]
+exclude_dirs = ["legacy/tests", "tests", "legacy/app/alembic"]
+skips = ["B101", "B601", "B110", "B311", "B608"]
+
 [tool.ruff]
 exclude = ["legacy/app/alembic", "legacy/tests"]

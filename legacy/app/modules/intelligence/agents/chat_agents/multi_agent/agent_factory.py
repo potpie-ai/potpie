@@ -303,8 +303,20 @@ class AgentFactory:
             create_sandbox_tools,
         )
 
-        # Sandbox tools work in both modes (no local-mode exclusion).
-        code_changes_tools = create_sandbox_tools()
+        # In local mode, exclude write-capable sandbox tools so the agent uses
+        # execute_terminal_command through the VS Code tunnel instead.
+        _LOCAL_ONLY_SANDBOX_NAMES = {
+            "sandbox_shell",
+            "sandbox_text_editor",
+            "sandbox_git",
+        }
+        code_changes_tools = [
+            t
+            for t in create_sandbox_tools()
+            if not (
+                local_mode and getattr(t, "name", None) in _LOCAL_ONLY_SANDBOX_NAMES
+            )
+        ]
 
         if self.tool_resolver:
             if use_tool_search_flow:
@@ -609,7 +621,20 @@ Subagents DON'T get your history. Provide comprehensive context:
         )
 
         # Sandbox edit tools replace the legacy CCM staging family.
-        code_changes_tools = create_sandbox_tools()
+        # In local mode the user's VS Code tunnel handles writes; exclude the
+        # write-capable sandbox tools so the agent uses execute_terminal_command instead.
+        _LOCAL_ONLY_SANDBOX_NAMES = {
+            "sandbox_shell",
+            "sandbox_text_editor",
+            "sandbox_git",
+        }
+        code_changes_tools = [
+            t
+            for t in create_sandbox_tools()
+            if not (
+                local_mode and getattr(t, "name", None) in _LOCAL_ONLY_SANDBOX_NAMES
+            )
+        ]
         requirement_tools = create_requirement_verification_tools()
         delegation_tools = self.build_delegation_tools()
 

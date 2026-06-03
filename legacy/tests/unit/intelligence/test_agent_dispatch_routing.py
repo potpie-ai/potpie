@@ -141,3 +141,114 @@ async def test_resolve_conversation_agent_id_reads_agent_ids(monkeypatch):
 async def test_resolve_conversation_agent_id_none_when_missing(monkeypatch):
     _patch_store(monkeypatch, None)
     assert await cr.resolve_conversation_agent_id("c1", None, None) is None
+
+
+class _RecordingAsyncRedis:
+    """Async redis stub that records which lifecycle calls were made."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def set_task_status(self, conversation_id, run_id, status):
+        self.calls.append(("set_task_status", status))
+
+    async def publish_event(self, conversation_id, run_id, event_type, payload):
+        self.calls.append(("publish_event", event_type))
+
+    async def wait_for_task_start(
+        self, conversation_id, run_id, timeout=30, require_running=False
+    ):
+        self.calls.append(("wait_for_task_start",))
+        return True
+
+    async def get_task_status(self, conversation_id, run_id):
+        return None
+
+    def stream_key(self, conversation_id, run_id):
+        return f"chat:stream:{conversation_id}:{run_id}"
+
+
+def _patch_dispatch_recorder(monkeypatch):
+    dispatched = []
+
+    async def _fake_dispatch(**kwargs):
+        dispatched.append(kwargs)
+        return None
+
+    monkeypatch.setattr(cr, "_dispatch_agent_run", _fake_dispatch)
+    return dispatched
+
+
+async def test_stream_with_cursor_does_not_redispatch(monkeypatch):
+    """Reconnect (cursor set) must attach to the existing run, never start a new one.
+
+    A durable backend (Hatchet) keeps orphaned runs alive, so re-dispatching on
+    reconnect spawns duplicate tasks that interleave into the same Redis stream.
+    """
+    from fastapi.responses import StreamingResponse
+
+    dispatched = _patch_dispatch_recorder(monkeypatch)
+    redis = _RecordingAsyncRedis()
+
+    resp = await cr.start_celery_task_and_stream(
+        conversation_id="c1",
+        run_id="r1",
+        user_id="u1",
+        query="q",
+        agent_id="debugging_agent",
+        node_ids=[],
+        attachment_ids=[],
+        async_redis_manager=redis,
+        cursor="5-0",
+        local_mode=False,
+        tunnel_url=None,
+    )
+
+    assert dispatched == []  # reconnect must NOT enqueue another run
+    # And it must not clobber the live run's status or inject a fresh queued event.
+    assert all(name != "set_task_status" for name, *_ in redis.calls)
+    assert all(name != "publish_event" for name, *_ in redis.calls)
+    assert isinstance(resp, StreamingResponse)
+
+
+async def test_stream_without_cursor_dispatches_once(monkeypatch):
+    """A fresh request (no cursor) still dispatches exactly one run."""
+    dispatched = _patch_dispatch_recorder(monkeypatch)
+    redis = _RecordingAsyncRedis()
+
+    await cr.start_celery_task_and_stream(
+        conversation_id="c1",
+        run_id="r1",
+        user_id="u1",
+        query="q",
+        agent_id="debugging_agent",
+        node_ids=[],
+        attachment_ids=[],
+        async_redis_manager=redis,
+        cursor=None,
+        local_mode=False,
+        tunnel_url=None,
+    )
+
+    assert len(dispatched) == 1
+    assert ("set_task_status", "queued") in redis.calls
+
+
+async def test_regenerate_stream_with_cursor_does_not_redispatch(monkeypatch):
+    """Regenerate reconnect path must also attach rather than re-dispatch."""
+    dispatched = _patch_dispatch_recorder(monkeypatch)
+    redis = _RecordingAsyncRedis()
+
+    await cr.start_regenerate_task_and_stream(
+        conversation_id="c1",
+        run_id="r1",
+        user_id="u1",
+        agent_id="debugging_agent",
+        node_ids=[],
+        attachment_ids=[],
+        async_redis_manager=redis,
+        cursor="5-0",
+        local_mode=False,
+    )
+
+    assert dispatched == []

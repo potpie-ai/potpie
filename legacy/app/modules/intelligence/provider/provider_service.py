@@ -861,8 +861,6 @@ class ProviderService:
         # Override with any additional parameters
         params.update(kwargs)
 
-        routing_provider = config.provider
-
         # Environment for span attributes
         env = (os.getenv("LOGFIRE_ENVIRONMENT") or os.getenv("ENV") or "local").strip()
 
@@ -896,7 +894,7 @@ class ProviderService:
                         for key, value in request_kwargs.items()
                         if key not in {"base_url", "api_key", "api_version"}
                     }
-                    response = await client.chat.completions.create(
+                    await client.chat.completions.create(
                         model=params["model"].split("/")[-1],
                         messages=messages,
                         response_model=output_schema,
@@ -965,7 +963,6 @@ class ProviderService:
 
         # Build parameters using the config object
         params = self._build_llm_params(config)
-        routing_provider = config.provider
 
         # Environment for span attributes
         env = (os.getenv("LOGFIRE_ENVIRONMENT") or os.getenv("ENV") or "local").strip()
@@ -1052,7 +1049,7 @@ class ProviderService:
                         for key, value in request_kwargs.items()
                         if key not in {"base_url", "api_key", "api_version"}
                     }
-                    response = await client.chat.completions.create(
+                    await client.chat.completions.create(
                         model=params["model"].split("/")[-1],
                         messages=messages,
                         response_model=output_schema,
@@ -1374,7 +1371,7 @@ class ProviderService:
             "claude-sonnet-4",
             "claude-opus-4-1",
             "claude-haiku-4-5",
-            "claude-sonnet-4-5",
+            "claude-sonnet-4-6",
             # Google models
             "gemini-pro-vision",
             "gemini-1.5",
