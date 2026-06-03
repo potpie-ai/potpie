@@ -33,7 +33,7 @@ EXIT_UNAVAILABLE = 2
 EXIT_DEGRADED = 3
 EXIT_AUTH = 4
 
-_state: dict[str, Any] = {"json": False, "host": None}
+_state: dict[str, Any] = {"json": False, "verbose": False, "host": None}
 
 
 def set_json(value: bool) -> None:
@@ -42,6 +42,14 @@ def set_json(value: bool) -> None:
 
 def is_json() -> bool:
     return bool(_state["json"])
+
+
+def set_verbose(value: bool) -> None:
+    _state["verbose"] = bool(value)
+
+
+def is_verbose() -> bool:
+    return bool(_state["verbose"])
 
 
 def get_host():
@@ -165,7 +173,9 @@ __all__ = [
     "fail",
     "get_host",
     "is_json",
+    "is_verbose",
     "resolve_pot_id",
     "set_host",
     "set_json",
+    "set_verbose",
 ]
