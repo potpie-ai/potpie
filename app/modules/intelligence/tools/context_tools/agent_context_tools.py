@@ -181,10 +181,15 @@ class AgentContextTools:
         if self._container.context_graph is None:
             return {"ok": False, "error": "context_graph_unavailable"}
 
+        # One mode-based read contract: resolve returns the canonical evidence
+        # envelope (items/coverage/unsupported_includes), never a server-side
+        # LLM ``answer.summary``. The agent synthesises the answer from the
+        # evidence itself. ``mode``/``source_policy`` carry retrieval-depth
+        # intent; the envelope path ignores the synthesis-era budget knobs.
         request = ContextGraphQuery(
             pot_id=pot_id,
             query=query,
-            goal=ContextGraphGoal.ANSWER,
+            goal=ContextGraphGoal.RETRIEVE,
             strategy=ContextGraphStrategy.AUTO,
             intent=intent,
             consumer_hint=consumer_hint,
@@ -205,12 +210,7 @@ class AgentContextTools:
                 source_refs=_split_csv(source_refs),
             ),
             source_policy=source_policy,
-            budget=ContextGraphBudget(
-                max_items=max_items,
-                max_tokens=max_tokens,
-                timeout_ms=timeout_ms,
-                freshness=freshness,
-            ),
+            budget=ContextGraphBudget(max_items=max_items, freshness=freshness),
             as_of=_parse_as_of(as_of),
         )
         out = await self._container.context_graph.query_async(request)
@@ -254,27 +254,18 @@ class AgentContextTools:
                 as_of=_parse_as_of(as_of),
             )
         )
-        rows = out.result if isinstance(out.result, list) else []
+        # RETRIEVE routes through the envelope path: read ``items`` (the ranked
+        # evidence) rather than a flat list. The agent reasons over evidence;
+        # there is no server-side answer summary.
+        envelope = out.result if isinstance(out.result, dict) else {}
+        rows = envelope.get("items", []) if isinstance(envelope, dict) else []
         return {
             "ok": out.error is None,
-            "answer": {"summary": f"Found {len(rows)} context search result(s)."},
             "evidence": rows,
+            "coverage": envelope.get("coverage", []),
+            "unsupported_includes": envelope.get("unsupported_includes", []),
+            "overall_confidence": envelope.get("overall_confidence", "unknown"),
             "source_refs": [],
-            "coverage": {
-                "status": "complete" if rows else "empty",
-                "available": ["semantic_search"] if rows else [],
-                "missing": [] if rows else ["semantic_search"],
-                "missing_reasons": {} if rows else {"semantic_search": "empty_result"},
-            },
-            "freshness": {
-                "status": "unknown",
-                "last_graph_update": None,
-                "last_source_verification": None,
-                "stale_refs": [],
-                "needs_verification_refs": [],
-            },
-            "fallbacks": [],
-            "recommended_next_actions": [],
             "error": out.error,
             "meta": out.meta,
         }
@@ -471,8 +462,9 @@ def create_agent_context_tools(sql_db: Session, user_id: str) -> list[Structured
             coroutine=instance.context_resolve,
             name="context_resolve",
             description=(
-                "Primary context graph tool. Resolve a bounded task context wrap with answer, facts, evidence, "
-                "source refs, coverage, freshness, quality, fallbacks, and recommended next actions."
+                "Primary context graph tool. Resolve a bounded task context wrap of ranked evidence items, "
+                "per-include coverage, unsupported includes, and overall confidence. Returns facts/evidence "
+                "for you to reason over — it does not synthesise an answer for you."
             ),
             args_schema=ContextResolveInput,
         ),
