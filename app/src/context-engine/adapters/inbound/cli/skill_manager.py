@@ -82,7 +82,7 @@ class SkillManager:
             skill_id = str(row["id"])
             catalog_entry = catalog.get(skill_id)
             lock_entry = lock_skills.get(skill_id)
-            lock_payload = {"present": isinstance(lock_entry, dict)}
+            lock_payload: dict[str, Any] = {"present": isinstance(lock_entry, dict)}
             if isinstance(lock_entry, dict):
                 lock_payload.update(
                     {
@@ -410,13 +410,15 @@ class SkillManager:
         target = skill_dir(self.root, skill_id)
         existing_hash = hash_path_dir(target) if target.exists() else None
         lock_entry = lock.get("skills", {}).get(skill_id)
-        if existing_hash == catalog_entry["templateHash"]:
+        template_hash = str(catalog_entry["templateHash"])
+        template_path = str(catalog_entry["templatePath"])
+        if existing_hash is not None and existing_hash == template_hash:
             upsert_lock_entry(
                 lock,
                 skill_id=skill_id,
-                source=catalog_entry["templatePath"].removesuffix("/SKILL.md"),
+                source=template_path.removesuffix("/SKILL.md"),
                 skill_path=relative_to_root(target / "SKILL.md", self.root),
-                template_hash=catalog_entry["templateHash"],
+                template_hash=template_hash,
                 installed_hash=existing_hash,
             )
             return {
@@ -454,9 +456,9 @@ class SkillManager:
         upsert_lock_entry(
             lock,
             skill_id=skill_id,
-            source=catalog_entry["templatePath"].removesuffix("/SKILL.md"),
+            source=template_path.removesuffix("/SKILL.md"),
             skill_path=relative_to_root(target / "SKILL.md", self.root),
-            template_hash=catalog_entry["templateHash"],
+            template_hash=template_hash,
             installed_hash=installed_hash,
         )
         return {

@@ -75,6 +75,7 @@ app = typer.Typer(
 pot_app = typer.Typer(help="Active pot and local pot helpers.")
 pot_repo_app = typer.Typer(help="Repositories attached to a context pot (Potpie API).")
 event_app = typer.Typer(help="Inspect and wait for ingestion events.")
+conflict_app = typer.Typer(help="Predicate-family conflicts (QualityIssue).")
 skills_app = typer.Typer(help="Manage repo-local Potpie agent skills.")
 
 # Set by root callback; read by all subcommands (including nested `pot`).
@@ -143,7 +144,7 @@ def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str
     if status_code == 202:
         return {
             "status": "queued",
-            "mutation_id": data.get("mutation_id"),
+            "episode_uuid": data.get("episode_uuid"),
             "event_id": data.get("event_id"),
             "job_id": data.get("job_id"),
             "downgrades": list(data.get("downgrades") or []),
@@ -151,7 +152,7 @@ def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str
     if "event_id" in data or "job_id" in data:
         return {
             "status": data.get("status") or "applied",
-            "mutation_id": data.get("mutation_id"),
+            "episode_uuid": data.get("episode_uuid"),
             "event_id": data.get("event_id"),
             "job_id": data.get("job_id"),
             "downgrades": list(data.get("downgrades") or []),
@@ -159,7 +160,7 @@ def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str
         }
     return {
         "status": "applied",
-        "mutation_id": data.get("mutation_id"),
+        "episode_uuid": data.get("episode_uuid"),
         "event_id": data.get("event_id"),
         "job_id": data.get("job_id"),
         "downgrades": list(data.get("downgrades") or []),
@@ -249,6 +250,16 @@ def doctor_cmd() -> None:
     s = EnvContextEngineSettings()
     cg = s.is_enabled()
     neo = bool(s.neo4j_uri())
+    ce_neo = bool(
+        os.getenv("CONTEXT_ENGINE_NEO4J_URI") or os.getenv("CONTEXT_ENGINE_NEO4J_URL")
+    )
+    legacy_neo = bool(os.getenv("NEO4J_URI") or os.getenv("NEO4J_URL"))
+    if ce_neo:
+        neo_src = "context_engine"
+    elif legacy_neo:
+        neo_src = "legacy"
+    else:
+        neo_src = "missing"
 
     has_potpie_key_env = bool(os.getenv("POTPIE_API_KEY"))
     has_stored_key = bool(get_stored_api_key())
@@ -297,7 +308,7 @@ def doctor_cmd() -> None:
 
     summary: list[str] = [
         "[dim]search / ingest / pot hard-reset call Potpie POST /api/v2/context/* with X-API-Key.[/dim]",
-        "[dim]Local Neo4j is not required on this machine.[/dim]",
+        "[dim]Local Neo4j/Graphiti is not required on this machine.[/dim]",
     ]
     if health_ok is True:
         summary.append("[green]GET /health on Potpie base URL succeeded.[/green]")
@@ -311,6 +322,7 @@ def doctor_cmd() -> None:
     snap = DoctorSnapshot(
         context_graph_enabled=cg,
         neo4j_effective_set=neo,
+        neo4j_source=neo_src,
         pot_maps_set=maps_set,
         active_pot_id=get_active_pot_id() or None,
         potpie_api_key_env=has_potpie_key_env,
@@ -466,9 +478,15 @@ def _print_skills_mutation(payload: dict[str, Any], *, as_json: bool) -> None:
     if as_json:
         print_json_blob(payload, as_json=True)
         return
+    default_status = {
+        "installed": "installed",
+        "updated": "updated",
+        "removed": "removed",
+        "skipped": "skipped",
+    }
     for key in ("installed", "updated", "removed", "skipped"):
         for row in payload.get(key, []) or []:
-            status = row.get("status", key.rstrip("d"))
+            status = row.get("status", default_status[key])
             suffix = f" ({row['reason']})" if row.get("reason") else ""
             print_plain_line(f"{status} {row['id']}{suffix}", as_json=False)
             command = row.get("recommendedCommand")
@@ -1225,6 +1243,60 @@ def event_wait_cmd(
 app.add_typer(event_app, name="event")
 
 
+@conflict_app.command("list")
+def conflict_list_cmd(
+    cwd: str = typer.Option(
+        ".",
+        "--cwd",
+        help="Git working tree used when inferring pot from remote / env",
+    ),
+) -> None:
+    """List open predicate-family conflicts for the active pot."""
+    load_cli_env()
+    j, v = _flags()
+    cwd_resolved = str(Path(cwd).resolve())
+    pot_id = _pot_id_or_git(None, cwd=cwd_resolved)
+    client = _cli_client_or_exit(v)
+    try:
+        out = client.conflicts_list(pot_id)
+    except PotpieContextApiError as exc:
+        emit_error("Could not list conflicts", _format_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    print_json_blob(out, as_json=j)
+
+
+@conflict_app.command("resolve")
+def conflict_resolve_cmd(
+    issue_uuid: str = typer.Argument(..., help="QualityIssue uuid"),
+    action: str = typer.Option(
+        "supersede_older",
+        "--action",
+        "-a",
+        help="Resolution strategy (supersede_older stamps invalid_at on the older edge)",
+    ),
+    cwd: str = typer.Option(
+        ".",
+        "--cwd",
+        help="Git working tree used when inferring pot from remote / env",
+    ),
+) -> None:
+    """Resolve one open conflict (default: supersede the older episodic edge)."""
+    load_cli_env()
+    j, v = _flags()
+    cwd_resolved = str(Path(cwd).resolve())
+    pot_id = _pot_id_or_git(None, cwd=cwd_resolved)
+    client = _cli_client_or_exit(v)
+    try:
+        out = client.conflicts_resolve(pot_id, issue_uuid, action=action)
+    except PotpieContextApiError as exc:
+        emit_error("Could not resolve conflict", _format_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    print_json_blob(out, as_json=j)
+
+
+app.add_typer(conflict_app, name="conflict")
+
+
 @app.command("add")
 def add_repo_cmd(
     path: str = typer.Argument(
@@ -1275,7 +1347,7 @@ def search(
     node_labels: str | None = typer.Option(
         None,
         "--node-labels",
-        help="Optional comma-separated entity labels, e.g. PullRequest,Decision",
+        help="Optional comma-separated Graphiti labels, e.g. PullRequest,Decision",
     ),
     repo_name: str | None = typer.Option(
         None,
@@ -1292,7 +1364,7 @@ def search(
     include_invalidated: bool = typer.Option(
         False,
         "--include-invalidated",
-        help="Return superseded facts too (edges with invalid_at set). Ignored when --as-of is set.",
+        help="Return superseded facts too (Graphiti edges with invalid_at set). Ignored when --as-of is set.",
     ),
     with_temporal: bool = typer.Option(
         False,
@@ -1304,16 +1376,16 @@ def search(
         "--as-of",
         help="ISO 8601 instant; restrict results to edges valid at that time (valid_at/invalid_at window).",
     ),
-    mutation_id: str | None = typer.Option(
+    episode_uuid: str | None = typer.Option(
         None,
-        "--mutation-id",
-        "-m",
-        help="Only facts written by this apply-plan mutation UUID (server-side filter).",
+        "--episode",
+        "-e",
+        help="Only facts linked to this ingested episode UUID (server-side filter).",
     ),
     no_provenance: bool = typer.Option(
         False,
         "--no-provenance",
-        help="Hide source / reference_time / mutation_id line in plain (non-JSON) output.",
+        help="Hide source / reference_time / episode line in plain (non-JSON) output.",
     ),
     cwd: str = typer.Option(
         ".",
@@ -1351,8 +1423,8 @@ def search(
         "source_descriptions": [_resolved_source_label(source_description)]
         if _resolved_source_label(source_description)
         else [],
-        "mutation_ids": [mutation_id.strip()]
-        if mutation_id and mutation_id.strip()
+        "episode_uuids": [episode_uuid.strip()]
+        if episode_uuid and episode_uuid.strip()
         else [],
         "include_invalidated": include_invalidated,
         "as_of": as_of_dt,
@@ -1437,8 +1509,7 @@ def status_cmd(
 ) -> None:
     """Fetch readiness / capability envelope (POST /status)."""
     j, v = _flags()
-    cwd_resolved = str(Path(cwd).resolve())
-    pot_id = _pot_id_or_git(pot, cwd=cwd_resolved)
+    pot_id = _pot_id_or_git(pot, cwd=str(Path(cwd).resolve()))
     body: dict[str, Any] = {
         "pot_id": pot_id,
         "scope": _resolve_scope_body(
@@ -1455,15 +1526,6 @@ def status_cmd(
             "Status failed", _format_api_error(exc), verbose=v, exc=exc if v else None
         )
         raise typer.Exit(code=1) from exc
-    if isinstance(response, dict):
-        try:
-            response["skills"] = SkillManager(cwd_resolved).context_status_advisory()
-        except SkillManagerError as exc:
-            response["skills"] = {
-                "ok": False,
-                "error": exc.to_payload()["error"],
-                "doNotEditInstalledSkillsDirectly": True,
-            }
     print_json_blob(response, as_json=j)
 
 
@@ -1554,14 +1616,14 @@ def overview_cmd(
     limit: int = typer.Option(12, "--limit", "-n"),
     cwd: str = typer.Option(".", "--cwd"),
 ) -> None:
-    """Fetch the project's infra/topology snapshot (services, datastores, deps)."""
+    """Fetch graph-wide readiness / activity snapshot (goal=aggregate, include=[graph_overview])."""
     j, v = _flags()
     pot_id = _pot_id_or_git(pot, cwd=str(Path(cwd).resolve()))
     body: dict[str, Any] = {
         "pot_id": pot_id,
-        "goal": "retrieve",
+        "goal": "aggregate",
         "strategy": "auto",
-        "include": ["infra_topology"],
+        "include": ["graph_overview"],
         "limit": limit,
         "scope": _resolve_scope_body(repo_name=repo_name),
     }
@@ -1869,7 +1931,7 @@ def ingest_cmd(
         raise typer.Exit(code=2)
     if (
         out["status"] == "applied"
-        and not out.get("mutation_id")
+        and not out.get("episode_uuid")
         and not out.get("event_id")
     ):
         emit_error(
@@ -1883,9 +1945,6 @@ def ingest_cmd(
 
 
 def main() -> None:
-    from bootstrap.logging_setup import configure_logging
-
-    configure_logging()
     app()
 
 
