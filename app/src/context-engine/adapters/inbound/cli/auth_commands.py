@@ -9,26 +9,17 @@ import urllib.parse
 import webbrowser
 from typing import Any
 
+from typing import Any
+
 import typer
 from rich.markup import escape
 
-from adapters.inbound.cli.atlassian_auth import run_atlassian_api_token_auth
-from adapters.inbound.cli.atlassian_read import (
-    AtlassianReadError,
-    fetch_confluence_content_sample,
-    fetch_confluence_spaces_sample,
-    fetch_jira_issues_sample,
-    fetch_jira_projects,
-    run_confluence_use_flow,
-    run_jira_use_flow,
-)
 from adapters.inbound.cli.callback_server import OAuthCallbackResult, wait_for_oauth_callback
 from adapters.inbound.cli.credentials_store import (
     ProviderCredentialError,
     clear_integration_tokens,
     credentials_path,
     get_integration_status,
-    get_integration_tokens,
     save_integration_tokens,
 )
 from adapters.inbound.cli.env_bootstrap import load_cli_env
@@ -50,14 +41,38 @@ from adapters.inbound.cli.provider_config import (
     get_scopes,
 )
 from adapters.inbound.cli.token_exchange import exchange_authorization_code
+from rich.markup import escape
+
+from adapters.inbound.cli.atlassian_auth import run_atlassian_api_token_auth
+from adapters.inbound.cli.atlassian_read import (
+    AtlassianReadError,
+    fetch_confluence_content_sample,
+    fetch_confluence_spaces_sample,
+    fetch_jira_issues_sample,
+    fetch_jira_projects,
+    run_confluence_use_flow,
+    run_jira_use_flow,
+)
+from adapters.inbound.cli.credentials_store import (
+    ProviderCredentialError,
+    clear_integration_tokens,
+    get_integration_status,
+    get_integration_tokens,
+)
+from adapters.inbound.cli.env_bootstrap import load_cli_env
+from adapters.inbound.cli.integration_verify import verify_integration_access
+from adapters.inbound.cli.output import emit_error, print_json_blob, print_plain_line
+from adapters.inbound.cli.provider_config import (
+    Provider,
+)
 
 auth_app = typer.Typer(help="Authenticate CLI integrations.")
 linear_app = typer.Typer(help="Linear authentication.")
-jira_app = typer.Typer(help="Jira authentication and read.")
-confluence_app = typer.Typer(help="Confluence authentication and read.")
 
 _OAUTH_CALLBACK_TIMEOUT = 300.0
 _ALL_PROVIDERS: tuple[str, ...] = ("linear", "jira", "confluence")
+jira_app = typer.Typer(help="Jira authentication and read.")
+confluence_app = typer.Typer(help="Confluence authentication and read.")
 
 
 def _canonical_provider_for_json(product: str) -> str:
@@ -80,6 +95,7 @@ def _flags() -> tuple[bool, bool]:
     from adapters.inbound.cli.main import _flags as main_flags
 
     return main_flags()
+
 
 def _build_linear_authorization_url(
     *,
@@ -343,6 +359,17 @@ def _run_linear_oauth_flow(*, force: bool = False) -> None:
     _print_linear_login_success(get_integration_status("linear"), tokens=tokens)
 
 
+def _esc(value: Any) -> str:
+    """Escape provider-controlled text before Rich markup interpretation."""
+    if value is None:
+        return ""
+    return escape(str(value))
+
+
+def _print_remote_line(message: str) -> None:
+    """Print provider-sourced text without Rich markup interpretation."""
+    print_plain_line(message, as_json=False, markup=False)
+
 
 @auth_app.command("status")
 def auth_status(
@@ -352,39 +379,11 @@ def auth_status(
         help="Run a lightweight read-only API check for authenticated providers.",
     ),
 ) -> None:
-    """Show auth status for Potpie, GitHub, and all integrations."""
+    """Show local integration auth status."""
     load_cli_env()
-    from adapters.inbound.cli.credentials_store import (
-        get_stored_api_key,
-        get_potpie_firebase_refresh_token,
-        get_potpie_auth_type,
-        get_integration_metadata,
-    )
     j, _ = _flags()
-
-    # --- Potpie account ---
-    api_key = get_stored_api_key()
-    refresh_token = get_potpie_firebase_refresh_token()
-    auth_type = get_potpie_auth_type() or ("api_key" if api_key else "")
-    potpie_authed = bool(api_key or refresh_token)
-    potpie_row: dict[str, Any] = {
-        "provider": "potpie",
-        "authenticated": potpie_authed,
-        "auth_type": auth_type or None,
-    }
-
-    # --- GitHub ---
-    github_meta = get_integration_metadata("github")
-    github_authed = bool(github_meta)
-    github_row: dict[str, Any] = {
-        "provider": "github",
-        "authenticated": github_authed,
-        "auth_type": "device_flow" if github_authed else None,
-        "login": github_meta.get("account", {}).get("login") if github_authed else None,
-    }
-
-    # --- Integrations (linear / jira / confluence) ---
     rows: list[dict[str, Any]] = []
+
     for provider in _ALL_PROVIDERS:
         meta = get_integration_status(provider)
         row = dict(meta)
@@ -407,28 +406,9 @@ def auth_status(
         rows.append(row)
 
     if j:
-        print_json_blob(
-            {"potpie": potpie_row, "github": github_row, "integrations": rows},
-            as_json=True,
-        )
+        print_json_blob({"integrations": rows}, as_json=True)
         return
 
-    # Human output — Potpie first
-    if potpie_authed:
-        label = auth_type or "unknown"
-        _print_remote_line(f"potpie: authenticated  auth_type={label}")
-    else:
-        print_plain_line("potpie: not authenticated  (run: potpie login)", as_json=False)
-
-    # GitHub
-    if github_authed:
-        login = github_row.get("login") or ""
-        suffix = f"  login={_esc(login)}" if login else ""
-        _print_remote_line(f"github: authenticated{suffix}")
-    else:
-        print_plain_line("github: not authenticated  (run: potpie auth github login)", as_json=False)
-
-    # Integrations
     for row in rows:
         provider = row["provider"]
         if not row.get("authenticated"):
@@ -447,6 +427,8 @@ def auth_status(
             parts.append(f"expires_at={_esc(row['expires_at'])}")
         if row.get("cloud_id"):
             parts.append(f"cloud_id={_esc(row['cloud_id'])}")
+        if row.get("token_storage"):
+            parts.append(f"token_storage={_esc(row['token_storage'])}")
         if verify:
             verified = row.get("verified")
             message = row.get("verify_message") or ""
@@ -497,21 +479,14 @@ def auth_logout(
 
     if was_authenticated:
         message = f"Logged out of {key}."
-        json_payload: dict[str, Any] = {"ok": True, "provider": key}
     else:
         message = (
             f"No active {key} session; removed any stale local credentials."
         )
-        json_payload = {
-            "ok": True,
-            "provider": key,
-            "cleared_stale": True,
-        }
-    print_plain_line(
-        message,
-        as_json=j,
-        json_payload=json_payload,
-    )
+    payload: dict[str, Any] = {"ok": True, "provider": key}
+    if not was_authenticated:
+        payload["cleared_stale"] = True
+    print_plain_line(message, as_json=j, json_payload=payload)
 
 
 @auth_app.command("revoke", hidden=True)
@@ -537,18 +512,6 @@ def auth_linear(
     _run_linear_oauth_flow(force=force)
 
 
-def _esc(value: Any) -> str:
-    """Escape provider-controlled text before Rich markup interpretation."""
-    if value is None:
-        return ""
-    return escape(str(value))
-
-
-def _print_remote_line(message: str) -> None:
-    """Print provider-sourced text without Rich markup interpretation."""
-    print_plain_line(message, as_json=False, markup=False)
-
-
 @linear_app.command("login")
 def linear_login(
     force: bool = typer.Option(
@@ -568,6 +531,7 @@ def linear_logout() -> None:
 
 
 register_provider_app("linear", linear_app)
+
 
 def _print_jira_issue_row(row: dict[str, Any]) -> None:
     _print_remote_line(
@@ -629,7 +593,7 @@ def _run_atlassian_quick_read(
     product: str,
     fetcher,
     limit: int,
-    hint_cmd: str = "potpie auth jira use",
+    hint_cmd: str = "potpie auth jira select",
     display_name: str | None = None,
 ) -> None:
     load_cli_env()
@@ -767,11 +731,11 @@ def jira_ls(
         )
         if row.get("url"):
             _print_remote_line(f"    {_esc(row.get('url'))}")
-    print_plain_line("\nFetch issues: potpie auth jira use", as_json=False)
+    print_plain_line("\nFetch issues: potpie auth jira select", as_json=False)
 
 
-@jira_app.command("use")
-def jira_use(
+@jira_app.command("select")
+def jira_select(
     key: str | None = typer.Option(None, "--key", "-k", help="Jira project key."),
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
 ) -> None:
@@ -795,7 +759,7 @@ def jira_issues(
         product="jira",
         fetcher=fetch_jira_issues_sample,
         limit=limit,
-        hint_cmd="potpie auth jira use",
+        hint_cmd="potpie auth jira select",
         display_name="Jira",
     )
 
@@ -865,11 +829,11 @@ def confluence_ls(
         _print_remote_line(
             f"  {_esc(row.get('key'))}\t{_esc(row.get('name'))}\t{_esc(row.get('type'))}",
         )
-    print_plain_line("\nFetch pages: potpie auth confluence use", as_json=False)
+    print_plain_line("\nFetch pages: potpie auth confluence select", as_json=False)
 
 
-@confluence_app.command("use")
-def confluence_use(
+@confluence_app.command("select")
+def confluence_select(
     key: str | None = typer.Option(None, "--key", "-k", help="Confluence space key."),
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
 ) -> None:
@@ -893,7 +857,7 @@ def confluence_pages(
         product="wiki",
         fetcher=fetch_confluence_content_sample,
         limit=limit,
-        hint_cmd="potpie auth confluence use",
+        hint_cmd="potpie auth confluence select",
         display_name="Confluence",
     )
 

@@ -13,7 +13,9 @@ from adapters.inbound.cli.auth.models import (
     GitHubAccount,
     ProviderCredentials,
 )
+from adapters.inbound.cli.env_bootstrap import load_cli_env
 
+GITHUB_CLIENT_ID_ENV = "POTPIE_GITHUB_CLIENT_ID"
 GITHUB_SCOPES = ("repo", "read:org", "read:user", "user:email")
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -30,9 +32,14 @@ class GitHubDeviceFlowError(Exception):
 
 
 def get_github_client_id() -> str:
-    client_id = (os.getenv("POTPIE_GITHUB_CLIENT_ID") or "").strip()
+    """Resolve GitHub OAuth app client ID from environment (.env via load_cli_env)."""
+    load_cli_env()
+    client_id = os.getenv(GITHUB_CLIENT_ID_ENV, "").strip()
     if not client_id:
-        raise GitHubDeviceFlowError("POTPIE_GITHUB_CLIENT_ID is not set.")
+        raise GitHubDeviceFlowError(
+            f"{GITHUB_CLIENT_ID_ENV} is not set. "
+            "Add it to potpie/.env (see .env.template)."
+        )
     return client_id
 
 
@@ -74,7 +81,7 @@ def request_device_code(
     scopes: tuple[str, ...] = GITHUB_SCOPES,
     client: httpx.Client | None = None,
 ) -> DeviceCode:
-    client_id = client_id or get_github_client_id()
+    resolved_client_id = client_id or get_github_client_id()
     owns_client = client is None
     if owns_client:
         client = httpx.Client(timeout=30.0)
@@ -82,7 +89,7 @@ def request_device_code(
         response = client.post(
             GITHUB_DEVICE_CODE_URL,
             headers={"Accept": "application/json"},
-            data={"client_id": client_id, "scope": " ".join(scopes)},
+            data={"client_id": resolved_client_id, "scope": " ".join(scopes)},
         )
     finally:
         if owns_client:
@@ -112,7 +119,7 @@ def poll_for_access_token(
     client: httpx.Client | None = None,
     sleep_fn: Any = time.sleep,
 ) -> AccessToken:
-    client_id = client_id or get_github_client_id()
+    resolved_client_id = client_id or get_github_client_id()
     owns_client = client is None
     if owns_client:
         client = httpx.Client(timeout=30.0)
@@ -129,7 +136,7 @@ def poll_for_access_token(
                 GITHUB_TOKEN_URL,
                 headers={"Accept": "application/json"},
                 data={
-                    "client_id": client_id,
+                    "client_id": resolved_client_id,
                     "device_code": device_code.device_code,
                     "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                 },

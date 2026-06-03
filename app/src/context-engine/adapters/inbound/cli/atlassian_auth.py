@@ -540,11 +540,11 @@ def _finalize_selected_site(
 
 
 def _prompt_credentials() -> tuple[str, str]:
-    email = typer.prompt("Enter your Atlassian email").strip()
-    if not email:
-        raise typer.Exit(code=1)
     api_token = typer.prompt("Enter your API token", hide_input=True).strip()
     if not api_token:
+        raise typer.Exit(code=1)
+    email = typer.prompt("Enter your Atlassian email").strip()
+    if not email:
         raise typer.Exit(code=1)
     return email, api_token
 
@@ -609,6 +609,39 @@ def _save_product_credentials(product: AtlassianProduct, payload: dict[str, Any]
         save_confluence_credentials(payload)
 
 
+def _open_atlassian_api_token_page() -> None:
+    print_plain_line("Create an API token (without scopes).", as_json=False)
+    print_plain_line(
+        "Use an Atlassian API token without scopes for Jira and Confluence.",
+        as_json=False,
+    )
+    print_plain_line(
+        "You will paste the token here, then enter your email and site subdomain.",
+        as_json=False,
+    )
+    for remaining in range(10, 0, -1):
+        prefix = "" if remaining == 10 else "\r"
+        suffix = "second" if remaining == 1 else "seconds"
+        sys.stdout.write(f"{prefix}Opening Atlassian in {remaining} {suffix}...")
+        sys.stdout.flush()
+        time.sleep(1)
+    sys.stdout.write("\rOpening Atlassian now...          \n")
+    sys.stdout.flush()
+
+    opened = webbrowser.open(ATLASSIAN_API_TOKEN_PAGE, new=1)
+    if not opened:
+        print_plain_line(
+            "Could not open a browser automatically. Open this URL:",
+            as_json=False,
+        )
+        print_plain_line(ATLASSIAN_API_TOKEN_PAGE, as_json=False, markup=False)
+        return
+    print_plain_line(
+        "Paste the API token here when you are done creating it.",
+        as_json=False,
+    )
+
+
 def run_atlassian_api_token_auth(
     product: AtlassianProduct,
     *,
@@ -658,20 +691,9 @@ def run_atlassian_api_token_auth(
         site, last_error = _resolve_site_from_subdomain(site_subdomain or "")
     else:
         if not as_json:
-            print_plain_line("Opening Atlassian API token page...", as_json=False)
-            print_plain_line(
-                f"If the browser does not open, visit:\n{ATLASSIAN_API_TOKEN_PAGE}",
-                as_json=False,
-            )
-            print_plain_line(
-                f"Create an API token (without scopes) with access to {product_label}.",
-                as_json=False,
-            )
-            print_plain_line(
-                "At id.atlassian.com choose Create API token — not Create API token with scopes.",
-                as_json=False,
-            )
-        webbrowser.open(ATLASSIAN_API_TOKEN_PAGE, new=1)
+            _open_atlassian_api_token_page()
+        else:
+            webbrowser.open(ATLASSIAN_API_TOKEN_PAGE, new=1)
         email_value, api_token_value = _prompt_credentials()
         site, last_error = _prompt_and_resolve_site()
     email, api_token = email_value, api_token_value

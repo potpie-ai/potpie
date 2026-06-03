@@ -23,6 +23,7 @@ from adapters.inbound.cli.credentials_store import (
     get_provider_credentials,
     write_provider_credentials,
 )
+from adapters.inbound.cli.env_bootstrap import load_cli_env
 from adapters.inbound.cli.output import emit_error, print_json_blob, print_plain_line
 
 github_app = typer.Typer(help="GitHub authentication.")
@@ -40,20 +41,47 @@ def _flags() -> tuple[bool, bool]:
     return main_flags()
 
 
+def _open_github_device_verification(user_code: str, verification_uri: str) -> None:
+    print_plain_line(
+        "GitHub login requires a one-time verification code.",
+        as_json=False,
+    )
+    print_plain_line(f"Copy this code: {user_code}", as_json=False)
+    print_plain_line(
+        "Copy the code, then press Enter to open GitHub.",
+        as_json=False,
+    )
+    typer.confirm("Press Enter after copying the code", default=True, show_default=False)
+    print_plain_line("Opening GitHub now...", as_json=False)
+
+    opened = webbrowser.open(verification_uri)
+    if not opened:
+        print_plain_line(
+            "Could not open a browser automatically. Open this URL:",
+            as_json=False,
+        )
+        print_plain_line(verification_uri, as_json=False, markup=False)
+        return
+    print_plain_line(
+        "Paste the copied code into GitHub to continue.",
+        as_json=False,
+    )
+
+
 def github_login_impl() -> None:
     """Authenticate the CLI with GitHub using device flow."""
+    load_cli_env()
     j, v = _flags()
     account = None
     payload = None
     try:
         device_code = request_device_code()
         if not j:
-            webbrowser.open(device_code.verification_uri)
-            print_plain_line(
-                f"Enter code {device_code.user_code} at {device_code.verification_uri}",
-                as_json=False,
+            _open_github_device_verification(
+                device_code.user_code,
+                device_code.verification_uri,
             )
-            print_plain_line("Waiting for authorization…", as_json=False)
+            print_plain_line("Waiting for authorization...", as_json=False)
         token = poll_for_access_token(device_code)
         account = verify_account(token.access_token)
         payload = build_provider_credentials(
