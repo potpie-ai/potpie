@@ -430,7 +430,7 @@ def _emit_skill_error(exc: SkillManagerError, *, as_json: bool) -> None:
     emit_error(exc.code, exc.message, hint=hint)
 
 
-def _skill_payload_or_exit(action: Any, *, success_exit: int = 0) -> dict[str, Any]:
+def _skill_payload_or_exit(action: Any) -> dict[str, Any]:
     j, _ = _flags()
     try:
         return action()

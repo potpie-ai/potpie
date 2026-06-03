@@ -357,7 +357,7 @@ class SkillManager:
                     "message": f"{skill_id} is installed but not owned by the lockfile.",
                 }
             )
-        if lock_error:
+        if lock_error and lock_error not in diagnostics:
             diagnostics.append(lock_error)
         ok = not diagnostics
         return {
