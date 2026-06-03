@@ -19,7 +19,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from application.use_cases.process_batch import process_batch
-from bootstrap.container import ContextEngineContainer
+from bootstrap.ingestion_server import IngestionServerContainer
 from bootstrap.observability_context import correlation_scope
 from bootstrap.observability_runtime import get_observability
 from domain.ports.observability import SPAN_KIND_CONSUMER
@@ -48,7 +48,7 @@ def handle_process_batch(
     db: Session,
     batch_id: str,
     *,
-    build_container: Callable[[Session], ContextEngineContainer],
+    build_ingestion_server: Callable[[Session], IngestionServerContainer],
 ) -> dict[str, Any]:
     """Claim one batch by id and run the reconciliation agent over it.
 
@@ -56,7 +56,7 @@ def handle_process_batch(
     batch is already claimed/running/done (a redundant enqueue races and
     loses), ``claim_batch_by_id`` returns ``None`` and this is a no-op.
     """
-    container = build_container(db)
+    container = build_ingestion_server(db)
     if container.reconciliation_agent is None:
         return {"status": "skipped", "reason": "no_reconciliation_agent"}
     batches_repo = container.batch_repository(db)

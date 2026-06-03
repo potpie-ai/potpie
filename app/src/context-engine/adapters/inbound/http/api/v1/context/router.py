@@ -31,7 +31,7 @@ from application.use_cases.record_durable_context import (
 )
 from application.use_cases.report_status import report_status
 from application.use_cases.submit_raw_episode import submit_raw_episode
-from bootstrap.container import ContextEngineContainer
+from bootstrap.ingestion_server import IngestionServerContainer
 from domain.actor import Actor, ActorSurface, normalize_surface
 from domain.graph_query import (
     ContextGraphBudget,
@@ -312,7 +312,7 @@ def _wants_sync(sync: bool, x_sync: str | None) -> bool:
 
 
 def _enforce(
-    container: ContextEngineContainer,
+    container: IngestionServerContainer,
     *,
     actor: Any | None,
     resource: str,
@@ -380,7 +380,7 @@ def _parse_window(window: str | None) -> timedelta | None:
 def create_context_router(
     *,
     require_auth: Callable[..., Any],
-    get_container: Callable[..., ContextEngineContainer],
+    get_container: Callable[..., IngestionServerContainer],
     get_db: Callable[..., Any],
     get_db_optional: Callable[..., Any],
 ) -> APIRouter:
@@ -448,7 +448,7 @@ def create_context_router(
         body: IngestEpisodeRequest,
         request: Request,
         auth_user: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session | None = Depends(get_db_optional),
         sync: bool = Query(
             False,
@@ -567,7 +567,7 @@ def create_context_router(
     def post_hard_reset(
         body: HardResetRequest,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session | None = Depends(get_db_optional),
     ) -> dict[str, Any]:
         _enforce(
@@ -625,7 +625,7 @@ def create_context_router(
     def post_events_reconcile(
         body: ContextEventHttpBody,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ):
         _enforce(
@@ -680,7 +680,7 @@ def create_context_router(
     def get_context_event(
         event_id: str,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
         q = container.event_query_service(db)
@@ -749,7 +749,7 @@ def create_context_router(
     def retry_context_event(
         event_id: str,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ):
         events = container.ingestion_event_store(db)
@@ -810,7 +810,7 @@ def create_context_router(
         pot_id: str,
         body: BatchRetryEventsRequest,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ):
         if not body.event_ids:
@@ -907,7 +907,7 @@ def create_context_router(
     def list_pot_events(
         pot_id: str,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
         cursor: str | None = None,
         limit: int = Query(50, ge=1, le=200),
@@ -999,7 +999,7 @@ def create_context_router(
     async def get_pot_timeline(
         pot_id: str,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         service: list[str] | None = Query(
             None,
             description="Anchor to one or more service names (repeat for multiple).",
@@ -1107,7 +1107,7 @@ def create_context_router(
     def get_ingestion_config(
         pot_id: str,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
         _enforce(
@@ -1133,7 +1133,7 @@ def create_context_router(
         pot_id: str,
         body: IngestionConfigBody,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
         _enforce(
@@ -1176,7 +1176,7 @@ def create_context_router(
     def force_flush_pot_endpoint(
         pot_id: str,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
         from application.use_cases.flush_windowed_batches import force_flush_pot
@@ -1211,7 +1211,7 @@ def create_context_router(
     def get_ingest_pipeline(
         pot_id: str,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
         from datetime import timedelta
@@ -1278,7 +1278,7 @@ def create_context_router(
     def stream_event_activity(
         event_id: str,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
         cursor: str | None = Query(
             None,
@@ -1367,7 +1367,7 @@ def create_context_router(
     def stream_pot_events(
         pot_id: str,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         cursor: str | None = Query(
             None,
             description="Redis stream id to resume after (last seen stream_id).",
@@ -1421,7 +1421,7 @@ def create_context_router(
         body: ContextRecordRequest,
         request: Request,
         auth_user: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
         sync: bool = Query(
             False, description="Inline reconcile (200) instead of enqueue (202)."
@@ -1499,7 +1499,7 @@ def create_context_router(
     def post_context_status(
         body: ContextStatusRequest,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
         db: Session | None = Depends(get_db_optional),
     ) -> dict[str, Any]:
         _enforce(
@@ -1534,7 +1534,7 @@ def create_context_router(
     async def post_context_graph_query(
         body: ContextGraphQuery,
         actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
+        container: IngestionServerContainer = Depends(get_container),
     ) -> dict[str, Any]:
         _enforce(
             container,

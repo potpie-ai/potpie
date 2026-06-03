@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # Returning ``None`` emits an UNSUPPORTED_SOURCE_TYPE fallback for that ref.
 RepoResolver = Callable[[str, SourceReferenceRecord], "str | None | Awaitable[str | None]"]
 # SourceControlFactory: ``(repo_name) -> GitHubReadPort``. Typically the
-# same callable as ``ContextEngineContainer.source_for_repo``.
+# same callable as ``IngestionServerContainer.source_for_repo``.
 SourceControlFactory = Callable[[str], GitHubReadPort]
 
 

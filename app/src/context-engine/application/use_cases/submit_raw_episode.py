@@ -14,7 +14,7 @@ from typing import Literal
 
 from sqlalchemy.orm import Session
 
-from bootstrap.container import ContextEngineContainer
+from bootstrap.ingestion_server import IngestionServerContainer
 from domain.actor import Actor
 from domain.ingestion_event_models import EventReceipt, IngestionSubmissionRequest
 from domain.ingestion_kinds import INGESTION_KIND_RAW_EPISODE
@@ -100,7 +100,7 @@ def _receipt_to_run_result(receipt: EventReceipt) -> RawEpisodeSubmissionResult:
 
 def submit_raw_episode(
     *,
-    container: ContextEngineContainer,
+    container: IngestionServerContainer,
     db: Session | None,
     pot_id: str,
     name: str,

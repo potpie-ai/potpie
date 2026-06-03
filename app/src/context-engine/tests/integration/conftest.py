@@ -102,10 +102,10 @@ def container(settings, pot_id, repo_name):
     The pot resolves to a single GitHub repo via ``ExplicitPotResolution``.
     The pot's graph partition is reset on teardown.
     """
-    from bootstrap.container import build_container
+    from bootstrap.ingestion_server import build_ingestion_server
     from bootstrap.http_projects import ExplicitPotResolution
 
-    c = build_container(
+    c = build_ingestion_server(
         settings=settings,
         pots=ExplicitPotResolution({pot_id: repo_name}),
     )
@@ -249,19 +249,20 @@ def pg_test_db():
 
 _LLM_KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY")
 _LLM_MODEL_VARS = (
-    "CONTEXT_ENGINE_QUERY_AGENT_MODEL",
-    "CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL",
+    # The read-side query-agent + answer-synthesis surfaces were removed when
+    # the engine collapsed onto one evidence-envelope read contract; only the
+    # reconciliation (ingestion) LLM surface remains.
     "CONTEXT_ENGINE_RECONCILIATION_MODEL",
 )
 
 
 @pytest.fixture()
 def llm_env(monkeypatch: pytest.MonkeyPatch) -> str:
-    """Load LLM keys + select the model for all three LLM surfaces.
+    """Load LLM keys + select the reconciliation (ingestion) model.
 
-    Skips if no API key is configured. Uses the configured query-agent model
-    (``CONTEXT_ENGINE_QUERY_AGENT_MODEL``) for ingestion, synthesis, and the
-    read agent so one model drives the whole LLM surface.
+    Skips if no API key is configured. The read path is deterministic (one
+    evidence-envelope contract, no LLM synthesis), so the only LLM surface left
+    is reconciliation during ingestion.
     """
     have_key = False
     for key in _LLM_KEYS:
@@ -272,7 +273,7 @@ def llm_env(monkeypatch: pytest.MonkeyPatch) -> str:
     if not have_key:
         pytest.skip("No LLM API key configured")
 
-    model = _env_or_dotenv("CONTEXT_ENGINE_QUERY_AGENT_MODEL") or "openai-responses:gpt-5.4-mini"
+    model = _env_or_dotenv("CONTEXT_ENGINE_RECONCILIATION_MODEL") or "openai-responses:gpt-5.4-mini"
     for var in _LLM_MODEL_VARS:
         monkeypatch.setenv(var, model)
     # Bound LLM time so a slow/hung run can't stall the suite.
@@ -287,13 +288,13 @@ def pipeline_container(
 ):
     """Container with a real reconciliation agent + real Postgres + Neo4j.
 
-    ``build_container`` attaches the context graph + read tools to the agent
+    ``build_ingestion_server`` attaches the context graph + read tools to the agent
     and wires the real query agent / answer synthesizer from the LLM env. The
     Celery job queue is replaced with a NoOp so batches are driven in-process.
     """
     monkeypatch.setenv("DATABASE_URL", pg_test_db.url)
 
-    from bootstrap.container import build_container
+    from bootstrap.ingestion_server import build_ingestion_server
     from bootstrap.http_projects import ExplicitPotResolution
     from domain.ports.context_graph_job_queue import NoOpContextGraphJobQueue
     from adapters.outbound.reconciliation.pydantic_deep_agent import (
@@ -301,7 +302,7 @@ def pipeline_container(
     )
 
     agent = PydanticDeepReconciliationAgent()  # model resolved from llm_env
-    c = build_container(
+    c = build_ingestion_server(
         settings=settings,
         pots=ExplicitPotResolution({pot_id: repo_name}),
         reconciliation_agent=agent,
@@ -322,14 +323,14 @@ def db_container(settings, pg_test_db, pot_id, repo_name):
     (which require an agent to be *present*) without making any LLM calls, so
     they run even when no API key is configured.
     """
-    from bootstrap.container import build_container
+    from bootstrap.ingestion_server import build_ingestion_server
     from bootstrap.http_projects import ExplicitPotResolution
     from domain.ports.context_graph_job_queue import NoOpContextGraphJobQueue
     from adapters.outbound.reconciliation.pydantic_deep_agent import (
         PydanticDeepReconciliationAgent,
     )
 
-    c = build_container(
+    c = build_ingestion_server(
         settings=settings,
         pots=ExplicitPotResolution({pot_id: repo_name}),
         reconciliation_agent=PydanticDeepReconciliationAgent(),
