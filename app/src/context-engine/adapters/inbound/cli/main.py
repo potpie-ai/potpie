@@ -51,6 +51,7 @@ from adapters.inbound.cli.potpie_api_config import (
     resolve_potpie_api_base_url,
     resolve_potpie_api_key,
 )
+from adapters.inbound.cli.skill_manager import SkillManager, SkillManagerError
 from adapters.outbound.http.potpie_context_api_client import (
     IngestRejectedError,
     PotpieContextApiClient,
@@ -75,6 +76,7 @@ pot_app = typer.Typer(help="Active pot and local pot helpers.")
 pot_repo_app = typer.Typer(help="Repositories attached to a context pot (Potpie API).")
 event_app = typer.Typer(help="Inspect and wait for ingestion events.")
 conflict_app = typer.Typer(help="Predicate-family conflicts (QualityIssue).")
+skills_app = typer.Typer(help="Manage repo-local Potpie agent skills.")
 
 # Set by root callback; read by all subcommands (including nested `pot`).
 _cli_state: dict[str, Any] = {"json": False, "verbose": False, "source": None}
@@ -409,6 +411,221 @@ def init_agent_cmd(
         print_plain_line(
             f"skipped {rel_path} (use --force to overwrite)", as_json=False
         )
+
+
+def _skill_manager_or_exit(path: str, agent: str) -> SkillManager:
+    j, _ = _flags()
+    try:
+        return SkillManager(path, agent=agent)
+    except SkillManagerError as exc:
+        _emit_skill_error(exc, as_json=j)
+        raise typer.Exit(code=1) from exc
+
+
+def _emit_skill_error(exc: SkillManagerError, *, as_json: bool) -> None:
+    if as_json:
+        print_json_blob(exc.to_payload(), as_json=True)
+        return
+    hint = f"Try: {exc.recommended_command}" if exc.recommended_command else None
+    emit_error(exc.code, exc.message, hint=hint)
+
+
+def _skill_payload_or_exit(action: Any) -> dict[str, Any]:
+    j, _ = _flags()
+    try:
+        return action()
+    except SkillManagerError as exc:
+        _emit_skill_error(exc, as_json=j)
+        raise typer.Exit(code=1) from exc
+
+
+def _print_skills_status(payload: dict[str, Any], *, as_json: bool) -> None:
+    if as_json:
+        print_json_blob(payload, as_json=True)
+        return
+    print_plain_line(f"Skills root: {payload['root']}", as_json=False)
+    print_plain_line(f"Agent: {payload['agent']}", as_json=False)
+    print_plain_line(
+        "Installed: "
+        f"{len(payload['installed'])}; missing: {len(payload['missing'])}; "
+        f"outdated: {len(payload['outdated'])}; "
+        f"locally modified: {len(payload['locallyModified'])}",
+        as_json=False,
+    )
+    actions = payload.get("nextActions") or []
+    if actions:
+        print_plain_line("Next actions:", as_json=False)
+        for action in actions:
+            print_plain_line(f"  {action['recommendedCommand']}", as_json=False)
+    else:
+        print_plain_line("Skills are up to date for this agent.", as_json=False)
+
+
+def _print_skills_list(payload: dict[str, Any], *, as_json: bool) -> None:
+    if as_json:
+        print_json_blob(payload, as_json=True)
+        return
+    print_plain_line(
+        f"{payload['mode']} skills for {payload['agent']} at {payload['root']}:",
+        as_json=False,
+    )
+    for row in payload["skills"]:
+        desc = row.get("description") or ""
+        print_plain_line(f"  {row['id']} - {desc}", as_json=False)
+
+
+def _print_skills_mutation(payload: dict[str, Any], *, as_json: bool) -> None:
+    if as_json:
+        print_json_blob(payload, as_json=True)
+        return
+    default_status = {
+        "installed": "installed",
+        "updated": "updated",
+        "removed": "removed",
+        "skipped": "skipped",
+    }
+    for key in ("installed", "updated", "removed", "skipped"):
+        for row in payload.get(key, []) or []:
+            status = row.get("status", default_status[key])
+            suffix = f" ({row['reason']})" if row.get("reason") else ""
+            print_plain_line(f"{status} {row['id']}{suffix}", as_json=False)
+            command = row.get("recommendedCommand")
+            if command:
+                print_plain_line(f"  next: {command}", as_json=False)
+
+
+def _print_skills_doctor(payload: dict[str, Any], *, as_json: bool) -> None:
+    if as_json:
+        print_json_blob(payload, as_json=True)
+        return
+    print_plain_line(
+        f"Skill doctor: {'ok' if payload['ok'] else 'issues found'}",
+        as_json=False,
+    )
+    for diag in payload.get("diagnostics", []):
+        skill = f" {diag['skillId']}" if diag.get("skillId") else ""
+        print_plain_line(
+            f"  {diag['code']}{skill}: {diag.get('message', '')}", as_json=False
+        )
+    if payload.get("recommendedCommand"):
+        print_plain_line(f"Next: {payload['recommendedCommand']}", as_json=False)
+
+
+@skills_app.command("status")
+def skills_status_cmd(
+    agent: str = typer.Option(
+        "default",
+        "--agent",
+        help="Agent harness: default, codex, claude, claude-code, or cursor.",
+    ),
+    path: str = typer.Option(".", "--path", help="Repository path."),
+) -> None:
+    """Read skill health without mutating files."""
+    j, _ = _flags()
+    manager = _skill_manager_or_exit(path, agent)
+    payload = _skill_payload_or_exit(manager.status)
+    _print_skills_status(payload, as_json=j)
+
+
+@skills_app.command("list")
+def skills_list_cmd(
+    available: bool = typer.Option(False, "--available", help="List bundled skills."),
+    installed: bool = typer.Option(
+        False, "--installed", help="List installed repo-local skills."
+    ),
+    recommended: bool = typer.Option(
+        False, "--recommended", help="List recommended skills for the agent."
+    ),
+    agent: str = typer.Option("default", "--agent"),
+    path: str = typer.Option(".", "--path", help="Repository path."),
+) -> None:
+    """List available, installed, or recommended skills."""
+    j, _ = _flags()
+    selected = [available, installed, recommended]
+    if sum(1 for flag in selected if flag) > 1:
+        exc = SkillManagerError(
+            "INVALID_ARGUMENTS",
+            "Choose only one of --available, --installed, or --recommended.",
+        )
+        _emit_skill_error(exc, as_json=j)
+        raise typer.Exit(code=1)
+    mode = "available" if available else "recommended" if recommended else "installed"
+    manager = _skill_manager_or_exit(path, agent)
+    payload = _skill_payload_or_exit(lambda: manager.list_skills(mode=mode))
+    _print_skills_list(payload, as_json=j)
+
+
+@skills_app.command("install")
+def skills_install_cmd(
+    skill_id: str | None = typer.Argument(
+        None, help="Bundled skill id. Omit to install the recommended set."
+    ),
+    agent: str = typer.Option("default", "--agent"),
+    path: str = typer.Option(".", "--path", help="Repository path."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm overwrites."),
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite locally modified owned skills."
+    ),
+) -> None:
+    """Install bundled Potpie skills into `.agents/skills`."""
+    j, _ = _flags()
+    manager = _skill_manager_or_exit(path, agent)
+    payload = _skill_payload_or_exit(
+        lambda: manager.install(skill_id, yes=yes, force=force)
+    )
+    _print_skills_mutation(payload, as_json=j)
+
+
+@skills_app.command("update")
+def skills_update_cmd(
+    skill_id: str | None = typer.Argument(
+        None, help="Installed skill id. Omit to update outdated skills."
+    ),
+    all_: bool = typer.Option(
+        False, "--all", help="Check every installed bundled skill."
+    ),
+    agent: str = typer.Option("default", "--agent"),
+    path: str = typer.Option(".", "--path", help="Repository path."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm updates."),
+) -> None:
+    """Update installed bundled skills when templates changed."""
+    j, _ = _flags()
+    manager = _skill_manager_or_exit(path, agent)
+    payload = _skill_payload_or_exit(
+        lambda: manager.update(skill_id, all_=all_, yes=yes)
+    )
+    _print_skills_mutation(payload, as_json=j)
+
+
+@skills_app.command("remove")
+def skills_remove_cmd(
+    skill_id: str = typer.Argument(..., help="Installed skill id to remove."),
+    agent: str = typer.Option("default", "--agent"),
+    path: str = typer.Option(".", "--path", help="Repository path."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm removal."),
+) -> None:
+    """Remove a Potpie-owned installed skill."""
+    j, _ = _flags()
+    manager = _skill_manager_or_exit(path, agent)
+    payload = _skill_payload_or_exit(lambda: manager.remove(skill_id, yes=yes))
+    _print_skills_mutation(payload, as_json=j)
+
+
+@skills_app.command("doctor")
+def skills_doctor_cmd(
+    agent: str = typer.Option("default", "--agent"),
+    path: str = typer.Option(".", "--path", help="Repository path."),
+) -> None:
+    """Run read-only skill diagnostics."""
+    j, _ = _flags()
+    manager = _skill_manager_or_exit(path, agent)
+    payload = _skill_payload_or_exit(manager.doctor)
+    _print_skills_doctor(payload, as_json=j)
+    if not payload.get("ok", False):
+        raise typer.Exit(code=1)
+
+
+app.add_typer(skills_app, name="skills")
 
 
 def _pot_id_or_git(explicit: str | None, *, cwd: str | None = None) -> str:
