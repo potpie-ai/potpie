@@ -42,7 +42,7 @@
 1. **Clone the repository**
 
    ```bash
-   git clone --recurse-submodules https://github.com/potpie-ai/potpie.git
+   git clone https://github.com/potpie-ai/potpie.git
    cd potpie
    ```
 
@@ -124,7 +124,10 @@ To stop all services:
 
 #### Now set up Potpie Frontend
 
+Clone the UI repo separately (it is no longer a submodule of this repository):
+
 ```bash
+git clone https://github.com/potpie-ai/potpie-ui.git
 cd potpie-ui
 
 cp .env.template .env
@@ -210,9 +213,9 @@ Set `GITHUB_AUTH_MODE` to `app`, `pat`, or `none` to select the method.
 
 For self-hosted Git servers (e.g., GitBucket, GitLab, etc.), configure:
 
-      
+
       uv sync
-    
+
 
 This will create a `.venv` directory and install all dependencies from `pyproject.toml`
 
@@ -247,12 +250,12 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
 ##### For Self-Hosted Git Servers (GitBucket, GitLab, etc.):
 
       Set the following environment variables:
-      
-    
+
+
       CODE_PROVIDER=github   # Options: github, gitbucket
       CODE_PROVIDER_BASE_URL=http://your-git-server.com/api/v3
       CODE_PROVIDER_TOKEN=your-token
-    
+
 
 **Important**: `GH_TOKEN_LIST` tokens are always used for GitHub.com, regardless of `CODE_PROVIDER_BASE_URL`.
 
