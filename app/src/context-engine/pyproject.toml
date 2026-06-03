@@ -70,6 +70,11 @@ dev = [
 potpie = "adapters.inbound.cli.host_cli:main"
 potpie-mcp = "adapters.inbound.mcp.server:main"
 
+# Daemon-shell components loaded by the detached daemon's runtime
+# (host.daemon_runtime.EntryPointPluginsLoader).
+[project.entry-points."potpie.shell.components"]
+context_graph = "adapters.inbound.shell_component.component:register"
+
 [tool.hatch.build.targets.wheel]
 packages = ["domain", "application", "adapters", "bootstrap", "benchmarks", "host"]
 include = [
