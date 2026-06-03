@@ -9,6 +9,7 @@ from langchain_core.tools import StructuredTool
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import AgentRunError, ModelRetry, UserError
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -282,6 +283,7 @@ Expected output:
                             ModelResponse([TextPart(content=msg)])
                             for msg in (ctx.history or [])
                         ],
+                        usage_limits=UsageLimits(request_limit=None),
                     )
                     return ChatAgentResponse(
                         response=str(result.output),
@@ -338,6 +340,7 @@ Expected output:
                             ModelResponse([TextPart(content=msg)])
                             for msg in (ctx.history or [])
                         ],
+                        usage_limits=UsageLimits(request_limit=None),
                     ) as run:
                         async for node in run:
                             if Agent.is_model_request_node(node):
