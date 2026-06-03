@@ -1,6 +1,6 @@
 """Process-wide accessor for the wired :class:`ObservabilityPort`.
 
-The hexagonal DI container is the source of truth: ``build_container``
+The hexagonal DI container is the source of truth: ``build_ingestion_server``
 installs the selected sink here. Application/domain call sites that already
 receive a container keep using ``container.observability``. But three
 cross-cutting concerns are *composition-root* concerns and cannot reach a
@@ -25,7 +25,7 @@ _OBSERVABILITY: ObservabilityPort = NoOpObservability()
 
 
 def set_observability(obs: ObservabilityPort) -> None:
-    """Called by ``build_container`` with the env-selected sink."""
+    """Called by ``build_ingestion_server`` with the env-selected sink."""
     global _OBSERVABILITY
     _OBSERVABILITY = obs
 

@@ -207,8 +207,8 @@ def _seed_topology(container, pot_id: str) -> None:
     asyncio.run(container.context_graph.apply_plan_async(plan, expected_pot_id=pot_id))
 
 
-class TestLLMQuery:
-    def test_answer_goal_synthesizes_over_topology(
+class TestEnvelopeQuery:
+    def test_retrieve_returns_evidence_envelope_over_topology(
         self, pipeline_container, pot_id
     ) -> None:
         container = pipeline_container
@@ -217,13 +217,14 @@ class TestLLMQuery:
         query = ContextGraphQuery(
             pot_id=pot_id,
             query="Which environment runs the web service?",
-            goal=ContextGraphGoal.ANSWER,
+            goal=ContextGraphGoal.RETRIEVE,
             scope=ContextGraphScope(services=["web"]),
         )
         result = asyncio.run(container.context_graph.query_async(query))
 
-        assert result.error is None, f"answer query errored: {result.error}"
-        assert result.result is not None
-        # The synthesized envelope carries an answer block.
+        assert result.error is None, f"resolve query errored: {result.error}"
+        # One read contract: the envelope carries ranked evidence (items +
+        # coverage), never a server-side synthesized answer block.
         assert isinstance(result.result, dict)
-        assert "answer" in result.result or "summary" in result.result
+        assert "items" in result.result
+        assert "answer" not in result.result
