@@ -32,7 +32,7 @@ There is **no** separate `tests/unit/context_graph/` tree in the repo root; that
 | `hatchet_worker.py` | Process entrypoint; delegates to `adapters.inbound.hatchet.worker` |
 | `sync_enqueue.py` | Backfill enqueue helper for HTTP (`enqueue_backfill_with_container`) |
 | `context_engine_http.py` | Mounts `create_context_router` at **`/api/v1/context`** (Firebase auth) + shared **`POTPIE_CONTEXT_GRAPH_MUTATIONS`** |
-| (see [`app/api/router.py`](../../api/router.py)) | Same router also mounted at **`/api/v2/context`** with **`X-API-Key`** (`get_api_key_user`) for CLI / MCP |
+| (see [`app/api/router.py`](../../api/router.py)) | Same router also mounted at **`/api/v2/context`** with API auth (`get_api_key_user`) for CLI / MCP |
 | `bundle_renderer.py` | Prefetch / coverage snippets for intelligence agents |
 | `code_provider_source_control.py` | Code-provider → `SourceControlPort` bridge |
 | `models.py` | SQLAlchemy models re-exported from `app.core.models` |

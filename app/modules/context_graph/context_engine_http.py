@@ -29,7 +29,7 @@ def get_context_engine_container_for_api_key(
     user: dict = Depends(get_api_key_user),
     db: Session = Depends(get_db),
 ) -> ContextEngineContainer:
-    """Same container shape as Firebase auth, for /api/v2/context (X-API-Key)."""
+    """Same container shape as Firebase auth, for /api/v2/context dual auth."""
     return build_container_for_user_session(db, user["user_id"])
 
 

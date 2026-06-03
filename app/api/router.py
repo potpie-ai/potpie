@@ -303,7 +303,7 @@ async def save_integration(
         )
 
 
-# Context graph: same routes as /api/v1/context but authenticated with X-API-Key (Potpie API v2).
+# Context graph: same routes as /api/v1/context but authenticated with API auth (Potpie API v2).
 _context_graph_v2_router = create_context_router(
     require_auth=get_api_key_user,
     get_container=get_context_engine_container_for_api_key,

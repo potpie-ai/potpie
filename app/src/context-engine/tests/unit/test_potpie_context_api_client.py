@@ -48,6 +48,124 @@ def test_client_context_graph_query_success(monkeypatch: pytest.MonkeyPatch) -> 
     assert out["result"] == [{"uuid": "u"}]
 
 
+def test_client_context_graph_query_supports_bearer_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *a: Any) -> None:
+            pass
+
+        def post(self, url: str, **kwargs: Any) -> httpx.Response:
+            assert url.endswith("/query/context-graph")
+            headers = kwargs["headers"]
+            assert headers.get("Authorization") == "Bearer id-token"
+            assert "X-API-Key" not in headers
+            return httpx.Response(200, json={"result": []})
+
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        FakeClient,
+    )
+    c = PotpieContextApiClient(
+        "http://example.com",
+        auth_headers={"Authorization": "Bearer id-token"},
+    )
+    assert c.context_graph_query({"pot_id": "p1", "query": "q"}) == {"result": []}
+
+
+def test_client_uses_auth_header_provider_for_get_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_calls: list[str] = []
+
+    class FakeClient:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def post(self, *a: Any, **k: Any) -> httpx.Response:
+            raise AssertionError("unused")
+
+        def get(self, url: str, **kwargs: Any) -> httpx.Response:
+            assert "/api/v2/context/pots" in url
+            headers = kwargs["headers"]
+            assert headers.get("Authorization") == "Bearer dynamic-token"
+            assert "Content-Type" not in headers
+            return httpx.Response(200, json=[{"id": "c1"}])
+
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        FakeClient,
+    )
+    c = PotpieContextApiClient(
+        "http://example.com",
+        auth_headers_provider=lambda: (
+            provider_calls.append("called")
+            or {"Authorization": "Bearer dynamic-token"}
+        ),
+    )
+
+    rows = c.list_context_pots()
+
+    assert rows == [{"id": "c1"}]
+    assert provider_calls == ["called"]
+
+
+def test_client_retries_get_once_on_401_with_auth_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    get_calls: list[str] = []
+    tokens = iter(["expired-token", "fresh-token"])
+
+    def _provider() -> dict[str, str]:
+        return {"Authorization": f"Bearer {next(tokens)}"}
+
+    class FakeClient:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *a: Any) -> None:
+            pass
+
+        def post(self, *a: Any, **k: Any) -> httpx.Response:
+            raise AssertionError("unused")
+
+        def get(self, url: str, **kwargs: Any) -> httpx.Response:
+            auth = kwargs["headers"].get("Authorization", "")
+            get_calls.append(auth)
+            if len(get_calls) == 1:
+                return httpx.Response(401)
+            return httpx.Response(200, json=[{"id": "c1"}])
+
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        FakeClient,
+    )
+    c = PotpieContextApiClient(
+        "http://example.com",
+        auth_headers_provider=_provider,
+    )
+
+    rows = c.list_context_pots()
+
+    assert rows == [{"id": "c1"}]
+    assert get_calls == ["Bearer expired-token", "Bearer fresh-token"]
+
+
 def test_client_ingest_queued(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeClient:
         def __init__(self, *a: Any, **k: Any) -> None:
