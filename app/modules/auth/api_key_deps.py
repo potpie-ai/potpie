@@ -1,23 +1,27 @@
-"""FastAPI dependencies for Potpie API key auth (shared by /api/v2 routes and context graph)."""
+"""FastAPI dependencies for Potpie API auth (shared by /api/v2 routes and context graph)."""
 
 from __future__ import annotations
 
 import os
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.database import get_async_db, get_db
 from app.modules.auth.api_key_service import APIKeyService
+from app.modules.auth.auth_service import AuthService
 from app.modules.users.user_service import AsyncUserService
+
+_bearer = HTTPBearer(auto_error=False)
 
 
 def is_development_mode() -> bool:
     return os.getenv("isDevelopmentMode", "").strip().lower() == "enabled"
 
 
-async def get_api_key_user(
+async def _get_x_api_key_user(
     x_api_key: str | None = Header(None),
     x_user_id: str | None = Header(None),
     db: Session = Depends(get_db),
@@ -65,3 +69,22 @@ async def get_api_key_user(
         )
 
     return user
+
+
+async def get_api_key_user(
+    request: Request,
+    res: Response,
+    credential: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    x_api_key: str | None = Header(None),
+    x_user_id: str | None = Header(None),
+    db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
+) -> dict:
+    """Authenticate via the supported API token headers.
+
+    X-API-Key takes precedence for CLI/MCP clients. Otherwise, Firebase Bearer auth is
+    used for browser-backed CLI sessions.
+    """
+    if (x_api_key or "").strip():
+        return await _get_x_api_key_user(x_api_key, x_user_id, db, async_db)
+    return await AuthService.check_auth(request, res, credential)
