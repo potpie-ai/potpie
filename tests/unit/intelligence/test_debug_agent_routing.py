@@ -27,6 +27,25 @@ import pytest
 pytestmark = pytest.mark.unit
 
 # ---------------------------------------------------------------------------
+# Capture original sys.modules / env state *before* this file stubs them, so the
+# autouse fixture below can restore it after this module's tests. Otherwise the
+# fake torch/sentence_transformers, test DB env, and the importlib.reload()'d
+# MultiAgentConfig leak into the rest of the suite and can mask real regressions.
+# ---------------------------------------------------------------------------
+_STUBBED_MODULE_NAMES = (
+    "torch",
+    "torch.nn",
+    "torch.nn.functional",
+    "torch.nn.modules",
+    "torch._jit_internal",
+    "torch._sources",
+    "torch._VF",
+    "sentence_transformers",
+)
+_ORIGINAL_MODULES = {name: sys.modules.get(name) for name in _STUBBED_MODULE_NAMES}
+_ORIGINAL_ENV = {key: os.environ.get(key) for key in ("POSTGRES_SERVER", "REDIS_URL")}
+
+# ---------------------------------------------------------------------------
 # Step 1 — set env vars that module-level code reads at import time
 # ---------------------------------------------------------------------------
 # database.py reads POSTGRES_SERVER at module level; give it a parseable URL
@@ -67,6 +86,32 @@ _torch_stub.nn = sys.modules["torch.nn"]  # type: ignore[attr-defined]
 
 _st_stub = _register_stub("sentence_transformers")
 _st_stub.SentenceTransformer = MagicMock(name="SentenceTransformer")  # type: ignore[attr-defined]
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _restore_global_import_state():
+    """Restore sys.modules / env after this module's tests so the fake torch and
+    sentence_transformers stubs (and test DB env) don't poison later tests, and
+    reload MultiAgentConfig so its importlib.reload()'d state doesn't leak."""
+    yield
+    for key, original in _ORIGINAL_ENV.items():
+        if original is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original
+    # Reload config under the restored env *before* the stubs are torn down, so
+    # the reloaded module no longer reflects a per-test env override.
+    try:
+        import app.modules.intelligence.agents.multi_agent_config as _cfg_mod
+
+        importlib.reload(_cfg_mod)
+    except Exception:
+        pass
+    for name, original in _ORIGINAL_MODULES.items():
+        if original is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original
 
 
 # ---------------------------------------------------------------------------
