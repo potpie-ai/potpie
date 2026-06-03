@@ -49,7 +49,7 @@
 2. **Configure your environment**
 
    ```bash
-   cp .env.template .env
+   cp legacy/.env.template legacy/.env
    ```
 
    Edit `.env` with the following required values:
@@ -98,8 +98,8 @@
 4. **Start all services**
 
    ```bash
-   chmod +x scripts/start.sh
-   ./scripts/start.sh
+   chmod +x legacy/scripts/start.sh
+   ./legacy/scripts/start.sh
    ```
 
    This will start Docker services, apply migrations, start the FastAPI app, and start the Celery worker.
@@ -119,7 +119,7 @@
 To stop all services:
 
 ```bash
-./scripts/stop.sh
+./legacy/scripts/stop.sh
 ```
 
 #### Now set up Potpie Frontend
@@ -147,7 +147,7 @@ fully opt-in, reusing the existing `potpie_postgres` container (no RabbitMQ).
 **One command** — boots infra + Hatchet + API + Celery + the Hatchet agent worker:
 
 ```bash
-make dev-hatchet
+cd legacy && make dev-hatchet
 ```
 
 This runs with `AGENT_TASK_BACKEND=hatchet`, so agents in `HATCHET_AGENT_ALLOWLIST`
@@ -264,8 +264,8 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    To start all Potpie services:
 
    ```bash
-   chmod +x scripts/start.sh
-   ./scripts/start.sh
+   chmod +x legacy/scripts/start.sh
+   ./legacy/scripts/start.sh
    ```
 
    This will:
@@ -293,7 +293,7 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    To stop all Potpie services:
 
    ```bash
-   ./scripts/stop.sh
+   ./legacy/scripts/stop.sh
    ```
 
    **Windows**

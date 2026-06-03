@@ -1,2 +1,0 @@
-"""File-backed sandbox adapters."""
-

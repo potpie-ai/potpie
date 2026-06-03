@@ -1,7 +1,7 @@
 # Observability deployment — Loki + Promtail + Grafana
 
 This is the production log-aggregation pipeline for the [observability
-package](../../app/src/observability). Closes the audit's
+package](../../potpie/observability). Closes the audit's
 "JSONL-to-stdout-is-inert-without-a-shipper" gap.
 
 ## What it does

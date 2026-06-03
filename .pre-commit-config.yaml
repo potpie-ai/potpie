@@ -16,9 +16,9 @@ repos:
     hooks:
       - id: ruff
         args: ["--fix"]
-        exclude: ^app/alembic/
+        exclude: ^legacy/app/alembic/
       - id: ruff-format
-        exclude: ^app/alembic/
+        exclude: ^legacy/app/alembic/
 
   - repo: https://github.com/PyCQA/bandit
     rev: 1.7.10
@@ -26,4 +26,4 @@ repos:
       - id: bandit
         args: ["-c", "pyproject.toml"]
         additional_dependencies: ["bandit[toml]"]
-        exclude: ^(tests|app/alembic)/
+        exclude: ^(legacy/tests|legacy/app/alembic)/

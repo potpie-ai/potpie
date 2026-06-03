@@ -9,6 +9,15 @@ resolution-markers = [
 ]
 
 [manifest]
+members = [
+    "context-engine",
+    "observability",
+    "parsing",
+    "potpie-core",
+    "potpie-integrations",
+    "potpie-legacy",
+    "potpie-sandbox",
+]
 overrides = [
     { name = "idna", specifier = ">=3.15" },
     { name = "openai", specifier = ">=2.7.1" },
@@ -851,7 +860,7 @@ wheels = [
 [[package]]
 name = "context-engine"
 version = "0.1.0"
-source = { editable = "app/src/context-engine" }
+source = { editable = "potpie/context-engine" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
@@ -871,6 +880,33 @@ all = [
     { name = "pydantic-deep" },
     { name = "pygithub" },
     { name = "sqlalchemy" },
+]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+github = [
+    { name = "pygithub" },
+]
+graph = [
+    { name = "graphiti-core" },
+    { name = "neo4j" },
+]
+hatchet = [
+    { name = "hatchet-sdk" },
+]
+postgres = [
+    { name = "psycopg", extra = ["binary"] },
+    { name = "sqlalchemy" },
+]
+reconciliation-agent = [
+    { name = "pydantic-deep" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest-cov" },
 ]
 
 [package.metadata]
@@ -3667,7 +3703,27 @@ wheels = [
 [[package]]
 name = "observability"
 version = "0.1.0"
-source = { editable = "app/src/observability" }
+source = { editable = "potpie/observability" }
+
+[package.optional-dependencies]
+celery = [
+    { name = "celery" },
+]
+dev = [
+    { name = "pytest" },
+]
+fastapi = [
+    { name = "starlette" },
+]
+logfire = [
+    { name = "logfire" },
+]
+loguru = [
+    { name = "loguru" },
+]
+sentry = [
+    { name = "sentry-sdk" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -4086,7 +4142,7 @@ wheels = [
 
 [[package]]
 name = "parsing"
-source = { directory = "app/src/parsing" }
+source = { editable = "potpie/parsing" }
 dependencies = [
     { name = "grep-ast" },
     { name = "loguru" },
@@ -4095,6 +4151,11 @@ dependencies = [
     { name = "pygments" },
     { name = "tree-sitter" },
     { name = "tree-sitter-language-pack" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest-benchmark" },
 ]
 
 [package.metadata]
@@ -4260,9 +4321,61 @@ wheels = [
 ]
 
 [[package]]
-name = "potpie"
+name = "potpie-core"
 version = "0.1.0"
 source = { virtual = "." }
+dependencies = [
+    { name = "context-engine", extra = ["all"] },
+    { name = "observability" },
+    { name = "parsing" },
+    { name = "potpie-integrations" },
+    { name = "potpie-sandbox" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "bandit" },
+    { name = "black" },
+    { name = "isort" },
+    { name = "pre-commit" },
+    { name = "pylint" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "context-engine", extras = ["all"], editable = "potpie/context-engine" },
+    { name = "observability", editable = "potpie/observability" },
+    { name = "parsing", editable = "potpie/parsing" },
+    { name = "potpie-integrations", editable = "potpie/integrations" },
+    { name = "potpie-sandbox", editable = "potpie/sandbox" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "bandit", specifier = ">=1.8.6" },
+    { name = "black", specifier = ">=26.3.1" },
+    { name = "isort", specifier = ">=7.0.0" },
+    { name = "pre-commit", specifier = ">=4.3.0" },
+    { name = "pylint", specifier = ">=4.0.2" },
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-asyncio", specifier = ">=1.2.0" },
+    { name = "pytest-cov", specifier = ">=6.0.0" },
+    { name = "ruff", specifier = ">=0.14.3" },
+]
+
+[[package]]
+name = "potpie-integrations"
+version = "0.1.0"
+source = { editable = "potpie/integrations" }
+
+[[package]]
+name = "potpie-legacy"
+version = "0.1.0"
+source = { editable = "legacy" }
 dependencies = [
     { name = "aiohttp" },
     { name = "alembic" },
@@ -4378,7 +4491,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.40.67" },
     { name = "celery", specifier = ">=5.5.3" },
     { name = "chardet", specifier = ">=5.2.0" },
-    { name = "context-engine", extras = ["all"], editable = "app/src/context-engine" },
+    { name = "context-engine", extras = ["all"], editable = "potpie/context-engine" },
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "daytona", specifier = ">=0.134.0" },
     { name = "email-inspector", specifier = ">=0.1.4" },
@@ -4413,15 +4526,15 @@ requires-dist = [
     { name = "networkx", specifier = ">=3.4.2" },
     { name = "newrelic", specifier = ">=11.2.0" },
     { name = "nltk", specifier = ">=3.9.4" },
-    { name = "observability", editable = "app/src/observability" },
+    { name = "observability", editable = "potpie/observability" },
     { name = "openai", specifier = ">=2.7.1" },
-    { name = "parsing", directory = "app/src/parsing" },
+    { name = "parsing", editable = "potpie/parsing" },
     { name = "pathspec", specifier = ">=0.12.1" },
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "postgres", specifier = ">=4.0" },
     { name = "posthog", specifier = ">=6.9.0" },
-    { name = "potpie-integrations", editable = "app/src/integrations" },
-    { name = "potpie-sandbox", editable = "app/src/sandbox" },
+    { name = "potpie-integrations", editable = "potpie/integrations" },
+    { name = "potpie-sandbox", editable = "potpie/sandbox" },
     { name = "protobuf", specifier = ">=6.33.5" },
     { name = "psycopg-binary", specifier = ">=3.2.12" },
     { name = "pyasn1", specifier = ">=0.6.3" },
@@ -4473,14 +4586,19 @@ dev = [
 ]
 
 [[package]]
-name = "potpie-integrations"
-version = "0.1.0"
-source = { editable = "app/src/integrations" }
-
-[[package]]
 name = "potpie-sandbox"
 version = "0.1.0"
-source = { editable = "app/src/sandbox" }
+source = { editable = "potpie/sandbox" }
+
+[package.optional-dependencies]
+daytona = [
+    { name = "daytona" },
+]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -4780,6 +4898,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ba/8f/a5ae396ec7aa955e9d234b7d38ae3e975a47fbf45c7f4571be4b0e7473b4/psycopg2-pool-1.2.tar.gz", hash = "sha256:e9ec38d5af15b7cef5546452797935129c99482b25646f258a21786bfb826bf3", size = 11385, upload-time = "2024-01-15T11:55:30.469Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/37/99fc8b2725df9b9c3df8a184209480290d1300cd7a4cb14ed6b29ce6ef9e/psycopg2_pool-1.2-py2.py3-none-any.whl", hash = "sha256:3c8251f6fac3145eb4c5bf3407bb61543dbbcbb8117af1341cd7a8b5468aedbb", size = 7349, upload-time = "2024-01-15T11:55:29.222Z" },
+]
+
+[[package]]
+name = "py-cpuinfo"
+version = "9.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/37/a8/d832f7293ebb21690860d2e01d8115e5ff6f2ae8bbdc953f0eb0fa4bd2c7/py-cpuinfo-9.0.0.tar.gz", hash = "sha256:3cdbbf3fac90dc6f118bfd64384f309edeadd902d7c8fb17f02ffa1fc3f49690", size = 104716, upload-time = "2022-10-25T20:38:06.303Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/a9/023730ba63db1e494a271cb018dcd361bd2c917ba7004c3e49d5daf795a2/py_cpuinfo-9.0.0-py3-none-any.whl", hash = "sha256:859625bc251f64e21f077d099d4162689c762b5d6a4c3c97553d56241c9674d5", size = 22335, upload-time = "2022-10-25T20:38:27.636Z" },
 ]
 
 [[package]]
@@ -5284,6 +5411,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/90/2c/8af215c0f776415f3590cac4f9086ccefd6fd463befeae41cd4d3f193e5a/pytest_asyncio-1.3.0.tar.gz", hash = "sha256:d7f52f36d231b80ee124cd216ffb19369aa168fc10095013c6b014a34d3ee9e5", size = 50087, upload-time = "2025-11-10T16:07:47.256Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/35/f8b19922b6a25bc0880171a2f1a003eaeb93657475193ab516fd87cac9da/pytest_asyncio-1.3.0-py3-none-any.whl", hash = "sha256:611e26147c7f77640e6d0a92a38ed17c3e9848063698d5c93d5aa7aa11cebff5", size = 15075, upload-time = "2025-11-10T16:07:45.537Z" },
+]
+
+[[package]]
+name = "pytest-benchmark"
+version = "5.2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "py-cpuinfo" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/24/34/9f732b76456d64faffbef6232f1f9dbec7a7c4999ff46282fa418bd1af66/pytest_benchmark-5.2.3.tar.gz", hash = "sha256:deb7317998a23c650fd4ff76e1230066a76cb45dcece0aca5607143c619e7779", size = 341340, upload-time = "2025-11-09T18:48:43.215Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/29/e756e715a48959f1c0045342088d7ca9762a2f509b945f362a316e9412b7/pytest_benchmark-5.2.3-py3-none-any.whl", hash = "sha256:bc839726ad20e99aaa0d11a127445457b4219bdb9e80a1afc4b51da7f96b0803", size = 45255, upload-time = "2025-11-09T18:48:39.765Z" },
 ]
 
 [[package]]

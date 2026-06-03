@@ -1,2 +1,0 @@
-"""In-memory sandbox adapters."""
-

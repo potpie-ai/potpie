@@ -51,7 +51,7 @@ jobs:
         run: uv sync --frozen --no-cache
 
       - name: Run parsing_rs Rust tests
-        run: cargo test --manifest-path app/src/parsing/Cargo.toml
+        run: cargo test --manifest-path potpie/parsing/Cargo.toml
 
       - name: Run test suite with coverage
         env:
@@ -62,7 +62,9 @@ jobs:
           REDISPORT: "6379"
           SENTRY_CLIENT_ID: "ci-dummy"
           SENTRY_CLIENT_SECRET: "ci-dummy"
-        run: uv run python scripts/run_tests.py --coverage
+          CONTEXT_GRAPH_JOB_QUEUE_BACKEND: "celery"
+          CONTEXT_GRAPH_CELERY_QUEUE_MODULE: "app.modules.context_graph.celery_job_queue"
+        run: uv sync --frozen --all-packages --no-cache && uv run --project legacy python legacy/scripts/run_tests.py --coverage
 
       - name: Upload coverage report (artifact)
         uses: actions/upload-artifact@v4
