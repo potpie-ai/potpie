@@ -19,9 +19,9 @@ from adapters.inbound.http.api.v1.context.router import (
     _parse_window,
     create_context_router,
 )
+from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from adapters.outbound.graph.context_graph_service import ContextGraphService
 from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
-from application.services.read_orchestrator import ReadOrchestrator
 from domain.ports.claim_query import ClaimRow
 
 API = "/api/v1/context"
@@ -71,10 +71,7 @@ def _client() -> TestClient:
             _touched("activity:github:pr-old", "service:web", verb_class="code_change", fact="ancient PR", age_days=120),
         ]
     )
-    adapter = ContextGraphService(
-        graph_writer=object(),  # type: ignore[arg-type]  # untouched on the read path
-        orchestrator=ReadOrchestrator(claim_query=store),
-    )
+    adapter = ContextGraphService(backend=InMemoryGraphBackend(store=store))
     container = _FakeContainer(adapter)
     router = create_context_router(
         require_auth=lambda: {"user_id": "u"},

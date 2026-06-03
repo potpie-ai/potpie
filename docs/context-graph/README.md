@@ -4,9 +4,9 @@ Last reviewed: 2026-05-29.
 
 The Context Graph is Potpie's project-context layer for agents. Users and agents
 talk to the `potpie` CLI. The same Pot Management, Graph Service, and Skill
-Manager modules run inside either a local daemon or the managed API server. Graph
-state stays local by default unless the user explicitly selects cloud graph sync
-or a managed profile.
+Manager modules run inside either a local daemon or a managed backend API. Graph
+state stays local by default unless the user logs in to a managed backend and
+selects a managed pot, or explicitly runs cloud graph sync.
 
 ```mermaid
 flowchart TB
@@ -20,9 +20,9 @@ flowchart TB
     cg_local_daemon --> cg_local_services --> cg_local_store
   end
 
-  subgraph cg_managed_profile["Managed graph profile"]
+  subgraph cg_managed_profile["Managed backend"]
     direction TB
-    cg_managed_api["managed API server"]
+    cg_managed_api["managed backend API"]
     cg_managed_services["same service modules"]
     cg_hosted_store[("hosted stores")]
     cg_managed_api --> cg_managed_services --> cg_hosted_store
@@ -30,11 +30,11 @@ flowchart TB
 
   subgraph cg_event_ledger["Event Ledger"]
     direction TB
-    cg_ledger["managed or self-hosted<br/>webhooks + event history + cursors"]
+    cg_ledger["managed or self-hosted<br/>webhooks + query/filter + replay tokens"]
   end
 
   cg_cli --> cg_local_daemon
-  cg_cli -. "cloud profile/sync" .-> cg_managed_api
+  cg_cli -. "login / managed pot / cloud sync" .-> cg_managed_api
   cg_cli -. "ledger config/pull" .-> cg_ledger
   cg_local_services -. "pull events" .-> cg_ledger
   cg_managed_services -. "consume events" .-> cg_ledger
@@ -58,85 +58,37 @@ potpie setup --repo . --agent claude --scan
 potpie status
 ```
 
-`potpie setup` installs/starts the daemon when needed, creates and uses a local
-`default` pot on first run, registers the repo source, and can perform the first
-scan. Users only pass `--pot <name>` when the first pot should have a different
-name.
+`potpie setup` installs/starts the daemon service. The daemon-hosted setup flow
+then provisions local config, local graph/storage dependencies, the active local
+`default` pot, repo source registration, optional skills, and optional first
+scan. Users only pass `--pot <name>` when the first local pot should have a
+different name.
 
-Cloud is opt-in and visibly scoped:
-
-```bash
-potpie cloud login
-potpie cloud push
-potpie cloud pull
-potpie cloud status
-```
-
-## Local graph backend: FalkorDBLite (lightweight alternative to Neo4j)
-
-The context graph defaults to **Neo4j** (production). For local/self-hosted
-single-user development you can switch the context graph to **FalkorDBLite** —
-an embedded Redis-module graph DB (via `redislite`) backed by a local file, so
-there's **no server and no Docker**. Only the context graph is affected; the
-code knowledge graph still uses Neo4j.
+Managed backend access is opt-in and visibly scoped:
 
 ```bash
-pip install "context-engine[falkordb]"   # installs falkordblite + redis<8
-export GRAPH_DB_BACKEND=falkordb
-# optional overrides:
-# export FALKORDB_LITE_PATH=.potpie/context_graph/falkordb.db
-# export FALKORDB_GRAPH_NAME=context_graph
+potpie login
+potpie pot list --managed
+potpie use <managed-pot-name> --managed
 ```
 
-`GRAPH_DB_BACKEND` (default `neo4j`) is read by the context-engine settings and
-`build_container` selects the writer + claim store together, injecting a single
-shared embedded graph handle into both. The FalkorDBLite dependency is an
-optional extra, imported lazily, so the default Neo4j install doesn't require
-it. The embedded database is created on first use at `FALKORDB_LITE_PATH`.
+`potpie config set cloud.backend_url <url>` points login at Potpie managed or a
+compatible self-hosted backend. A local pot and a managed pot use the same CLI
+surface; `--local` and `--managed` flags filter or disambiguate when needed.
 
-Server/container FalkorDB (over a redis URL, `FALKORDB_MODE=server` +
-`FALKORDB_URL`) exists as a deferred profile in code but is not part of the
-default local path; it needs the separate `falkordb` client.
+### FalkorDB (lightweight local backend) — wiring pending
 
-Troubleshooting:
+`GRAPH_DB_BACKEND=falkordb` selects the embedded FalkorDBLite backend
+(`pip install "context-engine[falkordb]"`). The reader/writer modules live at
+`adapters/outbound/graph/falkordb_{reader,writer}.py`, but they are not yet
+wrapped behind the `GraphBackend` port — selecting `falkordb` currently raises
+`NotImplementedError` in the ingestion server. Use the default `neo4j` until a
+`FalkorDBGraphBackend` adapter lands.
 
-- **`ModuleNotFoundError: redislite` / `falkordb`** — install the optional
-  extra above (`context-engine[falkordb]`).
-- **Redis 8 startup error** (`Cannot enable maintenance notifications…`) —
-  FalkorDBLite needs `redis<8`; the extra pins `redis>=7.1,<8`.
-- **Index/vector DDL differences** — index creation is best-effort and
-  non-fatal; `fact_query` currently uses the Python token-overlap fallback
-  (native vector KNN is available on FalkorDB and is a planned follow-up).
-- **Fall back** — unset `GRAPH_DB_BACKEND` (or set it to `neo4j`).
-
-## Ontology Import Surface
-
-Most graph vocabulary is derived from `domain.ontology`:
-
-```python
-from domain.ontology import (
-    ENTITY_TYPES, EDGE_TYPES, RECORD_TYPES,
-    CANONICAL_LABELS, CANONICAL_EDGE_TYPES, SYSTEM_EDGE_TYPES, ALL_EDGE_TYPES,
-    SCOPE_LABELS, ACTIVITY_LABELS,
-    ENTITY_PROJECT_MAP_FAMILY, ENTITY_DEBUGGING_FAMILY, ENTITY_FACT_FAMILY,
-    FACT_FAMILY_FRESHNESS_TTL_HOURS, SOURCE_OF_TRUTH_POLICIES,
-    ENTITY_TEXT_CLASSIFIERS, ENTITY_PROPERTY_SIGNATURES,
-    EDGE_ENDPOINT_INFERRED_LABELS, PREDICATE_FAMILY_EDGE_NAMES,
-    SINGLETON_EDGE_TYPES, STRUCTURAL_INCLUDES, PUBLIC_RECORD_TYPES,
-    validate_entity_upsert, validate_edge_upsert, validate_structural_mutations,
-    entity_spec, edge_spec, record_type_spec, record_types_for_include,
-    advertised_include_families,
-    is_canonical_entity_label, is_canonical_edge_type,
-    project_map_family_for_label, debugging_family_for_label, fact_family_for_label,
-    is_scope_label, is_activity_label, allowed_edge_types_between,
-    canonical_entity_labels,
-    normalize_edge_name, inferred_labels_for_episodic_edge_endpoint,
-    predicate_family_for_edge_name, predicate_family_for_episodic_supersede,
-)
 Managed or self-hosted integration events are also opt-in:
 
 ```bash
-potpie cloud login
+potpie login
 potpie ledger use managed
 potpie ledger pull --apply
 ```
@@ -148,13 +100,13 @@ state to managed storage.
 
 | Term | Meaning |
 |---|---|
-| **Pot** | Workspace/tenant boundary. Every query, source, record, claim, and graph operation is scoped to one pot. |
-| **Daemon shell** | Local background process for lifecycle, auth, IPC, health, logs, and service hosting. It is not the business layer. |
+| **Pot** | Workspace/tenant boundary. Every query, source, record, claim, and graph operation is scoped to one pot. A pot can be local or managed; the active pot determines routing. |
+| **Daemon shell** | Local background process for lifecycle, auth, IPC, health, logs, service hosting, and local dependency setup. It hosts setup services; it is not the business layer. |
 | **Pot Management Service** | Control plane for pots, active pot, source registry, graph readiness, lifecycle, and export/import metadata. |
 | **Graph Service** | Data plane for `resolve`, `search`, `record`, and `status`. Owns readers, ranking, record lowering, and envelopes. |
 | **GraphBackend** | Swappable graph capability bundle: mutation, claim query, semantic search, inspection, analytics, snapshot. |
 | **Skill Manager Service** | CLI-managed skill catalog and installation layer for agent harnesses. Skills teach agents how to use the CLI; they are not graph facts or new tools. |
-| **Event Ledger** | Separate managed or self-hostable source-event service for webhooks, integration polling, event history, and cursors. Graphs pull/consume from it; it is not graph storage. |
+| **Event Ledger** | Separate managed or self-hostable source-event service for webhooks, integration polling, event history, query/filter, provider-side cursors, and event-page replay tokens. Graph consumers store their own cursor, retry state, and applied position; graph state is not stored in the ledger. |
 
 The code currently lives under
 [`app/src/context-engine/`](../../app/src/context-engine/). If docs conflict,

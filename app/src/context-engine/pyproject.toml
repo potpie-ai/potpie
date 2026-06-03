@@ -67,11 +67,11 @@ dev = [
 ]
 
 [project.scripts]
-potpie = "adapters.inbound.cli.main:main"
+potpie = "adapters.inbound.cli.host_cli:main"
 potpie-mcp = "adapters.inbound.mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["domain", "application", "adapters", "bootstrap", "benchmarks"]
+packages = ["domain", "application", "adapters", "bootstrap", "benchmarks", "host"]
 include = [
     "domain/playbooks/**/*.md",
     "adapters/inbound/cli/templates/**/*.md",

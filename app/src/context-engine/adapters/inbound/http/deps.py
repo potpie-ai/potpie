@@ -13,7 +13,7 @@ from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 
 from adapters.outbound.postgres.session import database_url, make_session_factory
-from bootstrap.container import ContextEngineContainer
+from bootstrap.ingestion_server import IngestionServerContainer
 from bootstrap.standalone_container import build_standalone_context_engine_container
 
 logger = logging.getLogger(__name__)
@@ -69,11 +69,11 @@ def require_api_key(key: str | None = Security(_api_key_header)) -> None:
 
 
 @lru_cache
-def get_container() -> ContextEngineContainer:
+def get_container() -> IngestionServerContainer:
     return build_standalone_context_engine_container()
 
 
-def get_container_or_503() -> ContextEngineContainer:
+def get_container_or_503() -> IngestionServerContainer:
     try:
         return get_container()
     except RuntimeError as e:
