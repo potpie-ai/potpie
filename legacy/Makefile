@@ -86,7 +86,7 @@ help: ## Show this help
 
 dev: env-check infra-up sync migrate sandbox-prep ## Start infra, sync deps, migrate, boot Daytona if needed, then run API + worker. Use SANDBOX=local|docker|daytona to override.
 	@$(LOAD_ENV) \
-	source .venv/bin/activate; \
+	source $(REPO_ROOT)/.venv/bin/activate; \
 	$(SET_CELERY_Q) \
 	echo "─── starting API (gunicorn) and Celery worker ───"; \
 	$(SANDBOX_OVERRIDE) gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 \
@@ -145,7 +145,7 @@ hatchet-worker: ## Run only the Hatchet agent worker (assumes infra + `make hatc
 dev-hatchet: export POTPIE_POSTGRES_MAX_CONNECTIONS := 1000
 dev-hatchet: env-check infra-up hatchet-up sync migrate sandbox-prep ## Like `dev` but routes allowlisted agents to Hatchet (API + Celery + Hatchet worker)
 	@$(LOAD_ENV) \
-	source .venv/bin/activate; \
+	source $(REPO_ROOT)/.venv/bin/activate; \
 	$(SET_CELERY_Q) \
 	export AGENT_TASK_BACKEND=hatchet; \
 	echo "─── starting API + Celery worker + Hatchet agent worker (AGENT_TASK_BACKEND=hatchet) ───"; \
@@ -187,11 +187,11 @@ migration-history: ## Show alembic history
 ##@ Run individual processes (for debugging)
 
 api: ## Run only the FastAPI server (assumes infra is up). Honors SANDBOX=...
-	@$(LOAD_ENV) $(SANDBOX_OVERRIDE) uv run gunicorn --worker-class uvicorn.workers.UvicornWorker \
+	@cd $(REPO_ROOT) && $(LOAD_ENV) $(SANDBOX_OVERRIDE) uv run --project $(CURDIR) gunicorn --worker-class uvicorn.workers.UvicornWorker \
 	  --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level $(PROC_LOG_LEVEL) app.main:app
 
 worker: ## Run only the Celery worker (assumes infra is up). Honors SANDBOX=...
-	@$(LOAD_ENV) $(SET_CELERY_Q) $(SANDBOX_OVERRIDE) uv run celery -A app.celery.celery_app worker --loglevel=$(PROC_LOG_LEVEL) \
+	@cd $(REPO_ROOT) && $(LOAD_ENV) $(SET_CELERY_Q) $(SANDBOX_OVERRIDE) uv run --project $(CURDIR) celery -A app.celery.celery_app worker --loglevel=$(PROC_LOG_LEVEL) \
 	  -Q "$$CELERY_Q" -E --concurrency=1 --pool=solo
 
 stop: ## Kill API + worker processes and stop infra
