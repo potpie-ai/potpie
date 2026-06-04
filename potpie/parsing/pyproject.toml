@@ -19,6 +19,10 @@ dependencies = [
 package = true
 cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "**/*.rs"}]
 
+[tool.maturin]
+python-source = "."
+module-name = "parsing.parsing_rs"
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",

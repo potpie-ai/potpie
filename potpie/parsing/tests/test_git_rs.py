@@ -31,7 +31,9 @@ def local_git_repo(tmp_path_factory):
     lib.mkdir()
     (lib / "utils.py").write_text("def helper(): pass\n")
 
-    subprocess.run([git_executable, "init"], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(
+        [git_executable, "init"], cwd=repo_dir, check=True, capture_output=True
+    )
     subprocess.run(
         [git_executable, "config", "user.email", "test@example.com"],
         cwd=repo_dir,
@@ -44,7 +46,9 @@ def local_git_repo(tmp_path_factory):
         check=True,
         capture_output=True,
     )
-    subprocess.run([git_executable, "add", "."], cwd=repo_dir, check=True, capture_output=True)
+    subprocess.run(
+        [git_executable, "add", "."], cwd=repo_dir, check=True, capture_output=True
+    )
     subprocess.run(
         [git_executable, "commit", "-m", "initial"],
         cwd=repo_dir,
@@ -72,7 +76,9 @@ def test_bare_clone_local_repo_success(local_git_repo, tmp_path):
 
 def test_bare_clone_nonexistent_repo(tmp_path):
     with pytest.raises(GitRepositoryNotFoundError):
-        bare_clone(f"file://{tmp_path / 'missing-repo'}", str(tmp_path / "dest"), "HEAD", None)
+        bare_clone(
+            f"file://{tmp_path / 'missing-repo'}", str(tmp_path / "dest"), "HEAD", None
+        )
 
 
 def test_bare_clone_bad_ref_cleans_dest(local_git_repo, tmp_path):
