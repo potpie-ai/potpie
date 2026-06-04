@@ -14,6 +14,7 @@ from adapters.inbound.cli.commands._common import (
     contract,
     emit,
     get_host,
+    is_json,
     resolve_pot_id,
 )
 from domain.errors import CapabilityNotImplemented
@@ -33,6 +34,10 @@ def register(root: typer.Typer) -> None:
         yes: bool = typer.Option(False, "--yes", "-y", help="Assume yes for prompts."),
     ) -> None:
         """Idempotent first-run: provision config, storage, daemon, default pot, skills."""
+        from pathlib import Path
+
+        from adapters.inbound.cli.ui import setup_ux
+
         with contract():
             host = get_host()
             # --backend selects the storage profile for this run. Backend
@@ -62,7 +67,24 @@ def register(root: typer.Typer) -> None:
                 return
 
             report = host.setup.run(plan)
-            emit(report.to_dict(), human=_setup_human(report))
+
+            # Animated wizard for interactive TTYs; --json and --yes/non-interactive
+            # fall through to the plain, machine-readable emit path.
+            use_rich = setup_ux.rich_enabled(as_json=is_json()) and not yes
+            if use_rich:
+                setup_ux.render_setup_report(
+                    report,
+                    repo=Path(repo),
+                    agent=agent,
+                    scan=scan,
+                    use_rich=True,
+                    config_home=getattr(host.config, "home", None),
+                )
+                if report.ok:
+                    setup_ux.maybe_prompt_github_login()
+            else:
+                emit(report.to_dict(), human=_setup_human(report))
+
             if not report.ok:
                 raise typer.Exit(code=EXIT_DEGRADED)
 
@@ -128,29 +150,8 @@ def register(root: typer.Typer) -> None:
                 + (f" — {ident.detail}" if ident.detail else ""),
             )
 
-    @root.command()
-    def login(
-        backend_url: str = typer.Option(None, "--backend-url", help="Managed backend URL (defaults to cloud.backend_url)."),
-        org: str = typer.Option(None, "--org"),
-    ) -> None:
-        """Authenticate to the managed backend (managed profile; local OSS needs no login)."""
-        with contract():
-            # Managed login/session + managed pot binding is the HU3 seam.
-            raise CapabilityNotImplemented(
-                "host.auth.login",
-                detail=(
-                    "managed backend login is not implemented "
-                    f"(backend_url={backend_url or 'cloud.backend_url'}, org={org or '-'})"
-                ),
-                recommended_next_action="local OSS works without login; managed routing lands in HU3",
-            )
-
-    @root.command()
-    def logout() -> None:
-        """Clear the managed session (local OSS: no stored session)."""
-        with contract():
-            get_host().auth.logout()
-            emit({"logged_out": True}, human="logged out (local OSS has no managed session)")
+    # NOTE: top-level `login` / `logout` are the real Potpie-account flows,
+    # registered in commands/auth.py. Managed-backend auth remains `cloud login`.
 
     @root.command()
     def use(

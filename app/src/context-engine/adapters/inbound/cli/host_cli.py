@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import typer
 
+from adapters.inbound.cli.commands import auth as auth_cmds
 from adapters.inbound.cli.commands import bootstrap, cloud, daemon, graph, ledger, pots
 from adapters.inbound.cli.commands import ingest as ingest_cmds
 from adapters.inbound.cli.commands import query as query_cmds
 from adapters.inbound.cli.commands import skills as skills_cmds
-from adapters.inbound.cli.commands._common import set_json
+from adapters.inbound.cli.commands._common import set_json, set_verbose
 
 
 def build_app() -> typer.Typer:
@@ -29,12 +30,25 @@ def build_app() -> typer.Typer:
     )
 
     @app.callback()
-    def _root(json_: bool = typer.Option(False, "--json", help="Emit machine-readable JSON.")) -> None:
-        set_json(json_)
+    def _root(
+        json_: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+        verbose: bool = typer.Option(
+            False, "--verbose", "-v", help="Verbose tracebacks on errors."
+        ),
+    ) -> None:
+        from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+        from adapters.inbound.cli.ui.output import configure_cli_logging, configure_error_output
 
-    # Top-level commands (the four-tool surface + bootstrap).
+        set_json(json_)
+        set_verbose(verbose)
+        configure_error_output(as_json=json_)
+        configure_cli_logging(verbose)
+        load_cli_env()
+
+    # Top-level commands (the four-tool surface + bootstrap + auth/login).
     query_cmds.register(app)
     bootstrap.register(app)
+    auth_cmds.register(app)
 
     # Command groups (one per cli-flow.md section).
     app.add_typer(pots.pot_app, name="pot")

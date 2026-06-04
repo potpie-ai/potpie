@@ -4,7 +4,7 @@ Implements :class:`AgentTargetPort` for the Claude ``.claude/`` bundle by
 tracking installed skills in a small JSON file under the pot home. It does
 *not* yet lay down the real template files.
 
-    TODO(stage-N): delegate to ``adapters/inbound/cli/agent_installer`` to copy
+    TODO(stage-N): delegate to ``adapters/outbound/skills/agent_installer`` to copy
     the actual bundle into the target repo's ``.claude/`` / ``.agents/`` dirs.
 """
 

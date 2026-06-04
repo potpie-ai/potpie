@@ -25,6 +25,7 @@ from domain.errors import (
     ContextEngineDisabled,
     PotNotFound,
 )
+from domain.ports.cli_auth.credentials import CredentialStore
 
 # --- exit codes (cli-flow.md output contract) -------------------------------
 EXIT_OK = 0
@@ -33,7 +34,7 @@ EXIT_UNAVAILABLE = 2
 EXIT_DEGRADED = 3
 EXIT_AUTH = 4
 
-_state: dict[str, Any] = {"json": False, "host": None}
+_state: dict[str, Any] = {"json": False, "verbose": False, "host": None, "store": None}
 
 
 def set_json(value: bool) -> None:
@@ -42,6 +43,14 @@ def set_json(value: bool) -> None:
 
 def is_json() -> bool:
     return bool(_state["json"])
+
+
+def set_verbose(value: bool) -> None:
+    _state["verbose"] = bool(value)
+
+
+def is_verbose() -> bool:
+    return bool(_state["verbose"])
 
 
 def get_host():
@@ -56,6 +65,26 @@ def get_host():
 def set_host(host: Any) -> None:
     """Inject a host (tests / alternate wiring)."""
     _state["host"] = host
+
+
+def get_store() -> CredentialStore:
+    """Return the process-wide ``CredentialStore`` (built lazily).
+
+    The auth/credential subsystem persists through this domain port; the concrete
+    is chosen at the composition root (``bootstrap.cli_auth_wiring``), so this
+    inbound module never imports an adapter. The default is the real
+    keychain-backed store; tests inject an in-memory fake via ``set_store``.
+    """
+    if _state["store"] is None:
+        from bootstrap.cli_auth_wiring import build_credential_store
+
+        _state["store"] = build_credential_store()
+    return _state["store"]
+
+
+def set_store(store: CredentialStore) -> None:
+    """Inject a credential store (tests / alternate wiring)."""
+    _state["store"] = store
 
 
 def emit(payload: dict[str, Any], *, human: str) -> None:
@@ -164,8 +193,12 @@ __all__ = [
     "emit",
     "fail",
     "get_host",
+    "get_store",
     "is_json",
+    "is_verbose",
     "resolve_pot_id",
     "set_host",
+    "set_store",
     "set_json",
+    "set_verbose",
 ]

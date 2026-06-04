@@ -8,6 +8,7 @@ app by ``build_app`` (see ``adapters/inbound/cli/host_cli.py``).
 from __future__ import annotations
 
 from adapters.inbound.cli.commands import (
+    auth,
     bootstrap,
     cloud,
     daemon,
@@ -20,6 +21,7 @@ from adapters.inbound.cli.commands import (
 )
 
 __all__ = [
+    "auth",
     "bootstrap",
     "cloud",
     "daemon",
