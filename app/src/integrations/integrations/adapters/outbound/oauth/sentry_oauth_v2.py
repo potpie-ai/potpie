@@ -9,9 +9,9 @@ from fastapi import HTTPException
 import httpx
 import urllib.parse
 import time
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class SentryOAuthStore:
@@ -118,7 +118,7 @@ class SentryOAuthV2:
             )
         )
 
-        logger.info(f"Generated Sentry OAuth URL: {sanitized_url}")
+        logger.info(f"Generated Sentry OAuth URL: {sanitized_url}", sanitized_url=sanitized_url)
         return auth_url
 
     async def exchange_code_for_tokens(
@@ -164,11 +164,6 @@ class SentryOAuthV2:
                 )
 
                 if response.status_code != 200:
-                    logger.error(
-                        "Token exchange failed",
-                        status_code=response.status_code,
-                        response_text=response.text[:200],
-                    )  # Truncate
                     raise HTTPException(
                         status_code=response.status_code,
                         detail=f"Token exchange failed: {response.text}",
@@ -182,12 +177,10 @@ class SentryOAuthV2:
                 return tokens
 
         except httpx.HTTPError as e:
-            logger.exception("HTTP error during token exchange")
             raise HTTPException(
                 status_code=500, detail=f"HTTP error during token exchange: {str(e)}"
             )
         except Exception as e:
-            logger.exception("Unexpected error during token exchange")
             raise HTTPException(
                 status_code=500, detail=f"Token exchange failed: {str(e)}"
             )
@@ -209,8 +202,8 @@ class SentryOAuthV2:
                 )
 
                 if response.status_code != 200:
+                    logger.error(f"Failed to get organizations: {response.status_code}", response_status_code=response.status_code)
                     logger.error(f"Failed to get organizations: {response.status_code}")
-                    logger.error(f"Response: {response.text}")
                     raise HTTPException(
                         status_code=response.status_code,
                         detail=f"Failed to get organizations: {response.text}",
@@ -222,12 +215,10 @@ class SentryOAuthV2:
                 return organizations
 
         except httpx.HTTPError as e:
-            logger.exception("HTTP error getting organizations")
             raise HTTPException(
                 status_code=500, detail=f"Failed to get organizations: {str(e)}"
             )
         except Exception as e:
-            logger.exception("Unexpected error getting organizations")
             raise HTTPException(
                 status_code=500, detail=f"Failed to get organizations: {str(e)}"
             )

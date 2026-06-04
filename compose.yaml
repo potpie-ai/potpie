@@ -2,6 +2,11 @@ services:
   postgres:
     image: postgres:latest
     container_name: potpie_postgres
+    # Defaults to 100 (Postgres default) so non-Hatchet dev is unchanged. `make
+    # dev-hatchet` exports POTPIE_POSTGRES_MAX_CONNECTIONS=1000 because the
+    # optional Hatchet V1 engine + its Postgres msgqueue share this instance and
+    # are connection-hungry.
+    command: ["postgres", "-c", "max_connections=${POTPIE_POSTGRES_MAX_CONNECTIONS:-100}"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: mysecretpassword
@@ -45,11 +50,105 @@ services:
     networks:
       - app-network
 
+  # ── Hatchet (optional durable agent runtime) ──────────────────────────────
+  # Opt-in via the "hatchet" compose profile so `make infra-up` / `make dev`
+  # (no profile) keep starting only postgres/neo4j/redis. Boot with
+  # `make hatchet-up` (runs scripts/setup_hatchet_local.sh). Reuses the existing
+  # potpie_postgres container via a separate `hatchet` database (created by the
+  # bootstrap script) and Postgres-backed messaging — no RabbitMQ for local dev.
+  # Images are pinned to one version on purpose: mixing :latest across migrate vs
+  # engine skews the schema (e.g. create_v1_range_partition gains an arg in newer
+  # engines) and the engine crash-loops with SQLSTATE 42883. Bump all four together.
+  hatchet-migration:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-migrate:v0.86.26
+    command: /hatchet/hatchet-migrate
+    profiles: ["hatchet"]
+    networks:
+      - app-network
+    environment:
+      DATABASE_URL: "postgres://postgres:mysecretpassword@postgres:5432/hatchet?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  hatchet-setup-config:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-admin:v0.86.26
+    command: /hatchet/hatchet-admin quickstart --skip certs --generated-config-dir /hatchet/config --overwrite=false
+    profiles: ["hatchet"]
+    networks:
+      - app-network
+    environment:
+      DATABASE_URL: "postgres://postgres:mysecretpassword@postgres:5432/hatchet?sslmode=disable"
+      SERVER_MSGQUEUE_KIND: postgres
+      SERVER_AUTH_COOKIE_DOMAIN: localhost:8080
+      SERVER_AUTH_COOKIE_INSECURE: "t"
+      SERVER_GRPC_BIND_ADDRESS: "0.0.0.0"
+      SERVER_GRPC_INSECURE: "t"
+      SERVER_GRPC_BROADCAST_ADDRESS: localhost:7077
+      SERVER_DEFAULT_ENGINE_VERSION: "V1"
+      SERVER_INTERNAL_CLIENT_INTERNAL_GRPC_BROADCAST_ADDRESS: hatchet-engine:7070
+    volumes:
+      - hatchet_certs:/hatchet/certs
+      - hatchet_config:/hatchet/config
+    depends_on:
+      hatchet-migration:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  hatchet-engine:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-engine:v0.86.26
+    container_name: potpie_hatchet_engine
+    command: /hatchet/hatchet-engine --config /hatchet/config
+    restart: on-failure
+    profiles: ["hatchet"]
+    networks:
+      - app-network
+    ports:
+      - "7077:7070"
+    environment:
+      DATABASE_URL: "postgres://postgres:mysecretpassword@postgres:5432/hatchet?sslmode=disable"
+      SERVER_MSGQUEUE_KIND: postgres
+      SERVER_GRPC_BIND_ADDRESS: "0.0.0.0"
+      SERVER_GRPC_INSECURE: "t"
+      SERVER_GRPC_BROADCAST_ADDRESS: localhost:7077
+    volumes:
+      - hatchet_certs:/hatchet/certs
+      - hatchet_config:/hatchet/config
+    depends_on:
+      hatchet-setup-config:
+        condition: service_completed_successfully
+      hatchet-migration:
+        condition: service_completed_successfully
+
+  hatchet-dashboard:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-dashboard:v0.86.26
+    container_name: potpie_hatchet_dashboard
+    command: sh ./entrypoint.sh --config /hatchet/config
+    restart: on-failure
+    profiles: ["hatchet"]
+    networks:
+      - app-network
+    ports:
+      - "8080:80"
+    environment:
+      DATABASE_URL: "postgres://postgres:mysecretpassword@postgres:5432/hatchet?sslmode=disable"
+    volumes:
+      - hatchet_certs:/hatchet/certs
+      - hatchet_config:/hatchet/config
+    depends_on:
+      hatchet-setup-config:
+        condition: service_completed_successfully
+      hatchet-migration:
+        condition: service_completed_successfully
+
 volumes:
   postgres_data:
   neo4j_data:
   neo4j_logs:
   redis_data:
+  hatchet_config:
+  hatchet_certs:
 
 networks:
   app-network:

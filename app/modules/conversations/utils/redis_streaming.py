@@ -6,10 +6,10 @@ from datetime import datetime
 from typing import Generator, Optional
 
 from app.core.config_provider import ConfigProvider
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.modules.intelligence.provider.openrouter_usage_context import estimate_cost_for_log
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class RedisStreamManager:
@@ -80,7 +80,6 @@ class RedisStreamManager:
                 pass
             # #endregion
         except Exception as e:
-            logger.error(f"Failed to publish event to Redis stream {key}: {str(e)}")
             raise
 
     def consume_stream(
@@ -102,11 +101,17 @@ class RedisStreamManager:
             # Set starting point for live events
             if cursor and events:
                 last_id = events[-1][0]
-            elif self.redis_client.exists(key):
-                # For fresh requests, start from the latest event in the stream
-                # to avoid replaying old messages
-                latest_events = self.redis_client.xrevrange(key, count=1)
-                last_id = latest_events[0][0] if latest_events else "0-0"
+            elif not cursor and self.redis_client.exists(key):
+                # Fresh attach: replay from the beginning. Hatchet workers can publish
+                # start/chunk events before the HTTP consumer connects; skipping to the
+                # latest entry drops tool-call and thinking chunks emitted early.
+                existing = self.redis_client.xrange(key, min="-", max="+")
+                for event_id, event_data in existing:
+                    formatted_event = self._format_event(event_id, event_data)
+                    yield formatted_event
+                    if formatted_event.get("type") == "end":
+                        return
+                last_id = existing[-1][0] if existing else "0-0"
             else:
                 last_id = "0-0"
 
@@ -222,7 +227,7 @@ class RedisStreamManager:
                         pass  # No special handling needed for tool_calls
                     formatted[formatted_key] = parsed_value
                 except Exception as e:
-                    logger.error(f"Failed to parse {key_str}: {value_str}, error: {e}")
+                    logger.error(f"Failed to parse {key_str}: {value_str}, error: {e}", key_str=key_str, value_str=value_str, e=e)
                     formatted[key_str.replace("_json", "")] = []
             else:
                 formatted[key_str] = value_str
@@ -237,13 +242,13 @@ class RedisStreamManager:
         """Set cancellation signal for this conversation/run"""
         cancel_key = f"cancel:{conversation_id}:{run_id}"
         self.redis_client.set(cancel_key, "true", ex=300)  # 5 minute expiry
-        logger.info(f"Set cancellation signal for {conversation_id}:{run_id}")
+        logger.info(f"Set cancellation signal for {conversation_id}:{run_id}", conversation_id=conversation_id, run_id=run_id)
 
     def set_task_status(self, conversation_id: str, run_id: str, status: str) -> None:
         """Set task status for health checking"""
         status_key = f"task:status:{conversation_id}:{run_id}"
         self.redis_client.set(status_key, status, ex=600)  # 10 minute expiry
-        logger.debug(f"Set task status {status} for {conversation_id}:{run_id}")
+        logger.debug(f"Set task status {status} for {conversation_id}:{run_id}", status=status, conversation_id=conversation_id, run_id=run_id)
 
     def get_task_status(self, conversation_id: str, run_id: str) -> Optional[str]:
         """Get task status for health checking"""
@@ -255,7 +260,7 @@ class RedisStreamManager:
         """Store Celery task ID for this conversation/run"""
         task_id_key = f"task:id:{conversation_id}:{run_id}"
         self.redis_client.set(task_id_key, task_id, ex=600)  # 10 minute expiry
-        logger.debug(f"Stored task ID {task_id} for {conversation_id}:{run_id}")
+        logger.debug(f"Stored task ID {task_id} for {conversation_id}:{run_id}", task_id=task_id, conversation_id=conversation_id, run_id=run_id)
 
     def get_task_id(self, conversation_id: str, run_id: str) -> Optional[str]:
         """Get Celery task ID for this conversation/run"""
@@ -340,7 +345,7 @@ class RedisStreamManager:
 
             logger.info(
                 f"Cleared session for {conversation_id}:{run_id} (stream and keys removed from Redis)"
-            )
+            , conversation_id=conversation_id, run_id=run_id)
         except Exception as e:
             logger.error(
                 f"Failed to clear session for {conversation_id}:{run_id}: {str(e)}"
@@ -431,7 +436,7 @@ def _format_stream_event(event_id, event_data: dict) -> dict:
                 parsed_value = json.loads(value_str)
                 formatted[key_str.replace("_json", "")] = parsed_value
             except Exception as e:
-                logger.error(f"Failed to parse {key_str}: {value_str}, error: {e}")
+                logger.error(f"Failed to parse {key_str}: {value_str}, error: {e}", key_str=key_str, value_str=value_str, e=e)
                 formatted[key_str.replace("_json", "")] = []
         else:
             formatted[key_str] = value_str
@@ -462,7 +467,7 @@ class AsyncRedisStreamManager:
         await _retry_redis_async(
             lambda: self.redis_client.set(status_key, status, ex=600)
         )
-        logger.debug(f"Set task status {status} for {conversation_id}:{run_id}")
+        logger.debug(f"Set task status {status} for {conversation_id}:{run_id}", status=status, conversation_id=conversation_id, run_id=run_id)
 
     async def get_task_status(
         self, conversation_id: str, run_id: str
@@ -480,7 +485,7 @@ class AsyncRedisStreamManager:
         await _retry_redis_async(
             lambda: self.redis_client.set(task_id_key, task_id, ex=600)
         )
-        logger.debug(f"Stored task ID {task_id} for {conversation_id}:{run_id}")
+        logger.debug(f"Stored task ID {task_id} for {conversation_id}:{run_id}", task_id=task_id, conversation_id=conversation_id, run_id=run_id)
 
     async def get_task_id(
         self, conversation_id: str, run_id: str
@@ -533,9 +538,8 @@ class AsyncRedisStreamManager:
             await _retry_redis_async(
                 lambda: self.redis_client.expire(key, self.stream_ttl)
             )
-            logger.debug(f"Published {event_type} event to stream {key}")
+            logger.debug(f"Published {event_type} event to stream {key}", event_type=event_type, key=key)
         except Exception as e:
-            logger.error(f"Failed to publish event to Redis stream {key}: {str(e)}")
             raise
 
     async def set_cancellation(self, conversation_id: str, run_id: str) -> None:
@@ -543,7 +547,7 @@ class AsyncRedisStreamManager:
         await _retry_redis_async(
             lambda: self.redis_client.set(cancel_key, "true", ex=300)
         )
-        logger.info(f"Set cancellation signal for {conversation_id}:{run_id}")
+        logger.info(f"Set cancellation signal for {conversation_id}:{run_id}", conversation_id=conversation_id, run_id=run_id)
 
     async def get_stream_snapshot(
         self, conversation_id: str, run_id: str
@@ -587,7 +591,7 @@ class AsyncRedisStreamManager:
         except Exception as e:
             logger.error(
                 f"Failed to get stream snapshot for {conversation_id}:{run_id}: {e}"
-            )
+            , conversation_id=conversation_id, run_id=run_id, e=e)
             return {
                 "content": content,
                 "citations": citations,
@@ -616,11 +620,11 @@ class AsyncRedisStreamManager:
             )
             logger.info(
                 f"Cleared session for {conversation_id}:{run_id} (stream and keys removed)"
-            )
+            , conversation_id=conversation_id, run_id=run_id)
         except Exception as e:
             logger.error(
                 f"Failed to clear session for {conversation_id}:{run_id}: {e}"
-            )
+            , conversation_id=conversation_id, run_id=run_id, e=e)
 
     async def wait_for_task_start(
         self,

@@ -29,9 +29,9 @@ from app.modules.intelligence.tools.sandbox.client import (
     resolve_workspace,
 )
 from app.modules.intelligence.tools.sandbox.context import get_user_id
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 # ----------------------------------------------------------------------

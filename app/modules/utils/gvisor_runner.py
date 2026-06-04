@@ -22,9 +22,9 @@ from typing import List, Optional, Dict
 from dataclasses import dataclass
 
 from app.modules.utils.install_gvisor import get_runsc_path
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -148,12 +148,12 @@ def _filter_safe_environment_variables(env: Optional[Dict[str, str]]) -> Dict[st
             ):
                 logger.debug(
                     f"Filtered out environment variable '{key}' (looks like a secret)"
-                )
+                , key=key)
                 continue
 
             filtered[key] = value
         else:
-            logger.debug(f"Filtered out sensitive environment variable: {key}")
+            logger.debug(f"Filtered out sensitive environment variable: {key}", key=key)
 
     return filtered
 
@@ -228,7 +228,7 @@ def run_command_isolated(
 
     runsc_path = get_runsc_binary()
     if runsc_path:
-        logger.info(f"[GVISOR] gVisor available, using runsc at {runsc_path}")
+        logger.info(f"[GVISOR] gVisor available, using runsc at {runsc_path}", runsc_path=runsc_path)
     else:
         logger.info(
             "[GVISOR] runsc binary not found locally; will rely on Docker runtime when available"
@@ -325,7 +325,7 @@ def run_command_isolated(
                     )
 
     except subprocess.TimeoutExpired:
-        logger.error(f"Command timed out after {timeout} seconds")
+        logger.error(f"Command timed out after {timeout} seconds", timeout=timeout)
         return CommandResult(
             returncode=124,  # Standard timeout exit code
             stdout="",
@@ -406,7 +406,7 @@ def _check_docker_available() -> bool:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
     except Exception as e:
-        logger.debug(f"Error checking Docker gVisor availability: {e}")
+        logger.debug(f"Error checking Docker gVisor availability: {e}", e=e)
         return False
 
 
@@ -452,7 +452,7 @@ def _run_with_docker_gvisor(
     if runsc_path:
         logger.info(
             f"[GVISOR] Using Docker with gVisor runtime (runsc at {runsc_path})"
-        )
+        , runsc_path=runsc_path)
     else:
         logger.info(
             "[GVISOR] Using Docker with gVisor runtime (runsc provided by Docker runtime)"

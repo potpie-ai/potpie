@@ -6,12 +6,12 @@ from typing import Dict, Any
 
 import redis
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from .constants import CODE_CHANGES_TTL_SECONDS
 from .models import ChangeType, FileChange
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def load_changes_from_redis(
@@ -51,7 +51,7 @@ def load_changes_from_redis(
             logger.debug("storage.load_changes_from_redis: No existing data in Redis")
             return {}
     except Exception as e:
-        logger.warning(f"storage.load_changes_from_redis: Error loading: {e}")
+        logger.warning(f"storage.load_changes_from_redis: Error loading: {e}", e=e)
         return {}
 
 
@@ -93,4 +93,4 @@ def save_changes_to_redis(
             f"storage.save_changes_to_redis: Saved {len(changes)} changes (key={redis_key}, ttl={ttl}s)"
         )
     except Exception as e:
-        logger.error(f"storage.save_changes_to_redis: Error saving: {e}")
+        logger.error(f"storage.save_changes_to_redis: Error saving: {e}", e=e)

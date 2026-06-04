@@ -14,9 +14,9 @@ from app.modules.context_graph.context_graph_pot_model import ContextGraphPot
 from app.modules.context_graph.context_graph_pot_repository_model import (
     ContextGraphPotRepository,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class WebhookEventHandler:

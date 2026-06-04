@@ -13,12 +13,12 @@ from app.modules.intelligence.tools.registry.annotation_logging import (
     get_annotations_for_logging,
 )
 from app.modules.intelligence.tools.registry.exceptions import RegistryError
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 if TYPE_CHECKING:
     from app.modules.intelligence.tools.registry.resolver import ToolResolver
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Max length for short_description in discovery responses (schema allows 200)
 _SHORT_DESC_MAX = 200
@@ -57,11 +57,6 @@ def get_discovery_tools(
             exclude_embedding_tools=exclude_embedding_tools,
         )
     except RegistryError as e:
-        logger.error(
-            "get_discovery_tools: failed to resolve allow_list_id=%s: %s",
-            allow_list_id,
-            e,
-        )
         raise
 
     def _search_tools(query: Optional[str] = None) -> List[dict]:

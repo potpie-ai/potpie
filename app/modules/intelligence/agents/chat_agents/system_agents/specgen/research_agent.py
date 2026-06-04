@@ -3,9 +3,9 @@ from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.intelligence.agents.chat_agents.pydantic_deep_agent import PydanticDeepAgent
 from app.modules.intelligence.agents.chat_agents.agent_config import AgentConfig, TaskConfig
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 RESEARCH_AGENT_PROMPT = """You are the Research Agent. Your job is to explore a codebase using tools and gather evidence-backed findings.
 
@@ -138,7 +138,7 @@ def create_research_agent(
     missing_tools = [name for name in tool_names if name not in retrieved_tool_names]
     
     if missing_tools:
-        logger.warning(f"[RESEARCH_AGENT] Missing tools: {missing_tools}")
+        logger.warning(f"[RESEARCH_AGENT] Missing tools: {missing_tools}", missing_tools=missing_tools)
     logger.info(f"[RESEARCH_AGENT] Successfully constructed with {len(tools)} tools: {retrieved_tool_names}")
     
     return PydanticDeepAgent(llm_provider, agent_config, tools)

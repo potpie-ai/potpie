@@ -13,9 +13,9 @@ from app.modules.analytics.schemas import (
     UserAnalyticsResponse,
 )
 from app.modules.auth.auth_service import AuthService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -109,7 +109,7 @@ class AnalyticsAPI:
             return [TokensByDay(**r) for r in rows]
         except ValueError as e:
             error_msg = str(e)
-            logger.error(f"ValueError in tokens-by-day: {error_msg}")
+            logger.error(f"ValueError in tokens-by-day: {error_msg}", error_msg=error_msg)
             if "LOGFIRE_READ_TOKEN" in error_msg:
                 raise HTTPException(
                     status_code=500,
@@ -120,7 +120,6 @@ class AnalyticsAPI:
                 detail="Failed to process tokens by day.",
             )
         except Exception as e:
-            logger.exception("Error fetching tokens by day: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail="Failed to retrieve tokens by day.",
@@ -156,7 +155,7 @@ class AnalyticsAPI:
             return analytics_data
         except ValueError as e:
             error_msg = str(e)
-            logger.error(f"ValueError in analytics: {error_msg}")
+            logger.error(f"ValueError in analytics: {error_msg}", error_msg=error_msg)
             if "LOGFIRE_READ_TOKEN" in error_msg:
                 raise HTTPException(
                     status_code=500,
@@ -168,7 +167,6 @@ class AnalyticsAPI:
                 detail="Failed to process analytics data.",
             )
         except Exception as e:
-            logger.exception("Error fetching analytics: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail="Failed to retrieve analytics data.",
@@ -212,7 +210,7 @@ class AnalyticsAPI:
             return spans
         except ValueError as e:
             error_msg = str(e)
-            logger.error(f"ValueError in raw spans: {error_msg}")
+            logger.error(f"ValueError in raw spans: {error_msg}", error_msg=error_msg)
             if "LOGFIRE_READ_TOKEN" in error_msg:
                 raise HTTPException(
                     status_code=500,
@@ -224,7 +222,6 @@ class AnalyticsAPI:
                 detail="Failed to process raw span data.",
             )
         except Exception as e:
-            logger.exception("Error fetching raw spans: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail="Failed to retrieve raw span data.",
@@ -263,7 +260,7 @@ class AnalyticsAPI:
             return raw
         except ValueError as e:
             error_msg = str(e)
-            logger.error(f"Configuration error: {error_msg}")
+            logger.error(f"Configuration error: {error_msg}", error_msg=error_msg)
             if "LOGFIRE_READ_TOKEN" in error_msg:
                 raise HTTPException(
                     status_code=500,
@@ -274,7 +271,6 @@ class AnalyticsAPI:
                 detail="Failed to process debug data.",
             )
         except Exception as e:
-            logger.exception("Error fetching raw Logfire response: %s", e)
             raise HTTPException(
                 status_code=500,
                 detail="Failed to retrieve raw response.",

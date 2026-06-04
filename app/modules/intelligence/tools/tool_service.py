@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 from sqlalchemy.orm import Session
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
     get_change_detection_tool,
@@ -92,12 +92,30 @@ from app.modules.intelligence.tools.confluence_tools import (
 from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
+from .local_search_tools.tools import create_local_search_tools
 from .todo_management_tool import create_todo_management_tools
 from .requirement_verification_tool import create_requirement_verification_tools
 from .sandbox.tools import create_sandbox_tools
+from .parse_failure_signal_tool import parse_failure_signal_tool
+from .query_context_graph_tool import query_context_graph_tool
+from .hypothesis_state_tool import create_hypothesis_state_tools
+from .run_validation_tool import run_validation_tool
+from .get_workspace_debug_context_tool import get_workspace_debug_context_tool
+from .dap_tools import (
+    start_debug_session_tool,
+    set_breakpoints_tool,
+    take_debug_snapshot_tool,
+    step_over_tool,
+    step_into_tool,
+    step_out_tool,
+    continue_execution_tool,
+    evaluate_expression_tool,
+    list_debug_sessions_tool,
+    stop_debug_session_tool,
+)
 
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ToolService:
@@ -182,6 +200,7 @@ class ToolService:
             "get_code_from_multiple_node_ids": get_code_from_multiple_node_ids_tool(
                 self.db, self.user_id
             ),
+            "query_context_graph": query_context_graph_tool(),
             "ask_knowledge_graph_queries": get_ask_knowledge_graph_queries_tool(
                 self.db, self.user_id
             ),
@@ -189,6 +208,20 @@ class ToolService:
             "get_code_graph_from_node_id": get_code_graph_from_node_id_tool(self.db),
             "change_detection": get_change_detection_tool(self.user_id),
             "get_code_file_structure": get_code_file_structure_tool(self.db),
+            "parse_failure_signal": parse_failure_signal_tool(),
+            "run_validation": run_validation_tool(),
+            "get_workspace_debug_context": get_workspace_debug_context_tool(),
+            # DAP debugger tools (A3) — dispatched via tunnel to DebugSessionManager
+            "start_debug_session": start_debug_session_tool(),
+            "set_breakpoints": set_breakpoints_tool(),
+            "take_debug_snapshot": take_debug_snapshot_tool(),
+            "step_over": step_over_tool(),
+            "step_into": step_into_tool(),
+            "step_out": step_out_tool(),
+            "continue_execution": continue_execution_tool(),
+            "evaluate_expression": evaluate_expression_tool(),
+            "list_debug_sessions": list_debug_sessions_tool(),
+            "stop_debug_session": stop_debug_session_tool(),
             "get_node_neighbours_from_node_id": get_node_neighbours_from_node_id_tool(
                 self.db
             ),
@@ -238,6 +271,20 @@ class ToolService:
         for tool in create_agent_context_tools(self.db, self.user_id):
             tools[tool.name] = tool
 
+        # Local workspace search tools routed through the VS Code tunnel. They
+        # fail gracefully when no tunnel is attached, but must still be
+        # registered so agents can choose them when local mode is available.
+        for tool in create_local_search_tools():
+            tools[tool.name] = tool
+
+        logger.info(
+            "[DEBUG tool_service] execute_terminal_command registered: {} | "
+            "terminal_session_output registered: {} | terminal_session_signal registered: {}",
+            "execute_terminal_command" in tools,
+            "terminal_session_output" in tools,
+            "terminal_session_signal" in tools,
+        )
+
         # bash_command, apply_changes, git_commit, git_push, create_pr_workflow,
         # checkout_worktree_branch — all removed during the sandbox migration.
         # Their replacements live in the sandbox tool group below.
@@ -245,6 +292,11 @@ class ToolService:
         # Add todo management tools
         todo_tools = create_todo_management_tools()
         for tool in todo_tools:
+            tools[tool.name] = tool
+
+        # Add hypothesis state tools (debug agent — A5)
+        hypothesis_tools = create_hypothesis_state_tools()
+        for tool in hypothesis_tools:
             tools[tool.name] = tool
 
         # Sandbox-backed tools replace the legacy code_changes_manager staging

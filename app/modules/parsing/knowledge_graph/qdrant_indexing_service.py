@@ -64,9 +64,9 @@ import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -100,7 +100,7 @@ def _load_token_vocabulary(collection_name: str) -> Optional[List[str]]:
                 data = json.load(f)
             return data.get("token_vocabulary")
         except (json.JSONDecodeError, IOError) as e:
-            logger.warning(f"Failed to load vocabulary from {vocab_path}: {e}")
+            logger.warning(f"Failed to load vocabulary from {vocab_path}: {e}", vocab_path=vocab_path, e=e)
     return None
 
 
@@ -116,7 +116,7 @@ def _delete_token_vocabulary(collection_name: str) -> None:
     try:
         vocab_path.unlink(missing_ok=True)
     except OSError as e:
-        logger.warning(f"Failed to delete vocabulary file {vocab_path}: {e}")
+        logger.warning(f"Failed to delete vocabulary file {vocab_path}: {e}", vocab_path=vocab_path, e=e)
 
 
 def _build_staging_collection_name(collection_name: str) -> str:
@@ -271,9 +271,9 @@ _dense_model: Optional[SentenceTransformer] = None
 def _get_dense_model() -> SentenceTransformer:
     global _dense_model
     if _dense_model is None:
-        logger.info(f"Loading dense embedding model: {DENSE_MODEL}")
+        logger.info(f"Loading dense embedding model: {DENSE_MODEL}", DENSE_MODEL=DENSE_MODEL)
         _dense_model = SentenceTransformer(DENSE_MODEL, device="cpu")
-        logger.info(f"Dense model loaded: {DENSE_MODEL}")
+        logger.info(f"Dense model loaded: {DENSE_MODEL}", DENSE_MODEL=DENSE_MODEL)
     return _dense_model
 
 
@@ -571,15 +571,15 @@ def create_hybrid_collection(
     existing = client.collection_exists(collection_name)
     if existing:
         if recreate:
-            logger.info(f"Deleting existing collection: {collection_name}")
+            logger.info(f"Deleting existing collection: {collection_name}", collection_name=collection_name)
             client.delete_collection(collection_name)
         else:
             logger.info(
                 f"Collection '{collection_name}' already exists; skipping creation."
-            )
+            , collection_name=collection_name)
             return
 
-    logger.info(f"Creating Qdrant collection: {collection_name}")
+    logger.info(f"Creating Qdrant collection: {collection_name}", collection_name=collection_name)
 
     client.create_collection(
         collection_name=collection_name,
@@ -602,7 +602,7 @@ def create_hybrid_collection(
             ),
         },
     )
-    logger.info(f"Collection '{collection_name}' created successfully.")
+    logger.info(f"Collection '{collection_name}' created successfully.", collection_name=collection_name)
 
 
 def upsert_hybrid_points(
@@ -694,7 +694,7 @@ def upsert_hybrid_points(
         total_upserted += len(batch)
         logger.info(f"Upserted batch {i // batch_size + 1}: {len(batch)} points")
 
-    logger.info(f"Total upserted: {total_upserted} points into '{collection_name}'")
+    logger.info(f"Total upserted: {total_upserted} points into '{collection_name}'", total_upserted=total_upserted, collection_name=collection_name)
     return total_upserted
 
 

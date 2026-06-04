@@ -8,9 +8,9 @@ from app.modules.auth.auth_service import AuthService
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.projects.projects_model import Project
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 router = APIRouter()
 
 
@@ -94,7 +94,6 @@ async def semantic_search(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Error verifying project access: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Error verifying project access: {str(e)}"
@@ -137,7 +136,6 @@ async def semantic_search(
             total_results=len(formatted_results),
         )
     except Exception as e:
-        logger.exception(f"Error in semantic search: {e}")
         raise HTTPException(status_code=500, detail=f"Semantic search failed: {str(e)}")
     finally:
         try:

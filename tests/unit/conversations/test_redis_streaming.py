@@ -86,6 +86,37 @@ class TestRedisStreamManagerFormatEvent:
         assert out["tool_calls"] == [{"name": "x"}]
 
 
+class TestRedisStreamManagerConsumeStream:
+    @patch("app.modules.conversations.utils.redis_streaming.ConfigProvider")
+    @patch("app.modules.conversations.utils.redis_streaming.redis")
+    def test_fresh_connect_replays_existing_stream_from_start(self, mock_redis, mock_cp):
+        """Hatchet can publish chunks before HTTP attaches; do not skip to latest."""
+        mock_cp.return_value.get_redis_url.return_value = "redis://localhost:6379/0"
+        mock_cp.get_stream_ttl_secs.return_value = 3600
+        mock_cp.get_stream_maxlen.return_value = 1000
+        client = MagicMock()
+        client.exists.return_value = True
+        client.xrange.return_value = [
+            (
+                b"1-0",
+                {
+                    b"type": b"chunk",
+                    b"content": b"early",
+                    b"tool_calls_json": b'[{"tool_name":"search"}]',
+                },
+            ),
+            (b"2-0", {b"type": b"end", b"status": b"completed"}),
+        ]
+        mock_redis.from_url.return_value = client
+        mgr = RedisStreamManager()
+        events = list(mgr.consume_stream("c1", "r1", cursor=None))
+        types = [e.get("type") for e in events]
+        assert types == ["chunk", "end"]
+        assert events[0].get("content") == "early"
+        assert events[0].get("tool_calls") == [{"tool_name": "search"}]
+        client.xrevrange.assert_not_called()
+
+
 class TestRedisStreamManagerCancellation:
     @patch("app.modules.conversations.utils.redis_streaming.ConfigProvider")
     @patch("app.modules.conversations.utils.redis_streaming.redis")

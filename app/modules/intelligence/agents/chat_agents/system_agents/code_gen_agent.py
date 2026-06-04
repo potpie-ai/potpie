@@ -19,9 +19,9 @@ from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.intelligence.tools.registry import ToolResolver
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator, Optional
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Local mode prompt (defined before class to avoid forward reference issues)
 code_gen_task_prompt_local = """
@@ -135,6 +135,15 @@ class CodeGenAgent(ChatAgent):
     def _build_agent(
         self, ctx: Optional[ChatContext] = None, local_mode: bool = False
     ) -> ChatAgent:
+        logger.info(
+            "[DEBUG CodeGenAgent] _build_agent called: local_mode={} ctx.local_mode={} "
+            "user_id={} conversation_id={} using_resolver={}",
+            local_mode,
+            getattr(ctx, "local_mode", None),
+            getattr(ctx, "user_id", None),
+            getattr(ctx, "conversation_id", None),
+            self.tool_resolver is not None,
+        )
         agent_config = AgentConfig(
             role="Code Generation Agent",
             goal="Generate precise, copy-paste ready code modifications that maintain project consistency and handle all dependencies",
@@ -187,6 +196,10 @@ class CodeGenAgent(ChatAgent):
                 log_tool_annotations=log_tool_annotations,
             )
             base_tools = []  # Used only for logging below
+            logger.info(
+                "[DEBUG CodeGenAgent] resolver path — tool names given to agent: {}",
+                sorted(getattr(t, "name", str(t)) for t in tools),
+            )
         else:
             # Legacy fallback (no ToolResolver): mirror CODE_GEN_BASE_TOOLS in
             # registry/definitions.py. Sandbox tools replace the
@@ -245,6 +258,14 @@ class CodeGenAgent(ChatAgent):
             tools = self.tools_provider.get_tools(
                 base_tools,
                 exclude_embedding_tools=exclude_embedding_tools,
+            )
+            logger.info(
+                "[DEBUG CodeGenAgent] legacy path — base_tools requested: {}",
+                sorted(base_tools),
+            )
+            logger.info(
+                "[DEBUG CodeGenAgent] legacy path — tool names given to agent: {}",
+                sorted(getattr(t, "name", str(t)) for t in tools),
             )
 
         # The legacy CCM local-mode exclusion list is gone — those tools no
@@ -318,15 +339,15 @@ class CodeGenAgent(ChatAgent):
 
         logger.info(
             f"CodeGenAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
-        )
-        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
-        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+        , supports_pydantic=supports_pydantic, should_use_multi=should_use_multi)
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}", self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}", self_llm_provider_chat_config_capabilities=self.llm_provider.chat_config.capabilities)
 
         if supports_pydantic:
             if should_use_multi:
                 logger.info(
                     f"✅ Using PydanticMultiAgent (multi-agent system) [local_mode={local_mode}]"
-                )
+                , local_mode=local_mode)
                 # Create specialized delegate agents for code generation: THINK_EXECUTE + integration agents
                 integration_agents = create_integration_agents()
                 delegate_agents = {

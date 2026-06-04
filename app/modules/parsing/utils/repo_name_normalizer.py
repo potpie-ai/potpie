@@ -3,9 +3,9 @@ Repository name normalization utilities for different code providers.
 """
 
 import os
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def normalize_repo_name(repo_name: str, provider_type: str = None) -> str:
@@ -41,11 +41,11 @@ def normalize_repo_name(repo_name: str, provider_type: str = None) -> str:
             if not actual_username:
                 logger.debug(
                     f"GitBucket: Skipping normalization for '{repo_name}' because GITBUCKET_USERNAME is not set"
-                )
+                , repo_name=repo_name)
                 return repo_name
 
             normalized_name = repo_name.replace("root/", f"{actual_username}/", 1)
-            logger.info(f"GitBucket: Normalized '{repo_name}' to '{normalized_name}'")
+            logger.info(f"GitBucket: Normalized '{repo_name}' to '{normalized_name}'", repo_name=repo_name, normalized_name=normalized_name)
             return normalized_name
 
     # For other providers, return as-is

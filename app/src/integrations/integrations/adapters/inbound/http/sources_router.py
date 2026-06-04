@@ -144,7 +144,6 @@ async def linear_teams(
         """
         data = linear_graphql(token, q, {})
     except Exception as exc:
-        logger.exception("Failed to fetch Linear teams for integration %s", integration_id)
         raise HTTPException(
             status_code=502, detail=f"Linear API error: {exc}"
         ) from exc

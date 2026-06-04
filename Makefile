@@ -37,11 +37,18 @@ else
   SANDBOX_OVERRIDE :=
 endif
 
-# Load .env (and .env.daytona.local if present, written by `make daytona-up`).
-# Inline assignments after this line override what was sourced.
+# Process log level for the gunicorn/celery CLIs (distinct from the app's LOG_LEVEL
+# env, which drives loguru). Default `info` keeps the dev terminal readable; override
+# with e.g. `make dev-hatchet PROC_LOG_LEVEL=debug` when you need framework noise.
+PROC_LOG_LEVEL ?= info
+
+# Load .env (and .env.daytona.local / .env.hatchet.local if present, written by
+# `make daytona-up` / `make hatchet-up`). Inline assignments after this line
+# override what was sourced.
 LOAD_ENV := set -a; \
             [ -f .env ] && . ./.env; \
             [ -f app/src/sandbox/.env.daytona.local ] && . ./app/src/sandbox/.env.daytona.local; \
+            [ -f .env.hatchet.local ] && . ./.env.hatchet.local; \
             set +a;
 
 # Daytona helper scripts shell out to python (daytona_local.py,
@@ -72,6 +79,7 @@ CELERY_CONCURRENCY ?= 4
 
 .DEFAULT_GOAL := help
 .PHONY: help dev infra-up infra-down infra-logs infra-reset \
+        hatchet-up hatchet-down hatchet-worker dev-hatchet \
         sync deps env-check sandbox-prep \
         migrate migration downgrade migration-history \
         api worker stop \
@@ -96,9 +104,9 @@ dev: env-check infra-up sync migrate sandbox-prep ## Start infra, sync deps, mig
 	$(SET_CELERY_Q) \
 	echo "─── starting API (gunicorn) and Celery worker ───"; \
 	$(SANDBOX_OVERRIDE) gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 \
-	  --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app & \
+	  --timeout 1800 --bind 0.0.0.0:8001 --log-level $(PROC_LOG_LEVEL) app.main:app & \
 	GUNICORN_PID=$$!; \
-	$(SANDBOX_OVERRIDE) celery -A app.celery.celery_app worker --loglevel=debug \
+	$(SANDBOX_OVERRIDE) celery -A app.celery.celery_app worker --loglevel=$(PROC_LOG_LEVEL) \
 	  -Q "$$CELERY_Q" -E --concurrency=$(CELERY_CONCURRENCY) --pool=$(CELERY_POOL) -B --schedule=.celerybeat-schedule & \
 	CELERY_PID=$$!; \
 	trap 'kill -TERM $$GUNICORN_PID $$CELERY_PID 2>/dev/null || true; \
@@ -133,6 +141,41 @@ infra-logs: ## Tail logs from all infra containers
 infra-reset: ## Stop infra and DELETE all data volumes (destructive)
 	docker compose down -v
 
+##@ Hatchet (optional durable agent runtime)
+
+hatchet-up: ## Boot local Hatchet (reuses potpie_postgres) + write .env.hatchet.local (token if missing)
+	@bash scripts/setup_hatchet_local.sh
+	@echo "✓ Hatchet dashboard http://localhost:8080 (admin@example.com / Admin123!!) · engine localhost:7077"
+
+hatchet-down: ## Stop & remove only Hatchet services (keeps postgres/neo4j/redis and the hatchet DB)
+	docker compose --profile hatchet rm -sf hatchet-engine hatchet-dashboard hatchet-migration hatchet-setup-config
+
+hatchet-worker: ## Run only the Hatchet agent worker (assumes infra + `make hatchet-up`). Honors SANDBOX=...
+	@$(LOAD_ENV) $(SANDBOX_OVERRIDE) uv run python -m app.modules.intelligence.agents.hatchet_worker
+
+# Hatchet's V1 engine + its Postgres msgqueue share potpie_postgres, so the
+# whole flow needs ~1000 connection slots. Target-specific export is inherited
+# by prerequisites, so `infra-up` brings postgres up with this value too.
+dev-hatchet: export POTPIE_POSTGRES_MAX_CONNECTIONS := 1000
+dev-hatchet: env-check infra-up hatchet-up sync migrate sandbox-prep ## Like `dev` but routes allowlisted agents to Hatchet (API + Celery + Hatchet worker)
+	@$(LOAD_ENV) \
+	source .venv/bin/activate; \
+	$(SET_CELERY_Q) \
+	export AGENT_TASK_BACKEND=hatchet; \
+	echo "─── starting API + Celery worker + Hatchet agent worker (AGENT_TASK_BACKEND=hatchet) ───"; \
+	$(SANDBOX_OVERRIDE) gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 \
+	  --timeout 1800 --bind 0.0.0.0:8001 --log-level $(PROC_LOG_LEVEL) app.main:app & \
+	GUNICORN_PID=$$!; \
+	$(SANDBOX_OVERRIDE) celery -A app.celery.celery_app worker --loglevel=$(PROC_LOG_LEVEL) \
+	  -Q "$$CELERY_Q" -E --concurrency=1 --pool=solo & \
+	CELERY_PID=$$!; \
+	$(SANDBOX_OVERRIDE) uv run python -m app.modules.intelligence.agents.hatchet_worker & \
+	HATCHET_PID=$$!; \
+	trap 'kill -TERM $$GUNICORN_PID $$CELERY_PID $$HATCHET_PID 2>/dev/null || true; \
+	      wait $$GUNICORN_PID $$CELERY_PID $$HATCHET_PID 2>/dev/null || true' INT TERM EXIT; \
+	echo "API on http://localhost:8001 (gunicorn $$GUNICORN_PID, celery $$CELERY_PID, hatchet $$HATCHET_PID). Ctrl+C to stop."; \
+	wait $$GUNICORN_PID $$CELERY_PID $$HATCHET_PID
+
 ##@ Python environment
 
 sync: ## uv sync — install/update Python deps into .venv
@@ -159,10 +202,10 @@ migration-history: ## Show alembic history
 
 api: ## Run only the FastAPI server (assumes infra is up). Honors SANDBOX=...
 	@$(LOAD_ENV) $(SANDBOX_OVERRIDE) uv run gunicorn --worker-class uvicorn.workers.UvicornWorker \
-	  --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app
+	  --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level $(PROC_LOG_LEVEL) app.main:app
 
 worker: ## Run only the Celery worker (assumes infra is up). Honors SANDBOX=...
-	@$(LOAD_ENV) $(SET_CELERY_Q) $(SANDBOX_OVERRIDE) uv run celery -A app.celery.celery_app worker --loglevel=debug \
+	@$(LOAD_ENV) $(SET_CELERY_Q) $(SANDBOX_OVERRIDE) uv run celery -A app.celery.celery_app worker --loglevel=$(PROC_LOG_LEVEL) \
 	  -Q "$$CELERY_Q" -E --concurrency=$(CELERY_CONCURRENCY) --pool=$(CELERY_POOL) -B --schedule=.celerybeat-schedule
 
 stop: ## Kill API + worker processes and stop infra

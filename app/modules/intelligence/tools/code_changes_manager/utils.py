@@ -4,11 +4,11 @@ import threading
 import os as os_module
 from typing import Callable, TypeVar, Optional
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from .constants import MEMORY_PRESSURE_THRESHOLD
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 T = TypeVar("T")
 
@@ -51,10 +51,6 @@ def _execute_with_timeout(
     thread.join(timeout=timeout)
 
     if not result_container["completed"]:
-        logger.error(
-            f"Operation '{operation_name}' timed out after {timeout} seconds. "
-            f"This may indicate a deadlock or hung operation."
-        )
         raise TimeoutError(
             f"Operation '{operation_name}' timed out after {timeout} seconds"
         )
@@ -94,13 +90,13 @@ def _check_memory_pressure() -> tuple[bool, Optional[float]]:
             logger.warning(
                 f"Memory pressure detected: {memory_usage_percent:.1%} ({rss_mb:.1f}MB / {max_memory_mb:.1f}MB). "
                 f"Skipping non-critical operations."
-            )
+            , memory_usage_percent=memory_usage_percent, rss_mb=rss_mb, max_memory_mb=max_memory_mb)
 
         return is_under_pressure, memory_usage_percent
     except ImportError:
         return False, None
     except Exception as e:
-        logger.debug(f"Failed to check memory pressure: {e}")
+        logger.debug(f"Failed to check memory pressure: {e}", e=e)
         return False, None
 
 
@@ -143,5 +139,5 @@ def _get_git_file_size(
             operation_name=f"get_file_size({file_path})",
         )
     except Exception as e:
-        logger.debug(f"Could not get file size for {file_path}: {e}")
+        logger.debug(f"Could not get file size for {file_path}: {e}", file_path=file_path, e=e)
         return None

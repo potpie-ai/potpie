@@ -6,13 +6,13 @@ from pydantic_ai.messages import ToolCallPart, ModelMessage, ModelResponse
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIStreamedResponse
 from pydantic_ai.models import ModelRequestParameters
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.modules.intelligence.provider.openrouter_usage_context import (
     push_usage as push_usage_context,
     estimate_cost_for_log,
 )
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 # ------------------------------------------------------------------

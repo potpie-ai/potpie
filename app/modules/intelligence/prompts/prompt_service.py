@@ -23,9 +23,9 @@ from app.modules.intelligence.prompts.prompt_schema import (
 from app.modules.conversations.message.message_schema import MessageResponse
 from app.modules.intelligence.prompts.prompt_schema import EnhancedPromptResponse
 from app.modules.intelligence.provider.provider_service import ProviderService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class PromptServiceError(Exception):
@@ -86,13 +86,11 @@ class PromptService:
             return PromptResponse.model_validate(new_prompt)
         except IntegrityError as e:
             self.db.rollback()
-            logger.exception("IntegrityError in create_prompt", user_id=user_id)
             raise PromptCreationError(
                 "Failed to create prompt due to a database integrity error."
             ) from e
         except Exception as e:
             self.db.rollback()
-            logger.exception("Unexpected error in create_prompt", user_id=user_id)
             raise PromptCreationError(
                 "An unexpected error occurred while creating the prompt."
             ) from e
@@ -118,26 +116,18 @@ class PromptService:
             self.db.commit()
             self.db.refresh(db_prompt)
 
-            logger.info(f"Updated prompt with ID: {prompt_id}, user_id: {user_id}")
+            logger.info(f"Updated prompt with ID: {prompt_id}, user_id: {user_id}", prompt_id=prompt_id, user_id=user_id)
             return PromptResponse.model_validate(db_prompt)
         except PromptNotFoundError as e:
             logger.warning(str(e))
             raise
         except SQLAlchemyError as e:
             self.db.rollback()
-            logger.exception(
-                "Database error in update_prompt", prompt_id=prompt_id, user_id=user_id
-            )
             raise PromptUpdateError(
                 f"Failed to update prompt {prompt_id} due to a database error"
             ) from e
         except Exception as e:
             self.db.rollback()
-            logger.exception(
-                "Unexpected error in update_prompt",
-                prompt_id=prompt_id,
-                user_id=user_id,
-            )
             raise PromptUpdateError(
                 f"Failed to update prompt {prompt_id} due to an unexpected error"
             ) from e
@@ -152,25 +142,17 @@ class PromptService:
             if result == 0:
                 raise PromptNotFoundError(f"Prompt with id {prompt_id} not found")
             self.db.commit()
-            logger.info(f"Deleted prompt with ID: {prompt_id}, user_id: {user_id}")
+            logger.info(f"Deleted prompt with ID: {prompt_id}, user_id: {user_id}", prompt_id=prompt_id, user_id=user_id)
         except PromptNotFoundError as e:
             logger.warning(str(e))
             raise
         except SQLAlchemyError as e:
             self.db.rollback()
-            logger.exception(
-                "Database error in delete_prompt", prompt_id=prompt_id, user_id=user_id
-            )
             raise PromptDeletionError(
                 f"Failed to delete prompt {prompt_id} due to a database error"
             ) from e
         except Exception as e:
             self.db.rollback()
-            logger.exception(
-                "Unexpected error in delete_prompt",
-                prompt_id=prompt_id,
-                user_id=user_id,
-            )
             raise PromptDeletionError(
                 f"Failed to delete prompt {prompt_id} due to an unexpected error"
             ) from e
@@ -185,16 +167,10 @@ class PromptService:
             logger.warning(str(e))
             raise
         except SQLAlchemyError as e:
-            logger.exception(
-                "Database error in fetch_prompt", prompt_id=prompt_id, user_id=user_id
-            )
             raise PromptFetchError(
                 f"Failed to fetch prompt {prompt_id} due to a database error"
             ) from e
         except Exception as e:
-            logger.exception(
-                "Unexpected error in fetch_prompt", prompt_id=prompt_id, user_id=user_id
-            )
             raise PromptFetchError(
                 f"Failed to fetch prompt {prompt_id} due to an unexpected error"
             ) from e
@@ -221,12 +197,10 @@ class PromptService:
 
             return PromptListResponse(prompts=prompt_responses, total=total)
         except SQLAlchemyError as e:
-            logger.exception("Database error in list_prompts", user_id=user_id)
             raise PromptListError(
                 "Failed to list prompts due to a database error"
             ) from e
         except Exception as e:
-            logger.exception("Unexpected error in list_prompts", user_id=user_id)
             raise PromptListError(
                 "Failed to list prompts due to an unexpected error"
             ) from e
@@ -262,19 +236,9 @@ class PromptService:
                 return AgentPromptMappingResponse.model_validate(new_mapping)
         except SQLAlchemyError as e:
             self.db.rollback()
-            logger.exception(
-                "Database error in map_agent_to_prompt",
-                agent_id=mapping.agent_id,
-                prompt_id=mapping.prompt_id,
-            )
             raise PromptServiceError("Failed to map agent to prompt", e) from e
         except Exception as e:
             self.db.rollback()
-            logger.exception(
-                "Unexpected error in map_agent_to_prompt",
-                agent_id=mapping.agent_id,
-                prompt_id=mapping.prompt_id,
-            )
             raise PromptServiceError(
                 "Failed to map agent to prompt due to an unexpected error"
             ) from e
@@ -309,7 +273,7 @@ class PromptService:
                     update_reasons.append("status changed")
                     logger.info(
                         f"Status changed from {existing_prompt.status} to {prompt.status}"
-                    )
+                    , existing_prompt_status=existing_prompt.status, prompt_status=prompt.status)
 
                 if update_needed:
                     existing_prompt.text = prompt.text
@@ -342,11 +306,6 @@ class PromptService:
             return PromptResponse.model_validate(prompt_to_return)
         except SQLAlchemyError as e:
             self.db.rollback()
-            logger.exception(
-                "Database error in create_or_update_system_prompt",
-                agent_id=agent_id,
-                stage=stage,
-            )
             raise PromptServiceError("Failed to create or update system prompt") from e
 
     async def get_prompts_by_agent_id_and_types(
@@ -419,9 +378,6 @@ class PromptService:
             )
             return result.enhancedprompt
         except Exception:
-            logger.exception(
-                "Enhancing failed", user_id=user.get("user_id") if user else None
-            )
             raise
 
 

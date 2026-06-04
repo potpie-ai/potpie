@@ -13,9 +13,9 @@ from app.modules.conversations.message.message_model import (
     MessageStatus,
     MessageType,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ChatHistoryServiceError(Exception):
@@ -46,23 +46,13 @@ class ChatHistoryService:
                     history.append(AIMessage(content=msg.content))
             logger.info(
                 f"Retrieved session history for conversation: {conversation_id}"
-            )
+            , conversation_id=conversation_id)
             return history
         except SQLAlchemyError as e:
-            logger.exception(
-                "Database error in get_session_history",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ChatHistoryServiceError(
                 f"Failed to retrieve session history for conversation {conversation_id}"
             ) from e
         except Exception as e:
-            logger.exception(
-                "Unexpected error in get_session_history",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ChatHistoryServiceError(
                 f"An unexpected error occurred while retrieving session history for conversation {conversation_id}"
             ) from e
@@ -136,7 +126,7 @@ class ChatHistoryService:
                 }
                 logger.info(
                     f"Flushed message buffer for conversation: {conversation_id}"
-                )
+                , conversation_id=conversation_id)
                 return new_message.id
             return None
         except SQLAlchemyError as e:
@@ -173,7 +163,7 @@ class ChatHistoryService:
         if not content.strip():
             logger.debug(
                 f"save_partial_ai_message skipped: empty content for {conversation_id}"
-            )
+            , conversation_id=conversation_id)
             return None
         logger.info(
             f"save_partial_ai_message called for conversation {conversation_id}, "
@@ -200,7 +190,7 @@ class ChatHistoryService:
             logger.info(
                 f"Saved partial AI message for conversation {conversation_id} "
                 f"(stopped generation), message_id={new_message.id}"
-            )
+            , conversation_id=conversation_id, new_message_id=new_message.id)
             return new_message.id
         except SQLAlchemyError as e:
             logger.exception(
@@ -225,7 +215,7 @@ class ChatHistoryService:
         try:
             self.db.query(Message).filter_by(conversation_id=conversation_id).delete()
             self.db.commit()
-            logger.info(f"Cleared session history for conversation: {conversation_id}")
+            logger.info(f"Cleared session history for conversation: {conversation_id}", conversation_id=conversation_id)
         except SQLAlchemyError as e:
             logger.exception(
                 "Database error in clear_session_history",
@@ -277,20 +267,10 @@ class AsyncChatHistoryService:
             )
             return history
         except SQLAlchemyError as e:
-            logger.exception(
-                "Database error in get_session_history conversation_id=%s user_id=%s",
-                conversation_id,
-                user_id,
-            )
             raise ChatHistoryServiceError(
                 f"Failed to retrieve session history for conversation {conversation_id}"
             ) from e
         except Exception as e:
-            logger.exception(
-                "Unexpected error in get_session_history conversation_id=%s user_id=%s",
-                conversation_id,
-                user_id,
-            )
             raise ChatHistoryServiceError(
                 f"An unexpected error occurred while retrieving session history for conversation {conversation_id}"
             ) from e

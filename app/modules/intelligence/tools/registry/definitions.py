@@ -218,12 +218,14 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "tier": "medium",
         "category": "sandbox",
         "short_description": "View / create / str_replace / insert on worktree files.",
+        "non_local_only": True,
     },
     "sandbox_shell": {
         "tier": "low",
         "category": "sandbox",
         "short_description": "Run a single shell command inside the sandbox.",
         "destructive": True,
+        "non_local_only": True,
     },
     # ``sandbox_exec`` / ``sandbox_write_stdin`` are the unified streaming
     # exec surface: start a long-running / interactive command that yields
@@ -253,6 +255,7 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "tier": "medium",
         "category": "sandbox",
         "short_description": "Git status / diff / log / commit / push on the worktree.",
+        "non_local_only": True,
     },
     # ``sandbox_pr`` / ``sandbox_pr_comment`` are the consolidation
     # targets for the four legacy ``code_provider_*`` integration tools.

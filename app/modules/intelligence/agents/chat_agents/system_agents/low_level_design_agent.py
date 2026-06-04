@@ -16,9 +16,9 @@ from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator, Optional
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class LowLevelDesignAgent(ChatAgent):
@@ -82,9 +82,9 @@ class LowLevelDesignAgent(ChatAgent):
 
         logger.info(
             f"LowLevelDesignAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
-        )
-        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
-        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+        , supports_pydantic=supports_pydantic, should_use_multi=should_use_multi)
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}", self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}", self_llm_provider_chat_config_capabilities=self.llm_provider.chat_config.capabilities)
 
         if supports_pydantic:
             if should_use_multi:

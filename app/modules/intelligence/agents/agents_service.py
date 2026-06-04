@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel
@@ -24,6 +23,8 @@ from app.modules.intelligence.tools.registry import (
     ToolResolver,
     build_registry_from_tool_service,
 )
+from observability import get_logger
+from app.core.config_provider import ConfigProvider
 from app.modules.utils.logger import setup_logger
 
 from .chat_agent import AgentWithInfo, ChatContext
@@ -38,7 +39,7 @@ from .chat_agents.system_agents import (
     unit_test_agent,
 )
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class AgentInfo(BaseModel):
@@ -57,7 +58,7 @@ class AgentsService:
         prompt_provider: PromptService,
         tools_provider: ToolService,
     ):
-        self.project_path = str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute())
+        self.project_path = ConfigProvider.get_project_path()
         self.db = db
         self.prompt_service = PromptService(db)
         self.llm_provider = llm_provider
@@ -68,8 +69,9 @@ class AgentsService:
             registry = build_registry_from_tool_service(tools_provider, strict=False)
             self._tool_resolver = ToolResolver(registry, tools_provider)
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Tool registry build failed; agents will use legacy tool lists: {e!r}"
+            logger.warning(
+                f"Tool registry build failed; agents will use legacy tool lists: {e!r}",
+                exc_info=True,
             )
         self.system_agents = self._system_agents(
             llm_provider, prompt_provider, tools_provider

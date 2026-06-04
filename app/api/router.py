@@ -62,6 +62,7 @@ from app.modules.conversations.conversation_deps import get_async_redis_stream_m
 from app.modules.conversations.utils.conversation_routing import (
     normalize_run_id,
     async_ensure_unique_run_id,
+    resolve_conversation_agent_id,
     start_celery_task_and_stream,
     start_celery_task_and_wait,
 )
@@ -153,7 +154,7 @@ async def post_message(
             conversation_id, run_id, async_redis
         )
 
-    agent_id = None
+    agent_id = await resolve_conversation_agent_id(conversation_id, db, async_db)
     node_ids_list = [nc.node_id for nc in (message.node_ids or [])]
     user_agent = request.headers.get("user-agent", "")
     local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"

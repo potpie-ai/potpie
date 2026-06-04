@@ -19,9 +19,9 @@ from app.modules.intelligence.provider.openrouter_usage_context import (
     push_usage_from_run,
 )
 from app.modules.intelligence.tracing.logfire_tracer import logfire_trace_metadata
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def init_managers(
@@ -57,6 +57,30 @@ def init_managers(
     from app.modules.intelligence.tools.sandbox.context import (
         set_run_context as _set_sandbox_run_context,
     )
+    from app.modules.intelligence.tools.hypothesis_state_tool import (
+        _reset_hypothesis_store,
+    )
+    from app.modules.intelligence.tools.code_changes_manager import (
+        _init_code_changes_manager,
+    )
+
+    # Populate ContextVars (user_id, repository, tunnel_url, etc.) so all tunnel-
+    # dependent tools (search_bash, terminal, DAP, etc.) can route to the VS Code
+    # extension via the registered Socket.IO workspace.  This call was accidentally
+    # removed in commit 2e3d1bb9 (Feat/context engine #749), breaking tool routing.
+    logger.info(
+        f"🔄 [init_managers] Calling _init_code_changes_manager with "
+        f"tunnel_url={tunnel_url}, local_mode={local_mode}, repository={repository}, branch={branch}"
+    )
+    _init_code_changes_manager(
+        conversation_id=conversation_id,
+        agent_id=agent_id,
+        user_id=user_id,
+        tunnel_url=tunnel_url,
+        local_mode=local_mode,
+        repository=repository,
+        branch=branch,
+    )
 
     _reset_todo_manager()
     _set_sandbox_run_context(
@@ -66,9 +90,10 @@ def init_managers(
         local_mode=local_mode,
     )
     _reset_requirement_manager()
+    _reset_hypothesis_store(conversation_id=conversation_id or "")
     logger.info(
         f"🔄 Initialized managers for agent run (conversation_id={conversation_id}, agent_id={agent_id}, user_id={user_id}, tunnel_url={tunnel_url})"
-    )
+    , conversation_id=conversation_id, agent_id=agent_id, user_id=user_id, tunnel_url=tunnel_url)
 
 
 # Backward compatibility alias
@@ -152,7 +177,7 @@ class StandardExecutionFlow:
                     logger.warning(
                         f"MCP server initialization failed in standard run: {error_detail}",
                         exc_info=True,
-                    )
+                     error_detail=error_detail)
                     # Check if it's a JSON parsing error
                     if (
                         "json" in str(mcp_error).lower()

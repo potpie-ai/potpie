@@ -7,10 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.conversations.conversation.conversation_model import Conversation
 from app.modules.conversations.message.message_model import Message, MessageType
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.modules.billing.subscription_service import billing_subscription_service
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class UsageService:
@@ -49,7 +49,6 @@ class UsageService:
             }
 
         except SQLAlchemyError as e:
-            logger.exception("Failed to fetch usage data: %s", e)
             raise Exception("Failed to fetch usage data") from e
 
     @staticmethod
@@ -76,7 +75,7 @@ class UsageService:
             # Could not get or create Dodo customer - allow usage but log warning
             logger.warning(
                 f"Could not get or create Dodo customer for user {user_id}, allowing usage"
-            )
+            , user_id=user_id)
             return True
 
         # Get real-time credit balance from Dodo

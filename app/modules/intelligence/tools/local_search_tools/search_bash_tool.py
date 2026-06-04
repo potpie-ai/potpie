@@ -7,10 +7,10 @@ Falls back to cloud bash_command tool if LocalServer is not available.
 
 from typing import Optional
 from pydantic import BaseModel, Field
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from .tunnel_utils import route_to_local_server, get_context_vars
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class SearchBashInput(BaseModel):
@@ -133,7 +133,7 @@ def search_bash_tool(input_data: SearchBashInput) -> str:
             return f"❌ Bash command failed (cloud execution): {error_msg}"
 
     except Exception as e:
-        logger.exception(f"Error in cloud bash_command fallback: {e}")
+        logger.exception(f"Error in cloud bash_command fallback: {e}", e=e)
         return (
             f"❌ Failed to execute bash command in cloud (fallback): {str(e)}\n\n"
             "Please ensure:\n"

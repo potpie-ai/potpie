@@ -126,3 +126,11 @@ markers = [
 dev = [
     "pytest-cov>=7.1.0",
 ]
+
+[tool.uv]
+constraint-dependencies = [
+    "cryptography>=46.0.7",
+    "idna>=3.15",
+    "python-multipart>=0.0.28",
+    "urllib3>=2.7.0",
+]

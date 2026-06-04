@@ -16,9 +16,9 @@ from app.modules.analytics.schemas import (
     RawSpan,
     UserAnalyticsResponse,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Pattern for valid identifiers passed into SQL queries (Firebase UIDs,
 # UUIDs, etc.).  Rejects anything that could be used for SQL injection.
@@ -209,7 +209,6 @@ class AnalyticsService:
                     min_timestamp=start_dt,
                 )
             except Exception:
-                logger.exception("Error querying tokens by day")
                 raise
 
         rows = self._extract_rows(raw)
@@ -333,7 +332,6 @@ class AnalyticsService:
             logger.info("Retrieved %s LLM usage records", len(result))
             return result
         except Exception:
-            logger.exception("Error querying cost data")
             raise
 
     def _get_agent_data(
@@ -390,7 +388,6 @@ class AnalyticsService:
             logger.info("Retrieved %s execution records", len(result))
             return result
         except Exception:
-            logger.exception("Error querying agent data")
             raise
 
     def _get_conversation_data(
@@ -439,7 +436,6 @@ class AnalyticsService:
             logger.info("Retrieved %s conversation records", len(result))
             return result
         except Exception:
-            logger.exception("Error querying conversation data")
             raise
 
     def _aggregate_analytics(
@@ -488,7 +484,7 @@ class AnalyticsService:
                 daily_costs_map[date_key]["tokens"] += input_tokens + output_tokens
                 daily_costs_map[date_key]["run_count"] += 1
             except (ValueError, TypeError) as e:
-                logger.debug(f"Skipping invalid cost record: {e}")
+                logger.debug(f"Skipping invalid cost record: {e}", e=e)
                 continue
 
         # Convert daily costs to list
@@ -625,5 +621,4 @@ class AnalyticsService:
                 rows = self._extract_rows(raw)
                 return [RawSpan(**row) for row in rows]
             except Exception:
-                logger.exception("Error querying raw spans")
                 raise

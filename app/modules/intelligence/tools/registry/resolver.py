@@ -9,12 +9,12 @@ from app.modules.intelligence.tools.registry.annotation_logging import (
 )
 from app.modules.intelligence.tools.registry.exceptions import RegistryError
 from app.modules.intelligence.tools.registry.registry import ToolRegistry
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 if TYPE_CHECKING:
     from app.modules.intelligence.tools.tool_service import ToolService
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ToolResolver:
@@ -56,11 +56,6 @@ class ToolResolver:
                 exclude_embedding_tools=exclude_embedding_tools,
             )
         except RegistryError as e:
-            logger.error(
-                "ToolResolver: failed to resolve allow_list_id=%s: %s",
-                allow_list_id,
-                e,
-            )
             raise
         if not include_deferred_tools:
             names = [
@@ -94,6 +89,11 @@ class ToolResolver:
             local_mode,
             len(names),
             len(tools),
+        )
+        logger.info(
+            "[DEBUG resolver] execute_terminal_command in resolved names: {} | in returned tools: {}",
+            "execute_terminal_command" in names,
+            any(getattr(t, "name", None) == "execute_terminal_command" for t in tools),
         )
         # #region agent log
         try:

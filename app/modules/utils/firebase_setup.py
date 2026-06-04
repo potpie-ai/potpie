@@ -4,9 +4,9 @@ import os
 
 import firebase_admin
 from firebase_admin import credentials
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class FirebaseSetup:
@@ -34,9 +34,6 @@ class FirebaseSetup:
                     service_account_json = json.load(file)
                 logger.info("Loaded Firebase credentials from JSON file.")
             else:
-                logger.error(
-                    "Neither Firebase service account file 'firebase_service_account.txt' nor 'firebase_service_account.json' found."
-                )
                 raise FileNotFoundError(
                     "Neither Firebase service account file 'firebase_service_account.txt' nor 'firebase_service_account.json' found."
                 )
@@ -48,5 +45,4 @@ class FirebaseSetup:
             firebase_admin.initialize_app(cred)
 
         except Exception:
-            logger.exception("Error loading Firebase service account credentials")
             raise

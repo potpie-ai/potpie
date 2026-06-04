@@ -1,9 +1,9 @@
 import asyncio
 import os
 import secrets
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 from typing import Any, Dict, List, Optional
 
 from github import Github
@@ -115,7 +115,6 @@ class CodeProviderTool:
             provider = CodeProviderFactory.create_provider()
             return provider.client
         except Exception as e:
-            logger.error(f"Failed to get GitHub client: {str(e)}")
             raise Exception(f"Repository {repo_name} not found or inaccessible")
 
     def _fetch_github_content(
@@ -140,7 +139,7 @@ class CodeProviderTool:
             )
             logger.info(
                 f"[CODE_PROVIDER_TOOL] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
-            )
+            , provider_type=provider_type, repo_name=repo_name, actual_repo_name=actual_repo_name)
 
             repo = github.get_repo(actual_repo_name)
 

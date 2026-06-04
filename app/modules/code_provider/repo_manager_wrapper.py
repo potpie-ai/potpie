@@ -16,9 +16,9 @@ from app.modules.code_provider.base.code_provider_interface import (
     AuthMethod,
 )
 from app.modules.repo_manager.repo_manager_interface import IRepoManager
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from git import Repo
@@ -276,7 +276,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                                 logger.info(
                                     f"[REPO_MANAGER] File not in worktree, reading from base repo: "
                                     f"{base_file_path} for {repo_name}@{ref}"
-                                )
+                                , base_file_path=base_file_path, repo_name=repo_name, ref=ref)
                                 with open(
                                     base_file_path,
                                     "r",
@@ -302,7 +302,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                     logger.warning(
                         f"[REPO_MANAGER] File {file_path} not found in worktree at {full_path} "
                         f"or base repo for {repo_name}@{ref}. File may not exist at this ref."
-                    )
+                    , file_path=file_path, full_path=full_path, repo_name=repo_name, ref=ref)
                     raise FileNotFoundError(
                         f"File '{file_path}' not found in worktree or base repo for {repo_name}@{ref}"
                     )
@@ -320,7 +320,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 logger.info(
                     f"[REPO_MANAGER] Retrieved file content from local copy: "
                     f"{repo_name}/{file_path}@{ref} (path: {full_path})"
-                )
+                , repo_name=repo_name, file_path=file_path, ref=ref, full_path=full_path)
                 return content
 
             except FileNotFoundError:
@@ -334,19 +334,15 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 )
 
                 if isinstance(self._provider, LocalProvider):
-                    logger.error(
-                        f"[REPO_MANAGER] Error reading file from worktree: {e}, "
-                        f"for {repo_name}/{file_path}@{ref}. Not falling back to git show to avoid blocking."
-                    )
                     raise
                 # For non-LocalProvider, it's safe to fall back (e.g., GitHub API)
                 logger.warning(
                     f"[REPO_MANAGER] Error reading file from local copy: {e}, "
                     f"falling back to provider API for {repo_name}/{file_path}@{ref}"
-                )
+                , e=e, repo_name=repo_name, file_path=file_path, ref=ref)
                 logger.info(
                     f"[PROVIDER_API] Fetching file content: {repo_name}/{file_path}@{ref}"
-                )
+                , repo_name=repo_name, file_path=file_path, ref=ref)
                 return self._provider.get_file_content(
                     repo_name, file_path, ref, start_line, end_line
                 )
@@ -355,10 +351,10 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
         logger.info(
             f"[REPO_MANAGER] No local copy available for {repo_name}@{ref}, "
             f"using provider API"
-        )
+        , repo_name=repo_name, ref=ref)
         logger.info(
             f"[PROVIDER_API] Fetching file content: {repo_name}/{file_path}@{ref}"
-        )
+        , repo_name=repo_name, file_path=file_path, ref=ref)
         return self._provider.get_file_content(
             repo_name, file_path, ref, start_line, end_line
         )
@@ -390,17 +386,17 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 logger.info(
                     f"[REPO_MANAGER] Retrieved repository structure from local copy: "
                     f"{repo_name}@{ref} (path: {worktree_path}, depth: {max_depth})"
-                )
+                , repo_name=repo_name, ref=ref, worktree_path=worktree_path, max_depth=max_depth)
                 return structure
 
             except Exception as e:
                 logger.warning(
                     f"[REPO_MANAGER] Error reading structure from local copy: {e}, "
                     f"falling back to provider API for {repo_name}@{ref}"
-                )
+                , e=e, repo_name=repo_name, ref=ref)
                 logger.info(
                     f"[PROVIDER_API] Fetching repository structure: {repo_name}@{ref} (path: {path})"
-                )
+                , repo_name=repo_name, ref=ref, path=path)
                 return self._provider.get_repository_structure(
                     repo_name, path, ref, max_depth
                 )
@@ -409,10 +405,10 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
         logger.info(
             f"[REPO_MANAGER] No local copy available for {repo_name}@{ref}, "
             f"using provider API"
-        )
+        , repo_name=repo_name, ref=ref)
         logger.info(
             f"[PROVIDER_API] Fetching repository structure: {repo_name}@{ref} (path: {path})"
-        )
+        , repo_name=repo_name, ref=ref, path=path)
         return self._provider.get_repository_structure(repo_name, path, ref, max_depth)
 
     # ============ Helper methods ============
@@ -448,7 +444,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
         logger.debug(
             f"[REPO_MANAGER] Looking up worktree for {repo_name}@{ref} "
             f"(branch={branch}, commit_id={commit_id})"
-        )
+        , repo_name=repo_name, ref=ref, branch=branch, commit_id=commit_id)
 
         # Try multiple lookup strategies since repo might be registered with different combinations
         # 1. Try with commit_id only (most specific for commits)
@@ -460,11 +456,11 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 logger.info(
                     f"[REPO_MANAGER] Found registered worktree for {repo_name}@commit:{commit_id} "
                     f"at {registered_path}"
-                )
+                , repo_name=repo_name, commit_id=commit_id, registered_path=registered_path)
                 return registered_path
             logger.debug(
                 f"[REPO_MANAGER] No worktree found for {repo_name}@commit:{commit_id}"
-            )
+            , repo_name=repo_name, commit_id=commit_id)
 
         # 2. Try with branch only
         if branch:
@@ -473,11 +469,11 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 logger.info(
                     f"[REPO_MANAGER] Found registered worktree for {repo_name}@branch:{branch} "
                     f"at {registered_path}"
-                )
+                , repo_name=repo_name, branch=branch, registered_path=registered_path)
                 return registered_path
             logger.debug(
                 f"[REPO_MANAGER] No worktree found for {repo_name}@branch:{branch}"
-            )
+            , repo_name=repo_name, branch=branch)
 
         # 3. Try with both branch and commit_id (in case it was registered that way)
         if branch and commit_id:
@@ -488,11 +484,11 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 logger.info(
                     f"[REPO_MANAGER] Found registered worktree for {repo_name}@branch:{branch}:commit:{commit_id} "
                     f"at {registered_path}"
-                )
+                , repo_name=repo_name, branch=branch, commit_id=commit_id, registered_path=registered_path)
                 return registered_path
             logger.debug(
                 f"[REPO_MANAGER] No worktree found for {repo_name}@branch:{branch}:commit:{commit_id}"
-            )
+            , repo_name=repo_name, branch=branch, commit_id=commit_id)
 
         # 4. Try searching all repos for this repo_name to find any matching commit_id
         if commit_id:
@@ -507,7 +503,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                         logger.info(
                             f"[REPO_MANAGER] Found registered worktree via search for {repo_name}@commit:{commit_id} "
                             f"at {found_path}"
-                        )
+                        , repo_name=repo_name, commit_id=commit_id, found_path=found_path)
                         return found_path
 
         # If no ref specified, check for base repo
@@ -516,9 +512,9 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
             if base_path and os.path.exists(base_path):
                 logger.info(
                     f"[REPO_MANAGER] Found base repo for {repo_name} at {base_path}"
-                )
+                , repo_name=repo_name, base_path=base_path)
                 return base_path
-            logger.debug(f"[REPO_MANAGER] No base repo found for {repo_name}")
+            logger.debug(f"[REPO_MANAGER] No base repo found for {repo_name}", repo_name=repo_name)
             return None
 
         # Try to find base repo and create worktree
@@ -526,7 +522,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
         if not self._repo_manager.is_repo_available(repo_name):
             logger.debug(
                 f"[REPO_MANAGER] Repository {repo_name} not available in local storage"
-            )
+            , repo_name=repo_name)
             return None
 
         # Get base repo path (try without ref to find the base)
@@ -534,7 +530,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
         if not base_path or not os.path.exists(base_path):
             logger.debug(
                 f"[REPO_MANAGER] No base path found for repository {repo_name}"
-            )
+            , repo_name=repo_name)
             return None
 
         # Try to create/access worktree from base repo
@@ -557,13 +553,13 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
             )
             logger.debug(
                 f"[REPO_MANAGER] Created/accessed worktree for {repo_name}@{ref} at {worktree_path}"
-            )
+            , repo_name=repo_name, ref=ref, worktree_path=worktree_path)
             return worktree_path
 
         except Exception as e:
             logger.warning(
                 f"[REPO_MANAGER] Error setting up worktree for {repo_name}@{ref}: {e}"
-            )
+            , repo_name=repo_name, ref=ref, e=e)
             return None
 
     def _ensure_worktree(self, repo: "Repo", ref: str, is_commit: bool) -> str:
@@ -595,7 +591,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 if repo.active_branch.name == ref:
                     logger.debug(
                         f"Using main repo for {ref} (already checked out at {base_path})"
-                    )
+                    , ref=ref, base_path=base_path)
                     return base_path
             except Exception:
                 pass
@@ -615,7 +611,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                         return worktree_dir
             except Exception:
                 # Worktree exists but is invalid, remove it
-                logger.warning(f"Invalid worktree at {worktree_dir}, removing")
+                logger.warning(f"Invalid worktree at {worktree_dir}, removing", worktree_dir=worktree_dir)
                 try:
                     repo.git.worktree("remove", worktree_dir, force=True)
                 except Exception:
@@ -646,7 +642,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                             logger.warning(
                                 f"Failed to fetch {ref} from origin: {fetch_error}. "
                                 f"Trying to create from local branches."
-                            )
+                            , ref=ref, fetch_error=fetch_error)
                             # Check if branch exists locally
                             local_branches = [branch.name for branch in repo.heads]
                             if ref in local_branches:
@@ -663,7 +659,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                         # No origin remote, work with local branches only
                         logger.info(
                             f"No 'origin' remote found, working with local branches only for {ref}"
-                        )
+                        , ref=ref)
                         # Check if branch exists locally
                         local_branches = [branch.name for branch in repo.heads]
                         if ref in local_branches:
@@ -680,11 +676,11 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                                 f"Created new branch '{ref}' in worktree from HEAD ({current_head[:8]})"
                             )
 
-            logger.info(f"Created worktree for {ref} at {worktree_dir}")
+            logger.info(f"Created worktree for {ref} at {worktree_dir}", ref=ref, worktree_dir=worktree_dir)
             return worktree_dir
 
         except Exception as e:
-            logger.error(f"Failed to create worktree for {ref}: {e}")
+            logger.error(f"Failed to create worktree for {ref}: {e}", ref=ref, e=e)
             # Fallback to base repo
             return repo.working_tree_dir or repo.git_dir
 
@@ -739,7 +735,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 structure.append(item_info)
 
         except Exception as e:
-            logger.warning(f"Error building structure from {full_path}: {e}")
+            logger.warning(f"Error building structure from {full_path}: {e}", full_path=full_path, e=e)
 
         return structure
 
@@ -767,4 +763,4 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 repo_name, branch=branch, commit_id=commit_id
             )
         except Exception as e:
-            logger.debug(f"Failed to update last accessed time: {e}")
+            logger.debug(f"Failed to update last accessed time: {e}", e=e)

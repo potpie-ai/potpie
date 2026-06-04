@@ -47,12 +47,12 @@ from typing import Any, Dict, Optional
 
 import logfire
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 # Max length for baggage/attribute values (Logfire truncates longer strings)
 _LOGFIRE_ATTR_MAX_LEN = 1000
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _patch_otel_detach_for_async_context() -> None:
@@ -163,6 +163,13 @@ def initialize_logfire_tracing(
             environment=env,
             send_to_logfire=send_to_logfire,
         )
+        # Logfire mirrors every span to the console by default. With an agent emitting
+        # a span per token/tool call that floods local dev terminals (and the worker
+        # prints them too). Cloud tracing still captures everything (Logfire UI), so
+        # keep console off unless explicitly opted in with LOGFIRE_CONSOLE=true.
+        if os.getenv("LOGFIRE_CONSOLE", "false").lower() not in ("true", "1", "yes"):
+            config_kwargs["console"] = False
+
         logfire.configure(**config_kwargs)
 
         if instrument_pydantic_ai:

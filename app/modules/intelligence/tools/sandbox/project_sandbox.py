@@ -35,12 +35,12 @@ from app.modules.intelligence.tools.sandbox.client import (
     _resolve_auth_token,
     get_sandbox_client,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 if TYPE_CHECKING:
     from sandbox.api.parser_wire import ParseArtifacts
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)

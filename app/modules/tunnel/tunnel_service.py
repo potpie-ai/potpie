@@ -15,14 +15,14 @@ from typing import Any, Dict, Optional
 import redis
 
 from app.core.config_provider import ConfigProvider
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 try:
     import redis.asyncio as aioredis
 except ImportError:
     aioredis = None  # type: ignore[assignment]
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Redis key prefix for tunnel connections
 TUNNEL_KEY_PREFIX = "tunnel_connection"
@@ -63,7 +63,8 @@ def _get_local_tunnel_server_url() -> Optional[str]:
 def normalise_repo_url(repository: str) -> str:
     """
     Normalise repo identifier to a single form for workspace_id hashing.
-    Backend and extension must use the same rule: lowercase, strip protocol, strip .git, rstrip /.
+    Backend and extension must use the same rule: lowercase, strip protocol,
+    strip git host, strip .git, rstrip /.
     Accepts owner/repo or full URL (https://github.com/owner/repo or github.com/owner/repo).
     """
     if not repository or not isinstance(repository, str):
@@ -79,6 +80,11 @@ def normalise_repo_url(repository: str) -> str:
         s = s.replace(":", "/", 1)
     if s.endswith(".git"):
         s = s[: -len(".git")]
+    # Strip git host so "github.com/owner/repo" and "owner/repo" hash identically
+    for host in ("github.com/", "gitlab.com/", "bitbucket.org/"):
+        if s.startswith(host):
+            s = s[len(host):]
+            break
     return s
 
 
@@ -119,7 +125,7 @@ class TunnelService:
             except Exception as e:
                 logger.error(
                     f"[TunnelService] ❌ Failed to connect to Redis: {e}", exc_info=True
-                )
+                , e=e)
                 logger.warning("[TunnelService] Falling back to in-memory storage")
                 self.redis_client = None
                 self._in_memory_tunnels = {}
@@ -215,7 +221,7 @@ class TunnelService:
             logger.error(
                 f"[TunnelService] Error getting workspace tunnel record: {e}",
                 exc_info=True,
-            )
+             e=e)
             return None
 
     def set_workspace_tunnel_record(
@@ -239,13 +245,13 @@ class TunnelService:
                 self._in_memory_workspace_tunnel_records[key] = value
             logger.debug(
                 f"[TunnelService] Stored workspace tunnel record: workspace_id={workspace_id}"
-            )
+            , workspace_id=workspace_id)
             return True
         except Exception as e:
             logger.error(
                 f"[TunnelService] Error setting workspace tunnel record: {e}",
                 exc_info=True,
-            )
+             e=e)
             return False
 
     async def get_workspace_tunnel_record_async(
@@ -265,7 +271,7 @@ class TunnelService:
                 logger.error(
                     f"[TunnelService] Error getting workspace tunnel record (async): {e}",
                     exc_info=True,
-                )
+                 e=e)
                 return None
         return await asyncio.to_thread(
             self.get_workspace_tunnel_record, workspace_id
@@ -292,13 +298,13 @@ class TunnelService:
                 )
                 logger.debug(
                     f"[TunnelService] Stored workspace tunnel record (async): workspace_id={workspace_id}"
-                )
+                , workspace_id=workspace_id)
                 return True
             except Exception as e:
                 logger.error(
                     f"[TunnelService] Error setting workspace tunnel record (async): {e}",
                     exc_info=True,
-                )
+                 e=e)
                 return False
         return await asyncio.to_thread(
             self.set_workspace_tunnel_record,
@@ -322,7 +328,7 @@ class TunnelService:
                 if not verify_data:
                     logger.error(
                         f"[TunnelService] ❌ Failed to verify tunnel registration in Redis: {key}"
-                    )
+                    , key=key)
                     return False
             else:
                 self._in_memory_tunnels[key] = tunnel_data_json
@@ -331,7 +337,7 @@ class TunnelService:
             logger.error(
                 f"[TunnelService] Error storing tunnel data for key {key}: {e}",
                 exc_info=True,
-            )
+             key=key, e=e)
             return False
 
     def get_tunnel_url(
@@ -366,7 +372,7 @@ class TunnelService:
                 return None
             return SOCKET_TUNNEL_PREFIX + workspace_id
         except Exception as e:
-            logger.error(f"Error getting tunnel URL: {e}")
+            logger.error(f"Error getting tunnel URL: {e}", e=e)
             return None
 
     def get_tunnel_info(
@@ -397,7 +403,7 @@ class TunnelService:
                     return tunnel_data
             return None
         except Exception as e:
-            logger.error(f"Error getting tunnel info: {e}")
+            logger.error(f"Error getting tunnel info: {e}", e=e)
             return None
 
     def _get_tunnel_data(self, key: str) -> Optional[Dict]:
@@ -408,29 +414,29 @@ class TunnelService:
                 if data:
                     logger.debug(
                         f"[TunnelService] ✅ Found tunnel data in Redis for key: {key}"
-                    )
+                    , key=key)
                     return json.loads(data)
                 else:
                     logger.debug(
                         f"[TunnelService] ❌ No tunnel data in Redis for key: {key}"
-                    )
+                    , key=key)
             else:
                 data = self._in_memory_tunnels.get(key)
                 if data:
                     logger.debug(
                         f"[TunnelService] ✅ Found tunnel data in memory for key: {key}"
-                    )
+                    , key=key)
                     return json.loads(data)
                 else:
                     logger.debug(
                         f"[TunnelService] ❌ No tunnel data in memory for key: {key}"
-                    )
+                    , key=key)
             return None
         except Exception as e:
             logger.error(
                 f"[TunnelService] Error getting tunnel data for key {key}: {e}",
                 exc_info=True,
-            )
+             key=key, e=e)
             return None
 
     def unregister_tunnel(
@@ -455,16 +461,16 @@ class TunnelService:
                 self._delete_tunnel_key(conversation_key)
                 logger.info(
                     f"[TunnelService] Unregistered conversation-level tunnel: {conversation_key}"
-                )
+                , conversation_key=conversation_key)
             else:
                 logger.debug("[TunnelService] Unregister with no conversation_id: no-op (workspace-only mode)")
 
             logger.info(
                 f"Unregistered tunnel for user {user_id}, conversation {conversation_id}"
-            )
+            , user_id=user_id, conversation_id=conversation_id)
             return True
         except Exception as e:
-            logger.error(f"Error unregistering tunnel: {e}")
+            logger.error(f"Error unregistering tunnel: {e}", e=e)
             return False
 
     def _delete_tunnel_key(self, key: str) -> None:
@@ -503,6 +509,54 @@ class TunnelService:
         """Check if a socket is connected for this workspace_id."""
         from app.modules.tunnel.socket_service import get_socket_service
         return get_socket_service().is_workspace_online(workspace_id)
+
+    def invalidate_workspace_socket(self, workspace_id: str) -> bool:
+        """Remove stale workspace socket registration when RPC cannot reach the extension.
+
+        Called when Socket.IO emit fails or the mapped socket_id is dead but Redis
+        still has workspace:socket:{id} (e.g. extension disconnected without cleanup).
+        """
+        if not workspace_id:
+            return False
+        try:
+            from app.modules.tunnel.socket_server import (
+                SOCKET_WORKSPACE_KEY_PREFIX,
+                WORKSPACE_SOCKET_KEY_PREFIX,
+            )
+
+            fwd_key = f"{WORKSPACE_SOCKET_KEY_PREFIX}{workspace_id}"
+            removed = False
+            sid = None
+            if self.redis_client:
+                sid = self.redis_client.get(fwd_key)
+                if sid:
+                    rev_key = f"{SOCKET_WORKSPACE_KEY_PREFIX}{sid}"
+                    self.redis_client.delete(rev_key)
+                removed = self.redis_client.delete(fwd_key) > 0
+            else:
+                removed = False
+            record = self.get_workspace_tunnel_record(workspace_id)
+            if record and record.get("user_id") and record.get("repo_url"):
+                self.set_workspace_tunnel_record(
+                    workspace_id=workspace_id,
+                    user_id=record["user_id"],
+                    repo_url=record["repo_url"],
+                    status="disconnected",
+                )
+            if removed:
+                logger.info(
+                    "[TunnelService] Invalidated stale workspace socket workspace_id={} sid={}",
+                    workspace_id,
+                    sid,
+                )
+            return removed
+        except Exception as e:
+            logger.warning(
+                "[TunnelService] Failed to invalidate workspace socket {}: {}",
+                workspace_id,
+                e,
+            )
+            return False
 
     def is_tunnel_available(
         self, user_id: str, conversation_id: Optional[str] = None,
@@ -570,7 +624,7 @@ class TunnelService:
             logger.error(
                 f"[TunnelService] Error listing tunnels for user {user_id}: {e}",
                 exc_info=True,
-            )
+             user_id=user_id, e=e)
         return tunnels
 
     async def list_user_tunnels_async(self, user_id: str) -> Dict[str, Dict]:
@@ -596,7 +650,7 @@ class TunnelService:
                 logger.error(
                     f"[TunnelService] Error listing tunnels for user {user_id} (async): {e}",
                     exc_info=True,
-                )
+                 user_id=user_id, e=e)
             return tunnels
         return await asyncio.to_thread(self.list_user_tunnels, user_id)
 

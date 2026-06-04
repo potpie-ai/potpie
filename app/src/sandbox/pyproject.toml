@@ -37,3 +37,10 @@ python_files = ["test_*.py"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
 
+[tool.uv]
+constraint-dependencies = [
+    "idna>=3.15",
+    "python-multipart>=0.0.28",
+    "urllib3>=2.7.0",
+]
+

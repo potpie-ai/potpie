@@ -4,9 +4,9 @@ from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
-from app.modules.utils.logger import setup_logger, log_context
+from observability import get_logger, log_context
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 @celery_app.task(
@@ -61,7 +61,6 @@ def process_parsing(
             # context-graph source, so there is nothing to backfill at this
             # point in the unified model.
         except Exception:
-            logger.exception("Error during parsing")
             raise
         finally:
             if parsing_service is not None:

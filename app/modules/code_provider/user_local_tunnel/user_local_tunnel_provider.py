@@ -13,9 +13,9 @@ from app.modules.code_provider.base.code_provider_interface import (
     AuthMethod,
     ICodeProvider,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class UserLocalTunnelProvider(ICodeProvider):
@@ -64,7 +64,7 @@ class UserLocalTunnelProvider(ICodeProvider):
                 self.tunnel_url = url
             return url
         except Exception as e:
-            logger.warning(f"Failed to get tunnel URL: {e}")
+            logger.warning(f"Failed to get tunnel URL: {e}", e=e)
             return None
 
     def _make_tunnel_request(
@@ -100,7 +100,7 @@ class UserLocalTunnelProvider(ICodeProvider):
             )
             url = f"{url}?{query_string}"
 
-        logger.debug(f"[UserLocalTunnelProvider] Making {method} request to {url}")
+        logger.debug(f"[UserLocalTunnelProvider] Making {method} request to {url}", method=method, url=url)
 
         try:
             with httpx.Client(timeout=30.0) as client:
@@ -109,7 +109,7 @@ class UserLocalTunnelProvider(ICodeProvider):
                 elif method.upper() == "POST":
                     response = client.post(url, json=json_data)
                 else:
-                    logger.warning(f"Unsupported HTTP method: {method}")
+                    logger.warning(f"Unsupported HTTP method: {method}", method=method)
                     return None
 
                 if response.status_code == 200:
@@ -120,7 +120,7 @@ class UserLocalTunnelProvider(ICodeProvider):
                     )
                     return None
         except Exception as e:
-            logger.warning(f"[UserLocalTunnelProvider] Request error: {e}")
+            logger.warning(f"[UserLocalTunnelProvider] Request error: {e}", e=e)
             return None
 
     # ============ Authentication ============
@@ -257,7 +257,7 @@ class UserLocalTunnelProvider(ICodeProvider):
                 if result
                 else "No response from tunnel"
             )
-            logger.warning(f"Failed to get structure for path '{path}': {error}")
+            logger.warning(f"Failed to get structure for path '{path}': {error}", path=path, error=error)
             return []
 
         # The structure endpoint returns a nested object structure
@@ -265,7 +265,7 @@ class UserLocalTunnelProvider(ICodeProvider):
         structure_obj = result.get("structure", {})
 
         if not structure_obj:
-            logger.warning(f"Empty structure returned for path '{path}'")
+            logger.warning(f"Empty structure returned for path '{path}'", path=path)
             return []
 
         # Format the structure object to a string

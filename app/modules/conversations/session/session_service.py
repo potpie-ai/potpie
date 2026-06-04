@@ -12,9 +12,9 @@ from app.modules.conversations.utils.redis_streaming import (
     AsyncRedisStreamManager,
     RedisStreamManager,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class SessionService:
@@ -72,9 +72,6 @@ class SessionService:
                 )
                 cursor = latest_events[0][0].decode() if latest_events else "0-0"
             except (redis.exceptions.RedisError, OSError) as e:
-                logger.exception(
-                    "Redis error getting stream info for %s: %s", active_key, e
-                )
                 raise
             except Exception as e:
                 logger.exception(
@@ -106,11 +103,6 @@ class SessionService:
             )
 
         except (redis.exceptions.RedisError, OSError) as e:
-            logger.exception(
-                "Redis/infra error getting active session for %s: %s",
-                conversation_id,
-                e,
-            )
             raise
         except Exception as e:
             logger.exception(
@@ -180,11 +172,6 @@ class SessionService:
             )
 
         except (redis.exceptions.RedisError, OSError) as e:
-            logger.exception(
-                "Redis/infra error getting task status for %s: %s",
-                conversation_id,
-                e,
-            )
             raise
         except Exception as e:
             logger.exception(
@@ -223,11 +210,6 @@ class AsyncSessionService:
                 else:
                     latest_ids.append((key_str, "0-0"))
             except (redis.exceptions.RedisError, OSError) as e:
-                logger.exception(
-                    "Redis error while getting stream recency for key %s: %s",
-                    key_str,
-                    e,
-                )
                 raise
         # Redis stream IDs compare lexicographically by time then sequence
         latest_ids.sort(key=lambda x: x[1], reverse=True)
@@ -287,9 +269,6 @@ class AsyncSessionService:
                 else:
                     cursor = "0-0"
             except (redis.exceptions.RedisError, OSError) as e:
-                logger.exception(
-                    "Redis error getting stream info for %s: %s", active_key, e
-                )
                 raise
             except Exception as e:
                 logger.exception(
@@ -319,11 +298,6 @@ class AsyncSessionService:
                 lastActivity=current_time,
             )
         except (redis.exceptions.RedisError, OSError) as e:
-            logger.exception(
-                "Redis/infra error getting active session for %s: %s",
-                conversation_id,
-                e,
-            )
             raise
         except Exception as e:
             logger.exception(
@@ -377,11 +351,6 @@ class AsyncSessionService:
                 error="No background task found", conversationId=conversation_id
             )
         except (redis.exceptions.RedisError, OSError) as e:
-            logger.exception(
-                "Redis/infra error getting task status for %s: %s",
-                conversation_id,
-                e,
-            )
             raise
         except Exception as e:
             logger.exception(

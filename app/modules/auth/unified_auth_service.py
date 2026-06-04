@@ -5,12 +5,12 @@ Handles authentication across multiple providers (Firebase GitHub, SSO, etc.)
 while maintaining single user identity based on email.
 """
 
-import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
+from observability import get_logger
 
 from integrations.adapters.outbound.crypto.token_encryption import (
     decrypt_token,
@@ -54,7 +54,7 @@ from app.modules.auth.auth_schema import (
     SSOLoginResponse,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class UnifiedAuthService:
@@ -150,7 +150,7 @@ class UnifiedAuthService:
         # Step 1: Verify user exists
         user = self.db.query(User).filter(User.uid == user_id).first()
         if not user:
-            logger.warning(f"User {user_id} not found in users table")
+            logger.warning(f"User {user_id} not found in users table", user_id=user_id)
             return False, None
 
         # Step 2: Check user_auth_providers for GitHub provider
@@ -170,10 +170,10 @@ class UnifiedAuthService:
                 f"GitHub provider found for user {user_id}: "
                 f"provider_id={github_provider.id}, provider_uid={github_provider.provider_uid}, "
                 f"linked_at={github_provider.linked_at}"
-            )
+            , user_id=user_id, github_provider_id=github_provider.id, github_provider_provider_uid=github_provider.provider_uid, github_provider_linked_at=github_provider.linked_at)
             return True, github_provider
         else:
-            logger.info(f"No GitHub provider found for user {user_id}")
+            logger.info(f"No GitHub provider found for user {user_id}", user_id=user_id)
             return False, None
 
     def get_decrypted_access_token(
@@ -198,7 +198,7 @@ class UnifiedAuthService:
             logger.warning(
                 f"Failed to decrypt token for user {user_id}, provider {provider_type}. "
                 "Assuming plaintext token (backward compatibility)."
-            )
+            , user_id=user_id, provider_type=provider_type)
             return provider.access_token
 
     def get_decrypted_refresh_token(
@@ -347,11 +347,6 @@ class UnifiedAuthService:
         # Check if this is the only provider
         all_providers = self.get_user_providers(user_id)
         if len(all_providers) <= 1:
-            logger.error(
-                "Cannot unlink last provider %s for user %s",
-                provider_type,
-                user_id,
-            )
             raise ValueError("Cannot unlink the only authentication provider")
 
         was_primary = provider.is_primary
@@ -471,13 +466,13 @@ class UnifiedAuthService:
                             firebase_user_exists = True
                             logger.debug(
                                 f"Verified Firebase user {existing_user.uid} exists for email {email}"
-                            )
+                            , existing_user_uid=existing_user.uid, email=email)
                         except NotFoundError:
                             # User deleted from Firebase but exists in local DB - orphaned record
                             logger.warning(
                                 f"User {existing_user.uid} with email {email} exists in local DB "
                                 "but not in Firebase. Treating as orphaned record."
-                            )
+                            , existing_user_uid=existing_user.uid, email=email)
                             firebase_user_exists = False
                         except Exception as e:
                             # Handle case where Firebase is not properly initialized
@@ -485,7 +480,7 @@ class UnifiedAuthService:
                                 logger.warning(
                                     f"Firebase not initialized when verifying user {existing_user.uid}. "
                                     "Assuming user exists (development mode)."
-                                )
+                                , existing_user_uid=existing_user.uid)
                                 firebase_user_exists = True
                             else:
                                 logger.error(
@@ -499,7 +494,7 @@ class UnifiedAuthService:
                     if "does not exist" in str(e) or "initialize_app" in str(e):
                         logger.warning(
                             f"Firebase not initialized. Assuming user {existing_user.uid} exists (development mode)."
-                        )
+                        , existing_user_uid=existing_user.uid)
                         firebase_user_exists = True
                     else:
                         logger.error(
@@ -515,7 +510,7 @@ class UnifiedAuthService:
                     logger.info(
                         f"Deleting orphaned user record {user_uid} "
                         f"for email {email} (not in Firebase)"
-                    )
+                    , user_uid=user_uid, email=email)
                     try:
                         # Use helper function to delete orphaned user and all related records
                         self._delete_orphaned_user(user_uid, existing_user)
@@ -530,12 +525,12 @@ class UnifiedAuthService:
                             logger.warning(
                                 f"User {email} still exists after deletion attempt. "
                                 "This may indicate a transaction issue."
-                            )
+                            , email=email)
                             # Force expunge and set to None
                             self.db.expunge(existing_user)
                             existing_user = None
                         else:
-                            logger.info(f"Confirmed user {email} deleted successfully")
+                            logger.info("orphaned user deleted", user_uid=user_uid)
                     except Exception as e:
                         logger.error(
                             f"Failed to delete orphaned user {user_uid}: {str(e)}",
@@ -563,7 +558,7 @@ class UnifiedAuthService:
                 provider_types = [p.provider_type for p in all_providers]
                 logger.info(
                     f"User {existing_user.uid} ({email}) has providers: {provider_types}"
-                )
+                , existing_user_uid=existing_user.uid, email=email, provider_types=provider_types)
 
                 # CRITICAL: Check GitHub linking using systematic approach
                 # Flow: 1. Find user in users table by user_id
@@ -577,14 +572,14 @@ class UnifiedAuthService:
                     logger.warning(
                         f"No GitHub provider found for user {existing_user.uid} ({email}). "
                         f"Available providers: {provider_types}"
-                    )
+                    , existing_user_uid=existing_user.uid, email=email, provider_types=provider_types)
 
                 if not has_github:
                     # GitHub not linked - don't complete login, redirect to onboarding
                     logger.info(
                         f"User {existing_user.uid} ({email}) authenticated but GitHub not linked. "
                         "Requiring GitHub linking before login completion."
-                    )
+                    , existing_user_uid=existing_user.uid, email=email)
 
                     # Update last login time but don't commit yet (will commit after GitHub linking)
                     existing_user.last_login_at = utc_now()
@@ -689,7 +684,7 @@ class UnifiedAuthService:
                 logger.warning(
                     f"User with email {email} found during final check before creation. "
                     f"UID: {final_check.uid}. This may indicate a race condition."
-                )
+                , email=email, final_check_uid=final_check.uid)
                 # User exists - treat as existing user scenario
                 existing_user = final_check
                 # Check if this provider is already linked
@@ -708,7 +703,7 @@ class UnifiedAuthService:
                         logger.info(
                             f"User {existing_user.uid} ({email}) authenticated but GitHub not linked. "
                             "Requiring GitHub linking before login completion (race condition path)."
-                        )
+                        , existing_user_uid=existing_user.uid, email=email)
                         existing_user.last_login_at = utc_now()
 
                         return (
@@ -849,17 +844,9 @@ class UnifiedAuthService:
             return token
         except (IntegrityError, InternalError) as e:
             self.db.rollback()
-            logger.error(
-                f"Database error creating pending link for user_id={user_id}, provider_type={provider_type}, provider_uid={provider_uid}: {e}",
-                exc_info=True,
-            )
             raise
         except Exception as e:
             self.db.rollback()
-            logger.error(
-                f"Unexpected error creating pending link for user_id={user_id}, provider_type={provider_type}, provider_uid={provider_uid}: {e}",
-                exc_info=True,
-            )
             raise
 
     def confirm_provider_link(self, linking_token: str) -> Optional[UserAuthProvider]:
@@ -999,7 +986,7 @@ class UnifiedAuthService:
             if prompts_count > 0:
                 logger.info(
                     f"Deleting {prompts_count} prompts created by orphaned user {user_uid}"
-                )
+                , prompts_count=prompts_count, user_uid=user_uid)
                 self.db.execute(
                     text("DELETE FROM prompts WHERE created_by = :user_id"),
                     {"user_id": user_uid},
@@ -1014,7 +1001,7 @@ class UnifiedAuthService:
                 .count()
             )
             if preferences_count > 0:
-                logger.info(f"Deleting user preferences for orphaned user {user_uid}")
+                logger.info(f"Deleting user preferences for orphaned user {user_uid}", user_uid=user_uid)
                 self.db.execute(
                     text("DELETE FROM user_preferences WHERE user_id = :user_id"),
                     {"user_id": user_uid},
@@ -1031,7 +1018,7 @@ class UnifiedAuthService:
             if org_configs_count > 0:
                 logger.info(
                     f"Deleting {org_configs_count} organization SSO configs for orphaned user {user_uid}"
-                )
+                , org_configs_count=org_configs_count, user_uid=user_uid)
                 self.db.execute(
                     text(
                         "DELETE FROM organization_sso_config WHERE configured_by = :user_id"
@@ -1052,7 +1039,7 @@ class UnifiedAuthService:
             if search_indices_count > 0:
                 logger.info(
                     f"Deleting {search_indices_count} search indices for orphaned user {user_uid}"
-                )
+                , search_indices_count=search_indices_count, user_uid=user_uid)
                 self.db.execute(
                     text("""
                         DELETE FROM search_indices
@@ -1070,7 +1057,7 @@ class UnifiedAuthService:
             if projects_count > 0:
                 logger.info(
                     f"Deleting {projects_count} projects for orphaned user {user_uid}"
-                )
+                , projects_count=projects_count, user_uid=user_uid)
                 self.db.execute(
                     text("DELETE FROM projects WHERE user_id = :user_id"),
                     {"user_id": user_uid},
@@ -1089,7 +1076,7 @@ class UnifiedAuthService:
             if custom_agents_count > 0:
                 logger.info(
                     f"Deleting {custom_agents_count} custom agents for orphaned user {user_uid}"
-                )
+                , custom_agents_count=custom_agents_count, user_uid=user_uid)
                 self.db.execute(
                     text("DELETE FROM custom_agents WHERE user_id = :user_id"),
                     {"user_id": user_uid},
@@ -1108,7 +1095,7 @@ class UnifiedAuthService:
             if conversations_count > 0:
                 logger.info(
                     f"Deleting {conversations_count} conversations for orphaned user {user_uid}"
-                )
+                , conversations_count=conversations_count, user_uid=user_uid)
                 self.db.execute(
                     text("DELETE FROM conversations WHERE user_id = :user_id"),
                     {"user_id": user_uid},
@@ -1128,7 +1115,7 @@ class UnifiedAuthService:
             self.db.commit()
             logger.info(
                 f"Successfully deleted orphaned user {user_uid} and all related records"
-            )
+            , user_uid=user_uid)
 
         except Exception as e:
             logger.error(
@@ -1206,18 +1193,10 @@ class UnifiedAuthService:
         except (IntegrityError, InternalError) as e:
             # Rollback the transaction on database errors
             self.db.rollback()
-            logger.error(
-                f"Database error creating user with provider {provider_type}, email={email}, provider_uid={provider_uid}: {e}",
-                exc_info=True,
-            )
             raise
         except Exception as e:
             # Rollback on any other error
             self.db.rollback()
-            logger.error(
-                f"Unexpected error creating user with provider {provider_type}, email={email}, provider_uid={provider_uid}: {e}",
-                exc_info=True,
-            )
             raise
 
     def _log_auth_event(

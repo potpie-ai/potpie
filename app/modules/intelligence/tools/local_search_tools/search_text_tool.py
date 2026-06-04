@@ -6,10 +6,10 @@ Search for text patterns across files using LocalServer (grep-like functionality
 
 from typing import Optional
 from pydantic import BaseModel, Field
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from .tunnel_utils import route_to_local_server, get_context_vars
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class SearchTextInput(BaseModel):

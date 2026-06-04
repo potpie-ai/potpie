@@ -16,10 +16,13 @@ from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
+
+FILE_STRUCTURE_CONTEXT_MARKER = "[[repo_structure_context_v1]]"
+FILE_STRUCTURE_HEADER = "File Structure of the project:\n"
 
 
 class QnAAgent(ChatAgent):
@@ -33,14 +36,19 @@ class QnAAgent(ChatAgent):
         self.tools_provider = tools_provider
         self.prompt_provider = prompt_provider
 
-    def _build_agent(self, ctx: Optional[ChatContext] = None) -> ChatAgent:
+    @staticmethod
+    def _has_complete_prefetch(ctx: Optional[ChatContext]) -> bool:
         bundle = getattr(ctx, "context_intelligence_bundle", None) if ctx else None
-        cov = (bundle or {}).get("coverage") or {} if isinstance(bundle, dict) else {}
-        prefetch_complete = (
-            isinstance(cov, dict) and str(cov.get("status") or "").upper() == "COMPLETE"
+        if not isinstance(bundle, dict):
+            return False
+        coverage = bundle.get("coverage") or {}
+        return (
+            isinstance(coverage, dict)
+            and str(coverage.get("status") or "").upper() == "COMPLETE"
         )
 
-        if bundle and prefetch_complete:
+    def _build_agent(self, ctx: Optional[ChatContext] = None) -> ChatAgent:
+        if self._has_complete_prefetch(ctx):
             goal = (
                 "Answer questions using prefetched CONTEXT INTELLIGENCE first when coverage is COMPLETE; "
                 "avoid redundant graph tools; use code-level tools only when source is needed."
@@ -129,9 +137,9 @@ class QnAAgent(ChatAgent):
 
         logger.info(
             f"QnAAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
-        )
-        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
-        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+        , supports_pydantic=supports_pydantic, should_use_multi=should_use_multi)
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}", self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}", self_llm_provider_chat_config_capabilities=self.llm_provider.chat_config.capabilities)
 
         if supports_pydantic:
             if should_use_multi:
@@ -171,6 +179,8 @@ class QnAAgent(ChatAgent):
             return PydanticDeepAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
+        ctx.additional_context = ctx.additional_context or ""
+
         # Start from the same minimal context port exposed through MCP and CLI.
         # This replaces the older specialized graph-tool prefetches.
         try:
@@ -198,12 +208,9 @@ class QnAAgent(ChatAgent):
                 )
         except ValueError as e:
             # Expected when context graph isn't set up for this pot/user — skip silently.
-            logger.warning(f"Skipping context_resolve prefetch: {e}")
+            logger.warning(f"Skipping context_resolve prefetch: {e}", e=e)
         except Exception:
             logger.exception("Failed prefetching context via context_resolve")
-
-        if ctx.node_ids and len(ctx.node_ids) > 0:
-            return await self._append_code_and_structure(ctx)
 
         return await self._append_code_and_structure(ctx)
 
@@ -216,12 +223,16 @@ class QnAAgent(ChatAgent):
                 f"Code context of the node_ids in query:\n {code_results}"
             )
 
-        file_structure = (
-            await self.tools_provider.file_structure_tool.fetch_repo_structure(
-                ctx.project_id
+        if FILE_STRUCTURE_CONTEXT_MARKER not in ctx.additional_context:
+            file_structure = (
+                await self.tools_provider.file_structure_tool.fetch_repo_structure(
+                    ctx.project_id
+                )
             )
-        )
-        ctx.additional_context += f"File Structure of the project:\n {file_structure}"
+            ctx.additional_context += (
+                f"\n{FILE_STRUCTURE_CONTEXT_MARKER}\n"
+                f"{FILE_STRUCTURE_HEADER} {file_structure}"
+            )
 
         return ctx
 

@@ -34,10 +34,9 @@ dependencies = [
     "kombu>=5.5.4",
     "langchain>=1.0.3",
     "langchain-core>=1.3.3",
-    "langsmith>=0.7.31",
+    "langsmith>=0.8.0",
     "langgraph>=1.0.10",
     "litellm>=1.83.10,<1.84.0",
-    "loguru>=0.7.3",
     "markdownify>=0.13.1",
     "neo4j>=5.28.2",
     "networkx>=3.4.2",
@@ -50,7 +49,7 @@ dependencies = [
     "posthog>=6.9.0",
     "protobuf>=6.33.5",
     "psycopg-binary>=3.2.12",
-    "pydantic-ai-slim[ag-ui,anthropic,bedrock,cli,cohere,evals,fastmcp,google,groq,huggingface,logfire,mcp,openai,retries,spec,temporal,ui,vertexai,xai]>=1.74.0",
+    "pydantic-ai-slim[ag-ui,anthropic,bedrock,cli,cohere,evals,fastmcp,google,groq,huggingface,logfire,mcp,openai,retries,spec,temporal,ui,vertexai,xai]>=1.102.0",
     "pydantic-ai-todo>=0.1.6",
     "pydantic[email]>=2.12.4",
     "qdrant-client>=1.12.0",
@@ -60,7 +59,7 @@ dependencies = [
     "pynacl>=1.6.2",
     "python-dotenv>=1.2.2",
     "pyasn1>=0.6.3",
-    "python-multipart>=0.0.27",
+    "python-multipart>=0.0.28",
     "redis>=7.0.1",
     "python-socketio>=5.11.0",
     "requests>=2.33.1",
@@ -73,7 +72,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "transformers>=4.57.1",
     "tree-sitter>=0.20.4",
-    "tree-sitter-language-pack>=0.13.0",
+    "tree-sitter-language-pack>=0.13.0,<1.6.1",
     "mako>=1.3.12",
     "fastmcp>=3.2.0",
     "lupa>=2.7",
@@ -88,20 +87,25 @@ dependencies = [
     "typer>=0.15.0",
     "parsing",
     "potpie-sandbox",
+    "observability",
     "daytona>=0.134.0",
+    "tree-sitter-c-sharp==0.23.1",
+    "tree-sitter-embedded-template==0.25.0",
+    "tree-sitter-yaml==0.7.2",
 ]
 
 [tool.uv]
 # litellm>=1.83.10 clears CVE-2026-40217 (<1.83.10) but pins openai==2.24.0, which conflicts with
 # pydantic-ai + context-engine; override to the root stack. litellm still declares python-dotenv==1.0.1.
 # Root uses pydantic-ai-slim without the mistral extra so mistralai is not pulled (fixes universal lock on 3.13).
-override-dependencies = ["python-dotenv>=1.2.2", "openai>=2.7.1"]
+override-dependencies = ["python-dotenv>=1.2.2", "openai>=2.7.1", "idna>=3.15"]
 
 [tool.uv.sources]
 parsing = { path = "app/src/parsing" }
 context-engine = { path = "app/src/context-engine", editable = true }
 potpie-integrations = { path = "app/src/integrations", editable = true }
 potpie-sandbox = { path = "app/src/sandbox", editable = true }
+observability = { path = "app/src/observability", editable = true }
 
 [project.scripts]
 potpie-seed = "seed.cli:main"
@@ -121,6 +125,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["potpie*", "app*", "seed*"]
+# Defensive: keep the in-monorepo path-packages out of root's package discovery.
+# Each is its own distribution wired in via [tool.uv.sources] above.
+exclude = ["app.src*"]
 
 [tool.bandit]
 exclude_dirs = ["tests", "app/alembic"]
