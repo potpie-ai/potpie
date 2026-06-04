@@ -58,7 +58,7 @@ LOAD_ENV := set -a; \
 # build_agent_snapshot.py). The latter imports the daytona SDK from the
 # project's uv-managed .venv, so we point PYTHON at `uv run python`. Single
 # source of truth — every target invoking setup-daytona-local.sh exports this.
-DAYTONA_PYTHON := PYTHON='cd $(REPO_ROOT) && uv run --project $(CURDIR) python'
+DAYTONA_PYTHON := PYTHON="uv run --project $(CURDIR) python"
 
 # Shell snippet that exports CELERY_Q with the resolved queue list.
 # Inlined into recipes that need it (mirrors scripts/start.sh).
@@ -103,7 +103,7 @@ help: ## Show this help
 
 dev: env-check infra-up sync migrate sandbox-prep ## Start infra, sync deps, migrate, boot Daytona if needed, then run API + worker. Use SANDBOX=local|docker|daytona to override.
 	@$(LOAD_ENV) \
-	source $(REPO_ROOT)/.venv/bin/activate; \
+	source $(CURDIR)/.venv/bin/activate; \
 	$(SET_CELERY_Q) \
 	echo "─── starting API (gunicorn) and Celery worker ───"; \
 	$(SANDBOX_OVERRIDE) gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 \
