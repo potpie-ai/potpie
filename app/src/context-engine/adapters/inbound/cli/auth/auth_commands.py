@@ -352,39 +352,11 @@ def auth_status(
         help="Run a lightweight read-only API check for authenticated providers.",
     ),
 ) -> None:
-    """Show auth status for Potpie, GitHub, and all integrations."""
+    """Show local integration auth status."""
     load_cli_env()
-    from adapters.outbound.cli_auth.credentials_store import (
-        get_stored_api_key,
-        get_potpie_firebase_refresh_token,
-        get_potpie_auth_type,
-        get_integration_metadata,
-    )
     j, _ = _flags()
-
-    # --- Potpie account ---
-    api_key = get_stored_api_key()
-    refresh_token = get_potpie_firebase_refresh_token()
-    auth_type = get_potpie_auth_type() or ("api_key" if api_key else "")
-    potpie_authed = bool(api_key or refresh_token)
-    potpie_row: dict[str, Any] = {
-        "provider": "potpie",
-        "authenticated": potpie_authed,
-        "auth_type": auth_type or None,
-    }
-
-    # --- GitHub ---
-    github_meta = get_integration_metadata("github")
-    github_authed = bool(github_meta)
-    github_row: dict[str, Any] = {
-        "provider": "github",
-        "authenticated": github_authed,
-        "auth_type": "device_flow" if github_authed else None,
-        "login": github_meta.get("account", {}).get("login") if github_authed else None,
-    }
-
-    # --- Integrations (linear / jira / confluence) ---
     rows: list[dict[str, Any]] = []
+
     for provider in _ALL_PROVIDERS:
         meta = get_integration_status(provider)
         row = dict(meta)
@@ -407,28 +379,9 @@ def auth_status(
         rows.append(row)
 
     if j:
-        print_json_blob(
-            {"potpie": potpie_row, "github": github_row, "integrations": rows},
-            as_json=True,
-        )
+        print_json_blob({"integrations": rows}, as_json=True)
         return
 
-    # Human output — Potpie first
-    if potpie_authed:
-        label = auth_type or "unknown"
-        _print_remote_line(f"potpie: authenticated  auth_type={label}")
-    else:
-        print_plain_line("potpie: not authenticated  (run: potpie login)", as_json=False)
-
-    # GitHub
-    if github_authed:
-        login = github_row.get("login") or ""
-        suffix = f"  login={_esc(login)}" if login else ""
-        _print_remote_line(f"github: authenticated{suffix}")
-    else:
-        print_plain_line("github: not authenticated  (run: potpie auth github login)", as_json=False)
-
-    # Integrations
     for row in rows:
         provider = row["provider"]
         if not row.get("authenticated"):
@@ -447,6 +400,8 @@ def auth_status(
             parts.append(f"expires_at={_esc(row['expires_at'])}")
         if row.get("cloud_id"):
             parts.append(f"cloud_id={_esc(row['cloud_id'])}")
+        if row.get("token_storage"):
+            parts.append(f"token_storage={_esc(row['token_storage'])}")
         if verify:
             verified = row.get("verified")
             message = row.get("verify_message") or ""
@@ -498,21 +453,14 @@ def auth_logout(
 
     if was_authenticated:
         message = f"Logged out of {key}."
-        json_payload: dict[str, Any] = {"ok": True, "provider": key}
     else:
         message = (
             f"No active {key} session; removed any stale local credentials."
         )
-        json_payload = {
-            "ok": True,
-            "provider": key,
-            "cleared_stale": True,
-        }
-    print_plain_line(
-        message,
-        as_json=j,
-        json_payload=json_payload,
-    )
+    payload: dict[str, Any] = {"ok": True, "provider": key}
+    if not was_authenticated:
+        payload["cleared_stale"] = True
+    print_plain_line(message, as_json=j, json_payload=payload)
 
 
 @auth_app.command("revoke", hidden=True)
@@ -630,7 +578,7 @@ def _run_atlassian_quick_read(
     product: str,
     fetcher,
     limit: int,
-    hint_cmd: str = "potpie auth jira use",
+    hint_cmd: str = "potpie auth jira select",
     display_name: str | None = None,
 ) -> None:
     load_cli_env()
@@ -768,11 +716,11 @@ def jira_ls(
         )
         if row.get("url"):
             _print_remote_line(f"    {_esc(row.get('url'))}")
-    print_plain_line("\nFetch issues: potpie auth jira use", as_json=False)
+    print_plain_line("\nFetch issues: potpie auth jira select", as_json=False)
 
 
-@jira_app.command("use")
-def jira_use(
+@jira_app.command("select")
+def jira_select(
     key: str | None = typer.Option(None, "--key", "-k", help="Jira project key."),
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
 ) -> None:
@@ -796,7 +744,7 @@ def jira_issues(
         product="jira",
         fetcher=fetch_jira_issues_sample,
         limit=limit,
-        hint_cmd="potpie auth jira use",
+        hint_cmd="potpie auth jira select",
         display_name="Jira",
     )
 
@@ -866,11 +814,11 @@ def confluence_ls(
         _print_remote_line(
             f"  {_esc(row.get('key'))}\t{_esc(row.get('name'))}\t{_esc(row.get('type'))}",
         )
-    print_plain_line("\nFetch pages: potpie auth confluence use", as_json=False)
+    print_plain_line("\nFetch pages: potpie auth confluence select", as_json=False)
 
 
-@confluence_app.command("use")
-def confluence_use(
+@confluence_app.command("select")
+def confluence_select(
     key: str | None = typer.Option(None, "--key", "-k", help="Confluence space key."),
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
 ) -> None:
@@ -894,7 +842,7 @@ def confluence_pages(
         product="wiki",
         fetcher=fetch_confluence_content_sample,
         limit=limit,
-        hint_cmd="potpie auth confluence use",
+        hint_cmd="potpie auth confluence select",
         display_name="Confluence",
     )
 

@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
 from adapters.outbound.cli_auth.errors import CliAuthError
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 from adapters.outbound.cli_auth.models import (
@@ -16,6 +17,7 @@ from adapters.outbound.cli_auth.models import (
     ProviderCredentials,
 )
 
+GITHUB_CLIENT_ID_ENV = "POTPIE_GITHUB_CLIENT_ID"
 GITHUB_SCOPES = ("repo", "read:org", "read:user", "user:email")
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -32,9 +34,14 @@ class GitHubDeviceFlowError(CliAuthError):
 
 
 def get_github_client_id() -> str:
-    client_id = (os.getenv("POTPIE_GITHUB_CLIENT_ID") or "").strip()
+    """Resolve GitHub OAuth app client ID from environment (.env via load_cli_env)."""
+    load_cli_env()
+    client_id = os.getenv(GITHUB_CLIENT_ID_ENV, "").strip()
     if not client_id:
-        raise GitHubDeviceFlowError("POTPIE_GITHUB_CLIENT_ID is not set.")
+        raise GitHubDeviceFlowError(
+            f"{GITHUB_CLIENT_ID_ENV} is not set. "
+            "Add it to potpie/.env (see .env.template)."
+        )
     return client_id
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import types
 from typing import Any
 
 import httpx
@@ -39,6 +40,7 @@ def fake_keyring(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
 def _github_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
     # The device flow requires POTPIE_GITHUB_CLIENT_ID (no hardcoded default).
     monkeypatch.setenv("POTPIE_GITHUB_CLIENT_ID", "Iv1.testclientid")
+    monkeypatch.setattr(gh_auth, "load_cli_env", lambda: None)
 
 
 class FakeClient:
@@ -83,6 +85,31 @@ def test_request_device_code_sends_expected_payload() -> None:
     assert kwargs["headers"]["Accept"] == "application/json"
     assert kwargs["data"]["client_id"] == gh_auth.get_github_client_id()
     assert kwargs["data"]["scope"] == "repo read:org read:user user:email"
+
+
+def test_request_device_code_reads_client_id_from_env_at_call_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POTPIE_GITHUB_CLIENT_ID", "env-client-id")
+    client = FakeClient(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "device_code": "dev-code",
+                    "user_code": "ABCD-EFGH",
+                    "verification_uri": "https://github.com/login/device",
+                    "expires_in": 900,
+                    "interval": 5,
+                },
+            )
+        ]
+    )
+
+    gh_auth.request_device_code(http=client)
+
+    _method, _url, kwargs = client.calls[0]
+    assert kwargs["data"]["client_id"] == "env-client-id"
 
 
 def test_poll_for_access_token_waits_on_authorization_pending() -> None:
@@ -262,10 +289,23 @@ def test_github_login_stores_token_only_after_verification(
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     opened_urls: list[str] = []
+    slept: list[int] = []
     monkeypatch.setattr(
         gh_cmds.webbrowser,
         "open",
         lambda url: opened_urls.append(url) or True,
+    )
+    monkeypatch.setattr(
+        gh_cmds,
+        "time",
+        types.SimpleNamespace(sleep=lambda seconds: slept.append(seconds)),
+        raising=False,
+    )
+    entered: list[str] = []
+    monkeypatch.setattr(
+        gh_cmds.typer,
+        "confirm",
+        lambda message, **_kwargs: entered.append(message) or True,
     )
     monkeypatch.setattr(
         gh_cmds,
@@ -313,9 +353,107 @@ def test_github_login_stores_token_only_after_verification(
     }
     assert raw["integrations"]["github"]["token_storage"] == "keychain"
     assert opened_urls == [gh_auth.GITHUB_VERIFICATION_URI]
-    assert "Enter code ABCD-EFGH at" in result.stdout
+    assert "GitHub login requires a one-time verification code." in result.stdout
+    assert "Copy this code: ABCD-EFGH" in result.stdout
+    assert "Copy the code, then press Enter to open GitHub." in result.stdout
+    assert "Paste the copied code into GitHub to continue." in result.stdout
     assert "Waiting for authorization" in result.stdout
     assert "Logged in to GitHub as octocat (octocat@example.com)" in result.stdout
+    assert slept == []
+    assert entered == ["Press Enter after copying the code"]
+
+
+def test_github_login_prints_verification_url_when_browser_open_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(gh_cmds.webbrowser, "open", lambda _url: False)
+    monkeypatch.setattr(
+        gh_cmds,
+        "time",
+        types.SimpleNamespace(sleep=lambda _seconds: None),
+        raising=False,
+    )
+    monkeypatch.setattr(gh_cmds.typer, "confirm", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        gh_cmds,
+        "request_device_code",
+        lambda: gh_auth.DeviceCode(
+            device_code="dev-code",
+            user_code="ABCD-EFGH",
+            verification_uri=gh_auth.GITHUB_VERIFICATION_URI,
+            expires_in=900,
+            interval=5,
+        ),
+    )
+    monkeypatch.setattr(
+        gh_cmds,
+        "poll_for_access_token",
+        lambda _device: gh_auth.AccessToken(
+            access_token="plaintext-token",
+            token_type="bearer",
+            scopes=["repo"],
+        ),
+    )
+    monkeypatch.setattr(
+        gh_cmds,
+        "verify_account",
+        lambda _token: gh_auth.GitHubAccount(
+            login="octocat", id=1, name=None, email=None
+        ),
+    )
+
+    result = runner.invoke(cli_main.app, ["auth", "github", "login"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Could not open a browser automatically. Open this URL:" in result.stdout
+    assert gh_auth.GITHUB_VERIFICATION_URI in result.stdout
+    assert "Paste the copied code into GitHub to continue." not in result.stdout
+
+
+def test_github_login_json_mode_does_not_open_browser_or_print_countdown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(
+        gh_cmds.webbrowser,
+        "open",
+        lambda _url: pytest.fail("json mode must not open the browser"),
+    )
+    monkeypatch.setattr(
+        gh_cmds,
+        "request_device_code",
+        lambda: gh_auth.DeviceCode(
+            device_code="dev-code",
+            user_code="ABCD-EFGH",
+            verification_uri=gh_auth.GITHUB_VERIFICATION_URI,
+            expires_in=900,
+            interval=5,
+        ),
+    )
+    monkeypatch.setattr(
+        gh_cmds,
+        "poll_for_access_token",
+        lambda _device: gh_auth.AccessToken(
+            access_token="plaintext-token",
+            token_type="bearer",
+            scopes=["repo"],
+        ),
+    )
+    monkeypatch.setattr(
+        gh_cmds,
+        "verify_account",
+        lambda _token: gh_auth.GitHubAccount(
+            login="octocat", id=1, name=None, email=None
+        ),
+    )
+
+    result = runner.invoke(cli_main.app, ["--json", "auth", "github", "login"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Opening GitHub in" not in result.stdout
+    assert "Copy this code" not in result.stdout
+    assert '"provider": "github"' in result.stdout
 
 
 def test_deprecated_git_login_alias(
@@ -355,6 +493,8 @@ def test_git_login_does_not_store_when_account_verification_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(gh_cmds.webbrowser, "open", lambda _url: True)
+    monkeypatch.setattr(gh_cmds.typer, "confirm", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         gh_cmds,
         "request_device_code",

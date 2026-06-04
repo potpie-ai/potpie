@@ -565,7 +565,7 @@ def test_run_atlassian_auth_emits_site_discovery_error_on_tenant_http_error(
         lambda _product: {},
     )
 
-    prompts = iter(["user@example.com", "api-token-secret", "myteam"])
+    prompts = iter(["api-token-secret", "user@example.com", "myteam"])
     monkeypatch.setattr(
         atlassian_auth.typer,
         "prompt",
@@ -591,6 +591,70 @@ def test_run_atlassian_auth_emits_site_discovery_error_on_tenant_http_error(
     title, message = captured[0]
     assert "authentication failed" in title.lower()
     assert "Could not resolve cloud ID for the site" in message
+
+
+@pytest.mark.parametrize("product", ["jira", "confluence"])
+def test_run_atlassian_auth_opens_token_page_after_countdown(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    product: str,
+) -> None:
+    monkeypatch.setattr(atlassian_auth.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_get_product_credentials",
+        lambda _product: {},
+    )
+    site = {
+        "cloud_id": "cloud-1",
+        "site_url": "https://team.atlassian.net",
+        "site_name": "Team",
+    }
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_prompt_and_resolve_site",
+        lambda: (site, None),
+    )
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_finalize_selected_site",
+        lambda *_args: (site, None),
+    )
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_save_product_credentials",
+        lambda *_args: None,
+    )
+    opened_urls: list[str] = []
+    monkeypatch.setattr(
+        atlassian_auth.webbrowser,
+        "open",
+        lambda url, **_kwargs: opened_urls.append(url) or True,
+    )
+    slept: list[int] = []
+    monkeypatch.setattr(atlassian_auth.time, "sleep", lambda seconds: slept.append(seconds))
+    prompts: list[str] = []
+    prompt_values = iter(["api-token-secret", "user@example.com"])
+
+    def _prompt(label: str, **_kwargs: object) -> str:
+        prompts.append(label)
+        return next(prompt_values)
+
+    monkeypatch.setattr(atlassian_auth.typer, "prompt", _prompt)
+
+    run_atlassian_api_token_auth(product, force=True)
+
+    out = capsys.readouterr().out
+    assert "Create an API token (without scopes)." in out
+    assert "Use an Atlassian API token without scopes for Jira and Confluence." in out
+    assert "Opening Atlassian in 10 seconds..." in out
+    assert "\rOpening Atlassian in 9 seconds..." in out
+    assert "\rOpening Atlassian in 1 second..." in out
+    assert "\rOpening Atlassian now...          \n" in out
+    assert opened_urls == [atlassian_auth.ATLASSIAN_API_TOKEN_PAGE]
+    assert slept == [1] * 10
+    assert prompts == ["Enter your API token", "Enter your Atlassian email"]
+
 
 # --- test_atlassian_auth_discovery.py ---
 
