@@ -1,6 +1,6 @@
 """Static logo ASCII asset."""
 
-from adapters.inbound.cli.static_logo_loader import load_static_logo, resolve_static_logo_path
+from adapters.inbound.cli.ui.static_logo_loader import load_static_logo, resolve_static_logo_path
 
 
 def test_static_logo_asset_exists() -> None:

@@ -7,9 +7,9 @@ import pytest
 from typer.testing import CliRunner
 
 from adapters.inbound.cli import host_cli as cli_main
-from adapters.inbound.cli.auth import github as gh_auth
+from adapters.outbound.cli_auth import github as gh_auth
 from adapters.inbound.cli.auth import github_commands as gh_cmds
-from adapters.inbound.cli import credentials_store as cs
+from adapters.outbound.cli_auth import credentials_store as cs
 
 pytestmark = pytest.mark.unit
 
@@ -74,7 +74,7 @@ def test_request_device_code_sends_expected_payload() -> None:
         ]
     )
 
-    result = gh_auth.request_device_code(client=client)
+    result = gh_auth.request_device_code(http=client)
 
     assert result.device_code == "dev-code"
     method, url, kwargs = client.calls[0]
@@ -109,7 +109,7 @@ def test_poll_for_access_token_waits_on_authorization_pending() -> None:
             expires_in=900,
             interval=5,
         ),
-        client=client,
+        http=client,
         sleep_fn=sleeps.append,
     )
 
@@ -137,7 +137,7 @@ def test_poll_for_access_token_slow_down_increases_interval() -> None:
             expires_in=900,
             interval=5,
         ),
-        client=client,
+        http=client,
         sleep_fn=sleeps.append,
     )
 
@@ -157,7 +157,7 @@ def test_poll_for_access_token_exits_cleanly_on_terminal_errors(error_code: str)
                 expires_in=900,
                 interval=5,
             ),
-            client=client,
+            http=client,
             sleep_fn=lambda _seconds: None,
         )
 
@@ -177,7 +177,7 @@ def test_verify_account_parses_user() -> None:
         ]
     )
 
-    account = gh_auth.verify_account("gho_token", client=client)
+    account = gh_auth.verify_account("gho_token", http=client)
 
     assert account.login == "octocat"
     assert account.email == "octocat@example.com"
@@ -209,7 +209,7 @@ def test_verify_account_uses_primary_verified_email_when_user_email_is_null() ->
         ]
     )
 
-    account = gh_auth.verify_account("gho_token", client=client)
+    account = gh_auth.verify_account("gho_token", http=client)
 
     assert account.email == "octocat@example.com"
     assert client.calls[1][0] == "GET"
@@ -237,7 +237,7 @@ def test_list_user_owned_repositories_uses_owner_affiliation() -> None:
         ]
     )
 
-    repos = gh_auth.list_user_owned_repositories("gho_token", client=client)
+    repos = gh_auth.list_user_owned_repositories("gho_token", http=client)
 
     assert repos == [
         {
@@ -383,7 +383,7 @@ def test_git_login_does_not_store_when_account_verification_fails(
 
     result = runner.invoke(cli_main.app, ["auth", "github", "login"])
 
-    assert result.exit_code == 1, result.stdout
+    assert result.exit_code == 4, result.stdout
     assert cs.get_integration_metadata("github") == {}
 
 
@@ -428,7 +428,7 @@ def test_git_test_repos_requires_stored_github_credentials(
 
     result = runner.invoke(cli_main.app, ["github", "test", "repos"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 4
     assert (
         "GitHub token not found in system keychain. Run: potpie auth github login"
         in result.output

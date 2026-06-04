@@ -31,8 +31,8 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 from adapters.inbound.http.api.v1.context.router import create_context_router  # noqa: E402
-from adapters.inbound.cli.credentials_store import get_active_pot_id  # noqa: E402
-from adapters.inbound.cli.potpie_api_config import (  # noqa: E402
+from adapters.outbound.cli_auth.credentials_store import get_active_pot_id  # noqa: E402
+from adapters.outbound.cli_auth.potpie_api_config import (  # noqa: E402
     resolve_potpie_api_base_url,
     resolve_potpie_api_key,
 )

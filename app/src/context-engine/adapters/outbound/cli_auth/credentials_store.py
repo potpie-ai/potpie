@@ -12,6 +12,8 @@ from typing import Any, Optional
 import keyring
 from keyring.errors import KeyringError
 
+from adapters.outbound.cli_auth.errors import CliAuthError
+
 _CREDENTIALS_FILENAME = "credentials.json"
 _CONFIG_DIR_NAME = "potpie"
 _LEGACY_CONFIG_DIR_NAME = "context-engine"
@@ -32,7 +34,7 @@ _JIRA_CREDENTIALS_KEY = "jira"
 _CONFLUENCE_CREDENTIALS_KEY = "confluence"
 
 
-class CredentialStoreError(Exception):
+class CredentialStoreError(CliAuthError):
     """Credential metadata or secure secret storage failure."""
 
 
@@ -552,7 +554,7 @@ def save_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
     if key != _LINEAR_CREDENTIALS_KEY:
         raise ValueError(f"{provider!r} does not use OAuth token storage.")
 
-    from adapters.inbound.cli.integration_profile import build_linear_integration_record
+    from adapters.outbound.cli_auth.integration_profile import build_linear_integration_record
 
     access_token = str(tokens.get("access_token") or "").strip()
     if access_token:
@@ -607,36 +609,6 @@ def _product_secret_name(product: str) -> tuple[str, str]:
     return _CONFLUENCE_TOKEN_SECRET, "Confluence API token"
 
 
-def get_integration_tokens(provider: str) -> dict[str, Any]:
-    """Return integration credentials with secrets loaded from keychain."""
-    key = _norm_integration_key(provider)
-    if key in {_ATLASSIAN_CREDENTIALS_KEY, _JIRA_CREDENTIALS_KEY, _CONFLUENCE_CREDENTIALS_KEY}:
-        if key == _ATLASSIAN_CREDENTIALS_KEY:
-            creds = get_atlassian_credentials()
-        elif key == _JIRA_CREDENTIALS_KEY:
-            creds = get_jira_credentials()
-        else:
-            creds = get_confluence_credentials()
-        return {"auth_type": "api_token", **creds} if creds else {}
-
-    raise ValueError(f"Unknown integration provider {provider!r}.")
-
-
-def clear_integration_tokens(provider: str) -> None:
-    """Remove stored credentials for an integration provider."""
-    key = _norm_integration_key(provider)
-    if key == _JIRA_CREDENTIALS_KEY:
-        clear_jira_credentials()
-        return
-    if key == _CONFLUENCE_CREDENTIALS_KEY:
-        clear_confluence_credentials()
-        return
-    if key == _ATLASSIAN_CREDENTIALS_KEY:
-        clear_atlassian_credentials()
-        return
-    raise ValueError(f"Unknown integration provider {provider!r}.")
-
-
 def save_jira_credentials(credentials: dict[str, Any]) -> None:
     _save_atlassian_product_credentials("jira", credentials)
 
@@ -662,7 +634,7 @@ def clear_confluence_credentials() -> None:
 
 
 def _save_atlassian_product_credentials(product: str, credentials: dict[str, Any]) -> None:
-    from adapters.inbound.cli.integration_profile import (
+    from adapters.outbound.cli_auth.integration_profile import (
         atlassian_site_from_entry,
         build_product_integration_record,
     )
@@ -722,7 +694,7 @@ def _clear_atlassian_product_credentials(product: str) -> None:
 
 def save_atlassian_credentials(credentials: dict[str, Any]) -> None:
     """Legacy combined Atlassian record retained for compatibility."""
-    from adapters.inbound.cli.integration_profile import (
+    from adapters.outbound.cli_auth.integration_profile import (
         atlassian_site_from_entry,
         build_atlassian_integration_record,
     )
@@ -877,7 +849,7 @@ def list_integration_providers() -> list[str]:
 
 
 def get_integration_status(provider: str) -> dict[str, Any]:
-    from adapters.inbound.cli.integration_profile import (
+    from adapters.outbound.cli_auth.integration_profile import (
         atlassian_account_from_entry,
         atlassian_site_from_entry,
         linear_account_from_entry,

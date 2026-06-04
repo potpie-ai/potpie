@@ -8,6 +8,22 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _reset_cli_store():
+    """Reset the process-wide injected credential store after each test.
+
+    ``set_store`` (commands/_common) caches a store in module state; clear it so a
+    fake injected by one test never leaks into the next (mirrors host isolation).
+    """
+    yield
+    try:
+        from adapters.inbound.cli.commands import _common
+
+        _common._state["store"] = None
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _no_real_browser(monkeypatch: pytest.MonkeyPatch) -> None:
     """Never open a real browser during tests.
 

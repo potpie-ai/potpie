@@ -5,20 +5,21 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import httpx
-
-from adapters.inbound.cli.atlassian_auth import (
+from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from adapters.outbound.cli_auth.atlassian_client import (
     AtlassianAuthErrorKind,
     fetch_cloud_id_for_site,
     normalize_site_url,
     verify_gateway_product,
 )
-from adapters.inbound.cli.provider_config import Provider
+from adapters.outbound.cli_auth.provider_config import Provider
 
 
 def verify_integration_access(
     provider: Provider,
     credentials: dict[str, Any],
+    *,
+    http: HttpClient | None = None,
 ) -> tuple[bool, str]:
     """Return ``(ok, message)`` after a minimal read-only API check."""
     if provider == "linear":
@@ -32,7 +33,7 @@ def verify_integration_access(
                     return False, "access token expired"
             except (TypeError, ValueError):
                 pass
-        return _verify_linear(access_token)
+        return _verify_linear(access_token, http=http)
     if provider == "atlassian":
         jira_ok, jira_message = _verify_atlassian_product("jira", credentials)
         if jira_ok:
@@ -49,21 +50,27 @@ def verify_integration_access(
     return False, f"unknown provider {provider!r}"
 
 
-def _verify_linear(access_token: str) -> tuple[bool, str]:
+def _verify_linear(
+    access_token: str, *, http: HttpClient | None = None
+) -> tuple[bool, str]:
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
     }
     query = "query { viewer { id name email organization { name } } }"
+    owns = http is None
+    http = http or AuthHttpClient(timeout=15.0)
     try:
-        with httpx.Client(timeout=15.0) as client:
-            response = client.post(
-                "https://api.linear.app/graphql",
-                headers=headers,
-                json={"query": query},
-            )
-    except httpx.HTTPError:
+        response = http.post(
+            "https://api.linear.app/graphql",
+            headers=headers,
+            json={"query": query},
+        )
+    except AuthHttpError:
         return False, "Linear API request failed"
+    finally:
+        if owns:
+            http.close()
     if response.status_code != 200:
         return False, f"Linear API HTTP {response.status_code}"
     try:

@@ -10,7 +10,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
-from adapters.inbound.cli.static_logo_loader import VIEWPORT_WIDTH, load_static_logo
+from adapters.inbound.cli.ui.static_logo_loader import VIEWPORT_WIDTH, load_static_logo
 
 _ACCENT = "bold #D4FF4D on #000000"
 _DIM = "dim #9AE622"

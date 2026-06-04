@@ -6,28 +6,30 @@ from __future__ import annotations
 import typer
 import pytest
 from typer.testing import CliRunner
-from adapters.inbound.cli import auth_commands
+from adapters.inbound.cli.auth import auth_commands
+from adapters.inbound.cli.commands._common import set_store
+from tests._auth_fakes import InMemoryCredentialStore
 from adapters.inbound.cli import host_cli as cli_main
-from adapters.inbound.cli.atlassian_read import AtlassianReadError
+from adapters.inbound.cli.auth.atlassian_read import AtlassianReadError
 from unittest.mock import MagicMock
 import json
 import stat
 from pathlib import Path
 from keyring.errors import KeyringError
-from adapters.inbound.cli import credentials_store as cs
+from adapters.outbound.cli_auth import credentials_store as cs
 from unittest.mock import MagicMock, patch
-from adapters.inbound.cli.integration_profile import (
+from adapters.outbound.cli_auth.integration_profile import (
     build_atlassian_integration_record,
     build_product_integration_record,
 )
 from unittest.mock import patch
-from adapters.inbound.cli.atlassian_auth import AtlassianAuthErrorKind, AtlassianVerifyResult
-from adapters.inbound.cli.integration_verify import (
+from adapters.inbound.cli.auth.atlassian_auth import AtlassianAuthErrorKind, AtlassianVerifyResult
+from adapters.outbound.cli_auth.integration_verify import (
     _verify_atlassian_product,
     _verify_message_for_kind,
     verify_integration_access,
 )
-from adapters.inbound.cli.provider_config import (
+from adapters.outbound.cli_auth.provider_config import (
     ATLASSIAN_API_GATEWAY,
     atlassian_confluence_gateway_url,
     atlassian_jira_gateway_url,
@@ -119,11 +121,9 @@ def test_auth_logout_not_authenticated_still_clears_stale_state(
         lambda _p: {"authenticated": False},
     )
     cleared: list[str] = []
-    monkeypatch.setattr(
-        auth_commands,
-        "clear_integration_tokens",
-        lambda provider: cleared.append(provider),
-    )
+    store = InMemoryCredentialStore()
+    store.clear_integration_tokens = lambda provider: cleared.append(provider)  # type: ignore[method-assign]
+    set_store(store)
 
     result = runner.invoke(auth_commands.auth_app, ["logout", "jira"])
 
@@ -140,11 +140,9 @@ def test_auth_logout_wiki_alias(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _p: {"authenticated": True},
     )
     cleared: list[str] = []
-    monkeypatch.setattr(
-        auth_commands,
-        "clear_integration_tokens",
-        lambda provider: cleared.append(provider),
-    )
+    store = InMemoryCredentialStore()
+    store.clear_integration_tokens = lambda provider: cleared.append(provider)  # type: ignore[method-assign]
+    set_store(store)
 
     result = runner.invoke(auth_commands.auth_app, ["logout", "wiki"])
 
@@ -159,7 +157,7 @@ def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> Non
         "get_integration_status",
         lambda _p: {"authenticated": True},
     )
-    monkeypatch.setattr(auth_commands, "clear_integration_tokens", lambda _p: None)
+    set_store(InMemoryCredentialStore())
 
     result = runner.invoke(auth_commands.auth_app, ["revoke", "jira"])
 
@@ -167,7 +165,7 @@ def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> Non
     assert '"ok": true' in result.stdout
 
 def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    from adapters.inbound.cli.credentials_store import ProviderCredentialError
+    from adapters.outbound.cli_auth.credentials_store import ProviderCredentialError
 
     monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, True))
@@ -177,14 +175,17 @@ def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _p: {"authenticated": True},
     )
 
+    store = InMemoryCredentialStore()
+
     def _fail_clear(_provider: str) -> None:
         raise ProviderCredentialError("keychain broke")
 
-    monkeypatch.setattr(auth_commands, "clear_integration_tokens", _fail_clear)
+    store.clear_integration_tokens = _fail_clear  # type: ignore[method-assign]
+    set_store(store)
 
     result = runner.invoke(auth_commands.auth_app, ["logout", "jira"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 4
 
 def test_auth_logout_jira(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
@@ -195,11 +196,9 @@ def test_auth_logout_jira(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _provider: {"authenticated": True},
     )
     cleared: list[str] = []
-    monkeypatch.setattr(
-        auth_commands,
-        "clear_integration_tokens",
-        lambda provider: cleared.append(provider),
-    )
+    store = InMemoryCredentialStore()
+    store.clear_integration_tokens = lambda provider: cleared.append(provider)  # type: ignore[method-assign]
+    set_store(store)
 
     result = runner.invoke(auth_commands.auth_app, ["logout", "jira"])
 
@@ -1050,7 +1049,7 @@ def test_clear_atlassian_credentials_removes_shared_legacy(
     assert "atlassian" not in cs.read_credentials().get("integrations", {})
 
 def test_atlassian_account_from_entry_email_only() -> None:
-    from adapters.inbound.cli.integration_profile import atlassian_account_from_entry
+    from adapters.outbound.cli_auth.integration_profile import atlassian_account_from_entry
 
     assert atlassian_account_from_entry({"email": "u@example.com"}) == {
         "email": "u@example.com"
@@ -1073,11 +1072,11 @@ def test_verify_integration_access_unknown_provider() -> None:
 
 def test_verify_atlassian_product_success(monkeypatch) -> None:
     monkeypatch.setattr(
-        "adapters.inbound.cli.integration_verify.fetch_cloud_id_for_site",
+        "adapters.outbound.cli_auth.integration_verify.fetch_cloud_id_for_site",
         lambda _url: "cloud-1",
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.integration_verify.verify_gateway_product",
+        "adapters.outbound.cli_auth.integration_verify.verify_gateway_product",
         lambda *args, **kwargs: AtlassianVerifyResult(
             ok=True,
             display_name="Ada",
@@ -1098,7 +1097,7 @@ def test_verify_atlassian_product_success(monkeypatch) -> None:
 
 def test_verify_integration_access_jira(monkeypatch) -> None:
     monkeypatch.setattr(
-        "adapters.inbound.cli.integration_verify._verify_atlassian_product",
+        "adapters.outbound.cli_auth.integration_verify._verify_atlassian_product",
         lambda _p, _c: (True, "ok (Ada @ team)"),
     )
     ok, message = verify_integration_access(

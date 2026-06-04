@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from adapters.inbound.cli.setup_wizard_ui import (
+from adapters.inbound.cli.ui.setup_wizard_ui import (
     SetupWizardUI,
     is_interactive_tty,
     rich_ui_enabled,

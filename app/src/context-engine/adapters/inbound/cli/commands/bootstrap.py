@@ -36,7 +36,7 @@ def register(root: typer.Typer) -> None:
         """Idempotent first-run: provision config, storage, daemon, default pot, skills."""
         from pathlib import Path
 
-        from adapters.inbound.cli import setup_ux
+        from adapters.inbound.cli.ui import setup_ux
 
         with contract():
             host = get_host()

@@ -6,7 +6,7 @@ import webbrowser
 
 import typer
 
-from adapters.inbound.cli.auth.github import (
+from adapters.outbound.cli_auth.github import (
     GitHubDeviceFlowError,
     build_provider_credentials,
     list_user_owned_repositories,
@@ -14,16 +14,13 @@ from adapters.inbound.cli.auth.github import (
     request_device_code,
     verify_account,
 )
-from adapters.inbound.cli.auth_commands import register_provider_app
-from adapters.inbound.cli.credentials_store import (
+from adapters.inbound.cli.auth.auth_commands import register_provider_app
+from adapters.inbound.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
+from adapters.outbound.cli_auth.credentials_store import (
     CredentialStoreError,
     ProviderCredentialError,
-    clear_provider_credentials,
-    credentials_path,
-    get_provider_credentials,
-    write_provider_credentials,
 )
-from adapters.inbound.cli.output import emit_error, print_json_blob, print_plain_line
+from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
 
 github_app = typer.Typer(help="GitHub authentication.")
 github_test_app = typer.Typer(help="GitHub test helpers.")
@@ -43,6 +40,7 @@ def _flags() -> tuple[bool, bool]:
 def github_login_impl() -> None:
     """Authenticate the CLI with GitHub using device flow."""
     j, v = _flags()
+    store = get_store()
     account = None
     payload = None
     try:
@@ -59,13 +57,13 @@ def github_login_impl() -> None:
         payload = build_provider_credentials(
             token, account, verification_uri=device_code.verification_uri
         )
-        write_provider_credentials("github", payload.as_dict())
+        store.write_provider_credentials("github", payload.as_dict())
     except GitHubDeviceFlowError as exc:
         emit_error("GitHub login failed", str(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_AUTH) from exc
     except (ProviderCredentialError, CredentialStoreError) as exc:
         emit_error("GitHub login failed", str(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_AUTH) from exc
 
     if j:
         print_json_blob(
@@ -73,14 +71,14 @@ def github_login_impl() -> None:
                 "ok": True,
                 "provider": "github",
                 "account": payload.account if payload else {},
-                "path": str(credentials_path()),
+                "path": str(store.credentials_path()),
             },
             as_json=True,
         )
         return
 
     assert account is not None and payload is not None
-    stored = get_provider_credentials("github")
+    stored = store.get_provider_credentials("github")
     login = str(stored.get("account", {}).get("login") or account.login)
     email = str(stored.get("account", {}).get("email") or account.email or "")
     print_plain_line(
@@ -92,11 +90,12 @@ def github_login_impl() -> None:
 def github_logout_impl() -> None:
     """Remove GitHub credentials from keychain and config."""
     j, v = _flags()
+    store = get_store()
     try:
-        clear_provider_credentials("github")
+        store.clear_provider_credentials("github")
     except (ProviderCredentialError, CredentialStoreError, ValueError) as exc:
         emit_error("GitHub logout failed", str(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_AUTH) from exc
 
     if j:
         print_json_blob({"ok": True, "provider": "github"}, as_json=True)
@@ -133,15 +132,16 @@ def git_logout_cmd() -> None:
 def github_test_repos_cmd() -> None:
     """List GitHub repositories owned by the authenticated user."""
     j, v = _flags()
+    store = get_store()
     try:
-        credentials = get_provider_credentials("github")
+        credentials = store.get_provider_credentials("github")
     except (ProviderCredentialError, CredentialStoreError) as exc:
         emit_error(
             "GitHub credentials not found",
             str(exc),
             verbose=v,
         )
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_AUTH) from exc
     token = str(credentials.get("access_token") or "").strip()
     if not token:
         emit_error(
@@ -149,12 +149,12 @@ def github_test_repos_cmd() -> None:
             "GitHub token not found in system keychain. Run: potpie auth github login",
             verbose=v,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_AUTH)
     try:
         repos = list_user_owned_repositories(token)
     except GitHubDeviceFlowError as exc:
         emit_error("GitHub repository listing failed", str(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
 
     if j:
         print_json_blob(

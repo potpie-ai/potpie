@@ -5,31 +5,35 @@ from __future__ import annotations
 from __future__ import annotations
 from unittest.mock import MagicMock, patch
 import httpx
+
+from adapters.outbound.cli_auth.http import AuthHttpError
 import pytest
 import typer
-from adapters.inbound.cli import atlassian_auth
-from adapters.inbound.cli.atlassian_auth import (
+from adapters.inbound.cli.auth import atlassian_auth
+from adapters.outbound.cli_auth.atlassian_client import (
     AtlassianAuthErrorKind,
     AtlassianVerifyResult,
-    _auth_failure_message,
     _classify_gateway_status,
     _finalize_selected_site,
     _parse_gateway_probe_success,
     fetch_cloud_id_for_site,
     normalize_site_url,
-    run_atlassian_api_token_auth,
     site_url_from_subdomain,
     verify_gateway_product,
 )
-from adapters.inbound.cli.atlassian_auth import (
+from adapters.inbound.cli.auth.atlassian_auth import (
+    _auth_failure_message,
+    run_atlassian_api_token_auth,
+)
+from adapters.outbound.cli_auth.atlassian_client import (
     _fetch_accessible_resources,
     _parse_accessible_resources,
     discover_sites_with_api_token,
     fetch_accessible_resources,
 )
-from adapters.inbound.cli.atlassian_read import _auth_header_variants
-from adapters.inbound.cli import credentials_store as cs
-from adapters.inbound.cli.atlassian_read import (
+from adapters.inbound.cli.auth.atlassian_read import _auth_header_variants
+from adapters.outbound.cli_auth import credentials_store as cs
+from adapters.inbound.cli.auth.atlassian_read import (
     AtlassianReadError,
     _cloud_id_from_credentials,
     _get_json,
@@ -38,7 +42,7 @@ from adapters.inbound.cli.atlassian_read import (
     fetch_confluence_spaces_sample,
     fetch_jira_issues_sample,
 )
-from adapters.inbound.cli.atlassian_read import (
+from adapters.inbound.cli.auth.atlassian_read import (
     AtlassianReadError,
     fetch_confluence_pages_in_space,
     fetch_jira_issues_in_project,
@@ -89,9 +93,9 @@ def test_verify_gateway_product_confluence_success() -> None:
     response.status_code = 200
     response.content = b'{"displayName":"Wiki"}'
     response.json.return_value = {"displayName": "Wiki"}
-    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_client_cls:
+    with patch("adapters.outbound.cli_auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
-        mock_client_cls.return_value.__enter__.return_value = client
+        mock_client_cls.return_value = client
         client.get.return_value = response
 
         result = verify_gateway_product(
@@ -122,9 +126,9 @@ def test_verify_gateway_product_insufficient_scopes_on_403() -> None:
     response = MagicMock()
     response.status_code = 403
     response.content = b""
-    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_client_cls:
+    with patch("adapters.outbound.cli_auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
-        mock_client_cls.return_value.__enter__.return_value = client
+        mock_client_cls.return_value = client
         client.get.return_value = response
 
         result = verify_gateway_product(
@@ -142,9 +146,9 @@ def test_verify_gateway_product_success() -> None:
     response.status_code = 200
     response.content = b'{"displayName":"Ada"}'
     response.json.return_value = {"displayName": "Ada"}
-    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_client_cls:
+    with patch("adapters.outbound.cli_auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
-        mock_client_cls.return_value.__enter__.return_value = client
+        mock_client_cls.return_value = client
         client.get.return_value = response
 
         result = verify_gateway_product(
@@ -166,9 +170,9 @@ def test_verify_gateway_product_bearer_after_basic_401() -> None:
     bearer.status_code = 200
     bearer.content = b'{"displayName":"Bearer User"}'
     bearer.json.return_value = {"displayName": "Bearer User"}
-    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_client_cls:
+    with patch("adapters.outbound.cli_auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
-        mock_client_cls.return_value.__enter__.return_value = client
+        mock_client_cls.return_value = client
         client.get.side_effect = [basic, bearer]
 
         result = verify_gateway_product(
@@ -187,9 +191,9 @@ def test_fetch_cloud_id_for_site_success() -> None:
     response = MagicMock()
     response.status_code = 200
     response.json.return_value = {"cloudId": "cloud-xyz"}
-    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_client_cls:
+    with patch("adapters.outbound.cli_auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
-        mock_client_cls.return_value.__enter__.return_value = client
+        mock_client_cls.return_value = client
         client.get.return_value = response
 
         assert fetch_cloud_id_for_site("https://team.atlassian.net") == "cloud-xyz"
@@ -215,7 +219,7 @@ def test_finalize_selected_site_success() -> None:
         "cloud_id": "cloud-1",
     }
     with patch(
-        "adapters.inbound.cli.atlassian_auth.verify_gateway_product",
+        "adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
         return_value=AtlassianVerifyResult(
             ok=True,
             display_name="Ada",
@@ -236,7 +240,7 @@ def test_finalize_selected_site_success() -> None:
 def test_finalize_selected_site_gateway_failure() -> None:
     site = {"site_url": "https://team.atlassian.net", "cloud_id": "c1"}
     with patch(
-        "adapters.inbound.cli.atlassian_auth.verify_gateway_product",
+        "adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
         return_value=AtlassianVerifyResult(
             ok=False,
             error_kind=AtlassianAuthErrorKind.INVALID_CREDENTIALS,
@@ -273,18 +277,18 @@ def test_auth_failure_message_insufficient_scopes_per_product() -> None:
     assert "read:confluence-content at minimum" in confluence_lines[1]
 
 def test_fetch_cloud_id_for_site_returns_empty_on_http_error() -> None:
-    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_client_cls:
+    with patch("adapters.outbound.cli_auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
-        mock_client_cls.return_value.__enter__.return_value = client
-        client.get.side_effect = httpx.ConnectError("connection refused")
+        mock_client_cls.return_value = client
+        client.get.side_effect = AuthHttpError("connection refused")
 
         assert fetch_cloud_id_for_site("https://team.atlassian.net") == ""
 
 def test_verify_gateway_product_returns_unknown_on_http_error() -> None:
-    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_client_cls:
+    with patch("adapters.outbound.cli_auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
-        mock_client_cls.return_value.__enter__.return_value = client
-        client.get.side_effect = httpx.ConnectError("connection refused")
+        mock_client_cls.return_value = client
+        client.get.side_effect = AuthHttpError("connection refused")
 
         result = verify_gateway_product(
             "user@example.com",
@@ -403,11 +407,11 @@ def test_finalize_selected_site_fetches_cloud_id() -> None:
     site = {"site_url": "https://team.atlassian.net", "site_name": "Team"}
     with (
         patch(
-            "adapters.inbound.cli.atlassian_auth.fetch_cloud_id_for_site",
+            "adapters.outbound.cli_auth.atlassian_client.fetch_cloud_id_for_site",
             return_value="cloud-fetched",
         ),
         patch(
-            "adapters.inbound.cli.atlassian_auth.verify_gateway_product",
+            "adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
             return_value=AtlassianVerifyResult(ok=True, display_name="Ada"),
         ),
     ):
@@ -422,15 +426,15 @@ def test_finalize_selected_site_fetches_cloud_id() -> None:
     assert finalized["cloud_id"] == "cloud-fetched"
 
 def test_verify_site_with_api_token_success() -> None:
-    from adapters.inbound.cli.atlassian_auth import verify_site_with_api_token
+    from adapters.inbound.cli.auth.atlassian_auth import verify_site_with_api_token
 
     with (
         patch(
-            "adapters.inbound.cli.atlassian_auth.fetch_cloud_id_for_site",
+            "adapters.outbound.cli_auth.atlassian_client.fetch_cloud_id_for_site",
             return_value="cloud-1",
         ),
         patch(
-            "adapters.inbound.cli.atlassian_auth.verify_gateway_product",
+            "adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
             return_value=AtlassianVerifyResult(ok=True, display_name="Team Site"),
         ),
     ):
@@ -446,11 +450,11 @@ def test_verify_site_with_api_token_success() -> None:
 def test_discover_sites_skips_candidates_without_cloud_id() -> None:
     with (
         patch(
-            "adapters.inbound.cli.atlassian_auth.collect_site_candidates",
+            "adapters.outbound.cli_auth.atlassian_client.collect_site_candidates",
             return_value=[{"site_url": "https://team.atlassian.net", "cloud_id": ""}],
         ),
         patch(
-            "adapters.inbound.cli.atlassian_auth.verify_gateway_product",
+            "adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
         ) as verify,
     ):
         found = atlassian_auth.discover_sites_with_api_token(
@@ -471,7 +475,7 @@ def test_resolve_site_from_subdomain_failures() -> None:
     assert err2 == AtlassianAuthErrorKind.SITE_DISCOVERY_FAILED
 
     with patch(
-        "adapters.inbound.cli.atlassian_auth.fetch_cloud_id_for_site",
+        "adapters.outbound.cli_auth.atlassian_client.fetch_cloud_id_for_site",
         return_value="",
     ):
         site3, err3 = atlassian_auth._resolve_site_from_subdomain("myteam")
@@ -486,11 +490,11 @@ def test_finalize_atlassian_site_unscoped() -> None:
     }
     with (
         patch(
-            "adapters.inbound.cli.atlassian_auth._finalize_selected_site",
+            "adapters.outbound.cli_auth.atlassian_client._finalize_selected_site",
             return_value=(site, None),
         ),
         patch(
-            "adapters.inbound.cli.atlassian_auth.verify_gateway_product",
+            "adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
             return_value=AtlassianVerifyResult(ok=True, display_name="Wiki"),
         ),
     ):
@@ -575,10 +579,10 @@ def test_run_atlassian_auth_emits_site_discovery_error_on_tenant_http_error(
 
     monkeypatch.setattr(atlassian_auth, "emit_error", _capture_error)
 
-    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_client_cls:
+    with patch("adapters.outbound.cli_auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
-        mock_client_cls.return_value.__enter__.return_value = client
-        client.get.side_effect = httpx.ConnectError("connection refused")
+        mock_client_cls.return_value = client
+        client.get.side_effect = AuthHttpError("connection refused")
 
         with pytest.raises(typer.Exit):
             run_atlassian_api_token_auth("jira", force=True)
@@ -608,9 +612,9 @@ def test_fetch_accessible_resources_bearer_fallback() -> None:
     bearer.json.return_value = [
         {"id": "c2", "url": "https://other.atlassian.net", "name": "Other"},
     ]
-    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_cls:
+    with patch("adapters.outbound.cli_auth.atlassian_client.AuthHttpClient") as mock_cls:
         client = MagicMock()
-        mock_cls.return_value.__enter__.return_value = client
+        mock_cls.return_value = client
         client.get.side_effect = [basic, bearer]
         sites = _fetch_accessible_resources("user@example.com", "token")
     assert len(sites) == 1
@@ -622,9 +626,9 @@ def test_fetch_accessible_resources_basic_success() -> None:
     response.json.return_value = [
         {"id": "c1", "url": "https://team.atlassian.net", "name": "Team"},
     ]
-    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_cls:
+    with patch("adapters.outbound.cli_auth.atlassian_client.AuthHttpClient") as mock_cls:
         client = MagicMock()
-        mock_cls.return_value.__enter__.return_value = client
+        mock_cls.return_value = client
         client.get.return_value = response
         sites = _fetch_accessible_resources("user@example.com", "token")
     assert len(sites) == 1
@@ -636,10 +640,10 @@ def test_fetch_accessible_resources_http_error_tries_next_scheme() -> None:
     bearer.json.return_value = [
         {"id": "c2", "url": "https://other.atlassian.net", "name": "Other"},
     ]
-    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_cls:
+    with patch("adapters.outbound.cli_auth.atlassian_client.AuthHttpClient") as mock_cls:
         client = MagicMock()
-        mock_cls.return_value.__enter__.return_value = client
-        client.get.side_effect = [httpx.ConnectError("down"), bearer]
+        mock_cls.return_value = client
+        client.get.side_effect = [AuthHttpError("down"), bearer]
         sites = _fetch_accessible_resources("user@example.com", "token")
     assert len(sites) == 1
     assert sites[0]["cloud_id"] == "c2"
@@ -654,16 +658,16 @@ def test_fetch_accessible_resources_invalid_json_tries_next_scheme() -> None:
     good.json.return_value = [
         {"id": "c1", "url": "https://team.atlassian.net", "name": "Team"},
     ]
-    with patch("adapters.inbound.cli.atlassian_auth.httpx.Client") as mock_cls:
+    with patch("adapters.outbound.cli_auth.atlassian_client.AuthHttpClient") as mock_cls:
         client = MagicMock()
-        mock_cls.return_value.__enter__.return_value = client
+        mock_cls.return_value = client
         client.get.side_effect = [bad_json, good]
         sites = _fetch_accessible_resources("user@example.com", "token")
     assert len(sites) == 1
 
 
 def test_discover_sites_with_api_token_filters_by_gateway() -> None:
-    from adapters.inbound.cli.atlassian_auth import AtlassianVerifyResult
+    from adapters.inbound.cli.auth.atlassian_auth import AtlassianVerifyResult
 
     candidates = [
         {
@@ -674,11 +678,11 @@ def test_discover_sites_with_api_token_filters_by_gateway() -> None:
     ]
     with (
         patch(
-            "adapters.inbound.cli.atlassian_auth.collect_site_candidates",
+            "adapters.outbound.cli_auth.atlassian_client.collect_site_candidates",
             return_value=candidates,
         ),
         patch(
-            "adapters.inbound.cli.atlassian_auth.verify_gateway_product",
+            "adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
             return_value=AtlassianVerifyResult(ok=True, display_name="Ada"),
         ),
     ):
@@ -687,11 +691,11 @@ def test_discover_sites_with_api_token_filters_by_gateway() -> None:
     assert sites[0]["cloud_id"] == "c1"
 
 def test_collect_login_site_candidates_merges_resources_and_email_hints() -> None:
-    from adapters.inbound.cli.atlassian_auth import collect_login_site_candidates
+    from adapters.inbound.cli.auth.atlassian_auth import collect_login_site_candidates
 
     with (
         patch(
-            "adapters.inbound.cli.atlassian_auth._fetch_accessible_resources",
+            "adapters.outbound.cli_auth.atlassian_client._fetch_accessible_resources",
             return_value=[
                 {
                     "cloud_id": "c1",
@@ -701,7 +705,7 @@ def test_collect_login_site_candidates_merges_resources_and_email_hints() -> Non
             ],
         ),
         patch(
-            "adapters.inbound.cli.atlassian_auth.fetch_cloud_id_for_site",
+            "adapters.outbound.cli_auth.atlassian_client.fetch_cloud_id_for_site",
             return_value="c1",
         ),
     ):
@@ -715,7 +719,7 @@ def test_collect_login_site_candidates_merges_resources_and_email_hints() -> Non
 
 def test_fetch_accessible_resources_alias() -> None:
     with patch(
-        "adapters.inbound.cli.atlassian_auth.discover_sites_with_api_token",
+        "adapters.outbound.cli_auth.atlassian_client.discover_sites_with_api_token",
         return_value=[],
     ) as discover:
         fetch_accessible_resources("u@example.com", "tok")
@@ -761,9 +765,9 @@ def test_get_json_raises_atlassian_read_error_on_http_error() -> None:
     client = MagicMock()
     client.__enter__.return_value = client
     client.__exit__.return_value = None
-    client.get.side_effect = httpx.ConnectError("connection refused")
+    client.get.side_effect = AuthHttpError("connection refused")
 
-    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+    with patch("adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient", return_value=client):
         with pytest.raises(AtlassianReadError, match="jira GET failed") as exc_info:
             _get_json(
                 email="user@example.com",
@@ -786,9 +790,9 @@ def test_get_json_retries_after_transport_error_on_first_variant() -> None:
     ok = MagicMock()
     ok.status_code = 200
     ok.json.return_value = {"issues": []}
-    client.get.side_effect = [httpx.ConnectError("down"), ok]
+    client.get.side_effect = [AuthHttpError("down"), ok]
 
-    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+    with patch("adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient", return_value=client):
         data = _get_json(
             email="user@example.com",
             api_token="secret",
@@ -806,9 +810,9 @@ def test_post_json_raises_atlassian_read_error_on_http_error() -> None:
     client = MagicMock()
     client.__enter__.return_value = client
     client.__exit__.return_value = None
-    client.post.side_effect = httpx.ConnectError("connection refused")
+    client.post.side_effect = AuthHttpError("connection refused")
 
-    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+    with patch("adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient", return_value=client):
         with pytest.raises(AtlassianReadError, match="jira POST failed") as exc_info:
             _post_json(
                 email="user@example.com",
@@ -859,7 +863,7 @@ def test_fetch_jira_issues_sample(monkeypatch: pytest.MonkeyPatch, tmp_path) -> 
     client.get.return_value = response
     client.post.return_value = response
 
-    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+    with patch("adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient", return_value=client):
         issues = fetch_jira_issues_sample(limit=5)
 
     assert len(issues) == 1
@@ -897,7 +901,7 @@ def test_fetch_confluence_spaces_sample(monkeypatch: pytest.MonkeyPatch, tmp_pat
     client.__exit__.return_value = None
     client.get.return_value = response
 
-    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+    with patch("adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient", return_value=client):
         spaces = fetch_confluence_spaces_sample(limit=5)
 
     assert len(spaces) == 1
@@ -950,7 +954,7 @@ def test_post_json_success() -> None:
     client.__exit__.return_value = None
     client.post.return_value = response
 
-    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+    with patch("adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient", return_value=client):
         data = _post_json(
             email="user@example.com",
             api_token="secret",
@@ -972,7 +976,7 @@ def test_get_json_confluence_wiki_path() -> None:
     client.__exit__.return_value = None
     client.get.return_value = response
 
-    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+    with patch("adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient", return_value=client):
         data = _get_json(
             email="user@example.com",
             api_token="secret",
@@ -994,7 +998,7 @@ def test_get_json_http_error_status() -> None:
     client.__exit__.return_value = None
     client.get.return_value = response
 
-    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+    with patch("adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient", return_value=client):
         with pytest.raises(AtlassianReadError, match="HTTP 500"):
             _get_json(
                 email="user@example.com",
@@ -1014,7 +1018,7 @@ def test_get_json_returns_list_payload_wrapped(monkeypatch: pytest.MonkeyPatch) 
     client.__exit__.return_value = None
     client.get.return_value = response
 
-    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+    with patch("adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient", return_value=client):
         data = _get_json(
             email="user@example.com",
             api_token="secret",
@@ -1027,7 +1031,7 @@ def test_get_json_returns_list_payload_wrapped(monkeypatch: pytest.MonkeyPatch) 
     assert data == {"data": [{"id": "1"}]}
 
 def test_prompt_workspace_interactive_selection(monkeypatch: pytest.MonkeyPatch) -> None:
-    import adapters.inbound.cli.atlassian_read as atlassian_read
+    import adapters.inbound.cli.auth.atlassian_read as atlassian_read
 
     prompts = iter(["2"])
     monkeypatch.setattr(atlassian_read.typer, "prompt", lambda *args, **kwargs: next(prompts))
@@ -1060,7 +1064,7 @@ def test_fetch_jira_issues_sample_uses_saved_project(
     )
     cs.save_jira_workspace_prefs(project_key="ENG")
     monkeypatch.setattr(
-        "adapters.inbound.cli.atlassian_read.fetch_jira_issues_in_project",
+        "adapters.outbound.cli_auth.atlassian_read_client.fetch_jira_issues_in_project",
         lambda key, limit: [{"key": f"{key}-1"}],
     )
 
@@ -1126,7 +1130,7 @@ def test_fetch_jira_issues_in_project(monkeypatch: pytest.MonkeyPatch, tmp_path)
     client.get.return_value = response
     client.post.return_value = response
 
-    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+    with patch("adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient", return_value=client):
         issues = fetch_jira_issues_in_project("ENG", limit=5)
 
     assert issues[0]["key"] == "ENG-9"
@@ -1192,7 +1196,7 @@ def test_fetch_confluence_pages_in_space(monkeypatch: pytest.MonkeyPatch, tmp_pa
     client.__exit__.return_value = None
     client.get.return_value = response
 
-    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+    with patch("adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient", return_value=client):
         pages = fetch_confluence_pages_in_space("DOCS", limit=5)
 
     assert pages[0]["title"] == "Runbook"
@@ -1214,7 +1218,7 @@ def test_fetch_jira_projects(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     client.__exit__.return_value = None
     client.get.return_value = response
 
-    with patch("adapters.inbound.cli.atlassian_read.httpx.Client", return_value=client):
+    with patch("adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient", return_value=client):
         projects = fetch_jira_projects(limit=5)
 
     assert projects[0]["key"] == "ENG"
@@ -1226,11 +1230,11 @@ def test_jira_use_flow_saves_prefs_only_after_successful_fetch(
     _save_creds(monkeypatch, tmp_path)
     saved: list[str] = []
     monkeypatch.setattr(
-        "adapters.inbound.cli.atlassian_read.save_jira_workspace_prefs",
+        "adapters.inbound.cli.auth.atlassian_read.save_jira_workspace_prefs",
         lambda *, project_key: saved.append(project_key),
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.atlassian_read.fetch_jira_projects",
+        "adapters.inbound.cli.auth.atlassian_read.fetch_jira_projects",
         lambda **kwargs: [{"key": "ENG", "name": "Engineering"}],
     )
 
@@ -1238,7 +1242,7 @@ def test_jira_use_flow_saves_prefs_only_after_successful_fetch(
         raise AtlassianReadError("jira read failed")
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.atlassian_read.fetch_jira_issues_in_project",
+        "adapters.inbound.cli.auth.atlassian_read.fetch_jira_issues_in_project",
         _fail_fetch,
     )
 
@@ -1248,7 +1252,7 @@ def test_jira_use_flow_saves_prefs_only_after_successful_fetch(
     assert saved == []
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.atlassian_read.fetch_jira_issues_in_project",
+        "adapters.inbound.cli.auth.atlassian_read.fetch_jira_issues_in_project",
         lambda *args, **kwargs: [{"key": "ENG-1"}],
     )
     result = run_jira_use_flow(workspace_key="ENG", limit=5)
@@ -1258,7 +1262,7 @@ def test_jira_use_flow_saves_prefs_only_after_successful_fetch(
 def test_jira_use_flow_requires_key_when_non_interactive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import adapters.inbound.cli.atlassian_read as atlassian_read
+    import adapters.inbound.cli.auth.atlassian_read as atlassian_read
 
     monkeypatch.setattr(atlassian_read.sys.stdin, "isatty", lambda: False)
     with pytest.raises(AtlassianReadError, match="Interactive workspace"):
@@ -1267,7 +1271,7 @@ def test_jira_use_flow_requires_key_when_non_interactive(
 def test_confluence_use_flow_requires_key_when_non_interactive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import adapters.inbound.cli.atlassian_read as atlassian_read
+    import adapters.inbound.cli.auth.atlassian_read as atlassian_read
 
     monkeypatch.setattr(atlassian_read.sys.stdin, "isatty", lambda: False)
     with pytest.raises(AtlassianReadError, match="Interactive workspace"):
@@ -1276,7 +1280,7 @@ def test_confluence_use_flow_requires_key_when_non_interactive(
 def test_jira_use_flow_interactive_prompt(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    import adapters.inbound.cli.atlassian_read as atlassian_read
+    import adapters.inbound.cli.auth.atlassian_read as atlassian_read
 
     _save_creds(monkeypatch, tmp_path)
     monkeypatch.setattr(atlassian_read.sys.stdin, "isatty", lambda: True)
@@ -1314,11 +1318,11 @@ def test_confluence_use_flow_saves_prefs_only_after_successful_fetch(
     )
     saved: list[str] = []
     monkeypatch.setattr(
-        "adapters.inbound.cli.atlassian_read.save_confluence_workspace_prefs",
+        "adapters.inbound.cli.auth.atlassian_read.save_confluence_workspace_prefs",
         lambda *, space_key: saved.append(space_key),
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.atlassian_read.fetch_confluence_spaces_sample",
+        "adapters.inbound.cli.auth.atlassian_read.fetch_confluence_spaces_sample",
         lambda **kwargs: [{"key": "DOCS", "name": "Docs"}],
     )
 
@@ -1326,7 +1330,7 @@ def test_confluence_use_flow_saves_prefs_only_after_successful_fetch(
         raise AtlassianReadError("confluence read failed")
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.atlassian_read.fetch_confluence_pages_in_space",
+        "adapters.inbound.cli.auth.atlassian_read.fetch_confluence_pages_in_space",
         _fail_fetch,
     )
 
@@ -1336,7 +1340,7 @@ def test_confluence_use_flow_saves_prefs_only_after_successful_fetch(
     assert saved == []
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.atlassian_read.fetch_confluence_pages_in_space",
+        "adapters.inbound.cli.auth.atlassian_read.fetch_confluence_pages_in_space",
         lambda *args, **kwargs: [{"title": "Page"}],
     )
     result = run_confluence_use_flow(workspace_key="DOCS", limit=5)

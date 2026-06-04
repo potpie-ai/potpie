@@ -14,7 +14,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
-import httpx
+from adapters.outbound.cli_auth.errors import CliAuthError
+from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 
 _DEFAULT_UI_URL = "http://localhost:3000"
 _DEFAULT_API_URL = "http://localhost:8001"
@@ -23,7 +24,7 @@ _DEFAULT_PORT_MAX = 9999
 _DEFAULT_TIMEOUT_SECONDS = 300.0
 
 
-class PotpieCliAuthError(Exception):
+class PotpieCliAuthError(CliAuthError):
     """Expected Potpie CLI authentication failure."""
 
 
@@ -369,18 +370,24 @@ def _origin_from_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def revoke_api_key_on_server(*, api_base_url: str, api_key: str) -> None:
+def revoke_api_key_on_server(
+    *, api_base_url: str, api_key: str, http: HttpClient | None = None
+) -> None:
     url = f"{api_base_url.rstrip('/')}/api/v1/api-keys"
+    owns = http is None
+    http = http or AuthHttpClient()
     try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.delete(
-                url,
-                headers={"X-API-Key": api_key.strip()},
-            )
-    except httpx.RequestError as exc:
+        response = http.delete(
+            url,
+            headers={"X-API-Key": api_key.strip()},
+        )
+    except AuthHttpError as exc:
         raise PotpieCliAuthError(
             f"Failed to revoke API key on server: {exc}"
         ) from exc
+    finally:
+        if owns:
+            http.close()
     if response.status_code == 404:
         return
     if response.status_code >= 300:
@@ -397,6 +404,7 @@ def fetch_account_me(
     api_base_url: str,
     api_key: str | None = None,
     id_token: str | None = None,
+    http: HttpClient | None = None,
 ) -> dict[str, Any]:
     url = f"{api_base_url.rstrip('/')}/api/v1/account/me"
     headers = {"Accept": "application/json"}
@@ -406,11 +414,15 @@ def fetch_account_me(
         headers["X-API-Key"] = api_key.strip()
     else:
         raise PotpieCliAuthError("No Potpie auth token available.")
+    owns = http is None
+    http = http or AuthHttpClient()
     try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(url, headers=headers)
-    except httpx.RequestError as exc:
+        response = http.get(url, headers=headers)
+    except AuthHttpError as exc:
         raise PotpieCliAuthError(f"Failed to fetch account: {exc}") from exc
+    finally:
+        if owns:
+            http.close()
     if response.status_code == 401:
         raise PotpieCliAuthError("Potpie session is invalid or expired.")
     if response.status_code >= 300:

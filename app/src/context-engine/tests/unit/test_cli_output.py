@@ -2,7 +2,7 @@
 
 import logging
 
-from adapters.inbound.cli.output import (
+from adapters.inbound.cli.ui.output import (
     DoctorSnapshot,
     configure_error_output,
     configure_cli_logging,
@@ -120,9 +120,10 @@ def test_emit_error_json_mode(capsys) -> None:
     try:
         emit_error("Bad thing", "use a better thing", hint="try again")
         err = capsys.readouterr().err
-        assert '"ok": false' in err
-        assert '"title": "Bad thing"' in err
-        assert '"hint": "try again"' in err
+        assert '"code": "bad_thing"' in err
+        assert '"message": "use a better thing"' in err
+        assert '"detail": "try again"' in err
+        assert '"recommended_next_action": null' in err
     finally:
         configure_error_output(as_json=False)
 

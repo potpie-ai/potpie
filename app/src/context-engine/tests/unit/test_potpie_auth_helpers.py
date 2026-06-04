@@ -10,15 +10,19 @@ import time
 from typing import Any
 
 import httpx
+
+from adapters.outbound.cli_auth.http import AuthHttpError
+from adapters.inbound.cli.commands._common import set_store
+from tests._auth_fakes import InMemoryCredentialStore
 import pytest
 
 from typer.testing import CliRunner
 
 from adapters.inbound.cli import host_cli as cli_main
-from adapters.inbound.cli.commands import _login_impl
-from adapters.inbound.cli.auth import firebase_session
-from adapters.inbound.cli.auth import potpie as potpie_auth
-from adapters.inbound.cli.auth.firebase_session import (
+from adapters.inbound.cli.auth import _login_impl
+from adapters.outbound.cli_auth import firebase_session
+from adapters.outbound.cli_auth import potpie as potpie_auth
+from adapters.outbound.cli_auth.firebase_session import (
     FirebaseSession,
     FirebaseSessionError,
     exchange_custom_token,
@@ -383,11 +387,11 @@ def test_fetch_account_me_uses_bearer_token(monkeypatch: pytest.MonkeyPatch) -> 
             calls.append({"url": url, "kwargs": kwargs})
             return httpx.Response(200, json={"email": "dev@example.com"})
 
-    monkeypatch.setattr(potpie_auth.httpx, "Client", FakeClient)
 
     data = potpie_auth.fetch_account_me(
         api_base_url="https://api.potpie.ai/",
         id_token="id-token",
+        http=FakeClient(),
     )
 
     assert data == {"email": "dev@example.com"}
@@ -418,9 +422,10 @@ def test_fetch_account_me_errors(monkeypatch: pytest.MonkeyPatch) -> None:
         def get(self, url: str, **kwargs: Any) -> httpx.Response:
             return httpx.Response(401, json={"detail": "bad token"})
 
-    monkeypatch.setattr(potpie_auth.httpx, "Client", FakeClient)
     with pytest.raises(potpie_auth.PotpieCliAuthError, match="invalid or expired"):
-        potpie_auth.fetch_account_me(api_base_url="https://api.potpie.ai", api_key="sk")
+        potpie_auth.fetch_account_me(
+            api_base_url="https://api.potpie.ai", api_key="sk", http=FakeClient()
+        )
 
     with pytest.raises(potpie_auth.PotpieCliAuthError, match="No Potpie auth token"):
         potpie_auth.fetch_account_me(api_base_url="https://api.potpie.ai")
@@ -440,13 +445,13 @@ def test_fetch_account_me_wraps_request_errors(
             pass
 
         def get(self, url: str, **kwargs: Any) -> httpx.Response:
-            request = httpx.Request("GET", url)
-            raise httpx.ConnectError("connection failed", request=request)
+            raise AuthHttpError("connection failed")
 
-    monkeypatch.setattr(potpie_auth.httpx, "Client", FakeClient)
 
     with pytest.raises(potpie_auth.PotpieCliAuthError, match="Failed to fetch account: connection failed"):
-        potpie_auth.fetch_account_me(api_base_url="https://api.potpie.ai", api_key="sk")
+        potpie_auth.fetch_account_me(
+            api_base_url="https://api.potpie.ai", api_key="sk", http=FakeClient()
+        )
 
 
 def test_revoke_api_key_on_server_handles_not_found_and_errors(
@@ -467,15 +472,16 @@ def test_revoke_api_key_on_server_handles_not_found_and_errors(
         def delete(self, url: str, **kwargs: Any) -> httpx.Response:
             return httpx.Response(next(statuses), json={"detail": "server error"})
 
-    monkeypatch.setattr(potpie_auth.httpx, "Client", FakeClient)
     potpie_auth.revoke_api_key_on_server(
         api_base_url="https://api.potpie.ai",
         api_key="sk-test",
+        http=FakeClient(),
     )
     with pytest.raises(potpie_auth.PotpieCliAuthError, match="Failed to revoke"):
         potpie_auth.revoke_api_key_on_server(
             api_base_url="https://api.potpie.ai",
             api_key="sk-test",
+            http=FakeClient(),
         )
 
 
@@ -493,10 +499,8 @@ def test_revoke_api_key_on_server_wraps_request_errors(
             pass
 
         def delete(self, url: str, **kwargs: Any) -> httpx.Response:
-            request = httpx.Request("DELETE", url)
-            raise httpx.ConnectError("connection failed", request=request)
+            raise AuthHttpError("connection failed")
 
-    monkeypatch.setattr(potpie_auth.httpx, "Client", FakeClient)
 
     with pytest.raises(
         potpie_auth.PotpieCliAuthError,
@@ -505,6 +509,7 @@ def test_revoke_api_key_on_server_wraps_request_errors(
         potpie_auth.revoke_api_key_on_server(
             api_base_url="https://api.potpie.ai",
             api_key="sk-test",
+            http=FakeClient(),
         )
 
 # Firebase session helper coverage
@@ -533,9 +538,10 @@ def test_exchange_custom_token_calls_firebase(monkeypatch: pytest.MonkeyPatch) -
                 },
             )
 
-    monkeypatch.setattr(firebase_session.httpx, "Client", FakeClient)
 
-    session = exchange_custom_token("header.payload.signature", firebase_api_key="key")
+    session = exchange_custom_token(
+        "header.payload.signature", firebase_api_key="key", http=FakeClient()
+    )
 
     assert session.id_token == "id-token"
     assert session.refresh_token == "refresh-token"
@@ -595,10 +601,11 @@ def test_exchange_custom_token_errors_on_firebase_response(
         def post(self, url: str, **kwargs: Any) -> httpx.Response:
             return httpx.Response(400, json={"error": "bad token"})
 
-    monkeypatch.setattr(firebase_session.httpx, "Client", FakeClient)
 
     with pytest.raises(FirebaseSessionError, match="custom token exchange failed"):
-        exchange_custom_token("header.payload.signature", firebase_api_key="key")
+        exchange_custom_token(
+            "header.payload.signature", firebase_api_key="key", http=FakeClient()
+        )
 
 
 def test_exchange_custom_token_requires_id_and_refresh_tokens(
@@ -617,10 +624,11 @@ def test_exchange_custom_token_requires_id_and_refresh_tokens(
         def post(self, url: str, **kwargs: Any) -> httpx.Response:
             return httpx.Response(200, json={"idToken": "id-token"})
 
-    monkeypatch.setattr(firebase_session.httpx, "Client", FakeClient)
 
     with pytest.raises(FirebaseSessionError, match="missing idToken or refreshToken"):
-        exchange_custom_token("header.payload.signature", firebase_api_key="key")
+        exchange_custom_token(
+            "header.payload.signature", firebase_api_key="key", http=FakeClient()
+        )
 
 
 def test_exchange_custom_token_wraps_request_errors(
@@ -637,13 +645,13 @@ def test_exchange_custom_token_wraps_request_errors(
             pass
 
         def post(self, url: str, **kwargs: Any) -> httpx.Response:
-            request = httpx.Request("POST", url)
-            raise httpx.ConnectError("connection failed", request=request)
+            raise AuthHttpError("connection failed")
 
-    monkeypatch.setattr(firebase_session.httpx, "Client", FakeClient)
 
     with pytest.raises(FirebaseSessionError, match="request failed: connection failed"):
-        exchange_custom_token("header.payload.signature", firebase_api_key="key")
+        exchange_custom_token(
+            "header.payload.signature", firebase_api_key="key", http=FakeClient()
+        )
 
 
 def test_exchange_custom_token_wraps_json_parse_errors(
@@ -662,10 +670,11 @@ def test_exchange_custom_token_wraps_json_parse_errors(
         def post(self, url: str, **kwargs: Any) -> httpx.Response:
             return httpx.Response(200, text="not json")
 
-    monkeypatch.setattr(firebase_session.httpx, "Client", FakeClient)
 
     with pytest.raises(FirebaseSessionError, match="response parsing failed"):
-        exchange_custom_token("header.payload.signature", firebase_api_key="key")
+        exchange_custom_token(
+            "header.payload.signature", firebase_api_key="key", http=FakeClient()
+        )
 
 
 def test_refresh_id_token_form_encodes_refresh_token(
@@ -694,9 +703,10 @@ def test_refresh_id_token_form_encodes_refresh_token(
                 },
             )
 
-    monkeypatch.setattr(firebase_session.httpx, "Client", FakeClient)
 
-    session = refresh_id_token("refresh+token/with=symbols", firebase_api_key="key")
+    session = refresh_id_token(
+        "refresh+token/with=symbols", firebase_api_key="key", http=FakeClient()
+    )
 
     assert session.id_token == "new-id-token"
     assert session.refresh_token == "new-refresh-token"
@@ -723,10 +733,11 @@ def test_refresh_id_token_errors_on_firebase_response(
         def post(self, url: str, **kwargs: Any) -> httpx.Response:
             return httpx.Response(400, json={"error": "bad refresh"})
 
-    monkeypatch.setattr(firebase_session.httpx, "Client", FakeClient)
 
     with pytest.raises(FirebaseSessionError, match="token refresh failed"):
-        refresh_id_token("refresh-token", firebase_api_key="key")
+        refresh_id_token(
+            "refresh-token", firebase_api_key="key", http=FakeClient()
+        )
 
 
 def test_refresh_id_token_requires_response_tokens(
@@ -745,10 +756,11 @@ def test_refresh_id_token_requires_response_tokens(
         def post(self, url: str, **kwargs: Any) -> httpx.Response:
             return httpx.Response(200, json={"id_token": "id-token"})
 
-    monkeypatch.setattr(firebase_session.httpx, "Client", FakeClient)
 
     with pytest.raises(FirebaseSessionError, match="missing id_token or refresh_token"):
-        refresh_id_token("refresh-token", firebase_api_key="key")
+        refresh_id_token(
+            "refresh-token", firebase_api_key="key", http=FakeClient()
+        )
 
 
 def test_refresh_id_token_wraps_request_errors(
@@ -765,13 +777,13 @@ def test_refresh_id_token_wraps_request_errors(
             pass
 
         def post(self, url: str, **kwargs: Any) -> httpx.Response:
-            request = httpx.Request("POST", url)
-            raise httpx.ConnectError("connection failed", request=request)
+            raise AuthHttpError("connection failed")
 
-    monkeypatch.setattr(firebase_session.httpx, "Client", FakeClient)
 
     with pytest.raises(FirebaseSessionError, match="request failed: connection failed"):
-        refresh_id_token("refresh-token", firebase_api_key="key")
+        refresh_id_token(
+            "refresh-token", firebase_api_key="key", http=FakeClient()
+        )
 
 
 def test_refresh_id_token_wraps_json_parse_errors(
@@ -790,10 +802,11 @@ def test_refresh_id_token_wraps_json_parse_errors(
         def post(self, url: str, **kwargs: Any) -> httpx.Response:
             return httpx.Response(200, text="not json")
 
-    monkeypatch.setattr(firebase_session.httpx, "Client", FakeClient)
 
     with pytest.raises(FirebaseSessionError, match="response parsing failed"):
-        refresh_id_token("refresh-token", firebase_api_key="key")
+        refresh_id_token(
+            "refresh-token", firebase_api_key="key", http=FakeClient()
+        )
 
 
 def test_refresh_id_token_requires_refresh_token() -> None:
@@ -820,8 +833,8 @@ def test_id_token_expires_at_falls_back_for_invalid_token() -> None:
 def test_login_runs_browser_flow_and_stores_refresh_token(
     monkeypatch,
 ) -> None:
-    store_calls: list[tuple[str, str, str]] = []
-    id_token_calls: list[str] = []
+    store = InMemoryCredentialStore()
+    set_store(store)
 
     class _CallbackResult:
         custom_token = "header.payload.signature"
@@ -837,42 +850,19 @@ def test_login_runs_browser_flow_and_stores_refresh_token(
             expires_at=123.0,
         ),
     )
-    monkeypatch.setattr(
-        _login_impl,
-        "store_potpie_firebase_refresh_token",
-        lambda token, *, created_at, firebase_api_key=None: store_calls.append(
-            (token, created_at, firebase_api_key or "")
-        ),
-    )
-    monkeypatch.setattr(
-        _login_impl,
-        "store_potpie_firebase_id_token",
-        id_token_calls.append,
-    )
 
     result = runner.invoke(cli_main.app, ["login"])
 
     assert result.exit_code == 0, result.stdout
     assert "Logged in to Potpie successfully." in result.stdout
-    assert len(store_calls) == 1
-    assert store_calls[0][0] == "refresh-token"
-    assert store_calls[0][2] == "firebase-key"
-    assert id_token_calls == ["id-token"]
+    assert store.firebase_refresh_token == "refresh-token"
+    assert store.firebase_api_key == "firebase-key"
+    assert store.firebase_id_token == "id-token"
 
 
 def test_login_api_key_command_stores_api_key_securely(monkeypatch) -> None:
-    stored_keys: list[tuple[str, str]] = []
-    stored_urls: list[str | None] = []
-    monkeypatch.setattr(
-        _login_impl,
-        "store_potpie_api_key",
-        lambda token, *, created_at: stored_keys.append((token, created_at)),
-    )
-    monkeypatch.setattr(
-        _login_impl,
-        "write_api_base_url",
-        lambda api_base_url: stored_urls.append(api_base_url),
-    )
+    store = InMemoryCredentialStore()
+    set_store(store)
 
     result = runner.invoke(
         cli_main.app,
@@ -880,48 +870,44 @@ def test_login_api_key_command_stores_api_key_securely(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0, result.stdout
-    assert len(stored_keys) == 1
-    assert stored_keys[0][0] == "sk-legacy"
-    assert stored_urls == ["https://api.example.com/"]
+    assert store.api_key == "sk-legacy"
+    assert store.api_base_url == "https://api.example.com/"
     assert "Saved API key to keyring" in result.stdout
 
 
 def test_logout_clears_potpie_auth_only(monkeypatch) -> None:
-    cleared: list[bool] = []
-    monkeypatch.setattr(_login_impl, "get_potpie_auth_type", lambda: "potpie")
-    monkeypatch.setattr(
-        _login_impl,
-        "clear_potpie_auth",
-        lambda *, clear_api_key=False: cleared.append(clear_api_key),
-    )
+    store = InMemoryCredentialStore()
+    store.auth_type = "potpie"
+    store.firebase_refresh_token = "rt"
+    store.api_key = "keep"
+    set_store(store)
 
     result = runner.invoke(cli_main.app, ["logout"])
 
     assert result.exit_code == 0, result.stdout
-    assert cleared == [False]
     assert "Logged out of Potpie." in result.stdout
+    assert store.get_potpie_auth_type() == ""
+    # clear_api_key defaults False for a Firebase session — the API key is kept.
+    assert store.api_key == "keep"
 
 
 def test_logout_revokes_api_key_when_auth_type_is_api_key(monkeypatch) -> None:
     revoked: list[str] = []
-    cleared: list[bool] = []
-    monkeypatch.setattr(_login_impl, "get_potpie_auth_type", lambda: "api_key")
-    monkeypatch.setattr(_login_impl, "get_stored_api_key", lambda: "sk-test")
+    store = InMemoryCredentialStore()
+    store.auth_type = "api_key"
+    store.api_key = "sk-test"
+    set_store(store)
     monkeypatch.setattr(
         _login_impl,
         "revoke_api_key_on_server",
         lambda *, api_base_url, api_key: revoked.append(api_key),
-    )
-    monkeypatch.setattr(
-        _login_impl,
-        "clear_potpie_auth",
-        lambda *, clear_api_key=False: cleared.append(clear_api_key),
     )
 
     result = runner.invoke(cli_main.app, ["logout"])
 
     assert result.exit_code == 0, result.stdout
     assert revoked == ["sk-test"]
-    assert cleared == [True]
+    # api_key auth -> clear_api_key=True -> the stored key is removed.
+    assert store.api_key == ""
 
 

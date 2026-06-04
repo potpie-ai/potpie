@@ -5,12 +5,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from adapters.inbound.cli.credentials_store import (
+from adapters.outbound.cli_auth.credentials_store import (
     get_integration_tokens,
     save_integration_tokens,
 )
-from adapters.inbound.cli.provider_config import Provider
-from adapters.inbound.cli.token_exchange import refresh_access_token
+from adapters.outbound.cli_auth.provider_config import Provider
+from adapters.outbound.cli_auth.token_exchange import refresh_access_token
 
 REFRESH_BUFFER_SECONDS = 300
 

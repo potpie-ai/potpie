@@ -8,7 +8,9 @@ import threading
 import urllib.error
 import urllib.request
 import pytest
-from adapters.inbound.cli.callback_server import (
+from adapters.inbound.cli.commands._common import set_store
+from tests._auth_fakes import InMemoryCredentialStore
+from adapters.outbound.cli_auth.callback_server import (
     OAuthCallbackResult,
     _first,
     _oauth_callback_failure_html,
@@ -16,15 +18,15 @@ from adapters.inbound.cli.callback_server import (
 )
 import base64
 import hashlib
-from adapters.inbound.cli.pkce import generate_pkce_pair
+from adapters.outbound.cli_auth.pkce import generate_pkce_pair
 from unittest.mock import MagicMock, patch
-from adapters.inbound.cli import token_exchange as tx
+from adapters.outbound.cli_auth import token_exchange as tx
 from unittest.mock import patch
-from adapters.inbound.cli import integration_session as session
+from adapters.outbound.cli_auth import integration_session as session
 from unittest.mock import MagicMock
 import typer
-from adapters.inbound.cli import auth_commands
-from adapters.inbound.cli.callback_server import OAuthCallbackResult
+from adapters.inbound.cli.auth import auth_commands
+from adapters.outbound.cli_auth.callback_server import OAuthCallbackResult
 import json
 # --- test_callback_server.py ---
 
@@ -146,13 +148,13 @@ def test_exchange_authorization_code_success() -> None:
     client.__exit__.return_value = None
     client.post.return_value = response
 
-    with patch("adapters.inbound.cli.token_exchange.httpx.Client", return_value=client):
-        tokens = tx.exchange_authorization_code(
-            "linear",
-            code="auth-code",
-            code_verifier="verifier",
-            redirect_uri="http://localhost:8080/callback",
-        )
+    tokens = tx.exchange_authorization_code(
+        "linear",
+        code="auth-code",
+        code_verifier="verifier",
+        redirect_uri="http://localhost:8080/callback",
+        http=client,
+    )
 
     assert tokens["access_token"] == "access"
     assert tokens["refresh_token"] == "refresh"
@@ -179,13 +181,13 @@ def test_exchange_authorization_code_http_error() -> None:
     client.__exit__.return_value = None
     client.post.return_value = response
 
-    with patch("adapters.inbound.cli.token_exchange.httpx.Client", return_value=client):
-        with pytest.raises(RuntimeError, match="Token exchange failed"):
-            tx.exchange_authorization_code(
-                "linear",
-                code="c",
-                code_verifier="v",
-            )
+    with pytest.raises(RuntimeError, match="Token exchange failed"):
+        tx.exchange_authorization_code(
+            "linear",
+            code="c",
+            code_verifier="v",
+            http=client,
+        )
 
 def test_refresh_access_token_success() -> None:
     response = MagicMock()
@@ -200,8 +202,7 @@ def test_refresh_access_token_success() -> None:
     client.__exit__.return_value = None
     client.post.return_value = response
 
-    with patch("adapters.inbound.cli.token_exchange.httpx.Client", return_value=client):
-        tokens = tx.refresh_access_token("linear", refresh_token="rt")
+    tokens = tx.refresh_access_token("linear", refresh_token="rt", http=client)
 
     assert tokens["access_token"] == "new-access"
     assert tokens["refresh_token"] == "rt"
@@ -233,9 +234,8 @@ def test_refresh_http_error() -> None:
     client.__exit__.return_value = None
     client.post.return_value = response
 
-    with patch("adapters.inbound.cli.token_exchange.httpx.Client", return_value=client):
-        with pytest.raises(RuntimeError, match="Token refresh failed"):
-            tx.refresh_access_token("linear", refresh_token="rt")
+    with pytest.raises(RuntimeError, match="Token refresh failed"):
+        tx.refresh_access_token("linear", refresh_token="rt", http=client)
 
 # --- test_integration_session.py ---
 
@@ -405,12 +405,8 @@ def test_run_linear_oauth_flow_success(monkeypatch: pytest.MonkeyPatch) -> None:
             "scope": "read",
         },
     )
-    saved: list[dict] = []
-    monkeypatch.setattr(
-        auth_commands,
-        "save_integration_tokens",
-        lambda _provider, tokens: saved.append(tokens),
-    )
+    store = InMemoryCredentialStore()
+    set_store(store)
     printed: list[dict] = []
     monkeypatch.setattr(
         auth_commands,
@@ -419,7 +415,7 @@ def test_run_linear_oauth_flow_success(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     auth_commands._run_linear_oauth_flow(force=True)
 
-    assert saved and saved[0]["access_token"] == "access"
+    assert store.get_integration_tokens("linear").get("access_token") == "access"
     assert printed and printed[-1].get("ok") is True
 
 def test_run_linear_oauth_flow_already_connected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -493,7 +489,7 @@ def test_run_linear_oauth_flow_expired_reauth_message(monkeypatch: pytest.Monkey
         "exchange_authorization_code",
         lambda *_a, **_k: {"access_token": "a", "expires_at": 9999999999.0},
     )
-    monkeypatch.setattr(auth_commands, "save_integration_tokens", lambda *_a, **_k: None)
+    set_store(InMemoryCredentialStore())
     lines: list[str] = []
     monkeypatch.setattr(
         auth_commands,
@@ -757,7 +753,7 @@ def test_run_linear_oauth_flow_webbrowser_not_opened(monkeypatch: pytest.MonkeyP
         "exchange_authorization_code",
         lambda *_a, **_k: {"access_token": "a", "expires_at": 9999999999.0},
     )
-    monkeypatch.setattr(auth_commands, "save_integration_tokens", lambda *_a, **_k: None)
+    set_store(InMemoryCredentialStore())
     lines: list[str] = []
     monkeypatch.setattr(
         auth_commands,

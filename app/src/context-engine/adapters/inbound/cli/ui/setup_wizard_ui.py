@@ -19,7 +19,7 @@ from rich.table import Table
 from rich.markup import escape
 from rich.text import Text
 
-from adapters.inbound.cli.potpie_logo_anim import (
+from adapters.inbound.cli.ui.potpie_logo_anim import (
     chomp_glyph,
     content_width_for_panel,
     panel_width_for_console,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import traceback
 from dataclasses import dataclass, field
@@ -71,26 +72,38 @@ class DoctorSnapshot:
     summary_lines: list[str] = field(default_factory=list)
 
 
+def _error_code(title: str) -> str:
+    """Stable machine code from a human title ('GitHub login failed' -> 'github_login_failed')."""
+    slug = re.sub(r"[^a-z0-9]+", "_", title.strip().lower()).strip("_")
+    return slug or "error"
+
+
 def emit_error(
     title: str,
     message: str,
     *,
     hint: str | None = None,
+    code: str | None = None,
+    next_action: str | None = None,
     verbose: bool = False,
     exc: BaseException | None = None,
 ) -> None:
+    """Emit a structured error.
+
+    JSON mode mirrors the host-routed error contract (``commands/_common.fail``):
+    ``{code, message, detail, recommended_next_action}`` — one schema across the
+    whole CLI. Human mode keeps the rich title/message/hint rendering used by the
+    interactive auth flows.
+    """
     if _json_errors:
         payload: dict[str, Any] = {
-            "ok": False,
-            "error": {
-                "title": title,
-                "message": message,
-            },
+            "code": code or _error_code(title),
+            "message": message,
+            "detail": hint,
+            "recommended_next_action": next_action,
         }
-        if hint:
-            payload["error"]["hint"] = hint
         if verbose and exc is not None:
-            payload["error"]["traceback"] = "".join(
+            payload["traceback"] = "".join(
                 traceback.format_exception(type(exc), exc, exc.__traceback__)
             )
         print(json.dumps(payload), file=sys.stderr)

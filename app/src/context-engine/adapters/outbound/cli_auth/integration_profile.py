@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
+from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 
 _LINEAR_VIEWER_QUERY = "query { viewer { id name email organization { id name } } }"
 
@@ -15,7 +15,9 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def fetch_linear_viewer(access_token: str) -> dict[str, Any]:
+def fetch_linear_viewer(
+    access_token: str, *, http: HttpClient | None = None
+) -> dict[str, Any]:
     """Return ``account`` and ``organization`` dicts from Linear's GraphQL API."""
     token = access_token.strip()
     if not token:
@@ -24,15 +26,19 @@ def fetch_linear_viewer(access_token: str) -> dict[str, Any]:
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
+    owns = http is None
+    http = http or AuthHttpClient(timeout=15.0)
     try:
-        with httpx.Client(timeout=15.0) as client:
-            response = client.post(
-                "https://api.linear.app/graphql",
-                headers=headers,
-                json={"query": _LINEAR_VIEWER_QUERY},
-            )
-    except httpx.HTTPError:
+        response = http.post(
+            "https://api.linear.app/graphql",
+            headers=headers,
+            json={"query": _LINEAR_VIEWER_QUERY},
+        )
+    except AuthHttpError:
         return {}
+    finally:
+        if owns:
+            http.close()
     if response.status_code != 200:
         return {}
     try:

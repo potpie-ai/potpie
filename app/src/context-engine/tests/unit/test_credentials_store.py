@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from keyring.errors import KeyringError
 
-from adapters.inbound.cli import credentials_store as cs
+from adapters.outbound.cli_auth import credentials_store as cs
 
 
 def test_config_dir_respects_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

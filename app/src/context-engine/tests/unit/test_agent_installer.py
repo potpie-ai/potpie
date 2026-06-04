@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from adapters.inbound.cli.agent_installer import (
+from adapters.outbound.skills.agent_installer import (
     install_agent_bundle,
     iter_template_files,
     resolve_install_root,

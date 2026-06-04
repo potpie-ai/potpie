@@ -7,7 +7,9 @@ from typing import Any
 
 import httpx
 
-from adapters.inbound.cli.auth.models import (
+from adapters.outbound.cli_auth.errors import CliAuthError
+from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from adapters.outbound.cli_auth.models import (
     AccessToken,
     DeviceCode,
     GitHubAccount,
@@ -25,7 +27,7 @@ GITHUB_PROVIDER_HOST = "github.com"
 GITHUB_VERIFICATION_URI = "https://github.com/login/device"
 
 
-class GitHubDeviceFlowError(Exception):
+class GitHubDeviceFlowError(CliAuthError):
     """Expected GitHub auth flow failure."""
 
 
@@ -72,21 +74,22 @@ def request_device_code(
     *,
     client_id: str | None = None,
     scopes: tuple[str, ...] = GITHUB_SCOPES,
-    client: httpx.Client | None = None,
+    http: HttpClient | None = None,
 ) -> DeviceCode:
     client_id = client_id or get_github_client_id()
-    owns_client = client is None
-    if owns_client:
-        client = httpx.Client(timeout=30.0)
+    owns = http is None
+    http = http or AuthHttpClient()
     try:
-        response = client.post(
+        response = http.post(
             GITHUB_DEVICE_CODE_URL,
             headers={"Accept": "application/json"},
             data={"client_id": client_id, "scope": " ".join(scopes)},
         )
+    except AuthHttpError as exc:
+        raise GitHubDeviceFlowError(str(exc)) from exc
     finally:
-        if owns_client:
-            client.close()
+        if owns:
+            http.close()
     data = _json_or_error(response)
     if response.status_code >= 400:
         raise GitHubDeviceFlowError(
@@ -109,13 +112,12 @@ def poll_for_access_token(
     device_code: DeviceCode,
     *,
     client_id: str | None = None,
-    client: httpx.Client | None = None,
+    http: HttpClient | None = None,
     sleep_fn: Any = time.sleep,
 ) -> AccessToken:
     client_id = client_id or get_github_client_id()
-    owns_client = client is None
-    if owns_client:
-        client = httpx.Client(timeout=30.0)
+    owns = http is None
+    http = http or AuthHttpClient()
     interval = device_code.interval
     deadline = time.monotonic() + max(device_code.expires_in, 1)
     try:
@@ -125,7 +127,7 @@ def poll_for_access_token(
                 raise GitHubDeviceFlowError(
                     "GitHub device code expired before authorization completed."
                 )
-            response = client.post(
+            response = http.post(
                 GITHUB_TOKEN_URL,
                 headers={"Accept": "application/json"},
                 data={
@@ -159,25 +161,26 @@ def poll_for_access_token(
                 data.get("error_description") or error or "GitHub token exchange failed."
             )
             raise GitHubDeviceFlowError(detail)
+    except AuthHttpError as exc:
+        raise GitHubDeviceFlowError(str(exc)) from exc
     finally:
-        if owns_client:
-            client.close()
+        if owns:
+            http.close()
 
 
 def verify_account(
     access_token: str,
     *,
-    client: httpx.Client | None = None,
+    http: HttpClient | None = None,
 ) -> GitHubAccount:
-    owns_client = client is None
-    if owns_client:
-        client = httpx.Client(timeout=30.0)
+    owns = http is None
+    http = http or AuthHttpClient()
     headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {access_token}",
     }
     try:
-        response = client.get(
+        response = http.get(
             GITHUB_USER_URL,
             headers=headers,
         )
@@ -194,7 +197,7 @@ def verify_account(
             )
         email = str(data["email"]) if data.get("email") is not None else None
         if email is None:
-            emails_response = client.get(GITHUB_USER_EMAILS_URL, headers=headers)
+            emails_response = http.get(GITHUB_USER_EMAILS_URL, headers=headers)
             if emails_response.status_code >= 400:
                 emails_data = _json_or_error(emails_response)
                 raise GitHubDeviceFlowError(
@@ -215,9 +218,11 @@ def verify_account(
             name=str(data["name"]) if data.get("name") is not None else None,
             email=email,
         )
+    except AuthHttpError as exc:
+        raise GitHubDeviceFlowError(str(exc)) from exc
     finally:
-        if owns_client:
-            client.close()
+        if owns:
+            http.close()
 
 
 def _has_next_page(response: httpx.Response) -> bool:
@@ -228,16 +233,15 @@ def _has_next_page(response: httpx.Response) -> bool:
 def list_user_owned_repositories(
     access_token: str,
     *,
-    client: httpx.Client | None = None,
+    http: HttpClient | None = None,
 ) -> list[dict[str, Any]]:
-    owns_client = client is None
-    if owns_client:
-        client = httpx.Client(timeout=30.0)
+    owns = http is None
+    http = http or AuthHttpClient()
     repos: list[dict[str, Any]] = []
     page = 1
     try:
         while True:
-            response = client.get(
+            response = http.get(
                 GITHUB_USER_REPOS_URL,
                 headers={
                     "Accept": "application/vnd.github+json",
@@ -273,9 +277,11 @@ def list_user_owned_repositories(
             if not _has_next_page(response):
                 return repos
             page += 1
+    except AuthHttpError as exc:
+        raise GitHubDeviceFlowError(str(exc)) from exc
     finally:
-        if owns_client:
-            client.close()
+        if owns:
+            http.close()
 
 
 def build_provider_credentials(

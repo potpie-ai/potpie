@@ -5,9 +5,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import httpx
-
-from adapters.inbound.cli.provider_config import (
+from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from adapters.outbound.cli_auth.provider_config import (
     OAuthProvider,
     get_client_id,
     get_redirect_uri,
@@ -21,6 +20,7 @@ def exchange_authorization_code(
     code: str,
     code_verifier: str,
     redirect_uri: str | None = None,
+    http: HttpClient | None = None,
 ) -> dict[str, Any]:
     """Exchange an authorization code (PKCE) for Linear OAuth tokens."""
     if provider != "linear":
@@ -43,12 +43,19 @@ def exchange_authorization_code(
         "code_verifier": code_verifier,
     }
 
-    with httpx.Client(timeout=30.0) as client:
-        response = client.post(
+    owns = http is None
+    http = http or AuthHttpClient()
+    try:
+        response = http.post(
             token_url(provider),
             data=payload,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
+    except AuthHttpError as exc:
+        raise RuntimeError(f"Token exchange request failed: {exc}") from exc
+    finally:
+        if owns:
+            http.close()
 
     if response.status_code != 200:
         raise RuntimeError(
@@ -62,6 +69,7 @@ def refresh_access_token(
     provider: OAuthProvider,
     *,
     refresh_token: str,
+    http: HttpClient | None = None,
 ) -> dict[str, Any]:
     """Exchange a refresh token for a new Linear access token."""
     if provider != "linear":
@@ -84,12 +92,19 @@ def refresh_access_token(
         "client_id": client_id,
     }
 
-    with httpx.Client(timeout=30.0) as client:
-        response = client.post(
+    owns = http is None
+    http = http or AuthHttpClient()
+    try:
+        response = http.post(
             token_url(provider),
             data=payload,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
+    except AuthHttpError as exc:
+        raise RuntimeError(f"Token refresh request failed: {exc}") from exc
+    finally:
+        if owns:
+            http.close()
 
     if response.status_code != 200:
         raise RuntimeError(

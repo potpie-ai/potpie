@@ -12,8 +12,8 @@ from typing import Any
 import typer
 from rich.markup import escape
 
-from adapters.inbound.cli.atlassian_auth import run_atlassian_api_token_auth
-from adapters.inbound.cli.atlassian_read import (
+from adapters.inbound.cli.auth.atlassian_auth import run_atlassian_api_token_auth
+from adapters.inbound.cli.auth.atlassian_read import (
     AtlassianReadError,
     fetch_confluence_content_sample,
     fetch_confluence_spaces_sample,
@@ -22,24 +22,23 @@ from adapters.inbound.cli.atlassian_read import (
     run_confluence_use_flow,
     run_jira_use_flow,
 )
-from adapters.inbound.cli.callback_server import OAuthCallbackResult, wait_for_oauth_callback
-from adapters.inbound.cli.credentials_store import (
+from adapters.outbound.cli_auth.callback_server import OAuthCallbackResult, wait_for_oauth_callback
+from adapters.outbound.cli_auth.credentials_store import (
     ProviderCredentialError,
-    clear_integration_tokens,
     credentials_path,
     get_integration_status,
     get_integration_tokens,
-    save_integration_tokens,
 )
-from adapters.inbound.cli.env_bootstrap import load_cli_env
-from adapters.inbound.cli.integration_session import (
+from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+from adapters.outbound.cli_auth.integration_session import (
     ensure_valid_integration_tokens,
     token_needs_refresh,
 )
-from adapters.inbound.cli.integration_verify import verify_integration_access
-from adapters.inbound.cli.output import emit_error, print_json_blob, print_plain_line
-from adapters.inbound.cli.pkce import generate_pkce_pair
-from adapters.inbound.cli.provider_config import (
+from adapters.outbound.cli_auth.integration_verify import verify_integration_access
+from adapters.inbound.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
+from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
+from adapters.outbound.cli_auth.pkce import generate_pkce_pair
+from adapters.outbound.cli_auth.provider_config import (
     Provider,
     authorization_url,
     get_callback_host,
@@ -49,7 +48,7 @@ from adapters.inbound.cli.provider_config import (
     get_redirect_uri,
     get_scopes,
 )
-from adapters.inbound.cli.token_exchange import exchange_authorization_code
+from adapters.outbound.cli_auth.token_exchange import exchange_authorization_code
 
 auth_app = typer.Typer(help="Authenticate CLI integrations.")
 linear_app = typer.Typer(help="Linear authentication.")
@@ -195,6 +194,7 @@ def _print_linear_login_success(
 def _run_linear_oauth_flow(*, force: bool = False) -> None:
     load_cli_env()
     j, v = _flags()
+    store = get_store()
 
     status = get_integration_status("linear")
     if status.get("authenticated") and not force:
@@ -263,7 +263,7 @@ def _run_linear_oauth_flow(*, force: bool = False) -> None:
             verbose=v,
             exc=callback_error if v else None,
         )
-        raise typer.Exit(code=1) from callback_error
+        raise typer.Exit(code=EXIT_AUTH) from callback_error
 
     if not j:
         print_plain_line(
@@ -294,7 +294,7 @@ def _run_linear_oauth_flow(*, force: bool = False) -> None:
                 verbose=v,
                 exc=callback_error if v else None,
             )
-        raise typer.Exit(code=1) from callback_error
+        raise typer.Exit(code=EXIT_AUTH) from callback_error
 
     if callback_result is None:
         emit_error(
@@ -302,7 +302,7 @@ def _run_linear_oauth_flow(*, force: bool = False) -> None:
             f"No response on {redirect_uri} within {_OAUTH_CALLBACK_TIMEOUT:.0f}s.",
             verbose=v,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_AUTH)
 
     callback = callback_result
     if callback.error:
@@ -310,7 +310,7 @@ def _run_linear_oauth_flow(*, force: bool = False) -> None:
         if callback.error_description:
             msg = f"{msg}: {callback.error_description}"
         emit_error("Linear OAuth failed", msg, verbose=v)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_AUTH)
 
     if not callback.code:
         emit_error(
@@ -318,7 +318,7 @@ def _run_linear_oauth_flow(*, force: bool = False) -> None:
             "No authorization code received.",
             verbose=v,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_AUTH)
 
     if callback.state != state:
         emit_error(
@@ -326,7 +326,7 @@ def _run_linear_oauth_flow(*, force: bool = False) -> None:
             "State mismatch; aborting for safety.",
             verbose=v,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_AUTH)
 
     try:
         tokens = exchange_authorization_code(
@@ -335,10 +335,10 @@ def _run_linear_oauth_flow(*, force: bool = False) -> None:
             code_verifier=code_verifier,
             redirect_uri=redirect_uri,
         )
-        save_integration_tokens("linear", tokens)
+        store.save_integration_tokens("linear", tokens)
     except (ValueError, RuntimeError, ProviderCredentialError) as exc:
         emit_error("Linear token exchange failed", str(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_AUTH) from exc
 
     _print_linear_login_success(get_integration_status("linear"), tokens=tokens)
 
@@ -354,7 +354,7 @@ def auth_status(
 ) -> None:
     """Show auth status for Potpie, GitHub, and all integrations."""
     load_cli_env()
-    from adapters.inbound.cli.credentials_store import (
+    from adapters.outbound.cli_auth.credentials_store import (
         get_stored_api_key,
         get_potpie_firebase_refresh_token,
         get_potpie_auth_type,
@@ -467,6 +467,7 @@ def auth_logout(
     """Remove locally stored credentials for a provider."""
     load_cli_env()
     j, v = _flags()
+    store = get_store()
     key = provider.strip().lower()
     if key in {"wiki", "conf"}:
         key = "confluence"
@@ -490,10 +491,10 @@ def auth_logout(
         raise typer.Exit(code=1)
 
     try:
-        clear_integration_tokens(key)
+        store.clear_integration_tokens(key)
     except (ProviderCredentialError, ValueError) as exc:
         emit_error(f"{key} logout failed", str(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_AUTH) from exc
 
     if was_authenticated:
         message = f"Logged out of {key}."
@@ -639,7 +640,7 @@ def _run_atlassian_quick_read(
         rows = fetcher(limit=limit)
     except AtlassianReadError as exc:
         emit_error(f"{name} read failed", str(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
 
     if j:
         print_json_blob(
@@ -754,7 +755,7 @@ def jira_ls(
         rows = fetch_jira_projects(limit=limit)
     except AtlassianReadError as exc:
         emit_error("Jira workspace list failed", str(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
     if j:
         print_json_blob({"ok": True, "provider": "jira", "projects": rows}, as_json=True)
         return
@@ -782,7 +783,7 @@ def jira_use(
         result = run_jira_use_flow(workspace_key=key, limit=limit)
     except AtlassianReadError as exc:
         emit_error("Jira fetch failed", str(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
     _run_product_use_result(result, product_label="Jira")
 
 
@@ -854,7 +855,7 @@ def confluence_ls(
         rows = fetch_confluence_spaces_sample(limit=limit)
     except AtlassianReadError as exc:
         emit_error("Confluence workspace list failed", str(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
     if j:
         print_json_blob({"ok": True, "provider": "confluence", "spaces": rows}, as_json=True)
         return
@@ -880,7 +881,7 @@ def confluence_use(
         result = run_confluence_use_flow(workspace_key=key, limit=limit)
     except AtlassianReadError as exc:
         emit_error("Confluence fetch failed", str(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
     _run_product_use_result(result, product_label="Confluence")
 
 

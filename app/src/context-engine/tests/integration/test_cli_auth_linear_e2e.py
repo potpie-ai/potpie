@@ -49,7 +49,7 @@ pytestmark = [
 ]
 
 _CONTEXT_ENGINE_ROOT = Path(__file__).resolve().parents[2]
-_E2E_KEYRING_BACKEND = "adapters.inbound.cli.e2e_keyring.E2EKeyring"
+_E2E_KEYRING_BACKEND = "adapters.outbound.cli_auth.e2e_keyring.E2EKeyring"
 
 
 def _truthy(name: str) -> bool:
@@ -99,7 +99,7 @@ def isolated_cli_env(
 ) -> Iterator[dict[str, str]]:
     """Isolated credentials dir + repo .env merged via load_cli_env."""
     _require_e2e_enabled()
-    import adapters.inbound.cli.env_bootstrap as env_bootstrap
+    import adapters.outbound.cli_auth.env_bootstrap as env_bootstrap
 
     saved_loaded = env_bootstrap._loaded
     saved_environ = os.environ.copy()
@@ -111,7 +111,7 @@ def isolated_cli_env(
     monkeypatch.setenv("POTPIE_E2E_KEYRING_FILE", str(keyring_file))
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", _E2E_KEYRING_BACKEND)
     env_bootstrap._loaded = False
-    from adapters.inbound.cli.env_bootstrap import load_cli_env
+    from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
 
     load_cli_env()
     _activate_e2e_keyring()
@@ -139,7 +139,7 @@ def test_e2e_linear_status_and_verify_with_seeded_tokens(isolated_cli_env: dict[
     if not access:
         pytest.skip("Set CLI_AUTH_E2E_LINEAR_ACCESS_TOKEN (or run interactive login test)")
 
-    from adapters.inbound.cli.credentials_store import save_integration_tokens
+    from adapters.outbound.cli_auth.credentials_store import save_integration_tokens
 
     tokens: dict[str, Any] = {
         "access_token": access,

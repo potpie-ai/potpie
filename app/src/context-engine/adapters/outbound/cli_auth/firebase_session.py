@@ -12,8 +12,11 @@ from urllib.parse import quote_plus
 
 import httpx
 
+from adapters.outbound.cli_auth.errors import CliAuthError
+from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 
-class FirebaseSessionError(Exception):
+
+class FirebaseSessionError(CliAuthError):
     """Expected Firebase session exchange or refresh failure."""
 
 
@@ -80,6 +83,7 @@ def exchange_custom_token(
     custom_token: str,
     *,
     firebase_api_key: str | None = None,
+    http: HttpClient | None = None,
 ) -> FirebaseSession:
     token = custom_token.strip()
     if len(token.split(".")) != 3:
@@ -89,17 +93,21 @@ def exchange_custom_token(
         "https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken"
         f"?key={api_key}"
     )
+    owns = http is None
+    http = http or AuthHttpClient()
     try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(
-                url,
-                json={"token": token, "returnSecureToken": True},
-                headers={"Content-Type": "application/json"},
-            )
-    except httpx.RequestError as exc:
+        response = http.post(
+            url,
+            json={"token": token, "returnSecureToken": True},
+            headers={"Content-Type": "application/json"},
+        )
+    except AuthHttpError as exc:
         raise FirebaseSessionError(
             f"Firebase custom token exchange request failed: {exc}"
         ) from exc
+    finally:
+        if owns:
+            http.close()
     if response.status_code >= 300:
         raise FirebaseSessionError(
             f"Firebase custom token exchange failed: {_json_or_text(response)!r}"
@@ -125,6 +133,7 @@ def refresh_id_token(
     refresh_token: str,
     *,
     firebase_api_key: str | None = None,
+    http: HttpClient | None = None,
 ) -> FirebaseSession:
     token = refresh_token.strip()
     if not token:
@@ -132,17 +141,21 @@ def refresh_id_token(
     api_key = (firebase_api_key or resolve_firebase_api_key()).strip()
     url = f"https://securetoken.googleapis.com/v1/token?key={api_key}"
     body = f"grant_type=refresh_token&refresh_token={quote_plus(token)}"
+    owns = http is None
+    http = http or AuthHttpClient()
     try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(
-                url,
-                content=body,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-    except httpx.RequestError as exc:
+        response = http.post(
+            url,
+            content=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    except AuthHttpError as exc:
         raise FirebaseSessionError(
             f"Firebase token refresh request failed: {exc}"
         ) from exc
+    finally:
+        if owns:
+            http.close()
     if response.status_code >= 300:
         raise FirebaseSessionError(
             f"Firebase token refresh failed: {_json_or_text(response)!r}"

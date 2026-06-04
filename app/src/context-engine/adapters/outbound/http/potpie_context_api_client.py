@@ -53,6 +53,7 @@ class PotpieContextApiClient:
         *,
         auth_headers: dict[str, str] | None = None,
         auth_headers_provider: Callable[[], dict[str, str]] | None = None,
+        reauth_provider: Callable[[], dict[str, str]] | None = None,
         timeout: float = 120.0,
         client_surface: str | None = None,
         client_name: str | None = None,
@@ -61,6 +62,10 @@ class PotpieContextApiClient:
         self._api_key = (api_key or "").strip()
         self._auth_headers = dict(auth_headers or {})
         self._auth_headers_provider = auth_headers_provider
+        # Called only on a 401 to force-refresh auth (e.g. a new Firebase ID
+        # token). Distinct from auth_headers_provider, which returns the cached
+        # headers used for the normal request.
+        self._reauth_provider = reauth_provider
         self._timeout = timeout
         self._client_surface = (client_surface or "").strip() or None
         self._client_name = (client_name or "").strip() or None
@@ -98,6 +103,33 @@ class PotpieContextApiClient:
         headers.pop("Content-Type", None)
         return headers
 
+    def _refresh_auth_headers(self) -> bool:
+        """Force-refresh auth headers after a 401.
+
+        Returns True only when fresh headers were obtained AND differ from those
+        just sent — so the caller retries only when a retry can actually succeed.
+        A static API key (unchanged headers) yields False and no wasted retry.
+        """
+        if self._reauth_provider is None:
+            return False
+        try:
+            fresh = dict(self._reauth_provider() or {})
+        except Exception:
+            return False
+        if not fresh:
+            return False
+        previous = (
+            self._auth_headers_provider()
+            if self._auth_headers_provider is not None
+            else self._auth_headers
+        )
+        if fresh == dict(previous or {}):
+            return False
+        # Pin the refreshed headers so _headers() uses them for the retry.
+        self._auth_headers = fresh
+        self._auth_headers_provider = None
+        return True
+
     def _raise_for_status(self, r: httpx.Response) -> None:
         if r.is_success:
             return
@@ -116,7 +148,7 @@ class PotpieContextApiClient:
     ) -> httpx.Response:
         with httpx.Client(timeout=self._timeout) as client:
             response = client.get(url, headers=self._get_headers(), params=params)
-            if response.status_code == 401 and self._auth_headers_provider is not None:
+            if response.status_code == 401 and self._refresh_auth_headers():
                 response = client.get(
                     url, headers=self._get_headers(), params=params
                 )
@@ -136,7 +168,7 @@ class PotpieContextApiClient:
                 json=json_body,
                 params=params,
             )
-            if response.status_code == 401 and self._auth_headers_provider is not None:
+            if response.status_code == 401 and self._refresh_auth_headers():
                 response = client.post(
                     url,
                     headers=self._headers(),

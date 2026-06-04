@@ -26,7 +26,7 @@ def register(root: typer.Typer) -> None:
     # into auth_app (and github/git at root). Both must run BEFORE auth_app is
     # mounted under `auth` so the sub-apps are present.
     from adapters.inbound.cli.auth.github_commands import register_github_commands
-    from adapters.inbound.cli.auth_commands import auth_app
+    from adapters.inbound.cli.auth.auth_commands import auth_app
 
     register_github_commands(root)
     root.add_typer(auth_app, name="auth")
@@ -47,7 +47,7 @@ def register(root: typer.Typer) -> None:
         ),
     ) -> None:
         """Sign in to Potpie (browser Firebase session, or --api-key to store a key)."""
-        from adapters.inbound.cli.commands._login_impl import (
+        from adapters.inbound.cli.auth._login_impl import (
             potpie_login_api_key_impl,
             potpie_login_impl,
         )
@@ -60,7 +60,7 @@ def register(root: typer.Typer) -> None:
     @root.command("logout")
     def logout() -> None:
         """Remove Potpie account auth from the system keychain."""
-        from adapters.inbound.cli.commands._login_impl import potpie_logout_impl
+        from adapters.inbound.cli.auth._login_impl import potpie_logout_impl
 
         potpie_logout_impl()
 

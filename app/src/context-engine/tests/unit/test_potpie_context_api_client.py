@@ -122,14 +122,32 @@ def test_client_uses_auth_header_provider_for_get_requests(
     assert provider_calls == ["called"]
 
 
-def test_client_retries_get_once_on_401_with_auth_provider(
+def _always_401_get_client(get_calls: list[str]) -> type:
+    class FakeClient:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *a: Any) -> None:
+            pass
+
+        def post(self, *a: Any, **k: Any) -> httpx.Response:
+            raise AssertionError("unused")
+
+        def get(self, url: str, **kwargs: Any) -> httpx.Response:
+            get_calls.append(kwargs["headers"].get("Authorization", ""))
+            return httpx.Response(401)
+
+    return FakeClient
+
+
+def test_client_refreshes_auth_on_401_via_reauth_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A 401 forces a re-auth and retries once with the refreshed headers."""
     get_calls: list[str] = []
-    tokens = iter(["expired-token", "fresh-token"])
-
-    def _provider() -> dict[str, str]:
-        return {"Authorization": f"Bearer {next(tokens)}"}
 
     class FakeClient:
         def __init__(self, *a: Any, **k: Any) -> None:
@@ -145,8 +163,7 @@ def test_client_retries_get_once_on_401_with_auth_provider(
             raise AssertionError("unused")
 
         def get(self, url: str, **kwargs: Any) -> httpx.Response:
-            auth = kwargs["headers"].get("Authorization", "")
-            get_calls.append(auth)
+            get_calls.append(kwargs["headers"].get("Authorization", ""))
             if len(get_calls) == 1:
                 return httpx.Response(401)
             return httpx.Response(200, json=[{"id": "c1"}])
@@ -157,13 +174,55 @@ def test_client_retries_get_once_on_401_with_auth_provider(
     )
     c = PotpieContextApiClient(
         "http://example.com",
-        auth_headers_provider=_provider,
+        auth_headers={"Authorization": "Bearer stale-token"},
+        reauth_provider=lambda: {"Authorization": "Bearer fresh-token"},
     )
 
     rows = c.list_context_pots()
 
     assert rows == [{"id": "c1"}]
-    assert get_calls == ["Bearer expired-token", "Bearer fresh-token"]
+    # First request uses the stale token; the retry uses the refreshed one.
+    assert get_calls == ["Bearer stale-token", "Bearer fresh-token"]
+
+
+def test_client_does_not_retry_401_without_reauth_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No reauth hook (e.g. plain API key) → a 401 surfaces, no wasted retry."""
+    get_calls: list[str] = []
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        _always_401_get_client(get_calls),
+    )
+    c = PotpieContextApiClient("http://example.com", "k")
+
+    with pytest.raises(PotpieContextApiError) as ei:
+        c.list_context_pots()
+
+    assert ei.value.status_code == 401
+    assert len(get_calls) == 1
+
+
+def test_client_does_not_retry_401_when_reauth_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reauth that returns identical headers → no retry (retry couldn't succeed)."""
+    get_calls: list[str] = []
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        _always_401_get_client(get_calls),
+    )
+    c = PotpieContextApiClient(
+        "http://example.com",
+        auth_headers={"Authorization": "Bearer t"},
+        reauth_provider=lambda: {"Authorization": "Bearer t"},
+    )
+
+    with pytest.raises(PotpieContextApiError) as ei:
+        c.list_context_pots()
+
+    assert ei.value.status_code == 401
+    assert len(get_calls) == 1
 
 
 def test_client_ingest_queued(monkeypatch: pytest.MonkeyPatch) -> None:

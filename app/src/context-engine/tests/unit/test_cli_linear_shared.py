@@ -6,7 +6,7 @@ from __future__ import annotations
 import typer
 import pytest
 from typer.testing import CliRunner
-from adapters.inbound.cli import auth_commands
+from adapters.inbound.cli.auth import auth_commands
 from adapters.inbound.cli import host_cli as cli_main
 from unittest.mock import MagicMock, patch
 from unittest.mock import MagicMock
@@ -14,17 +14,20 @@ import json
 import stat
 from pathlib import Path
 from keyring.errors import KeyringError
-from adapters.inbound.cli import credentials_store as cs
-from adapters.inbound.cli.integration_profile import (
+from adapters.outbound.cli_auth import credentials_store as cs
+from adapters.outbound.cli_auth.integration_profile import (
     build_linear_integration_record,
     fetch_linear_viewer,
 )
 import httpx
-from adapters.inbound.cli.integration_verify import (
+from adapters.outbound.cli_auth.http import AuthHttpError
+from adapters.inbound.cli.commands._common import set_store
+from tests._auth_fakes import InMemoryCredentialStore
+from adapters.outbound.cli_auth.integration_verify import (
     _verify_linear,
     verify_integration_access,
 )
-from adapters.inbound.cli.provider_config import (
+from adapters.outbound.cli_auth.provider_config import (
     LINEAR_TOKEN_URL,
     authorization_url,
     get_callback_host,
@@ -145,7 +148,7 @@ def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> Non
         "get_integration_status",
         lambda _p: {"authenticated": True},
     )
-    monkeypatch.setattr(auth_commands, "clear_integration_tokens", lambda _p: None)
+    set_store(InMemoryCredentialStore())
 
     result = runner.invoke(auth_commands.auth_app, ["revoke", "linear"])
 
@@ -153,7 +156,7 @@ def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> Non
     assert '"ok": true' in result.stdout
 
 def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    from adapters.inbound.cli.credentials_store import ProviderCredentialError
+    from adapters.outbound.cli_auth.credentials_store import ProviderCredentialError
 
     monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, True))
@@ -163,14 +166,17 @@ def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _p: {"authenticated": True},
     )
 
+    store = InMemoryCredentialStore()
+
     def _fail_clear(_provider: str) -> None:
         raise ProviderCredentialError("keychain broke")
 
-    monkeypatch.setattr(auth_commands, "clear_integration_tokens", _fail_clear)
+    store.clear_integration_tokens = _fail_clear  # type: ignore[method-assign]
+    set_store(store)
 
     result = runner.invoke(auth_commands.auth_app, ["logout", "linear"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 4
 
 # --- test_auth_commands_cli.py ---
 
@@ -198,7 +204,7 @@ def test_auth_status_verify_token_error(monkeypatch: pytest.MonkeyPatch) -> None
     assert "refresh broke" in result.stdout
 
 def test_wait_for_callback_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
-    from adapters.inbound.cli.callback_server import OAuthCallbackResult
+    from adapters.outbound.cli_auth.callback_server import OAuthCallbackResult
 
     monkeypatch.setattr(
         auth_commands,
@@ -691,7 +697,7 @@ def test_linear_status_includes_org_and_scope_string(
     monkeypatch: pytest.MonkeyPatch, tmp_path, keychain: dict
 ) -> None:
     monkeypatch.setattr(
-        "adapters.inbound.cli.integration_profile.fetch_linear_viewer",
+        "adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
         lambda _token: {
             "account": {"name": "Ada", "email": "ada@example.com"},
             "organization": {"name": "Potpie"},
@@ -749,7 +755,7 @@ def test_build_linear_integration_record_includes_account_and_scopes() -> None:
         "organization": {"id": "o1", "name": "Acme"},
     }
     with patch(
-        "adapters.inbound.cli.integration_profile.fetch_linear_viewer",
+        "adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
         return_value=viewer,
     ):
         record = build_linear_integration_record(tokens)
@@ -769,7 +775,7 @@ def test_build_linear_integration_record_preserves_account_on_refresh(
     }
     tokens = {"access_token": "new-token", "expires_at": 123.0}
     with patch(
-        "adapters.inbound.cli.integration_profile.fetch_linear_viewer",
+        "adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
         return_value={},
     ):
         record = build_linear_integration_record(tokens, existing=prior)
@@ -788,7 +794,7 @@ def test_save_integration_tokens_writes_account_metadata(
         "organization": {"name": "Acme"},
     }
     with patch(
-        "adapters.inbound.cli.integration_profile.fetch_linear_viewer",
+        "adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
         return_value=viewer,
     ):
         cs.save_integration_tokens(
@@ -831,8 +837,7 @@ def test_fetch_linear_viewer_non_json_body_returns_empty() -> None:
     client.__enter__.return_value = client
     client.__exit__.return_value = None
     client.post.return_value = response
-    with patch("adapters.inbound.cli.integration_profile.httpx.Client", return_value=client):
-        assert fetch_linear_viewer("token") == {}
+    assert fetch_linear_viewer("token", http=client) == {}
 
 def test_fetch_linear_viewer_non_200_returns_empty() -> None:
     response = MagicMock()
@@ -841,8 +846,7 @@ def test_fetch_linear_viewer_non_200_returns_empty() -> None:
     client.__enter__.return_value = client
     client.__exit__.return_value = None
     client.post.return_value = response
-    with patch("adapters.inbound.cli.integration_profile.httpx.Client", return_value=client):
-        assert fetch_linear_viewer("token") == {}
+    assert fetch_linear_viewer("token", http=client) == {}
 
 def test_fetch_linear_viewer_empty_token_returns_empty() -> None:
     assert fetch_linear_viewer("   ") == {}
@@ -855,8 +859,7 @@ def test_fetch_linear_viewer_non_dict_viewer_returns_empty() -> None:
     client.__enter__.return_value = client
     client.__exit__.return_value = None
     client.post.return_value = response
-    with patch("adapters.inbound.cli.integration_profile.httpx.Client", return_value=client):
-        assert fetch_linear_viewer("token") == {}
+    assert fetch_linear_viewer("token", http=client) == {}
 
 def test_build_linear_integration_record_normalizes_scope_list() -> None:
     record = build_linear_integration_record(
@@ -885,8 +888,7 @@ def test_fetch_linear_viewer_parses_graphql_response() -> None:
     client.__enter__.return_value = client
     client.__exit__.return_value = None
     client.post.return_value = response
-    with patch("adapters.inbound.cli.integration_profile.httpx.Client", return_value=client):
-        profile = fetch_linear_viewer("token")
+    profile = fetch_linear_viewer("token", http=client)
     assert profile["account"]["name"] == "Nihit"
     assert profile["organization"]["name"] == "Potpie"
 
@@ -896,9 +898,8 @@ def test_verify_linear_transport_error_returns_false() -> None:
     client = MagicMock()
     client.__enter__.return_value = client
     client.__exit__.return_value = None
-    client.post.side_effect = httpx.ConnectError("offline")
-    with patch("adapters.inbound.cli.integration_verify.httpx.Client", return_value=client):
-        ok, message = _verify_linear("token")
+    client.post.side_effect = AuthHttpError("offline")
+    ok, message = _verify_linear("token", http=client)
     assert ok is False
     assert message == "Linear API request failed"
 
@@ -910,8 +911,7 @@ def test_verify_linear_non_json_body_returns_false() -> None:
     client.__enter__.return_value = client
     client.__exit__.return_value = None
     client.post.return_value = response
-    with patch("adapters.inbound.cli.integration_verify.httpx.Client", return_value=client):
-        ok, message = _verify_linear("token")
+    ok, message = _verify_linear("token", http=client)
     assert ok is False
     assert "non-JSON" in message
 
@@ -930,8 +930,7 @@ def test_verify_linear_success_without_org() -> None:
     client.__enter__.return_value = client
     client.__exit__.return_value = None
     client.post.return_value = response
-    with patch("adapters.inbound.cli.integration_verify.httpx.Client", return_value=client):
-        ok, message = _verify_linear("token")
+    ok, message = _verify_linear("token", http=client)
     assert ok is True
     assert "Ada" in message
 
@@ -960,22 +959,21 @@ def test_verify_linear_success() -> None:
     client.__enter__.return_value = client
     client.__exit__.return_value = None
     client.post.return_value = response
-    with patch("adapters.inbound.cli.integration_verify.httpx.Client", return_value=client):
-        ok, message = _verify_linear("token")
+    ok, message = _verify_linear("token", http=client)
     assert ok is True
     assert "Ada" in message
     assert "Acme" in message
 
 def test_verify_integration_access_linear_ignores_invalid_expires_at() -> None:
     with patch(
-        "adapters.inbound.cli.integration_verify._verify_linear",
+        "adapters.outbound.cli_auth.integration_verify._verify_linear",
         return_value=(True, "ok (Ada)"),
     ) as verify:
         ok, message = verify_integration_access(
             "linear",
             {"access_token": "tok", "expires_at": "not-a-number"},
         )
-    verify.assert_called_once_with("tok")
+    verify.assert_called_once_with("tok", http=None)
     assert ok is True
     assert message == "ok (Ada)"
 
@@ -987,8 +985,7 @@ def test_verify_linear_graphql_errors() -> None:
     client.__enter__.return_value = client
     client.__exit__.return_value = None
     client.post.return_value = response
-    with patch("adapters.inbound.cli.integration_verify.httpx.Client", return_value=client):
-        ok, message = _verify_linear("token")
+    ok, message = _verify_linear("token", http=client)
     assert ok is False
     assert "rejected" in message
 
@@ -999,8 +996,7 @@ def test_verify_linear_non_200_status() -> None:
     client.__enter__.return_value = client
     client.__exit__.return_value = None
     client.post.return_value = response
-    with patch("adapters.inbound.cli.integration_verify.httpx.Client", return_value=client):
-        ok, message = _verify_linear("token")
+    ok, message = _verify_linear("token", http=client)
     assert ok is False
     assert "HTTP 401" in message
 

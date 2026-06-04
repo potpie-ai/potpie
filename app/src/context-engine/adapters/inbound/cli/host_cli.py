@@ -36,8 +36,8 @@ def build_app() -> typer.Typer:
             False, "--verbose", "-v", help="Verbose tracebacks on errors."
         ),
     ) -> None:
-        from adapters.inbound.cli.env_bootstrap import load_cli_env
-        from adapters.inbound.cli.output import configure_cli_logging, configure_error_output
+        from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+        from adapters.inbound.cli.ui.output import configure_cli_logging, configure_error_output
 
         set_json(json_)
         set_verbose(verbose)

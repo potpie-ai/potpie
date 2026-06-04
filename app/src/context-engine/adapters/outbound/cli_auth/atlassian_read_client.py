@@ -1,35 +1,36 @@
-"""Read-only Atlassian Cloud helpers for CLI (classic unscoped API tokens)."""
+"""Read-only Atlassian Cloud HTTP/data client (classic unscoped API tokens).
+
+Pure transport + parsing for Jira & Confluence reads (fetch projects/issues/
+spaces/pages, credential loading, response parsing) — no CLI/presentation. The
+interactive workspace-selection flow lives in
+``adapters.inbound.cli.auth.atlassian_read``.
+"""
 
 from __future__ import annotations
 
 import re
-import sys
 from html import unescape
 from typing import Any
 from urllib.parse import quote
 
-import httpx
-import typer
-
-from adapters.inbound.cli.atlassian_auth import (
+from adapters.outbound.cli_auth.atlassian_client import (
     AtlassianProduct,
     atlassian_basic_auth_header,
     atlassian_bearer_auth_header,
     normalize_site_url,
 )
-from adapters.inbound.cli.credentials_store import (
+from adapters.outbound.cli_auth.credentials_store import (
     ProviderCredentialError,
     get_confluence_credentials,
     get_jira_credentials,
-    save_confluence_workspace_prefs,
-    save_jira_workspace_prefs,
 )
-from adapters.inbound.cli.integration_profile import (
+from adapters.outbound.cli_auth.integration_profile import (
     atlassian_site_from_entry,
     atlassian_workspaces_from_entry,
 )
-from adapters.inbound.cli.output import print_plain_line
-from adapters.inbound.cli.provider_config import (
+from adapters.outbound.cli_auth.errors import CliAuthError
+from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from adapters.outbound.cli_auth.provider_config import (
     atlassian_confluence_gateway_url,
     atlassian_jira_gateway_url,
 )
@@ -40,7 +41,7 @@ _DEFAULT_CONFLUENCE_LIMIT = 10
 _EXCERPT_LEN = 280
 
 
-class AtlassianReadError(Exception):
+class AtlassianReadError(CliAuthError):
     """Failed to read Jira or Confluence data with stored credentials."""
 
 
@@ -119,7 +120,7 @@ def _site_bases(product: AtlassianProduct, site_url: str) -> list[str]:
 
 
 def _transport_read_error(
-    exc: httpx.HTTPError,
+    exc: AuthHttpError,
     *,
     product: AtlassianProduct,
     method: str,
@@ -140,6 +141,7 @@ def _get_json(
     site_url: str,
     path: str,
     site_first: bool = False,
+    http: HttpClient | None = None,
 ) -> dict[str, Any]:
     path = path if path.startswith("/") else f"/{path}"
     paths = [path]
@@ -148,11 +150,13 @@ def _get_json(
     bases = _ordered_bases(product, cloud_id, site_url, site_first=site_first)
     last_status: int | None = None
     last_body = ""
-    last_transport_exc: httpx.HTTPError | None = None
+    last_transport_exc: AuthHttpError | None = None
     last_transport_base = ""
     last_transport_path = ""
 
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+    owns = http is None
+    http = http or AuthHttpClient(timeout=_HTTP_TIMEOUT)
+    try:
         for candidate_path in paths:
             for base in bases:
                 url = f"{base}{candidate_path}"
@@ -160,8 +164,8 @@ def _get_json(
                     email, api_token, base=base
                 ):
                     try:
-                        response = client.get(url, headers=headers)
-                    except httpx.HTTPError as exc:
+                        response = http.get(url, headers=headers)
+                    except AuthHttpError as exc:
                         last_transport_exc = exc
                         last_transport_base = base
                         last_transport_path = candidate_path
@@ -173,6 +177,9 @@ def _get_json(
                             return data
                         return {"data": data}
                     last_body = response.text[:500]
+    finally:
+        if owns:
+            http.close()
 
     if last_transport_exc is not None and last_status is None:
         raise _transport_read_error(
@@ -198,6 +205,7 @@ def _post_json(
     path: str,
     body: dict[str, Any],
     site_first: bool = False,
+    http: HttpClient | None = None,
 ) -> dict[str, Any]:
     path = path if path.startswith("/") else f"/{path}"
     bases = _ordered_bases(product, cloud_id, site_url, site_first=site_first)
@@ -205,14 +213,16 @@ def _post_json(
     last_body = ""
     headers_base = {"Accept": "application/json", "Content-Type": "application/json"}
 
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+    owns = http is None
+    http = http or AuthHttpClient(timeout=_HTTP_TIMEOUT)
+    try:
         for base in bases:
             url = f"{base}{path}"
             for auth in _auth_header_variants(email, api_token, base=base):
                 headers = {**headers_base, **auth}
                 try:
-                    response = client.post(url, headers=headers, json=body)
-                except httpx.HTTPError as exc:
+                    response = http.post(url, headers=headers, json=body)
+                except AuthHttpError as exc:
                     raise _transport_read_error(
                         exc,
                         product=product,
@@ -227,6 +237,9 @@ def _post_json(
                         return data
                     return {"data": data}
                 last_body = response.text[:500]
+    finally:
+        if owns:
+            http.close()
 
     raise AtlassianReadError(
         f"{product} read failed (HTTP {last_status}): {last_body or 'no response body'}"
@@ -600,97 +613,6 @@ def fetch_confluence_pages_in_space(
             }
         )
     return pages
-
-
-def _prompt_choice(label: str, *, default: str = "1") -> int:
-    while True:
-        choice = typer.prompt(label, default=default).strip()
-        try:
-            return int(choice)
-        except ValueError:
-            print_plain_line("Enter a number from the list.", as_json=False)
-
-
-def _prompt_workspace(
-    items: list[dict[str, Any]],
-    *,
-    label: str,
-) -> dict[str, Any]:
-    if not items:
-        raise AtlassianReadError(f"No {label} found for this account.")
-    print_plain_line(f"Select {label}:", as_json=False)
-    for index, item in enumerate(items, start=1):
-        print_plain_line(
-            f"  {index}. {item.get('key')}\t{item.get('name')}",
-            as_json=False,
-        )
-    while True:
-        selected = _prompt_choice(f"{label.capitalize()} number")
-        if 1 <= selected <= len(items):
-            return items[selected - 1]
-        print_plain_line("Enter a number from the list.", as_json=False)
-
-
-def run_jira_use_flow(
-    *,
-    workspace_key: str | None = None,
-    limit: int = 10,
-) -> dict[str, Any]:
-    """Pick a Jira project, persist choice, and fetch issues."""
-    if not sys.stdin.isatty() and not workspace_key:
-        raise AtlassianReadError(
-            "Interactive workspace selection requires a terminal. "
-            "Use: potpie auth jira use --key ENG"
-        )
-    ctx = load_jira_read_credentials()
-    prefs = ctx.get("workspaces") if isinstance(ctx.get("workspaces"), dict) else {}
-    items = fetch_jira_projects()
-    default_key = str(workspace_key or prefs.get("jira_project") or "").strip().upper()
-    if workspace_key or (default_key and (not sys.stdin.isatty() or workspace_key)):
-        match = next((i for i in items if i.get("key") == default_key), None)
-        picked = match or {"key": default_key, "name": default_key}
-    else:
-        picked = _prompt_workspace(items, label="Jira project")
-    project_key = str(picked.get("key") or "").strip().upper()
-    rows = fetch_jira_issues_in_project(project_key, limit=limit)
-    save_jira_workspace_prefs(project_key=project_key)
-    return {
-        "product": "jira",
-        "workspace_key": project_key,
-        "workspace_name": picked.get("name"),
-        "items": rows,
-    }
-
-
-def run_confluence_use_flow(
-    *,
-    workspace_key: str | None = None,
-    limit: int = 10,
-) -> dict[str, Any]:
-    """Pick a Confluence space, persist choice, and fetch pages."""
-    if not sys.stdin.isatty() and not workspace_key:
-        raise AtlassianReadError(
-            "Interactive workspace selection requires a terminal. "
-            "Use: potpie auth confluence use --key DOCS"
-        )
-    ctx = load_confluence_read_credentials()
-    prefs = ctx.get("workspaces") if isinstance(ctx.get("workspaces"), dict) else {}
-    items = fetch_confluence_spaces_sample()
-    default_key = str(workspace_key or prefs.get("confluence_space") or "").strip().upper()
-    if workspace_key or (default_key and (not sys.stdin.isatty() or workspace_key)):
-        match = next((i for i in items if i.get("key") == default_key), None)
-        picked = match or {"key": default_key, "name": default_key}
-    else:
-        picked = _prompt_workspace(items, label="Confluence space")
-    space_key = str(picked.get("key") or "").strip().upper()
-    rows = fetch_confluence_pages_in_space(space_key, limit=limit)
-    save_confluence_workspace_prefs(space_key=space_key)
-    return {
-        "product": "wiki",
-        "workspace_key": space_key,
-        "workspace_name": picked.get("name"),
-        "items": rows,
-    }
 
 
 def fetch_jira_issues_sample(*, limit: int = _DEFAULT_JIRA_LIMIT) -> list[dict[str, Any]]:
