@@ -209,6 +209,21 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --no-cache
 
+      # Parsing integration tests construct ParsingService → InferenceService, which
+      # loads sentence-transformers/all-MiniLM-L6-v2 from the Hugging Face hub.
+      - name: Cache Hugging Face hub
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-hub-${{ runner.os }}-all-MiniLM-L6-v2-v1
+          restore-keys: |
+            hf-hub-${{ runner.os }}-
+
+      - name: Pre-download embedding model
+        run: |
+          uv sync --frozen --all-packages --no-cache
+          uv run --project legacy python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2', device='cpu')"
+
       - name: Run test suite with coverage
         env:
           SKIP_REAL_PARSE: "1"
