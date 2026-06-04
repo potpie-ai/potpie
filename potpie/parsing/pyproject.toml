@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "potpie-parsing"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 dynamic = ["version"]
 dependencies = [
     "grep-ast>=0.6.0",

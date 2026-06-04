@@ -7,7 +7,7 @@ name = "potpie"
 version = "1.1.1"
 description = "Potpie core packages workspace (context-engine, parsing, sandbox, integrations)"
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Potpie AI", email = "engineering@potpie.ai" }]
@@ -20,7 +20,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -59,7 +58,7 @@ exclude = [
 override-dependencies = ["python-dotenv>=1.2.2", "openai>=2.7.1", "idna>=3.15"]
 
 [tool.uv.workspace]
-members = ["potpie/*", "legacy"]
+members = ["potpie/*"]
 
 [tool.uv.sources]
 potpie-parsing = { workspace = true }
@@ -67,7 +66,6 @@ potpie-context-engine = { workspace = true, editable = true }
 potpie-integrations = { workspace = true, editable = true }
 potpie-sandbox = { workspace = true, editable = true }
 potpie-observability = { workspace = true, editable = true }
-potpie-legacy = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -80,9 +78,6 @@ dev = [
     "pytest-cov>=6.0.0",
     "ruff>=0.14.3",
 ]
-
-[tool.ruff]
-exclude = ["legacy/app/alembic", "legacy/tests"]
 
 [tool.ruff.lint]
 extend-select = ["S"]

@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "potpie-observability"
 version = "0.1.0"
 description = "Liftable observability layer: structured logging + Sentry + logfire behind one contract. app.*-free."
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.14"
 # Core is stdlib-only on purpose: max portability, survives a codebase rewrite.
 dependencies = []
 

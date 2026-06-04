@@ -7,7 +7,7 @@ name = "potpie-legacy"
 version = "0.1.0"
 description = "Optional Potpie demo host (FastAPI, agents, Celery, seed). Delete this folder if you only need core packages."
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 license = "Apache-2.0"
 authors = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
 maintainers = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
@@ -17,7 +17,6 @@ classifiers = [
     "Framework :: FastAPI",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",

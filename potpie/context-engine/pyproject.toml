@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "potpie-context-engine"
 version = "0.1.0"
 description = "Context graph API, webhooks, CLI, and MCP (hexagonal)."
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
@@ -78,7 +78,7 @@ include = [
 ]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 src = [".", "tests"]
 
 [tool.pytest.ini_options]
