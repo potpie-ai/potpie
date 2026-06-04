@@ -1,0 +1,303 @@
+import os
+import subprocess
+
+# Set TOKENIZERS_PARALLELISM before any tokenizer imports to prevent fork warnings
+# This must be set before sentence-transformers or any HuggingFace tokenizers are used
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+# Load .env before any app imports so modules that read env at import time (e.g. tunnel service) see it
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+from observability import configure, get_logger
+from observability.integrations.fastapi import LoggingContextMiddleware
+from observability.profiles import monolith
+
+configure(monolith())
+logger = get_logger(__name__)
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.router import router as potpie_api_router
+from app.core.base_model import Base
+from app.core.database import SessionLocal, engine
+from app.core.models import *  # noqa #necessary for models to not give import errors
+from app.modules.analytics.analytics_router import router as analytics_router
+from app.modules.auth.auth_router import auth_router
+from app.modules.code_provider.github.github_router import router as github_router
+from app.modules.conversations.conversations_router import (
+    router as conversations_router,
+)
+from integrations.application.bootstrap import load_providers
+from integrations.adapters.inbound.http.integrations_router import (
+    router as integrations_router,
+)
+from integrations.adapters.inbound.http.sources_router import router as sources_router
+from app.modules.intelligence.agents.agents_router import router as agent_router
+from app.modules.intelligence.prompts.prompt_router import router as prompt_router
+from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
+from app.modules.intelligence.provider.provider_router import router as provider_router
+from app.modules.intelligence.tools.tool_router import router as tool_router
+from app.modules.key_management.secret_manager import router as secret_manager_router
+from app.modules.knowledge_graph.knowledge_graph_router import (
+    router as knowledge_graph_router,
+)
+from app.modules.media.media_router import router as media_router
+from app.modules.parsing.graph_construction.parsing_router import (
+    router as parsing_router,
+)
+from app.modules.projects.projects_router import router as projects_router
+from app.modules.search.search_router import router as search_router
+from app.modules.tunnel.tunnel_router import router as tunnel_router
+from app.modules.usage.usage_router import router as usage_router
+from app.modules.users.user_router import router as user_router
+from app.modules.context_graph.context_engine_http import (
+    potpie_context_engine_router,
+    potpie_context_pot_v1_router,
+)
+from app.modules.users.user_service import UserService
+from app.modules.utils.firebase_setup import FirebaseSetup
+load_providers()
+
+
+class MainApp:
+    def __init__(self):
+        if (
+            os.getenv("isDevelopmentMode") == "enabled"
+            and os.getenv("ENV") != "development"
+        ):
+            logger.error(
+                "Development mode enabled but ENV is not set to development. Exiting."
+            )
+            exit(1)
+        # Sentry init + logfire tracing are wired by observability.configure(monolith())
+        # at module load. setup_sentry / setup_tracing removed.
+
+        @asynccontextmanager
+        async def lifespan(_app: FastAPI):
+            _app.state.main_app = self
+            await self.startup_event()
+            yield
+            await self.shutdown_event()
+
+        self.app = FastAPI(lifespan=lifespan)
+        self.setup_cors()
+        self.setup_logging_middleware()
+        self.setup_socket_io()
+        self.include_routers()
+
+    def setup_cors(self):
+        # Get allowed origins from environment variable, default to localhost:3000 for development
+        allowed_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+        # Split by comma if multiple origins are provided
+        origins = [origin.strip() for origin in allowed_origins_env.split(",")]
+
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        logger.info(f"CORS configured with allowed origins: {origins}", origins=origins)
+
+    def setup_logging_middleware(self):
+        """
+        Add logging context middleware to automatically inject request-level context.
+
+        This ensures all logs within a request automatically include:
+        - request_id: Unique identifier for tracing
+        - path: API endpoint path
+        - user_id: Authenticated user (if available)
+
+        Domain-specific IDs (conversation_id, project_id) should be added
+        manually using log_context() in routes where available.
+        """
+        self.app.add_middleware(LoggingContextMiddleware)
+        logger.info("Logging context middleware configured")
+
+    def setup_socket_io(self):
+        """Mount Socket.IO ASGI app at /ws for workspace tunnel."""
+        from app.modules.tunnel.socket_auth_middleware import SocketAuthMiddleware
+        from app.modules.tunnel.socket_server import socket_asgi
+
+        self.app.add_middleware(SocketAuthMiddleware)
+        self.app.mount("/ws", socket_asgi)
+        logger.info(
+            "Socket.IO workspace tunnel mounted at /ws (auth from query/header supported)"
+        )
+
+    def setup_data(self):
+        if os.getenv("isDevelopmentMode") == "enabled":
+            logger.info("Development mode enabled. Skipping Firebase setup.")
+            # Setup dummy user for development mode
+            db = SessionLocal()
+            user_service = UserService(db)
+            user_service.setup_dummy_user()
+            db.close()
+            logger.info("Dummy user created")
+        else:
+            FirebaseSetup.firebase_init()
+
+    def initialize_database(self):
+        # Initialize database tables
+        Base.metadata.create_all(bind=engine)
+
+    def include_routers(self):
+        self.app.include_router(auth_router, prefix="/api/v1", tags=["Auth"])
+        self.app.include_router(user_router, prefix="/api/v1", tags=["User"])
+        self.app.include_router(parsing_router, prefix="/api/v1", tags=["Parsing"])
+        self.app.include_router(
+            conversations_router, prefix="/api/v1", tags=["Conversations"]
+        )
+        self.app.include_router(tunnel_router, prefix="/api/v1", tags=["Tunnel"])
+        self.app.include_router(prompt_router, prefix="/api/v1", tags=["Prompts"])
+        self.app.include_router(projects_router, prefix="/api/v1", tags=["Projects"])
+        self.app.include_router(search_router, prefix="/api/v1", tags=["Search"])
+        self.app.include_router(github_router, prefix="/api/v1", tags=["Github"])
+        self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
+        self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
+        self.app.include_router(tool_router, prefix="/api/v1", tags=["Tools"])
+        self.app.include_router(usage_router, prefix="/api/v1/usage", tags=["Usage"])
+        self.app.include_router(analytics_router, prefix="/api/v1", tags=["Analytics"])
+        self.app.include_router(
+            potpie_api_router, prefix="/api/v2", tags=["Potpie API"]
+        )
+        self.app.include_router(
+            secret_manager_router, prefix="/api/v1", tags=["Secret Manager"]
+        )
+        self.app.include_router(media_router, prefix="/api/v1", tags=["Media"])
+        self.app.include_router(
+            integrations_router, prefix="/api/v1", tags=["Integrations"]
+        )
+        self.app.include_router(sources_router, prefix="/api/v1", tags=["Sources"])
+        self.app.include_router(
+            knowledge_graph_router, prefix="/api/v1", tags=["Knowledge Graph"]
+        )
+        self.app.include_router(
+            potpie_context_engine_router,
+            prefix="/api/v1/context",
+            tags=["Context Graph API"],
+        )
+        self.app.include_router(
+            potpie_context_pot_v1_router,
+            prefix="/api/v1/context",
+            tags=["Context Graph API"],
+        )
+
+    def add_health_check(self):
+        @self.app.get("/health", tags=["Health"])
+        def health_check():
+            return {
+                "status": "ok",
+                "version": subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"]
+                )
+                .strip()
+                .decode("utf-8"),
+            }
+
+    async def startup_event(self):
+        # Database initialization moved here (runs on app start, not import)
+        logger.info("Initializing database...")
+        self.initialize_database()
+        logger.info("Database initialized successfully")
+
+        # Async Redis stream manager for FastAPI (native async, no event-loop blocking)
+        try:
+            from app.modules.conversations.utils.redis_streaming import (
+                AsyncRedisStreamManager,
+            )
+
+            self.app.state.async_redis_stream_manager = AsyncRedisStreamManager()
+            logger.info("AsyncRedisStreamManager initialized")
+        except Exception as e:
+            raise RuntimeError(
+                "Async Redis stream manager unavailable; cannot start. "
+                "Install redis>=4.2 with redis.asyncio support."
+            ) from e
+
+        # Setup data (Firebase or dummy user)
+        logger.info("Setting up application data...")
+        self.setup_data()
+        logger.info("Application data setup complete")
+
+        # System prompts initialization
+        db = SessionLocal()
+        try:
+            system_prompt_setup = SystemPromptSetup(db)
+            await system_prompt_setup.initialize_system_prompts()
+            logger.info("System prompts initialized successfully")
+        except Exception:
+            raise
+        finally:
+            db.close()
+
+        await self._ensure_sandbox_snapshot()
+
+    async def _ensure_sandbox_snapshot(self) -> None:
+        """Pre-build the agent-sandbox snapshot when running on Daytona.
+
+        Without this, the build runs lazily on the first sandbox-tool
+        request, which means the user sees either a multi-minute hang
+        (cold build) or — if the build silently fails — a confusing
+        "Snapshot not found" error from the SDK. Running it at startup
+        moves the cost off the user-facing path and surfaces build
+        problems in deploy logs.
+
+        Soft-fail: a misconfigured or unreachable Daytona must not block
+        boot. Local-provider deploys early-exit because the workspace
+        provider has no ``_ensure_snapshot`` method.
+        """
+        provider_name = (
+            os.getenv("SANDBOX_WORKSPACE_PROVIDER", "local").strip().lower()
+        )
+        if provider_name != "daytona":
+            return
+        try:
+            from app.modules.intelligence.tools.sandbox.client import (
+                get_sandbox_client,
+            )
+
+            client = get_sandbox_client()
+            logger.info("Ensuring Daytona agent-sandbox snapshot is ready...")
+            await client.ensure_snapshot_ready()
+            logger.info("Daytona agent-sandbox snapshot is ready")
+        except Exception:
+            logger.exception(
+                "Failed to ensure Daytona agent-sandbox snapshot at startup; "
+                "sandbox tools may fail until the snapshot is built manually "
+                "(see app/src/sandbox/scripts/build_agent_snapshot.py)"
+            )
+
+    async def shutdown_event(self):
+        """Close async Redis and other resources on app shutdown."""
+        if getattr(self.app.state, "async_redis_stream_manager", None):
+            try:
+                await self.app.state.async_redis_stream_manager.aclose()
+                logger.info("AsyncRedisStreamManager closed")
+            except Exception as e:
+                logger.warning("Error closing AsyncRedisStreamManager: %s", e)
+        try:
+            from app.modules.code_provider.github.github_service import (
+                close_github_async_redis_cache,
+                GithubService,
+            )
+
+            await close_github_async_redis_cache()
+            GithubService.shutdown_executor()
+        except Exception as e:
+            logger.warning("Shutdown cleanup error: %s", e)
+
+    def run(self):
+        self.add_health_check()
+        return self.app
+
+
+# Create an instance of MainApp and run it
+main_app = MainApp()
+app = main_app.run()
