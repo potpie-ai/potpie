@@ -45,7 +45,9 @@ def test_install_agent_bundle_creates_expected_files(tmp_path: Path) -> None:
     assert (repo / ".agents" / "skills" / "potpie-cli" / "SKILL.md").exists()
 
 
-def test_install_agent_bundle_skips_conflicting_files_without_force(tmp_path: Path) -> None:
+def test_install_agent_bundle_skips_conflicting_files_without_force(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     target = repo / "AGENTS.md"
@@ -69,7 +71,9 @@ def test_install_agent_bundle_overwrites_with_force(tmp_path: Path) -> None:
     assert "# Context Engine" in target.read_text(encoding="utf-8")
 
 
-def test_init_agent_cli_json_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_init_agent_cli_json_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("adapters.inbound.cli.main.load_cli_env", lambda: None)
     runner = CliRunner()
 
@@ -97,10 +101,14 @@ def test_install_agent_bundle_claude_creates_claude_files(tmp_path: Path) -> Non
     assert "context_resolve" in content
 
 
-def test_install_agent_bundle_claude_merges_into_existing_claude_md(tmp_path: Path) -> None:
+def test_install_agent_bundle_claude_merges_into_existing_claude_md(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "CLAUDE.md").write_text("# My Project\n\nExisting content.\n", encoding="utf-8")
+    (repo / "CLAUDE.md").write_text(
+        "# My Project\n\nExisting content.\n", encoding="utf-8"
+    )
 
     result = install_agent_bundle(repo, agent="claude")
 
@@ -139,7 +147,9 @@ def test_install_agent_bundle_claude_updates_section_with_force(tmp_path: Path) 
     assert "# Project" in content
 
 
-def test_install_agent_bundle_claude_skips_changed_section_without_force(tmp_path: Path) -> None:
+def test_install_agent_bundle_claude_skips_changed_section_without_force(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "CLAUDE.md").write_text(
@@ -157,7 +167,9 @@ def test_install_agent_bundle_invalid_agent_raises(tmp_path: Path) -> None:
         install_agent_bundle(tmp_path, agent="unknown")
 
 
-def test_init_agent_cli_claude_json_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_init_agent_cli_claude_json_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("adapters.inbound.cli.main.load_cli_env", lambda: None)
     runner = CliRunner()
 
@@ -169,7 +181,9 @@ def test_init_agent_cli_claude_json_output(tmp_path: Path, monkeypatch: pytest.M
     assert "CLAUDE.md" in payload["created"]
 
 
-def test_init_agent_cli_path_without_agent_type(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_init_agent_cli_path_without_agent_type(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A bare path as first arg (not an agent type) should default to codex/agent bundle."""
     monkeypatch.setattr("adapters.inbound.cli.main.load_cli_env", lambda: None)
     runner = CliRunner()

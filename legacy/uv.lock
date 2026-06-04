@@ -4059,7 +4059,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest-benchmark", specifier = ">=5.2.3" }]
+dev = [
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-benchmark", specifier = ">=5.2.3" },
+]
 
 [[package]]
 name = "potpie-sandbox"

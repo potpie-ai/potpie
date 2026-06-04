@@ -104,15 +104,19 @@ def test_adapter_multi_family_execution_merges_results() -> None:
     structural = MagicMock()
     adapter = GraphitiContextGraphAdapter(episodic=episodic, structural=structural)
 
-    with patch(
-        "adapters.outbound.graphiti.context_graph.search_pot_context",
-        return_value=[{"uuid": "s1"}],
-    ), patch(
-        "adapters.outbound.graphiti.context_graph.get_change_history",
-        return_value=[{"pr_number": 9}],
-    ), patch(
-        "adapters.outbound.graphiti.context_graph.get_decisions",
-        return_value=[{"id": "d1"}],
+    with (
+        patch(
+            "adapters.outbound.graphiti.context_graph.search_pot_context",
+            return_value=[{"uuid": "s1"}],
+        ),
+        patch(
+            "adapters.outbound.graphiti.context_graph.get_change_history",
+            return_value=[{"pr_number": 9}],
+        ),
+        patch(
+            "adapters.outbound.graphiti.context_graph.get_decisions",
+            return_value=[{"id": "d1"}],
+        ),
     ):
         out = adapter.query(
             ContextGraphQuery(
@@ -145,12 +149,15 @@ def test_adapter_executor_error_becomes_fallback_not_raise() -> None:
     def boom(*_args, **_kwargs):  # noqa: ANN002, ANN003
         raise RuntimeError("kaboom")
 
-    with patch(
-        "adapters.outbound.graphiti.context_graph.search_pot_context",
-        side_effect=boom,
-    ), patch(
-        "adapters.outbound.graphiti.context_graph.get_decisions",
-        return_value=[{"id": "d1"}],
+    with (
+        patch(
+            "adapters.outbound.graphiti.context_graph.search_pot_context",
+            side_effect=boom,
+        ),
+        patch(
+            "adapters.outbound.graphiti.context_graph.get_decisions",
+            return_value=[{"id": "d1"}],
+        ),
     ):
         out = adapter.query(
             ContextGraphQuery(
