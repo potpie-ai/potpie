@@ -3,16 +3,21 @@ repos:
     rev: v5.0.0
     hooks:
       - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-ast
       - id: trailing-whitespace
       - id: end-of-file-fixer
+      - id: mixed-line-ending
       - id: check-merge-conflict
+      - id: check-case-conflict
       - id: check-added-large-files
         args: ["--maxkb=51200"]
+      - id: detect-private-key
       - id: debug-statements
-      - id: check-toml
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.2
+    rev: v0.14.3
     hooks:
       - id: ruff
         args: ["--fix"]
@@ -20,10 +25,17 @@ repos:
       - id: ruff-format
         exclude: ^legacy/app/alembic/
 
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.7.10
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.10.7
     hooks:
-      - id: bandit
-        args: ["-c", "pyproject.toml"]
-        additional_dependencies: ["bandit[toml]"]
-        exclude: ^(legacy/tests|legacy/app/alembic)/
+      - id: uv-lock
+        args: ["--check"]
+
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --manifest-path potpie/parsing/Cargo.toml -- --check
+        language: system
+        files: ^potpie/parsing/.*\.rs$
+        pass_filenames: false

@@ -23,7 +23,7 @@ export CONTEXT_GRAPH_JOB_QUEUE_BACKEND="${CONTEXT_GRAPH_JOB_QUEUE_BACKEND:-celer
 export CONTEXT_GRAPH_CELERY_QUEUE_MODULE="${CONTEXT_GRAPH_CELERY_QUEUE_MODULE:-app.modules.context_graph.celery_job_queue}"
 
 echo "Starting Docker Compose..."
-docker compose -f "$REPO_ROOT/compose.yaml" up -d
+docker compose -f "$LEGACY_ROOT/compose.yaml" up -d
 
 # Wait for postgres to be ready
 echo "Waiting for postgres to be ready..."

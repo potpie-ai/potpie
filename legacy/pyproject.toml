@@ -136,7 +136,6 @@ potpie-seed = "seed.cli:main"
 
 [dependency-groups]
 dev = [
-    "bandit>=1.8.6",
     "black>=26.3.1",
     "isort>=7.0.0",
     "pre-commit>=4.3.0",
@@ -150,12 +149,11 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["app*", "seed*"]
 
-[tool.bandit]
-exclude_dirs = ["tests", "app/alembic"]
-skips = ["B101", "B601"]                # Skip assert_used and shell injection warnings
-
 [tool.ruff]
 exclude = ["tests", "app/alembic"]
+
+[tool.ruff.lint]
+extend-select = ["S"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

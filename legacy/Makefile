@@ -15,7 +15,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 REPO_ROOT := $(abspath $(CURDIR)/..)
-COMPOSE := docker compose -f $(REPO_ROOT)/compose.yaml
+COMPOSE := docker compose -f $(CURDIR)/compose.yaml
 
 # Sandbox selection. Override .env at the command line: `make dev SANDBOX=local`.
 # When unset, whatever's in .env / .env.daytona.local wins (Daytona by default per

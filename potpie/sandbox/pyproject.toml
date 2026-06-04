@@ -53,6 +53,9 @@ include = ["README.md", "sandbox", "tests"]
 target-version = "py310"
 src = [".", "tests"]
 
+[tool.ruff.lint]
+extend-select = ["S"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

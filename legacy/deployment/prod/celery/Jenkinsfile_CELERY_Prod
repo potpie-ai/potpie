@@ -84,7 +84,7 @@ SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --integration-only
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "sudo docker build -f legacy/deployment/prod/celery/celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} \"${env.WORKSPACE}\""
+                    sh "cp legacy/.dockerignore .dockerignore && sudo docker build -f legacy/deployment/prod/celery/celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} \"${env.WORKSPACE}\""
                 }
             }
         }

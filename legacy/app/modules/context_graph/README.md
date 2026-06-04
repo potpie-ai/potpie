@@ -41,4 +41,4 @@ There is **no** separate `tests/unit/context_graph/` tree in the repo root; that
 
 - `CONTEXT_GRAPH_JOB_QUEUE_BACKEND` — `celery` (default), `hatchet`, or `noop` (see `bootstrap.queue_factory` in context-engine).
 - `CONTEXT_GRAPH_CELERY_QUEUE_MODULE` — override for the Celery adapter import path (default: `app.modules.context_graph.celery_job_queue`).
-- **Hatchet (optional):** set `CONTEXT_GRAPH_JOB_QUEUE_BACKEND=hatchet`, **`HATCHET_CLIENT_*`**, self-host Hatchet (not in root `compose.yaml`) — **[`docs/hatchet-local.md`](../../../docs/hatchet-local.md)**.
+- **Hatchet (optional):** set `CONTEXT_GRAPH_JOB_QUEUE_BACKEND=hatchet`, **`HATCHET_CLIENT_*`**, self-host Hatchet (not in `legacy/compose.yaml`) — **[`docs/hatchet-local.md`](../../../docs/hatchet-local.md)**.

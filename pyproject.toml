@@ -71,7 +71,6 @@ potpie-legacy = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "bandit>=1.8.6",
     "black>=26.3.1",
     "isort>=7.0.0",
     "pre-commit>=4.3.0",
@@ -82,9 +81,8 @@ dev = [
     "ruff>=0.14.3",
 ]
 
-[tool.bandit]
-exclude_dirs = ["legacy/tests", "tests", "legacy/app/alembic"]
-skips = ["B101", "B601", "B110", "B311", "B608"]
-
 [tool.ruff]
 exclude = ["legacy/app/alembic", "legacy/tests"]
+
+[tool.ruff.lint]
+extend-select = ["S"]
