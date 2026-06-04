@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from adapters.outbound.source_resolvers.linear_issue import LinearIssueResolver
+from adapters.outbound.connectors.linear.resolver import LinearIssueResolver
 from domain.source_references import SourceReferenceRecord
 from domain.source_resolution import (
     PERMISSION_DENIED,
@@ -35,7 +35,13 @@ class _FakeFetcher:
         self.calls: list[str] = []
         self.raise_exc: Exception | None = None
 
-    def get_issue(self, issue_id: str) -> dict[str, Any] | None:
+    def get_issue(
+        self,
+        issue_id: str,
+        *,
+        pot_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        _ = pot_id
         self.calls.append(issue_id)
         if self.raise_exc is not None:
             raise self.raise_exc

@@ -1,0 +1,139 @@
+id: combo_onboarding_new_engineer
+use_case: COMBO
+tier: quick
+difficulty: medium
+source_mix: dual
+universe: acme
+dimensions: [PREF, INFRA]
+light: true
+
+description: |
+  A new engineer (bench-user-17) joins and asks the agent: "I need to
+  add a Postgres-backed endpoint to inventory-svc that creates an
+  inventory hold. What do I need to know?"
+
+  The answer is a *composite* — it needs both preference knowledge
+  (PREF) and infra knowledge (INFRA) to be useful:
+
+    - PREF side:   ADR-007 (response_model + AcmeError), ADR-014
+                   (Pydantic v2 for DTOs), ADR-021 (structlog kw-args).
+    - INFRA side:  inventory-svc owns the inventory-prod-db, talks to
+                   kafka(orders-topic), is owned by `@platform-data` /
+                   bench-user-2. Migrations require DBA sign-off
+                   (bench-user-6).
+
+  Composite scenarios test routing across dimensions — the engine
+  must surface BOTH classes of knowledge in one response without the
+  user having asked them separately. Failure modes we're hunting:
+
+    - Answer covers PREF only → INFRA criteria fail
+    - Answer covers INFRA only → PREF criteria fail
+    - Answer covers both but at surface depth → both dim scores low
+
+  `by_dimension` in the report breaks this scenario into a PREF score
+  and an INFRA score so a regression on one side does not get hidden
+  by stability on the other.
+
+ingest:
+  - { event: repo_docs/checkout_api_readme_update.json, at: "-10d", tags: [signal] }
+
+post_ingest_assertions:
+  # INFRA dimension is structurally gradeable: the topology read surfaces
+  # Service / DataStore nodes + DEPENDS_ON / USES edges. The PREF dimension
+  # (ADR Decisions / Documents) is graded in the synthesis judge instead —
+  # the current query/read layer does not surface those entity tiers, so a
+  # structural assertion on them would grade a read-layer gap, not the
+  # engine's reconciliation of the new engineer's onboarding context.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*inventory-svc", min_count: 1 }
+    - { label: DataStore, key_pattern: "datastore:.*inventory-prod-db", min_count: 1 }
+  graph_must_contain_edges:
+    - { from_label: Service, to_label: DataStore, type: USES, min_count: 1, dimensions: [INFRA] }
+    - { from_label: Service, to_label: Service, type: DEPENDS_ON, min_count: 1, dimensions: [INFRA] }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: feature
+  scope: { service: inventory-svc, change_kind: "new_endpoint", touches: ["postgres", "migration"] }
+  include: [coding_preferences, infra_topology, decisions, owners, docs]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [coding_preferences, infra_topology]
+  source_refs_min: 3
+  must_cite_event_id:
+    - universe/acme/00-architecture.json
+    - universe/acme/20-adr-014-pydantic.json
+    - universe/acme/21-adr-007-fastapi-handlers.json
+
+judge:
+  pass_score: 65
+  criteria:
+    # PREF side ---
+    - name: cites_pydantic_v2_for_dto
+      weight: 15
+      pass_threshold: 4
+      dimensions: [PREF]
+      prompt: |
+        Does the answer require the engineer to model request/response
+        bodies with Pydantic v2 `BaseModel`, citing ADR-014? Generic
+        "use a schema library" is not enough.
+    - name: cites_response_model_and_acmeerror
+      weight: 15
+      pass_threshold: 3
+      dimensions: [PREF]
+      prompt: |
+        Does the answer mention that the new handler must declare
+        `response_model` and raise `AcmeError` subclasses (ADR-007)?
+    - name: cites_structlog_for_logging
+      weight: 10
+      pass_threshold: 3
+      dimensions: [PREF]
+      prompt: |
+        Does the answer mention structlog + kw-args (ADR-021) as the
+        logging convention for any log lines added in the new handler?
+    # INFRA side ---
+    - name: names_correct_db_and_owner
+      weight: 20
+      pass_threshold: 4
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer correctly identify that inventory-svc owns the
+        `inventory-prod-db` Postgres database, that the team owner is
+        `@platform-data` (lead bench-user-2), and that the engineer
+        will need a code review from that team?
+    - name: flags_dba_signoff_on_migration
+      weight: 20
+      pass_threshold: 4
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer flag that any new Postgres-backed endpoint
+        usually implies a schema change, and that schema migrations
+        require DBA sign-off from bench-user-6 (per the migrations/
+        CODEOWNERS rule + the runbook precedent)? Missing this is a
+        common onboarding failure and the answer must surface it
+        unprompted.
+    - name: kafka_orders_topic_awareness
+      weight: 10
+      pass_threshold: 2
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer mention that inventory-svc reads from
+        `kafka(orders-topic)`, i.e. that the new endpoint may need to
+        coordinate with the existing event-driven reservation path?
+        Bonus for noting the analytics-pipeline also reads that topic.
+    # Cross-dimension synthesis ---
+    - name: integrates_pref_and_infra
+      weight: 10
+      pass_threshold: 3
+      prompt: |
+        Does the answer feel like one coherent onboarding plan (rather
+        than two glued-together lists)? E.g. does it sequence
+        "(1) write the migration → sign-off by DBA → (2) model the
+        request/response with Pydantic v2 → (3) implement the handler
+        following ADR-007, log via structlog"? A bulleted dump of
+        independent rules scores low here.

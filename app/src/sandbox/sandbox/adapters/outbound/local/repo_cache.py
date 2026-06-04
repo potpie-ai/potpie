@@ -14,6 +14,7 @@ adapter (the doc explicitly forbids the adapter from owning that policy
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 from pathlib import Path
 
@@ -26,15 +27,29 @@ from sandbox.adapters.outbound.local._git_ops import (
     validate_repo_name,
 )
 from sandbox.adapters.outbound.local.auth import resolve_token
+from sandbox.adapters.outbound.local.storage import dir_size_bytes
 from sandbox.domain.models import (
     RepoCache,
     RepoCacheRequest,
     WorkspaceLocation,
     WorkspaceState,
     WorkspaceStorageKind,
-    new_id,
     utc_now,
 )
+
+
+def _deterministic_cache_id(key: str) -> str:
+    """Derive a stable cache id from the request key.
+
+    ``_by_id`` / ``_by_key`` only dedupe inside a single process; after
+    a restart they are empty. Without a deterministic id, the next
+    ``ensure_cache`` mints a fresh ``rc_<uuid>`` even though the bare
+    repo on disk and the persisted ``RepoCache`` row already exist —
+    leaving ``Workspace.repo_cache_id`` pointing at a row the store
+    doesn't have. Hashing the key keeps the id stable across restarts.
+    """
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    return f"rc_{digest}"
 
 
 class LocalRepoCacheProvider:
@@ -107,6 +122,7 @@ class LocalRepoCacheProvider:
         # above still ran (it's the only way to materialize the
         # requested ref into the bare); the in-memory id stays stable.
         key = request.key()
+        size = dir_size_bytes(bare_path)
         existing_id = self._by_key.get(key)
         if existing_id is not None:
             existing = self._by_id.get(existing_id)
@@ -114,10 +130,13 @@ class LocalRepoCacheProvider:
                 existing.last_fetched_at = utc_now()
                 existing.last_used_at = utc_now()
                 existing.updated_at = utc_now()
+                # Re-fetch may have grown the bare (new ref); keep the
+                # size the eviction policy ranks on roughly current.
+                existing.size_bytes = size
                 return existing
 
         cache = RepoCache(
-            id=new_id("rc"),
+            id=_deterministic_cache_id(key),
             key=key,
             repo=request.repo,
             location=WorkspaceLocation(
@@ -127,6 +146,7 @@ class LocalRepoCacheProvider:
             backend_kind=self.kind,
             state=WorkspaceState.READY,
             last_fetched_at=utc_now(),
+            size_bytes=size,
         )
         self._by_id[cache.id] = cache
         self._by_key[key] = cache.id

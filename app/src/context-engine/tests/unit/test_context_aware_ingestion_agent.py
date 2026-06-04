@@ -10,7 +10,7 @@ from adapters.outbound.reconciliation.context_graph_tools import (
     ContextGraphReconciliationTools,
     build_initial_context_snapshot,
 )
-from application.use_cases.reconciliation_validation import (
+from application.services.reconciliation_validation import (
     validate_reconciliation_plan,
 )
 from domain.context_events import ContextEvent, EventRef
@@ -70,10 +70,11 @@ def test_tools_adapter_scopes_query_to_request_pot_and_repo() -> None:
     tools = ContextGraphReconciliationTools(graph)
     req = _make_request(pot_id="pot-42", repo_name="acme/api")
     out = tools.execute_read_tool(req, "context_search", {"query": "telemetry"})
-    assert out["kind"] == "semantic_search"
+    assert out["kind"] != "error"
     assert graph.calls[-1].pot_id == "pot-42"
     assert graph.calls[-1].scope.repo_name == "acme/api"
     assert graph.calls[-1].query == "telemetry"
+    assert graph.calls[-1].include == []  # generic search routes by intent
 
 
 def test_tools_adapter_rejects_empty_query() -> None:
@@ -92,10 +93,23 @@ def test_tools_adapter_lists_expected_tool_catalog() -> None:
     names = {t.name for t in tools.list_tools(_make_request())}
     assert names == {
         "context_search",
-        "context_recent_changes",
-        "context_file_owners",
-        "context_graph_overview",
+        "context_coding_preferences",
+        "context_infra_topology",
+        "context_timeline",
+        "context_prior_bugs",
     }
+
+
+def test_read_tool_includes_are_orchestrator_backed() -> None:
+    """Every targeted read tool must name an include the orchestrator backs;
+    this guard stops the tool surface from drifting from the readers again."""
+    from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
+    from adapters.outbound.reconciliation.context_graph_tools import READ_TOOL_INCLUDE
+    from application.services.read_orchestrator import ReadOrchestrator
+
+    backed = ReadOrchestrator(claim_query=InMemoryClaimQueryStore()).backed_includes
+    targeted = {inc for inc in READ_TOOL_INCLUDE.values() if inc is not None}
+    assert targeted <= backed, f"unbacked read-tool includes: {targeted - backed}"
 
 
 def test_tools_adapter_returns_disabled_when_graph_off() -> None:
@@ -108,14 +122,12 @@ def test_tools_adapter_returns_disabled_when_graph_off() -> None:
     assert out == {"error": "context_graph_disabled", "kind": "error"}
 
 
-def test_recent_changes_requires_at_least_one_target() -> None:
+def test_timeline_runs_without_a_scope_target() -> None:
     graph = _FakeGraph()
     tools = ContextGraphReconciliationTools(graph)
-    out = tools.execute_read_tool(
-        _make_request(), "context_recent_changes", {}
-    )
-    assert out["kind"] == "error"
-    assert "one_of" in out["error"]
+    out = tools.execute_read_tool(_make_request(), "context_timeline", {})
+    assert out["kind"] == "timeline"
+    assert graph.calls[-1].include == ["timeline"]
 
 
 def test_unknown_tool_name_returns_error() -> None:
@@ -128,7 +140,7 @@ def test_unknown_tool_name_returns_error() -> None:
     assert out["error"].startswith("unknown_tool")
 
 
-def test_build_initial_context_snapshot_bundles_overview_and_seeds() -> None:
+def test_build_initial_context_snapshot_bundles_topology_and_seeds() -> None:
     graph = _FakeGraph()
     tools = ContextGraphReconciliationTools(graph)
     snap = build_initial_context_snapshot(
@@ -136,7 +148,7 @@ def test_build_initial_context_snapshot_bundles_overview_and_seeds() -> None:
         _make_request(payload={"title": "Investigate alert storm"}),
         semantic_seed="Investigate alert storm",
     )
-    assert "graph_overview" in snap
+    assert "infra_topology" in snap
     assert "semantic_seed" in snap
     assert "source_ref_hits" in snap  # event has source_id
 
@@ -147,7 +159,7 @@ def test_snapshot_omits_semantic_seed_when_none() -> None:
     req = _make_request(source_id="", payload={})
     req.event.source_event_id = None  # no source ref at all
     snap = build_initial_context_snapshot(tools, req, semantic_seed=None)
-    assert "graph_overview" in snap
+    assert "infra_topology" in snap
     assert "semantic_seed" not in snap
     assert "source_ref_hits" not in snap
 
@@ -156,7 +168,6 @@ def _plan_with_n_entities(n: int) -> ReconciliationPlan:
     return ReconciliationPlan(
         event_ref=EventRef(event_id="e1", source_system="github", pot_id="pot-1"),
         summary="s",
-        episodes=[],
         entity_upserts=[
             EntityUpsert(
                 entity_key=f"obs:{i}",
@@ -197,9 +208,9 @@ def test_pydantic_deep_agent_exposes_tools_setter() -> None:
     )
 
     agent = PydanticDeepReconciliationAgent()
-    assert agent.capability_metadata()["toolset_version"] == "read-only-plan"
-    graph = _FakeGraph()
-    agent.set_context_tools(ContextGraphReconciliationTools(graph))
-    meta = agent.capability_metadata()
-    assert meta["toolset_version"] == "context-aware-v1"
-    assert meta["has_context_tools"] is True
+    base_meta = agent.capability_metadata()
+    assert base_meta["toolset_version"] == "batch-tools-v1"
+    assert base_meta["has_context_tools"] is False
+    agent.set_context_tools(ContextGraphReconciliationTools(_FakeGraph()))
+    after = agent.capability_metadata()
+    assert after["has_context_tools"] is True

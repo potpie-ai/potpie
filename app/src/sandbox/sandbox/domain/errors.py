@@ -65,6 +65,14 @@ class RuntimeCommandRejected(RuntimeErrorBase):
     """Command was rejected before execution by policy or adapter limitations."""
 
 
+class SessionsUnsupported(RuntimeErrorBase):
+    """Runtime backend does not implement interactive exec sessions."""
+
+
+class ExecSessionNotFound(RuntimeErrorBase):
+    """Exec session id is unknown to the runtime (expired, killed, or wrong worker)."""
+
+
 class GitPlatformError(SandboxCoreError):
     """Base for git-platform (PR/review/comment) failures."""
 

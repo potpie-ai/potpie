@@ -1,7 +1,7 @@
 """Enrich a ``ReconciliationPlan`` with canonical labels inferred by the classifier.
 
 Plan path runs before structural writes; it shares the same
-``ontology_classifier.classify_entity`` engine as the post-Graphiti Neo4j pass
+``ontology_classifier.classify_entity`` engine over the canonical Neo4j graph
 so the vocabulary pinning is identical regardless of which path produced the
 mutation.
 

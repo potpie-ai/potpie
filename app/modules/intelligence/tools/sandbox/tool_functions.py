@@ -379,6 +379,126 @@ async def sandbox_shell_tool(
 
 
 # ----------------------------------------------------------------------
+# sandbox_exec / sandbox_write_stdin  (unified exec — streaming sessions)
+# ----------------------------------------------------------------------
+def _wrap_session_result(handle: Any, result: Any) -> Dict[str, Any]:
+    """Shape an ``ExecSessionResult`` for the LLM.
+
+    ``success`` is true while the command is still running (no failure yet)
+    and, once finished, only when it exited 0.
+    """
+    running = bool(result.running)
+    return {
+        "success": running or result.exit_code == 0,
+        "branch": handle.branch,
+        "session_id": result.session_id,
+        "running": running,
+        "exit_code": result.exit_code,
+        "output": result.output,
+        "truncated": result.truncated,
+    }
+
+
+async def _exec_session_start(
+    client: Any,
+    handle: Any,
+    *,
+    command: str,
+    tty: bool = False,
+    yield_time_ms: int = 10_000,
+    max_output_bytes: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Handle-bound ``sandbox_exec`` implementation."""
+    result = await client.exec_start(
+        handle,
+        [command],
+        shell=True,
+        tty=tty,
+        yield_time_ms=yield_time_ms,
+        max_output_bytes=max_output_bytes,
+        command_kind=CommandKind.WRITE,
+    )
+    return _wrap_session_result(handle, result)
+
+
+async def _exec_session_write(
+    client: Any,
+    handle: Any,
+    *,
+    session_id: str,
+    chars: str = "",
+    kill: bool = False,
+    yield_time_ms: int = 10_000,
+    max_output_bytes: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Handle-bound ``sandbox_write_stdin`` implementation (write / poll / kill)."""
+    if kill:
+        await client.exec_kill(handle, session_id)
+        return {
+            "success": True,
+            "session_id": session_id,
+            "running": False,
+            "killed": True,
+        }
+    result = await client.exec_write_stdin(
+        handle,
+        session_id,
+        chars,
+        yield_time_ms=yield_time_ms,
+        max_output_bytes=max_output_bytes,
+    )
+    return _wrap_session_result(handle, result)
+
+
+async def sandbox_exec_tool(
+    project_id: str,
+    command: str,
+    tty: bool = False,
+    yield_time_ms: int = 10_000,
+    max_output_bytes: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Start a streamable command and read its progress (legacy form)."""
+    try:
+        handle = await _resolve(project_id)
+        client = get_sandbox_client()
+        return await _exec_session_start(
+            client,
+            handle,
+            command=command,
+            tty=tty,
+            yield_time_ms=yield_time_ms,
+            max_output_bytes=max_output_bytes,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(f"sandbox_exec failed: {exc}")
+
+
+async def sandbox_write_stdin_tool(
+    project_id: str,
+    session_id: str,
+    chars: str = "",
+    kill: bool = False,
+    yield_time_ms: int = 10_000,
+    max_output_bytes: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Write stdin to / poll / kill a sandbox_exec session (legacy form)."""
+    try:
+        handle = await _resolve(project_id)
+        client = get_sandbox_client()
+        return await _exec_session_write(
+            client,
+            handle,
+            session_id=session_id,
+            chars=chars,
+            kill=kill,
+            yield_time_ms=yield_time_ms,
+            max_output_bytes=max_output_bytes,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(f"sandbox_write_stdin failed: {exc}")
+
+
+# ----------------------------------------------------------------------
 # sandbox_search
 # ----------------------------------------------------------------------
 async def _exec_search(

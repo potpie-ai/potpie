@@ -1,0 +1,129 @@
+id: time_hotspot_detection
+use_case: TIME
+tier: quick
+difficulty: hard
+source_mix: single
+universe: acme
+
+description: |
+  An agent is asked: "Which file in checkout-api has churned the most in the
+  last 30 days — what's our hotspot?"
+
+  This is a hotspot-detection question. The engine must count how often each
+  file was touched across recent PRs and identify the single file with the
+  most churn, resisting heavy distraction from unrelated PRs.
+
+  Ground truth: `services/checkout-api/app/handlers/orders.py` is the hotspot.
+  It is touched by SIX PRs inside the 30-day window, in chronological order:
+    1. PR #1180 (-28d) reject negative quantities
+    2. PR #1186 (-23d) idempotency-key hashing bug
+    3. PR #1193 (-18d) split-shipment support
+    4. PR #1199 (-13d) revert inline tax calc
+    5. PR #1205 (-8d)  per-step timing spans
+    6. PR #1210 (-2d)  fix N+1 inventory lookups
+
+  Distractors that must NOT be counted as orders.py touches:
+    - PR #1188 (-21d) docs-only — touches checkout-api/README.md.
+    - PR #1201 (-12d) cart notes — touches carts/persistence.py.
+    - PR #998 (-79d, out of window) inventory-svc reformat.
+    - A cloud of clone-mode chore noise PRs touching unrelated files.
+
+  The hard part is *churn counting under distraction*: the engine must
+  recognize orders.py as the hotspot, count ~6 touches in the window, list the
+  contributing PRs, and NOT inflate the count with the two in-service
+  distractor PRs that touch different files or with the noise PRs. Getting the
+  count materially wrong (e.g. saying 8) or naming a different file fails.
+
+ingest:
+  - { event: github/pr_merged__1180__orders_validation.json, at: "-28d", tags: [signal] }
+  - { event: github/pr_merged__1186__orders_idempotency_bug.json, at: "-23d", tags: [signal] }
+  - { event: github/pr_merged__1193__orders_split_shipment.json, at: "-18d", tags: [signal] }
+  - { event: github/pr_merged__1199__orders_tax_revert.json, at: "-13d", tags: [signal] }
+  - { event: github/pr_merged__1205__orders_telemetry.json, at: "-8d", tags: [signal] }
+  - { event: github/pr_merged__1210__orders_n_plus_one.json, at: "-2d", tags: [signal] }
+  - { event: github/pr_merged__1188__checkout_readme_other_file.json, at: "-21d", tags: [distractor] }
+  - { event: github/pr_merged__1201__checkout_carts_other_file.json, at: "-12d", tags: [distractor] }
+  - { event: github/pr_merged__998__inventory_unrelated.json, at: "-79d", tags: [distractor] }
+
+distractor_events:
+  - { event: "noise/github_chore_noise_template.json", at: "-29d..-2d", count: 18, shape: "noise/random" }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): PullRequest/File/Activity nodes are reconciled
+  # onto the timeline but the topology query/read path surfaces only topology
+  # entities (Service/DataStore + DEPENDS_ON/USES). The churn-counting /
+  # hotspot identification this scenario measures is graded via retrieval +
+  # the judge. We anchor the structural floor on the checkout-api Service.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*checkout-api", min_count: 1 }
+  graph_must_not_contain:
+    - { label: PullRequest, key_pattern: ".*:400[0-9]", max_count: 0 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: review
+  scope: { service: checkout-api, window_days: 30 }
+  include: [timeline, infra_topology]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [timeline]
+  source_refs_min: 5
+  must_cite_event_id:
+    - github/pr_merged__1180__orders_validation.json
+    - github/pr_merged__1186__orders_idempotency_bug.json
+    - github/pr_merged__1193__orders_split_shipment.json
+    - github/pr_merged__1199__orders_tax_revert.json
+    - github/pr_merged__1205__orders_telemetry.json
+    - github/pr_merged__1210__orders_n_plus_one.json
+  must_not_cite_event_id:
+    - github/pr_merged__998__inventory_unrelated.json
+  temporal:
+    must_order_correctly: true
+    window: { from: "-30d", to: "0d" }
+    out_of_window_refs_max: 0
+
+judge:
+  pass_score: 55
+  criteria:
+    - name: identifies_hotspot_file
+      weight: 35
+      pass_threshold: 4
+      dimensions: [TIME]
+      prompt: |
+        Does the answer identify `services/checkout-api/app/handlers/orders.py`
+        (the orders handler) as the most-churned file / the hotspot? Naming a
+        different file, or failing to name a specific file at all, fails.
+    - name: correct_touch_count
+      weight: 25
+      pass_threshold: 3
+      dimensions: [TIME]
+      prompt: |
+        Does the answer count roughly SIX PRs touching the orders handler in
+        the 30-day window? Accept 5-6 as correct (the six are #1180, #1186,
+        #1193, #1199, #1205, #1210). A materially wrong count — e.g. inflating
+        to 8 by counting the docs/cart distractor PRs, or undercounting to
+        2-3 — fails.
+    - name: lists_contributing_prs_in_order
+      weight: 25
+      pass_threshold: 3
+      dimensions: [TIME]
+      prompt: |
+        Does the answer list the contributing PRs (by number or description)
+        in roughly chronological order, and EXCLUDE the in-service distractors
+        that did not touch orders.py (PR #1188 docs, PR #1201 cart notes)?
+        Listing at least four of the six in order, without including the
+        distractors, passes.
+    - name: no_hallucination
+      weight: 15
+      pass_threshold: 5
+      dimensions: [TIME]
+      prompt: |
+        Are all factual claims grounded? Valid identifiers: orders.py, PR
+        #1180, #1186, #1193, #1199, #1205, #1210, checkout-api, bench-user-1.
+        Any other PR numbers (including the 4000-range chore noise), file
+        paths, or person names are hallucinations and fail this criterion.

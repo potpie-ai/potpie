@@ -1,0 +1,119 @@
+id: time_dependency_bump_history
+use_case: TIME
+tier: extended
+difficulty: medium
+source_mix: single
+universe: acme
+
+description: |
+  An engineer asks: "How did the Pydantic v1->v2 migration roll out across our
+  services, and is it done?"
+
+  This is a dependency-migration history question. The migration was not a
+  single bump — it landed in four PRs over four months, and the engine must
+  reconstruct the rollout order and report which services migrated when.
+
+  Ground truth, in chronological order:
+    1. PR #905 (-120d, 2026-01-25) — migrate shared `acme-models` lib to
+       Pydantic v2 behind a `pydantic.v1` compat shim. No service migrates its
+       own models yet. (bench-user-10)
+    2. PR #961 (-92d, 2026-02-22) — checkout-api is the FIRST service to drop
+       the shim and adopt native v2. (bench-user-1)
+    3. PR #1024 (-60d, 2026-03-26) — inventory-svc drops the shim and adopts
+       native v2, following checkout-api's pattern. (bench-user-2)
+    4. PR #1140 (-10d, 2026-05-15) — remove the `pydantic.v1` compat shim
+       entirely now that all services are on v2; migration COMPLETE.
+       (bench-user-10)
+
+  The hard part is *narrating a long multi-service migration in order*: the
+  engine must get the four PRs in sequence, attribute checkout-api as migrating
+  BEFORE inventory-svc, recognize PR #905 introduced the compat shim and PR
+  #1140 removed it (bookending the migration), and conclude the migration is
+  complete. Reversing the service order, or missing that #1140 closes it out,
+  fails.
+
+ingest:
+  - { event: github/pr_merged__905__pydantic_v2_shared_models.json, at: "-120d", tags: [signal] }
+  - { event: github/pr_merged__961__pydantic_v2_checkout.json, at: "-92d", tags: [signal] }
+  - { event: github/pr_merged__1024__pydantic_v2_inventory.json, at: "-60d", tags: [signal] }
+  - { event: github/pr_merged__1140__pydantic_v1_shim_removal.json, at: "-10d", tags: [signal] }
+
+distractor_events:
+  - { event: "noise/github_chore_noise_template.json", at: "-110d..-15d", count: 10, shape: "noise/random" }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): PullRequest/Person nodes are reconciled onto the
+  # timeline but the topology query/read path surfaces only topology entities
+  # (Service/DataStore + DEPENDS_ON/USES). The migration-history narrative this
+  # scenario measures is graded via retrieval + the judge. We anchor the
+  # structural floor on the two Services that migrated their own models.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*(checkout-api|inventory-svc)", min_count: 1 }
+  graph_must_not_contain:
+    - { label: PullRequest, key_pattern: ".*:400[0-9]", max_count: 0 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 4
+    failed_events_max: 0
+
+query:
+  intent: review
+  scope: { topic: pydantic-migration, window_days: 150 }
+  include: [timeline, infra_topology]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [timeline]
+  source_refs_min: 3
+  must_cite_event_id:
+    - github/pr_merged__905__pydantic_v2_shared_models.json
+    - github/pr_merged__961__pydantic_v2_checkout.json
+    - github/pr_merged__1024__pydantic_v2_inventory.json
+    - github/pr_merged__1140__pydantic_v1_shim_removal.json
+  must_not_cite_event_id:
+    - github/pr_merged__998__inventory_unrelated.json
+  temporal:
+    must_order_correctly: true
+    window: { from: "-150d", to: "0d" }
+    out_of_window_refs_max: 0
+
+judge:
+  pass_score: 65
+  criteria:
+    - name: chronology_of_migration
+      weight: 35
+      pass_threshold: 4
+      dimensions: [TIME]
+      prompt: |
+        Does the answer present the four migration PRs in correct order:
+        #905 (shared lib + compat shim) -> #961 (checkout-api native v2) ->
+        #1024 (inventory-svc native v2) -> #1140 (shim removed)? Out-of-order
+        listing, or omitting the bookending shim PRs (#905/#1140), fails.
+    - name: which_service_when
+      weight: 30
+      pass_threshold: 4
+      dimensions: [TIME]
+      prompt: |
+        Does the answer correctly state which service migrated when — that
+        checkout-api went native v2 BEFORE inventory-svc (PR #961 ~3 months
+        ago vs PR #1024 ~2 months ago)? Reversing the two services fails.
+    - name: migration_status
+      weight: 20
+      pass_threshold: 3
+      dimensions: [TIME]
+      prompt: |
+        Does the answer conclude that the migration is COMPLETE, citing the
+        shim removal in PR #1140 (~10 days ago) as the closing step? An answer
+        that leaves the status ambiguous, or claims it is still in progress,
+        fails.
+    - name: no_hallucination
+      weight: 15
+      pass_threshold: 5
+      dimensions: [TIME]
+      prompt: |
+        Are all factual claims grounded? Valid identifiers: PR #905, #961,
+        #1024, #1140, checkout-api, inventory-svc, acme-models, Pydantic v1/v2,
+        bench-user-1, bench-user-2, bench-user-10. Any other PR numbers
+        (including the 4000-range chore noise), services, or person names are
+        hallucinations and fail this criterion.

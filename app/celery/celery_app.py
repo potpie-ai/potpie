@@ -18,6 +18,28 @@ if platform.system() == "Darwin":
         # Already set, which is fine
         pass
 
+# Celery beat persists its schedule through `shelve`, which on Python 3.13+
+# defaults to the new `dbm.sqlite3` backend. With embedded beat (`celery
+# worker -B`), beat runs inside a billiard fork; SQLite connections are not
+# fork-safe, so the schedule DB flips to WAL mode and every sync dies with
+# "sqlite3.OperationalError: disk I/O error". Force a fork-safe, non-sqlite
+# dbm backend (ndbm if present, else the pure-Python dumb backend) so beat's
+# schedule survives the fork. Must run before celery/beat import + fork.
+import dbm  # noqa: E402
+
+_beat_dbm = None
+for _dbm_name in ("dbm.ndbm", "dbm.dumb"):
+    try:
+        _beat_dbm = __import__(_dbm_name, fromlist=["open"])
+        break
+    except ImportError:
+        continue
+if _beat_dbm is not None:
+    # _modules: lets whichdb-detected backend resolve when beat reopens the db
+    # _defaultmod: backend used to create the db on beat's first run
+    dbm._modules[_beat_dbm.__name__] = _beat_dbm  # type: ignore[attr-defined]
+    dbm._defaultmod = _beat_dbm  # type: ignore[attr-defined]
+
 from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
@@ -139,17 +161,52 @@ def configure_celery(queue_prefix: str):
             "app.modules.event_bus.tasks.event_tasks.process_custom_event": {
                 "queue": "external-event"
             },
-            "app.modules.context_graph.tasks.context_graph_backfill_pot": {
+            "app.modules.context_graph.tasks.context_graph_process_batch": {
                 "queue": "context-graph-etl"
             },
-            "app.modules.context_graph.tasks.context_graph_ingest_pr": {
+            "app.modules.context_graph.tasks.context_graph_flush_windowed_batches": {
                 "queue": "context-graph-etl"
             },
-            "app.modules.context_graph.tasks.context_graph_ingestion_agent_run": {
+            "app.modules.context_graph.tasks.context_graph_reap_stale_batches": {
                 "queue": "context-graph-etl"
             },
-            "app.modules.context_graph.tasks.context_graph_apply_episode": {
-                "queue": "context-graph-etl"
+        },
+        # Phase 4: every minute, sweep windowed pots and enqueue any whose
+        # open batch is older than the configured window_minutes. The task
+        # itself is idempotent — running it more often than necessary only
+        # adds load proportional to ready pots, not all pots.
+        beat_schedule={
+            "context-graph-flush-windowed-batches": {
+                "task": "app.modules.context_graph.tasks.context_graph_flush_windowed_batches",
+                "schedule": float(
+                    os.getenv("CONTEXT_ENGINE_WINDOW_FLUSH_INTERVAL_SECS", "60")
+                ),
+                "options": {"queue": "context-graph-etl"},
+            },
+            # Backstop for batches whose worker died mid-run (OOM, pod
+            # restart, hard time-limit): the message is not redelivered and
+            # the row is never re-claimable, so without this its events sit
+            # at "processing" forever. Cheap + idempotent; the lease (well
+            # above task_time_limit) ensures it never touches a live run.
+            "context-graph-reap-stale-batches": {
+                "task": "app.modules.context_graph.tasks.context_graph_reap_stale_batches",
+                "schedule": float(
+                    os.getenv("CONTEXT_ENGINE_STALE_REAP_INTERVAL_SECS", "300")
+                ),
+                "options": {"queue": "context-graph-etl"},
+            },
+            # Periodic sandbox storage sweep: the reactive eviction path
+            # only fires on new allocations, so a host can fill with
+            # stale worktrees while idle. This refreshes LRU sizes,
+            # winds down idle runtimes, and evicts to the low-water mark.
+            # Idempotent — the interval is purely a responsiveness/cost
+            # trade-off.
+            "sandbox-storage-sweep": {
+                "task": "app.modules.intelligence.tools.sandbox.tasks.sandbox_storage_sweep",
+                "schedule": float(
+                    os.getenv("SANDBOX_STORAGE_SWEEP_INTERVAL_SECS", "300")
+                ),
+                "options": {"queue": "context-graph-etl"},
             },
         },
         # Optimize task distribution
@@ -177,9 +234,12 @@ def configure_celery(queue_prefix: str):
 
 configure_celery(queue_name)
 
-# Wire Celery-side observability signals: worker_process_init re-configures
-# observability INSIDE each forked worker (fork-safe init for Sentry/logfire
-# sockets) and task_prerun/postrun bracket each task with log_context.
+# Pydantic AI instrumentation is enabled via _obs_cfg.logfire.instrument_pydantic_ai
+# (set above); base_task.run_async uses asyncio.run() per task so each run has a
+# fresh event loop and OTel context (no deferred aclose() in wrong context).
+# install_celery_observability wires the Celery-side signals: worker_process_init
+# re-configures observability INSIDE each forked worker (fork-safe init for
+# Sentry/logfire sockets) and task_prerun/postrun bracket each task with log_context.
 install_celery_observability(celery_app, config=_obs_cfg)
 
 
@@ -579,3 +639,4 @@ import app.celery.tasks.parsing_tasks  # noqa # Ensure the task module is import
 import app.celery.tasks.agent_tasks  # noqa # Ensure the agent task module is imported
 import app.modules.event_bus.tasks.event_tasks  # noqa # Ensure event bus tasks are registered
 import app.modules.context_graph.tasks  # noqa # Ensure context graph tasks are registered
+import app.modules.intelligence.tools.sandbox.tasks  # noqa # Ensure the beat-scheduled sandbox storage sweep is registered

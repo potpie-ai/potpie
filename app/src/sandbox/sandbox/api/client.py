@@ -34,6 +34,7 @@ from sandbox.domain.models import (
     CommandKind,
     ExecRequest,
     ExecResult,
+    ExecSessionResult,
     PullRequest,
     PullRequestComment,
     PullRequestCommentResult,
@@ -42,6 +43,8 @@ from sandbox.domain.models import (
     RepoCacheRequest,
     RepoIdentity,
     RuntimeState,
+    SessionExecRequest,
+    SessionInputRequest,
     Workspace,
     WorkspaceMode,
     WorkspaceRequest,
@@ -262,6 +265,118 @@ class SandboxClient:
         """Remove the worktree (and its runtime). The repo cache survives."""
         await self._service.destroy_workspace(handle.workspace_id)
 
+    async def detach_repo_from_pot(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        repo: str,
+    ) -> int:
+        """Drop every workspace for ``(user_id, project_id, repo)``.
+
+        Used when a repo is removed from a pot: tears down the per-repo
+        worktree(s) but leaves the shared sandbox container in place so the
+        other pot repos keep running. Returns how many workspaces were
+        destroyed. The bare clone in the repo cache survives — it is shared
+        across pots and the host is responsible for any GC decision.
+        """
+        removed = 0
+        for workspace in await self._service._store.list_workspaces():
+            req = workspace.request
+            if req.user_id != user_id:
+                continue
+            if req.project_id != project_id:
+                continue
+            if req.repo.repo_name != repo:
+                continue
+            try:
+                await self._service.destroy_workspace(workspace.id)
+                removed += 1
+            except Exception:  # noqa: BLE001
+                continue
+        return removed
+
+    async def destroy_pot_sandbox(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        delete_repo_caches: bool = False,
+    ) -> dict[str, int]:
+        """Tear down everything for a pot: workspaces, runtimes, the shared sandbox.
+
+        Wraps :meth:`SandboxService.destroy_pot_container`. ``delete_repo_caches``
+        is gated by the host (see ``CONTEXT_ENGINE_GC_BARE_ON_POT_DELETE``) —
+        bare clones are shared across pots and should not be removed without
+        cross-pot reference checks.
+        """
+        return await self._service.destroy_pot_container(
+            user_id=user_id,
+            project_id=project_id,
+            delete_repo_caches=delete_repo_caches,
+        )
+
+    async def sweep_storage(
+        self,
+        *,
+        idle_stop_seconds: float = 30 * 60,
+        idle_destroy_seconds: float = 6 * 60 * 60,
+    ) -> dict[str, object]:
+        """Periodic maintenance pass — the Celery beat task's entrypoint.
+
+        Three steps, cheapest-to-rebuild first:
+
+        1. **Refresh sizes.** Workspaces/caches measure ``size_bytes``
+           once at creation; mutating execs grow them without re-walking
+           (the hot path stays cheap). Here, off the hot path, we
+           re-measure local-backed rows so the eviction policy ranks LRU
+           on current sizes. Daytona rows have no local path and use the
+           count scope, so they're skipped.
+        2. **Prune idle runtimes.** Live compute, trivially rebuilt on
+           next exec — reclaimed first.
+        3. **Evict to low-water.** Run the policy globally
+           (``user_id=None``) so disk pressure is relieved even when no
+           new work is arriving to trigger the reactive path.
+
+        Idempotent and best-effort: safe to run on any interval; running
+        it more often than needed only costs the size-walk.
+        """
+        from sandbox.adapters.outbound.local.storage import dir_size_bytes
+
+        store = self._container.store
+        resized = 0
+        for ws in await store.list_workspaces():
+            path = ws.location.local_path
+            if not path or not Path(path).exists():
+                continue
+            new_size = await asyncio.to_thread(dir_size_bytes, Path(path))
+            if new_size != ws.size_bytes:
+                ws.size_bytes = new_size
+                await store.save_workspace(ws)
+                resized += 1
+        for cache in await store.list_repo_caches():
+            path = cache.location.local_path
+            if not path or not Path(path).exists():
+                continue
+            new_size = await asyncio.to_thread(dir_size_bytes, Path(path))
+            if new_size != cache.size_bytes:
+                cache.size_bytes = new_size
+                await store.save_repo_cache(cache)
+                resized += 1
+
+        runtimes = await self._service.prune_idle_runtimes(
+            idle_stop_seconds=idle_stop_seconds,
+            idle_destroy_seconds=idle_destroy_seconds,
+        )
+        eviction = await self._service.evict_storage(user_id=None)
+        return {
+            "rows_resized": resized,
+            "runtimes": runtimes,
+            "evicted_workspaces": len(eviction.evicted_workspace_ids),
+            "evicted_repo_caches": len(eviction.evicted_repo_cache_ids),
+            "freed_bytes": eviction.freed_bytes,
+        }
+
     async def is_alive(self, handle: WorkspaceHandle) -> bool:
         """Cheap liveness probe — does the backing workspace still exist?
 
@@ -312,6 +427,85 @@ class SandboxClient:
             shell=shell,
         )
         return await self._service.exec(handle.workspace_id, request)
+
+    # ------------------------------------------------------------------
+    # Unified exec — start a streamable/long-running command, then read its
+    # progress (and optionally feed it stdin) across multiple calls. Modeled
+    # on OpenAI Codex's exec_command / write_stdin. Backends that don't
+    # support sessions raise ``SessionsUnsupported``; check
+    # ``container.runtime_provider.capabilities.interactive_session`` first
+    # if you need to branch.
+    # ------------------------------------------------------------------
+    async def exec_start(
+        self,
+        handle: WorkspaceHandle,
+        cmd: list[str],
+        *,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        shell: bool = True,
+        tty: bool = False,
+        yield_time_ms: int = 10_000,
+        max_output_bytes: int | None = None,
+        command_kind: CommandKind = CommandKind.READ,
+    ) -> ExecSessionResult:
+        """Start a command in a session and collect output for the yield window.
+
+        Returns an :class:`ExecSessionResult`. If ``running`` is true the
+        command is still executing — keep its ``session_id`` and call
+        :meth:`exec_poll` to read more output or :meth:`exec_write_stdin` to
+        feed it input. If ``running`` is false the command finished and
+        ``exit_code`` is set.
+        """
+        request = SessionExecRequest(
+            cmd=tuple(cmd),
+            cwd=cwd,
+            env=dict(env or {}),
+            shell=shell,
+            tty=tty,
+            yield_time_ms=yield_time_ms,
+            max_output_bytes=max_output_bytes,
+            command_kind=command_kind,
+        )
+        return await self._service.exec_session_start(handle.workspace_id, request)
+
+    async def exec_write_stdin(
+        self,
+        handle: WorkspaceHandle,
+        session_id: str,
+        data: str = "",
+        *,
+        yield_time_ms: int = 10_000,
+        max_output_bytes: int | None = None,
+    ) -> ExecSessionResult:
+        """Write ``data`` to a running session's stdin, then collect new output."""
+        request = SessionInputRequest(
+            session_id=session_id,
+            data=data,
+            yield_time_ms=yield_time_ms,
+            max_output_bytes=max_output_bytes,
+        )
+        return await self._service.exec_session_write(handle.workspace_id, request)
+
+    async def exec_poll(
+        self,
+        handle: WorkspaceHandle,
+        session_id: str,
+        *,
+        yield_time_ms: int = 10_000,
+        max_output_bytes: int | None = None,
+    ) -> ExecSessionResult:
+        """Read more output from a running session without writing stdin."""
+        return await self._service.exec_session_poll(
+            handle.workspace_id,
+            session_id,
+            yield_time_ms=yield_time_ms,
+            max_output_bytes=max_output_bytes,
+        )
+
+    async def exec_kill(self, handle: WorkspaceHandle, session_id: str) -> None:
+        """Terminate a session and free its runtime resources."""
+        await self._service.exec_session_kill(handle.workspace_id, session_id)
 
     # ------------------------------------------------------------------
     # File helpers

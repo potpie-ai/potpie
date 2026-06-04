@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.modules.context_graph.context_graph_pot_repository_model import (
     ContextGraphPotRepository,
@@ -95,6 +99,68 @@ def unmirror_repository_from_sources(
     ).delete(synchronize_session=False)
 
 
+def repository_for_source(
+    db: Session, source: ContextGraphPotSource
+) -> ContextGraphPotRepository | None:
+    """Resolve the repo row a repository source mirrors — inverse of mirror.
+
+    Matches on the stable ``scope_hash`` join key (computed at mirror time
+    from provider/host/owner/repo and stored on the source row), not by
+    re-parsing ``scope_json``. A corrupt or legacy ``scope_json`` therefore
+    can no longer orphan the repo row when the source is deleted. Returns
+    ``None`` for non-repository sources or when no repo row matches.
+    """
+    if source.source_kind != SOURCE_KIND_REPOSITORY:
+        return None
+    candidates = (
+        db.query(ContextGraphPotRepository)
+        .filter(
+            ContextGraphPotRepository.pot_id == source.pot_id,
+            ContextGraphPotRepository.provider == source.provider,
+        )
+        .all()
+    )
+    for repo_row in candidates:
+        if (
+            github_repo_scope_hash(
+                repo_row.provider,
+                repo_row.provider_host,
+                repo_row.owner,
+                repo_row.repo,
+            )
+            == source.scope_hash
+        ):
+            return repo_row
+    return None
+
+
+def repository_source_exists(
+    db: Session, repository: ContextGraphPotRepository
+) -> bool:
+    """True when the mirrored source row for ``repository`` is present.
+
+    A live attachment always has its source mirror (``attach_repo_to_pot``
+    creates both together). Its absence means the repo was deleted via the
+    Sources tab — ``delete_pot_source`` always drops the source row but only
+    best-effort drops the repo row, so the surviving repo row is then an
+    orphan, not a live attachment.
+    """
+    scope_hash = github_repo_scope_hash(
+        repository.provider, repository.provider_host, repository.owner, repository.repo
+    )
+    return (
+        db.query(ContextGraphPotSource)
+        .filter(
+            ContextGraphPotSource.pot_id == repository.pot_id,
+            ContextGraphPotSource.provider == repository.provider,
+            ContextGraphPotSource.source_kind == SOURCE_KIND_REPOSITORY,
+            ContextGraphPotSource.scope_hash == scope_hash,
+        )
+        .first()
+        is not None
+    )
+
+
 def linear_team_scope_hash(team_id: str) -> str:
     raw = f"linear|team|{team_id.strip().lower()}"
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
@@ -144,6 +210,129 @@ def attach_linear_team_source(
     db.add(row)
     db.flush()
     return row, False
+
+
+def emit_linear_backfill_event(
+    db: Session,
+    *,
+    row: ContextGraphPotSource,
+    submitted_by_user_id: str,
+) -> str | None:
+    """Submit the ``linear_team.added`` backfill seed for a newly attached team.
+
+    The Linear analogue of ``attach_repo_to_pot._emit_bootstrap_event``: one
+    ``agent_reconciliation`` event flows the same admission path as GitHub's
+    ``repository.added`` and every live webhook, so the reconciliation agent
+    (planner on, via the ``linear/linear_team/added`` playbook) enumerates the
+    team's issues and seeds them. Idempotent on ``source_id`` so re-attaching
+    the same team is a no-op at the ingestion ledger.
+
+    Best-effort: returns ``None`` (and logs) if the context-engine isn't
+    importable, the container can't be built, or submit raises. The source row
+    is already committed by the caller, so attach stays successful regardless.
+    """
+    try:
+        from app.modules.context_graph.wiring import (
+            build_container_for_user_session,
+        )
+        from domain.ingestion_event_models import IngestionSubmissionRequest
+        from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
+    except Exception:
+        logger.exception(
+            "emit_linear_backfill_event: context-engine import failed; "
+            "skipping backfill seed"
+        )
+        return None
+
+    try:
+        scope = json.loads(row.scope_json) if row.scope_json else {}
+    except (TypeError, ValueError):
+        scope = {}
+    team_id = str((scope or {}).get("team_id") or "").strip()
+    if not team_id:
+        logger.warning(
+            "emit_linear_backfill_event: no team_id in scope for source=%s",
+            row.id,
+        )
+        return None
+    team_name = (scope or {}).get("team_name")
+
+    try:
+        container = build_container_for_user_session(db, submitted_by_user_id)
+    except Exception:
+        logger.exception(
+            "emit_linear_backfill_event: container build failed for pot=%s",
+            row.pot_id,
+        )
+        return None
+
+    request = IngestionSubmissionRequest(
+        pot_id=row.pot_id,
+        ingestion_kind=INGESTION_KIND_AGENT_RECONCILIATION,
+        source_channel="source_attach",
+        source_system="linear",
+        event_type="linear_team",
+        action="added",
+        source_id=f"linear_team_added:{team_id}",
+        provider="linear",
+        provider_host="linear.app",
+        payload={
+            "team_id": team_id,
+            "team_name": team_name,
+            "integration_id": row.integration_id,
+            "pot_source_id": row.id,
+            "submitted_by_user_id": submitted_by_user_id,
+        },
+    )
+    try:
+        receipt = container.ingestion_submission(db).submit(
+            request, sync=False, wait=False
+        )
+    except Exception:
+        logger.exception(
+            "emit_linear_backfill_event: submit failed for pot=%s team=%s",
+            row.pot_id,
+            team_id,
+        )
+        return None
+    logger.info(
+        "emit_linear_backfill_event: enqueued event=%s pot=%s team=%s",
+        receipt.event_id,
+        row.pot_id,
+        team_id,
+    )
+    return receipt.event_id
+
+
+def touch_pot_source_sync(
+    db: Session,
+    source_id: str,
+    *,
+    error: str | None = None,
+) -> None:
+    """Stamp ``last_sync_at`` / ``last_error`` / ``health_score`` after a sync run.
+
+    ``health_score`` is stored as TEXT in this table for forward compat; we
+    parse it as int, adjust, and write it back as a string.
+    """
+    row = (
+        db.query(ContextGraphPotSource)
+        .filter(ContextGraphPotSource.id == source_id)
+        .first()
+    )
+    if row is None:
+        return
+    row.last_sync_at = datetime.now(timezone.utc)
+    row.last_error = error
+    try:
+        current = int(row.health_score) if row.health_score is not None else 100
+    except (TypeError, ValueError):
+        current = 100
+    if error:
+        row.health_score = str(max(0, current - 10))
+    else:
+        row.health_score = str(min(100, current + 5))
+    db.commit()
 
 
 def serialize_source(row: ContextGraphPotSource) -> dict[str, Any]:

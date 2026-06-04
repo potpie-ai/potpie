@@ -1,4 +1,5 @@
 from typing import Dict, Any, Optional
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from integrations.adapters.outbound.oauth.sentry_oauth_v2 import SentryOAuthV2
 from integrations.adapters.outbound.oauth.linear_oauth import LinearOAuth
@@ -1408,11 +1409,13 @@ class IntegrationsService:
                     ad["refresh_token"] = None
                     row.auth_data = ad
             if integration_ids:
-                from integrations.adapters.outbound.postgres.project_source_model import ProjectSource
+                from app.modules.context_graph.context_graph_pot_source_model import (
+                    ContextGraphPotSource,
+                )
 
                 linked_sources = (
-                    self.db.query(ProjectSource)
-                    .filter(ProjectSource.integration_id.in_(integration_ids))
+                    self.db.query(ContextGraphPotSource)
+                    .filter(ContextGraphPotSource.integration_id.in_(integration_ids))
                     .all()
                 )
                 for source in linked_sources:
@@ -1738,9 +1741,32 @@ class IntegrationsService:
             setattr(db_integration, "created_at", created_at)
             setattr(db_integration, "updated_at", created_at)
 
-            # Save to database
+            # Save to database. The (unique_identifier, created_by) unique
+            # index gives us a hard backstop against the race between the
+            # explicit check above and this INSERT: if a concurrent OAuth
+            # callback for the same user+org sneaks in between the two,
+            # the DB rejects the second one and we translate the
+            # IntegrityError to the typed exception the router knows how
+            # to handle.
             self.db.add(db_integration)
-            self.db.commit()
+            try:
+                self.db.commit()
+            except IntegrityError:
+                self.db.rollback()
+                existing = await self.check_existing_linear_integration(
+                    unique_identifier, user_id
+                )
+                if existing:
+                    raise LinearOrganizationAlreadyIntegratedError(
+                        existing["integration_id"]
+                    )
+                # The constraint fired but we can't find the surviving
+                # row — surface a typed error rather than the raw DB
+                # message.
+                raise Exception(
+                    "Linear integration could not be saved due to a conflict; "
+                    "please try again."
+                )
             self.db.refresh(db_integration)
 
             # Return the integration data

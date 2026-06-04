@@ -14,15 +14,19 @@ import subprocess
 from pathlib import Path
 from typing import AsyncIterator
 
+from sandbox.adapters.outbound.local.exec_sessions import LocalExecSessions
 from sandbox.domain.errors import InvalidWorkspacePath, RuntimeCommandRejected, RuntimeNotFound
 from sandbox.domain.models import (
     ExecChunk,
     ExecRequest,
     ExecResult,
+    ExecSessionResult,
     Runtime,
     RuntimeCapabilities,
     RuntimeSpec,
     RuntimeState,
+    SessionExecRequest,
+    SessionInputRequest,
     new_id,
     utc_now,
 )
@@ -30,11 +34,18 @@ from sandbox.domain.models import (
 
 class LocalSubprocessRuntimeProvider:
     kind = "local_subprocess"
-    capabilities = RuntimeCapabilities()
+    capabilities = RuntimeCapabilities(interactive_session=True)
 
-    def __init__(self, *, allow_write: bool = False) -> None:
+    def __init__(self, *, allow_write: bool = True) -> None:
+        # Local subprocess is explicitly *not* a security boundary (see
+        # the module docstring). The default matches that posture: if a
+        # caller has wired this provider, they have already accepted no
+        # isolation, and gating writes off would silently break the
+        # edit/commit/push flow. Tests that want read-only behavior pass
+        # ``allow_write=False`` explicitly.
         self.allow_write = allow_write
         self._runtimes: dict[str, Runtime] = {}
+        self._sessions = LocalExecSessions()
 
     async def create(self, workspace_id: str, spec: RuntimeSpec) -> Runtime:
         self._validate_spec(spec)
@@ -84,6 +95,49 @@ class LocalSubprocessRuntimeProvider:
             yield ExecChunk(stream="stdout", data=result.stdout)
         if result.stderr:
             yield ExecChunk(stream="stderr", data=result.stderr)
+
+    # -- Unified exec sessions ------------------------------------------
+    async def exec_session_start(
+        self, runtime: Runtime, request: SessionExecRequest
+    ) -> ExecSessionResult:
+        if request.command_kind.mutates_workspace and not self.allow_write:
+            raise RuntimeCommandRejected(
+                "LocalSubprocessRuntimeProvider was created with allow_write=False"
+            )
+        cwd = str(self._resolve_cwd(runtime.spec, request.cwd))
+        env = self._build_env(runtime.spec.env, request.env)
+        return await self._sessions.start(
+            cwd=cwd,
+            env=env,
+            cmd=request.cmd,
+            shell=request.shell,
+            tty=request.tty,
+            yield_time_ms=request.yield_time_ms,
+            max_output_bytes=request.max_output_bytes,
+        )
+
+    async def exec_session_write(
+        self, runtime: Runtime, request: SessionInputRequest
+    ) -> ExecSessionResult:
+        return await self._sessions.write(
+            request.session_id,
+            request.data,
+            request.yield_time_ms,
+            request.max_output_bytes,
+        )
+
+    async def exec_session_poll(
+        self,
+        runtime: Runtime,
+        session_id: str,
+        *,
+        yield_time_ms: int,
+        max_output_bytes: int | None = None,
+    ) -> ExecSessionResult:
+        return await self._sessions.poll(session_id, yield_time_ms, max_output_bytes)
+
+    async def exec_session_kill(self, runtime: Runtime, session_id: str) -> None:
+        await self._sessions.kill(session_id)
 
     def _exec_sync(self, runtime: Runtime, request: ExecRequest) -> ExecResult:
         workdir = self._resolve_cwd(runtime.spec, request.cwd)

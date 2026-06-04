@@ -12,23 +12,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from adapters.outbound.postgres.models import (
-    ContextEpisodeStepModel,
     ContextEventModel,
     ContextReconciliationRun,
     ContextReconciliationWorkEvent,
 )
 from domain.context_events import ContextEvent, EventScope
 from domain.context_status import ReconciliationLedgerHealth
-from domain.ingestion_kinds import (
-    EPISODE_STEP_APPLIED,
-    EPISODE_STEP_APPLYING as EPISODE_STEP_APPLYING_VALUE,
-    EPISODE_STEP_FAILED as EPISODE_STEP_FAILED_VALUE,
-    EVENT_STATUS_EPISODES_QUEUED,
-    INGESTION_KIND_RAW_EPISODE,
-)
+from domain.ingestion_kinds import INGESTION_KIND_RAW_EPISODE
 from domain.ports.reconciliation_ledger import (
     ContextEventRow,
-    EpisodeStepRow,
     ReconciliationLedgerPort,
     ReconciliationRunRow,
     ReconciliationWorkEventRow,
@@ -250,23 +242,76 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         self._db.commit()
 
     def record_event_reconciled(self, event_id: str) -> None:
-        self._db.execute(
-            update(ContextEventModel)
-            .where(ContextEventModel.id == event_id)
-            .values(status="reconciled")
-        )
+        self.record_events_reconciled([event_id])
+
+    def record_events_reconciled(self, event_ids: list[str]) -> None:
+        if not event_ids:
+            return
+        self._bulk_set_status(event_ids, "reconciled")
         self._db.commit()
 
     def record_event_failed(self, event_id: str, error: str) -> None:
+        self.record_events_failed([event_id], error)
+
+    def record_events_failed(self, event_ids: list[str], error: str) -> None:
+        if not event_ids:
+            return
         logger.warning(
-            "context event %s reconciliation failed: %s", event_id, error[:2000]
+            "context event reconciliation failed (%d event(s)): %s",
+            len(event_ids),
+            error[:2000],
         )
-        self._db.execute(
-            update(ContextEventModel)
-            .where(ContextEventModel.id == event_id)
-            .values(status="failed")
-        )
+        self._bulk_set_status(event_ids, "failed")
         self._db.commit()
+
+    def fail_inflight_events(self, event_ids: list[str], error: str) -> int:
+        if not event_ids:
+            return 0
+        window = self._STATUS_UPDATE_WINDOW
+        affected = 0
+        for i in range(0, len(event_ids), window):
+            result = self._db.execute(
+                update(ContextEventModel)
+                .where(
+                    ContextEventModel.id.in_(event_ids[i : i + window]),
+                    # Preserve terminal states: a reaped batch may have
+                    # partially completed before the worker died, and those
+                    # events are legitimately ``reconciled``. Only the
+                    # leftovers still in flight become ``failed``.
+                    ContextEventModel.status.in_(
+                        ("received", "queued", "processing")
+                    ),
+                )
+                .values(status="failed")
+            )
+            affected += result.rowcount or 0
+        if affected:
+            logger.warning(
+                "reaped %d stuck in-flight event(s) → failed: %s",
+                affected,
+                error[:2000],
+            )
+        self._db.commit()
+        return affected
+
+    # Postgres caps bind parameters (~32767) and a multi-thousand-element IN
+    # list bloats the planner; window the UPDATE so a single huge batch still
+    # commits as one transaction (all-or-nothing) without blowing the limit.
+    _STATUS_UPDATE_WINDOW = 1000
+
+    def _bulk_set_status(self, event_ids: list[str], status: str) -> None:
+        """Issue ``UPDATE … SET status WHERE id IN (…)`` over windowed id slices.
+
+        Does NOT commit — the caller owns the transaction boundary so the
+        whole bulk transition is atomic across windows.
+        """
+        window = self._STATUS_UPDATE_WINDOW
+        for i in range(0, len(event_ids), window):
+            self._db.execute(
+                update(ContextEventModel)
+                .where(ContextEventModel.id.in_(event_ids[i : i + window]))
+                .values(status=status)
+            )
 
     def list_runs_for_event(self, event_id: str) -> list[ReconciliationRunRow]:
         rows = self._db.scalars(
@@ -285,7 +330,7 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         return [self._to_work_event_row(r) for r in rows]
 
     def delete_all_for_pot(self, pot_id: str) -> int:
-        """Delete reconciliation rows for ``pot_id`` (runs → events; episode steps cascade)."""
+        """Delete reconciliation rows for ``pot_id`` (runs → events)."""
         event_ids = self._db.scalars(
             select(ContextEventModel.id).where(ContextEventModel.pot_id == pot_id)
         ).all()
@@ -318,28 +363,31 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         return int(n or 0) + 1
 
     def mark_event_for_retry(self, event_id: str) -> None:
+        self.mark_events_for_retry([event_id])
+
+    def mark_events_for_retry(self, event_ids: list[str]) -> None:
+        if not event_ids:
+            return
         self._db.execute(
             update(ContextEventModel)
-            .where(ContextEventModel.id == event_id)
+            .where(ContextEventModel.id.in_(event_ids))
             .values(status="received")
         )
         self._db.commit()
 
     def mark_event_queued(self, event_id: str) -> None:
+        self.mark_events_queued([event_id])
+
+    def mark_events_queued(self, event_ids: list[str]) -> None:
+        if not event_ids:
+            return
         self._db.execute(
             update(ContextEventModel)
             .where(
-                ContextEventModel.id == event_id, ContextEventModel.status == "received"
+                ContextEventModel.id.in_(event_ids),
+                ContextEventModel.status == "received",
             )
             .values(status="queued")
-        )
-        self._db.commit()
-
-    def mark_event_episodes_queued(self, event_id: str) -> None:
-        self._db.execute(
-            update(ContextEventModel)
-            .where(ContextEventModel.id == event_id)
-            .values(status=EVENT_STATUS_EPISODES_QUEUED)
         )
         self._db.commit()
 
@@ -363,85 +411,6 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
             )
             self._db.commit()
 
-    def replace_episode_steps_for_event(
-        self,
-        pot_id: str,
-        event_id: str,
-        run_id: str | None,
-        steps: list[tuple[int, str, dict[str, Any]]],
-    ) -> None:
-        self._db.execute(
-            delete(ContextEpisodeStepModel).where(
-                ContextEpisodeStepModel.event_id == event_id
-            )
-        )
-        for seq, step_kind, step_json in steps:
-            self._db.add(
-                ContextEpisodeStepModel(
-                    id=str(uuid4()),
-                    pot_id=pot_id,
-                    event_id=event_id,
-                    sequence=seq,
-                    step_kind=step_kind,
-                    step_json=step_json,
-                    status="pending",
-                    run_id=run_id,
-                )
-            )
-        self._db.commit()
-
-    def list_episode_steps(self, event_id: str) -> list[EpisodeStepRow]:
-        rows = self._db.scalars(
-            select(ContextEpisodeStepModel)
-            .where(ContextEpisodeStepModel.event_id == event_id)
-            .order_by(ContextEpisodeStepModel.sequence.asc())
-        ).all()
-        return [self._to_episode_row(r) for r in rows]
-
-    def get_episode_step(self, event_id: str, sequence: int) -> EpisodeStepRow | None:
-        row = self._db.scalar(
-            select(ContextEpisodeStepModel).where(
-                ContextEpisodeStepModel.event_id == event_id,
-                ContextEpisodeStepModel.sequence == sequence,
-            )
-        )
-        return self._to_episode_row(row) if row else None
-
-    def max_applied_sequence(self, event_id: str) -> int | None:
-        m = self._db.scalar(
-            select(func.max(ContextEpisodeStepModel.sequence)).where(
-                ContextEpisodeStepModel.event_id == event_id,
-                ContextEpisodeStepModel.status == EPISODE_STEP_APPLIED,
-            )
-        )
-        return int(m) if m is not None else None
-
-    def update_episode_step_status(
-        self,
-        event_id: str,
-        sequence: int,
-        *,
-        status: str,
-        error: str | None = None,
-        increment_attempt: bool = False,
-    ) -> None:
-        vals: dict[str, Any] = {"status": status}
-        if error is not None:
-            vals["error"] = error[:8000] if error else None
-        if status == EPISODE_STEP_APPLIED:
-            vals["applied_at"] = _utcnow()
-        if increment_attempt:
-            vals["attempt_count"] = ContextEpisodeStepModel.attempt_count + 1
-        self._db.execute(
-            update(ContextEpisodeStepModel)
-            .where(
-                ContextEpisodeStepModel.event_id == event_id,
-                ContextEpisodeStepModel.sequence == sequence,
-            )
-            .values(**vals)
-        )
-        self._db.commit()
-
     def summarize_pot_reconciliation(
         self,
         pot_id: str,
@@ -461,15 +430,6 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         run_counts: dict[str, int] = {}
         for status_value, n in run_count_rows:
             run_counts[str(status_value)] = int(n or 0)
-
-        step_count_rows = self._db.execute(
-            select(ContextEpisodeStepModel.status, func.count())
-            .where(ContextEpisodeStepModel.pot_id == pot_id)
-            .group_by(ContextEpisodeStepModel.status)
-        ).all()
-        step_counts: dict[str, int] = {}
-        for status_value, n in step_count_rows:
-            step_counts[str(status_value)] = int(n or 0)
 
         last_success = self._db.scalar(
             select(func.max(ContextReconciliationRun.completed_at))
@@ -534,72 +494,11 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
                 }
             )
 
-        stuck_rows = self._db.execute(
-            select(
-                ContextEpisodeStepModel.id,
-                ContextEpisodeStepModel.event_id,
-                ContextEpisodeStepModel.sequence,
-                ContextEpisodeStepModel.step_kind,
-                ContextEpisodeStepModel.status,
-                ContextEpisodeStepModel.attempt_count,
-                ContextEpisodeStepModel.error,
-                ContextEpisodeStepModel.queued_at,
-                ContextEpisodeStepModel.started_at,
-            )
-            .where(
-                ContextEpisodeStepModel.pot_id == pot_id,
-                or_(
-                    ContextEpisodeStepModel.status == EPISODE_STEP_FAILED_VALUE,
-                    ContextEpisodeStepModel.status == EPISODE_STEP_APPLYING_VALUE,
-                ),
-            )
-            .order_by(
-                func.coalesce(
-                    ContextEpisodeStepModel.started_at,
-                    ContextEpisodeStepModel.queued_at,
-                ).desc()
-            )
-            .limit(max(stuck_step_limit, 0))
-        ).all()
-        stuck_step_samples = []
-        for r in stuck_rows:
-            ts = r.started_at or r.queued_at
-            stuck_step_samples.append(
-                {
-                    "step_id": r.id,
-                    "event_id": r.event_id,
-                    "sequence": r.sequence,
-                    "step_kind": r.step_kind,
-                    "status": r.status,
-                    "attempt_count": r.attempt_count,
-                    "error": r.error,
-                    "at": _ensure_aware(ts).isoformat() if isinstance(ts, datetime) else None,
-                }
-            )
-
         return ReconciliationLedgerHealth(
             run_counts=run_counts,
-            step_counts=step_counts,
             last_run_success_at=_ensure_aware(last_success) if isinstance(last_success, datetime) else None,
             last_run_failure_at=_ensure_aware(last_failure) if isinstance(last_failure, datetime) else None,
             recent_failed_runs=recent_failed_runs,
-            stuck_step_samples=stuck_step_samples,
-        )
-
-    @staticmethod
-    def _to_episode_row(row: ContextEpisodeStepModel) -> EpisodeStepRow:
-        return EpisodeStepRow(
-            id=row.id,
-            pot_id=row.pot_id,
-            event_id=row.event_id,
-            sequence=row.sequence,
-            step_kind=row.step_kind,
-            step_json=row.step_json,
-            status=row.status,
-            attempt_count=row.attempt_count,
-            applied_at=row.applied_at,
-            error=row.error,
-            run_id=row.run_id,
         )
 
     @staticmethod

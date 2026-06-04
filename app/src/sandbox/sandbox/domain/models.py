@@ -222,7 +222,11 @@ class ResourceHints:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeSpec:
-    image: str
+    # ``image`` is ``None`` when the caller wants the runtime provider to
+    # use its configured default (e.g. DockerRuntimeProvider's
+    # ``default_image``). Providers that don't honour images at all
+    # (local subprocess, Daytona) ignore the field.
+    image: str | None
     workdir: str
     mounts: tuple[Mount, ...] = ()
     env: Mapping[str, str] = field(default_factory=dict)
@@ -235,7 +239,9 @@ class RuntimeSpec:
 @dataclass(frozen=True, slots=True)
 class RuntimeRequest:
     workspace_id: str
-    image: str = "python:3.12-slim"
+    # ``None`` ⇒ defer to the runtime provider's default. Explicit string
+    # values still win, so callers that need a specific image can pin it.
+    image: str | None = None
     env: Mapping[str, str] = field(default_factory=dict)
     writable: bool = True
     network: NetworkMode = NetworkMode.LIMITED
@@ -283,6 +289,72 @@ class ExecResult:
 class ExecChunk:
     stream: str
     data: bytes
+
+
+# Clamp bounds for the unified-exec collect window, mirroring Codex's
+# clamp_yield_time (a too-small window spins the poll loop; a too-large one
+# blocks the agent turn). Adapters/service clamp ``yield_time_ms`` into this.
+SESSION_YIELD_MIN_MS = 250
+SESSION_YIELD_MAX_MS = 30_000
+# Default cap on the text delta returned per collect call (tail-truncated).
+SESSION_OUTPUT_MAX_BYTES = 256_000
+
+
+@dataclass(frozen=True, slots=True)
+class SessionExecRequest:
+    """Start a streamable/long-running command in a runtime ("unified exec").
+
+    The command runs asynchronously inside a runtime-managed session. The
+    call collects interleaved stdout+stderr for up to ``yield_time_ms`` and
+    then returns an :class:`ExecSessionResult`: either finished (``running``
+    false, ``exit_code`` set) or still running (``running`` true, with a
+    ``session_id`` the caller can poll, write stdin to, or kill). Modeled on
+    OpenAI Codex's ``exec_command``.
+
+    ``tty`` selects a real PTY (interactive programs, REPLs, colorized
+    progress) over the default piped session.
+    """
+
+    cmd: tuple[str, ...]
+    cwd: str | None = None
+    env: Mapping[str, str] = field(default_factory=dict)
+    shell: bool = True
+    tty: bool = False
+    yield_time_ms: int = 10_000
+    max_output_bytes: int | None = None
+    command_kind: CommandKind = CommandKind.READ
+
+
+@dataclass(frozen=True, slots=True)
+class SessionInputRequest:
+    """Write characters to a running session, then collect new output.
+
+    ``data`` may be empty to poll without writing (the agent's "read more
+    progress" call). Modeled on Codex's ``write_stdin``.
+    """
+
+    session_id: str
+    data: str = ""
+    yield_time_ms: int = 10_000
+    max_output_bytes: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExecSessionResult:
+    """Outcome of a session start / write-stdin / poll.
+
+    ``output`` is the interleaved stdout+stderr text *produced during this
+    collect window* (a delta, not the whole history). ``running`` true means
+    the command is still executing and ``session_id`` stays valid for
+    follow-up calls; ``exit_code`` is populated only once it has finished.
+    """
+
+    session_id: str
+    output: str = ""
+    running: bool = True
+    exit_code: int | None = None
+    truncated: bool = False
+    timed_out: bool = False
 
 
 @dataclass(frozen=True, slots=True)

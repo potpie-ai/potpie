@@ -1,16 +1,14 @@
 """Unified context graph port.
 
-Application code depends on this port for graph reads and writes. Graphiti
+Application code depends on this port for graph reads and writes. Episodic
 episodic writes and canonical structural mutations are adapter-internal
 details of the concrete graph layer.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Protocol
 
-from domain.actor import Actor
 from domain.graph_mutations import ProvenanceContext
 from domain.graph_query import (
     ContextGraphQuery,
@@ -39,16 +37,17 @@ class ContextGraphPort(Protocol):
     ) -> ReconciliationResult:
         ...
 
-    def write_raw_episode(
+    async def apply_plan_async(
         self,
-        pot_id: str,
-        name: str,
-        episode_body: str,
-        source_description: str,
-        reference_time: datetime,
+        plan: ReconciliationPlan,
         *,
-        actor: Actor | None = None,
-    ) -> dict[str, Any]:
+        expected_pot_id: str,
+        provenance_context: ProvenanceContext | None = None,
+    ) -> ReconciliationResult:
+        """Async-native plan apply. Preferred when called from inside an
+        event loop (e.g. agent tools, FastAPI handlers) — avoids the
+        sync→async→sync bridge that can cross-bind Neo4j connections to a
+        dead loop."""
         ...
 
     def reset_pot(self, pot_id: str) -> dict[str, Any]:

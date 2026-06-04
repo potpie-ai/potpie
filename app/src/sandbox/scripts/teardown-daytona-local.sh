@@ -15,8 +15,13 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sandbox_dir="$(cd "$here/.." && pwd)"
 
-DAYTONA_REPO_PATH="${DAYTONA_REPO_PATH:-/Users/nandan/Desktop/Dev/daytona}"
-COMPOSE_FILE="$DAYTONA_REPO_PATH/docker/docker-compose.yaml"
+# Mirror setup-daytona-local.sh: vendored compose by default, DAYTONA_REPO_PATH
+# (a daytona clone) opt-in. Must match whatever brought the stack up.
+if [[ -n "${DAYTONA_REPO_PATH:-}" ]]; then
+  COMPOSE_FILE="$DAYTONA_REPO_PATH/docker/docker-compose.yaml"
+else
+  COMPOSE_FILE="$sandbox_dir/daytona/docker-compose.yaml"
+fi
 OVERRIDE_FILE="$here/daytona-overrides/docker-compose.override.yaml"
 ENV_FILE="${SANDBOX_ENV_FILE:-$sandbox_dir/.env.daytona.local}"
 export DAYTONA_DASHBOARD_PORT="${DAYTONA_DASHBOARD_PORT:-3010}"

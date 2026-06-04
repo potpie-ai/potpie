@@ -1,6 +1,7 @@
 .DS_Store
 .vscode
 *__pycache__
+.potpie/
 .venv
 firebase_service_account.json
 firebase_service_account.json:Zone.Identifier
@@ -10,6 +11,10 @@ venv/
 .env
 *.json
 !seed/data/**/*.json
+# Vendored Daytona local-dev stack (config bound into the compose containers)
+!app/src/sandbox/daytona/**/*.json
+# Potpie CLI setup-wizard logo (generated asset, must ship in the package)
+!app/src/context-engine/adapters/inbound/cli/assets/potpie-logo-static.json
 .momentum
 db
 cli/momentum_cli/.momentum
@@ -23,6 +28,12 @@ cli/momentum_cli/.momentum
 /projects/
 # Ignore PyCharm config
 .idea
+# Celery beat schedule (created by `celery worker -B` for the dispatcher tick)
+.celerybeat-schedule
+.celerybeat-schedule.db
+.celerybeat-schedule-*
+celerybeat-schedule
+celerybeat.pid
 
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 

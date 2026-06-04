@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from adapters.outbound.postgres.models import ContextEventModel
@@ -166,6 +166,30 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
                 q = q.where(ContextEventModel.received_at >= filters.submitted_after)
             if filters.submitted_before:
                 q = q.where(ContextEventModel.received_at <= filters.submitted_before)
+            if filters.q:
+                # Phase 6: server-side free-text. Matches event_id /
+                # repo_name / event_type / action, plus payload->>'name'
+                # and payload->>'title' for raw episodes that carry a
+                # user-supplied title. Wildcard-escape user input so a
+                # ``%`` in the query doesn't broaden the search.
+                needle = "%" + filters.q.replace("\\", "\\\\").replace(
+                    "%", "\\%"
+                ).replace("_", "\\_") + "%"
+                q = q.where(
+                    or_(
+                        ContextEventModel.id.ilike(needle),
+                        ContextEventModel.repo_name.ilike(needle),
+                        ContextEventModel.event_type.ilike(needle),
+                        ContextEventModel.action.ilike(needle),
+                        # payload->>'name' and payload->>'title' for raw episodes
+                        text("context_events.payload->>'name' ILIKE :needle").bindparams(
+                            needle=needle
+                        ),
+                        text("context_events.payload->>'title' ILIKE :needle").bindparams(
+                            needle=needle
+                        ),
+                    )
+                )
         if cursor:
             try:
                 ts, eid = _decode_list_cursor(cursor)

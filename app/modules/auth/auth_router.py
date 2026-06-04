@@ -24,6 +24,7 @@ from app.modules.auth.auth_schema import (
     AccountResponse,
     AuthProviderCreate,
 )
+from app.modules.auth.api_key_deps import get_api_key_user
 from app.modules.auth.auth_service import auth_handler, AuthService
 from app.modules.auth.auth_provider_model import UserAuthProvider
 from app.modules.auth.unified_auth_service import (
@@ -938,7 +939,7 @@ class AuthAPI:
     @staticmethod
     @auth_router.get("/account/me")
     async def get_my_account(
-        user=Depends(AuthService.check_auth),
+        user=Depends(get_api_key_user),
         db: Session = Depends(get_db),
         async_db: AsyncSession = Depends(get_async_db),
     ):

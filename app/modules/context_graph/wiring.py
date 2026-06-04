@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 from sqlalchemy import func
@@ -23,12 +24,20 @@ from app.modules.context_graph.context_graph_pot_repository_model import (
 from app.modules.context_graph.context_graph_pot_source_model import (
     ContextGraphPotSource,
 )
-from adapters.outbound.source_resolvers import (
-    CompositeSourceResolver,
-    DocumentationUriResolver,
-    GitHubPullRequestResolver,
+from adapters.outbound.connectors._bench_stubs import (
+    AlertingStubConnector,
+    DeployStubConnector,
+    RepoDocsStubConnector,
+    SlackStubConnector,
 )
-from bootstrap.container import ContextEngineContainer, build_container
+from adapters.outbound.connectors.github import GitHubConnector
+from adapters.outbound.connectors.linear.connector import LinearConnector
+from adapters.outbound.connectors.notion import NotionConnector
+from application.services.source_connector_registry import SourceConnectorRegistry
+from bootstrap.ingestion_server import (
+    IngestionServerContainer,
+    build_ingestion_server,
+)
 from domain.context_status import StatusSource
 from domain.source_references import SourceReferenceRecord
 from domain.ports.pot_resolution import (
@@ -39,6 +48,8 @@ from domain.ports.pot_resolution import (
 )
 from domain.ports.pot_source_listing import PotSourceListingPort
 from domain.ports.settings import ContextEngineSettingsPort
+
+logger = logging.getLogger(__name__)
 
 
 class PotpieContextEngineSettings(ContextEngineSettingsPort):
@@ -72,6 +83,33 @@ class PotpieContextEngineSettings(ContextEngineSettingsPort):
             return v
         c = self._cp.get_neo4j_config()
         return c.get("password")
+
+    def graph_db_backend(self) -> str:
+        return (os.getenv("GRAPH_DB_BACKEND") or "neo4j").strip().lower() or "neo4j"
+
+    def falkordb_url(self) -> str | None:
+        v = (os.getenv("CONTEXT_ENGINE_FALKORDB_URL") or os.getenv("FALKORDB_URL") or "").strip()
+        return v or None
+
+    def falkordb_graph_name(self) -> str:
+        v = (
+            os.getenv("CONTEXT_ENGINE_FALKORDB_GRAPH_NAME")
+            or os.getenv("FALKORDB_GRAPH_NAME")
+            or ""
+        ).strip()
+        return v or "context_graph"
+
+    def falkordb_mode(self) -> str:
+        v = (os.getenv("CONTEXT_ENGINE_FALKORDB_MODE") or os.getenv("FALKORDB_MODE") or "").strip().lower()
+        return v or "lite"
+
+    def falkordb_lite_path(self) -> str:
+        v = (
+            os.getenv("CONTEXT_ENGINE_FALKORDB_LITE_PATH")
+            or os.getenv("FALKORDB_LITE_PATH")
+            or ""
+        ).strip()
+        return v or ".potpie/context_graph/falkordb.db"
 
     def backfill_max_prs_per_run(self) -> int:
         return int(self._cp.get_context_graph_config().get("backfill_max_prs_per_run", 100))
@@ -188,6 +226,12 @@ class SqlalchemyPotResolution(PotResolutionPort):
 
 class UserScopedContextGraphPotResolution(PotResolutionPort):
     """Resolve context-graph pots the caller may access (member or legacy pot owner row)."""
+
+    # Read by DefaultPolicyAdapter's tenant-boundary contract: this resolver
+    # returns None for pots the caller cannot access, so per-actor pot
+    # authorization is enforced here. Do NOT set this on the wide
+    # (worker/system) resolvers.
+    actor_scoped = True
 
     def __init__(self, db: Session, user_id: str) -> None:
         self._db = db
@@ -371,60 +415,329 @@ def _resolve_repo_for_pot(db: Session) -> "callable":
     return _resolver
 
 
-def _build_source_resolver(db: Session, source_for_repo):
-    """Compose the default host source-resolver chain.
+def _build_connector_registry(db: Session, source_for_repo) -> SourceConnectorRegistry:
+    """Compose the default host connector registry.
 
-    ``GitHubPullRequestResolver`` covers ``github:pr:*`` and legacy ``change``
-    refs that embed PR numbers; ``DocumentationUriResolver`` covers docs
-    refs with a stored summary/title (no live fetch by default). Adding a
-    ``content_fetcher`` here later enables live doc snippets.
+    Phase 2 replaced the standalone ``CompositeSourceResolver`` chain with a
+    :class:`SourceConnectorRegistry`. The GitHub connector wraps the same
+    ``GitHubPullRequestResolver`` internally and resolves a pot's primary
+    GitHub repo via the closure returned by :func:`_resolve_repo_for_pot`
+    (which also honours ``resolver_hint['repo_name']`` for multi-repo pots).
+
+    The Linear connector resolves its access token per call via
+    :class:`ContextEngineLinearFetcher`, which walks
+    ``pot_id → project_sources → integrations`` and decrypts the stored
+    OAuth token; this keeps the connector multi-tenant without coupling
+    it to any single workspace.
     """
-    return CompositeSourceResolver(
-        children=[
-            GitHubPullRequestResolver(
-                source_for_repo=source_for_repo,
-                repo_resolver=_resolve_repo_for_pot(db),
-            ),
-            DocumentationUriResolver(),
-        ]
+    from integrations.adapters.outbound.linear.context_engine_fetcher import (
+        ContextEngineLinearFetcher,
+    )
+
+    registry = SourceConnectorRegistry()
+    registry.register(
+        # Same rationale as the LinearConnector below: in the host the
+        # GitHub signature is verified at the HTTP ingress
+        # (`integrations_router.py /github/webhook`, fail-closed) and the
+        # repo→pot routing path does not invoke the connector's
+        # ``normalize_webhook``. Connector-level enforcement is reserved
+        # for the standalone container path (``bootstrap/container.py``),
+        # where the connector itself is the ingress.
+        GitHubConnector(
+            source_for_repo=source_for_repo,
+            repo_resolver=_resolve_repo_for_pot(db),
+            allow_unsigned=True,
+        )
+    )
+    registry.register(
+        # The host verifies the Linear signature at the HTTP ingress
+        # (`integrations_router.py /linear/webhook`, fail-closed over the
+        # raw body). By the time the connector runs it is post-verification
+        # and behind the async event bus — it has neither the raw body nor
+        # the `Linear-Signature` header, so it must NOT re-enforce here
+        # (doing so would falsely reject every event). Signature
+        # enforcement at the connector is only for the standalone path,
+        # where the connector itself is the ingress.
+        LinearConnector(
+            fetcher=ContextEngineLinearFetcher(db),
+            allow_unsigned=True,
+        )
+    )
+    # Passive bench-stub connectors — register them in the host registry
+    # too so the benchmark probe sees the full set of source kinds
+    # (notion/slack/repo_docs/alerting/deploy). They advertise no fetch
+    # capability so production traffic without a real reader still fails
+    # closed; they exist solely as ``source_system`` markers.
+    registry.register(NotionConnector())
+    registry.register(SlackStubConnector())
+    registry.register(RepoDocsStubConnector())
+    registry.register(AlertingStubConnector())
+    registry.register(DeployStubConnector())
+    return registry
+
+
+from typing import Callable, Optional, Tuple
+
+PotTokenResolver = Callable[
+    [Optional[str], Optional[str]],
+    Tuple[Optional[str], Optional[str]],
+]
+"""``(user_id, repo_name) -> (token, kind)`` — see :func:`_default_pot_token_resolver`."""
+
+
+def _default_pot_token_resolver(user_id: str | None, repo_name: str | None):
+    """Default chain: contextvar → GitHub App → user OAuth → env.
+
+    Returns ``(token, kind)`` so callers / telemetry can tell which branch
+    produced the token. Wraps :func:`_resolve_auth` so the existing chain
+    (which already prefers App-installation tokens, surviving the user
+    leaving the pot) stays the source of truth.
+    """
+    from app.modules.intelligence.tools.sandbox.client import _resolve_auth
+
+    resolved = _resolve_auth(user_id, repo_name)
+    return resolved.token, resolved.kind
+
+
+_POT_TOKEN_RESOLVER = _default_pot_token_resolver
+
+
+def set_pot_token_resolver(resolver) -> None:
+    """Override the per-attachment token resolver process-wide.
+
+    Lets alternate hosts (tests, on-prem deployments without GitHub-App
+    install) plug in their own resolution. Pass ``None`` to restore the
+    default chain.
+    """
+    global _POT_TOKEN_RESOLVER
+    _POT_TOKEN_RESOLVER = resolver or _default_pot_token_resolver
+
+
+def _build_pot_sandbox_resolver(db: Session):
+    """Resolve ``pot_id -> PotSandboxConfig`` (every repo attached to the pot).
+
+    Closes over the request-scoped DB session. Returns ``None`` when the pot
+    has no attached repos — ``build_sandbox_tools`` then silently skips
+    sandbox tools for that batch.
+
+    Tenant choice: the first attacher (oldest ``created_at`` row) owns the
+    pot's sandbox container, so per-pot Daytona/Docker state collapses into
+    one ``(user_id, pot_id)`` key regardless of who attached subsequent
+    repos. Per-repo clone tokens flow through the pluggable
+    :func:`set_pot_token_resolver` so GitHub-App installation tokens win
+    over user OAuth (and the choice is observable in telemetry).
+    """
+    from adapters.outbound.agent_tools.sandbox import (
+        PotSandboxConfig,
+        RepoAttachment,
+    )
+
+    def _resolver(pot_id: str):
+        rows = (
+            db.query(ContextGraphPotRepository)
+            .filter(ContextGraphPotRepository.pot_id == pot_id)
+            .order_by(ContextGraphPotRepository.created_at.asc())
+            .all()
+        )
+        if not rows:
+            return None
+        first = rows[0]
+        repos: list[RepoAttachment] = []
+        for r in rows:
+            full = f"{r.owner}/{r.repo}"
+            try:
+                token, kind = _POT_TOKEN_RESOLVER(r.added_by_user_id, full)
+            except Exception:
+                token, kind = None, "error"
+            repos.append(
+                RepoAttachment(
+                    owner=r.owner,
+                    repo=r.repo,
+                    default_branch=r.default_branch or "main",
+                    repo_url=r.remote_url,
+                    auth_token=token,
+                    auth_kind=kind,
+                )
+            )
+        return PotSandboxConfig(
+            user_id=first.added_by_user_id,
+            pot_id=pot_id,
+            provider_host=first.provider_host,
+            repos=repos,
+        )
+
+    return _resolver
+
+
+async def _sandbox_client_factory():
+    """Async wrapper that hands the agent the process-wide ``SandboxClient``."""
+    from app.modules.intelligence.tools.sandbox.client import get_sandbox_client
+
+    return get_sandbox_client()
+
+
+def _sandbox_tools_disabled() -> bool:
+    return (os.getenv("CONTEXT_ENGINE_DISABLE_SANDBOX_TOOLS") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
     )
 
 
-def build_container_for_session(db: Session) -> ContextEngineContainer:
+def _build_pot_user_resolver(db: Session):
+    """Resolve ``pot_id -> user_id`` (the account the pot is configured under).
+
+    Used to scope host-coupled tools (web search / page extraction) to the
+    pot owner's provider keys and quota in the worker path, which has no
+    request user. Prefers the explicit pot owner row, falling back to the
+    oldest repo attacher so a legacy pot with no ``user_id`` still resolves.
+    """
+
+    def _resolver(pot_id: str | None) -> str | None:
+        if not pot_id:
+            return None
+        pot = (
+            db.query(ContextGraphPot)
+            .filter(ContextGraphPot.id == pot_id)
+            .first()
+        )
+        if pot is not None and getattr(pot, "user_id", None):
+            return pot.user_id
+        repo = (
+            db.query(ContextGraphPotRepository)
+            .filter(ContextGraphPotRepository.pot_id == pot_id)
+            .order_by(ContextGraphPotRepository.created_at.asc())
+            .first()
+        )
+        if repo is not None and getattr(repo, "added_by_user_id", None):
+            return repo.added_by_user_id
+        return None
+
+    return _resolver
+
+
+def _attach_agent_tools(agent, db: Session, *, source_for_repo) -> None:
+    """Best-effort: wire every extra tool surface onto the reconciliation agent.
+
+    ``add_extra_tools`` *replaces* the agent's builder list, so all surfaces
+    (sandbox + GitHub + Linear + web) must be assembled and registered in a
+    single call. Each surface is added independently and any failing import
+    is skipped so a missing optional dependency degrades that surface only —
+    the agent still runs with whatever tools resolved.
+
+    Every surface stays scoped to the account the pot is configured under:
+    sandbox/GitHub via the per-repo token chain, Linear via the pot's
+    connected OAuth integration, web via the pot owner's provider keys.
+    """
+    if agent is None:
+        return
+    attach = getattr(agent, "add_extra_tools", None)
+    if attach is None:
+        return
+
+    builders: list = []
+
+    if not _sandbox_tools_disabled():
+        try:
+            from adapters.outbound.agent_tools.sandbox import build_sandbox_tools
+
+            builders.append(
+                build_sandbox_tools(
+                    client_factory=_sandbox_client_factory,
+                    pot_resolver=_build_pot_sandbox_resolver(db),
+                )
+            )
+        except Exception:
+            logger.exception("failed to build sandbox tool surface")
+
+    try:
+        from adapters.outbound.connectors.github.agent_tools import (
+            build_github_tools,
+        )
+
+        def _allowed_repos_for_pot(pot_id: str) -> set[str]:
+            """``owner/repo`` (lowercased) attached to the pot — the only
+            repos a reconciliation agent may read via the GitHub tools.
+            Binds agent-supplied ``repo_name`` to the pot's tenancy so a
+            prompt-injected agent cannot pull a foreign private repo
+            through the shared org credential (security review C-5)."""
+            rows = (
+                db.query(ContextGraphPotRepository)
+                .filter(ContextGraphPotRepository.pot_id == pot_id)
+                .all()
+            )
+            return {
+                f"{r.owner}/{r.repo}".strip().lower()
+                for r in rows
+                if r.owner and r.repo
+            }
+
+        builders.append(
+            build_github_tools(
+                source_for_repo,
+                allowed_repos_for_pot=_allowed_repos_for_pot,
+            )
+        )
+    except Exception:
+        logger.exception("failed to build github tool surface")
+
+    try:
+        from adapters.outbound.connectors.linear.agent_tools import (
+            build_linear_tools,
+        )
+        from integrations.adapters.outbound.linear.context_engine_fetcher import (
+            ContextEngineLinearFetcher,
+        )
+
+        builders.append(build_linear_tools(ContextEngineLinearFetcher(db)))
+    except Exception:
+        logger.exception("failed to build linear tool surface")
+
+    try:
+        from app.modules.context_graph.agent_web_tools import build_web_tools
+
+        builders.append(
+            build_web_tools(db=db, user_resolver=_build_pot_user_resolver(db))
+        )
+    except Exception:
+        logger.exception("failed to build web tool surface")
+
+    if builders:
+        attach(builders)
+
+
+def build_container_for_session(db: Session) -> IngestionServerContainer:
     def source_for_repo(repo_name: str):
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         return CodeProviderSourceControl(provider)
 
-    container = build_container(
+    agent = try_pydantic_deep_reconciliation_agent()
+    _attach_agent_tools(agent, db, source_for_repo=source_for_repo)
+    container = build_ingestion_server(
         settings=PotpieContextEngineSettings(),
         pots=SqlalchemyPotResolution(db),
-        source_for_repo=source_for_repo,
-        reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
+        connectors=_build_connector_registry(db, source_for_repo),
+        reconciliation_agent=agent,
         jobs=get_context_graph_job_queue(),
     )
     container.pot_source_listing = SqlalchemyPotSourceListing(db)
-    resolver = _build_source_resolver(db, source_for_repo)
-    container.source_resolver = resolver
-    if container.resolution_service is not None:
-        container.resolution_service.set_source_resolver(resolver)
     return container
 
 
-def build_container_for_user_session(db: Session, user_id: str) -> ContextEngineContainer:
+def build_container_for_user_session(db: Session, user_id: str) -> IngestionServerContainer:
     def source_for_repo(repo_name: str):
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         return CodeProviderSourceControl(provider)
 
-    container = build_container(
+    agent = try_pydantic_deep_reconciliation_agent()
+    _attach_agent_tools(agent, db, source_for_repo=source_for_repo)
+    container = build_ingestion_server(
         settings=PotpieContextEngineSettings(),
         pots=UserScopedContextGraphPotResolution(db, user_id),
-        source_for_repo=source_for_repo,
-        reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
+        connectors=_build_connector_registry(db, source_for_repo),
+        reconciliation_agent=agent,
         jobs=get_context_graph_job_queue(),
     )
     container.pot_source_listing = SqlalchemyPotSourceListing(db)
-    resolver = _build_source_resolver(db, source_for_repo)
-    container.source_resolver = resolver
-    if container.resolution_service is not None:
-        container.resolution_service.set_source_resolver(resolver)
     return container
