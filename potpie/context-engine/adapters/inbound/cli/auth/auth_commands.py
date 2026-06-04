@@ -59,7 +59,7 @@ jira_app = typer.Typer(help="Jira authentication and read.")
 confluence_app = typer.Typer(help="Confluence authentication and read.")
 
 _OAUTH_CALLBACK_TIMEOUT = 300.0
-_ALL_PROVIDERS: tuple[str, ...] = ("linear", "jira", "confluence")
+_ALL_PROVIDERS: tuple[Provider, ...] = ("linear", "jira", "confluence")
 
 
 def _canonical_provider_for_json(product: str) -> str:
@@ -345,6 +345,20 @@ def _run_linear_oauth_flow(*, force: bool = False) -> None:
         raise typer.Exit(code=EXIT_AUTH) from exc
 
     _print_linear_login_success(get_integration_status("linear"), tokens=tokens)
+
+
+def run_integration_login(provider: str, *, force: bool = False) -> None:
+    """Run the standard login flow for ``linear``, ``jira``, or ``confluence``."""
+    key = provider.strip().lower()
+    if key == "linear":
+        _run_linear_oauth_flow(force=force)
+        return
+    if key in ("jira", "confluence"):
+        load_cli_env()
+        j, v = _flags()
+        run_atlassian_api_token_auth(key, force=force, as_json=j, verbose=v)
+        return
+    raise ValueError(f"Unknown integration provider {provider!r}.")
 
 
 @auth_app.command("status")

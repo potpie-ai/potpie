@@ -90,6 +90,8 @@ def _skip_reason(step: str, plan: SetupPlan) -> str | None:
         return "in-process host — no detached daemon / service unit to manage"
     if step == "source" and not plan.repo:
         return "no --repo provided"
+    if step == "pot.default" and plan.defer_default_pot:
+        return "named in post-setup wizard"
     return None
 
 
@@ -98,6 +100,8 @@ def _planned_steps(plan: SetupPlan) -> list[PlannedSetupStep]:
     steps: list[PlannedSetupStep] = []
     for step, owner, action_tmpl in _SEAM_PLAN:
         if step == "scan" and not plan.scan:
+            continue
+        if step == "pot.default" and plan.defer_default_pot:
             continue
         steps.append(
             PlannedSetupStep(
@@ -171,8 +175,16 @@ class DefaultSetupOrchestrator:
             self._step(
                 "migrator.migrate", hard("migrator.migrate"), self.migrator.migrate
             ),
-            self._step(
-                "pot.default", hard("pot.default"), lambda: self._default_pot(plan)
+            *(
+                [
+                    self._step(
+                        "pot.default",
+                        hard("pot.default"),
+                        lambda: self._default_pot(plan),
+                    )
+                ]
+                if not plan.defer_default_pot
+                else []
             ),
             self._step("daemon", hard("daemon"), lambda: self.daemon.ensure(plan)),
             self._step("auth", hard("auth"), self.auth.init_local),

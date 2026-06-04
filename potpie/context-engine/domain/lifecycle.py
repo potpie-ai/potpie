@@ -39,6 +39,7 @@ class SetupPlan:
     agent: str = "claude"
     scan: bool = False
     assume_yes: bool = False
+    defer_default_pot: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +155,7 @@ def _plan_dict(plan: SetupPlan) -> dict[str, Any]:
         "pot": plan.pot,
         "agent": plan.agent,
         "scan": plan.scan,
+        "defer_default_pot": plan.defer_default_pot,
     }
 
 

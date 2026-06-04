@@ -9,11 +9,10 @@ from pathlib import Path
 
 from rich.text import Text
 
+from adapters.inbound.cli.ui.brand import LOGO_COLOR, LOGO_STYLE
+
 VIEWPORT_WIDTH = 96
-VIEWPORT_HEIGHT = 20
-LOGO_COLOR = "#B6E343"
-LOGO_STYLE = f"bold {LOGO_COLOR} on #000000"
-BLANK_STYLE = "on #000000"
+VIEWPORT_HEIGHT = 12
 
 
 @dataclass(frozen=True)
@@ -43,24 +42,30 @@ def _chomp_token_from_lines(lines: list[str]) -> str:
     return "@@"
 
 
-def _center_lines_in_viewport(
+def load_raw_logo_lines() -> list[str] | None:
+    path = resolve_static_logo_path()
+    if path is None:
+        return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        lines = [str(line) for line in (doc.get("lines") or []) if line is not None]
+        return lines or None
+    except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError):
+        return None
+
+
+def layout_logo_lines(
     lines: list[str],
     *,
     viewport_width: int,
-    viewport_height: int,
-    style: str,
+    viewport_height: int = VIEWPORT_HEIGHT,
+    style: str = LOGO_STYLE,
 ) -> Text:
+    """Left-aligned logo block; empty cells use the terminal default background."""
     if not lines:
-        out = Text()
-        for row in range(viewport_height):
-            if row:
-                out.append("\n")
-            out.append(" " * viewport_width, style=BLANK_STYLE)
-        return out
+        return Text()
 
     art_h = len(lines)
-    art_w = max(len(line) for line in lines)
-
     if art_h > viewport_height:
         trim = art_h - viewport_height
         start = trim // 2
@@ -68,17 +73,17 @@ def _center_lines_in_viewport(
         art_h = len(lines)
 
     pad_top = max(0, (viewport_height - art_h) // 2)
-    pad_left = max(0, (viewport_width - art_w) // 2)
+    pad_left = 0
 
     out = Text()
     for row in range(viewport_height):
         if row:
             out.append("\n")
         if row < pad_top or row >= pad_top + art_h:
-            out.append(" " * viewport_width, style=BLANK_STYLE)
+            out.append(" " * viewport_width)
             continue
         src = lines[row - pad_top]
-        prefix = " " * pad_left + src
+        prefix = (" " * pad_left) + src
         suffix_len = viewport_width - len(prefix)
         if suffix_len > 0:
             prefix += " " * suffix_len
@@ -88,26 +93,22 @@ def _center_lines_in_viewport(
 
 @lru_cache(maxsize=16)
 def load_static_logo(viewport_width: int = VIEWPORT_WIDTH) -> StaticLogoArt | None:
-    path = resolve_static_logo_path()
-    if path is None:
+    lines = load_raw_logo_lines()
+    if lines is None:
         return None
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-        lines = [str(line) for line in (doc.get("lines") or []) if line is not None]
-        if not lines:
-            return None
+        path = resolve_static_logo_path()
+        doc = json.loads(path.read_text(encoding="utf-8")) if path else {}
         doc_vw = int(doc.get("viewport_width", VIEWPORT_WIDTH))
         vw = min(doc_vw, viewport_width)
         vh = int(doc.get("viewport_height", VIEWPORT_HEIGHT))
         color = str(doc.get("color") or LOGO_COLOR)
-        style = f"bold {color} on #000000"
+        style = f"bold {color}"
         token = str(doc.get("chomp_token") or _chomp_token_from_lines(lines))
         return StaticLogoArt(
             width=vw,
             height=vh,
-            text=_center_lines_in_viewport(
-                lines, viewport_width=vw, viewport_height=vh, style=style
-            ),
+            text=layout_logo_lines(lines, viewport_width=vw, viewport_height=vh, style=style),
             chomp_token=token,
         )
     except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError):

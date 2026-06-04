@@ -58,6 +58,7 @@ def register(root: typer.Typer) -> None:
                     backend=build_backend(backend), profile=host.profile
                 )
                 set_host(host)
+            use_rich = setup_ux.rich_enabled(as_json=is_json()) and not yes
             plan = SetupPlan(
                 mode=host.profile if host.profile in ("local", "managed") else "local",
                 host_mode="in_process"
@@ -69,6 +70,7 @@ def register(root: typer.Typer) -> None:
                 agent=agent,
                 scan=scan,
                 assume_yes=yes,
+                defer_default_pot=use_rich,
             )
 
             if dry_run:
@@ -80,7 +82,6 @@ def register(root: typer.Typer) -> None:
 
             # Animated wizard for interactive TTYs; --json and --yes/non-interactive
             # fall through to the plain, machine-readable emit path.
-            use_rich = setup_ux.rich_enabled(as_json=is_json()) and not yes
             if use_rich:
                 setup_ux.render_setup_report(
                     report,
@@ -91,7 +92,11 @@ def register(root: typer.Typer) -> None:
                     config_home=getattr(host.config, "home", None),
                 )
                 if report.ok:
-                    setup_ux.maybe_prompt_github_login()
+                    setup_ux.maybe_prompt_github_login(
+                        repo=Path(repo),
+                        setup_agent=agent,
+                        default_pot_name=pot,
+                    )
             else:
                 emit(report.to_dict(), human=_setup_human(report))
 

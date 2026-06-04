@@ -16,6 +16,7 @@ from typing import Any
 
 from adapters.inbound.cli.ui.setup_wizard_ui import (
     SetupWizardUI,
+    StepStatus,
     is_interactive_tty,
     rich_ui_enabled,
 )
@@ -44,7 +45,7 @@ CHOMP_STEPS = frozenset(
 
 # Lifecycle StepResult.state -> wizard ChecklistStep status. A soft
 # not_implemented step is informational (warn), not a failure.
-STATE_MAP: dict[str, str] = {
+STATE_MAP: dict[str, StepStatus] = {
     "done": "done",
     "skipped": "skipped",
     "failed": "failed",
@@ -106,27 +107,182 @@ def render_setup_report(
     wizard.print_complete_summary(
         setup_path=setup_path,
         data_path=data_path,
-        pot_name=pot_name or report.plan.pot,
+        pot_name=None if report.plan.defer_default_pot else (pot_name or report.plan.pot),
         already_setup=False,
     )
 
 
-def maybe_prompt_github_login() -> None:
-    """After a successful setup, offer to connect GitHub via device flow."""
-    if not is_interactive_tty():
-        return
+# Post-setup integration picker (order used for sequential login).
+POST_SETUP_INTEGRATION_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("linear", "Linear"),
+    ("jira", "Jira"),
+    ("confluence", "Atlassian"),
+)
+POST_SETUP_INTEGRATION_ORDER: tuple[str, ...] = tuple(
+    option_id for option_id, _ in POST_SETUP_INTEGRATION_OPTIONS
+)
+
+# Agent harnesses supported by ``install_agent_bundle`` (repo-local templates).
+POST_SETUP_AGENT_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("claude", "Claude"),
+    ("cursor", "Cursor"),
+    ("opencode", "OpenCode"),
+    ("codex", "Codex"),
+    ("default", "AGENTS.md (OpenAI / generic)"),
+)
+POST_SETUP_AGENT_ORDER: tuple[str, ...] = tuple(
+    option_id for option_id, _ in POST_SETUP_AGENT_OPTIONS
+)
+
+
+def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any]]:
+    """Copy packaged skill bundles into *repo* for each harness id."""
+    from adapters.outbound.skills.agent_installer import AGENT_TYPES, install_agent_bundle
+
+    results: list[tuple[str, Any]] = []
+    for agent in agents:
+        key = agent.strip().lower()
+        if key not in AGENT_TYPES:
+            continue
+        results.append((key, install_agent_bundle(repo, agent=key)))
+    return results
+
+
+def _print_agent_install_summary(repo: Path, results: list[tuple[str, Any]]) -> None:
+    from adapters.inbound.cli.ui.output import print_plain_line
+
+    root = repo.resolve()
+    for agent, result in results:
+        created = len(result.created)
+        updated = len(result.updated)
+        unchanged = len(result.unchanged)
+        print_plain_line(
+            f"Installed {agent} skills into {root} "
+            f"({created} new, {updated} updated, {unchanged} unchanged).",
+            as_json=False,
+        )
+
+
+def _try_login(handler) -> None:
+    """Run a login handler; continue setup when the user declines or auth fails."""
     import typer
 
+    try:
+        handler()
+    except typer.Exit:
+        pass
+    except (KeyboardInterrupt, EOFError):
+        raise
+
+
+def _maybe_prompt_agent_skills(*, repo: Path, setup_agent: str) -> None:
+    from adapters.inbound.cli.ui.interactive_prompts import prompt_multi_checkbox
+
+    valid = frozenset(POST_SETUP_AGENT_ORDER)
+    default_checked = (
+        frozenset({setup_agent.strip().lower()})
+        if setup_agent.strip().lower() in valid
+        else frozenset()
+    )
+    try:
+        selected = prompt_multi_checkbox(
+            "Which agent harnesses should receive Potpie skills?",
+            list(POST_SETUP_AGENT_OPTIONS),
+            default_checked=default_checked,
+        )
+    except (KeyboardInterrupt, EOFError):
+        return
+
+    if not selected:
+        return
+
+    selected_set = frozenset(selected)
+    agents = [agent for agent in POST_SETUP_AGENT_ORDER if agent in selected_set]
+    results = install_agents_to_repo(repo, agents)
+    if results:
+        _print_agent_install_summary(repo, results)
+
+
+def maybe_prompt_github_login(
+    *,
+    repo: Path | None = None,
+    setup_agent: str = "claude",
+    default_pot_name: str = "default",
+) -> None:
+    """After setup: GitHub, integrations, then repo-local agent skill bundles."""
+    if not is_interactive_tty():
+        return
+
+    from adapters.inbound.cli.auth.auth_commands import run_integration_login
     from adapters.inbound.cli.auth.github_commands import github_login_impl
+    from adapters.inbound.cli.ui.interactive_prompts import (
+        prompt_multi_checkbox,
+        prompt_yes_no,
+    )
 
     try:
-        confirmed = typer.confirm(
-            "\nWould you like to log in to GitHub now?", default=True
+        confirmed = prompt_yes_no(
+            "Would you like to log in to GitHub now?",
+            default=True,
         )
-    except typer.Abort:
+    except (KeyboardInterrupt, EOFError):
         confirmed = False
     if confirmed:
-        github_login_impl()
+        _try_login(github_login_impl)
+
+    try:
+        selected = prompt_multi_checkbox(
+            "Which integrations would you like to connect?",
+            list(POST_SETUP_INTEGRATION_OPTIONS),
+        )
+    except (KeyboardInterrupt, EOFError):
+        selected = []
+
+    if selected:
+        selected_set = frozenset(selected)
+        for provider in POST_SETUP_INTEGRATION_ORDER:
+            if provider not in selected_set:
+                continue
+            _try_login(lambda p=provider: run_integration_login(p))
+
+    if repo is not None:
+        _maybe_prompt_agent_skills(repo=repo, setup_agent=setup_agent)
+
+    _maybe_prompt_first_pot(repo=repo, default_pot_name=default_pot_name)
+
+
+def _register_repo_source(*, repo: str) -> None:
+    from adapters.inbound.cli.commands._common import get_host
+
+    host = get_host()
+    active = host.pots.active_pot()
+    if active is None:
+        return
+    existing = host.pots.list_sources(pot_id=active.pot_id)
+    if any(s.kind == "repo" and s.name == repo for s in existing):
+        return
+    host.pots.add_source(pot_id=active.pot_id, kind="repo", location=repo)
+
+
+def _maybe_prompt_first_pot(*, repo: Path | None, default_pot_name: str) -> None:
+    from adapters.inbound.cli.commands._common import get_host
+    from adapters.inbound.cli.ui.interactive_prompts import prompt_first_pot_name
+    from adapters.inbound.cli.ui.potpie_logo_anim import play_setup_finish
+    from adapters.inbound.cli.ui.setup_wizard_ui import stderr_console
+
+    try:
+        name = prompt_first_pot_name(default=default_pot_name).strip()
+    except (KeyboardInterrupt, EOFError):
+        return
+    if not name:
+        name = default_pot_name
+
+    repo_str = str(repo.resolve()) if repo is not None else None
+    pot = get_host().pots.create_pot(name=name, repo=repo_str, use=True)
+    if repo_str:
+        _register_repo_source(repo=repo_str)
+
+    play_setup_finish(stderr_console(), pot_name=pot.name)
 
 
 __all__ = [
@@ -136,4 +292,9 @@ __all__ = [
     "rich_enabled",
     "render_setup_report",
     "maybe_prompt_github_login",
+    "install_agents_to_repo",
+    "POST_SETUP_INTEGRATION_OPTIONS",
+    "POST_SETUP_INTEGRATION_ORDER",
+    "POST_SETUP_AGENT_OPTIONS",
+    "POST_SETUP_AGENT_ORDER",
 ]
