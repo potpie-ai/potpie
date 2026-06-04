@@ -68,8 +68,7 @@ except importlib.metadata.PackageNotFoundError:
 app = typer.Typer(
     name="potpie",
     help="Context graph CLI (configure via env; use HTTP API for full sync).",
-    invoke_without_command=True,
-    no_args_is_help=False,
+    no_args_is_help=True,
 )
 
 pot_app = typer.Typer(help="Active pot and local pot helpers.")

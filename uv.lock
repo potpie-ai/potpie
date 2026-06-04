@@ -10,7 +10,7 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "potpie-ai",
+    "potpie",
     "potpie-context-engine",
     "potpie-integrations",
     "potpie-legacy",
@@ -4184,7 +4184,7 @@ wheels = [
 ]
 
 [[package]]
-name = "potpie-ai"
+name = "potpie"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

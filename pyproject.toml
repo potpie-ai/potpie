@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "potpie-ai"
+name = "potpie"
 version = "0.1.0"
 description = "Potpie core packages workspace (context-engine, parsing, sandbox, integrations)"
 readme = "README.md"
