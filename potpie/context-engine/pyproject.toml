@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "context-engine"
+name = "potpie-context-engine"
 version = "0.1.0"
 description = "Context graph API, webhooks, CLI, and MCP (hexagonal)."
 requires-python = ">=3.10,<3.14"

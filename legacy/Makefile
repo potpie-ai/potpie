@@ -20,15 +20,22 @@ COMPOSE := docker compose -f $(CURDIR)/compose.yaml
 # Sandbox selection. Override .env at the command line: `make dev SANDBOX=local`.
 # When unset, whatever's in .env / .env.daytona.local wins (Daytona by default per
 # .env.template). Keep this in sync with sandbox/bootstrap/settings.py.
+#
+# Accept lowercase `sandbox=` as an alias (Make vars are case-sensitive, so
+# `make dev sandbox=daytona` would otherwise be silently ignored) and fold the
+# value to lowercase, so DAYTONA / Daytona / daytona all resolve.
 SANDBOX ?=
-ifeq ($(SANDBOX),daytona)
+sandbox ?=
+SANDBOX_RAW := $(if $(SANDBOX),$(SANDBOX),$(sandbox))
+SANDBOX_SEL := $(shell printf '%s' '$(SANDBOX_RAW)' | tr '[:upper:]' '[:lower:]')
+ifeq ($(SANDBOX_SEL),daytona)
   SANDBOX_OVERRIDE := SANDBOX_WORKSPACE_PROVIDER=daytona SANDBOX_RUNTIME_PROVIDER=daytona
-else ifeq ($(SANDBOX),local)
+else ifeq ($(SANDBOX_SEL),local)
   SANDBOX_OVERRIDE := SANDBOX_WORKSPACE_PROVIDER=local SANDBOX_RUNTIME_PROVIDER=local_subprocess
-else ifeq ($(SANDBOX),docker)
+else ifeq ($(SANDBOX_SEL),docker)
   SANDBOX_OVERRIDE := SANDBOX_WORKSPACE_PROVIDER=local SANDBOX_RUNTIME_PROVIDER=docker
-else ifneq ($(SANDBOX),)
-  $(error Unknown SANDBOX=$(SANDBOX). Use one of: daytona, local, docker)
+else ifneq ($(SANDBOX_SEL),)
+  $(error Unknown sandbox=$(SANDBOX_RAW). Use one of: daytona, local, docker)
 else
   SANDBOX_OVERRIDE :=
 endif
@@ -63,6 +70,16 @@ SET_CELERY_Q := CELERY_Q="$${CELERY_QUEUE_NAME}_process_repository,$${CELERY_QUE
     CELERY_Q="$$CELERY_Q,context-graph-etl"; \
   fi;
 
+# Celery worker pool + concurrency. macOS cannot use the prefork pool —
+# libgit2/GitPython internal state does not survive fork() and SIGSEGVs the
+# forked workers (see app/celery/celery_app.py), which is why the historical
+# default was the single-task `solo` pool. The `threads` pool gives real
+# parallelism without forking (ideal for the LLM-I/O-bound reconciliation
+# path). Override per environment, e.g. on Linux/CI:
+#   CELERY_POOL=prefork CELERY_CONCURRENCY=8 make worker
+CELERY_POOL ?= threads
+CELERY_CONCURRENCY ?= 4
+
 .DEFAULT_GOAL := help
 .PHONY: help dev infra-up infra-down infra-logs infra-reset \
         hatchet-up hatchet-down hatchet-worker dev-hatchet \
@@ -93,7 +110,7 @@ dev: env-check infra-up sync migrate sandbox-prep ## Start infra, sync deps, mig
 	  --timeout 1800 --bind 0.0.0.0:8001 --log-level $(PROC_LOG_LEVEL) app.main:app & \
 	GUNICORN_PID=$$!; \
 	$(SANDBOX_OVERRIDE) celery -A app.celery.celery_app worker --loglevel=$(PROC_LOG_LEVEL) \
-	  -Q "$$CELERY_Q" -E --concurrency=1 --pool=solo & \
+	  -Q "$$CELERY_Q" -E --concurrency=$(CELERY_CONCURRENCY) --pool=$(CELERY_POOL) -B --schedule=.celerybeat-schedule & \
 	CELERY_PID=$$!; \
 	trap 'kill -TERM $$GUNICORN_PID $$CELERY_PID 2>/dev/null || true; \
 	      wait $$GUNICORN_PID $$CELERY_PID 2>/dev/null || true' INT TERM EXIT; \
@@ -191,8 +208,8 @@ api: ## Run only the FastAPI server (assumes infra is up). Honors SANDBOX=...
 	  --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level $(PROC_LOG_LEVEL) app.main:app
 
 worker: ## Run only the Celery worker (assumes infra is up). Honors SANDBOX=...
-	@cd $(REPO_ROOT) && $(LOAD_ENV) $(SET_CELERY_Q) $(SANDBOX_OVERRIDE) uv run --project $(CURDIR) celery -A app.celery.celery_app worker --loglevel=$(PROC_LOG_LEVEL) \
-	  -Q "$$CELERY_Q" -E --concurrency=1 --pool=solo
+	@$(LOAD_ENV) $(SET_CELERY_Q) $(SANDBOX_OVERRIDE) uv run celery -A app.celery.celery_app worker --loglevel=$(PROC_LOG_LEVEL) \
+	  -Q "$$CELERY_Q" -E --concurrency=$(CELERY_CONCURRENCY) --pool=$(CELERY_POOL) -B --schedule=.celerybeat-schedule
 
 stop: ## Kill API + worker processes and stop infra
 	-pkill -f "gunicorn" || true

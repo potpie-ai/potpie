@@ -1,0 +1,65 @@
+# OpenTelemetry Collector — context-engine → Tempo / Prometheus / Loki
+#
+# The context-engine OTel adapter exports OTLP and reads standard OTEL_*
+# env, so it points here with no code change:
+#
+#   CONTEXT_ENGINE_OBSERVABILITY=1
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+#   OTEL_SERVICE_NAME=context-engine
+#
+# Vendor-neutral by design — swap the exporters block to send the same
+# OTLP elsewhere without touching the application.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+  # Drop the high-cardinality event_ids list from metric labels (it is
+  # kept on spans, where cardinality is fine).
+  attributes/metrics:
+    actions:
+      - key: agent.event_ids
+        action: delete
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # ce.* metric namespace → ce_* in Prometheus.
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/metrics, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [loki]

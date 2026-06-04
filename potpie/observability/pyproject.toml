@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "observability"
+name = "potpie-observability"
 version = "0.1.0"
 description = "Liftable observability layer: structured logging + Sentry + logfire behind one contract. app.*-free."
 requires-python = ">=3.10"

@@ -1,9 +1,14 @@
-"""Reconciliation requests, plans, and results."""
+"""Reconciliation requests, plans, and results.
+
+Post-refactor the graph layer has a single writer; the agent emits a
+constrained mutation plan and ``apply_reconciliation_plan`` applies it
+directly. There is no episodic narrative tier — plans are
+entity/edge upserts, deletes, and invalidations.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 from domain.context_events import ContextEvent, EventRef
@@ -25,16 +30,6 @@ class EvidenceRef:
 
 
 @dataclass(slots=True)
-class EpisodeDraft:
-    """One episodic write to apply after validation."""
-
-    name: str
-    episode_body: str
-    source_description: str
-    reference_time: datetime
-
-
-@dataclass(slots=True)
 class ReconciliationRequest:
     """Input to ``ReconciliationAgentPort``."""
 
@@ -46,11 +41,16 @@ class ReconciliationRequest:
 
 @dataclass(slots=True)
 class ReconciliationPlan:
-    """Constrained mutation plan produced by an agent or deterministic planner."""
+    """Constrained mutation plan produced by an agent or deterministic planner.
+
+    A plan is a typed bundle of graph mutations targeting specific entities
+    and edges. The agent inspects the event, decides which parts of the
+    graph to touch, and emits this plan; ``apply_reconciliation_plan``
+    executes the four mutation kinds in order against the single writer.
+    """
 
     event_ref: EventRef
     summary: str
-    episodes: list[EpisodeDraft]
     entity_upserts: list[EntityUpsert] = field(default_factory=list)
     edge_upserts: list[EdgeUpsert] = field(default_factory=list)
     edge_deletes: list[EdgeDelete] = field(default_factory=list)
@@ -66,7 +66,6 @@ class ReconciliationPlan:
 class MutationSummary:
     """Counts applied in one reconciliation run."""
 
-    episodes_written: int = 0
     entity_upserts_applied: int = 0
     edge_upserts_applied: int = 0
     edge_deletes_applied: int = 0
@@ -76,10 +75,15 @@ class MutationSummary:
 
 @dataclass(slots=True)
 class ReconciliationResult:
-    """Outcome of ``apply_reconciliation_plan`` or full ``reconcile_event``."""
+    """Outcome of ``apply_reconciliation_plan`` or full ``reconcile_event``.
+
+    ``mutation_id`` is a per-apply UUID stamped onto every mutation as
+    write provenance — it lets readers trace any edge/entity back to the
+    single apply that produced it.
+    """
 
     ok: bool
-    episode_uuids: list[str | None]
+    mutation_id: str
     mutation_summary: MutationSummary
     error: str | None = None
     reconciliation_errors: list[dict[str, str]] = field(default_factory=list)

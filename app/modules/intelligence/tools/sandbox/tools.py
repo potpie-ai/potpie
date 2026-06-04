@@ -59,16 +59,22 @@ from .tool_functions import (
     _exec_git,
     _exec_pull_request,
     _exec_search,
+    _exec_session_start,
+    _exec_session_write,
     _exec_shell,
     _exec_text_editor,
+    sandbox_exec_tool,
     sandbox_git_tool,
     sandbox_pr_comment_tool,
     sandbox_pr_tool,
     sandbox_search_tool,
     sandbox_shell_tool,
     sandbox_text_editor_tool,
+    sandbox_write_stdin_tool,
 )
 from .tool_inputs import (
+    SandboxExecInput,
+    SandboxExecInputBound,
     SandboxGitInput,
     SandboxGitInputBound,
     SandboxPRCommentInputLegacy,
@@ -80,6 +86,8 @@ from .tool_inputs import (
     SandboxShellInputBound,
     SandboxTextEditorInput,
     SandboxTextEditorInputBound,
+    SandboxWriteStdinInput,
+    SandboxWriteStdinInputBound,
 )
 
 
@@ -119,6 +127,31 @@ _SHELL_DESC = (
     "`find ... -exec grep`. Prefer `sandbox_search` for plain "
     "ripgrep queries; reach here only when you need shell pipes or "
     "rg flags `sandbox_search` doesn't expose."
+)
+
+_EXEC_DESC = (
+    "Start a streamable / long-running command and read its progress. "
+    "Unlike sandbox_shell (which blocks until the command exits), this "
+    "returns after a short window even if the command is still running, "
+    "handing back a session_id. Use it for dev servers, watch builds, long "
+    "test runs, or interactive programs. Set tty=true for REPLs / programs "
+    "that need a real terminal. Returns {session_id, output, running, "
+    "exit_code, truncated}; if running is true, call sandbox_write_stdin "
+    "with the session_id to read more output, send input, or kill it. For a "
+    "command you expect to finish quickly, sandbox_shell is simpler. "
+    "The sandbox ships ripgrep (rg), fd, jq, tree, git, gh, python3, and "
+    "node — for any text/code search use rg ('rg -n PATTERN', 'rg -t py "
+    "PATTERN', 'rg -l PATTERN | xargs ...'), never 'grep -r' or 'find ... "
+    "-exec grep'; rg is faster and honors .gitignore. Prefer sandbox_search "
+    "for plain searches."
+)
+
+_WRITE_STDIN_DESC = (
+    "Drive a running sandbox_exec session: pass its session_id and either "
+    "write to its stdin (chars, include a trailing newline to submit a "
+    "line), poll for more output (leave chars empty), or stop it "
+    "(kill=true). Returns the same shape as sandbox_exec. Keep polling "
+    "until running becomes false to capture the final output and exit_code."
 )
 
 _SEARCH_DESC = (
@@ -219,6 +252,18 @@ def _legacy_tools() -> List[SimpleTool]:
             args_schema=SandboxShellInput,
         ),
         SimpleTool(
+            name="sandbox_exec",
+            description=_EXEC_DESC,
+            func=sandbox_exec_tool,
+            args_schema=SandboxExecInput,
+        ),
+        SimpleTool(
+            name="sandbox_write_stdin",
+            description=_WRITE_STDIN_DESC,
+            func=sandbox_write_stdin_tool,
+            args_schema=SandboxWriteStdinInput,
+        ),
+        SimpleTool(
             name="sandbox_search",
             description=_SEARCH_DESC,
             func=sandbox_search_tool,
@@ -301,6 +346,18 @@ def _explicit_tools(
                     description=_SHELL_DESC,
                     func=_bind(_exec_shell, client, handle),
                     args_schema=SandboxShellInputBound,
+                ),
+                SimpleTool(
+                    name="sandbox_exec",
+                    description=_EXEC_DESC,
+                    func=_bind(_exec_session_start, client, handle),
+                    args_schema=SandboxExecInputBound,
+                ),
+                SimpleTool(
+                    name="sandbox_write_stdin",
+                    description=_WRITE_STDIN_DESC,
+                    func=_bind(_exec_session_write, client, handle),
+                    args_schema=SandboxWriteStdinInputBound,
                 ),
                 SimpleTool(
                     name="sandbox_git",

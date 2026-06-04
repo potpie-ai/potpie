@@ -8,6 +8,7 @@ the application service's job (via `SandboxStore`).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import shutil
 import subprocess
@@ -20,6 +21,7 @@ from sandbox.adapters.outbound.local._git_ops import (
     validate_repo_name,
 )
 from sandbox.adapters.outbound.local.repo_cache import LocalRepoCacheProvider
+from sandbox.adapters.outbound.local.storage import dir_size_bytes
 from sandbox.adapters.outbound.memory.eviction import NoOpEvictionPolicy
 from sandbox.domain.errors import (
     InvalidWorkspacePath,
@@ -163,25 +165,12 @@ class LocalGitWorkspaceProvider:
 
         worktree_path.parent.mkdir(parents=True, exist_ok=True)
         if request.create_branch or request.mode is not WorkspaceMode.ANALYSIS:
-            result = run(
-                [
-                    "git",
-                    "-C",
-                    str(bare_path),
-                    "worktree",
-                    "add",
-                    "-b",
-                    branch,
-                    "--",
-                    str(worktree_path),
-                    request.base_ref,
-                ],
-                timeout=120,
-            )
-            if result.returncode != 0 and "already exists" in result.stderr:
+            if self._branch_exists(bare_path, branch):
                 # Branch already exists in the bare repo (e.g. a prior
-                # conversation's edit branch); re-attach the worktree
-                # without re-creating the branch.
+                # conversation's edit branch). Re-attach the worktree on
+                # the existing branch instead of trying to recreate it —
+                # probing with ``show-ref`` avoids depending on git's
+                # localised "already exists" stderr wording.
                 result = run(
                     [
                         "git",
@@ -192,6 +181,22 @@ class LocalGitWorkspaceProvider:
                         "--",
                         str(worktree_path),
                         branch,
+                    ],
+                    timeout=120,
+                )
+            else:
+                result = run(
+                    [
+                        "git",
+                        "-C",
+                        str(bare_path),
+                        "worktree",
+                        "add",
+                        "-b",
+                        branch,
+                        "--",
+                        str(worktree_path),
+                        request.base_ref,
                     ],
                     timeout=120,
                 )
@@ -232,9 +237,31 @@ class LocalGitWorkspaceProvider:
             ),
             backend_kind=self.kind,
             state=WorkspaceState.READY,
+            # Measured once at checkout. The eviction policy needs a size
+            # to rank LRU candidates and to account ``freed_bytes``; the
+            # periodic sweeper refreshes this so we don't pay a recursive
+            # walk on every mutating exec on the hot path.
+            size_bytes=dir_size_bytes(worktree_path),
             metadata={"branch": branch},
             capabilities=Capabilities.from_mode(request.mode),
         )
+
+    @staticmethod
+    def _branch_exists(bare_path: Path, branch: str) -> bool:
+        """Probe the bare repo for ``refs/heads/<branch>`` deterministically."""
+        result = run(
+            [
+                "git",
+                "-C",
+                str(bare_path),
+                "show-ref",
+                "--verify",
+                "--quiet",
+                f"refs/heads/{branch}",
+            ],
+            timeout=30,
+        )
+        return result.returncode == 0
 
     @staticmethod
     def _remove_worktree_sync(path: Path) -> None:
@@ -263,13 +290,21 @@ class LocalGitWorkspaceProvider:
         return self.repos_base_path / repo_name / "worktrees"
 
     def _worktree_path(self, request: WorkspaceRequest, branch: str) -> Path:
-        safe_user = self._safe_segment(request.user_id)
+        # The safe-segment transform replaces every unsafe char with
+        # ``_``, so distinct raw tuples like ``("alice", "a/b")`` and
+        # ``("alice", "a_b")`` would otherwise produce the same path.
+        # Hash the raw tuple into a short suffix so the human-readable
+        # prefix stays useful for ops while the hash guarantees
+        # collision-free worktrees.
         scope = request.conversation_id or request.task_id or request.base_ref
+        safe_user = self._safe_segment(request.user_id)
         safe_scope = self._safe_segment(scope)
         safe_branch = self._safe_segment(branch)
+        raw_key = "|".join([request.user_id or "", scope or "", branch])
+        suffix = hashlib.sha1(raw_key.encode("utf-8")).hexdigest()[:8]
         return (
             self._worktrees_dir(request.repo.repo_name)
-            / f"{safe_user}_{safe_scope}_{safe_branch}"
+            / f"{safe_user}_{safe_scope}_{safe_branch}-{suffix}"
         )
 
     def _default_branch_name(self, request: WorkspaceRequest) -> str:

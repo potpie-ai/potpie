@@ -15,6 +15,10 @@ from pathlib import Path
 DEFAULT_AGENT_SNAPSHOT = "potpie/agent-sandbox:0.2.1"
 DEFAULT_AGENT_DOCKER_IMAGE = "potpie/agent-sandbox:0.2.1"
 
+_VALID_PROVIDERS = frozenset({"local", "daytona"})
+_VALID_RUNTIMES = frozenset({"local_subprocess", "docker", "daytona"})
+_VALID_EVICTION_POLICIES = frozenset({"tiered", "noop"})
+
 # Bundled Dockerfile that defines the agent-sandbox snapshot. Resolved relative
 # to this file so the path is correct whether the package is run from source
 # or installed into a venv.
@@ -30,7 +34,13 @@ class SandboxSettings:
     repos_base_path: str = ".repos"
     metadata_path: str | None = None
     docker_image: str = DEFAULT_AGENT_DOCKER_IMAGE
-    local_allow_write: bool = False
+    # Local subprocess explicitly *is not* a security boundary (see
+    # ``LocalSubprocessRuntimeProvider`` docstring): a caller who selects
+    # ``runtime=local_subprocess`` has already accepted that. Defaulting
+    # writes off would silently break the edit/commit/push flow without
+    # adding any real safety. Read-only callers can flip this back via
+    # ``SANDBOX_LOCAL_ALLOW_WRITE=false``.
+    local_allow_write: bool = True
     daytona_snapshot: str | None = DEFAULT_AGENT_SNAPSHOT
     daytona_workspace_root: str = "/home/agent/work"
     daytona_snapshot_dockerfile: str | None = None
@@ -80,6 +90,72 @@ class SandboxSettings:
     # predictable. Must NOT collide with system dirs Daytona rejects
     # (/proc, /sys, /etc, /bin, /sbin, /lib, /lib64, /boot, /dev).
     daytona_volume_mount_path: str = "/home/agent/work/.bare-cache"
+    # ---- Storage limit + eviction --------------------------------------
+    # Tiered eviction is the default (bounded disk out of the box). Set
+    # ``noop`` to opt out (tests/standalone). ``storage_limit_gb`` is an
+    # absolute budget for the local ``.repos``; when unset the budget is
+    # ``storage_disk_fraction`` of the filesystem total — pressure is
+    # always our-footprint / budget, never whole-disk fill, so an empty
+    # cache reads ~0 and never flaps. High/low water are the evict
+    # trigger and the sweep stop target. ``evict_dirty`` gates the
+    # last-resort tier that drops un-pushed edits. ``max_sandboxes_per_
+    # user`` is the Daytona per-user count cap the inspector reports on
+    # (``None`` ⇒ count scope not enforced; Daytona's own caps still
+    # apply). ``storage_sweep_interval_secs`` is read by the Celery beat
+    # entry, kept here so all knobs live in one place.
+    eviction_policy: str = "tiered"
+    storage_limit_gb: float | None = None
+    storage_disk_fraction: float = 0.5
+    storage_high_water: float = 0.85
+    storage_low_water: float = 0.70
+    evict_dirty: bool = True
+    daytona_max_sandboxes_per_user: int | None = None
+    storage_sweep_interval_secs: float = 300.0
+
+    def __post_init__(self) -> None:
+        """Fail fast on misconfiguration.
+
+        Previously an unknown ``SANDBOX_WORKSPACE_PROVIDER`` /
+        ``SANDBOX_RUNTIME_PROVIDER`` surfaced only when the bootstrap
+        tried to materialise the adapter — deep inside the first agent
+        call inside a Celery task. Validating here turns it into a
+        process-start error with a clear message.
+        """
+        if self.provider not in _VALID_PROVIDERS:
+            raise ValueError(
+                f"Unsupported SANDBOX_WORKSPACE_PROVIDER={self.provider!r}; "
+                f"expected one of {sorted(_VALID_PROVIDERS)}"
+            )
+        if self.runtime not in _VALID_RUNTIMES:
+            raise ValueError(
+                f"Unsupported SANDBOX_RUNTIME_PROVIDER={self.runtime!r}; "
+                f"expected one of {sorted(_VALID_RUNTIMES)}"
+            )
+        # Daytona's runtime is wired to its workspace provider (the
+        # sandbox is the runtime), so mixing it with the local
+        # workspace provider can't work — flag it early.
+        if self.runtime == "daytona" and self.provider != "daytona":
+            raise ValueError(
+                "SANDBOX_RUNTIME_PROVIDER=daytona requires "
+                "SANDBOX_WORKSPACE_PROVIDER=daytona (the Daytona runtime "
+                "lives inside the Daytona workspace)"
+            )
+        if self.eviction_policy not in _VALID_EVICTION_POLICIES:
+            raise ValueError(
+                f"Unsupported SANDBOX_EVICTION_POLICY={self.eviction_policy!r}; "
+                f"expected one of {sorted(_VALID_EVICTION_POLICIES)}"
+            )
+        if not 0.0 < self.storage_low_water < self.storage_high_water <= 1.0:
+            raise ValueError(
+                "require 0 < SANDBOX_STORAGE_LOW_WATER < "
+                "SANDBOX_STORAGE_HIGH_WATER <= 1; got "
+                f"low={self.storage_low_water} high={self.storage_high_water}"
+            )
+        if not 0.0 < self.storage_disk_fraction <= 1.0:
+            raise ValueError(
+                "require 0 < SANDBOX_STORAGE_DISK_FRACTION <= 1; got "
+                f"{self.storage_disk_fraction}"
+            )
 
 
 def settings_from_env() -> SandboxSettings:
@@ -96,7 +172,7 @@ def settings_from_env() -> SandboxSettings:
         repos_base_path=base,
         metadata_path=metadata,
         docker_image=os.getenv("SANDBOX_DOCKER_IMAGE", DEFAULT_AGENT_DOCKER_IMAGE),
-        local_allow_write=_bool_env("SANDBOX_LOCAL_ALLOW_WRITE", False),
+        local_allow_write=_bool_env("SANDBOX_LOCAL_ALLOW_WRITE", True),
         daytona_snapshot=os.getenv("DAYTONA_SNAPSHOT") or DEFAULT_AGENT_SNAPSHOT,
         daytona_workspace_root=os.getenv(
             "DAYTONA_WORKSPACE_ROOT", "/home/agent/work"
@@ -125,6 +201,20 @@ def settings_from_env() -> SandboxSettings:
         ),
         daytona_volume_mount_path=os.getenv(
             "DAYTONA_VOLUME_MOUNT_PATH", "/home/agent/work/.bare-cache"
+        ),
+        eviction_policy=os.getenv("SANDBOX_EVICTION_POLICY", "tiered")
+        .strip()
+        .lower(),
+        storage_limit_gb=_optional_float_env("SANDBOX_STORAGE_LIMIT_GB"),
+        storage_disk_fraction=_float_env("SANDBOX_STORAGE_DISK_FRACTION", 0.5),
+        storage_high_water=_float_env("SANDBOX_STORAGE_HIGH_WATER", 0.85),
+        storage_low_water=_float_env("SANDBOX_STORAGE_LOW_WATER", 0.70),
+        evict_dirty=_bool_env("SANDBOX_EVICT_DIRTY", True),
+        daytona_max_sandboxes_per_user=_optional_int_env(
+            "SANDBOX_DAYTONA_MAX_SANDBOXES_PER_USER"
+        ),
+        storage_sweep_interval_secs=_float_env(
+            "SANDBOX_STORAGE_SWEEP_INTERVAL_SECS", 300.0
         ),
     )
 
@@ -169,5 +259,21 @@ def _optional_int_env(name: str) -> int | None:
         return None
     try:
         return int(raw)
+    except ValueError:
+        return None
+
+
+def _optional_float_env(name: str) -> float | None:
+    """Like :func:`_float_env` but returns ``None`` for unset / blank.
+
+    Used for ``SANDBOX_STORAGE_LIMIT_GB``: ``None`` means "no explicit
+    budget — fall back to the disk-fraction default", which is a
+    distinct mode from any numeric value.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return float(raw)
     except ValueError:
         return None

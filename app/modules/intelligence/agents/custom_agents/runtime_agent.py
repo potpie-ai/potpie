@@ -126,13 +126,13 @@ class RuntimeCustomAgent(ChatAgent):
                 return agent
             else:
                 logger.info(
-                    "❌ Multi-agent disabled by config for custom agent, using PydanticRagAgent"
+                    "❌ Multi-agent disabled by config for custom agent, using PydanticDeepAgent"
                 )
-                from app.modules.intelligence.agents.chat_agents.pydantic_agent import (
-                    PydanticRagAgent,
+                from app.modules.intelligence.agents.chat_agents.pydantic_deep_agent import (
+                    PydanticDeepAgent,
                 )
 
-                agent = PydanticRagAgent(self.llm_provider, agent_config, tools)
+                agent = PydanticDeepAgent(self.llm_provider, agent_config, tools)
                 self._pydantic_agent = agent
                 return agent
         else:

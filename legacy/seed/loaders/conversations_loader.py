@@ -93,7 +93,7 @@ def apply_conversations(
             ct = _msg_type(m.type)
             if ct == MessageType.HUMAN and not sid:
                 raise ValueError(
-                    f"Message {m.id}: HUMAN messages require sender_id (use { _PLACEHOLDER!r} or explicit uid)"
+                    f"Message {m.id}: HUMAN messages require sender_id (use {_PLACEHOLDER!r} or explicit uid)"
                 )
             if ct != MessageType.HUMAN and sid:
                 sid = None

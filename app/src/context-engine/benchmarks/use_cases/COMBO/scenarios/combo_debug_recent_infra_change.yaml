@@ -1,0 +1,171 @@
+id: combo_debug_recent_infra_change
+use_case: COMBO
+tier: quick
+difficulty: hard
+source_mix: full
+universe: acme
+dimensions: [TIME, BUG, INFRA]
+
+description: |
+  An on-call engineer pages the agent: "inventory-svc is 503ing this
+  morning. What changed recently, and is this a known pattern?"
+
+  This is a three-dimension composite — a useful answer has to braid
+  together a recent-change lens, a prior-incident lens, and a topology
+  lens. None alone is sufficient:
+
+    - TIME side:  the proximate trigger is PR #1240 + its prod deploy
+                  two days ago — inventory-svc worker fleet expanded
+                  18 -> 24 for Black Friday prep, with no application
+                  code change. The agent must surface THAT change as
+                  the recent thing that moved.
+    - BUG side:   this is not novel. It is the OPS-218 pool-exhaustion
+                  pattern recurring on a different service. OPS-220's
+                  postmortem and ADR-045 codify the +25% fleet rule;
+                  the 18 -> 24 jump is +33% and violates it. The agent
+                  must recognise the recurrence and cite the rule.
+    - INFRA side: inventory-svc owns inventory-prod-db (Postgres) and
+                  reads kafka(orders-topic); it is owned by
+                  @platform-data (lead bench-user-2), and a pool/worker
+                  change requires DBA sign-off (bench-user-6).
+
+  Failure modes we are hunting:
+
+    - Answer names the recent deploy but treats OPS-389 as a brand-new
+      bug → BUG criteria fail (no recurrence, no +25% rule).
+    - Answer recites the OPS-218 history but never identifies the
+      recent 18 -> 24 change that actually triggered today → TIME fails.
+    - Answer reasons about topology/owners but never connects the dots
+      to a recent change or a known pattern → an inert architecture
+      dump.
+
+  `by_dimension` decomposes this into TIME / BUG / INFRA scores so a
+  regression on recurrence-detection (BUG) is not masked by a stable
+  "what changed recently" (TIME) answer, and vice versa.
+
+ingest:
+  # Recent change (TIME) — the proximate trigger.
+  - { event: github/pr_merged__1240__inventory_worker_scale.json, at: "-2d", tags: [signal] }
+  - { event: deploy/inventory_prod_deploy_24workers.json, at: "-2d", tags: [signal] }
+  # Prior-incident history (BUG) — the pattern this recurs from.
+  - { event: linear/issue_create__OPS-218.json, at: "-90d", tags: [signal] }
+  - { event: linear/comment_create__OPS-218__root_cause.json, at: "-89d", tags: [signal] }
+  - { event: linear/issue_create__OPS-220__postmortem.json, at: "-80d", tags: [signal] }
+  # Today's symptom report (BUG/TIME).
+  - { event: linear/issue_create__OPS-389.json, at: "0d", tags: [signal] }
+
+distractor_events:
+  - { event: "noise/github_chore_noise_template.json", at: "-21d..-3d", count: 18, shape: "noise/random" }
+  - { event: "noise/alerting_noise_template.json", at: "-21d..-1d", count: 12, shape: "noise/random" }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): only the INFRA dimension is structurally
+  # gradeable — the topology read surfaces Service / DataStore nodes plus
+  # DEPENDS_ON / USES edges. The TIME dimension (recent PR/Deploy events)
+  # and the BUG dimension (Issue / Decision recurrence) are reconciled but
+  # are NOT returned by the current topology read path, so a structural
+  # assertion on them would grade a read-layer gap rather than the engine's
+  # reconciliation. Those two dimensions are graded in the synthesis judge
+  # and via retrieval_assertions. We anchor the structural floor on
+  # inventory-svc + inventory-prod-db, which the topology read does surface.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*inventory-svc", min_count: 1 }
+    - { label: DataStore, key_pattern: "datastore:.*inventory-prod-db", min_count: 1 }
+  graph_must_contain_edges:
+    - { from_label: Service, to_label: DataStore, type: USES, min_count: 1, dimensions: [INFRA] }
+    - { from_label: Service, to_label: Service, type: DEPENDS_ON, min_count: 1, dimensions: [INFRA] }
+  graph_must_not_contain:
+    - { label: Issue, key_pattern: "NOISE-.*", max_count: 0 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: debugging
+  scope: { service: inventory-svc }
+  include: [timeline, prior_bugs, infra_topology, decisions, owners, docs]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [timeline, prior_bugs]
+  source_refs_min: 3
+  must_cite_event_id:
+    - github/pr_merged__1240__inventory_worker_scale.json
+    - linear/issue_create__OPS-218.json
+  must_not_cite_event_id:
+    - noise/github_chore_noise_template.json
+    - noise/alerting_noise_template.json
+  forbid_in_answer:
+    - "I don't have information"
+    - "no recent changes"
+    - "no prior incidents"
+
+judge:
+  pass_score: 55
+  criteria:
+    # TIME side ---
+    - name: identifies_recent_change
+      weight: 20
+      pass_threshold: 4
+      dimensions: [TIME]
+      prompt: |
+        Does the answer identify the recent change that triggered today's
+        symptoms — specifically the inventory-svc worker-fleet expansion
+        18 -> 24 (PR #1240, deployed ~2 days ago for Black Friday prep) —
+        and note that it shipped no application code change? A generic
+        "something changed recently" without naming the worker scale-up
+        fails.
+    # BUG side ---
+    - name: recognizes_recurrence
+      weight: 20
+      pass_threshold: 4
+      dimensions: [BUG]
+      prompt: |
+        Does the answer recognise this is a recurrence of the OPS-218
+        Postgres connection-pool exhaustion pattern (same symptom
+        signature, same AM-ramp window, post-fleet-expansion trigger)
+        rather than treating OPS-389 as a novel incident? Naming OPS-218
+        explicitly is required; "a similar past incident" is not enough.
+    - name: cites_plus25_rule
+      weight: 15
+      pass_threshold: 3
+      dimensions: [BUG]
+      prompt: |
+        Does the answer cite the +25% fleet-expansion / DBA pool-ceiling
+        rule (OPS-220 postmortem, formalised as ADR-045) and note that
+        the current 18 -> 24 (+33%) expansion violates it? This is the
+        highest-value synthesis the engine can do here.
+    # INFRA side ---
+    - name: inventory_topology_and_owner
+      weight: 20
+      pass_threshold: 4
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer correctly place inventory-svc in the topology —
+        it owns inventory-prod-db (Postgres) and reads kafka(orders-topic)
+        — and identify the owning team @platform-data (lead bench-user-2),
+        noting that a pool/worker change needs DBA sign-off (bench-user-6)?
+    # Cross-dimension integration ---
+    - name: integrates_change_pattern_topology
+      weight: 15
+      pass_threshold: 3
+      prompt: |
+        Does the answer read as one coherent diagnosis that links the
+        recent change -> the known pattern -> the affected topology, e.g.
+        "the 18 -> 24 worker bump pushed inventory-prod-db's pool past
+        its ceiling, which is the OPS-218 pattern, and per ADR-045 that
+        scale-up needed DBA sign-off it never got"? Three disconnected
+        sections that never reference each other score low.
+    - name: no_hallucination
+      weight: 10
+      pass_threshold: 5
+      prompt: |
+        Are all factual claims grounded in retrieved facts? Valid
+        identifiers: OPS-218, OPS-220, OPS-389, PR #1240, PR #875,
+        PR #892, ADR-045, runbooks/db-pool-exhaustion.md, inventory-svc,
+        checkout-api, inventory-prod-db, checkout-prod-db, bench-user-1
+        through bench-user-6, @platform-data. Any other PR numbers, SHAs,
+        file paths, services, or people are hallucinations and fail this
+        criterion.

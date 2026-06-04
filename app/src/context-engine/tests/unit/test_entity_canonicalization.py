@@ -29,7 +29,6 @@ def _plan(**kwargs) -> ReconciliationPlan:
     return ReconciliationPlan(
         event_ref=EventRef(event_id="evt-1", pot_id="pot-1", source_system="test"),
         summary="test",
-        episodes=[],
         **kwargs,
     )
 

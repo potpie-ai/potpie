@@ -1,25 +1,72 @@
-"""Canonical Potpie context graph ontology.
+"""Canonical Potpie context graph ontology — unified topology + memory.
 
-This module is the governed vocabulary that sits above Graphiti extraction.
-Graphiti can still ingest episodes flexibly, but deterministic structural
-mutations should use the labels, relationship types, identity rules, and
-validation helpers defined here.
+Single declarative catalog covering everything an agent can read or write.
+Three sections, all spec-driven:
+
+1. :data:`ENTITY_TYPES` — every label that can live in the graph, with the
+   identity class and key prefix that mint it, plus fact family, freshness
+   TTL, classifier cues, and project-map / debugging family mappings.
+2. :data:`EDGE_TYPES` — every predicate that can ride on a ``:RELATES_TO``
+   claim, grouped by ``category`` (``topology`` / ``ownership`` / ``people``
+   / ``timeline`` / ``memory`` / ``generic``).
+3. :data:`RECORD_TYPES` — the agent-facing context_record vocabulary, each
+   row joining a record type to its anchor entity, emitted predicate,
+   payload schema, and reader include key. This is the table that unifies
+   the agent surface (record types + include families) with the graph
+   ontology (entities + predicates).
+
+Every other module — canonical writer, structural reader, reconciliation
+validation, graph-quality policy, agent context port — derives its behavior
+from these three catalogs rather than carrying parallel vocabularies.
+
+**Adding an entity:** one row in :data:`ENTITY_TYPES`.
+**Adding a predicate:** one row in :data:`EDGE_TYPES`.
+**Adding a record type:** one row in :data:`RECORD_TYPES`.
+
+The identity registry (:mod:`domain.identity`) is a *view* over
+:data:`ENTITY_TYPES` (populated at the bottom of this module). The agent
+context port's record-type and include vocabularies are *views* over
+:data:`RECORD_TYPES`. :mod:`domain.coherence` runs import-time invariants
+that fail loud if any two views disagree.
+
+Design pillars:
+
+1. **An entity exists only if an edge needs it as an endpoint.** No
+   aspirational nodes; if nothing connects to it and no query traverses it,
+   it is a property, not a node.
+2. **Identity-only required fields.** A node needs its ``entity_key`` and a
+   label; everything else is optional enrichment. No required-property
+   downgrade traps.
+3. **One name per edge, declared once.** The edge vocabulary *is* the schema;
+   readers and writers traverse the same names.
+4. **A ``Scope`` interface, not a base class.** Entities flagged
+   ``scope=True`` (``Repository``/``Service``/``Environment``/``DataStore``/
+   ``Cluster``) act as scope endpoints for cross-cutting edges (memory
+   claims, ownership) without each edge enumerating them.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Iterable
 
 from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert
-from domain.source_references import validate_source_reference_properties
+from domain.identity import IdentityClass, IdentitySpec, register_identity
 
-ONTOLOGY_VERSION = "2026-04-phase-8-timeline"
+ONTOLOGY_VERSION = "2026-05-unified-v1"
+
+
+# --- Lifecycle vocabulary ---------------------------------------------------
 
 
 class LifecycleStatus(StrEnum):
-    """Edge-level lifecycle for episodic facts (stored as ``lifecycle_status`` on the edge)."""
+    """Edge-level lifecycle for facts that carry ``lifecycle_status``.
+
+    Retained as a stable vocabulary for the claim layer added later; the
+    topology core does not use lifecycle edges.
+    """
 
     proposed = "proposed"
     planned = "planned"
@@ -30,20 +77,89 @@ class LifecycleStatus(StrEnum):
     unknown = "unknown"
 
 
+# --- Source-of-truth / evidence vocabulary ---------------------------------
+
+
+SOURCE_OF_TRUTH_AUTHORITATIVE_EXTERNAL = "authoritative_external_truth"
+SOURCE_OF_TRUTH_AUTHORITATIVE_CODE = "authoritative_code_truth"
+SOURCE_OF_TRUTH_CANONICAL_MEMORY = "canonicalized_memory"
+SOURCE_OF_TRUTH_SOFT_INFERENCE = "soft_inference"
+
+EVIDENCE_STRENGTHS = ("deterministic", "attested", "inferred", "hypothesized")
+DEFAULT_EVIDENCE_STRENGTH = "inferred"
+
+
+# --- Graph labels & endpoints ----------------------------------------------
+
+
 BASE_GRAPH_LABELS = frozenset({"Entity"})
+# Legacy code-graph labels still in the data; ``CodeAsset`` is the canonical
+# bridge. The validator treats any of these as a CodeAsset endpoint.
 CODE_GRAPH_LABELS = frozenset({"CodeAsset", "FILE", "FUNCTION", "CLASS", "NODE"})
 WILDCARD_ENDPOINT = "*"
+SCOPE_ENDPOINT = "@Scope"  # resolves to any entity flagged ``scope=True``
+ACTIVITY_ENDPOINT = "@Activity"  # resolves to Activity or any entity flagged ``is_activity=True``
+
+
+# --- Spec dataclasses -------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class EntityTypeSpec:
+    """Declarative metadata for one canonical entity label.
+
+    Every downstream consumer derives its behavior from these fields rather
+    than hardcoding label strings. To add a new entity, append a new spec to
+    :data:`ENTITY_TYPES`.
+    """
+
     label: str
     category: str
     description: str
+    # --- Identity --- (binds to domain.identity.IdentitySpec) --------------
+    identity_class: IdentityClass
+    """How identity is established: EXTERNAL_ID / SLUG_ALIAS / CONTENT_HASH."""
+
+    key_prefix: str
+    """Canonical key prefix (e.g. ``service`` → ``service:auth-svc``)."""
+
     identity_policy: str
+    """Human-readable identity sketch (e.g. ``service:<name>``) for docs/errors."""
+
+    authoritative_source: str | None = None
+    """For EXTERNAL_ID identities: source system whose id wins (e.g. ``github``)."""
+
     required_properties: frozenset[str] = frozenset()
     lifecycle_states: frozenset[str] = frozenset()
     public: bool = True
+
+    # --- Structural traits ---------------------------------------------------
+    scope: bool = False
+    """True for Repository/Service/Environment/DataStore/Cluster — scope endpoints."""
+
+    is_activity: bool = False
+    """True for rich change events — multi-labels with Activity for timeline."""
+
+    # --- Agent-facing family mapping ----------------------------------------
+    project_map_family: str | None = None
+    """Which family this label answers in the project_map response."""
+
+    debugging_family: str | None = None
+    """Which family in the debugging_memory response."""
+
+    # --- Source-of-truth / freshness ---------------------------------------
+    fact_family: str = "unknown"
+    """Identifier for the SoT family (topology, ownership, …)."""
+
+    source_of_truth: str = SOURCE_OF_TRUTH_CANONICAL_MEMORY
+    freshness_ttl_hours: int = 24 * 30
+
+    # --- Classification cues (used by ontology_classifier) -----------------
+    text_patterns: tuple[str, ...] = ()
+    """Regex patterns over name/title/summary/fact that classify text → this label."""
+
+    property_signatures: tuple[str, ...] = ()
+    """Property names whose non-empty string value forces this label."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +169,29 @@ class EdgeTypeSpec:
     allowed_pairs: tuple[tuple[str, str], ...]
     required_properties: frozenset[str] = frozenset()
     public: bool = True
+    category: str = "structural"
+
+    # --- Temporal traits ---------------------------------------------------
+    lifecycle_carrier: bool = False
+    """Edge carries ``lifecycle_status`` (proposed/in_progress/completed/...)."""
+
+    predicate_family: str | None = None
+    """Membership in a predicate family for auto-supersession and conflict detection."""
+
+    # --- Edge cardinality --------------------------------------------------
+    singleton: bool = False
+    """When True, ``(subject, predicate)`` admits one live object at a time.
+
+    The canonical writer auto-stamps ``invalid_at`` on any prior live claim
+    with the same subject + predicate but a different object when a new
+    deterministic claim lands. Multi-source corroboration on the same object
+    is preserved (singleton applies to objects, not sources).
+    """
+
+    # --- Endpoint disambiguation -------------------------------------------
+    source_inferred_labels: tuple[str, ...] = ()
+    target_inferred_labels: tuple[str, ...] = ()
+    """When this edge type appears, the classifier may add these labels to source/target."""
 
     def allows(self, from_labels: Iterable[str], to_labels: Iterable[str]) -> bool:
         from_set = _normalized_label_set(from_labels)
@@ -63,930 +202,728 @@ class EdgeTypeSpec:
         )
 
 
-def _spec(
+# --- Entity catalog ---------------------------------------------------------
+# Conventions:
+#   * ``scope=True``  → endpoint for future cross-cutting edges (APPLIES_TO etc.)
+#   * ``project_map_family`` → drives the structural reader / project map
+#   * ``fact_family``, ``source_of_truth``, ``freshness_ttl_hours`` → graph_quality
+#   * ``text_patterns`` → drive the ontology_classifier
+
+
+def _e(
     label: str,
     category: str,
     description: str,
-    identity_policy: str,
-    required: Iterable[str] = (),
-    lifecycle: Iterable[str] = (),
+    *,
+    identity_class: IdentityClass,
+    key_prefix: str,
+    identity_policy: str | None = None,
+    authoritative_source: str | None = None,
+    **kwargs,
 ) -> EntityTypeSpec:
+    """Helper for declaring an entity spec with concise call sites.
+
+    ``identity_policy`` defaults to a human-readable sketch built from the
+    key prefix and identity class so docs don't repeat the same string twice.
+    """
+    required = kwargs.pop("required", ())
+    lifecycle = kwargs.pop("lifecycle", frozenset())
+    if identity_policy is None:
+        suffix = {
+            IdentityClass.SLUG_ALIAS: "<slug>",
+            IdentityClass.EXTERNAL_ID: "<id>",
+            IdentityClass.CONTENT_HASH: "<hash>",
+        }[identity_class]
+        identity_policy = f"{key_prefix}:{suffix}"
     return EntityTypeSpec(
         label=label,
         category=category,
         description=description,
+        identity_class=identity_class,
+        key_prefix=key_prefix,
         identity_policy=identity_policy,
+        authoritative_source=authoritative_source,
         required_properties=frozenset(required),
         lifecycle_states=frozenset(lifecycle),
+        **kwargs,
     )
 
 
-def _edge(
+# Source-of-truth presets to make rows concise.
+SOT_EXTERNAL = SOURCE_OF_TRUTH_AUTHORITATIVE_EXTERNAL
+SOT_CODE = SOURCE_OF_TRUTH_AUTHORITATIVE_CODE
+SOT_MEMORY = SOURCE_OF_TRUTH_CANONICAL_MEMORY
+SOT_SOFT = SOURCE_OF_TRUTH_SOFT_INFERENCE
+
+H = 1
+DAY = 24
+WEEK = 7 * DAY
+
+
+ENTITY_TYPES: dict[str, EntityTypeSpec] = {
+    # --- Topology scope endpoints ------------------------------------------
+    "Repository": _e(
+        "Repository",
+        "topology",
+        "A source code repository.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="repo",
+        identity_policy="repo:<host>/<org>/<name>",
+        scope=True,
+        project_map_family="repos",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        text_patterns=(r"\brepo(sitory)?\b", r"\bmonorepo\b"),
+    ),
+    "Service": _e(
+        "Service",
+        "topology",
+        "A deployable/runnable unit (service, worker, cronjob, frontend, gateway, library).",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="service",
+        scope=True,
+        project_map_family="services",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        text_patterns=(r"\bservice\b", r"\bmicroservice\b", r"\bworker\b", r"\bcronjob\b"),
+    ),
+    "Environment": _e(
+        "Environment",
+        "topology",
+        "A named runtime target (prod, staging, dev, preview).",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="environment",
+        scope=True,
+        project_map_family="environments",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        text_patterns=(r"\benv(ironment)?\b", r"\b(prod|production|staging|stage|dev|preview)\b"),
+    ),
+    "DataStore": _e(
+        "DataStore",
+        "topology",
+        "A stateful backing resource (postgres, mysql, redis, kafka, s3, ...).",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="datastore",
+        scope=True,
+        project_map_family="datastores",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        text_patterns=(r"\b(database|datastore|postgres|mysql|redis|kafka|bucket|s3|elastic)\b",),
+    ),
+    "Cluster": _e(
+        "Cluster",
+        "topology",
+        "The cloud account / cluster / region an environment runs on.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="cluster",
+        scope=True,
+        project_map_family="clusters",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        text_patterns=(r"\b(cluster|region|eks|gke|ecs|kubernetes|k8s)\b",),
+    ),
+    # --- Scanner-emitted topology nodes ------------------------------------
+    # Code-anchored entities scanners surface during working-tree ingestion.
+    # ``Dependency`` is a package-manager dependency (``requests==2.31``);
+    # ``APIContract`` is an OpenAPI operation (path + method). Both are
+    # registered by their scanner today; declared here so the central catalog
+    # owns them and the coherence check stays green.
+    "Dependency": _e(
+        "Dependency",
+        "topology",
+        "A third-party package / library a service depends on. Scanner-emitted "
+        "from package manifests (pyproject.toml, package.json, ...).",
+        identity_class=IdentityClass.EXTERNAL_ID,
+        key_prefix="dependency",
+        identity_policy="dependency:<ecosystem>:<name>",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        property_signatures=("package_name", "version"),
+        text_patterns=(r"\bdependency\b", r"\bpackage\b", r"\blibrary\b"),
+    ),
+    "APIContract": _e(
+        "APIContract",
+        "topology",
+        "One operation in an OpenAPI / RPC spec — a (path, method) pair a "
+        "service exposes. Scanner-emitted from OpenAPI 3.x docs.",
+        identity_class=IdentityClass.EXTERNAL_ID,
+        key_prefix="api_contract",
+        identity_policy="api_contract:<service>:<method>:<path>",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        property_signatures=("http_method", "path"),
+        text_patterns=(r"\bAPI\b", r"\bendpoint\b", r"\boperation\b"),
+    ),
+    # --- People ------------------------------------------------------------
+    "Team": _e(
+        "Team",
+        "people",
+        "An owning group / squad.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="team",
+        project_map_family="teams",
+        fact_family="ownership",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        text_patterns=(r"\bteam\b", r"\bsquad\b"),
+    ),
+    "Person": _e(
+        "Person",
+        "people",
+        "An individual contributor / owner.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="person",
+        identity_policy="person:<handle>",
+        project_map_family="people",
+        fact_family="ownership",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        text_patterns=(r"\bperson\b", r"\bauthor\b", r"\bowner\b"),
+    ),
+    # --- Activity timeline -------------------------------------------------
+    # A timestamped event. ``is_activity=True`` flags it as a timeline node;
+    # its claims carry ``valid_at = occurred_at`` (event time), so the
+    # timeline is reconstructed by the existing bitemporal window/as-of
+    # filters rather than any dedicated temporal edge. The event ``kind`` is
+    # the ``verb`` property (opened_pr / merged_pr / deployed / decided …),
+    # which rides on the activity's claims and so comes back in
+    # ``ClaimRow.properties`` for read-time include/exclude.
+    "Activity": _e(
+        "Activity",
+        "timeline",
+        "A timestamped event — something that happened (PR merged, deploy, "
+        "alert, discussion, decision). The unit of the activity timeline.",
+        identity_class=IdentityClass.EXTERNAL_ID,
+        key_prefix="activity",
+        identity_policy="activity:<source>:<id>",
+        is_activity=True,
+        fact_family="timeline",
+        source_of_truth=SOT_EXTERNAL,
+        freshness_ttl_hours=2 * WEEK,
+        property_signatures=("occurred_at", "verb_class"),
+        text_patterns=(
+            r"\bmerged\b",
+            r"\bdeploy(ed|ment)?\b",
+            r"\brolled?\s*back\b",
+            r"\balert(ed)?\b",
+            r"\bincident\b",
+        ),
+    ),
+    "Period": _e(
+        "Period",
+        "timeline",
+        "A timeline bucket (daily by default) anchoring activities for "
+        "windowed timeline queries.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="period",
+        identity_policy="timeline:period:daily:<pot>:<yyyy-mm-dd>",
+        fact_family="timeline",
+        source_of_truth=SOT_EXTERNAL,
+        freshness_ttl_hours=2 * WEEK,
+        property_signatures=("period_kind",),
+    ),
+    # --- Memory tier (preferences / bugs / decisions) ----------------------
+    # Anchors for the agent-facing context_record flow. Each carries a
+    # ``fact_family`` distinct from topology so freshness / source-of-truth
+    # policies can diverge. All emit ``:RELATES_TO`` claims with category
+    # ``memory`` (see EDGE_TYPES below).
+    "Preference": _e(
+        "Preference",
+        "memory",
+        "A coding preference / policy with scope-qualified prescription "
+        "(language / framework / repo / service).",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="preference",
+        fact_family="preference",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+        text_patterns=(r"\bprefer(ence)?\b", r"\bpolicy\b", r"\bconvention\b"),
+        property_signatures=("policy_kind", "prescription"),
+    ),
+    "Policy": _e(
+        "Policy",
+        "memory",
+        "A named project-wide policy (typically a strong/hard preference).",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="policy",
+        fact_family="preference",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+        lifecycle=("proposed", "active", "deprecated"),
+    ),
+    "BugPattern": _e(
+        "BugPattern",
+        "memory",
+        "A reproducible failure pattern — the symptom side of a fix.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="bug_pattern",
+        fact_family="bugs",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+        text_patterns=(r"\bbug\b", r"\bfailure\b", r"\bregression\b"),
+        property_signatures=("symptom_signature",),
+    ),
+    "Fix": _e(
+        "Fix",
+        "memory",
+        "A bug-fix observation retrievable later by symptom. Carries "
+        "``verification_status`` and links to its BugPattern via RESOLVED / "
+        "ATTEMPTED_FIX_FAILED claims.",
+        identity_class=IdentityClass.CONTENT_HASH,
+        key_prefix="fix",
+        fact_family="bugs",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+        text_patterns=(r"\bfix(ed)?\b", r"\bworkaround\b"),
+        property_signatures=("fix_steps", "verification_status"),
+    ),
+    "Decision": _e(
+        "Decision",
+        "memory",
+        "An ADR-style architectural decision with title, rationale, "
+        "alternatives_rejected.",
+        identity_class=IdentityClass.CONTENT_HASH,
+        key_prefix="decision",
+        fact_family="decisions",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=24 * WEEK,
+        lifecycle=("proposed", "accepted", "superseded", "deprecated", "rejected"),
+        text_patterns=(r"\bdecision\b", r"\b(ADR|architecture decision)\b"),
+        property_signatures=("rationale", "alternatives_rejected"),
+    ),
+    # --- Generic fail-open fallbacks (soft-fail downgrade targets) ----------
+    # The agent reconciliation path coerces unrecognized output onto these
+    # rather than rejecting the batch. ``public=False`` keeps them out of the
+    # agent-facing topology contract; they carry no project-map family.
+    "Document": _e(
+        "Document",
+        "evidence",
+        "Generic document / note (soft-fail fallback for unrecognized doc-like entities).",
+        identity_class=IdentityClass.CONTENT_HASH,
+        key_prefix="document",
+        public=False,
+        fact_family="evidence",
+        source_of_truth=SOT_MEMORY,
+    ),
+    "Observation": _e(
+        "Observation",
+        "evidence",
+        "Generic observation / signal (soft-fail fallback for unrecognized entities).",
+        identity_class=IdentityClass.CONTENT_HASH,
+        key_prefix="observation",
+        public=False,
+        fact_family="evidence",
+        source_of_truth=SOT_SOFT,
+    ),
+    "QualityIssue": _e(
+        "QualityIssue",
+        "hygiene",
+        "Internal marker the soft-fail path attaches to record an ontology downgrade.",
+        identity_class=IdentityClass.CONTENT_HASH,
+        key_prefix="quality",
+        public=False,
+        fact_family="evidence",
+        source_of_truth=SOT_SOFT,
+    ),
+}
+
+
+# --- Edge catalog -----------------------------------------------------------
+# Direction is chosen so the common query is a single forward or backward hop.
+# Cardinality drives supersession: ``singleton=True`` means a new object
+# supersedes the old; everything else accumulates.
+
+
+def _x(
     edge_type: str,
     description: str,
     pairs: Iterable[tuple[str, str]],
+    *,
     required: Iterable[str] = (),
+    category: str = "structural",
+    public: bool = True,
+    lifecycle_carrier: bool = False,
+    predicate_family: str | None = None,
+    singleton: bool = False,
+    source_inferred: Iterable[str] = (),
+    target_inferred: Iterable[str] = (),
 ) -> EdgeTypeSpec:
     return EdgeTypeSpec(
         edge_type=edge_type,
         description=description,
         allowed_pairs=tuple(pairs),
         required_properties=frozenset(required),
+        public=public,
+        category=category,
+        lifecycle_carrier=lifecycle_carrier,
+        predicate_family=predicate_family,
+        singleton=singleton,
+        source_inferred_labels=tuple(source_inferred),
+        target_inferred_labels=tuple(target_inferred),
     )
 
 
-COMMON_LIFECYCLE_STATES = frozenset(
-    {"proposed", "active", "deprecated", "retired", "unknown"}
-)
-DECISION_STATES = frozenset(
-    {"proposed", "accepted", "superseded", "rejected", "unknown"}
-)
-ISSUE_STATES = frozenset({"open", "closed", "triaged", "blocked", "unknown"})
-INCIDENT_STATES = frozenset({"open", "mitigated", "resolved", "postmortem", "unknown"})
-
-
-ENTITY_TYPES: dict[str, EntityTypeSpec] = {
-    "Pot": _spec(
-        "Pot",
-        "scope_identity",
-        "Isolation boundary for project context.",
-        "pot slug",
-        ("name",),
-    ),
-    "Repository": _spec(
-        "Repository",
-        "scope_identity",
-        "Source repository mapped to a pot.",
-        "provider host plus owner/name",
-        ("name", "provider"),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "System": _spec(
-        "System",
-        "scope_identity",
-        "Product or platform boundary.",
-        "pot-scoped slug",
-        ("name",),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "Service": _spec(
-        "Service",
-        "scope_identity",
-        "Deployable runtime unit.",
-        "pot-scoped service slug",
-        ("name", "criticality", "lifecycle_state"),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "Environment": _spec(
-        "Environment",
-        "scope_identity",
-        "Local, staging, production, preview, or regional runtime environment.",
-        "pot-scoped environment slug",
-        ("name", "environment_type"),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "DeploymentTarget": _spec(
-        "DeploymentTarget",
-        "delivery_operations",
-        "Cloud, cluster, or hosting target.",
-        "provider target id or scoped slug",
-        ("name",),
-    ),
-    "DeploymentStrategy": _spec(
-        "DeploymentStrategy",
-        "delivery_operations",
-        "Rollout strategy such as rolling, canary, or manual.",
-        "scoped strategy slug",
-        ("name", "strategy_type"),
-    ),
-    "Component": _spec(
-        "Component",
-        "product_architecture",
-        "Logical subsystem, module, package, or bounded context.",
-        "repo/service-scoped semantic key",
-        ("name", "component_type"),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "LegacyArtifact": _spec(
-        "LegacyArtifact",
-        "product_architecture",
-        "Deprecated, superseded, or decommissioned resource still referenced in history.",
-        "scoped legacy slug or name",
-        ("name", "status"),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "Capability": _spec(
-        "Capability",
-        "product_architecture",
-        "External product behavior or capability.",
-        "system-scoped capability slug",
-        ("name",),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "Feature": _spec(
-        "Feature",
-        "product_architecture",
-        "Concrete deliverable area within a capability.",
-        "capability/system-scoped feature slug",
-        ("name",),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "Functionality": _spec(
-        "Functionality",
-        "product_architecture",
-        "Granular behavior under a feature.",
-        "feature-scoped functionality slug",
-        ("name",),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "Requirement": _spec(
-        "Requirement",
-        "product_architecture",
-        "Expected behavior or acceptance criterion.",
-        "source ref or scoped requirement slug",
-        ("statement", "status"),
-    ),
-    "RoadmapItem": _spec(
-        "RoadmapItem",
-        "product_architecture",
-        "Planned evolution or future direction.",
-        "planning-source id or scoped slug",
-        ("title", "status"),
-    ),
-    "Interface": _spec(
-        "Interface",
-        "product_architecture",
-        "API, event contract, queue, webhook, or database contract.",
-        "component/service-scoped interface slug",
-        ("name", "interface_type"),
-    ),
-    "DataStore": _spec(
-        "DataStore",
-        "product_architecture",
-        "Database, cache, object store, or SaaS storage.",
-        "service/system-scoped datastore slug",
-        ("name", "store_type"),
-    ),
-    "Integration": _spec(
-        "Integration",
-        "product_architecture",
-        "External API, SDK, webhook, MCP, queue, or cloud service.",
-        "provider/integration slug",
-        ("name", "integration_type"),
-    ),
-    "Dependency": _spec(
-        "Dependency",
-        "product_architecture",
-        "External system, service, or library with operational significance.",
-        "package/system scoped dependency id",
-        ("name", "dependency_type"),
-    ),
-    "Person": _spec(
-        "Person",
-        "team_ownership",
-        "Contributor or stakeholder.",
-        "provider user id, email, or pot-scoped person slug",
-        ("name",),
-    ),
-    "Agent": _spec(
-        "Agent",
-        "team_ownership",
-        "Automated coding agent, IDE agent, or service agent working in a pot.",
-        "agent provider plus agent id or pot-scoped slug",
-        ("name", "agent_type"),
-    ),
-    "Team": _spec(
-        "Team",
-        "team_ownership",
-        "Functional, product, or ownership team.",
-        "pot-scoped team slug",
-        ("name",),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "Role": _spec(
-        "Role",
-        "team_ownership",
-        "On-call, tech lead, owner, reviewer, or maintainer role.",
-        "scope plus role slug",
-        ("name", "role_type"),
-    ),
-    "Change": _spec(
-        "Change",
-        "change_decision",
-        "Generic parent concept for important change events.",
-        "source id or generated change id",
-        ("title", "change_type"),
-    ),
-    "PullRequest": _spec(
-        "PullRequest",
-        "change_decision",
-        "Source-control pull request.",
-        "provider/repo/pr number",
-        ("pr_number", "title"),
-    ),
-    "Commit": _spec(
-        "Commit",
-        "change_decision",
-        "Source-control commit.",
-        "provider/repo/sha",
-        ("sha",),
-    ),
-    "Issue": _spec(
-        "Issue",
-        "change_decision",
-        "Ticket, issue, bug, or planning item.",
-        "provider issue key/id",
-        ("title", "status"),
-        ISSUE_STATES,
-    ),
-    "Decision": _spec(
-        "Decision",
-        "change_decision",
-        "Canonical engineering or product decision.",
-        "source ref or scoped decision slug",
-        ("title", "summary", "status"),
-        DECISION_STATES,
-    ),
-    "Constraint": _spec(
-        "Constraint",
-        "change_decision",
-        "Rule, architecture constraint, compliance rule, or do-not-do guidance.",
-        "scoped constraint slug",
-        ("statement", "constraint_type", "status"),
-    ),
-    "Preference": _spec(
-        "Preference",
-        "change_decision",
-        "Team or project style and workflow preference.",
-        "scope plus preference slug",
-        ("statement", "preference_type", "scope_kind"),
-    ),
-    "AgentInstruction": _spec(
-        "AgentInstruction",
-        "change_decision",
-        "AGENTS.md, skill, prompt, MCP guidance, or agent-facing instruction.",
-        "source ref plus section id",
-        ("title", "instruction_type"),
-    ),
-    "LocalWorkflow": _spec(
-        "LocalWorkflow",
-        "change_decision",
-        "How people run, test, debug, or deploy locally.",
-        "repo/service-scoped workflow slug",
-        ("name", "workflow_type"),
-    ),
-    "CodeAsset": _spec(
-        "CodeAsset",
-        "code_topology",
-        "File, function, class, or other code asset referenced by context facts.",
-        "provider/repo/path/symbol identity",
-        ("name", "asset_type"),
-    ),
-    "Document": _spec(
-        "Document",
-        "knowledge_evidence",
-        "ADR, product doc, design doc, runbook doc, or wiki page.",
-        "source document id or URL",
-        ("title", "source_uri"),
-    ),
-    "Conversation": _spec(
-        "Conversation",
-        "knowledge_evidence",
-        "Slack thread, review discussion, planning thread, or incident thread.",
-        "source conversation id",
-        ("title", "source_uri"),
-    ),
-    "Episode": _spec(
-        "Episode",
-        "knowledge_evidence",
-        "Graphiti ingested episode; narrative source.",
-        "Graphiti episode uuid",
-        ("name",),
-    ),
-    "Observation": _spec(
-        "Observation",
-        "knowledge_evidence",
-        "Normalized evidence unit.",
-        "source ref plus observation slug",
-        ("summary", "observed_at"),
-    ),
-    "SourceSystem": _spec(
-        "SourceSystem",
-        "knowledge_evidence",
-        "GitHub, Linear, Slack, Docs, Sentry, GCP, AWS, or another provider.",
-        "provider slug",
-        ("name", "source_type"),
-    ),
-    "SourceReference": _spec(
-        "SourceReference",
-        "knowledge_evidence",
-        "Stable pointer to an external artifact with resolver hints and freshness metadata.",
-        "source system plus external id",
-        ("source_system", "external_id", "ref_type"),
-    ),
-    "Deployment": _spec(
-        "Deployment",
-        "delivery_operations",
-        "Version or branch promoted into an environment.",
-        "target/environment/source deployment id",
-        ("version", "deployed_at"),
-    ),
-    "Branch": _spec(
-        "Branch",
-        "delivery_operations",
-        "Git branch with operational meaning.",
-        "provider/repo/branch name",
-        ("name",),
-    ),
-    "Alert": _spec(
-        "Alert",
-        "delivery_operations",
-        "Monitoring or incident signal.",
-        "source alert id or fingerprint",
-        ("title", "severity", "status"),
-    ),
-    "Incident": _spec(
-        "Incident",
-        "delivery_operations",
-        "Operational issue with timeline and severity.",
-        "source incident id or scoped slug",
-        ("title", "severity", "status"),
-        INCIDENT_STATES,
-    ),
-    "Metric": _spec(
-        "Metric",
-        "delivery_operations",
-        "Named health indicator.",
-        "service/environment metric name",
-        ("name", "metric_type"),
-    ),
-    "Runbook": _spec(
-        "Runbook",
-        "delivery_operations",
-        "Human-usable remediation procedure.",
-        "source doc id or scoped runbook slug",
-        ("title",),
-    ),
-    "Script": _spec(
-        "Script",
-        "delivery_operations",
-        "Local, CI, debug, or deployment command used by the team.",
-        "repo path or scoped script slug",
-        ("name", "command"),
-    ),
-    "ConfigVariable": _spec(
-        "ConfigVariable",
-        "delivery_operations",
-        "Important config variable or secret reference, never secret value.",
-        "scope plus variable name",
-        ("name", "scope_kind"),
-    ),
-    "BugPattern": _spec(
-        "BugPattern",
-        "debugging_reliability",
-        "Repeated failure mode or symptom cluster.",
-        "scope plus symptom signature",
-        ("summary",),
-    ),
-    "Investigation": _spec(
-        "Investigation",
-        "debugging_reliability",
-        "Debugging session, diagnostic path, or incident investigation.",
-        "source session/incident id or generated id",
-        ("summary", "status"),
-    ),
-    "Fix": _spec(
-        "Fix",
-        "debugging_reliability",
-        "Resolution, mitigation, workaround, or permanent code/config change.",
-        "source ref or generated fix id",
-        ("summary", "fix_type"),
-    ),
-    "DiagnosticSignal": _spec(
-        "DiagnosticSignal",
-        "debugging_reliability",
-        "Error signature, log query, metric, alert fingerprint, or symptom.",
-        "scope plus signal fingerprint",
-        ("signal_type", "summary"),
-    ),
-    "QualityIssue": _spec(
-        "QualityIssue",
-        "quality_drift",
-        "Detected graph quality, freshness, source sync, alias, orphan, or bridge issue.",
-        "pot/scope plus issue code and affected entity",
-        ("code", "severity", "status"),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "MaintenanceJob": _spec(
-        "MaintenanceJob",
-        "quality_drift",
-        "Recurring verification, repair, cleanup, or materialization job.",
-        "job family plus scope id",
-        ("job_type", "status"),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "MaterializedAccessPath": _spec(
-        "MaterializedAccessPath",
-        "quality_drift",
-        "Compact derived path maintained for repeated agent queries.",
-        "pattern type plus scope id",
-        ("name", "pattern_type"),
-        COMMON_LIFECYCLE_STATES,
-    ),
-    "Activity": _spec(
-        "Activity",
-        "timeline",
-        "An atomic happening in the project timeline: a verb performed by an actor "
-        "at a point in time, touching zero or more subjects. Emitted by ingestion "
-        "for every source event (PR merged, issue updated, commit authored, "
-        "deployment, agent episode, etc).",
-        "source system plus deterministic activity slug",
-        ("verb", "occurred_at", "summary"),
-        frozenset({"in_progress", "completed", "unknown"}),
-    ),
-    "Period": _spec(
-        "Period",
-        "timeline",
-        "Rollup time-window aggregating Activities for fast pulse reads "
-        "(daily/weekly bucket, or user-declared named window).",
-        "period kind plus pot-scoped label",
-        ("label", "period_kind", "opened_at"),
-        frozenset({"open", "closed", "unknown"}),
-    ),
-}
-
-
 EDGE_TYPES: dict[str, EdgeTypeSpec] = {
-    "SCOPES": _edge(
-        "SCOPES",
-        "Pot scopes project context entities.",
-        [
-            ("Pot", "Repository"),
-            ("Pot", "System"),
-            ("Pot", "Service"),
-            ("Pot", "Environment"),
-            ("Pot", "Feature"),
-            ("Pot", "Component"),
-            ("Pot", "Document"),
-            ("Pot", "Person"),
-            ("Pot", "Team"),
-            ("Pot", "DeploymentTarget"),
-            ("Pot", "Integration"),
-        ],
+    "DEFINED_IN": _x(
+        "DEFINED_IN",
+        "A service's code lives in a repository (edge prop ``path`` carries the subtree).",
+        [("Service", "Repository")],
+        category="topology",
+        source_inferred=("Service",),
+        target_inferred=("Repository",),
     ),
-    "CONTAINS": _edge(
-        "CONTAINS",
-        "System, repository, service, or component contains lower-level project context.",
-        [
-            ("System", "Service"),
-            ("System", "Component"),
-            ("System", "Capability"),
-            ("Repository", "Component"),
-            ("Service", "Component"),
-            ("Component", "Component"),
-        ],
-    ),
-    "BACKED_BY": _edge(
-        "BACKED_BY",
-        "Service or component is backed by repository.",
-        [("Service", "Repository"), ("Component", "Repository")],
-    ),
-    "DEPLOYED_TO": _edge(
+    "DEPLOYED_TO": _x(
         "DEPLOYED_TO",
-        "Service or deployment runs in environment.",
+        "A service runs in an environment.",
         [("Service", "Environment")],
+        category="topology",
+        predicate_family="deployment_target",
+        source_inferred=("Service",),
+        target_inferred=("Environment",),
     ),
-    "HOSTS": _edge("HOSTS", "Environment hosts service.", [("Environment", "Service")]),
-    "HOSTED_ON": _edge(
-        "HOSTED_ON",
-        "Environment is hosted on deployment target.",
-        [("Environment", "DeploymentTarget")],
-    ),
-    "IMPLEMENTS": _edge(
-        "IMPLEMENTS", "Feature implements capability.", [("Feature", "Capability")]
-    ),
-    "HAS_FUNCTIONALITY": _edge(
-        "HAS_FUNCTIONALITY",
-        "Feature has granular functionality.",
-        [("Feature", "Functionality")],
-    ),
-    "DEFINES": _edge(
-        "DEFINES",
-        "Requirement defines feature or functionality.",
-        [("Requirement", "Feature"), ("Requirement", "Functionality")],
-    ),
-    "EVOLVES": _edge(
-        "EVOLVES",
-        "Roadmap item evolves feature or capability.",
-        [("RoadmapItem", "Feature"), ("RoadmapItem", "Capability")],
-    ),
-    "SUPPORTS": _edge(
-        "SUPPORTS",
-        "Component supports feature or observation supports fact.",
-        [
-            ("Component", "Feature"),
-            ("Observation", "Decision"),
-            ("Observation", "Incident"),
-            ("Observation", "Constraint"),
-        ],
-    ),
-    "EXPOSES": _edge(
-        "EXPOSES", "Component exposes interface.", [("Component", "Interface")]
-    ),
-    "USES": _edge(
-        "USES",
-        "Component or service uses integration/dependency.",
-        [
-            ("Component", "Integration"),
-            ("Component", "Dependency"),
-            ("Service", "Integration"),
-            ("Service", "Dependency"),
-        ],
-    ),
-    "DEPENDS_ON": _edge(
+    "DEPENDS_ON": _x(
         "DEPENDS_ON",
-        "Component or service depends on another dependency/service.",
+        "A service depends on / calls another service.",
+        [("Service", "Service")],
+        category="topology",
+        source_inferred=("Service",),
+        target_inferred=("Service",),
+    ),
+    "USES": _x(
+        "USES",
+        "A service uses a datastore or third-party dependency.",
+        [("Service", "DataStore"), ("Service", "Dependency")],
+        category="topology",
+        predicate_family="datastore_binding",
+        source_inferred=("Service",),
+    ),
+    "EXPOSES": _x(
+        "EXPOSES",
+        "A service exposes an API operation (path + method) defined by an "
+        "OpenAPI / RPC contract.",
+        [("Service", "APIContract")],
+        category="topology",
+        source_inferred=("Service",),
+        target_inferred=("APIContract",),
+    ),
+    "HOSTED_ON": _x(
+        "HOSTED_ON",
+        "An environment runs on a cluster / platform.",
+        [("Environment", "Cluster")],
+        category="topology",
+        predicate_family="deployment_target",
+        source_inferred=("Environment",),
+        target_inferred=("Cluster",),
+    ),
+    "OWNED_BY": _x(
+        "OWNED_BY",
+        "A service or repo is owned by a team or person (one live owner at a time).",
         [
-            ("Component", "Dependency"),
-            ("Component", "Service"),
-            ("Service", "Dependency"),
-            ("Service", "Service"),
+            ("Service", "Team"),
+            ("Service", "Person"),
+            ("Repository", "Team"),
+            ("Repository", "Person"),
         ],
+        category="ownership",
+        predicate_family="owner_binding",
+        singleton=True,
     ),
-    "USES_DATA_STORE": _edge(
-        "USES_DATA_STORE", "Service uses data store.", [("Service", "DataStore")]
+    "MEMBER_OF": _x(
+        "MEMBER_OF",
+        "A person is a member of a team.",
+        [("Person", "Team")],
+        category="people",
+        source_inferred=("Person",),
+        target_inferred=("Team",),
     ),
-    "USES_DEPLOYMENT_STRATEGY": _edge(
-        "USES_DEPLOYMENT_STRATEGY",
-        "Service uses deployment strategy.",
-        [("Service", "DeploymentStrategy")],
-    ),
-    "CALLS": _edge("CALLS", "Service calls another service.", [("Service", "Service")]),
-    "OWNS": _edge(
-        "OWNS",
-        "Person or team owns project context.",
-        [
-            ("Person", "Service"),
-            ("Person", "Component"),
-            ("Person", "Feature"),
-            ("Person", "Repository"),
-            ("Team", "Service"),
-            ("Team", "Component"),
-            ("Team", "Capability"),
-            ("Team", "Feature"),
-            ("Team", "Runbook"),
-            ("Team", "Repository"),
-        ],
-    ),
-    "MEMBER_OF": _edge("MEMBER_OF", "Person belongs to team.", [("Person", "Team")]),
-    "REVIEWS": _edge("REVIEWS", "Person reviews change.", [("Person", "Change")]),
-    "ONCALL_FOR": _edge(
-        "ONCALL_FOR",
-        "Person is on call for service or environment.",
-        [("Person", "Service"), ("Person", "Environment")],
-    ),
-    "OWNS_FILE": _edge(
-        "OWNS_FILE", "Component owns code file.", [("Component", "CodeAsset")]
-    ),
-    "TOUCHES_CODE": _edge(
-        "TOUCHES_CODE", "Feature touches code asset.", [("Feature", "CodeAsset")]
-    ),
-    "AFFECTS": _edge(
-        "AFFECTS",
-        "Decision affects product or architecture context.",
-        [
-            ("Decision", "Feature"),
-            ("Decision", "Component"),
-            ("Decision", "Service"),
-            ("Decision", "CodeAsset"),
-        ],
-    ),
-    "AFFECTS_CODE": _edge(
-        "AFFECTS_CODE", "Decision affects code asset.", [("Decision", "CodeAsset")]
-    ),
-    "ADDRESSES": _edge(
-        "ADDRESSES",
-        "Pull request addresses issue.",
-        [("PullRequest", "Issue"), ("Change", "Issue")],
-    ),
-    "HAS_COMMIT": _edge(
-        "HAS_COMMIT",
-        "Pull request contains a commit.",
-        [("PullRequest", "Commit")],
-    ),
-    "HAS_REVIEW_DECISION": _edge(
-        "HAS_REVIEW_DECISION",
-        "Pull request review discussion produced a decision.",
-        [("PullRequest", "Decision")],
-    ),
-    "PART_OF": _edge(
-        "PART_OF",
-        "Change hierarchy membership.",
-        [("PullRequest", "Change"), ("Commit", "PullRequest")],
-    ),
-    "MADE_IN": _edge(
-        "MADE_IN",
-        "Decision was made in source context.",
-        [
-            ("Decision", "PullRequest"),
-            ("Decision", "Incident"),
-            ("Decision", "Document"),
-        ],
-    ),
-    "APPLIES_TO": _edge(
-        "APPLIES_TO",
-        "Constraint applies to scope.",
-        [
-            ("Constraint", "Service"),
-            ("Constraint", "Component"),
-            ("Constraint", "Feature"),
-            ("Constraint", "Repository"),
-        ],
-    ),
-    "PREFERRED_FOR": _edge(
-        "PREFERRED_FOR",
-        "Preference applies to scope.",
-        [
-            ("Preference", "Repository"),
-            ("Preference", "Component"),
-            ("Preference", "Team"),
-        ],
-    ),
-    "INFORMS": _edge(
-        "INFORMS",
-        "Agent instruction informs a working scope.",
-        [
-            ("AgentInstruction", "Repository"),
-            ("AgentInstruction", "Service"),
-            ("AgentInstruction", "Feature"),
-            ("AgentInstruction", "Agent"),
-        ],
-    ),
-    "RUNS": _edge(
-        "RUNS",
-        "Workflow or script runs against project scope.",
-        [
-            ("LocalWorkflow", "Service"),
-            ("LocalWorkflow", "Component"),
-            ("LocalWorkflow", "Repository"),
-            ("Script", "Service"),
-            ("Script", "Component"),
-        ],
-    ),
-    "TARGETS": _edge(
-        "TARGETS", "Deployment targets environment.", [("Deployment", "Environment")]
-    ),
-    "DEPLOYED_AS": _edge(
-        "DEPLOYED_AS", "Branch deployed as deployment.", [("Branch", "Deployment")]
-    ),
-    "CONFIGURES": _edge(
-        "CONFIGURES",
-        "Config variable configures service or environment.",
-        [("ConfigVariable", "Service"), ("ConfigVariable", "Environment")],
-    ),
-    "MITIGATES": _edge(
-        "MITIGATES",
-        "Runbook or fix mitigates incident.",
-        [
-            ("Runbook", "Incident"),
-            ("Runbook", "BugPattern"),
-            ("Fix", "Incident"),
-            ("Fix", "BugPattern"),
-        ],
-    ),
-    "IMPACTS": _edge(
-        "IMPACTS",
-        "Incident or alert impacts service or environment.",
-        [("Incident", "Service"), ("Alert", "Service"), ("Alert", "Environment")],
-    ),
-    "FIRED_IN": _edge(
-        "FIRED_IN", "Alert fired in environment.", [("Alert", "Environment")]
-    ),
-    "INDICATES": _edge(
-        "INDICATES", "Alert indicates incident.", [("Alert", "Incident")]
-    ),
-    "MATCHES_PATTERN": _edge(
-        "MATCHES_PATTERN", "Incident matches bug pattern.", [("Incident", "BugPattern")]
-    ),
-    "DEBUGGED": _edge(
-        "DEBUGGED",
-        "Investigation debugged incident or pattern.",
-        [("Investigation", "Incident"), ("Investigation", "BugPattern")],
-    ),
-    "OBSERVED_IN": _edge(
-        "OBSERVED_IN",
-        "Diagnostic signal was observed in investigation or incident.",
-        [("DiagnosticSignal", "Investigation"), ("DiagnosticSignal", "Incident")],
-    ),
-    "RESOLVED": _edge(
-        "RESOLVED",
-        "Fix resolved incident or bug pattern.",
-        [("Fix", "Incident"), ("Fix", "BugPattern")],
-    ),
-    "CHANGED_BY": _edge(
-        "CHANGED_BY",
-        "Fix was changed by PR or commit.",
-        [("Fix", "PullRequest"), ("Fix", "Commit")],
-    ),
-    "HAS_SIGNAL": _edge(
-        "HAS_SIGNAL",
-        "Bug pattern, incident, or investigation has a diagnostic signal.",
-        [
-            ("BugPattern", "DiagnosticSignal"),
-            ("Incident", "DiagnosticSignal"),
-            ("Investigation", "DiagnosticSignal"),
-        ],
-    ),
-    "HAS_ROOT_CAUSE": _edge(
-        "HAS_ROOT_CAUSE",
-        "Investigation or incident identified a root-cause observation.",
-        [("Investigation", "Observation"), ("Incident", "Observation")],
-    ),
-    "SEEN_IN": _edge(
-        "SEEN_IN",
-        "Bug pattern seen in scope.",
-        [
-            ("BugPattern", "Service"),
-            ("BugPattern", "Environment"),
-            ("BugPattern", "Component"),
-        ],
-    ),
-    "DESCRIBES": _edge(
-        "DESCRIBES",
-        "Episode or document describes context.",
-        [
-            ("Episode", "Change"),
-            ("Episode", "Incident"),
-            ("Episode", "Decision"),
-            ("Episode", "Document"),
-            ("Document", "Feature"),
-            ("Document", "Component"),
-            ("Document", "Constraint"),
-        ],
-    ),
-    "RESULTED_IN": _edge(
-        "RESULTED_IN",
-        "Conversation resulted in decision.",
-        [("Conversation", "Decision")],
-    ),
-    "EVIDENCED_BY": _edge(
-        "EVIDENCED_BY",
-        "Canonical fact is evidenced by source reference.",
-        [(WILDCARD_ENDPOINT, "SourceReference")],
-    ),
-    "FROM_SOURCE": _edge(
-        "FROM_SOURCE",
-        "Source reference came from source system.",
-        [("SourceReference", "SourceSystem")],
-    ),
-    "MODIFIED": _edge(
-        "MODIFIED", "Pull request modified code asset.", [("PullRequest", "CodeAsset")]
-    ),
-    "INVOLVES_CODE": _edge(
-        "INVOLVES_CODE", "Incident involves code asset.", [("Incident", "CodeAsset")]
-    ),
-    "REFERENCES_CODE": _edge(
-        "REFERENCES_CODE", "Runbook references code asset.", [("Runbook", "CodeAsset")]
-    ),
-    "ALIASES": _edge(
-        "ALIASES", "Entity has an alias.", [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)]
-    ),
-    "RENAMED_FROM": _edge(
-        "RENAMED_FROM",
-        "Entity was renamed from prior identity.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "MERGED_FROM": _edge(
-        "MERGED_FROM",
-        "Entity was merged from another identity.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "SPLIT_FROM": _edge(
-        "SPLIT_FROM",
-        "Entity was split from another identity.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "FLAGS": _edge(
-        "FLAGS",
-        "Quality issue flags an affected entity or source reference.",
-        [("QualityIssue", WILDCARD_ENDPOINT)],
-    ),
-    "REPAIRS": _edge(
-        "REPAIRS",
-        "Maintenance job repairs or verifies an affected entity.",
-        [("MaintenanceJob", WILDCARD_ENDPOINT)],
-    ),
-    "MATERIALIZES": _edge(
-        "MATERIALIZES",
-        "Materialized access path precomputes a query path for an entity.",
-        [("MaterializedAccessPath", WILDCARD_ENDPOINT)],
-    ),
-    "SUPERSEDES": _edge(
-        "SUPERSEDES",
-        "A fact or entity supersedes a prior version; the target is soft-invalidated with valid_to.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    # Episodic extraction verbs (Graphiti); wildcard endpoints — see docs/context-graph-improvements/02.
-    "GENERIC_ACTION": _edge(
-        "GENERIC_ACTION",
-        "Fallback when the extractor cannot name a specific predicate; carries lifecycle_status.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "MIGRATED_TO": _edge(
-        "MIGRATED_TO",
-        "Workload or datastore migration to a new system or store.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "DECOMMISSIONED": _edge(
-        "DECOMMISSIONED",
-        "Resource, cluster, or path was shut down or removed from service.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "PLANNED": _edge(
-        "PLANNED",
-        "Future or scheduled work not yet delivered.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "DELIVERED": _edge(
-        "DELIVERED",
-        "Delivered or finished change (past tense, shipped).",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "DEPRECATED": _edge(
-        "DEPRECATED",
-        "API, component, or path is deprecated or slated for removal.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "REPLACES": _edge(
-        "REPLACES",
-        "New component or system replaces an older one.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "CAUSED": _edge(
-        "CAUSED",
-        "Causal link between events or changes.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "FIXES": _edge(
-        "FIXES",
-        "Change or release fixes a defect or incident.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "ADDED_TO": _edge(
-        "ADDED_TO",
-        "Capability, instrumentation, or dependency was added to a scope.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "REMOVED_FROM": _edge(
-        "REMOVED_FROM",
-        "Something was removed from a system, path, or dependency set.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "RELATED_TO": _edge(
-        "RELATED_TO",
-        "Catch-all when the extractor emits a non-catalog edge type; preserve "
-        "``original_edge_type`` on edge properties.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "STORED_IN": _edge(
-        "STORED_IN",
-        "Data is persisted in or primarily associated with a store or database.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    "DECIDES_FOR": _edge(
-        "DECIDES_FOR",
-        "Decision or policy governs a scope or component.",
-        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
-    ),
-    # --- Timeline subgraph --------------------------------------------------
-    "PERFORMED": _edge(
-        "PERFORMED",
-        "Actor (Person, Agent, or Team) performed a timeline Activity.",
-        [
-            ("Person", "Activity"),
-            ("Agent", "Activity"),
-            ("Team", "Activity"),
-        ],
-        ("valid_from",),
-    ),
-    "TOUCHED": _edge(
+    # --- Activity timeline (events) ----------------------------------------
+    # Three uniform claims hang off every Activity. There are deliberately NO
+    # stored temporal/causal edges (TRIGGERED_BY / PRECEDED_BY / HOTSPOT): the
+    # timeline is a read-time query over ``valid_at`` (ordering, windowing,
+    # proximity correlation, churn counts), not graph topology. Each edge is
+    # source-inferred to ``Activity`` so any event endpoint auto-classifies.
+    "TOUCHED": _x(
         "TOUCHED",
-        "Timeline Activity touched or affected a subject entity. Wildcard target "
-        "so any subject (PR, Commit, Issue, Feature, CodeAsset, Service, ...) "
-        "can be wired into the timeline.",
-        [("Activity", WILDCARD_ENDPOINT)],
-        ("valid_from",),
+        "An activity changed / affected a scope (service, datastore, "
+        "environment, repo) or code asset. The spine of 'what changed in X'.",
+        [(ACTIVITY_ENDPOINT, SCOPE_ENDPOINT), (ACTIVITY_ENDPOINT, "CodeAsset")],
+        category="timeline",
+        source_inferred=("Activity",),
     ),
-    "IN_PERIOD": _edge(
+    "PERFORMED": _x(
+        "PERFORMED",
+        "A person or team performed an activity. Direction: actor → activity, "
+        "matching ``timeline_plan.build_timeline_mutations``.",
+        [("Person", ACTIVITY_ENDPOINT), ("Team", ACTIVITY_ENDPOINT)],
+        category="timeline",
+        target_inferred=("Activity",),
+    ),
+    "AUTHORED": _x(
+        "AUTHORED",
+        "A person/team authored content referenced by an activity (commit, "
+        "PR body, comment). Looser than PERFORMED — captures originating "
+        "authorship that may differ from the activity actor.",
+        [("Person", ACTIVITY_ENDPOINT), ("Team", ACTIVITY_ENDPOINT)],
+        category="timeline",
+        target_inferred=("Activity",),
+    ),
+    "IN_PERIOD": _x(
         "IN_PERIOD",
-        "Timeline Activity falls within a Period rollup bucket.",
-        [("Activity", "Period")],
+        "An activity falls within a timeline period bucket (daily by default).",
+        [(ACTIVITY_ENDPOINT, "Period")],
+        category="timeline",
+        source_inferred=("Activity",),
+        target_inferred=("Period",),
+    ),
+    "MENTIONS": _x(
+        "MENTIONS",
+        "An activity's body referenced an entity (provenance / recall; looser "
+        "than TOUCHED — the F4 link so timeline recall doesn't fall through).",
+        [(ACTIVITY_ENDPOINT, WILDCARD_ENDPOINT)],
+        category="timeline",
+        source_inferred=("Activity",),
+    ),
+    # --- Memory tier predicates --------------------------------------------
+    # Emitted by the context_record path (via LLM extraction or, in the
+    # P6 deterministic emitter, directly). Each is anchored by one of the
+    # memory-tier entity types (Preference / Policy / BugPattern / Fix /
+    # Decision) and attaches to a topology scope or another memory anchor.
+    "POLICY_APPLIES_TO": _x(
+        "POLICY_APPLIES_TO",
+        "A preference / policy applies to a scope or code asset. Backs the "
+        "coding_preferences reader.",
+        [
+            ("Preference", SCOPE_ENDPOINT),
+            ("Preference", "CodeAsset"),
+            ("Policy", SCOPE_ENDPOINT),
+            ("Policy", "CodeAsset"),
+        ],
+        category="memory",
+        predicate_family="policy_binding",
+        source_inferred=("Preference",),
+    ),
+    "REPRODUCES": _x(
+        "REPRODUCES",
+        "A bug pattern reproduces in a given scope (service / environment / "
+        "code asset). Backs the prior_bugs reader's symptom-to-scope lookup.",
+        [
+            ("BugPattern", SCOPE_ENDPOINT),
+            ("BugPattern", "CodeAsset"),
+        ],
+        category="memory",
+        source_inferred=("BugPattern",),
+    ),
+    "RESOLVED": _x(
+        "RESOLVED",
+        "A fix resolved a bug pattern (verified or unverified — see Fix.verification_status).",
+        [("Fix", "BugPattern")],
+        category="memory",
+        predicate_family="fix_outcome",
+        source_inferred=("Fix",),
+        target_inferred=("BugPattern",),
+    ),
+    "ATTEMPTED_FIX_FAILED": _x(
+        "ATTEMPTED_FIX_FAILED",
+        "A fix was attempted against a bug pattern but did not resolve it. "
+        "Surfaced by prior_bugs reader so agents avoid repeating failed attempts.",
+        [("Fix", "BugPattern")],
+        category="memory",
+        predicate_family="fix_outcome",
+        source_inferred=("Fix",),
+        target_inferred=("BugPattern",),
+    ),
+    "VERIFIED": _x(
+        "VERIFIED",
+        "An activity (or actor) independently confirmed a fix worked. "
+        "Folded into prior_bugs ranking as verification corroboration.",
+        [(ACTIVITY_ENDPOINT, "Fix"), ("Person", "Fix"), ("Team", "Fix")],
+        category="memory",
+        target_inferred=("Fix",),
+    ),
+    "DECIDED": _x(
+        "DECIDED",
+        "A decision was made on a scope (service / repo / environment).",
+        [("Decision", SCOPE_ENDPOINT)],
+        category="memory",
+        source_inferred=("Decision",),
+    ),
+    "AFFECTS": _x(
+        "AFFECTS",
+        "A decision affects a scope, code asset, or downstream entity. "
+        "Looser than DECIDED — captures downstream impact, not the choice itself.",
+        [
+            ("Decision", SCOPE_ENDPOINT),
+            ("Decision", "CodeAsset"),
+            ("Decision", WILDCARD_ENDPOINT),
+        ],
+        category="memory",
+        source_inferred=("Decision",),
+    ),
+    # --- Generic fail-open fallback (soft-fail downgrade target) ------------
+    # Unrecognized agent-emitted edge types coerce onto this wildcard edge
+    # rather than failing the batch. ``public=False`` keeps it out of the
+    # advertised topology vocabulary.
+    "RELATED_TO": _x(
+        "RELATED_TO",
+        "Generic association (soft-fail fallback for unrecognized edge types).",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+        category="generic",
+        public=False,
     ),
 }
+
+
+# --- Derived label sets -----------------------------------------------------
 
 
 CANONICAL_LABELS: frozenset[str] = frozenset(ENTITY_TYPES.keys())
 CANONICAL_EDGE_TYPES: frozenset[str] = frozenset(EDGE_TYPES.keys())
+# Writer-internal bookkeeping edges. These are NOT part of the agent-facing
+# vocabulary (agents/scanners must never emit them) and so are deliberately
+# kept out of ``EDGE_TYPES`` / ``CANONICAL_EDGE_TYPES``. The canonical writer's
+# supersession machinery emits ``SUPERSEDES`` directly (see
+# ``canonical_writer._write_supersedes_claim``); declaring it here keeps the
+# ontology honest about every relationship name that can exist in the store.
+SYSTEM_EDGE_TYPES: frozenset[str] = frozenset({"SUPERSEDES"})
+# Every relationship name the store can legitimately hold: agent-facing
+# canonical edges plus writer-internal system edges.
+ALL_EDGE_TYPES: frozenset[str] = CANONICAL_EDGE_TYPES | SYSTEM_EDGE_TYPES
+SCOPE_LABELS: frozenset[str] = frozenset(
+    label for label, spec in ENTITY_TYPES.items() if spec.scope
+)
+ACTIVITY_LABELS: frozenset[str] = frozenset(
+    label for label, spec in ENTITY_TYPES.items() if spec.is_activity
+) | {"Activity"}
+# The ontology is the single source of truth for which predicates are
+# singleton; the registry rebuilds itself from this set so any new
+# ``singleton=True`` flag on an edge spec auto-propagates to the canonical
+# writer's supersession path.
+SINGLETON_EDGE_TYPES: frozenset[str] = frozenset(
+    edge_type for edge_type, spec in EDGE_TYPES.items() if spec.singleton
+)
+
+
+def _sync_singleton_registry() -> None:
+    """Reset the singleton-predicate registry to match the ontology.
+
+    Called at module import so adding a ``singleton=True`` flag in
+    ``EDGE_TYPES`` automatically applies to the canonical writer's
+    supersession path. Tests that need a custom set should use
+    :func:`domain.singleton_predicates.replace_singletons` then restore.
+    """
+    from domain.singleton_predicates import replace_singletons
+
+    replace_singletons(SINGLETON_EDGE_TYPES)
+
+
+_sync_singleton_registry()
+
+
+def _build_entity_family_map(attr: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for label, spec in ENTITY_TYPES.items():
+        value = getattr(spec, attr)
+        if value:
+            out[label] = value
+    return out
+
+
+# Internal label → public family name (for project map / structural reader).
+ENTITY_PROJECT_MAP_FAMILY: dict[str, str] = _build_entity_family_map("project_map_family")
+ENTITY_DEBUGGING_FAMILY: dict[str, str] = _build_entity_family_map("debugging_family")
+ENTITY_FACT_FAMILY: dict[str, str] = _build_entity_family_map("fact_family")
+
+
+# Fact-family → freshness / source-of-truth policy (used by graph_quality).
+# Built by walking specs; first spec to declare a family wins on tie.
+def _build_freshness_table() -> dict[str, int]:
+    out: dict[str, int] = {}
+    for spec in ENTITY_TYPES.values():
+        fam = spec.fact_family or "unknown"
+        out.setdefault(fam, spec.freshness_ttl_hours)
+    return out
+
+
+def _build_sot_table() -> dict[str, str]:
+    out: dict[str, str] = {}
+    for spec in ENTITY_TYPES.values():
+        fam = spec.fact_family or "unknown"
+        out.setdefault(fam, spec.source_of_truth)
+    return out
+
+
+FACT_FAMILY_FRESHNESS_TTL_HOURS: dict[str, int] = _build_freshness_table()
+SOURCE_OF_TRUTH_POLICIES: dict[str, str] = _build_sot_table()
+# Ensure the "unknown" fallback is always present.
+FACT_FAMILY_FRESHNESS_TTL_HOURS.setdefault("unknown", 30 * DAY)
+SOURCE_OF_TRUTH_POLICIES.setdefault("unknown", SOT_MEMORY)
+
+
+# Classifier tables — built from spec text_patterns / property_signatures.
+def _build_text_classifiers() -> tuple[tuple[str, re.Pattern[str]], ...]:
+    out: list[tuple[str, re.Pattern[str]]] = []
+    for label, spec in ENTITY_TYPES.items():
+        for pattern in spec.text_patterns:
+            out.append((label, re.compile(pattern, re.IGNORECASE)))
+    return tuple(out)
+
+
+ENTITY_TEXT_CLASSIFIERS: tuple[tuple[str, re.Pattern[str]], ...] = _build_text_classifiers()
+
+
+def _build_property_signatures() -> dict[str, tuple[str, ...]]:
+    out: dict[str, list[str]] = {}
+    for label, spec in ENTITY_TYPES.items():
+        for prop in spec.property_signatures:
+            out.setdefault(prop, []).append(label)
+    return {prop: tuple(sorted(labels)) for prop, labels in out.items()}
+
+
+ENTITY_PROPERTY_SIGNATURES: dict[str, tuple[str, ...]] = _build_property_signatures()
+
+
+# Non-canonical verb endpoint inference. Empty in the topology core; the claim
+# layer added later can register rules for verbs that aren't canonical edges.
+EPISODIC_VERB_INFERRED_LABELS: dict[tuple[str, str], tuple[str, ...]] = {}
+
+
+# Edge endpoint inference table — built from spec source/target_inferred PLUS
+# any non-canonical verb rules above.
+def _build_edge_endpoint_inferred_labels() -> dict[tuple[str, str], tuple[str, ...]]:
+    out: dict[tuple[str, str], tuple[str, ...]] = {}
+    for edge_type, spec in EDGE_TYPES.items():
+        if spec.source_inferred_labels:
+            out[(edge_type, "source")] = spec.source_inferred_labels
+        if spec.target_inferred_labels:
+            out[(edge_type, "target")] = spec.target_inferred_labels
+    for key, labels in EPISODIC_VERB_INFERRED_LABELS.items():
+        out.setdefault(key, labels)
+    return out
+
+
+EDGE_ENDPOINT_INFERRED_LABELS: dict[tuple[str, str], tuple[str, ...]] = (
+    _build_edge_endpoint_inferred_labels()
+)
+
+
+# Predicate families — built from spec predicate_family field.
+def _build_predicate_family_edge_names() -> dict[str, frozenset[str]]:
+    out: dict[str, set[str]] = {}
+    for edge_type, spec in EDGE_TYPES.items():
+        if spec.predicate_family:
+            out.setdefault(spec.predicate_family, set()).add(edge_type)
+    return {fam: frozenset(names) for fam, names in out.items()}
+
+
+PREDICATE_FAMILY_EDGE_NAMES: dict[str, frozenset[str]] = _build_predicate_family_edge_names()
 
 
 def _union_entity_lifecycle_strings() -> frozenset[str]:
@@ -1000,149 +937,47 @@ def _union_entity_lifecycle_strings() -> frozenset[str]:
 ALLOWED_LIFECYCLE_STATUSES: frozenset[str] = _union_entity_lifecycle_strings()
 
 
-# --- Temporal predicate families (auto-supersession + search ranking) ------------
-# See docs/context-graph-improvements/01-temporal-resolution-in-search.md
+# --- Helpers ----------------------------------------------------------------
 
 
-def normalize_graphiti_edge_name(name: str) -> str:
-    """Normalize LLM / Graphiti relation labels for family lookup."""
+def normalize_edge_name(name: str) -> str:
+    """Normalize an LLM-emitted relation label for family lookup."""
     return name.strip().upper().replace(" ", "_").replace("-", "_")
 
 
-# Edge endpoint → canonical node label inference.
-# Key: (normalized edge name, "source" | "target") → labels to add on that endpoint.
-# Two sources feed this table:
-#   1. Graphiti episodic extraction verbs (RELATES_TO.name) — fire in the post-ingest
-#      ontology classifier pass on Neo4j.
-#   2. Canonical ontology edge types (EDGE_TYPES) — fire in the reconciliation-plan
-#      enrichment path before structural writes.
-# Only include rows where the edge type forces a unique canonical label on that
-# endpoint. Ambiguous predicates (e.g. FIXES target = Issue or Incident) are omitted
-# so the classifier never lies.
-EDGE_ENDPOINT_INFERRED_LABELS: dict[tuple[str, str], tuple[str, ...]] = {
-    # --- Episodic extraction verbs --------------------------------------------------
-    ("DECIDES_FOR", "target"): ("Decision",),
-    ("CAUSED", "target"): ("Incident",),
-    ("DEPLOYED_TO", "target"): ("Deployment",),
-    ("DEPRECATED", "target"): ("LegacyArtifact",),
-    ("DECOMMISSIONED", "target"): ("LegacyArtifact",),
-    ("AUTHORED_BY", "target"): ("Person",),
-    ("STORED_IN", "target"): ("DataStore",),
-    ("PART_OF_FEATURE", "target"): ("Feature",),
-    ("REPLACES", "target"): ("LegacyArtifact",),
-    # --- Canonical ontology edges ---------------------------------------------------
-    # Change / decision
-    ("ADDRESSES", "target"): ("Issue",),
-    ("HAS_COMMIT", "target"): ("Commit",),
-    ("HAS_REVIEW_DECISION", "target"): ("Decision",),
-    ("MADE_IN", "source"): ("Decision",),
-    ("AFFECTS", "source"): ("Decision",),
-    ("AFFECTS_CODE", "source"): ("Decision",),
-    ("RESULTED_IN", "target"): ("Decision",),
-    ("MODIFIED", "source"): ("PullRequest",),
-    # Product / architecture
-    ("HAS_FUNCTIONALITY", "target"): ("Functionality",),
-    ("IMPLEMENTS", "target"): ("Capability",),
-    ("EXPOSES", "target"): ("Interface",),
-    ("USES_DATA_STORE", "target"): ("DataStore",),
-    ("MEMBER_OF", "target"): ("Team",),
-    # Constraints / preferences / policy
-    ("APPLIES_TO", "source"): ("Constraint",),
-    ("PREFERRED_FOR", "source"): ("Preference",),
-    ("INFORMS", "source"): ("AgentInstruction",),
-    ("CONFIGURES", "source"): ("ConfigVariable",),
-    # Delivery / operations
-    ("TARGETS", "source"): ("Deployment",),
-    ("DEPLOYED_AS", "source"): ("Branch",),
-    ("DEPLOYED_AS", "target"): ("Deployment",),
-    # Debugging / reliability
-    ("INDICATES", "source"): ("Alert",),
-    ("INDICATES", "target"): ("Incident",),
-    ("FIRED_IN", "source"): ("Alert",),
-    ("FIRED_IN", "target"): ("Environment",),
-    ("MATCHES_PATTERN", "target"): ("BugPattern",),
-    ("OBSERVED_IN", "source"): ("DiagnosticSignal",),
-    ("RESOLVED", "source"): ("Fix",),
-    ("CHANGED_BY", "source"): ("Fix",),
-    ("HAS_SIGNAL", "target"): ("DiagnosticSignal",),
-    ("HAS_ROOT_CAUSE", "target"): ("Observation",),
-    ("SEEN_IN", "source"): ("BugPattern",),
-    ("DEBUGGED", "source"): ("Investigation",),
-    # Evidence / provenance / quality
-    ("EVIDENCED_BY", "target"): ("SourceReference",),
-    ("FROM_SOURCE", "source"): ("SourceReference",),
-    ("FROM_SOURCE", "target"): ("SourceSystem",),
-    ("FLAGS", "source"): ("QualityIssue",),
-    ("REPAIRS", "source"): ("MaintenanceJob",),
-    ("MATERIALIZES", "source"): ("MaterializedAccessPath",),
-}
+# Back-compat alias — external callers may still import the legacy name.
 
 
 def inferred_labels_for_episodic_edge_endpoint(
     edge_name: str, role: str
 ) -> tuple[str, ...]:
-    """Return canonical ontology labels to add for a RELATES_TO endpoint, if unambiguous."""
+    """Canonical labels to add for a RELATES_TO endpoint, if unambiguous."""
     if role not in ("source", "target"):
         return ()
-    key = (normalize_graphiti_edge_name(edge_name), role)
+    key = (normalize_edge_name(edge_name), role)
     return EDGE_ENDPOINT_INFERRED_LABELS.get(key, ())
 
 
-# Hand-curated: same family + same logical subject + different object ⇒ contradiction.
-PREDICATE_FAMILY_EDGE_NAMES: dict[str, frozenset[str]] = {
-    "datastore_binding": frozenset(
-        {
-            "USES_DATA_STORE",
-            "STORED_IN",
-            "PERSISTS_TO",
-            "MIGRATED_TO",
-        }
-    ),
-    "owner_binding": frozenset({"OWNS", "OWNED_BY", "MAINTAINED_BY"}),
-    "deployment_target": frozenset({"DEPLOYED_TO", "RUNS_ON", "HOSTED_ON"}),
-    "lifecycle_status": frozenset(
-        {
-            "PROPOSED",
-            "IN_PROGRESS",
-            "COMPLETED",
-            "DEPRECATED",
-            "DECOMMISSIONED",
-        }
-    ),
-}
-
-
 def predicate_family_for_edge_name(name: str) -> str | None:
-    """Return predicate family id for a Graphiti ``RELATES_TO.name``, if any."""
-    n = normalize_graphiti_edge_name(name)
+    """Return predicate family id for a ``RELATES_TO.name``, if any."""
+    n = normalize_edge_name(name)
     for fam, members in PREDICATE_FAMILY_EDGE_NAMES.items():
         if n in members:
             return fam
     return None
 
 
-# Targets that disambiguate ``CHOSE`` toward datastore / persistence binding (see fix 02).
-_DATASTORE_CHOOSE_TARGET_LABEL_HINTS: frozenset[str] = frozenset({"DataStore"})
-
-
 def predicate_family_for_episodic_supersede(
     edge_name: str,
     target_labels: Iterable[str] | None = None,
 ) -> str | None:
-    """Predicate family for temporal auto-supersede and pairwise conflict bucketing.
+    """Predicate family for temporal auto-supersede / pairwise conflict bucketing.
 
-    Graphiti may emit ``CHOSE`` for decisions that are not datastore-related; those must not
-    join ``datastore_binding``. When the target carries no canonical hints, ``CHOSE`` is
-    excluded (strict fallback—matches single-type supersession only for that edge).
+    ``target_labels`` is accepted for back-compat with the legacy two-arg
+    callsite but is unused — family is derived from the edge name alone now
+    that all canonical predicates have known endpoint shapes.
     """
-    n = normalize_graphiti_edge_name(edge_name)
-    if n == "CHOSE":
-        hinted = frozenset(canonical_entity_labels(target_labels or ()))
-        if not hinted:
-            return None
-        if hinted & _DATASTORE_CHOOSE_TARGET_LABEL_HINTS:
-            return "datastore_binding"
-        return None
+    del target_labels
     return predicate_family_for_edge_name(edge_name)
 
 
@@ -1153,24 +988,24 @@ def object_counterparty_uuid_for_edge(
     *,
     predicate_family: str | None = None,
 ) -> str | None:
-    """Endpoint uuid whose identity differs when the same resource has a conflicting binding."""
+    """Endpoint uuid that differs when the same resource has conflicting bindings.
 
-    n = normalize_graphiti_edge_name(edge_name)
-    fam = predicate_family if predicate_family is not None else predicate_family_for_edge_name(
-        edge_name
+    For every declared canonical predicate, the subject is the cardinality
+    anchor and the object is the counterparty that supersedes — so we
+    return the target. Legacy LLM-emitted aliases (e.g. ``OWNS``) that
+    inverted this convention are no longer in the catalog; if they
+    resurface, declare them explicitly in :data:`EDGE_TYPES` rather than
+    teaching this helper about them.
+    """
+    del source_uuid
+    fam = (
+        predicate_family
+        if predicate_family is not None
+        else predicate_family_for_edge_name(edge_name)
     )
-    if fam is None:
+    if fam is None or fam not in PREDICATE_FAMILY_EDGE_NAMES:
         return None
-    if fam in {"datastore_binding", "deployment_target", "lifecycle_status"}:
-        return target_uuid
-    if fam == "owner_binding":
-        if n == "OWNS":
-            return source_uuid
-        if n == "OWNED_BY":
-            return target_uuid
-        if n == "MAINTAINED_BY":
-            return source_uuid
-    return None
+    return target_uuid
 
 
 def temporal_subject_key_for_edge(
@@ -1182,30 +1017,25 @@ def temporal_subject_key_for_edge(
 ) -> str | None:
     """Stable subject node uuid for contradiction grouping within a family.
 
-    * datastore / deployment / lifecycle: subject is the ``source`` entity.
-    * owner edges: the *resource* whose ownership is described (OWNS: target;
-      OWNED_BY / MAINTAINED_BY: source when the edge is Resource -> Actor).
+    Mirrors :func:`object_counterparty_uuid_for_edge`: for every declared
+    canonical predicate the subject is the cardinality anchor, so we
+    return ``source_uuid``. Legacy inverted aliases (``OWNS``, ``MAINTAINED_BY``)
+    no longer exist in the catalog; declare new edges explicitly rather
+    than special-casing names here.
     """
-    n = normalize_graphiti_edge_name(edge_name)
-    fam = predicate_family if predicate_family is not None else predicate_family_for_edge_name(
-        edge_name
+    del target_uuid
+    fam = (
+        predicate_family
+        if predicate_family is not None
+        else predicate_family_for_edge_name(edge_name)
     )
-    if fam is None:
+    if fam is None or fam not in PREDICATE_FAMILY_EDGE_NAMES:
         return None
-    if fam in {"datastore_binding", "deployment_target", "lifecycle_status"}:
-        return source_uuid
-    if fam == "owner_binding":
-        if n == "OWNS":
-            return target_uuid
-        if n == "OWNED_BY":
-            return source_uuid
-        if n == "MAINTAINED_BY":
-            return target_uuid
-    return None
+    return source_uuid
 
 
 def canonical_entity_labels(labels: Iterable[str]) -> tuple[str, ...]:
-    """Return public canonical labels from a mixed Graphiti/Neo4j label set."""
+    """Return public canonical labels from a mixed label set."""
     return tuple(label for label in labels if label in ENTITY_TYPES)
 
 
@@ -1223,6 +1053,29 @@ def entity_spec(label: str) -> EntityTypeSpec | None:
 
 def edge_spec(edge_type: str) -> EdgeTypeSpec | None:
     return EDGE_TYPES.get(edge_type)
+
+
+def project_map_family_for_label(label: str) -> str | None:
+    return ENTITY_PROJECT_MAP_FAMILY.get(label)
+
+
+def debugging_family_for_label(label: str) -> str | None:
+    return ENTITY_DEBUGGING_FAMILY.get(label)
+
+
+def fact_family_for_label(label: str) -> str:
+    return ENTITY_FACT_FAMILY.get(label, "unknown")
+
+
+def is_scope_label(label: str) -> bool:
+    return label in SCOPE_LABELS
+
+
+def is_activity_label(label: str) -> bool:
+    return label in ACTIVITY_LABELS
+
+
+# --- Validation -------------------------------------------------------------
 
 
 def validate_entity_upsert(item: EntityUpsert) -> list[str]:
@@ -1264,11 +1117,6 @@ def validate_entity_upsert(item: EntityUpsert) -> list[str]:
                 f"{item.entity_key}:{label}: missing required properties: {', '.join(missing)}"
             )
         _validate_lifecycle_state(item.entity_key, label, spec, item.properties, errors)
-        if label == "SourceReference":
-            errors.extend(
-                f"{item.entity_key}:{error}"
-                for error in validate_source_reference_properties(item.properties)
-            )
 
     return errors
 
@@ -1304,13 +1152,6 @@ def validate_structural_mutations(
     edge_upserts: Iterable[EdgeUpsert],
     edge_deletes: Iterable[EdgeDelete],
 ) -> list[str]:
-    """Validate deterministic mutations against the public ontology.
-
-    Edge endpoint compatibility is enforced when both endpoints are present in
-    the same mutation batch. If an endpoint already exists in the graph and is
-    not part of the current batch, Phase 1 only validates the relationship type;
-    the write adapter can perform graph-backed endpoint checks later.
-    """
     errors: list[str] = []
     labels_by_key: dict[str, tuple[str, ...]] = {}
 
@@ -1393,12 +1234,7 @@ def _validate_lifecycle_state(
 ) -> None:
     if not spec.lifecycle_states:
         return
-    # Decision uses ``status`` (ADR-style); do not treat ``lifecycle_state`` from another
-    # co-located label (e.g. Service) as this label's lifecycle value.
-    if label == "Decision":
-        value = properties.get("status")
-    else:
-        value = properties.get("lifecycle_state") or properties.get("status")
+    value = properties.get("lifecycle_state") or properties.get("status")
     if value is None:
         return
     if str(value) not in spec.lifecycle_states:
@@ -1418,6 +1254,254 @@ def _normalized_label_set(labels: Iterable[str]) -> frozenset[str]:
 def _endpoint_matches(endpoint: str, labels: frozenset[str]) -> bool:
     if endpoint == WILDCARD_ENDPOINT:
         return bool(labels)
+    if endpoint == SCOPE_ENDPOINT:
+        return bool(labels & SCOPE_LABELS)
+    if endpoint == ACTIVITY_ENDPOINT:
+        return bool(labels & ACTIVITY_LABELS)
     if endpoint == "CodeAsset":
         return bool(labels & CODE_GRAPH_LABELS)
     return endpoint in labels
+
+
+# ---------------------------------------------------------------------------
+# Identity registry sync — populate :mod:`domain.identity` from ENTITY_TYPES
+# ---------------------------------------------------------------------------
+# The identity registry is a *view* over the ontology: every public entity
+# type registers its (label, identity_class, key_prefix) at module import so
+# the registry and the ontology can never disagree. Adding ``IdentityClass``
+# / ``key_prefix`` to a new ``EntityTypeSpec`` row is the only step needed —
+# the registry follows automatically.
+
+
+def _sync_identity_registry() -> None:
+    for label, spec in ENTITY_TYPES.items():
+        register_identity(
+            IdentitySpec(
+                label=label,
+                klass=spec.identity_class,
+                key_prefix=spec.key_prefix,
+                authoritative_source=spec.authoritative_source,
+            )
+        )
+
+
+_sync_identity_registry()
+
+
+# ---------------------------------------------------------------------------
+# Agent-facing record-type catalog
+# ---------------------------------------------------------------------------
+# One declarative table joining the ``context_record`` agent surface to the
+# graph ontology. Each row says: when an agent submits ``record_type=t``,
+# which canonical entity it anchors, which predicate that entity emits, what
+# structured payload schema validates it, and which read-side include family
+# the records flow back through.
+#
+# This catalog is the single source of truth for:
+#   * agent_context_port.CONTEXT_RECORD_TYPES (derived from .keys() of public rows)
+#   * agent_context_port.READER_BACKED_INCLUDES + PLANNED_INCLUDES
+#     (derived by joining ``reader_include`` against the registered reader set)
+#   * context_records dispatch (``payload_schema`` names the builder)
+
+
+@dataclass(frozen=True, slots=True)
+class RecordTypeSpec:
+    """Declarative metadata for one agent-facing ``context_record`` type."""
+
+    record_type: str
+    description: str
+    anchor_label: str
+    """Which entity type the record creates / attaches to. Must be in ENTITY_TYPES."""
+
+    emits_predicate: str | None
+    """Primary predicate the record emits on its anchor. Must be in EDGE_TYPES
+    (or None for free-form records that don't yet have a deterministic path)."""
+
+    payload_schema: str | None
+    """Name of the structured builder in ``domain.context_records``
+    (``fix``/``preference``/``bug_pattern``/``decision``/``verification``).
+    ``None`` means the record falls through to ``FreeFormRecord``."""
+
+    reader_include: str | None
+    """Which read-side include family these records surface through. None for
+    records that don't have a primary reader yet."""
+
+    public: bool = True
+    """``False`` hides the record type from the advertised agent vocabulary."""
+
+
+# NOTE: ``emits_predicate`` records the *primary* canonical predicate. Some
+# record types emit secondary predicates as well (e.g. a Fix may emit
+# ATTEMPTED_FIX_FAILED on retries); the writer is responsible for these
+# secondaries. The catalog's role is the surface vocabulary, not the full
+# predicate graph each type produces.
+
+
+RECORD_TYPES: dict[str, RecordTypeSpec] = {
+    "preference": RecordTypeSpec(
+        record_type="preference",
+        description="Coding preference / policy with scope-qualified prescription.",
+        anchor_label="Preference",
+        emits_predicate="POLICY_APPLIES_TO",
+        payload_schema="preference",
+        reader_include="coding_preferences",
+    ),
+    "policy": RecordTypeSpec(
+        record_type="policy",
+        description="Named project-wide policy (alias of preference with Policy anchor).",
+        anchor_label="Policy",
+        emits_predicate="POLICY_APPLIES_TO",
+        payload_schema="preference",  # same shape; different anchor label
+        reader_include="coding_preferences",
+    ),
+    "bug_pattern": RecordTypeSpec(
+        record_type="bug_pattern",
+        description="Reproducible failure pattern — the symptom side of a fix.",
+        anchor_label="BugPattern",
+        emits_predicate="REPRODUCES",
+        payload_schema="bug_pattern",
+        reader_include="prior_bugs",
+    ),
+    "fix": RecordTypeSpec(
+        record_type="fix",
+        description="Bug-fix observation retrievable later by symptom.",
+        anchor_label="Fix",
+        emits_predicate="RESOLVED",
+        payload_schema="fix",
+        reader_include="prior_bugs",
+    ),
+    "verification": RecordTypeSpec(
+        record_type="verification",
+        description="Confirm / refute attached to an existing Fix.",
+        anchor_label="Activity",
+        emits_predicate="VERIFIED",
+        payload_schema="verification",
+        reader_include="prior_bugs",
+    ),
+    "decision": RecordTypeSpec(
+        record_type="decision",
+        description="ADR-style architectural decision with rationale + alternatives.",
+        anchor_label="Decision",
+        emits_predicate="DECIDED",
+        payload_schema="decision",
+        reader_include="decisions",  # planned reader
+    ),
+    # --- Free-form record types (no structured schema yet, FreeFormRecord) -
+    # Kept as advertised types so the agent surface accepts them; readers
+    # surface them as ``unsupported_include`` until each gets a backing
+    # entity + reader pair. The advertised contract stays honest because
+    # the coherence check (domain.coherence) flags any free-form type whose
+    # reader_include has neither a reader nor a planned-reader marker.
+    "investigation": RecordTypeSpec(
+        record_type="investigation",
+        description="Ongoing or completed investigation context.",
+        anchor_label="Document",
+        emits_predicate=None,
+        payload_schema=None,
+        reader_include=None,
+    ),
+    "diagnostic_signal": RecordTypeSpec(
+        record_type="diagnostic_signal",
+        description="A diagnostic signal / observation captured during debugging.",
+        anchor_label="Observation",
+        emits_predicate=None,
+        payload_schema=None,
+        reader_include=None,
+    ),
+    "workflow": RecordTypeSpec(
+        record_type="workflow",
+        description="A repeatable workflow / runbook entry.",
+        anchor_label="Document",
+        emits_predicate=None,
+        payload_schema=None,
+        reader_include=None,
+    ),
+    "feature_note": RecordTypeSpec(
+        record_type="feature_note",
+        description="A note about a feature, its rationale, or its current state.",
+        anchor_label="Document",
+        emits_predicate=None,
+        payload_schema=None,
+        reader_include=None,
+    ),
+    "service_note": RecordTypeSpec(
+        record_type="service_note",
+        description="A note attached to a service — operational quirks, gotchas.",
+        anchor_label="Document",
+        emits_predicate=None,
+        payload_schema=None,
+        reader_include=None,
+    ),
+    "runbook_note": RecordTypeSpec(
+        record_type="runbook_note",
+        description="A runbook fragment — what to do when X happens.",
+        anchor_label="Document",
+        emits_predicate=None,
+        payload_schema=None,
+        reader_include=None,
+    ),
+    "integration_note": RecordTypeSpec(
+        record_type="integration_note",
+        description="Notes on integrating two systems / services / APIs.",
+        anchor_label="Document",
+        emits_predicate=None,
+        payload_schema=None,
+        reader_include=None,
+    ),
+    "incident_summary": RecordTypeSpec(
+        record_type="incident_summary",
+        description="Post-incident summary (root cause, contributing factors, follow-ups).",
+        anchor_label="Document",
+        emits_predicate=None,
+        payload_schema=None,
+        reader_include=None,
+    ),
+    "doc_reference": RecordTypeSpec(
+        record_type="doc_reference",
+        description="Pointer to canonical project documentation.",
+        anchor_label="Document",
+        emits_predicate=None,
+        payload_schema=None,
+        reader_include="docs",  # planned reader
+    ),
+}
+
+
+PUBLIC_RECORD_TYPES: frozenset[str] = frozenset(
+    rt for rt, spec in RECORD_TYPES.items() if spec.public
+)
+
+
+# Reader include families that aren't backed by RECORD_TYPES rows because
+# they read pure topology data (no agent-emitted records anchor them). These
+# are listed explicitly so the coherence check can distinguish "structural
+# include" from "missing reader_include on a record type".
+STRUCTURAL_INCLUDES: frozenset[str] = frozenset(
+    {
+        "infra_topology",
+        "timeline",
+        "owners",
+        "raw_graph",
+    }
+)
+
+
+def record_type_spec(record_type: str) -> RecordTypeSpec | None:
+    return RECORD_TYPES.get(record_type)
+
+
+def record_types_for_include(include_key: str) -> tuple[str, ...]:
+    """Reverse lookup: which record types surface through ``include_key``."""
+    return tuple(
+        rt for rt, spec in RECORD_TYPES.items() if spec.reader_include == include_key
+    )
+
+
+def advertised_include_families() -> frozenset[str]:
+    """Every include family the agent surface advertises — structural + memory."""
+    from_records = frozenset(
+        spec.reader_include
+        for spec in RECORD_TYPES.values()
+        if spec.public and spec.reader_include
+    )
+    return STRUCTURAL_INCLUDES | from_records

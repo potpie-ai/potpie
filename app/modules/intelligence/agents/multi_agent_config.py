@@ -12,38 +12,37 @@ from typing import Dict, Any, Optional
 class MultiAgentConfig:
     """Configuration class for multi-agent system settings"""
 
-    # Global multi-agent mode setting (default enabled)
-    ENABLE_MULTI_AGENT = os.getenv("ENABLE_MULTI_AGENT", "true").lower() == "true"
+    # Global multi-agent mode setting (default disabled — PydanticDeepAgent is the default runtime)
+    ENABLE_MULTI_AGENT = os.getenv("ENABLE_MULTI_AGENT", "false").lower() == "true"
 
-    # Per-agent type multi-agent settings (default enabled)
+    # Per-agent type multi-agent settings (default disabled — opt in via env var)
     AGENT_MULTI_AGENT_SETTINGS = {
         "general_purpose_agent": os.getenv(
-            "GENERAL_PURPOSE_MULTI_AGENT", "true"
+            "GENERAL_PURPOSE_MULTI_AGENT", "false"
         ).lower()
         == "true",
-        "code_generation_agent": os.getenv("CODE_GEN_MULTI_AGENT", "true").lower()
+        "code_generation_agent": os.getenv("CODE_GEN_MULTI_AGENT", "false").lower()
         == "true",
-        "codebase_qna_agent": os.getenv("QNA_MULTI_AGENT", "true").lower() == "true",
-        # A7.1: Default to single-agent (PydanticRagAgent) for debugging_agent.
-        # The DAP loop is stateful; round-tripping through THINK_EXECUTE delegation
-        # risks losing tool-call context.  To re-enable multi-agent mode set the env
-        # var: DEBUG_MULTI_AGENT=true
+        "codebase_qna_agent": os.getenv("QNA_MULTI_AGENT", "false").lower() == "true",
+        # A7.1: Default to single-agent for debugging_agent. The DAP loop is
+        # stateful; round-tripping through THINK_EXECUTE delegation risks losing
+        # tool-call context. To re-enable multi-agent mode set DEBUG_MULTI_AGENT=true
         "debugging_agent": os.getenv("DEBUG_MULTI_AGENT", "false").lower() == "true",
-        "unit_test_agent": os.getenv("UNIT_TEST_MULTI_AGENT", "true").lower() == "true",
+        "unit_test_agent": os.getenv("UNIT_TEST_MULTI_AGENT", "false").lower() == "true",
         "integration_test_agent": os.getenv(
-            "INTEGRATION_TEST_MULTI_AGENT", "true"
+            "INTEGRATION_TEST_MULTI_AGENT", "false"
         ).lower()
         == "true",
-        "LLD_agent": os.getenv("LLD_MULTI_AGENT", "true").lower() == "true",
-        "code_changes_agent": os.getenv("CODE_CHANGES_MULTI_AGENT", "true").lower()
+        "LLD_agent": os.getenv("LLD_MULTI_AGENT", "false").lower() == "true",
+        "code_changes_agent": os.getenv("CODE_CHANGES_MULTI_AGENT", "false").lower()
         == "true",
-        "sweb_debug_agent": os.getenv("SWEB_DEBUG_MULTI_AGENT", "true").lower()
+        "sweb_debug_agent": os.getenv("SWEB_DEBUG_MULTI_AGENT", "false").lower()
         == "true",
     }
 
-    # Custom agent multi-agent setting (default enabled)
+    # Custom agent multi-agent setting (default disabled)
     CUSTOM_AGENT_MULTI_AGENT = (
-        os.getenv("CUSTOM_AGENT_MULTI_AGENT", "true").lower() == "true"
+        os.getenv("CUSTOM_AGENT_MULTI_AGENT", "false").lower() == "true"
     )
 
     @classmethod
@@ -55,7 +54,7 @@ class MultiAgentConfig:
             agent_type: The type of agent to check. If None, returns global setting.
 
         Returns:
-            bool: True if multi-agent mode should be enabled (DEFAULT: True for all agents)
+            bool: True if multi-agent mode should be enabled (DEFAULT: False — PydanticDeepAgent is the default)
         """
         if not cls.ENABLE_MULTI_AGENT:
             return False
@@ -63,9 +62,9 @@ class MultiAgentConfig:
         if agent_type is None:
             return cls.ENABLE_MULTI_AGENT
 
-        # Default to True for all agents (including custom agents and any new agent types)
-        # This makes multi-agent the default behavior for all agents
-        return cls.AGENT_MULTI_AGENT_SETTINGS.get(agent_type, True)
+        # Default to False for unknown agent types so PydanticDeepAgent stays the default.
+        # Opt into multi-agent per agent via env var.
+        return cls.AGENT_MULTI_AGENT_SETTINGS.get(agent_type, False)
 
     @classmethod
     def get_agent_config(cls, agent_type: str) -> Dict[str, Any]:
@@ -99,24 +98,23 @@ class MultiAgentConfig:
 
 # Environment variable examples for configuration:
 """
-# Global multi-agent mode (default: true)
-ENABLE_MULTI_AGENT=true
+# Global multi-agent mode (default: false — PydanticDeepAgent runs by default)
+ENABLE_MULTI_AGENT=false
 
-# Per-agent multi-agent settings (default: true for all)
-GENERAL_PURPOSE_MULTI_AGENT=true
-CODE_GEN_MULTI_AGENT=true
-QNA_MULTI_AGENT=true
-DEBUG_MULTI_AGENT=false  # default false (A7.1) — set to true to re-enable multi-agent for debugging_agent
-UNIT_TEST_MULTI_AGENT=true
-INTEGRATION_TEST_MULTI_AGENT=true
-LLD_MULTI_AGENT=true
-CODE_CHANGES_MULTI_AGENT=true
+# Per-agent multi-agent opt-in (default: false for all)
+GENERAL_PURPOSE_MULTI_AGENT=false
+CODE_GEN_MULTI_AGENT=false
+QNA_MULTI_AGENT=false
+DEBUG_MULTI_AGENT=false  # A7.1 — keep false; set true to re-enable multi-agent for debugging_agent
+UNIT_TEST_MULTI_AGENT=false
+INTEGRATION_TEST_MULTI_AGENT=false
+LLD_MULTI_AGENT=false
+CODE_CHANGES_MULTI_AGENT=false
 
-# Custom agent multi-agent setting (default: true)
-CUSTOM_AGENT_MULTI_AGENT=true
+# Custom agent multi-agent setting (default: false)
+CUSTOM_AGENT_MULTI_AGENT=false
 
-# To disable multi-agent mode, set to false:
-# ENABLE_MULTI_AGENT=false
-# GENERAL_PURPOSE_MULTI_AGENT=false
-# etc.
+# To opt a specific agent into multi-agent mode, set both the global and per-agent flag to true:
+# ENABLE_MULTI_AGENT=true
+# QNA_MULTI_AGENT=true
 """

@@ -227,6 +227,23 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "destructive": True,
         "non_local_only": True,
     },
+    # ``sandbox_exec`` / ``sandbox_write_stdin`` are the unified streaming
+    # exec surface: start a long-running / interactive command that yields
+    # a session_id, then drive it (write stdin / poll / kill) via
+    # ``sandbox_write_stdin``. They sit alongside ``sandbox_shell`` (which
+    # blocks until exit) in both the legacy and handle-bound toolsets.
+    "sandbox_exec": {
+        "tier": "low",
+        "category": "sandbox",
+        "short_description": "Start a streamable / long-running command and read its progress.",
+        "destructive": True,
+    },
+    "sandbox_write_stdin": {
+        "tier": "low",
+        "category": "sandbox",
+        "short_description": "Write stdin to / poll / kill a running sandbox_exec session.",
+        "destructive": True,
+    },
     "sandbox_search": {
         "tier": "medium",
         "category": "sandbox",
@@ -295,6 +312,8 @@ CODE_GEN_BASE_TOOLS: List[str] = [
     # Sandbox tools (Anthropic-style consolidated surface).
     "sandbox_text_editor",
     "sandbox_shell",
+    "sandbox_exec",
+    "sandbox_write_stdin",
     "sandbox_search",
     "sandbox_git",
     "sandbox_pr",
@@ -374,6 +393,8 @@ EXECUTE_TOOLS: List[str] = [
     # Sandbox: read / edit / shell / git on the agent worktree.
     "sandbox_text_editor",
     "sandbox_shell",
+    "sandbox_exec",
+    "sandbox_write_stdin",
     "sandbox_search",
     "sandbox_git",
     "sandbox_pr",
@@ -468,6 +489,8 @@ INTEGRATION_LINEAR_TOOLS: List[str] = [
 SANDBOX_TOOLS: List[str] = [
     "sandbox_text_editor",
     "sandbox_shell",
+    "sandbox_exec",
+    "sandbox_write_stdin",
     "sandbox_search",
     "sandbox_git",
     "sandbox_pr",

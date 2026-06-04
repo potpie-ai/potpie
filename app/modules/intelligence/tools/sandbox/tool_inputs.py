@@ -129,6 +129,72 @@ class SandboxShellInput(_ProjectScope):
 
 
 # ----------------------------------------------------------------------
+# sandbox_exec / sandbox_write_stdin  (unified exec — streaming sessions)
+# ----------------------------------------------------------------------
+class SandboxExecInput(_ProjectScope):
+    """Start a streamable / long-running command and read its progress.
+
+    Unlike ``sandbox_shell`` (which blocks until the command finishes),
+    ``sandbox_exec`` returns after a short *yield window* even if the command
+    is still running, handing back a ``session_id``. Use it for dev servers,
+    watch builds, long test runs, or interactive programs.
+
+    Returns ``{session_id, output, running, exit_code, truncated}``. If
+    ``running`` is true the command is still going — call
+    ``sandbox_write_stdin`` (with the ``session_id``) to read more output
+    (leave ``chars`` empty to just poll) or to feed it input.
+    """
+
+    command: str = Field(
+        ...,
+        description="Shell command to start, e.g. 'npm run dev', "
+        "'pytest -q', 'python repl.py'. Runs at the worktree root.",
+    )
+    tty: bool = Field(
+        default=False,
+        description="Allocate a real terminal (PTY). Set true for REPLs / "
+        "programs that need a TTY (colors, prompts); false for plain output.",
+    )
+    yield_time_ms: int = Field(
+        default=10_000,
+        description="How long (ms) to collect output before returning. "
+        "Clamped to 250–30000. Lower = check back sooner.",
+    )
+    max_output_bytes: Optional[int] = Field(
+        default=None,
+        description="Cap on the output delta returned this call (tail-kept).",
+    )
+
+
+class SandboxWriteStdinInput(_ProjectScope):
+    """Feed stdin to a running ``sandbox_exec`` session and/or read progress.
+
+    Pass the ``session_id`` from ``sandbox_exec``. Leave ``chars`` empty to
+    just poll for new output. Returns the same shape as ``sandbox_exec``.
+    To stop a session, set ``kill=true``.
+    """
+
+    session_id: str = Field(
+        ..., description="Session id returned by a previous sandbox_exec call."
+    )
+    chars: str = Field(
+        default="",
+        description="Characters to write to the command's stdin (include a "
+        "trailing newline to submit a line). Empty = poll only.",
+    )
+    kill: bool = Field(
+        default=False,
+        description="Terminate the session instead of writing/polling.",
+    )
+    yield_time_ms: int = Field(
+        default=10_000,
+        description="How long (ms) to collect output after writing. "
+        "Clamped to 250–30000.",
+    )
+    max_output_bytes: Optional[int] = Field(default=None)
+
+
+# ----------------------------------------------------------------------
 # sandbox_search
 # ----------------------------------------------------------------------
 class SandboxSearchInput(_ProjectScope):
@@ -252,6 +318,25 @@ class SandboxShellInputBound(BaseModel):
     )
     timeout_s: Optional[int] = Field(default=120)
     max_output_bytes: Optional[int] = Field(default=80_000)
+
+
+class SandboxExecInputBound(BaseModel):
+    """Start a streamable command on a pre-bound workspace handle."""
+
+    command: str = Field(..., description="Shell command to start.")
+    tty: bool = Field(default=False)
+    yield_time_ms: int = Field(default=10_000)
+    max_output_bytes: Optional[int] = Field(default=None)
+
+
+class SandboxWriteStdinInputBound(BaseModel):
+    """Write stdin / poll / kill a session on a pre-bound workspace handle."""
+
+    session_id: str = Field(..., description="Session id from sandbox_exec.")
+    chars: str = Field(default="", description="Stdin to write; empty = poll only.")
+    kill: bool = Field(default=False)
+    yield_time_ms: int = Field(default=10_000)
+    max_output_bytes: Optional[int] = Field(default=None)
 
 
 class SandboxSearchInputBound(BaseModel):

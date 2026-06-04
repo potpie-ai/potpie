@@ -12,6 +12,12 @@ INVITATION_STATUS_PENDING = "pending"
 INVITATION_STATUS_ACCEPTED = "accepted"
 INVITATION_STATUS_REVOKED = "revoked"
 INVITATION_STATUS_EXPIRED = "expired"
+# Invitee was auto-added on invite, then opted out. Membership is removed and
+# the pot disappears for them. No schema change: `status` is a free-form
+# String(16) with no CHECK constraint, and the partial unique index that keeps
+# one invite per (pot, email) only covers status = 'pending', so a declined
+# row never blocks a fresh re-invite.
+INVITATION_STATUS_DECLINED = "declined"
 
 
 class ContextGraphPotInvitation(Base):
@@ -37,6 +43,11 @@ class ContextGraphPotInvitation(Base):
         nullable=True,
     )
     token_hash = Column(String(128), nullable=False, unique=True, index=True)
+    # Raw invite token, kept so a pending invite stays re-shareable (copy
+    # link / resend email). Safe to persist: the accept endpoint additionally
+    # requires the signed-in user's email to match, so the token is an
+    # identifier, not a bearer credential. NULL for legacy/non-pending rows.
+    token = Column(Text, nullable=True)
     status = Column(String(16), nullable=False, default=INVITATION_STATUS_PENDING)
     expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(

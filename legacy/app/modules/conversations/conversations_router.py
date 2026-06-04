@@ -676,6 +676,8 @@ async def sync_code_change_from_local(
         _set_conversation_id,
     )
 
+    user_id = user["user_id"]
+
     try:
         # Set conversation_id in context for CodeChangesManager
         _set_conversation_id(conversation_id)

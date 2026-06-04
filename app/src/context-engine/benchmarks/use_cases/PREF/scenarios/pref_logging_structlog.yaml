@@ -1,0 +1,96 @@
+id: pref_logging_structlog
+use_case: PREF
+tier: quick
+difficulty: easy
+source_mix: dual
+universe: acme
+light: true
+
+description: |
+  A new engineer (bench-user-16) is writing a new FastAPI handler in
+  payments-svc and asks the agent for the team's logging conventions.
+  Two sources reinforce the same rule:
+
+    - ADR-021 (`docs/adr/021-structured-logging.md`) — the canonical
+      decision: structlog, kw-args only, no f-strings.
+    - A recent #eng-standards Slack thread (bench-user-5 rejecting a PR
+      for ACME010, the f-string lint rule).
+
+  The engine should surface BOTH the ADR and the slack reinforcement,
+  cite the ACME010 rule, and translate the convention into a concrete
+  code snippet style ("use kw-args, not f-strings").
+
+ingest:
+  - { event: slack/standards_thread__structlog_reminder.json, at: "-7d", tags: [signal] }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): the preference tier (ADR Document / Decision)
+  # is reconciled, but the current topology query/read path surfaces only
+  # topology entities, not Document/Decision nodes — so the ADR-021 decision
+  # cannot be asserted structurally yet. Whether the convention actually
+  # surfaces is graded in the synthesis judge below. We anchor the structural
+  # floor on the payments-svc Service the new handler targets (readable
+  # topology from the universe seed).
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*payments-svc", min_count: 1 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 4
+    failed_events_max: 0
+
+query:
+  intent: feature
+  scope: { service: payments-svc }
+  include: [coding_preferences, decisions, docs]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [coding_preferences]
+  source_refs_min: 1
+  must_cite_event_id:
+    - universe/acme/22-adr-021-logging.json
+  forbid_in_answer:
+    - "I don't have information"
+    - "no logging conventions"
+
+judge:
+  pass_score: 70
+  criteria:
+    - name: cites_correct_preference
+      weight: 30
+      pass_threshold: 4
+      dimensions: [PREF]
+      prompt: |
+        Does the answer specifically name `structlog` (the canonical
+        logger choice from ADR-021) and the kw-args-only rule? A
+        general "use structured logging" is not enough — it must name
+        the library + the kw-arg constraint.
+    - name: applies_preference_concretely
+      weight: 30
+      pass_threshold: 3
+      dimensions: [PREF]
+      prompt: |
+        Does the answer translate the rule into action a developer
+        could execute — for example showing or describing the right
+        call shape (e.g. `log.info("event.name", key=value)`) and
+        contrasting it with the wrong shape (f-strings in messages)?
+        Pure description without actionable form fails this criterion.
+    - name: no_invented_rules
+      weight: 20
+      pass_threshold: 5
+      dimensions: [PREF]
+      prompt: |
+        Does every cited rule map to either ADR-021 or the #eng-standards
+        Slack thread? Invented rules ("we forbid info-level for X" if
+        not in the source) must fail this criterion.
+    - name: surfaces_unprompted_context
+      weight: 20
+      pass_threshold: 3
+      dimensions: [PREF]
+      prompt: |
+        The user only asked about logging; does the answer also note
+        that ADR-007 (handler conventions) applies to the same file
+        they're writing — i.e. does the engine surface the related
+        preference unprompted? This tests whether normative knowledge
+        cross-references correctly.

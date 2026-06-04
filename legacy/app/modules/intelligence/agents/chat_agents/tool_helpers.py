@@ -1893,12 +1893,14 @@ description:
                 exit_code = content.get("exit_code", 0)
                 result_msg = f"Command executed (exit code: {exit_code})"
                 if output:
-                    result_msg += f"\n\nOutput:\n```\n{output[:min(len(output), 1000)]}"
+                    result_msg += (
+                        f"\n\nOutput:\n```\n{output[: min(len(output), 1000)]}"
+                    )
                     if len(output) > 1000:
                         result_msg += "\n... (output truncated)"
                     result_msg += "\n```"
                 if error:
-                    result_msg += f"\n\nError:\n```\n{error[:min(len(error), 500)]}"
+                    result_msg += f"\n\nError:\n```\n{error[: min(len(error), 500)]}"
                     if len(error) > 500:
                         result_msg += " ..."
                     result_msg += "\n```"

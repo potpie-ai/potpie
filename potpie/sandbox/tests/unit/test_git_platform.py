@@ -15,7 +15,6 @@ from sandbox import (
     Capabilities,
     PullRequest,
     PullRequestRequest,
-    RepoIdentity,
     SandboxClient,
     SandboxContainer,
     SandboxService,
@@ -44,9 +43,7 @@ class FakeGitPlatformProvider:
         self.next_result: PullRequest | None = None
         self.raise_for_next: BaseException | None = None
 
-    async def create_pull_request(
-        self, request: PullRequestRequest
-    ) -> PullRequest:
+    async def create_pull_request(self, request: PullRequestRequest) -> PullRequest:
         self.calls.append(request)
         if self.raise_for_next is not None:
             exc = self.raise_for_next

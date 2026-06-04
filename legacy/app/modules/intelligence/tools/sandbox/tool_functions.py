@@ -140,7 +140,7 @@ async def _exec_text_editor(
             return _err("insert requires insert_line and new_str")
         return await _insert(client, handle, path, insert_line, new_str)
     return _err(
-        f"unknown command: {command!r}. " "Expected: view, create, str_replace, insert."
+        f"unknown command: {command!r}. Expected: view, create, str_replace, insert."
     )
 
 
@@ -487,7 +487,7 @@ async def _exec_git(
             "branch": handle.branch,
         }
     return _err(
-        f"unknown command: {command!r}. " "Expected: status, diff, log, commit, push."
+        f"unknown command: {command!r}. Expected: status, diff, log, commit, push."
     )
 
 

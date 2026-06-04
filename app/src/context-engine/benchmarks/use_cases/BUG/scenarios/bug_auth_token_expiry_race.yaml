@@ -1,0 +1,104 @@
+id: bug_auth_token_expiry_race
+use_case: BUG
+tier: quick
+difficulty: medium
+source_mix: full
+universe: acme
+
+description: |
+  During a flash sale, customers hit a 401 from payments-svc at the final
+  "Place order" / capture step — but only on flows where they sat on the
+  payment screen a long time. A new engineer files OPS-431 and asks why a
+  valid login produces a 401 at the end.
+
+  Ground truth: this recurs the OPS-355 incident. auth-svc issues 15-minute
+  JWTs (ADR-031). checkout-api caches the token through a multi-step flow and
+  reuses it on the capture call to payments-svc; if the flow crosses the
+  15-min boundary the cached token is expired → 401. There was no clock-skew
+  buffer either. PR #1012 fixed it: refresh the token if within 120s of exp
+  before calling payments-svc, add 30s clock-skew leeway, never cache a token
+  past 80% of TTL. A Notion postmortem records the rule: any cross-service
+  call inside a user flow that can exceed the JWT TTL MUST refresh-on-near-
+  expiry. Today the NEW gift-card redemption step added a screen that pushes
+  flow time back over 15 min.
+
+  Evidence is split across linear (OPS-355 + OPS-431), notion (postmortem),
+  and slack (#incidents thread where the auth lead names OPS-355).
+
+  A strong answer surfaces OPS-355 + PR #1012, recognises the JWT-expiry
+  race recurrence (new gift-card step lengthened the flow), and recommends
+  the refresh-on-near-expiry fix / verifying it is wired on the new flow.
+
+  Medium tier: three sources with cross-source linking, moderate distractors.
+
+ingest:
+  - { event: linear/bug_auth_race_prior.json, at: "-80d", tags: [signal] }
+  - { event: notion/bug_auth_race_postmortem.json, at: "-78d", tags: [signal] }
+  - { event: slack/bug_auth_race_thread.json, at: "0d", tags: [signal] }
+  - { event: linear/bug_auth_race_today.json, at: "0d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/linear_issue_noise_template.json, at: "-70d..-2d", count: 8 }
+  - { event: noise/slack_chatter_noise_template.json, at: "-30d..-1d", count: 6 }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): Issue/Document nodes are reconciled but the
+  # topology read surfaces only Service/DataStore. Recurrence detection is
+  # graded in retrieval + the judge. Anchor on the two services involved.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*(auth-svc|checkout-api|payments-svc)", min_count: 1 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: debugging
+  scope: { service: checkout-api }
+  include: [prior_bugs, infra_topology, timeline]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [prior_bugs]
+  source_refs_min: 2
+  must_cite_event_id:
+    - linear/bug_auth_race_prior.json
+    - notion/bug_auth_race_postmortem.json
+  forbid_in_answer:
+    - "I don't have information"
+    - "no prior incidents"
+
+judge:
+  pass_score: 65
+  criteria:
+    - name: surfaces_prior_incident
+      weight: 30
+      pass_threshold: 4
+      prompt: |
+        Does the answer reference OPS-355 (the prior JWT-expiry race) by
+        identifier and surface PR #1012's fix (refresh-on-near-expiry + 30s
+        clock-skew leeway + never cache past 80% TTL) and/or the postmortem?
+    - name: identifies_recurrence_pattern
+      weight: 25
+      pass_threshold: 3
+      prompt: |
+        Does the answer explain WHY a valid login yields a 401 at capture —
+        the 15-min JWT TTL is shorter than a long checkout flow, the cached
+        token expires mid-flow — and connect today's recurrence to the new
+        gift-card step lengthening the flow?
+    - name: actionable_first_steps
+      weight: 25
+      pass_threshold: 3
+      prompt: |
+        Does the answer recommend the prior fix's lever — refresh the token
+        when near expiry before calling payments-svc, ensure the new
+        gift-card flow uses that path — rather than a generic "look into auth"?
+    - name: no_hallucination
+      weight: 20
+      pass_threshold: 5
+      prompt: |
+        Are all claims grounded? Valid references: OPS-355, OPS-431,
+        PR #1012, ADR-031, JWT, 15-minute TTL, auth-svc, checkout-api,
+        payments-svc, bench-user-3, bench-user-14, bench-user-17. Other
+        PRs/services/people are hallucinations.

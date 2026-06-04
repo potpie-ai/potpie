@@ -3,7 +3,7 @@ requires = ["maturin>=1.13,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "parsing"
+name = "potpie-parsing"
 requires-python = ">=3.10,<3.14"
 dynamic = ["version"]
 dependencies = [

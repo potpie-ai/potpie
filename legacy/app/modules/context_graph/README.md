@@ -4,7 +4,7 @@
 
 | Goal | Location |
 |------|----------|
-| Domain logic, use cases, HTTP/MCP/CLI routes, Postgres/Neo4j/Graphiti adapters, job queue port + Hatchet worker core | [`potpie/context-engine`](../../../../potpie/context-engine) |
+| Domain logic, use cases, HTTP/MCP/CLI routes, Postgres/Neo4j/Graphiti adapters, job queue port + Hatchet worker core | [`app/src/context-engine`](../../src/context-engine) |
 | Potpie-only glue (Celery tasks, DB-scoped container build, auth-mounted FastAPI router, intelligence bundle helpers) | **this directory** |
 
 Do **not** add portable business logic here—it belongs in the `context-engine` package so it stays testable and reusable.
@@ -14,7 +14,7 @@ Do **not** add portable business logic here—it belongs in the `context-engine`
 All context-graph / context-engine unit tests run from the package:
 
 ```bash
-cd potpie/context-engine
+cd app/src/context-engine
 uv run pytest tests/unit/
 ```
 
@@ -41,4 +41,4 @@ There is **no** separate `tests/unit/context_graph/` tree in the repo root; that
 
 - `CONTEXT_GRAPH_JOB_QUEUE_BACKEND` — `celery` (default), `hatchet`, or `noop` (see `bootstrap.queue_factory` in context-engine).
 - `CONTEXT_GRAPH_CELERY_QUEUE_MODULE` — override for the Celery adapter import path (default: `app.modules.context_graph.celery_job_queue`).
-- **Hatchet (optional):** set `CONTEXT_GRAPH_JOB_QUEUE_BACKEND=hatchet`, **`HATCHET_CLIENT_*`**, self-host Hatchet (not in `legacy/compose.yaml`) — **[`docs/hatchet-local.md`](../../../docs/hatchet-local.md)**.
+- **Hatchet (optional):** set `CONTEXT_GRAPH_JOB_QUEUE_BACKEND=hatchet`, **`HATCHET_CLIENT_*`**, self-host Hatchet (not in root `compose.yaml`) — **[`docs/hatchet-local.md`](../../../docs/hatchet-local.md)**.

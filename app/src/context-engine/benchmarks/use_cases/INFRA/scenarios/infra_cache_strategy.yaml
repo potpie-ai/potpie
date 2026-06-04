@@ -1,0 +1,119 @@
+id: infra_cache_strategy
+use_case: INFRA
+tier: extended
+difficulty: medium
+source_mix: dual
+universe: acme
+
+description: |
+  An engineer asks which services cache what, where, and for how long. The
+  agent must reconstruct Acme's caching model — which today is narrow:
+  only auth-svc owns a Redis cache.
+
+  Ground-truth (from `repo_docs/infra_cache_strategy.json` plus the notion
+  caching page, consistent with `universe/acme/00-architecture.json` where
+  auth-svc → redis(auth-cache)):
+    - auth-svc is the ONLY service with a dedicated Redis cache,
+      redis(auth-cache): local docker in dev, ElastiCache in staging,
+      multi-AZ ElastiCache in prod.
+    - It caches three things with mandatory TTLs: JWT public keys (JWKS)
+      `jwks:current` TTL 1h (busted on key rotation); session lookups
+      `session:<sid>` TTL 30m sliding (deleted on logout/revoke); resolved
+      RBAC `rbac:<user_id>` TTL 5m (deleted on role change).
+    - TTL discipline: every key MUST carry an explicit TTL; Postgres
+      (auth-prod-db) is the source of truth, Redis is a read-through
+      accelerator (an outage degrades latency, not correctness).
+    - NO other service owns a dedicated cache — checkout-api, inventory-svc,
+      payments-svc, notifications-svc, analytics-pipeline, web-app do not.
+
+  Why it's hard: the wrong instinct is to attribute caching broadly ("most
+  services use Redis"). The correct answer is narrow and TTL-disciplined:
+  one service, three keyed caches, every key with an explicit TTL, Redis
+  never authoritative.
+
+  NOTE (read-layer gating): the live snapshot read surfaces only topology
+  entities (Service / DataStore + DEPENDS_ON / USES). What-is-cached and
+  TTLs are NOT structurally returned; they are graded in the synthesis
+  judge. We anchor the structural floor on the canonical Service set, on
+  auth-svc, and on the redis(auth-cache) DataStore, and forbid Service
+  nodes minted from cache-key strings.
+
+ingest:
+  - { event: repo_docs/infra_cache_strategy.json, at: "-18d", tags: [signal] }
+  - { event: notion/cache_strategy.json, at: "-14d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/github_chore_noise_template.json, at: "-40d..-3d", count: 12 }
+  - { event: noise/slack_chatter_noise_template.json, at: "-30d..-2d", count: 8 }
+
+post_ingest_assertions:
+  graph_must_contain_entities:
+    - { label: Service, min_count: 7 }
+    - { label: Service, key_pattern: "service:.*auth-svc", min_count: 1 }
+    - { label: DataStore, key_pattern: "datastore:.*auth-cache", min_count: 1 }
+  graph_must_not_contain:
+    - { label: Service, key_pattern: "(?i)(jwks|session|rbac|elasticache|read-?through)", max_count: 0 }
+    - { label: Service, key_pattern: "type:chore", max_count: 0 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: operations
+  scope: { service: auth-svc }
+  include: [infra_topology, owners, docs]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [infra_topology]
+  source_refs_min: 2
+  must_cite_event_id:
+    - repo_docs/infra_cache_strategy.json
+    - notion/cache_strategy.json
+  must_not_cite_event_id:
+    - noise/github_chore_noise_template.json
+    - noise/slack_chatter_noise_template.json
+
+judge:
+  pass_score: 65
+  criteria:
+    - name: auth_svc_only_cache_owner
+      weight: 26
+      pass_threshold: 4
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer state that auth-svc is the ONLY service owning a
+        dedicated Redis cache — redis(auth-cache) — and that no other
+        service (checkout-api, inventory-svc, payments-svc,
+        notifications-svc, analytics-pipeline, web-app) owns one? Claiming
+        widespread Redis caching fails this.
+    - name: what_is_cached
+      weight: 26
+      pass_threshold: 3
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer name what auth-svc caches — JWT public keys (JWKS),
+        session lookups, and resolved RBAC? Getting two of the three is
+        partial credit; naming none fails this.
+    - name: ttl_discipline
+      weight: 26
+      pass_threshold: 4
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer convey TTL discipline — every key has an explicit
+        TTL (JWKS ~1h, sessions ~30m, RBAC ~5m), Postgres (auth-prod-db) is
+        the source of truth, Redis is a read-through accelerator (outage
+        degrades latency not correctness)? An answer with no TTLs and no
+        source-of-truth distinction fails this.
+    - name: no_invented_services
+      weight: 22
+      pass_threshold: 5
+      dimensions: [INFRA]
+      prompt: |
+        Are all services named drawn from the canonical Acme service list
+        (checkout-api, inventory-svc, payments-svc, notifications-svc,
+        auth-svc, web-app, analytics-pipeline)? Treating a cache key
+        (jwks/session/rbac), Redis, or ElastiCache as if it were one of
+        Acme's own services fails this criterion.

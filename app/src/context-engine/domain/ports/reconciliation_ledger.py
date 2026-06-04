@@ -36,21 +36,6 @@ class ContextEventRow:
 
 
 @dataclass(slots=True)
-class EpisodeStepRow:
-    id: str
-    pot_id: str
-    event_id: str
-    sequence: int
-    step_kind: str
-    step_json: dict[str, Any]
-    status: str
-    attempt_count: int
-    applied_at: datetime | None
-    error: str | None
-    run_id: str | None
-
-
-@dataclass(slots=True)
 class ReconciliationRunRow:
     id: str
     event_id: str
@@ -132,7 +117,36 @@ class ReconciliationLedgerPort(Protocol):
 
     def record_event_reconciled(self, event_id: str) -> None: ...
 
+    def record_events_reconciled(self, event_ids: list[str]) -> None:
+        """Bulk ``record_event_reconciled``: ``→ reconciled`` for all ids in one
+        statement.
+
+        No-op on an empty list. All-or-nothing — a failure leaves none of the
+        ids transitioned, so a bulk completion never half-applies. Prefer this
+        over a per-event loop when closing a batch/chunk (the common path).
+        """
+
     def record_event_failed(self, event_id: str, error: str) -> None: ...
+
+    def record_events_failed(self, event_ids: list[str], error: str) -> None:
+        """Bulk ``record_event_failed``: ``→ failed`` for all ids in one
+        statement, sharing the batch/chunk-level ``error``.
+
+        No-op on an empty list. All-or-nothing, same as
+        ``record_events_reconciled``.
+        """
+
+    def fail_inflight_events(self, event_ids: list[str], error: str) -> int:
+        """``→ failed`` for ids still in a non-terminal state, return the count.
+
+        Unlike ``record_events_failed`` (an unconditional bulk set), this is
+        status-guarded: it only flips events currently ``received`` /
+        ``queued`` / ``processing``. Events a partially-completed batch
+        already drove to ``reconciled`` are left untouched, so the reaper
+        can fail a stuck batch's leftovers without clobbering work that
+        actually finished. No-op on an empty list.
+        """
+        ...
 
     def list_runs_for_event(self, event_id: str) -> list[ReconciliationRunRow]: ...
 
@@ -146,14 +160,21 @@ class ReconciliationLedgerPort(Protocol):
     def mark_event_for_retry(self, event_id: str) -> None:
         """Set event status to ``received`` so ``claim_event_for_processing`` can run again."""
 
+    def mark_events_for_retry(self, event_ids: list[str]) -> None:
+        """Bulk ``mark_event_for_retry``: set every id to ``received`` in one statement.
+
+        No-op on an empty list. All-or-nothing — a failure leaves none of
+        the ids transitioned, so a bulk retry never half-applies.
+        """
+
+    def mark_events_queued(self, event_ids: list[str]) -> None:
+        """Bulk ``mark_event_queued``: ``received`` → ``queued`` for all ids in one statement."""
+
     def delete_all_for_pot(self, pot_id: str) -> int:
         """Remove reconciliation rows for ``pot_id``; returns rows removed."""
 
     def mark_event_queued(self, event_id: str) -> None:
         """Transition ``received`` → ``queued`` (async ingestion)."""
-
-    def mark_event_episodes_queued(self, event_id: str) -> None:
-        """Planner finished persisting steps; apply workers will run."""
 
     def set_event_job_metadata(
         self,
@@ -164,40 +185,11 @@ class ReconciliationLedgerPort(Protocol):
     ) -> None:
         """Attach broker / correlation ids after enqueue."""
 
-    def replace_episode_steps_for_event(
-        self,
-        pot_id: str,
-        event_id: str,
-        run_id: str | None,
-        steps: list[tuple[int, str, dict[str, Any]]],
-    ) -> None:
-        """Replace all steps for an event: ``(sequence, step_kind, step_json)``."""
-
-    def list_episode_steps(self, event_id: str) -> list[EpisodeStepRow]: ...
-
-    def get_episode_step(
-        self, event_id: str, sequence: int
-    ) -> EpisodeStepRow | None: ...
-
-    def max_applied_sequence(self, event_id: str) -> int | None:
-        """Highest ``sequence`` with status ``applied``, or ``None`` if none."""
-
-    def update_episode_step_status(
-        self,
-        event_id: str,
-        sequence: int,
-        *,
-        status: str,
-        error: str | None = None,
-        increment_attempt: bool = False,
-    ) -> None: ...
-
     def summarize_pot_reconciliation(
         self,
         pot_id: str,
         *,
         recent_failure_limit: int = 5,
-        stuck_step_limit: int = 5,
     ) -> ReconciliationLedgerHealth:
-        """Per-pot reconciliation run + apply step health (for ``/status``)."""
+        """Per-pot reconciliation run health (for ``/status``)."""
         ...

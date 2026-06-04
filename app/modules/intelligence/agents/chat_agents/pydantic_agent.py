@@ -707,6 +707,23 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
+        # Seed the sandbox contextvars before any tool can fire. The
+        # non-streaming `run()` does this at the top too; without it the
+        # streaming path enters `_run_standard_stream` / `_run_multimodal_stream`
+        # with `_user_id_ctx` still at its default `None`, and the first
+        # sandbox tool call (e.g. sandbox_text_editor, sandbox_shell) fails
+        # with "SandboxRunContext.user_id is not set."
+        from app.modules.intelligence.tools.sandbox.context import (
+            set_run_context as _set_sandbox_run_context,
+        )
+
+        _set_sandbox_run_context(
+            user_id=ctx.user_id,
+            conversation_id=ctx.conversation_id,
+            branch=getattr(ctx, "branch", None),
+            local_mode=ctx.local_mode if hasattr(ctx, "local_mode") else False,
+        )
+
         has_images = ctx.has_images()
         has_documents = ctx.has_documents()
         has_multimodal_content = has_images or has_documents

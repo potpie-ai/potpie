@@ -1,7 +1,10 @@
-# Layered on top of /Users/nandan/Desktop/Dev/daytona/docker/docker-compose.yaml
-# by scripts/setup-daytona-local.sh.
+# Layered on top of the vendored Daytona stack at app/src/sandbox/daytona/
+# docker-compose.yaml by scripts/setup-daytona-local.sh. (When DAYTONA_REPO_PATH
+# is set, it layers on that clone's docker/docker-compose.yaml instead.)
+# Keep this file for potpie-specific local-dev tweaks; keep the vendored copy
+# pristine so re-vendoring a newer Daytona release stays a clean drop-in.
 #
-# Two changes:
+# Three changes:
 #   1. Move the Daytona dashboard host port from 3000 to ${DAYTONA_DASHBOARD_PORT}
 #      (default 3010) so port 3000 is free for the potpie frontend dev server.
 #      Inside the container the API still listens on 3000, so service-to-service
@@ -10,10 +13,17 @@
 #      `http://localhost:${DAYTONA_DASHBOARD_PORT}` redirect URIs in the
 #      daytona OIDC client. Without this, dashboard login fails with
 #      `invalid_redirect_uri` after the port move.
+#   3. Give the backing services (db, redis, dex, otel-collector, minio, jaeger,
+#      maildev, pgadmin) a `restart: unless-stopped` policy. Upstream's dev
+#      compose only restarts api/proxy/runner/registry, so after a Docker Desktop
+#      restart or host sleep the backing services stay down while the API
+#      crash-loops on `getaddrinfo ENOTFOUND redis` — taking the bundled
+#      dashboard (served by the API container) down with it. Restarting them
+#      keeps the stack — and the dashboard — alive across daemon restarts.
 #
-# `!override` is required for both fields. Compose merges list fields by
-# default (appending), which would leave the original `3000:3000` mapping live
-# and the unwanted dex config still mounted.
+# `!override` is required for the ports/volumes fields. Compose merges list
+# fields by default (appending), which would leave the original `3000:3000`
+# mapping live and the unwanted dex config still mounted.
 
 services:
   api:
@@ -67,6 +77,23 @@ services:
         exec node dist/apps/api/main.js
 
   dex:
+    restart: unless-stopped
     volumes: !override
       - ${POTPIE_SANDBOX_DIR:?set by setup-daytona-local.sh}/scripts/daytona-overrides/dex-config.yaml:/etc/dex/config.yaml
       - dex_db:/var/dex
+
+  # Backing services upstream leaves without a restart policy (see change #3).
+  db:
+    restart: unless-stopped
+  redis:
+    restart: unless-stopped
+  otel-collector:
+    restart: unless-stopped
+  minio:
+    restart: unless-stopped
+  jaeger:
+    restart: unless-stopped
+  maildev:
+    restart: unless-stopped
+  pgadmin:
+    restart: unless-stopped

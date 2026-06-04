@@ -84,7 +84,15 @@ SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --integration-only
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
+<<<<<<< HEAD:legacy/deployment/prod/celery/Jenkinsfile_CELERY_Prod
                     sh "cp legacy/.dockerignore .dockerignore && sudo docker build -f legacy/deployment/prod/celery/celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} \"${env.WORKSPACE}\""
+=======
+                    // --no-cache --pull: the celery image is deployed infrequently and
+                    // a stale layer cache on the build node has repeatedly shipped old
+                    // application code + supervisord conf under a correct commit tag.
+                    // A clean build is cheap insurance against silent staleness.
+                    sh "sudo docker build --no-cache --pull -f deployment/prod/celery/celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} \"${env.WORKSPACE}\""
+>>>>>>> origin/main:deployment/prod/celery/Jenkinsfile_CELERY_Prod
                 }
             }
         }

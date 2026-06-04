@@ -45,7 +45,15 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
+<<<<<<< HEAD:legacy/deployment/stage/celery/Jenkinsfile_CELERY
                     sh "cp legacy/.dockerignore .dockerignore && sudo docker build -f legacy/deployment/stage/celery/celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} ${env.WORKSPACE}"
+=======
+                    // --no-cache --pull: the celery image is deployed infrequently and
+                    // a stale layer cache on the build node has repeatedly shipped old
+                    // application code + supervisord conf under a correct commit tag.
+                    // A clean build is cheap insurance against silent staleness.
+                    sh "sudo docker build --no-cache --pull -f deployment/stage/celery/celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} ${env.WORKSPACE}"
+>>>>>>> origin/main:deployment/stage/celery/Jenkinsfile_CELERY
                 }
             }
         }
@@ -103,8 +111,26 @@ pipeline {
 
                     try {
                         sh """
+<<<<<<< HEAD:legacy/deployment/stage/celery/Jenkinsfile_CELERY
                         kubectl set image legacy/deployment/celery-api-deployment celery-api=${DOCKER_REGISTRY}/celery-api:${imageTag} -n ${params.namespace}
                         kubectl rollout status legacy/deployment/celery-api-deployment -n ${params.namespace}
+=======
+                        # The deployment mounts this ConfigMap over
+                        # /etc/supervisor/conf.d/celery-api-supervisord.conf.
+                        # Keep it in sync with the repo, otherwise Dockerfile
+                        # supervisor changes are hidden by the mounted file.
+                        kubectl create configmap celery-api-supervisord-config \
+                          --from-file=celery-api-supervisord.conf=deployment/stage/celery/celery-api-supervisord.conf \
+                          --dry-run=client -o yaml -n ${params.namespace} | kubectl apply -f -
+                        kubectl set env deployment/celery-api-deployment -n ${params.namespace} \
+                          CELERY_QUEUE_NAME=potpieSTG \
+                          CONTEXT_GRAPH_ENABLED=true \
+                          BEAT_ENABLED=true \
+                          CELERY_CONTEXT_CONCURRENCY=1 \
+                          CELERY_EVENTS_CONCURRENCY=1
+                        kubectl set image deployment/celery-api-deployment celery-api=${DOCKER_REGISTRY}/celery-api:${imageTag} -n ${params.namespace}
+                        kubectl rollout status deployment/celery-api-deployment -n ${params.namespace}
+>>>>>>> origin/main:deployment/stage/celery/Jenkinsfile_CELERY
                         """
                         imageDeploySucceeded = true
                     } catch (Exception e) {

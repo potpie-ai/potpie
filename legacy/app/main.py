@@ -270,7 +270,7 @@ class MainApp:
             logger.exception(
                 "Failed to ensure Daytona agent-sandbox snapshot at startup; "
                 "sandbox tools may fail until the snapshot is built manually "
-                "(see potpie/sandbox/scripts/build_agent_snapshot.py)"
+                "(see app/src/sandbox/scripts/build_agent_snapshot.py)"
             )
 
     async def shutdown_event(self):

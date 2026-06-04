@@ -1,9 +1,9 @@
 """End-to-end tests for the Daytona runtime backend against a real local stack.
 
-These tests require the docker-compose Daytona stack from
-`/Users/nandan/Desktop/Dev/daytona/docker/docker-compose.yaml` to be reachable
-at http://localhost:3000. When `DAYTONA_API_KEY` is not set the conftest
-fixture mints a dev key by scripting the dex OIDC login flow.
+These tests require the vendored Daytona compose stack
+(`app/src/sandbox/daytona/docker-compose.yaml`, brought up by `make daytona-up`)
+to be reachable. When `DAYTONA_API_KEY` is not set the conftest fixture mints a
+dev key by scripting the dex OIDC login flow.
 
 Each test creates a *real* Daytona sandbox, clones a small public repo into it,
 runs commands inside the managed runtime, and tears the sandbox back down so we

@@ -508,9 +508,7 @@ class SandboxClient:
             line_no = int(data.get("line_number") or 0)
             file_path = (data.get("path") or {}).get("text") or ""
             text = (data.get("lines") or {}).get("text") or ""
-            hits.append(
-                Hit(path=file_path, line=line_no, snippet=text.rstrip("\n"))
-            )
+            hits.append(Hit(path=file_path, line=line_no, snippet=text.rstrip("\n")))
             if max_hits is not None and len(hits) >= max_hits:
                 break
         return hits
@@ -548,7 +546,6 @@ class SandboxClient:
         # doesn't need to be loaded for every SandboxClient — only callers
         # that actually parse pay the cost.
         from sandbox.api.parser_wire import (
-            ParseArtifacts,
             WireFormatError,
             parse_stream,
         )
@@ -743,9 +740,7 @@ class SandboxClient:
         if set_upstream:
             cmd.append("--set-upstream")
         cmd.extend([remote, f"HEAD:{handle.branch}"])
-        result = await self.exec(
-            handle, cmd, command_kind=CommandKind.WRITE
-        )
+        result = await self.exec(handle, cmd, command_kind=CommandKind.WRITE)
         if result.exit_code != 0:
             raise SandboxOpError(
                 f"git push failed: {_err_payload(result)}", result=result
@@ -809,9 +804,9 @@ class SandboxClient:
         if auth is None:
             return []
         host = workspace.request.repo.provider_host or "github.com"
-        basic = base64.b64encode(
-            f"x-access-token:{auth.token}".encode()
-        ).decode("ascii")
+        basic = base64.b64encode(f"x-access-token:{auth.token}".encode()).decode(
+            "ascii"
+        )
         header = f"AUTHORIZATION: basic {basic}"
         # `-c` overrides config for this invocation only; the token
         # never lands on disk. The host scope is important — a global
@@ -978,9 +973,7 @@ def _safe_local_path(root: str, rel: str) -> Path:
         try:
             target.relative_to(root_path)
         except ValueError:
-            raise InvalidWorkspacePath(
-                f"path {rel!r} resolves outside workspace root"
-            )
+            raise InvalidWorkspacePath(f"path {rel!r} resolves outside workspace root")
     return target
 
 

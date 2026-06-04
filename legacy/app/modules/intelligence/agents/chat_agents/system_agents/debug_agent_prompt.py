@@ -16,10 +16,10 @@ from app.modules.intelligence.agents.chat_agents.system_agents.debug_hypothesis_
 
 _STATUS_VALUES = " | ".join(f'"{s.value}"' for s in HypothesisStatus)
 _DISCOVERY_LIST = "\n".join(
-    f"  {i+1}. `{tool}`" for i, tool in enumerate(DISCOVERY_PRIORITY_ORDER)
+    f"  {i + 1}. `{tool}`" for i, tool in enumerate(DISCOVERY_PRIORITY_ORDER)
 )
 
-debug_task_prompt = f"""  # nosec B608
+debug_task_prompt = f"""
 # Debugging Agent — Hypothesis-Driven Loop
 
 ## OUTPUT CONTRACT (read this first; violations break the UI)

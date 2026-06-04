@@ -9,16 +9,24 @@ import subprocess
 from pathlib import Path
 from typing import AsyncIterator
 
-from sandbox.domain.errors import RuntimeCommandRejected, RuntimeNotFound, RuntimeUnavailable
+from sandbox.domain.errors import (
+    RuntimeCommandRejected,
+    RuntimeNotFound,
+    RuntimeUnavailable,
+    SessionsUnsupported,
+)
 from sandbox.domain.models import (
     ExecChunk,
     ExecRequest,
     ExecResult,
+    ExecSessionResult,
     NetworkMode,
     Runtime,
     RuntimeCapabilities,
     RuntimeSpec,
     RuntimeState,
+    SessionExecRequest,
+    SessionInputRequest,
     new_id,
     utc_now,
 )
@@ -35,9 +43,21 @@ class DockerRuntimeProvider:
     kind = "docker"
     capabilities = RuntimeCapabilities(preview_url=False, interactive_session=False)
 
-    def __init__(self, *, docker_bin: str = "docker", name_prefix: str = "potpie-sandbox") -> None:
+    def __init__(
+        self,
+        *,
+        docker_bin: str = "docker",
+        name_prefix: str = "potpie-sandbox",
+        default_image: str = "python:3.12-slim",
+    ) -> None:
+        # ``default_image`` is the container image used when the caller
+        # didn't pin one on the ``RuntimeRequest`` / ``RuntimeSpec``. The
+        # bootstrap wires this from ``SandboxSettings.docker_image`` so
+        # ``SANDBOX_DOCKER_IMAGE`` actually changes the image Docker
+        # mode boots (previously the env var was read but unused).
         self.docker_bin = docker_bin
         self.name_prefix = name_prefix
+        self.default_image = default_image
         self._runtimes: dict[str, Runtime] = {}
 
     async def create(self, workspace_id: str, spec: RuntimeSpec) -> Runtime:
@@ -106,6 +126,39 @@ class DockerRuntimeProvider:
         if result.stderr:
             yield ExecChunk(stream="stderr", data=result.stderr)
 
+    # -- Unified exec sessions ------------------------------------------
+    # Not implemented yet for the Docker backend (would need `docker exec -i`
+    # PTY plumbing + an output pump). ``interactive_session=False`` advertises
+    # this; calls fail closed with a clear, typed error rather than silently
+    # degrading. Daytona (prod) and Local (dev/tests) carry the feature.
+    _SESSIONS_MSG = (
+        "DockerRuntimeProvider does not support unified-exec sessions yet; "
+        "use one-shot exec() or the Daytona/Local backends."
+    )
+
+    async def exec_session_start(
+        self, runtime: Runtime, request: SessionExecRequest
+    ) -> ExecSessionResult:
+        raise SessionsUnsupported(self._SESSIONS_MSG)
+
+    async def exec_session_write(
+        self, runtime: Runtime, request: SessionInputRequest
+    ) -> ExecSessionResult:
+        raise SessionsUnsupported(self._SESSIONS_MSG)
+
+    async def exec_session_poll(
+        self,
+        runtime: Runtime,
+        session_id: str,
+        *,
+        yield_time_ms: int,
+        max_output_bytes: int | None = None,
+    ) -> ExecSessionResult:
+        raise SessionsUnsupported(self._SESSIONS_MSG)
+
+    async def exec_session_kill(self, runtime: Runtime, session_id: str) -> None:
+        raise SessionsUnsupported(self._SESSIONS_MSG)
+
     def _create_container(self, runtime: Runtime) -> None:
         spec = runtime.spec
         if not spec.mounts:
@@ -132,7 +185,8 @@ class DockerRuntimeProvider:
                 cmd.extend(["--memory", f"{spec.resources.memory_mb}m"])
             if spec.resources.cpu:
                 cmd.extend(["--cpus", str(spec.resources.cpu)])
-        cmd.extend([spec.image, "tail", "-f", "/dev/null"])
+        image = spec.image or self.default_image
+        cmd.extend([image, "tail", "-f", "/dev/null"])
 
         result = self._run(cmd, 120)
         if result.returncode != 0:

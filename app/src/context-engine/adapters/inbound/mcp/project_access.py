@@ -71,7 +71,10 @@ def assert_mcp_pot_allowed(pot_id: str) -> None:
     if trust_all:
         if not _log_state.trust_all_logged:
             logger.warning(
-                "MCP CONTEXT_ENGINE_MCP_TRUST_ALL_POTS is enabled; any pot_id is accepted"
+                "SECURITY: CONTEXT_ENGINE_MCP_TRUST_ALL_POTS is enabled — "
+                "the MCP server accepts ANY pot_id with no per-pot access "
+                "check. Acceptable only for local stdio; NEVER expose the "
+                "MCP server over the network with this set."
             )
             _log_state.trust_all_logged = True
         return

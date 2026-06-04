@@ -13,25 +13,7 @@ def _register_stub_celery_queue() -> type:
     """Minimal stand-in for the host Celery adapter (no ``app`` import)."""
 
     class StubCeleryQueue:
-        def enqueue_backfill(
-            self, pot_id: str, *, target_repo_name: str | None = None
-        ) -> None:
-            return None
-
-        def enqueue_ingest_pr(
-            self,
-            pot_id: str,
-            pr_number: int,
-            *,
-            is_live_bridge: bool = True,
-            repo_name: str | None = None,
-        ) -> None:
-            return None
-
-        def enqueue_ingestion_event(self, event_id: str, *, pot_id: str, kind: str) -> None:
-            return None
-
-        def enqueue_episode_apply(self, pot_id: str, event_id: str, sequence: int) -> None:
+        def enqueue_batch(self, batch_id: str) -> None:
             return None
 
     mod = ModuleType("stub_celery_queue")

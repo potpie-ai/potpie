@@ -99,7 +99,7 @@ _cg_lc=$(printf '%s' "$_cg" | tr '[:upper:]' '[:lower:]')
 if [[ "$_cg_lc" != "false" && "$_cg_lc" != "0" && "$_cg_lc" != "no" && "$_cg_lc" != "off" && "$_cg_lc" != "" ]]; then
   CELERY_QUEUES="${CELERY_QUEUES},context-graph-etl"
 fi
-celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUES}" -E --concurrency=1 --pool=solo &
+celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUES}" -E --concurrency=1 --pool=solo -B --schedule=.celerybeat-schedule &
 CELERY_PID=$!
 
 # Keep this script in the foreground and forward Ctrl+C to app workers.

@@ -120,8 +120,7 @@ class FakeFs:
         self.lists.append(path)
         entries = self.dirs.get(path, [])
         return [
-            types.SimpleNamespace(name=n, is_dir=d, size=s)
-            for (n, d, s) in entries
+            types.SimpleNamespace(name=n, is_dir=d, size=s) for (n, d, s) in entries
         ]
 
 
@@ -272,7 +271,8 @@ class FakeDaytonaClient:
         if not labels:
             return list(self._sandboxes.values())
         return [
-            s for s in self._sandboxes.values()
+            s
+            for s in self._sandboxes.values()
             if all(s.labels.get(k) == v for k, v in labels.items())
         ]
 
@@ -325,7 +325,8 @@ async def test_daytona_workspace_bare_clones_and_creates_worktree() -> None:
 
     # Bare-clone via shell; auth embedded in URL.
     clone_cmds = [
-        str(c["command"]) for c in sandbox.process.commands
+        str(c["command"])
+        for c in sandbox.process.commands
         if "git clone --bare" in str(c.get("command"))
     ]
     assert len(clone_cmds) == 1
@@ -335,13 +336,16 @@ async def test_daytona_workspace_bare_clones_and_creates_worktree() -> None:
     assert sandbox.git.clones == []
 
     worktree_cmds = [
-        str(c["command"]) for c in sandbox.process.commands
+        str(c["command"])
+        for c in sandbox.process.commands
         if "worktree add" in str(c.get("command"))
     ]
     # Uses lowercase `-b` (fresh branch from base_ref) — never `-B` (which
     # would reset the branch and discard prior agent commits on re-runs).
     assert any(
-        bare_dir in cmd and worktree_dir in cmd and "-b" in cmd.split()
+        bare_dir in cmd
+        and worktree_dir in cmd
+        and "-b" in cmd.split()
         and "agent/edits-c1" in cmd
         for cmd in worktree_cmds
     )
@@ -400,14 +404,16 @@ async def test_two_branches_share_one_sandbox() -> None:
     assert client.create_calls == 1
     sandbox = client._sandboxes["sbx_1"]
     clone_cmds = [
-        c for c in sandbox.process.commands
+        c
+        for c in sandbox.process.commands
         if "git clone --bare" in str(c.get("command"))
     ]
     assert len(clone_cmds) == 1
     # Each branch got its own worktree path.
     assert ws_a.location.remote_path != ws_b.location.remote_path
     worktree_cmds = [
-        str(c["command"]) for c in sandbox.process.commands
+        str(c["command"])
+        for c in sandbox.process.commands
         if "worktree add" in str(c.get("command"))
     ]
     assert sum(1 for cmd in worktree_cmds if "agent/edits-c-a" in cmd) == 1
@@ -472,9 +478,7 @@ async def test_delete_workspace_keeps_sandbox_alive() -> None:
     request = WorkspaceRequest(
         user_id="u1",
         project_id="p1",
-        repo=RepoIdentity(
-            repo_name="owner/private", repo_url="https://x/.git"
-        ),
+        repo=RepoIdentity(repo_name="owner/private", repo_url="https://x/.git"),
         base_ref="main",
         mode=WorkspaceMode.EDIT,
         conversation_id="c1",
@@ -521,7 +525,9 @@ async def test_missing_snapshot_is_built_on_first_sandbox_creation(
         from_dockerfile=lambda path: {"dockerfile": str(path)}
     )
     fake_errors_mod = types.ModuleType("daytona.common.errors")
-    fake_errors_mod.DaytonaNotFoundError = type("DaytonaNotFoundError", (Exception,), {})  # type: ignore[attr-defined]
+    fake_errors_mod.DaytonaNotFoundError = type(
+        "DaytonaNotFoundError", (Exception,), {}
+    )  # type: ignore[attr-defined]
     fake_sandbox_mod = types.ModuleType("daytona.common.sandbox")
     fake_sandbox_mod.Resources = lambda **kw: kw  # type: ignore[attr-defined]
     monkeyed = {
@@ -600,7 +606,9 @@ async def test_snapshot_build_timeout_surfaces_runtime_unavailable(
 
     # Override snapshot.create so it raises a timeout-shaped error after a
     # short delay, simulating the SDK's `@with_timeout()` firing.
-    def slow_create(params: object, *, on_logs: object | None = None, timeout: float = 0):
+    def slow_create(
+        params: object, *, on_logs: object | None = None, timeout: float = 0
+    ):
         time.sleep(0.05)
         raise RuntimeError("Function 'create' exceeded timeout of 0.05 seconds.")
 
@@ -620,7 +628,9 @@ async def test_snapshot_build_timeout_surfaces_runtime_unavailable(
         from_dockerfile=lambda path: {"dockerfile": str(path)}
     )
     fake_errors_mod = types.ModuleType("daytona.common.errors")
-    fake_errors_mod.DaytonaNotFoundError = type("DaytonaNotFoundError", (Exception,), {})  # type: ignore[attr-defined]
+    fake_errors_mod.DaytonaNotFoundError = type(
+        "DaytonaNotFoundError", (Exception,), {}
+    )  # type: ignore[attr-defined]
     fake_errors_mod.DaytonaTimeoutError = type("DaytonaTimeoutError", (Exception,), {})  # type: ignore[attr-defined]
     fake_sandbox_mod = types.ModuleType("daytona.common.sandbox")
     fake_sandbox_mod.Resources = lambda **kw: kw  # type: ignore[attr-defined]
@@ -648,7 +658,8 @@ async def test_snapshot_build_timeout_surfaces_runtime_unavailable(
                     user_id="u1",
                     project_id="p1",
                     repo=RepoIdentity(
-                        repo_name="owner/repo", repo_url="https://github.com/owner/repo.git"
+                        repo_name="owner/repo",
+                        repo_url="https://github.com/owner/repo.git",
                     ),
                     base_ref="main",
                     mode=WorkspaceMode.EDIT,
@@ -717,9 +728,7 @@ async def test_existing_failed_snapshot_raises_immediately() -> None:
     from sandbox.domain.errors import RuntimeUnavailable
 
     client = FakeDaytonaClient()
-    client.snapshot = FakeSnapshotService(
-        existing=True, states=["build_failed"]
-    )
+    client.snapshot = FakeSnapshotService(existing=True, states=["build_failed"])
     provider = DaytonaWorkspaceProvider(
         client_factory=lambda: client,
         snapshot="potpie/agent-sandbox:0.1.0",
@@ -753,9 +762,7 @@ async def test_recovers_existing_sandbox_across_provider_restart() -> None:
         state="started",
         created_at="2026-04-28T12:00:00Z",
     )
-    survivor.process.fake_paths.add(
-        "/home/daytona/workspace/owner_repo/.bare/HEAD"
-    )
+    survivor.process.fake_paths.add("/home/daytona/workspace/owner_repo/.bare/HEAD")
     client.register(survivor)
 
     workspace_provider = DaytonaWorkspaceProvider(
@@ -773,9 +780,7 @@ async def test_recovers_existing_sandbox_across_provider_restart() -> None:
         WorkspaceRequest(
             user_id="u1",
             project_id="p1",
-            repo=RepoIdentity(
-                repo_name="owner/repo", repo_url="https://x/.git"
-            ),
+            repo=RepoIdentity(repo_name="owner/repo", repo_url="https://x/.git"),
             base_ref="main",
             mode=WorkspaceMode.EDIT,
             conversation_id="c1",
@@ -788,7 +793,8 @@ async def test_recovers_existing_sandbox_across_provider_restart() -> None:
     assert client.create_calls == 0
     # Bare clone was already on disk on the survivor — no re-clone happened.
     bare_clone_cmds = [
-        c for c in survivor.process.commands
+        c
+        for c in survivor.process.commands
         if "git clone --bare" in str(c.get("command"))
     ]
     assert bare_clone_cmds == []
@@ -886,7 +892,8 @@ async def test_recovery_handles_paginated_list_response() -> None:
             base = list(self._sandboxes.values())
             if labels:
                 base = [
-                    s for s in base
+                    s
+                    for s in base
                     if all(s.labels.get(k) == v for k, v in labels.items())
                 ]
             return _Paginated(base)
@@ -1209,6 +1216,7 @@ async def test_exec_recovery_no_labels_propagates_error() -> None:
     # from before the label stamping landed). Use dataclasses.replace
     # since RuntimeSpec is frozen.
     from dataclasses import replace as _dc_replace
+
     runtime.spec = _dc_replace(runtime.spec, labels={})
     await service._store.save_runtime(runtime)
 
@@ -1271,7 +1279,9 @@ async def test_daytona_runtime_write_bytes_uses_fs_upload() -> None:
         workspace.id, "/home/daytona/workspace/owner_private/x.txt", b"hello"
     )
     assert ok is True
-    assert sandbox.fs.uploads == [(b"hello", "/home/daytona/workspace/owner_private/x.txt")]
+    assert sandbox.fs.uploads == [
+        (b"hello", "/home/daytona/workspace/owner_private/x.txt")
+    ]
     # Parent dir created via fs.create_folder, not via shell mkdir.
     assert sandbox.fs.folders == [("/home/daytona/workspace/owner_private", "755")]
     # ``process.exec`` must not have run during the write — that was the
@@ -1312,7 +1322,8 @@ async def test_daytona_runtime_read_and_list_use_fs() -> None:
     sandbox = client.get(runtime.backend_runtime_id)
     sandbox.fs.files["/home/daytona/workspace/owner_private/x.txt"] = b"hi"
     sandbox.fs.dirs["/home/daytona/workspace/owner_private"] = [
-        ("x.txt", False, 2), ("subdir", True, None),
+        ("x.txt", False, 2),
+        ("subdir", True, None),
     ]
 
     body = await service.fs_read_file(
@@ -1555,7 +1566,10 @@ async def test_snapshot_build_passes_resources(tmp_path) -> None:
 
     assert len(captured) == 1
     snap_kwargs = captured[0]
-    assert snap_kwargs["resources"] == ("Resources", {"cpu": 4, "memory": 8, "disk": 20})
+    assert snap_kwargs["resources"] == (
+        "Resources",
+        {"cpu": 4, "memory": 8, "disk": 20},
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -1578,9 +1592,7 @@ def test_err_payload_prefers_stderr_falls_back_to_stdout() -> None:
     daytona_shape = ExecResult(exit_code=1, stdout=b"fatal: bad ref", stderr=b"")
     assert _err_payload(daytona_shape) == "fatal: bad ref"
 
-    split_shape = ExecResult(
-        exit_code=2, stdout=b"some progress", stderr=b"real error"
-    )
+    split_shape = ExecResult(exit_code=2, stdout=b"some progress", stderr=b"real error")
     assert _err_payload(split_shape) == "real error"
 
     empty = ExecResult(exit_code=0, stdout=b"", stderr=b"")
@@ -1610,7 +1622,7 @@ async def test_volume_off_uses_local_fs_bare_path() -> None:
         store=InMemorySandboxStore(),
         locks=InMemoryLockManager(),
     )
-    workspace = await service.get_or_create_workspace(
+    await service.get_or_create_workspace(
         WorkspaceRequest(
             user_id="u1",
             project_id="p1",
@@ -1625,7 +1637,10 @@ async def test_volume_off_uses_local_fs_bare_path() -> None:
         )
     )
 
-    assert workspace_provider._bare_path("owner/repo") == "/home/agent/work/owner_repo/.bare"
+    assert (
+        workspace_provider._bare_path("owner/repo")
+        == "/home/agent/work/owner_repo/.bare"
+    )
     assert client.volume.get_calls == []
     assert client.volume.create_calls == []
 
@@ -1725,16 +1740,22 @@ async def test_volume_on_get_or_creates_per_user_volume() -> None:
     # Both sandboxes mount the same volume; subpath differs.
     mount_a = captured[0]["volumes"][0]
     mount_b = captured[1]["volumes"][0]
-    assert mount_a == ("VolumeMount", {
-        "volume_id": "vol_1",
-        "mount_path": "/home/agent/work/.bare-cache",
-        "subpath": "p1",
-    })
-    assert mount_b == ("VolumeMount", {
-        "volume_id": "vol_1",
-        "mount_path": "/home/agent/work/.bare-cache",
-        "subpath": "p2",
-    })
+    assert mount_a == (
+        "VolumeMount",
+        {
+            "volume_id": "vol_1",
+            "mount_path": "/home/agent/work/.bare-cache",
+            "subpath": "p1",
+        },
+    )
+    assert mount_b == (
+        "VolumeMount",
+        {
+            "volume_id": "vol_1",
+            "mount_path": "/home/agent/work/.bare-cache",
+            "subpath": "p2",
+        },
+    )
     # Bare path lives inside the mount, not under <repo>/.bare.
     assert provider._bare_path("owner/repo") == "/home/agent/work/.bare-cache/.bare"
 

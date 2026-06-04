@@ -165,7 +165,10 @@ class IntegrationsService:
     async def refresh_sentry_token(self, integration_id: str) -> Dict[str, Any]:
         """Refresh expired Sentry access token"""
         try:
-            from integrations.adapters.outbound.crypto.token_encryption import decrypt_token, encrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import (
+                decrypt_token,
+                encrypt_token,
+            )
             import httpx
 
             # Get the integration from database
@@ -245,12 +248,16 @@ class IntegrationsService:
 
                     # Log sanitized error at error level
                     logger.error(
-                        f"Token refresh failed: {response.status_code} - {sanitized_error}"
-                    , response_status_code=response.status_code, sanitized_error=sanitized_error)
+                        f"Token refresh failed: {response.status_code} - {sanitized_error}",
+                        response_status_code=response.status_code,
+                        sanitized_error=sanitized_error,
+                    )
                     # Log full response body at debug level for detailed troubleshooting
                     logger.debug(
-                        f"Token refresh full response: status={response.status_code}, body={response.text}"
-                    , response_status_code=response.status_code, response_text=response.text)
+                        f"Token refresh full response: status={response.status_code}, body={response.text}",
+                        response_status_code=response.status_code,
+                        response_text=response.text,
+                    )
                     # Raise exception with minimal message
                     raise Exception(f"Token refresh failed: {response.status_code}")
 
@@ -286,8 +293,9 @@ class IntegrationsService:
                 self.db.refresh(db_integration)
 
                 logger.info(
-                    f"Integration {integration_id} tokens refreshed successfully"
-                , integration_id=integration_id)
+                    f"Integration {integration_id} tokens refreshed successfully",
+                    integration_id=integration_id,
+                )
 
                 return {
                     "success": True,
@@ -302,7 +310,9 @@ class IntegrationsService:
     async def get_valid_sentry_token(self, integration_id: str) -> str:
         """Get valid Sentry access token, refreshing if necessary"""
         try:
-            from integrations.adapters.outbound.crypto.token_encryption import decrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import (
+                decrypt_token,
+            )
 
             # Get the integration from database
             db_integration = (
@@ -331,14 +341,16 @@ class IntegrationsService:
                     if datetime.utcnow() >= expires_at:
                         # Token expired, refresh it
                         logger.info(
-                            f"Token expired for integration {integration_id}, refreshing..."
-                        , integration_id=integration_id)
+                            f"Token expired for integration {integration_id}, refreshing...",
+                            integration_id=integration_id,
+                        )
                         refresh_result = await self.refresh_sentry_token(integration_id)
                         return refresh_result["access_token"]
                 except ValueError:
                     logger.warning(
-                        f"Invalid expiration date format for integration {integration_id}"
-                    , integration_id=integration_id)
+                        f"Invalid expiration date format for integration {integration_id}",
+                        integration_id=integration_id,
+                    )
 
             # Token is still valid, decrypt and return it
             return decrypt_token(auth_data["access_token"])
@@ -500,8 +512,9 @@ class IntegrationsService:
 
                 if response.status_code != 200:
                     logger.error(
-                        f"Failed to get organization info: {response.status_code}"
-                    , response_status_code=response.status_code)
+                        f"Failed to get organization info: {response.status_code}",
+                        response_status_code=response.status_code,
+                    )
                     return None
 
                 organizations = response.json()
@@ -590,7 +603,9 @@ class IntegrationsService:
     ) -> Dict[str, Any]:
         """Save Sentry integration with authorization code (backend handles token exchange)"""
         try:
-            from integrations.adapters.outbound.crypto.token_encryption import encrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import (
+                encrypt_token,
+            )
 
             logger.info(
                 "Processing Sentry integration",
@@ -740,8 +755,9 @@ class IntegrationsService:
             self.db.commit()
             self.db.refresh(db_integration)
             logger.info(
-                f"Integration saved to database with encrypted tokens: {integration_id}"
-            , integration_id=integration_id)
+                f"Integration saved to database with encrypted tokens: {integration_id}",
+                integration_id=integration_id,
+            )
 
             # Return the integration data
             return {
@@ -809,13 +825,16 @@ class IntegrationsService:
             if db_integration:
                 logger.info(
                     f"Found Linear integration {db_integration.integration_id} "
-                    f"by org_id {organization_id}"
-                , db_integration_integration_id=db_integration.integration_id, organization_id=organization_id)
+                    f"by org_id {organization_id}",
+                    db_integration_integration_id=db_integration.integration_id,
+                    organization_id=organization_id,
+                )
                 return self._db_to_dict(db_integration)
 
             logger.warning(
-                f"No Linear integration found for organization {organization_id}"
-            , organization_id=organization_id)
+                f"No Linear integration found for organization {organization_id}",
+                organization_id=organization_id,
+            )
             return None
 
         except Exception as e:
@@ -888,7 +907,10 @@ class IntegrationsService:
                     ),
                 }
 
-                logger.info(f"Deleting integration: {integration_details}", integration_details=integration_details)
+                logger.info(
+                    f"Deleting integration: {integration_details}",
+                    integration_details=integration_details,
+                )
 
                 # Clean up Jira webhooks if this is a Jira integration
                 if db_integration.integration_type == "jira":
@@ -899,11 +921,15 @@ class IntegrationsService:
                 self.db.commit()
 
                 logger.info(
-                    f"Integration successfully deleted from database: {integration_id}"
-                , integration_id=integration_id)
+                    f"Integration successfully deleted from database: {integration_id}",
+                    integration_id=integration_id,
+                )
                 return True
             else:
-                logger.warning(f"Integration not found for deletion: {integration_id}", integration_id=integration_id)
+                logger.warning(
+                    f"Integration not found for deletion: {integration_id}",
+                    integration_id=integration_id,
+                )
                 return False
         except Exception:
             logger.exception(
@@ -932,11 +958,15 @@ class IntegrationsService:
 
             if not access_token or not site_id:
                 logger.warning(
-                    f"Cannot cleanup webhooks: missing access_token or site_id for integration {db_integration.integration_id}"
-                , db_integration_integration_id=db_integration.integration_id)
+                    f"Cannot cleanup webhooks: missing access_token or site_id for integration {db_integration.integration_id}",
+                    db_integration_integration_id=db_integration.integration_id,
+                )
                 logger.debug(
-                    f"auth_data: {auth_data}, scope_data: {scope_data}, metadata: {metadata}"
-                , auth_data=auth_data, scope_data=scope_data, metadata=metadata)
+                    f"auth_data: {auth_data}, scope_data: {scope_data}, metadata: {metadata}",
+                    auth_data=auth_data,
+                    scope_data=scope_data,
+                    metadata=metadata,
+                )
                 return
 
             access_token = decrypt_token(access_token)
@@ -957,13 +987,16 @@ class IntegrationsService:
                         if success:
                             deleted_count += 1
                             logger.info(
-                                f"Deleted Jira webhook {webhook_id} for integration {db_integration.integration_id}"
-                            , webhook_id=webhook_id, db_integration_integration_id=db_integration.integration_id)
+                                f"Deleted Jira webhook {webhook_id} for integration {db_integration.integration_id}",
+                                webhook_id=webhook_id,
+                                db_integration_integration_id=db_integration.integration_id,
+                            )
                         else:
                             failed_count += 1
                             logger.warning(
-                                f"Failed to delete Jira webhook {webhook_id}"
-                            , webhook_id=webhook_id)
+                                f"Failed to delete Jira webhook {webhook_id}",
+                                webhook_id=webhook_id,
+                            )
                     except Exception as e:
                         failed_count += 1
                         logger.error(
@@ -972,8 +1005,11 @@ class IntegrationsService:
 
             logger.info(
                 f"Webhook cleanup complete for integration {db_integration.integration_id}: "
-                f"{deleted_count} deleted, {failed_count} failed"
-            , db_integration_integration_id=db_integration.integration_id, deleted_count=deleted_count, failed_count=failed_count)
+                f"{deleted_count} deleted, {failed_count} failed",
+                db_integration_integration_id=db_integration.integration_id,
+                deleted_count=deleted_count,
+                failed_count=failed_count,
+            )
 
         except Exception:
             logger.exception("Error during webhook cleanup")
@@ -996,8 +1032,10 @@ class IntegrationsService:
                 setattr(db_integration, "updated_at", datetime.utcnow())
                 self.db.commit()
                 logger.info(
-                    f"Integration status updated: {integration_id} -> active: {active}"
-                , integration_id=integration_id, active=active)
+                    f"Integration status updated: {integration_id} -> active: {active}",
+                    integration_id=integration_id,
+                    active=active,
+                )
                 return True
             return False
         except Exception:
@@ -1074,8 +1112,11 @@ class IntegrationsService:
             # Log the update attempt
             old_name = str(db_integration.name)
             logger.info(
-                f"Updating integration name: {integration_id} from '{old_name}' to '{request.name}'"
-            , integration_id=integration_id, old_name=old_name, request_name=request.name)
+                f"Updating integration name: {integration_id} from '{old_name}' to '{request.name}'",
+                integration_id=integration_id,
+                old_name=old_name,
+                request_name=request.name,
+            )
 
             # Update only the name field
             setattr(db_integration, "name", request.name)
@@ -1256,8 +1297,9 @@ class IntegrationsService:
 
             if not db_integration:
                 logger.warning(
-                    f"Integration not found for deletion (schema): {integration_id}"
-                , integration_id=integration_id)
+                    f"Integration not found for deletion (schema): {integration_id}",
+                    integration_id=integration_id,
+                )
                 return IntegrationResponse(
                     success=False,
                     data=None,
@@ -1269,8 +1311,14 @@ class IntegrationsService:
 
             # Log integration details before deletion for audit trail
             logger.info(
-                f"Deleting integration (schema): integration_id='{integration_schema.integration_id}', name='{integration_schema.name}', type='{integration_schema.integration_type}', status='{integration_schema.status}', created_by='{integration_schema.created_by}', created_at='{integration_schema.created_at}'"
-            , integration_schema_integration_id=integration_schema.integration_id, integration_schema_name=integration_schema.name, integration_schema_integration_type=integration_schema.integration_type, integration_schema_status=integration_schema.status, integration_schema_created_by=integration_schema.created_by, integration_schema_created_at=integration_schema.created_at)
+                f"Deleting integration (schema): integration_id='{integration_schema.integration_id}', name='{integration_schema.name}', type='{integration_schema.integration_type}', status='{integration_schema.status}', created_by='{integration_schema.created_by}', created_at='{integration_schema.created_at}'",
+                integration_schema_integration_id=integration_schema.integration_id,
+                integration_schema_name=integration_schema.name,
+                integration_schema_integration_type=integration_schema.integration_type,
+                integration_schema_status=integration_schema.status,
+                integration_schema_created_by=integration_schema.created_by,
+                integration_schema_created_at=integration_schema.created_at,
+            )
 
             # Clean up Jira webhooks if this is a Jira integration
             if db_integration.integration_type == "jira":
@@ -1355,9 +1403,7 @@ class IntegrationsService:
             expires_dt: datetime | None = None
             if isinstance(exp_raw, str):
                 try:
-                    expires_dt = datetime.fromisoformat(
-                        exp_raw.replace("Z", "+00:00")
-                    )
+                    expires_dt = datetime.fromisoformat(exp_raw.replace("Z", "+00:00"))
                 except ValueError:
                     expires_dt = None
             elif isinstance(exp_raw, datetime):
@@ -1408,7 +1454,9 @@ class IntegrationsService:
                     ad["refresh_token"] = None
                     row.auth_data = ad
             if integration_ids:
-                from integrations.adapters.outbound.postgres.project_source_model import ProjectSource
+                from integrations.adapters.outbound.postgres.project_source_model import (
+                    ProjectSource,
+                )
 
                 linked_sources = (
                     self.db.query(ProjectSource)
@@ -1472,11 +1520,15 @@ class IntegrationsService:
             if db_integration:
                 logger.info(
                     f"Found Jira integration {db_integration.integration_id} "
-                    f"by site_id {site_id}"
-                , db_integration_integration_id=db_integration.integration_id, site_id=site_id)
+                    f"by site_id {site_id}",
+                    db_integration_integration_id=db_integration.integration_id,
+                    site_id=site_id,
+                )
                 return self._db_to_dict(db_integration)
 
-            logger.warning(f"No Jira integration found for site {site_id}", site_id=site_id)
+            logger.warning(
+                f"No Jira integration found for site {site_id}", site_id=site_id
+            )
             return None
 
         except Exception as e:
@@ -1504,14 +1556,19 @@ class IntegrationsService:
             if existing_integration:
                 logger.info(
                     f"Found existing Linear integration for organization {org_id} "
-                    f"by user {user_id}: {existing_integration.integration_id}"
-                , org_id=org_id, user_id=user_id, existing_integration_integration_id=existing_integration.integration_id)
+                    f"by user {user_id}: {existing_integration.integration_id}",
+                    org_id=org_id,
+                    user_id=user_id,
+                    existing_integration_integration_id=existing_integration.integration_id,
+                )
                 return self._db_to_dict(existing_integration)
 
             logger.info(
                 f"No existing Linear integration found for organization {org_id} "
-                f"by user {user_id}"
-            , org_id=org_id, user_id=user_id)
+                f"by user {user_id}",
+                org_id=org_id,
+                user_id=user_id,
+            )
             return None
 
         except Exception as e:
@@ -1568,8 +1625,10 @@ class IntegrationsService:
 
             if existing_integration:
                 logger.info(
-                    f"Found existing Jira integration for site {site_id}: {existing_integration.integration_id}"
-                , site_id=site_id, existing_integration_integration_id=existing_integration.integration_id)
+                    f"Found existing Jira integration for site {site_id}: {existing_integration.integration_id}",
+                    site_id=site_id,
+                    existing_integration_integration_id=existing_integration.integration_id,
+                )
                 return self._db_to_dict(existing_integration)
 
             logger.debug("No existing Jira integration found for site", site_id=site_id)
@@ -1584,7 +1643,9 @@ class IntegrationsService:
     ) -> Dict[str, Any]:
         """Save Linear integration with authorization code (backend handles token exchange)"""
         try:
-            from integrations.adapters.outbound.crypto.token_encryption import encrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import (
+                encrypt_token,
+            )
 
             # Validate the authorization code format and timing
             if not request.code or len(request.code) < 10:
@@ -1863,7 +1924,9 @@ class IntegrationsService:
     ) -> Dict[str, Any]:
         """Save Jira integration with authorization code"""
         try:
-            from integrations.adapters.outbound.crypto.token_encryption import encrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import (
+                encrypt_token,
+            )
 
             if not request.code or len(request.code) < 20:
                 raise Exception("Invalid authorization code format")
@@ -2035,8 +2098,9 @@ class IntegrationsService:
                                 }
                             )
                             logger.info(
-                                f"Stored webhook ID {webhook_id} in integration metadata"
-                            , webhook_id=webhook_id)
+                                f"Stored webhook ID {webhook_id} in integration metadata",
+                                webhook_id=webhook_id,
+                            )
 
                     except Exception as wh_exc:
                         logger.warning(
@@ -2136,8 +2200,9 @@ class IntegrationsService:
 
             if token_expired and encrypted_refresh_token:
                 logger.info(
-                    f"Access token expired for integration {integration_id}, refreshing..."
-                , integration_id=integration_id)
+                    f"Access token expired for integration {integration_id}, refreshing...",
+                    integration_id=integration_id,
+                )
                 try:
                     refresh_token = decrypt_token(encrypted_refresh_token)
                     new_tokens = await self.jira_oauth.refresh_access_token(
@@ -2145,7 +2210,9 @@ class IntegrationsService:
                     )
 
                     # Update tokens in database
-                    from integrations.adapters.outbound.crypto.token_encryption import encrypt_token
+                    from integrations.adapters.outbound.crypto.token_encryption import (
+                        encrypt_token,
+                    )
 
                     auth_data["access_token"] = encrypt_token(
                         new_tokens["access_token"]
@@ -2164,8 +2231,9 @@ class IntegrationsService:
 
                     access_token = new_tokens["access_token"]
                     logger.info(
-                        f"Successfully refreshed token for integration {integration_id}"
-                    , integration_id=integration_id)
+                        f"Successfully refreshed token for integration {integration_id}",
+                        integration_id=integration_id,
+                    )
                 except Exception as e:
                     raise Exception(f"Failed to refresh expired token: {str(e)}")
 
@@ -2201,7 +2269,7 @@ class IntegrationsService:
                 "site_id": context.get("site_id"),
                 "site_url": context.get("site_url"),
             }
-        except Exception as e:
+        except Exception:
             raise
 
     async def get_jira_projects(
@@ -2340,8 +2408,9 @@ class IntegrationsService:
                 try:
                     await self._cleanup_jira_webhooks(db_integration)
                     logger.info(
-                        f"Cleaned up webhooks for integration {db_integration.integration_id}"
-                    , db_integration_integration_id=db_integration.integration_id)
+                        f"Cleaned up webhooks for integration {db_integration.integration_id}",
+                        db_integration_integration_id=db_integration.integration_id,
+                    )
                 except Exception as webhook_error:
                     logger.error(
                         f"Failed to cleanup webhooks for integration {db_integration.integration_id}: {str(webhook_error)}"
@@ -2378,7 +2447,9 @@ class IntegrationsService:
     ) -> Dict[str, Any]:
         """Save Confluence integration with authorization code (associate with user_id)"""
         try:
-            from integrations.adapters.outbound.crypto.token_encryption import encrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import (
+                encrypt_token,
+            )
 
             if not request.code or len(request.code) < 20:
                 raise Exception("Invalid authorization code format")
@@ -2599,7 +2670,7 @@ class IntegrationsService:
                 "site_id": context.get("site_id"),
                 "site_url": context.get("site_url"),
             }
-        except Exception as e:
+        except Exception:
             raise
 
     async def get_confluence_spaces(

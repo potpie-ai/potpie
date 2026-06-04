@@ -27,6 +27,13 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = PROJECT_ROOT / "tests"
+SANDBOX_UNIT_TESTS_DIR = PROJECT_ROOT / "app" / "src" / "sandbox" / "tests" / "unit"
+# The context-engine package has its own nested pyproject.toml (separate
+# pytest rootdir) and tests that import ``scripts.*`` / fixtures relative to
+# that root, so its unit suite runs as a dedicated invocation with cwd there
+# rather than merged into the repo-root collection. It is the canonical
+# context-engine unit suite.
+CONTEXT_ENGINE_DIR = PROJECT_ROOT / "app" / "src" / "context-engine"
 
 
 BANNER_WIDTH = 72
@@ -40,8 +47,9 @@ def run_pytest(
     coverage: bool = False,
     coverage_append: bool = False,
     coverage_final: bool = False,
+    cwd: Path | None = None,
 ) -> int:
-    """Run pytest with project root as cwd; return exit code.
+    """Run pytest (cwd = project root unless overridden); return exit code.
     Uses addopts from pyproject.toml (-v -ra --durations=5) for clearer output."""
     env = os.environ.copy()
     if extra_env:
@@ -59,7 +67,7 @@ def run_pytest(
             cmd.append("--cov-fail-under=0")
     result = subprocess.run(
         cmd,
-        cwd=PROJECT_ROOT,
+        cwd=cwd or PROJECT_ROOT,
         env=env,
     )
     if phase_name is not None:
@@ -70,6 +78,23 @@ def run_pytest(
         )
         print(f"{'─' * BANNER_WIDTH}\n")
     return result.returncode
+
+
+def run_context_engine_unit(*pytest_extra: str) -> int:
+    """Run the canonical context-engine unit suite from its own rootdir.
+
+    The package has a nested pyproject.toml, so it must run with cwd there
+    (its tests import ``scripts.*`` and fixtures relative to that root). The
+    whole ``tests/unit`` tree is unit-level (no infra), so no marker filter is
+    applied. Coverage is not collected here — the suite imports the engine as
+    top-level packages (``domain``/``application``/``adapters``), not ``app.*``,
+    so it contributes nothing to ``--cov=app``."""
+    return run_pytest(
+        "tests/unit",
+        *pytest_extra,
+        phase_name="Context-engine unit",
+        cwd=CONTEXT_ENGINE_DIR,
+    )
 
 
 def main() -> int:
@@ -141,6 +166,10 @@ def main() -> int:
             coverage=args.coverage,
             coverage_final=True,
         )
+        if code != 0:
+            return code
+        print_phase_banner("Context-engine unit")
+        code = run_context_engine_unit(*args.pytest_extra)
         if code == 0 and args.coverage:
             print(f"HTML report: file://{PROJECT_ROOT / 'htmlcov' / 'index.html'}")
         return code
@@ -206,6 +235,14 @@ def main() -> int:
         phases.append((PHASE_REAL_PARSE, [str(TESTS_DIR), "-m", "real_parse"]))
     if run_stress:
         phases.append(("Stress", [str(TESTS_DIR), "-m", "stress"]))
+
+    # Canonical context-engine unit suite (own rootdir). Gate before the
+    # repo-root phases so engine regressions surface fast; it carries no
+    # coverage, so the coverage-append chain across the phases is unaffected.
+    print_phase_banner("Context-engine unit")
+    code = run_context_engine_unit(*args.pytest_extra)
+    if code != 0:
+        return code
 
     for i, (name, pytest_args) in enumerate(phases):
         print_phase_banner(name)
