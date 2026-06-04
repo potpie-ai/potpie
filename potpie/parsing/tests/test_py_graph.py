@@ -1,4 +1,4 @@
-from parsing import py_graph
+from parsing.py_graph import create_graph
 
 
 class TestPyGraph:
@@ -17,7 +17,7 @@ class Greeter:
 '''
         )
 
-        graph = py_graph.create_graph(str(tmp_path))
+        graph = create_graph(str(tmp_path))
 
         node_types = [data.get("type") for _, data in graph.nodes(data=True)]
 
