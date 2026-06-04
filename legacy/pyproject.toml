@@ -124,11 +124,11 @@ Issues = "https://github.com/potpie-ai/potpie/issues"
 override-dependencies = ["python-dotenv>=1.2.2", "openai>=2.7.1", "idna>=3.15"]
 
 [tool.uv.sources]
-potpie-parsing = { workspace = true }
-potpie-context-engine = { workspace = true, editable = true }
-potpie-integrations = { workspace = true, editable = true }
-potpie-sandbox = { workspace = true, editable = true }
-potpie-observability = { workspace = true, editable = true }
+potpie-parsing = { path = "../potpie/parsing" }
+potpie-context-engine = { path = "../potpie/context-engine", editable = true }
+potpie-integrations = { path = "../potpie/integrations", editable = true }
+potpie-sandbox = { path = "../potpie/sandbox", editable = true }
+potpie-observability = { path = "../potpie/observability", editable = true }
 
 [project.scripts]
 potpie-seed = "seed.cli:main"

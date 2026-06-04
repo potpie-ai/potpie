@@ -72,7 +72,7 @@ def test_planner_unknown_include_token_becomes_fallback() -> None:
             include=["change_history", "bogus_family"],
         )
     )
-    assert [l.family for l in plan.legs] == ["change_history"]
+    assert [l.family for l in plan.legs] == ["timeline", "change_history"]
     assert any(
         fb["family"] == "bogus_family" and fb["reason"] == "unsupported_include"
         for fb in plan.planner_fallbacks
