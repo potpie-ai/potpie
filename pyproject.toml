@@ -108,6 +108,7 @@ potpie-sandbox = { path = "app/src/sandbox", editable = true }
 observability = { path = "app/src/observability", editable = true }
 
 [project.scripts]
+potpie = "potpie.cli:main"
 potpie-seed = "seed.cli:main"
 
 [dependency-groups]
