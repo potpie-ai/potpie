@@ -14,4 +14,14 @@ dependencies = []
 packages = ["integrations"]
 
 [tool.hatch.build.targets.sdist]
-include = ["integrations"]
+include = ["integrations", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+markers = [
+    "integration: HTTP/router integration tests (legacy app host)",
+]
+

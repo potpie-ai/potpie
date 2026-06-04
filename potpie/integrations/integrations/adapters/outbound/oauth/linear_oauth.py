@@ -63,13 +63,19 @@ class LinearOAuth:
             logger.warning("Linear OAuth credentials not configured")
 
     def get_authorization_url(
-        self, redirect_uri: str, state: Optional[str] = None, scope: str = "read"
+        self,
+        redirect_uri: str,
+        state: Optional[str] = None,
+        scope: str = "read",
+        prompt: Optional[str] = "consent",
     ) -> str:
         """
         Generate authorization URL for OAuth flow
         Following: https://developers.linear.app/docs/oauth
+
+        ``prompt`` defaults to ``"consent"`` so Linear shows the workspace
+        picker every time instead of silently reusing a prior authorization.
         """
-        # Build query parameters with proper URL encoding
         params = {
             "client_id": self.client_id,
             "response_type": "code",
@@ -79,12 +85,11 @@ class LinearOAuth:
 
         if state:
             params["state"] = state
+        if prompt:
+            params["prompt"] = prompt
 
-        # Use urllib.parse.urlencode for proper URL encoding
         query_string = urllib.parse.urlencode(params, safe="")
-
-        auth_url = f"https://linear.app/oauth/authorize?{query_string}"
-        return auth_url
+        return f"https://linear.app/oauth/authorize?{query_string}"
 
     async def exchange_code_for_tokens(
         self, authorization_code: str, redirect_uri: str

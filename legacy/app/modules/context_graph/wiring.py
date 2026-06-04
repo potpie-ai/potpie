@@ -13,6 +13,13 @@ from bootstrap.queue_factory import get_context_graph_job_queue
 from adapters.outbound.reconciliation.factory import (
     try_pydantic_deep_reconciliation_agent,
 )
+from adapters.outbound.settings_env import (
+    context_engine_falkordb_graph_name,
+    context_engine_falkordb_lite_path,
+    context_engine_falkordb_mode,
+    context_engine_falkordb_url,
+    context_engine_graph_db_backend,
+)
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 from app.modules.context_graph.code_provider_source_control import (
     CodeProviderSourceControl,
@@ -85,6 +92,21 @@ class PotpieContextEngineSettings(ContextEngineSettingsPort):
         return int(
             self._cp.get_context_graph_config().get("backfill_max_prs_per_run", 100)
         )
+
+    def graph_db_backend(self) -> str:
+        return context_engine_graph_db_backend()
+
+    def falkordb_url(self) -> str | None:
+        return context_engine_falkordb_url()
+
+    def falkordb_graph_name(self) -> str:
+        return context_engine_falkordb_graph_name()
+
+    def falkordb_mode(self) -> str:
+        return context_engine_falkordb_mode()
+
+    def falkordb_lite_path(self) -> str:
+        return context_engine_falkordb_lite_path()
 
 
 def _resolved_pot_from_context_graph_row(

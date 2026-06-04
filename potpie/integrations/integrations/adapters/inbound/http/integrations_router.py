@@ -391,6 +391,65 @@ async def sentry_redirect_webhook(request: Request) -> Dict[str, Any]:
         )
 
 
+class LinearInitiateRequest(OAuthInitiateRequest):
+    """Body for ``POST /linear/initiate``.
+
+    The optional ``state`` field on the parent is ignored — identity comes
+    from ``AuthService.check_auth``, not the request body.
+    """
+
+    scope: str | None = None
+
+
+@router.post("/linear/initiate")
+async def initiate_linear_oauth(
+    body: LinearInitiateRequest,
+    request: Request,
+    user: dict = Depends(AuthService.check_auth),
+    linear_oauth: LinearOAuth = Depends(get_linear_oauth),
+) -> Dict[str, Any]:
+    """Server-side initiation for Linear OAuth.
+
+    Returns the Linear ``authorization_url`` with the authenticated user's id
+    signed into ``state``. The frontend redirects via
+    ``window.location.href = authorization_url``.
+    """
+    user_id = user["user_id"]
+
+    callback_redirect_uri = _linear_oauth_callback_redirect_uri(request)
+    requested_redirect_uri = body.redirect_uri or callback_redirect_uri
+    parsed = urllib.parse.urlparse(requested_redirect_uri)
+    if parsed.path != "/api/v1/integrations/linear/callback":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "redirect_uri must point at /api/v1/integrations/linear/callback "
+                "on this deployment"
+            ),
+        )
+
+    signed_state = _sign_oauth_state(user_id)
+    if not signed_state:
+        raise HTTPException(status_code=401, detail="Empty authenticated user_id")
+
+    scope = body.scope or "read"
+    auth_url = linear_oauth.get_authorization_url(
+        redirect_uri=requested_redirect_uri,
+        state=signed_state,
+        scope=scope,
+    )
+    logger.info(
+        "Linear OAuth initiated for user=%s redirect_uri=%s scope=%s",
+        hash_user_id(user_id),
+        requested_redirect_uri,
+        scope,
+    )
+    return {
+        "status": "success",
+        "authorization_url": auth_url,
+    }
+
+
 @router.get("/linear/redirect")
 async def linear_oauth_redirect(
     request: Request, linear_oauth: LinearOAuth = Depends(get_linear_oauth)
