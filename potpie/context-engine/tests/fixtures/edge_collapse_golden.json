@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "id": "pr_to_code_modified_stays_modified",
+      "relation_name": "MODIFIED",
+      "fact": "Pull request 42 modified app/api.py.",
+      "source_labels": ["PullRequest"],
+      "target_labels": ["FILE"],
+      "expected_name": "MODIFIED",
+      "expected_lifecycle": "unknown"
+    },
+    {
+      "id": "vague_modified_migration",
+      "relation_name": "MODIFIED",
+      "fact": "The billing service was migrated from Mongo to Postgres.",
+      "source_labels": ["Service"],
+      "target_labels": ["Database"],
+      "expected_name": "MIGRATED_TO",
+      "expected_lifecycle": "completed"
+    },
+    {
+      "id": "vague_modified_planned",
+      "relation_name": "MODIFIED",
+      "fact": "The search index will be rebuilt next quarter.",
+      "source_labels": ["Service"],
+      "target_labels": ["Component"],
+      "expected_name": "PLANNED",
+      "expected_lifecycle": "planned"
+    },
+    {
+      "id": "unknown_relation_falls_back",
+      "relation_name": "USES_MAGIC",
+      "fact": "The worker coordinates with the scheduler.",
+      "source_labels": ["Service"],
+      "target_labels": ["Service"],
+      "expected_name": "GENERIC_ACTION",
+      "expected_lifecycle": "unknown"
+    },
+    {
+      "id": "vague_modified_dependency",
+      "relation_name": "MODIFIED",
+      "fact": "The API gateway depends on Redis for rate limiting.",
+      "source_labels": ["Service"],
+      "target_labels": ["Dependency"],
+      "expected_name": "DEPENDS_ON",
+      "expected_lifecycle": "unknown"
+    }
+  ]
+}
