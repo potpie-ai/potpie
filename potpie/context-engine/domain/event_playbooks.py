@@ -327,6 +327,44 @@ _register(
 )
 
 
+# --- linear / linear_team / one_shot_ingest --------------------------------
+_register(
+    EventPlaybook(
+        source_system="linear",
+        event_type="linear_team",
+        action="one_shot_ingest",
+        summary=(
+            "One-time ingestion of a Linear team's recent projects, documents, "
+            "and issues into the context graph."
+        ),
+        available_data=(
+            "Payload carries team and count. The embedded skill below is "
+            "authoritative for the bounded list calls, drain order, key formats, "
+            "and mutation shapes."
+        ),
+        extract=_load_skill_body("linear_team_one_shot_ingestion.md"),
+        skip=(
+            "Do not page past the bounded list results. Do not fabricate missing "
+            "Linear projects, documents, issues, comments, or states. Do not emit "
+            "Fix nodes from issue filings alone."
+        ),
+        tool_hints=(
+            "linear_list_projects",
+            "linear_get_project",
+            "linear_list_documents",
+            "linear_get_document",
+            "linear_list_issues",
+            "linear_get_issue",
+            "apply_graph_mutations",
+            "mark_event_processed",
+            "finish_batch",
+        ),
+        max_tool_calls=400,
+        enables_planner=True,
+    )
+)
+
+
 # --- github / pull_request / merged ----------------------------------------
 _register(
     EventPlaybook(

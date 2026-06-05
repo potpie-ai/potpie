@@ -2,18 +2,51 @@
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
+
 import typer
 
 from adapters.inbound.cli.commands._common import (
     contract,
     emit,
+    fail,
     get_host,
     resolve_pot_id,
+)
+from adapters.outbound.cli_auth.potpie_api_config import (
+    resolve_potpie_api_base_url,
+    resolve_potpie_auth_config,
+)
+from adapters.outbound.http.potpie_context_api_client import (
+    PotpieContextApiClient,
+    PotpieContextApiError,
 )
 from domain.errors import CapabilityNotImplemented
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
 source_app = typer.Typer(help="Sources registered to a pot.")
+linear_team_app = typer.Typer(help="Linear teams attached to a context pot.")
+
+
+def _potpie_api_client() -> PotpieContextApiClient:
+    try:
+        return PotpieContextApiClient(
+            resolve_potpie_api_base_url(),
+            auth_headers_provider=lambda: resolve_potpie_auth_config().headers,
+            reauth_provider=lambda: resolve_potpie_auth_config(
+                force_refresh=True
+            ).headers,
+            client_surface="cli",
+            client_name="potpie-cli",
+        )
+    except ValueError as exc:
+        fail(
+            code="auth_missing",
+            message="Potpie API not configured.",
+            detail=str(exc),
+            next_action="run 'potpie login' or set POTPIE_API_KEY",
+        )
 
 
 @pot_app.command("list")
@@ -106,6 +139,66 @@ def pot_reset(
         )
 
 
+@linear_team_app.command("ingest")
+def linear_team_ingest(
+    team: str = typer.Argument(..., help="Linear team id or key, e.g. ENG."),
+    pot: str = typer.Option(None, "--pot", help="Pot id/name (default: active pot)."),
+    count: int = typer.Option(
+        120,
+        "--count",
+        min=1,
+        max=1000,
+        help="Soft per-kind item limit for the one-shot ingestion playbook.",
+    ),
+) -> None:
+    """Queue one-shot ingestion for a Linear team's recent graph history."""
+    with contract():
+        team_key = team.strip()
+        if not team_key:
+            raise ValueError("Linear team id/key is required.")
+
+        pid = resolve_pot_id(get_host(), pot)
+        source_id = f"one_shot_ingest:linear:{team_key.lower()}:{uuid.uuid4()}"
+        try:
+            status_code, data = _potpie_api_client().submit_event(
+                pot_id=pid,
+                source_system="linear",
+                event_type="linear_team",
+                action="one_shot_ingest",
+                source_id=source_id,
+                payload={"team": team_key, "count": count},
+                provider=None,
+                provider_host=None,
+                repo_name=None,
+                occurred_at=datetime.now(timezone.utc),
+            )
+        except PotpieContextApiError as exc:
+            fail(
+                code="api_error",
+                message="Linear ingest failed.",
+                detail=str(exc.detail),
+            )
+
+        out = {
+            "status": "queued" if status_code == 202 else data.get("status", "applied"),
+            "pot_id": pid,
+            "team": team_key,
+            "count": count,
+            "source_id": source_id,
+            "event_id": data.get("event_id"),
+            "batch_id": data.get("batch_id"),
+        }
+        if status_code == 409:
+            out["status"] = "duplicate"
+        emit(
+            out,
+            human=(
+                f"Queued Linear team ingest for {team_key} in pot {pid} "
+                f"(event {out.get('event_id') or 'unknown'})."
+            ),
+        )
+
+
 @pot_app.command("archive")
 def pot_archive(ref: str) -> None:
     with contract():
@@ -169,5 +262,7 @@ def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> Non
         host.pots.remove_source(pot_id=pot_id, source_id=source_id)
         emit({"removed": source_id}, human=f"removed source {source_id}")
 
+
+pot_app.add_typer(linear_team_app, name="linear-team")
 
 __all__ = ["pot_app", "source_app"]

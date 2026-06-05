@@ -262,11 +262,11 @@ class PotpieContextApiClient:
         source_system: str,
         event_type: str,
         action: str,
-        repo_name: str,
         source_id: str,
         payload: dict[str, Any] | None = None,
-        provider: str = "github",
-        provider_host: str = "github.com",
+        repo_name: str | None = None,
+        provider: str | None = "github",
+        provider_host: str | None = "github.com",
         event_id: str | None = None,
         ingestion_kind: str | None = None,
         occurred_at: datetime | None = None,
@@ -282,12 +282,15 @@ class PotpieContextApiClient:
             "source_system": source_system,
             "event_type": event_type,
             "action": action,
-            "repo_name": repo_name,
             "source_id": source_id,
-            "provider": provider,
-            "provider_host": provider_host,
             "payload": payload or {},
         }
+        if repo_name is not None:
+            body["repo_name"] = repo_name
+        if provider is not None:
+            body["provider"] = provider
+        if provider_host is not None:
+            body["provider_host"] = provider_host
         if event_id is not None:
             body["event_id"] = event_id
         if ingestion_kind is not None:
@@ -305,10 +308,19 @@ class PotpieContextApiClient:
                 detail = r.json().get("detail", {})
             except Exception:
                 detail = {}
-            if isinstance(detail, dict) and detail.get("error") == "duplicate_event":
+            if isinstance(detail, dict) and (
+                detail.get("error") == "duplicate_event" or detail.get("event_id")
+            ):
                 return r.status_code, detail
         self._raise_for_status(r)
         return r.status_code, {}
+
+    def classify_modified_edges(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /maintenance/classify-modified-edges (dry-run by default)."""
+        r = self.post_context("/maintenance/classify-modified-edges", json_body=body)
+        self._raise_for_status(r)
+        out = r.json()
+        return out if isinstance(out, dict) else {}
 
     def get_health(self) -> tuple[int, Optional[dict[str, Any]]]:
         """GET /health on the same host as base_url."""

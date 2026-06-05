@@ -93,6 +93,7 @@ include = [
 [tool.hatch.build.targets.sdist]
 include = [
     "domain",
+    "domain/playbooks/**/*.md",
     "application",
     "adapters",
     "bootstrap",

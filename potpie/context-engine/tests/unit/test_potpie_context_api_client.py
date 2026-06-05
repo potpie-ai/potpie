@@ -261,6 +261,52 @@ def test_client_ingest_queued(monkeypatch: pytest.MonkeyPatch) -> None:
     assert data["event_id"] == "e1"
 
 
+def test_submit_event_omits_non_repo_scope_fields_when_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: dict[str, Any] = {}
+
+    class FakeClient:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *a: Any) -> None:
+            pass
+
+        def post(self, url: str, **kwargs: Any) -> httpx.Response:
+            sent["url"] = url
+            sent["payload"] = kwargs.get("json")
+            return httpx.Response(202, json={"status": "queued", "event_id": "e1"})
+
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        FakeClient,
+    )
+    c = PotpieContextApiClient("http://example.com", "k")
+    code, data = c.submit_event(
+        pot_id="pot-1",
+        source_system="linear",
+        event_type="linear_team",
+        action="one_shot_ingest",
+        source_id="one_shot_ingest:linear:eng:42",
+        payload={"team": "ENG", "count": 120},
+        provider=None,
+        provider_host=None,
+        repo_name=None,
+    )
+
+    assert code == 202
+    assert data["event_id"] == "e1"
+    assert sent["url"].endswith("/api/v2/context/events/reconcile")
+    assert "provider" not in sent["payload"]
+    assert "provider_host" not in sent["payload"]
+    assert "repo_name" not in sent["payload"]
+    assert sent["payload"]["payload"] == {"team": "ENG", "count": 120}
+
+
 def test_client_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeClient:
         def __init__(self, *a: Any, **k: Any) -> None:
