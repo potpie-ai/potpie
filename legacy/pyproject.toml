@@ -24,7 +24,7 @@ classifiers = [
 dependencies = [
     "potpie-context-engine[all]>=0.1.0,<0.2.0",
     "potpie-integrations>=0.1.0,<0.2.0",
-    "aiohttp>=3.13.4",
+    "aiohttp>=3.14.0",
     "alembic>=1.17.1",
     "anthropic>=0.72.0",
     "logfire[litellm]>=3.2.0",
@@ -121,7 +121,13 @@ Issues = "https://github.com/potpie-ai/potpie/issues"
 # litellm>=1.83.10 clears CVE-2026-40217 (<1.83.10) but pins openai==2.24.0, which conflicts with
 # pydantic-ai + context-engine; override to the root stack. litellm still declares python-dotenv==1.0.1.
 # Root uses pydantic-ai-slim without the mistral extra so mistralai is not pulled (fixes universal lock on 3.13).
-override-dependencies = ["python-dotenv>=1.2.2", "openai>=2.7.1", "idna>=3.15"]
+override-dependencies = [
+    "python-dotenv>=1.2.2",
+    "openai>=2.7.1",
+    "idna>=3.15",
+    "aiohttp>=3.14.0",
+    "starlette>=1.0.1",
+]
 
 [tool.uv.sources]
 potpie-parsing = { path = "../potpie/parsing" }
