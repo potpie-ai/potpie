@@ -77,3 +77,12 @@ def test_jira_project_skill_uses_current_timeline_ontology_names() -> None:
     assert "`period_kind=\"daily\"`, `label=\"<yyyy-mm-dd>\"`" in body
     for stale in ("`MENTIONS`", "`AUTHORED`", "`DECIDED`", "`verb_class="):
         assert stale not in body
+
+
+def test_jira_project_skill_emits_project_lead_person() -> None:
+    _, body = _read_skill()
+
+    assert "**Entity** `Person` — the project lead" in body
+    assert "`person:<project_lead>`" in body
+    assert '`["Entity", "Person"]`' in body
+    assert "**Edge** `PERFORMED` — `person:<project_lead>` → activity" in body

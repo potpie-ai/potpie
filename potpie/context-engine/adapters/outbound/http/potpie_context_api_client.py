@@ -293,7 +293,11 @@ class PotpieContextApiClient:
         if r.status_code == 409:
             try:
                 detail = r.json().get("detail", {})
-                if isinstance(detail, dict) and detail.get("event_id"):
+                if (
+                    isinstance(detail, dict)
+                    and detail.get("event_id")
+                    and detail.get("error") == "duplicate_event"
+                ):
                     return r.status_code, detail
             except Exception:
                 pass

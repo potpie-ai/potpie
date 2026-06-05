@@ -398,6 +398,77 @@ def test_client_ingest_duplicate_409_returns_event_id(monkeypatch: pytest.Monkey
     assert data["event_id"] == "dup-123"
 
 
+def test_client_submit_event_duplicate_409_returns_event_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *a: Any) -> None:
+            pass
+
+        def post(self, *a: Any, **k: Any) -> httpx.Response:
+            return httpx.Response(
+                409,
+                json={"detail": {"error": "duplicate_event", "event_id": "dup-123"}},
+            )
+
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+    )
+    c = PotpieContextApiClient("http://example.com", "k")
+    code, data = c.submit_event(
+        pot_id="p",
+        source_system="jira",
+        event_type="jira_project",
+        action="one_shot_ingest",
+        source_id="sid",
+        payload={"project_key": "PROJ"},
+    )
+    assert code == 409
+    assert data["error"] == "duplicate_event"
+    assert data["event_id"] == "dup-123"
+
+
+def test_client_submit_event_non_duplicate_409_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeClient:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *a: Any) -> None:
+            pass
+
+        def post(self, *a: Any, **k: Any) -> httpx.Response:
+            return httpx.Response(
+                409,
+                json={"detail": {"error": "locked", "event_id": "conflict-1"}},
+            )
+
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+    )
+    c = PotpieContextApiClient("http://example.com", "k")
+    with pytest.raises(PotpieContextApiError) as exc_info:
+        c.submit_event(
+            pot_id="p",
+            source_system="jira",
+            event_type="jira_project",
+            action="one_shot_ingest",
+            source_id="sid",
+            payload={"project_key": "PROJ"},
+        )
+    assert exc_info.value.status_code == 409
+
+
 def test_client_ingest_non_duplicate_409_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeClient:
         def __init__(self, *a: Any, **k: Any) -> None:

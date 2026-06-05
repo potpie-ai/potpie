@@ -1017,15 +1017,24 @@ def pot_jira_project_ingest_cmd(
         "count": count,
         "source_id": source_id,
         "event_id": data.get("event_id"),
-        "batch_id": data.get("batch_id"),
+        "job_id": data.get("job_id") or data.get("batch_id"),
     }
     if status_code == 409:
         out["status"] = "duplicate"
     if j:
         print_json_blob(out, as_json=True)
     else:
+        status = str(out.get("status") or out.get("result") or "unknown").lower()
+        if status == "queued":
+            label = "Queued"
+        elif status == "duplicate":
+            label = "Duplicate"
+        elif status in {"applied", "success"}:
+            label = "Applied"
+        else:
+            label = f"Status: {status}"
         print_plain_line(
-            f"Queued Jira project ingest for {key} in pot {pid} "
+            f"{label} Jira project ingest for {key} in pot {pid} "
             f"(event {out.get('event_id') or 'unknown'}).",
             as_json=False,
         )

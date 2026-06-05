@@ -15,7 +15,7 @@ def test_cli_jira_project_ingest_submits_repo_less_event(
     class FakeClient:
         def submit_event(self, **kwargs: Any) -> tuple[int, dict[str, Any]]:
             sent.update(kwargs)
-            return 202, {"event_id": "evt-1", "batch_id": "batch-1"}
+            return 202, {"event_id": "evt-1", "job_id": "job-1"}
 
     monkeypatch.setattr(cli_main, "load_cli_env", lambda: None)
     monkeypatch.setattr(cli_main, "_pot_id_or_git", lambda pot_opt, cwd=None: "pot-1")
@@ -47,3 +47,23 @@ def test_cli_jira_project_ingest_submits_repo_less_event(
     assert sent["repo_name"] is None
     assert sent["source_id"].startswith("one_shot_ingest:jira:proj:")
     assert '"event_id": "evt-1"' in result.stdout
+    assert '"job_id": "job-1"' in result.stdout
+    assert '"batch_id"' not in result.stdout
+
+
+def test_cli_jira_project_ingest_plain_message_uses_status(monkeypatch) -> None:
+    class FakeClient:
+        def submit_event(self, **kwargs: Any) -> tuple[int, dict[str, Any]]:
+            return 409, {"error": "duplicate_event", "event_id": "evt-dup"}
+
+    monkeypatch.setattr(cli_main, "load_cli_env", lambda: None)
+    monkeypatch.setattr(cli_main, "_pot_id_or_git", lambda pot_opt, cwd=None: "pot-1")
+    monkeypatch.setattr(cli_main, "_cli_client_or_exit", lambda verbose: FakeClient())
+
+    result = CliRunner().invoke(
+        cli_main.app,
+        ["pot", "jira-project", "ingest", "PROJ", "--pot", "pot-1"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert result.stdout.startswith("Duplicate Jira project ingest")

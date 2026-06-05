@@ -379,6 +379,10 @@ Identity rules to respect (these are NOT free-form strings):
   - properties: `title=<project_name>`, `summary=<description>`,
     `source_uri=<project_url>`, `source="jira"`,
     `jira_project_key=<project_key>`.
+- **Entity** `Person` — the project lead, only if identified.
+  - key: `person:<project_lead>`.
+  - labels: `["Entity", "Person"]`.
+  - properties: include `display_name`, `email`, and `id` when available.
 - **Edge** `TOUCHED` — activity → document, with `valid_from=<occurred_at>`.
 - **Edge** `IN_PERIOD` — activity → period.
 - **Edge** `PERFORMED` — `person:<project_lead>` → activity, with
