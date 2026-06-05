@@ -1,4 +1,0 @@
-interface:
-  display_name: "Potpie CLI"
-  short_description: "Work on the Potpie CLI"
-  default_prompt: "Use $potpie-cli to update or explain the Potpie CLI in this repository."
