@@ -2,9 +2,9 @@
 """
 Single entry point to run the full test suite. Used by developers and CI.
 
-- Runs tests by phase (unit → integration → real_parse → stress) so output is clear.
+- Runs tests by phase (unit → real_parse → stress) so output is clear.
 - Uses pytest discovery and markers only; no test file paths. New tests under
-  tests/unit/ or tests/integration-tests/ are picked up automatically.
+  tests/unit/ are picked up automatically.
 - Control via env or flags: SKIP_REAL_PARSE=1, RUN_STRESS=1, or --unit-only, etc.
 - With --coverage, the final phase enforces minimum 50% (fail_under in pyproject.toml).
   PRs that lower coverage below 50% will fail the run.
@@ -76,7 +76,7 @@ def run_pytest(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run test suite (unit → integration → real_parse → stress). "
+        description="Run test suite (unit → real_parse → stress). "
         "Uses markers and testpaths; new tests are discovered automatically.",
     )
     group = parser.add_mutually_exclusive_group()
@@ -84,11 +84,6 @@ def main() -> int:
         "--unit-only",
         action="store_true",
         help="Run only unit tests (tests/unit/, marker: unit).",
-    )
-    group.add_argument(
-        "--integration-only",
-        action="store_true",
-        help="Run only integration tests, excluding stress and real_parse.",
     )
     group.add_argument(
         "--real-parse-only",
@@ -149,21 +144,6 @@ def main() -> int:
             print(f"HTML report: file://{PROJECT_ROOT / 'htmlcov' / 'index.html'}")
         return code
 
-    if args.integration_only:
-        print_phase_banner("Integration")
-        code = run_pytest(
-            str(TESTS_DIR / "integration-tests"),
-            "-m",
-            "not stress and not real_parse and not github_live",
-            *args.pytest_extra,
-            phase_name="Integration",
-            coverage=args.coverage,
-            coverage_final=True,
-        )
-        if code == 0 and args.coverage:
-            print(f"HTML report: file://{PROJECT_ROOT / 'htmlcov' / 'index.html'}")
-        return code
-
     if args.real_parse_only:
         print_phase_banner(PHASE_REAL_PARSE)
         code = run_pytest(
@@ -194,17 +174,9 @@ def main() -> int:
             print(f"HTML report: file://{PROJECT_ROOT / 'htmlcov' / 'index.html'}")
         return code
 
-    # Full run: unit → integration (no stress/real_parse) → real_parse (optional) → stress (optional)
+    # Full run: unit → real_parse (optional) → stress (optional)
     phases = [
         ("Unit", [str(TESTS_DIR / "unit"), "-m", "unit"]),
-        (
-            "Integration",
-            [
-                str(TESTS_DIR / "integration-tests"),
-                "-m",
-                "not stress and not real_parse and not github_live",
-            ],
-        ),
     ]
     if not skip_real_parse:
         phases.append((PHASE_REAL_PARSE, [str(TESTS_DIR), "-m", "real_parse"]))

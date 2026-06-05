@@ -71,12 +71,7 @@ from app.modules.code_provider.github.github_service import GithubService
 
 def pytest_ignore_collect(collection_path, config):
     path = collection_path.as_posix()
-    return (
-        "/tests/unit/context_graph/" in path
-        or path.endswith("/tests/unit/cli/test_potpie_skills.py")
-        or path.endswith("/tests/unit/intelligence/test_query_context_graph_tool.py")
-        or path.endswith("/tests/unit/integrations/test_linear_sync_graph.py")
-    )
+    return path.endswith("/tests/unit/cli/test_potpie_skills.py")
 
 
 # =================================================================
