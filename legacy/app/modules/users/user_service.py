@@ -30,7 +30,6 @@ class UserService:
         self.db = db
 
     def update_last_login(self, uid: str, oauth_token: str):
-        logger.info(f"Updating last login time for user with UID: {uid}")
         message: str = ""
         error: bool = False
         try:
@@ -64,10 +63,6 @@ class UserService:
         return message, error
 
     def create_user(self, user_details: CreateUser):
-        logger.info(
-            f"Creating user with email: {user_details.email} | display_name:"
-            f" {user_details.display_name}"
-        )
         new_user = User(
             uid=user_details.uid,
             email=user_details.email,
@@ -101,7 +96,6 @@ class UserService:
         user_service = UserService(self.db)
         user = user_service.get_user_by_uid(defaultUserId)
         if user:
-            print("Dummy user already exists")
             return
         else:
             now = utc_now()
@@ -148,10 +142,10 @@ class UserService:
             try:
                 return self.db.query(User).filter(User.email == email).first()
             except SQLAlchemyError as e:
-                logger.error(f"Database error fetching user by email {email}: {e}")
+                logger.error(f"Database error fetching user by email: {e}")
                 return None
             except Exception as e:
-                logger.error(f"Unexpected error fetching user by email {email}: {e}")
+                logger.error(f"Unexpected error fetching user by email: {e}")
                 return None
 
         return await asyncio.get_running_loop().run_in_executor(None, _query)
@@ -198,7 +192,7 @@ class AsyncUserService:
                 return user.uid
             return None
         except Exception as e:
-            logger.error("Error fetching user ID by email %s: %s", email, e)
+            logger.error("Error fetching user ID by email: %s", e)
             return None
 
     async def get_user_by_email(self, email: str) -> Optional[User]:
@@ -207,10 +201,10 @@ class AsyncUserService:
             result = await self.session.execute(stmt)
             return result.scalar_one_or_none()
         except SQLAlchemyError as e:
-            logger.error("Database error fetching user by email %s: %s", email, e)
+            logger.error("Database error fetching user by email: %s", e)
             return None
         except Exception as e:
-            logger.error("Unexpected error fetching user by email %s: %s", email, e)
+            logger.error("Unexpected error fetching user by email: %s", e)
             return None
 
     async def get_user_ids_by_emails(self, emails: List[str]) -> Optional[List[str]]:
@@ -220,7 +214,7 @@ class AsyncUserService:
             users = result.scalars().all()
             return [u.uid for u in users]
         except Exception as e:
-            logger.error("Error fetching user IDs by emails %s: %s", emails, e)
+            logger.error("Error fetching user IDs by emails: %s", e)
             return None
 
     async def create_user(self, user_details: CreateUser) -> Tuple[str, str, bool]:
