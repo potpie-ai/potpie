@@ -28,6 +28,45 @@ def context_engine_neo4j_password() -> str | None:
     return v or None
 
 
+def context_engine_graph_db_backend() -> str:
+    v = (os.getenv("GRAPH_DB_BACKEND") or "neo4j").strip().lower()
+    return v or "neo4j"
+
+
+def context_engine_falkordb_url() -> str | None:
+    v = (
+        os.getenv("CONTEXT_ENGINE_FALKORDB_URL") or os.getenv("FALKORDB_URL") or ""
+    ).strip()
+    return v or None
+
+
+def context_engine_falkordb_graph_name() -> str:
+    v = (
+        os.getenv("CONTEXT_ENGINE_FALKORDB_GRAPH_NAME")
+        or os.getenv("FALKORDB_GRAPH_NAME")
+        or ""
+    ).strip()
+    return v or "context_graph"
+
+
+def context_engine_falkordb_mode() -> str:
+    v = (
+        (os.getenv("CONTEXT_ENGINE_FALKORDB_MODE") or os.getenv("FALKORDB_MODE") or "")
+        .strip()
+        .lower()
+    )
+    return v or "lite"
+
+
+def context_engine_falkordb_lite_path() -> str:
+    v = (
+        os.getenv("CONTEXT_ENGINE_FALKORDB_LITE_PATH")
+        or os.getenv("FALKORDB_LITE_PATH")
+        or ""
+    ).strip()
+    return v or ".potpie/context_graph/falkordb.db"
+
+
 class EnvContextEngineSettings(ContextEngineSettingsPort):
     def is_enabled(self) -> bool:
         raw = os.getenv("CONTEXT_GRAPH_ENABLED")
@@ -59,42 +98,19 @@ class EnvContextEngineSettings(ContextEngineSettingsPort):
         return os.getenv("NEO4J_PASSWORD")
 
     def graph_db_backend(self) -> str:
-        v = (os.getenv("GRAPH_DB_BACKEND") or "neo4j").strip().lower()
-        return v or "neo4j"
+        return context_engine_graph_db_backend()
 
     def falkordb_url(self) -> str | None:
-        v = (
-            os.getenv("CONTEXT_ENGINE_FALKORDB_URL") or os.getenv("FALKORDB_URL") or ""
-        ).strip()
-        return v or None
+        return context_engine_falkordb_url()
 
     def falkordb_graph_name(self) -> str:
-        v = (
-            os.getenv("CONTEXT_ENGINE_FALKORDB_GRAPH_NAME")
-            or os.getenv("FALKORDB_GRAPH_NAME")
-            or ""
-        ).strip()
-        return v or "context_graph"
+        return context_engine_falkordb_graph_name()
 
     def falkordb_mode(self) -> str:
-        v = (
-            (
-                os.getenv("CONTEXT_ENGINE_FALKORDB_MODE")
-                or os.getenv("FALKORDB_MODE")
-                or ""
-            )
-            .strip()
-            .lower()
-        )
-        return v or "lite"
+        return context_engine_falkordb_mode()
 
     def falkordb_lite_path(self) -> str:
-        v = (
-            os.getenv("CONTEXT_ENGINE_FALKORDB_LITE_PATH")
-            or os.getenv("FALKORDB_LITE_PATH")
-            or ""
-        ).strip()
-        return v or ".potpie/context_graph/falkordb.db"
+        return context_engine_falkordb_lite_path()
 
     def backfill_max_prs_per_run(self) -> int:
         raw = os.getenv("CONTEXT_GRAPH_BACKFILL_MAX_PRS_PER_RUN", "100").strip()
