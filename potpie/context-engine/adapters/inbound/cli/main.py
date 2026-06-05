@@ -74,6 +74,7 @@ app = typer.Typer(
 
 pot_app = typer.Typer(help="Active pot and local pot helpers.")
 pot_repo_app = typer.Typer(help="Repositories attached to a context pot (Potpie API).")
+pot_jira_project_app = typer.Typer(help="Jira projects reachable from a context pot.")
 event_app = typer.Typer(help="Inspect and wait for ingestion events.")
 conflict_app = typer.Typer(help="Predicate-family conflicts (QualityIssue).")
 skills_app = typer.Typer(help="Manage repo-local Potpie agent skills.")
@@ -955,6 +956,82 @@ def pot_repo_add_cmd(
 
 
 pot_app.add_typer(pot_repo_app, name="repo")
+
+
+@pot_jira_project_app.command("ingest")
+def pot_jira_project_ingest_cmd(
+    project_key: str = typer.Argument(..., help="Jira project key, e.g. PROJ."),
+    pot_opt: str | None = typer.Option(
+        None,
+        "--pot",
+        help="Pot UUID or alias (default: active pot / git cwd).",
+    ),
+    count: int = typer.Option(
+        120,
+        "--count",
+        min=1,
+        max=1000,
+        help=(
+            "Soft per-kind item limit; default keeps the one-shot playbook "
+            "under its 400 tool-call budget."
+        ),
+    ),
+    cwd: str | None = typer.Option(
+        None,
+        "--cwd",
+        help="Git repo directory for pot inference when --pot is omitted.",
+    ),
+) -> None:
+    """Queue one-shot ingestion for a Jira project's recent epics and issues."""
+    load_cli_env()
+    j, v = _flags()
+    key = project_key.strip()
+    if not key:
+        emit_error("Invalid project", "Jira project key is required.", verbose=v)
+        raise typer.Exit(code=1)
+
+    pid = _pot_id_or_git(pot_opt, cwd=cwd)
+    client = _cli_client_or_exit(v)
+    source_id = f"one_shot_ingest:jira:{key.lower()}:{uuid.uuid4()}"
+    try:
+        status_code, data = client.submit_event(
+            pot_id=pid,
+            source_system="jira",
+            event_type="jira_project",
+            action="one_shot_ingest",
+            source_id=source_id,
+            payload={"project_key": key, "count": count},
+            provider=None,
+            provider_host=None,
+            repo_name=None,
+            occurred_at=datetime.now(timezone.utc),
+        )
+    except PotpieContextApiError as exc:
+        emit_error("Jira ingest failed", _format_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    out = {
+        "status": "queued" if status_code == 202 else data.get("status", "applied"),
+        "pot_id": pid,
+        "project_key": key,
+        "count": count,
+        "source_id": source_id,
+        "event_id": data.get("event_id"),
+        "batch_id": data.get("batch_id"),
+    }
+    if status_code == 409:
+        out["status"] = "duplicate"
+    if j:
+        print_json_blob(out, as_json=True)
+    else:
+        print_plain_line(
+            f"Queued Jira project ingest for {key} in pot {pid} "
+            f"(event {out.get('event_id') or 'unknown'}).",
+            as_json=False,
+        )
+
+
+pot_app.add_typer(pot_jira_project_app, name="jira-project")
 
 
 @pot_app.command("hard-reset")
