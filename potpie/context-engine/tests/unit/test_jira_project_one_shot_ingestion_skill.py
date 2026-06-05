@@ -71,11 +71,11 @@ def test_jira_project_skill_forbids_fix_from_issues() -> None:
 def test_jira_project_skill_uses_current_timeline_ontology_names() -> None:
     _, body = _read_skill()
 
-    assert "`TOUCHED`" in body
+    assert "`MENTIONS`" in body
     assert "`valid_from=<occurred_at>`" in body
     assert "`verb=\"jira_issue_<status-normalized>\"`" in body
     assert "`period_kind=\"daily\"`, `label=\"<yyyy-mm-dd>\"`" in body
-    for stale in ("`MENTIONS`", "`AUTHORED`", "`DECIDED`", "`verb_class="):
+    for stale in ("`TOUCHED`", "`SEEN_IN`", "`MADE_IN`", "`AUTHORED`", "`DECIDED`", "`verb_class="):
         assert stale not in body
 
 

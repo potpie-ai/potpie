@@ -296,8 +296,11 @@ Identity rules to respect (these are NOT free-form strings):
     - properties: `summary=<short canonical symptom sentence>`,
       `symptom_signature=<short canonical sentence>`,
       `title=<symptom title>`, `source_issue=<activity_key>`.
-  - **Edge** `SEEN_IN` — bug_pattern → service/component/environment key
-    when the issue identifies exactly one such affected scope; otherwise
+  - **Edge** `MENTIONS` — activity → bug_pattern, with
+    `valid_from=<occurred_at>`, so the issue Activity remains linked to
+    the bug evidence without pretending the Jira ticket is itself a Fix.
+  - **Edge** `REPRODUCES` — bug_pattern → service/component/environment
+    key, only when the issue identifies exactly one affected scope; otherwise
     omit (Jira issues are not bound to a repo/service scope by default).
   - **Do NOT emit `Fix`** from a Jira issue. Fix is reserved for the
     merged PR / commit that shipped the change. The GitHub one-shot
@@ -342,7 +345,7 @@ Identity rules to respect (these are NOT free-form strings):
     `summary=<1-2 sentence description summary>`, `source_uri=<epic_url>`,
     `source="jira"`, `jira_issue_key=<PROJ-12>`.
 - **Entity** `Person` for the reporter (if identified).
-- **Edge** `TOUCHED` — activity → document, with `valid_from=<occurred_at>`.
+- **Edge** `MENTIONS` — activity → document, with `valid_from=<occurred_at>`.
 - **Edge** `IN_PERIOD` — activity → period.
 - **Edge** `PERFORMED` — `person:<reporter>` → activity, with
   `valid_from=<occurred_at>`.
@@ -359,7 +362,8 @@ Identity rules to respect (these are NOT free-form strings):
     `rationale=<stated rationale>`,
     `alternatives_rejected=<list or string>`,
     `source_document=<document_key>`.
-  - **Edge** `MADE_IN` — decision key → document key.
+  - **Edge** `AFFECTS` — decision key → document key, recording that the
+    decision is grounded in this Jira epic document.
   - **Edge** `AFFECTS` — decision key → feature/component/service/code
     asset, ONLY when a single affected scope is clear. Otherwise omit
     AFFECTS.
@@ -383,7 +387,7 @@ Identity rules to respect (these are NOT free-form strings):
   - key: `person:<project_lead>`.
   - labels: `["Entity", "Person"]`.
   - properties: include `display_name`, `email`, and `id` when available.
-- **Edge** `TOUCHED` — activity → document, with `valid_from=<occurred_at>`.
+- **Edge** `MENTIONS` — activity → document, with `valid_from=<occurred_at>`.
 - **Edge** `IN_PERIOD` — activity → period.
 - **Edge** `PERFORMED` — `person:<project_lead>` → activity, with
   `valid_from=<occurred_at>`, only if a lead is identified.
