@@ -3,8 +3,12 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
-from app.modules.code_provider.github.github_service import GithubService
+from app.modules.code_provider.github.github_service import (
+    GithubErrorCode,
+    GithubService,
+)
 
 
 pytestmark = pytest.mark.unit
@@ -54,3 +58,53 @@ class TestGithubServiceInitializeTokens:
             assert GithubService.gh_token_list[2] == "token3"
             # Restore for other tests that may expect tokens
             GithubService.gh_token_list = []
+
+
+class TestGithubServiceUserAuth:
+    @pytest.mark.asyncio
+    async def test_get_repos_for_user_requires_user_oauth_token(self):
+        service = GithubService.__new__(GithubService)
+        service.is_development_mode = False
+        service.db = MagicMock()
+
+        user = MagicMock()
+        user.uid = "firebase-user-123"
+        user.provider_username = "octocat"
+
+        user_query = MagicMock()
+        user_query.filter.return_value.first.return_value = user
+        provider_query = MagicMock()
+        provider_query.filter.return_value.first.return_value = None
+        service.db.query.side_effect = [user_query, provider_query]
+
+        with patch.object(service, "get_github_oauth_token", return_value=None):
+            with patch.dict(
+                "os.environ",
+                {
+                    "GH_TOKEN_LIST": "shared-token",
+                    "CODE_PROVIDER_TOKEN": "system-token",
+                },
+                clear=False,
+            ):
+                with pytest.raises(HTTPException) as exc_info:
+                    await service.get_repos_for_user("firebase-user-123")
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["code"] == GithubErrorCode.AUTH_REQUIRED.value
+        assert exc_info.value.detail["action"] == "connect_github"
+        assert exc_info.value.detail["provider"] == "github"
+
+    def test_get_github_oauth_token_ignores_legacy_plaintext_provider_info(self):
+        service = GithubService.__new__(GithubService)
+        service.db = MagicMock()
+
+        user = MagicMock()
+        user.provider_info = {"access_token": "gho_legacy_plaintext_token"}
+
+        user_query = MagicMock()
+        user_query.filter.return_value.first.return_value = user
+        provider_query = MagicMock()
+        provider_query.filter.return_value.first.return_value = None
+        service.db.query.side_effect = [user_query, provider_query]
+
+        assert service.get_github_oauth_token("firebase-user-123") is None
