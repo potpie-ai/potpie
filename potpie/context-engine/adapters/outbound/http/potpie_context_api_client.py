@@ -262,11 +262,7 @@ class PotpieContextApiClient:
         repo_name: Optional[str] = None,
         occurred_at: Optional[datetime] = None,
     ) -> tuple[int, dict[str, Any]]:
-        """POST /events/reconcile for source-scoped reconciliation events.
-
-        NOTE: duplicated from Linear PR #839. Drop on rebase once that PR
-        lands.
-        """
+        """POST /events/reconcile for source-scoped reconciliation events."""
         body: dict[str, Any] = {
             "pot_id": pot_id,
             "source_system": source_system,
