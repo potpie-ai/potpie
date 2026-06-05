@@ -3,6 +3,8 @@ import os
 import secrets
 import re
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass
+from enum import Enum
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
@@ -51,6 +53,34 @@ except ImportError:
     redis_async = None  # type: ignore[assignment]
 
 logger = get_logger(__name__)
+
+
+class GithubErrorCode(str, Enum):
+    """Machine-readable codes for GitHub errors surfaced to the frontend."""
+
+    AUTH_REQUIRED = "GITHUB_AUTH_REQUIRED"
+
+
+@dataclass(frozen=True)
+class ErrorDetail:
+    """Structured, frontend-facing error payload for an HTTPException detail."""
+
+    code: str
+    message: str
+    action: str
+    provider: str = "github"
+
+    def as_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+
+GITHUB_ERRORS: Dict[GithubErrorCode, ErrorDetail] = {
+    GithubErrorCode.AUTH_REQUIRED: ErrorDetail(
+        code=GithubErrorCode.AUTH_REQUIRED.value,
+        message="GitHub OAuth token is missing or unusable. Connect GitHub again.",
+        action="connect_github",
+    ),
+}
 
 # Lazy async Redis client for project structure cache (shared across instances)
 _async_redis_cache: Optional[Any] = None
@@ -271,7 +301,7 @@ class GithubService:
 
     def get_github_oauth_token(self, uid: str) -> Optional[str]:
         """
-        Get user's GitHub OAuth token from UserAuthProvider (new system) or provider_info (legacy).
+        Get user's encrypted GitHub OAuth token from UserAuthProvider.
 
         Returns:
             OAuth token if available, None otherwise
@@ -305,44 +335,17 @@ class GithubService:
                     decrypted_token = decrypt_token(github_provider.access_token)
                     return decrypted_token
                 except Exception as e:
-                    # Check if token looks like a valid GitHub token (starts with gh* and ~40 chars)
-                    # If so, it might be plaintext from before encryption was added
-                    raw_token = github_provider.access_token
-                    is_likely_plaintext = (
-                        raw_token
-                        and len(raw_token) < 100  # Real tokens are short
-                        and (
-                            raw_token.startswith("gh")
-                            or raw_token.startswith("gho_")
-                            or raw_token.startswith("ghs_")
-                        )
+                    logger.error(
+                        "Failed to decrypt GitHub token for user %s: %s. "
+                        "User must reconnect GitHub before repository access.",
+                        uid,
+                        str(e),
                     )
-
-                    if is_likely_plaintext:
-                        logger.warning(
-                            "Failed to decrypt GitHub token for user %s: %s. "
-                            "Token looks like plaintext (backward compatibility), using as-is.",
-                            uid,
-                            str(e),
-                        )
-                        return raw_token
-                    else:
-                        # Token is likely encrypted but can't be decrypted
-                        # Don't use it - let code fall back to system tokens
-                        logger.error(
-                            "Failed to decrypt GitHub token for user %s: %s. "
-                            "Token appears to be encrypted (length=%d). "
-                            "Will fall back to system tokens.",
-                            uid,
-                            str(e),
-                            len(raw_token) if raw_token else 0,
-                        )
-                        # Don't return the encrypted token - it will cause 414 errors
-                        # Fall through to legacy system or system tokens
+                    return None
         except Exception as e:
             logger.debug("Error checking UserAuthProvider: %s", str(e))
 
-        # Fallback to legacy provider_info system
+        # Legacy provider_info tokens are plaintext; keep them out of user actions.
         if user.provider_info is None:
             logger.warning("User %s has no provider_info", uid)
             return None
@@ -360,7 +363,10 @@ class GithubService:
             logger.warning("User %s has no access_token in provider_info", uid)
             return None
 
-        return access_token
+        logger.warning(
+            "Ignoring legacy plaintext GitHub token in provider_info for user %s", uid
+        )
+        return None
 
     async def async_get_github_oauth_token(
         self, uid: str, session: AsyncSession
@@ -394,31 +400,11 @@ class GithubService:
                 try:
                     return decrypt_token(github_provider.access_token)
                 except Exception as e:
-                    raw_token = github_provider.access_token
-                    is_likely_plaintext = (
-                        raw_token
-                        and len(raw_token) < 100
-                        and (
-                            raw_token.startswith("gh")
-                            or raw_token.startswith("gho_")
-                            or raw_token.startswith("ghs_")
-                        )
-                    )
-                    if is_likely_plaintext:
-                        logger.warning(
-                            "Failed to decrypt GitHub token for user %s: %s. "
-                            "Token looks like plaintext (backward compatibility), using as-is.",
-                            uid,
-                            str(e),
-                        )
-                        return raw_token
                     logger.error(
                         "Failed to decrypt GitHub token for user %s: %s. "
-                        "Token appears to be encrypted (length=%d). "
-                        "Will fall back to system tokens.",
+                        "User must reconnect GitHub before repository access.",
                         uid,
                         str(e),
-                        len(raw_token) if raw_token else 0,
                     )
                     return None
         except Exception as e:
@@ -438,7 +424,10 @@ class GithubService:
         if not access_token:
             logger.warning("User %s has no access_token in provider_info", uid)
             return None
-        return access_token
+        logger.warning(
+            "Ignoring legacy plaintext GitHub token in provider_info for user %s", uid
+        )
+        return None
 
     def _parse_link_header(self, link_header: str) -> Dict[str, str]:
         """Parse GitHub Link header to extract pagination URLs."""
@@ -572,32 +561,15 @@ class GithubService:
                     detail="GitHub username not found. Please ensure your GitHub account is properly linked.",
                 )
 
-            # Fall back to system tokens if user OAuth token not available
             if not github_oauth_token:
-                logger.info(
-                    f"No user OAuth token for {firebase_uid}, falling back to system tokens",
-                    firebase_uid=firebase_uid,
+                logger.warning(
+                    "No usable GitHub OAuth token for user %s; frontend action required.",
+                    firebase_uid,
                 )
-                # Try GH_TOKEN_LIST first
-                token_list_str = os.getenv("GH_TOKEN_LIST", "")
-                if token_list_str:
-                    tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
-                    if tokens:
-                        github_oauth_token = secrets.choice(tokens)
-                        logger.info("Using token from GH_TOKEN_LIST as fallback")
-
-                # Fall back to CODE_PROVIDER_TOKEN if GH_TOKEN_LIST not available
-                if not github_oauth_token:
-                    github_oauth_token = os.getenv("CODE_PROVIDER_TOKEN")
-                    if github_oauth_token:
-                        logger.info("Using CODE_PROVIDER_TOKEN as fallback")
-
-                # If still no token, raise error
-                if not github_oauth_token:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="No GitHub authentication available (user OAuth token, GH_TOKEN_LIST, or CODE_PROVIDER_TOKEN)",
-                    )
+                raise HTTPException(
+                    status_code=400,
+                    detail=GITHUB_ERRORS[GithubErrorCode.AUTH_REQUIRED].as_dict(),
+                )
 
             user_github = Github(github_oauth_token)
 
@@ -1095,6 +1067,10 @@ class GithubService:
                     status_code=e.status if hasattr(e, "status") else 500,
                     detail=f"GitHub API error: {error_str}",
                 ) from e
+        except HTTPException:
+            # Intentional HTTP errors (e.g. GITHUB_AUTH_REQUIRED, user not found)
+            # must reach the frontend unchanged, not be masked as a generic 500.
+            raise
         except Exception as e:
             # Check if this is a 414 error that might have been wrapped
             error_str = str(e)
