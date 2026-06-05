@@ -8,6 +8,7 @@ import pytest
 from fastapi import Response
 
 from adapters.inbound.http.api.v1.context.router import (
+    ContextEventHttpBody,
     _EVENTS_INGEST_ALIAS_WARNING,
     _apply_events_ingest_alias_headers,
     _mark_events_ingest_alias,
@@ -69,3 +70,20 @@ def test_counter_is_reset_between_tests():
     assert events_ingest_alias_call_count() == 3
     reset_events_ingest_alias_counter()
     assert events_ingest_alias_call_count() == 0
+
+
+def test_context_event_http_body_accepts_non_repo_scoped_linear_event():
+    body = ContextEventHttpBody.model_validate(
+        {
+            "pot_id": "pot-1",
+            "source_system": "linear",
+            "event_type": "linear_team",
+            "action": "one_shot_ingest",
+            "source_id": "one_shot_ingest:linear:eng:42",
+            "payload": {"team": "ENG", "count": 120},
+        }
+    )
+
+    assert body.repo_name is None
+    assert body.provider is None
+    assert body.provider_host is None

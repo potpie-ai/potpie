@@ -248,6 +248,54 @@ class PotpieContextApiClient:
         out = r.json()
         return out if isinstance(out, dict) else {}
 
+    def submit_event(
+        self,
+        *,
+        pot_id: str,
+        source_system: str,
+        event_type: str,
+        action: str,
+        source_id: str,
+        payload: dict[str, Any],
+        provider: Optional[str] = None,
+        provider_host: Optional[str] = None,
+        repo_name: Optional[str] = None,
+        occurred_at: Optional[datetime] = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """POST /events/reconcile for source-scoped reconciliation events."""
+        body: dict[str, Any] = {
+            "pot_id": pot_id,
+            "source_system": source_system,
+            "event_type": event_type,
+            "action": action,
+            "source_id": source_id,
+            "payload": payload,
+        }
+        if provider is not None:
+            body["provider"] = provider
+        if provider_host is not None:
+            body["provider_host"] = provider_host
+        if repo_name is not None:
+            body["repo_name"] = repo_name
+        if occurred_at is not None:
+            body["occurred_at"] = occurred_at
+
+        r = self.post_context("/events/reconcile", json_body=body)
+        if r.status_code in (200, 202):
+            try:
+                return r.status_code, r.json()
+            except json.JSONDecodeError:
+                raise PotpieContextApiError(r.status_code, r.text) from None
+        if r.status_code == 409:
+            try:
+                detail = r.json().get("detail", {})
+                if isinstance(detail, dict) and detail.get("event_id"):
+                    return r.status_code, detail
+            except Exception:
+                pass
+        self._raise_for_status(r)
+        return r.status_code, {}
+
     def ingest(self, body: dict[str, Any], *, sync: bool) -> tuple[int, dict[str, Any]]:
         params = {"sync": "true"} if sync else None
         r = self.post_context("/ingest", json_body=body, params=params)

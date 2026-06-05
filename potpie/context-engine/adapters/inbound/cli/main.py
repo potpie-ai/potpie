@@ -74,6 +74,7 @@ app = typer.Typer(
 
 pot_app = typer.Typer(help="Active pot and local pot helpers.")
 pot_repo_app = typer.Typer(help="Repositories attached to a context pot (Potpie API).")
+pot_linear_team_app = typer.Typer(help="Linear teams attached to a context pot.")
 event_app = typer.Typer(help="Inspect and wait for ingestion events.")
 conflict_app = typer.Typer(help="Predicate-family conflicts (QualityIssue).")
 skills_app = typer.Typer(help="Manage repo-local Potpie agent skills.")
@@ -955,6 +956,82 @@ def pot_repo_add_cmd(
 
 
 pot_app.add_typer(pot_repo_app, name="repo")
+
+
+@pot_linear_team_app.command("ingest")
+def pot_linear_team_ingest_cmd(
+    team: str = typer.Argument(..., help="Linear team id or key, e.g. ENG."),
+    pot_opt: str | None = typer.Option(
+        None,
+        "--pot",
+        help="Pot UUID or alias (default: active pot / git cwd).",
+    ),
+    count: int = typer.Option(
+        120,
+        "--count",
+        min=1,
+        max=1000,
+        help=(
+            "Soft per-kind item limit; default keeps the one-shot playbook "
+            "under its 400 tool-call budget."
+        ),
+    ),
+    cwd: str | None = typer.Option(
+        None,
+        "--cwd",
+        help="Git repo directory for pot inference when --pot is omitted.",
+    ),
+) -> None:
+    """Queue one-shot ingestion for a Linear team's recent projects, documents, and issues."""
+    load_cli_env()
+    j, v = _flags()
+    team_key = team.strip()
+    if not team_key:
+        emit_error("Invalid team", "Linear team id/key is required.", verbose=v)
+        raise typer.Exit(code=1)
+
+    pid = _pot_id_or_git(pot_opt, cwd=cwd)
+    client = _cli_client_or_exit(v)
+    source_id = f"one_shot_ingest:linear:{team_key.lower()}:{uuid.uuid4()}"
+    try:
+        status_code, data = client.submit_event(
+            pot_id=pid,
+            source_system="linear",
+            event_type="linear_team",
+            action="one_shot_ingest",
+            source_id=source_id,
+            payload={"team": team_key, "count": count},
+            provider=None,
+            provider_host=None,
+            repo_name=None,
+            occurred_at=datetime.now(timezone.utc),
+        )
+    except PotpieContextApiError as exc:
+        emit_error("Linear ingest failed", _format_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    out = {
+        "status": "queued" if status_code == 202 else data.get("status", "applied"),
+        "pot_id": pid,
+        "team": team_key,
+        "count": count,
+        "source_id": source_id,
+        "event_id": data.get("event_id"),
+        "batch_id": data.get("batch_id"),
+    }
+    if status_code == 409:
+        out["status"] = "duplicate"
+    if j:
+        print_json_blob(out, as_json=True)
+    else:
+        print_plain_line(
+            f"Queued Linear team ingest for {team_key} in pot {pid} "
+            f"(event {out.get('event_id') or 'unknown'}).",
+            as_json=False,
+        )
+
+
+pot_app.add_typer(pot_linear_team_app, name="linear-team")
 
 
 @pot_app.command("hard-reset")
