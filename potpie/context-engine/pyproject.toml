@@ -6,10 +6,11 @@ build-backend = "hatchling.build"
 name = "potpie-context-engine"
 version = "0.1.0"
 description = "Context graph API, webhooks, CLI, and MCP (hexagonal)."
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
+    "keyring>=25.0.0",
     "mcp>=1.0.0",
     "rich>=13.0",
     "typer>=0.15.0",
@@ -22,9 +23,18 @@ postgres = [
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
 ]
+benchmarks = [
+    "pyyaml>=6.0",
+    "openai>=1.50.0",
+]
 graph = [
-    "graphiti-core>=0.28.0",
     "neo4j>=5.28.0",
+]
+falkordb = [
+    # FalkorDBLite (embedded) requires Python >= 3.12; marker keeps resolution
+    # valid across the project's wider requires-python range.
+    "falkordblite>=0.10.0; python_version >= '3.12'",
+    "redis>=7.1,<8",
 ]
 github = [
     "pygithub>=2.8.0",
@@ -35,14 +45,21 @@ reconciliation-agent = [
 hatchet = [
     "hatchet-sdk>=1.29.0",
 ]
+observability = [
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+    "opentelemetry-instrumentation-openai>=0.40b0",
+]
 all = [
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
-    "graphiti-core>=0.28.0",
     "neo4j>=5.28.0",
     "pygithub>=2.8.0",
     "pydantic-deep>=0.3.0",
     "hatchet-sdk>=1.29.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+    "opentelemetry-instrumentation-openai>=0.40b0",
 ]
 dev = [
     "pytest>=9.0.3",
@@ -51,17 +68,26 @@ dev = [
 ]
 
 [project.scripts]
-potpie = "adapters.inbound.cli.main:main"
+potpie = "adapters.inbound.cli.host_cli:main"
 potpie-mcp = "adapters.inbound.mcp.server:main"
 
+[tool.hatch.build.force-include]
+"adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "adapters/inbound/cli/ui/assets/potpie-logo-static.json"
+
 [tool.hatch.build.targets.wheel]
-packages = ["domain", "application", "adapters", "bootstrap", "benchmarks"]
+packages = ["domain", "application", "adapters", "bootstrap", "benchmarks", "host"]
 include = [
+    "domain/playbooks/**/*.md",
     "adapters/inbound/cli/templates/**/*.md",
     "adapters/inbound/cli/templates/**/*.yaml",
+    "adapters/inbound/cli/ui/assets/**/*.json",
+    "adapters/inbound/cli/ui/assets/**/*.svg",
     "scripts/**/*.py",
     "scripts/**/*.json",
-    "benchmarks/data/**/*.json",
+    "scripts/**/*.mjs",
+    "benchmarks/use_cases/**/*.yaml",
+    "benchmarks/fixtures/raw_events/**/*.json",
+    "benchmarks/_legacy/data/**/*.json",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -71,14 +97,18 @@ include = [
     "adapters",
     "bootstrap",
     "benchmarks",
+    "domain/playbooks/**/*.md",
     "adapters/inbound/cli/templates/**/*.md",
     "adapters/inbound/cli/templates/**/*.yaml",
+    "adapters/inbound/cli/ui/assets/**/*.json",
+    "adapters/inbound/cli/ui/assets/**/*.svg",
     "scripts/**/*.py",
     "scripts/**/*.json",
+    "scripts/**/*.mjs",
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py310"
 src = [".", "tests"]
 
 [tool.pytest.ini_options]
@@ -88,6 +118,8 @@ addopts = "-v --tb=short"
 asyncio_mode = "auto"
 markers = [
     "unit: unit tests",
+    "integration: integration tests (no external services required, but exercise real third-party libs)",
+    "cli_auth_e2e: opt-in live CLI auth tests (Linear/Jira/Confluence); requires RUN_CLI_AUTH_E2E=1",
 ]
 
 [dependency-groups]

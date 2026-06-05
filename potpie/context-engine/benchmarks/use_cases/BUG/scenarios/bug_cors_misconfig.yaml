@@ -1,0 +1,92 @@
+id: bug_cors_misconfig
+use_case: BUG
+tier: extended
+difficulty: easy
+source_mix: dual
+universe: acme
+
+description: |
+  The new German locale storefront (https://de.shop.acme.com) launched this
+  morning and browser fetches to checkout-api are being blocked by CORS — a
+  Datadog monitor shows ~1,240 blocked fetches/min from that origin. The
+  backend is healthy; the browser just won't use the responses.
+
+  Ground truth: there is a runbook (`runbooks/cors-misconfig.md`).
+  checkout-api keeps an explicit CORS allow-list of storefront origins; a new
+  storefront domain not in `CORS_ALLOWED_ORIGINS` gets its preflight rejected.
+  The fix is to add the specific origin to CORS_ALLOWED_ORIGINS (and the
+  per-env Helm value) — NEVER `allow_origins=['*']` with credentials (rejected
+  by browsers, forbidden by ADR-031).
+
+  A strong answer surfaces the runbook, identifies the missing-origin CORS
+  allow-list as the cause, and gives the concrete fix (add
+  https://de.shop.acme.com to CORS_ALLOWED_ORIGINS, redeploy, verify
+  preflight) without suggesting a wildcard.
+
+  Easy tier: alerting + repo_docs, recent, low distractors.
+
+ingest:
+  - { event: repo_docs/bug_cors_runbook.json, at: "-190d", tags: [signal] }
+  - { event: alerting/bug_cors_alert.json, at: "0d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/alerting_noise_template.json, at: "-40d..-2d", count: 3 }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): Document/Alert nodes are reconciled but the
+  # topology read surfaces only Service/DataStore. Runbook recall graded in
+  # retrieval + judge. Anchor on checkout-api + web-app.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*(checkout-api|web-app)", min_count: 1 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 4
+    failed_events_max: 0
+
+query:
+  intent: debugging
+  scope: { service: checkout-api }
+  include: [prior_bugs, infra_topology, timeline]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  source_refs_min: 1
+  must_cite_event_id:
+    - repo_docs/bug_cors_runbook.json
+  forbid_in_answer:
+    - "I don't have information"
+    - "no runbook"
+
+judge:
+  pass_score: 75
+  criteria:
+    - name: surfaces_prior_runbook
+      weight: 30
+      pass_threshold: 4
+      prompt: |
+        Does the answer surface runbooks/cors-misconfig.md (the runbook for
+        web-app → checkout-api CORS failures)?
+    - name: identifies_root_cause
+      weight: 25
+      pass_threshold: 3
+      prompt: |
+        Does the answer identify the cause as the new origin
+        (https://de.shop.acme.com) not being in checkout-api's
+        CORS_ALLOWED_ORIGINS allow-list, so the preflight is rejected?
+    - name: actionable_first_steps
+      weight: 25
+      pass_threshold: 3
+      prompt: |
+        Does the answer recommend adding the specific origin to
+        CORS_ALLOWED_ORIGINS (and the per-env Helm value) and redeploying —
+        WITHOUT suggesting allow_origins=['*'] with credentials (forbidden by
+        ADR-031)? Suggesting a wildcard fails this criterion.
+    - name: no_hallucination
+      weight: 20
+      pass_threshold: 5
+      prompt: |
+        Are all claims grounded? Valid references: checkout-api, web-app,
+        CORS_ALLOWED_ORIGINS, https://de.shop.acme.com, ADR-031,
+        runbooks/cors-misconfig.md, bench-user-1. Other services/people/files
+        are hallucinations.
