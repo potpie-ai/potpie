@@ -371,9 +371,9 @@ class ContextEventHttpBody(BaseModel):
     event_type: str
     action: str
     pot_id: str
-    provider: str = "github"
-    provider_host: str = "github.com"
-    repo_name: str
+    provider: Optional[str] = None
+    provider_host: Optional[str] = None
+    repo_name: Optional[str] = None
     source_id: str
     source_event_id: Optional[str] = None
     artifact_refs: list[str] = Field(default_factory=list)

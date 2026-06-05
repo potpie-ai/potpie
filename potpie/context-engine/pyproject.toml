@@ -57,6 +57,7 @@ potpie-mcp = "adapters.inbound.mcp.server:main"
 [tool.hatch.build.targets.wheel]
 packages = ["domain", "application", "adapters", "bootstrap", "benchmarks"]
 include = [
+    "domain/playbooks/**/*.md",
     "adapters/inbound/cli/templates/**/*.md",
     "adapters/inbound/cli/templates/**/*.yaml",
     "scripts/**/*.py",
@@ -67,6 +68,7 @@ include = [
 [tool.hatch.build.targets.sdist]
 include = [
     "domain",
+    "domain/playbooks/**/*.md",
     "application",
     "adapters",
     "bootstrap",
