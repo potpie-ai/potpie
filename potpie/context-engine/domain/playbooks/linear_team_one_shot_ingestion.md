@@ -126,7 +126,8 @@ within a batch parallelize up to `K`.
    - Read signals in PRIORITY ORDER:
      1. **Title** — author-stated headline (Spec / PRD / RFC / Runbook
         often prefixed).
-     2. **Creator** — single Person reference; the AUTHORED actor.
+     2. **Creator** — single Person reference; the actor on the document
+        Activity.
      3. **Project association** (if returned) — anchor to a project.
      4. **Content** (body) — only enough to derive a 1-2 sentence summary
         and to spot rationale + alternatives_rejected if this doc justifies
@@ -156,8 +157,8 @@ within a batch parallelize up to `K`.
    - Classify:
      - **Author / Creator handle** (the issue creator) and the
        **completer** (if the resolution comment / state-change identifies
-       one). For Linear, the creator drives PERFORMED; an assignee who
-       merged the implementation may drive AUTHORED on the same Activity.
+       one). For Linear, the creator drives `PERFORMED`; an assignee who
+       completed the work may also drive `PERFORMED` on the same Activity.
      - **Kind** — `feat | fix | chore | refactor | docs | spec | other`
        derived first from labels, then from identifier+title.
      - **Summary** — 1-2 sentence functional summary of what was
@@ -236,7 +237,8 @@ Identity rules to respect (these are NOT free-form strings):
 - **Entity** `Period` — one per distinct activity date in the batch.
   - key: `timeline:period:daily:<pot>:<yyyy-mm-dd>`.
   - labels: `["Entity", "Period"]`.
-  - properties: `period_kind="daily"`, `date="<yyyy-mm-dd>"`.
+  - properties: `period_kind="daily"`, `label="<yyyy-mm-dd>"`,
+    `opened_at="<yyyy-mm-dd>T00:00:00+00:00"`.
 
 ### Per ISSUE — always emit
 
@@ -244,7 +246,7 @@ Identity rules to respect (these are NOT free-form strings):
   - key: `activity:linear:issue:<identifier-lowered>`.
   - labels: `["Entity", "Activity"]`.
   - properties: `occurred_at=<created_at or completed_at>`,
-    `verb_class="linear_issue_<state>"` (e.g. `linear_issue_done`),
+    `verb="linear_issue_<state>"` (e.g. `linear_issue_done`),
     `title=<issue_title>`, `summary=<your 1-2 sentence summary>`,
     `identifier=<ENG-123>`, `state=<state>`, `kind` (feat/fix/...),
     `issue_url`.
@@ -253,9 +255,11 @@ Identity rules to respect (these are NOT free-form strings):
   - key: `person:<handle-lowered>`.
   - labels: `["Entity", "Person"]`.
   - properties: `name=<display_name>`, `handle=<handle>`.
-- **Edge** `PERFORMED` — `person:<creator>` → activity key.
-- **Edge** `AUTHORED` — `person:<assignee>` → activity key, only when
-  the assignee differs from the creator and the issue is `done`.
+- **Edge** `PERFORMED` — `person:<creator>` → activity key, with
+  `valid_from=<occurred_at>`.
+- **Edge** `PERFORMED` — `person:<assignee>` → activity key, with
+  `valid_from=<occurred_at>` and `role="assignee"`, only when the assignee
+  differs from the creator and the issue is `done`.
 - **Edge** `IN_PERIOD` — activity key → period key (date from
   `occurred_at`).
 
@@ -267,11 +271,12 @@ Identity rules to respect (these are NOT free-form strings):
     - key: `bug_pattern:linear-<team-slug>:<symptom-slug>` (segments
       slug-valid).
     - labels: `["Entity", "BugPattern"]`.
-    - properties: `symptom_signature=<short canonical sentence>`,
-      `name=<symptom title>`, `source_issue=<activity_key>`.
-  - **Edge** `REPRODUCES` — bug_pattern → repository key when the issue
-    has a clear linked Repository; otherwise omit (Linear issues are
-    not bound to a scope by default).
+    - properties: `summary=<short canonical symptom sentence>`,
+      `symptom_signature=<short canonical sentence>`,
+      `title=<symptom title>`, `source_issue=<activity_key>`.
+  - **Edge** `SEEN_IN` — bug_pattern → service/component/environment key
+    when the issue identifies exactly one such affected scope; otherwise
+    omit (Linear issues are not bound to a repo/service scope by default).
   - **Do NOT emit `Fix`** from a Linear issue. Fix is reserved for the
     merged PR / commit that shipped the change. The GitHub one-shot
     skill (sibling) emits Fix from merged PRs and writes the same
@@ -286,12 +291,14 @@ Identity rules to respect (these are NOT free-form strings):
     - key: `decision:<12-hex-sha256>` from
       `"linear:issue:<identifier>|decision|<title>"`.
     - labels: `["Entity", "Decision"]`.
-    - properties: `name=<short title>`, `rationale=<stated rationale>`,
+    - properties: `title=<short title>`,
+      `summary=<one sentence decision summary>`, `status="accepted"`,
+      `rationale=<stated rationale>`,
       `alternatives_rejected=<list or string>`,
       `source_issue=<activity_key>`.
-  - **Edge** `AFFECTS` — decision key → repository key when the issue's
-    linked PRs / repo references identify exactly one attached Repository;
-    otherwise omit (Linear issues are not bound to a scope by default).
+  - **Edge** `AFFECTS` — decision key → feature/component/service/code
+    asset when the issue identifies exactly one affected scope; otherwise
+    omit (Linear issues are often team-scoped, not code-scoped).
 
 ### Per PROJECT — always emit
 
@@ -299,35 +306,36 @@ Identity rules to respect (these are NOT free-form strings):
   - key: `activity:linear:project:<id-lowered>`.
   - labels: `["Entity", "Activity"]`.
   - properties: `occurred_at=<project_started_at or created_at>`,
-    `verb_class="linear_project_<state>"`, `title=<project_name>`,
+    `verb="linear_project_<state>"`, `title=<project_name>`,
     `summary=<your 1-2 sentence summary>`, `state=<state>`, `project_url`.
 - **Entity** `Document` — the project's description as a stable document.
   - key: `document:<12-hex-sha256>` from `"linear:project:<id>|<name>"`.
   - labels: `["Entity", "Document"]`.
-  - properties: `name=<project_name>`, `summary=<description>`,
-    `source="linear"`, `linear_project_id=<id>`.
-- **Edge** `MENTIONS` — activity → document.
+  - properties: `title=<project_name>`, `summary=<description>`,
+    `source_uri=<project_url>`, `source="linear"`, `linear_project_id=<id>`.
+- **Edge** `TOUCHED` — activity → document, with `valid_from=<occurred_at>`.
 - **Edge** `IN_PERIOD` — activity → period.
-- **Edge** `PERFORMED` — `person:<project_lead>` → activity, only if a
-  lead is identified.
+- **Edge** `PERFORMED` — `person:<project_lead>` → activity, with
+  `valid_from=<occurred_at>`, only if a lead is identified.
 
 ### Per DOCUMENT — always emit
 
 - **Entity** `Document`
   - key: `document:<12-hex-sha256>` from `"linear:document:<id>|<title>"`.
   - labels: `["Entity", "Document"]`.
-  - properties: `name=<title>`, `summary=<1-2 sentence content summary>`,
-    `source="linear"`, `linear_document_id=<id>`, `url=<doc_url>`.
+  - properties: `title=<title>`, `summary=<1-2 sentence content summary>`,
+    `source_uri=<doc_url>`, `source="linear"`, `linear_document_id=<id>`.
 - **Entity** `Activity` for the document's creation / last update.
   - key: `activity:linear:document:<id-lowered>`.
   - labels: `["Entity", "Activity"]`.
   - properties: `occurred_at=<updated_at or created_at>`,
-    `verb_class="linear_document_active"`, `title=<title>`,
+    `verb="linear_document_active"`, `title=<title>`,
     `summary=<your 1-2 sentence summary>`.
 - **Entity** `Person` for the creator (if identified).
-- **Edge** `MENTIONS` — activity → document.
+- **Edge** `TOUCHED` — activity → document, with `valid_from=<occurred_at>`.
 - **Edge** `IN_PERIOD` — activity → period.
-- **Edge** `PERFORMED` — `person:<creator>` → activity.
+- **Edge** `PERFORMED` — `person:<creator>` → activity, with
+  `valid_from=<occurred_at>`.
 
 ### Per DOCUMENT — conditionally emit
 
@@ -336,12 +344,15 @@ Identity rules to respect (these are NOT free-form strings):
   - **Entity** `Decision` keyed `decision:<12-hex-sha256>` from
     `"linear:document:<id>|decision|<title>"`.
   - labels: `["Entity", "Decision"]`.
-  - properties: `name=<short title>`, `rationale=<stated rationale>`,
+  - properties: `title=<short title>`,
+    `summary=<one sentence decision summary>`, `status="accepted"`,
+    `rationale=<stated rationale>`,
     `alternatives_rejected=<list or string>`,
     `source_document=<document_key>`.
-  - **Edge** `DECIDED` — decision key → repository key, ONLY when a single
-    attached Repository is clearly the affected scope (Linear documents
-    are usually team-scoped, not repo-scoped). Otherwise omit DECIDED.
+  - **Edge** `MADE_IN` — decision key → document key.
+  - **Edge** `AFFECTS` — decision key → feature/component/service/code
+    asset, ONLY when a single affected scope is clear. Otherwise omit
+    AFFECTS.
 
 ## Source-priority rationale (why)
 
