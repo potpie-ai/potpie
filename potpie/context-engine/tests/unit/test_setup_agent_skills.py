@@ -54,8 +54,7 @@ def test_post_setup_wizard_runs_skills_after_integrations(
 
     monkeypatch.setattr(setup_ux, "is_interactive_tty", lambda: True)
     monkeypatch.setattr(
-        interactive_prompts,
-        "prompt_yes_no",
+        "typer.confirm",
         lambda *_a, **_k: False,
     )
 

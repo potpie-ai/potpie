@@ -14,8 +14,7 @@ def test_maybe_prompt_github_login_runs_selected_integrations(
     calls: list[str] = []
 
     monkeypatch.setattr(
-        interactive_prompts,
-        "prompt_yes_no",
+        "typer.confirm",
         lambda *_a, **_k: False,
     )
     monkeypatch.setattr(
@@ -45,8 +44,7 @@ def test_maybe_prompt_github_login_runs_github_when_confirmed(
     calls: list[str] = []
 
     monkeypatch.setattr(
-        interactive_prompts,
-        "prompt_yes_no",
+        "typer.confirm",
         lambda *_a, **_k: True,
     )
     monkeypatch.setattr(

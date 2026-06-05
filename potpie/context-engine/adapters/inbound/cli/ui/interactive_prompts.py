@@ -350,7 +350,7 @@ def _print_subtle_separator(console: Console) -> None:
     )
 
 
-def prompt_first_pot_name(*, default: str = "default") -> str:
+def prompt_first_pot_name(*, default: str = "foo-pot") -> str:
     """Friendly post-setup prompt to name the user's first pot."""
     import typer
 

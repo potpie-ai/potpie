@@ -207,7 +207,7 @@ def maybe_prompt_github_login(
     *,
     repo: Path | None = None,
     setup_agent: str = "claude",
-    default_pot_name: str = "default",
+    default_pot_name: str = "foo-pot",
 ) -> None:
     """After setup: GitHub, integrations, then repo-local agent skill bundles."""
     if not is_interactive_tty():
@@ -215,13 +215,12 @@ def maybe_prompt_github_login(
 
     from adapters.inbound.cli.auth.auth_commands import run_integration_login
     from adapters.inbound.cli.auth.github_commands import github_login_impl
-    from adapters.inbound.cli.ui.interactive_prompts import (
-        prompt_multi_checkbox,
-        prompt_yes_no,
-    )
+    from adapters.inbound.cli.ui.interactive_prompts import prompt_multi_checkbox
+
+    import typer
 
     try:
-        confirmed = prompt_yes_no(
+        confirmed = typer.confirm(
             "Would you like to log in to GitHub now?",
             default=True,
         )

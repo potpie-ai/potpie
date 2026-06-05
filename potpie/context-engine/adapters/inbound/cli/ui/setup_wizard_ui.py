@@ -323,10 +323,6 @@ class SetupWizardUI:
             lines.append(
                 f"[{LOGO_COLOR}]✓[/{LOGO_COLOR}] Pot [bold]{escape(pot_name)}[/bold]"
             )
-        else:
-            lines.append(
-                f"[{LOGO_DIM_STYLE}]→[/] Name your first pot in the steps below"
-            )
         lines.extend(["", "Next: [bold]connect tools & agents[/bold]"])
         console.print("\n".join(lines))
         console.print(_subtle_green_separator(width))

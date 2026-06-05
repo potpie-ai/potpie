@@ -26,7 +26,7 @@ def register(root: typer.Typer) -> None:
     @root.command()
     def setup(
         repo: str = typer.Option(".", "--repo"),
-        pot: str = typer.Option("default", "--pot"),
+        pot: str = typer.Option("foo-pot", "--pot"),
         agent: str = typer.Option("claude", "--agent"),
         backend: str = typer.Option(
             None,

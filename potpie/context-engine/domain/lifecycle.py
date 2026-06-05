@@ -35,7 +35,7 @@ class SetupPlan:
     host_mode: str = "daemon"  # daemon | in_process — flips daemon/installer hardness
     backend: str = "embedded"  # embedded | postgres | neo4j | in_memory
     repo: str | None = "."
-    pot: str = "default"
+    pot: str = "foo-pot"
     agent: str = "claude"
     scan: bool = False
     assume_yes: bool = False
