@@ -11,6 +11,7 @@ from adapters.inbound.http.api.v1.context.router import (
     _EVENTS_INGEST_ALIAS_WARNING,
     _apply_events_ingest_alias_headers,
     _mark_events_ingest_alias,
+    ContextEventHttpBody,
     events_ingest_alias_call_count,
     reset_events_ingest_alias_counter,
 )
@@ -69,3 +70,20 @@ def test_counter_is_reset_between_tests():
     assert events_ingest_alias_call_count() == 3
     reset_events_ingest_alias_counter()
     assert events_ingest_alias_call_count() == 0
+
+
+def test_context_event_body_allows_repo_less_jira_event():
+    body = ContextEventHttpBody.model_validate(
+        {
+            "pot_id": "11111111-1111-4111-8111-111111111111",
+            "source_system": "jira",
+            "event_type": "jira_project",
+            "action": "one_shot_ingest",
+            "source_id": "one_shot_ingest:jira:proj:1",
+            "payload": {"project_key": "PROJ", "count": 3},
+        }
+    )
+
+    assert body.provider is None
+    assert body.provider_host is None
+    assert body.repo_name is None
