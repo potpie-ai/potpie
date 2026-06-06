@@ -1,0 +1,49 @@
+# Potpie Automated PR Review
+#
+# Copy this file to .github/workflows/potpie-pr-review.yml in your repository.
+#
+# One-time setup in your repo's GitHub settings:
+#   Settings -> Secrets and variables -> Actions -> New repository secret
+#   Name:  POTPIE_WEBHOOK_URL
+#   Value: https://<your-potpie-host>/api/v1/github/webhook
+#
+# That's it. Every new PR will get an automated Potpie review comment.
+
+name: Potpie PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  potpie-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Potpie PR Review
+        env:
+          POTPIE_WEBHOOK_URL: ${{ secrets.POTPIE_WEBHOOK_URL }}
+          GH_EVENT_ACTION: ${{ github.event.action }}
+          GH_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_PR_TITLE: ${{ github.event.pull_request.title }}
+          GH_BRANCH: ${{ github.event.pull_request.head.ref }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          payload=$(jq -n \
+            --arg action "$GH_EVENT_ACTION" \
+            --arg pr_number "$GH_PR_NUMBER" \
+            --arg pr_title "$GH_PR_TITLE" \
+            --arg branch "$GH_BRANCH" \
+            --arg repo "$GH_REPO" \
+            '{
+              action: $action,
+              pull_request: {
+                number: ($pr_number | tonumber),
+                title: $pr_title,
+                head: { ref: $branch }
+              },
+              repository: { full_name: $repo }
+            }')
+
+          curl -sf -X POST "$POTPIE_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$payload"
