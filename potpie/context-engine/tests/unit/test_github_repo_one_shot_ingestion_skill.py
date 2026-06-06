@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ SKILL_PATH = (
 
 
 def _read_skill() -> tuple[dict[str, str], str]:
+    """Parse the playbook frontmatter and body; assert the file is well-formed."""
     raw = SKILL_PATH.read_text(encoding="utf-8")
     assert raw.startswith("---\n")
     end = raw.find("\n---\n", 4)
@@ -32,6 +34,7 @@ def _read_skill() -> tuple[dict[str, str], str]:
 
 
 def test_github_repo_skill_frontmatter_targets_one_shot_event() -> None:
+    """Frontmatter must target the (github, github_repo, one_shot_ingest) event triple."""
     frontmatter, _ = _read_skill()
 
     assert frontmatter["source_system"] == "github"
@@ -41,6 +44,7 @@ def test_github_repo_skill_frontmatter_targets_one_shot_event() -> None:
 
 
 def test_github_repo_skill_uses_bounded_list_calls() -> None:
+    """Playbook must use exactly one bounded list call per kind and prohibit pagination."""
     _, body = _read_skill()
 
     assert 'github_list_commits(repo=repo, limit=count)' in body
@@ -50,6 +54,7 @@ def test_github_repo_skill_uses_bounded_list_calls() -> None:
 
 
 def test_github_repo_skill_allows_fix_from_merged_prs() -> None:
+    """Playbook must allow Fix emission from merged PRs (unlike the Linear sibling skill)."""
     _, body = _read_skill()
     lowered = body.lower()
 
@@ -60,14 +65,15 @@ def test_github_repo_skill_allows_fix_from_merged_prs() -> None:
 
 
 def test_github_repo_skill_forbids_fix_from_issues() -> None:
+    """Playbook must explicitly forbid Fix and RESOLVED emission from GitHub issues."""
     _, body = _read_skill()
-    lowered = body.lower()
 
-    assert "do not emit `fix` from a github issue" in lowered
-    assert "do not emit `resolved` from a github issue" in lowered
+    assert re.search(r"do\s+not\s+emit\s+`[Ff]ix`\s+from\s+a\s+github\s+issue", body, re.IGNORECASE)
+    assert re.search(r"do\s+not\s+emit\s+`[Rr]esolved`\s+from\s+a\s+github\s+issue", body, re.IGNORECASE)
 
 
 def test_github_repo_skill_uses_current_timeline_ontology_names() -> None:
+    """Playbook must use current ontology edge names and forbid stale aliases."""
     _, body = _read_skill()
 
     assert "`PERFORMED`" in body
@@ -80,6 +86,7 @@ def test_github_repo_skill_uses_current_timeline_ontology_names() -> None:
 
 
 def test_github_repo_skill_bugpattern_key_converges_with_linear() -> None:
+    """BugPattern keys must be stable and designed to converge with the Linear sibling skill."""
     _, body = _read_skill()
 
     assert "bug_pattern:github-<repo-slug>:<symptom-slug>" in body
