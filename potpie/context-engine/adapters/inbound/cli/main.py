@@ -955,6 +955,89 @@ def pot_repo_add_cmd(
         )
 
 
+@pot_repo_app.command("ingest")
+def pot_repo_ingest_cmd(
+    owner_repo: str = typer.Argument(
+        ...,
+        help="GitHub repository as owner/repo (e.g. acme/api).",
+    ),
+    pot_opt: str | None = typer.Option(
+        None,
+        "--pot",
+        help="Pot UUID or alias (default: active pot / git cwd).",
+    ),
+    count: int = typer.Option(
+        120,
+        "--count",
+        min=1,
+        max=1000,
+        help=(
+            "Soft per-kind item limit; default keeps the one-shot playbook "
+            "under its 400 tool-call budget."
+        ),
+    ),
+    cwd: str | None = typer.Option(
+        None,
+        "--cwd",
+        help="Git repo directory for pot inference when --pot is omitted.",
+    ),
+) -> None:
+    """Queue one-shot ingestion for a GitHub repo's recent commits, pull requests, and issues."""
+    load_cli_env()
+    j, v = _flags()
+    raw = owner_repo.strip()
+    if "/" not in raw:
+        emit_error("Invalid repo", "Use owner/repo (e.g. org/service).", verbose=v)
+        raise typer.Exit(code=1)
+    o, rn = raw.split("/", 1)
+    o, rn = o.strip(), rn.strip()
+    if not o or not rn:
+        emit_error("Invalid repo", "owner and repo name required.", verbose=v)
+        raise typer.Exit(code=1)
+    raw = f"{o}/{rn}"
+
+    pid = _pot_id_or_git(pot_opt, cwd=cwd)
+    client = _cli_client_or_exit(v)
+    repo_key = raw.lower().replace("/", ":")
+    source_id = f"one_shot_ingest:github:{repo_key}:{uuid.uuid4()}"
+    try:
+        status_code, data = client.submit_event(
+            pot_id=pid,
+            source_system="github",
+            event_type="github_repo",
+            action="one_shot_ingest",
+            source_id=source_id,
+            payload={"repo": raw, "count": count},
+            repo_name=raw,
+            provider="github",
+            provider_host=None,
+            occurred_at=datetime.now(timezone.utc),
+        )
+    except PotpieContextApiError as exc:
+        emit_error("GitHub repo ingest failed", _format_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    out = {
+        "status": "queued" if status_code == 202 else data.get("status", "applied"),
+        "pot_id": pid,
+        "repo": raw,
+        "count": count,
+        "source_id": source_id,
+        "event_id": data.get("event_id"),
+        "batch_id": data.get("batch_id"),
+    }
+    if status_code == 409:
+        out["status"] = "duplicate"
+    if j:
+        print_json_blob(out, as_json=True)
+    else:
+        print_plain_line(
+            f"Queued GitHub repo ingest for {raw} in pot {pid} "
+            f"(event {out.get('event_id') or 'unknown'}).",
+            as_json=False,
+        )
+
+
 pot_app.add_typer(pot_repo_app, name="repo")
 
 
