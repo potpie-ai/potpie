@@ -26,16 +26,21 @@ client = TestClient(app)
 # ── signature verification ────────────────────────────────────────────────────
 
 class TestVerifySignature:
+    """Tests for HMAC-SHA256 webhook signature verification."""
+
     def test_valid_signature(self):
+        """Returns True when signature matches the payload and secret."""
         secret = "mysecret"
         payload = b'{"action": "opened"}'
         sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
         assert _verify_signature(payload, sig, secret) is True
 
     def test_invalid_signature(self):
+        """Returns False when the signature digest does not match."""
         assert _verify_signature(b"payload", "sha256=wrong", "secret") is False
 
     def test_missing_sha256_prefix(self):
+        """Returns False when the signature is missing the sha256= prefix."""
         assert _verify_signature(b"payload", "badsig", "secret") is False
 
 
@@ -53,7 +58,10 @@ PR_PAYLOAD = {
 
 
 class TestGithubWebhookEndpoint:
+    """Tests for the POST /github/webhook endpoint."""
+
     def _post(self, payload=None, event="pull_request", secret=None):
+        """Helper to POST a webhook payload with optional signature."""
         body = json.dumps(payload or PR_PAYLOAD).encode()
         headers = {"X-GitHub-Event": event}
         if secret:
@@ -62,17 +70,20 @@ class TestGithubWebhookEndpoint:
         return client.post("/github/webhook", content=body, headers=headers)
 
     def test_non_pr_event_is_ignored(self):
+        """Non-pull_request events return status ignored."""
         resp = self._post(event="push")
         assert resp.status_code == 200
         assert resp.json()["status"] == "ignored"
 
     def test_pr_action_not_in_allowlist_is_ignored(self):
+        """PR actions outside the allowlist (e.g. closed) return status ignored."""
         payload = {**PR_PAYLOAD, "action": "closed"}
         resp = self._post(payload=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "ignored"
 
     def test_missing_signature_rejected_when_secret_set(self):
+        """Returns 400 when GITHUB_WEBHOOK_SECRET is set but no signature header is sent."""
         with patch.dict("os.environ", {"GITHUB_WEBHOOK_SECRET": "mysecret"}):
             body = json.dumps(PR_PAYLOAD).encode()
             resp = client.post(
@@ -83,6 +94,7 @@ class TestGithubWebhookEndpoint:
         assert resp.status_code == 400
 
     def test_wrong_signature_rejected(self):
+        """Returns 401 when the provided signature does not match the payload."""
         with patch.dict("os.environ", {"GITHUB_WEBHOOK_SECRET": "mysecret"}):
             body = json.dumps(PR_PAYLOAD).encode()
             resp = client.post(
@@ -96,6 +108,7 @@ class TestGithubWebhookEndpoint:
         assert resp.status_code == 401
 
     def test_valid_pr_accepted_and_background_task_queued(self):
+        """Valid PR payload returns 200 accepted and queues the review background task."""
         with patch(
             "app.modules.code_provider.github.github_webhook_router._run_pr_review"
         ) as mock_task:
@@ -110,12 +123,14 @@ class TestGithubWebhookEndpoint:
 
     @pytest.mark.parametrize("action", ["opened", "synchronize", "reopened"])
     def test_all_trigger_actions_accepted(self, action):
+        """All three trigger actions (opened, synchronize, reopened) are accepted."""
         payload = {**PR_PAYLOAD, "action": action}
         resp = self._post(payload=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "accepted"
 
     def test_valid_signature_accepted(self):
+        """Request with correct HMAC signature is accepted when secret is configured."""
         secret = "topsecret"
         with patch.dict("os.environ", {"GITHUB_WEBHOOK_SECRET": secret}):
             resp = self._post(secret=secret)
@@ -126,8 +141,11 @@ class TestGithubWebhookEndpoint:
 # ── background task ───────────────────────────────────────────────────────────
 
 class TestRunPrReview:
+    """Tests for the _run_pr_review background task."""
+
     @pytest.mark.asyncio
     async def test_skips_when_no_project_found(self):
+        """Silently skips posting a review when no matching Potpie project exists."""
         from app.modules.code_provider.github.github_webhook_router import _run_pr_review
 
         mock_project_service = MagicMock()
@@ -139,7 +157,6 @@ class TestRunPrReview:
             mock_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_db.return_value.__exit__ = MagicMock(return_value=False)
 
-            # Should complete without error when no project is found
             await _run_pr_review("acme/unknown-repo", 1, "main", "Test PR")
 
         mock_project_service.get_global_project_from_db.assert_called_once_with(
@@ -149,6 +166,7 @@ class TestRunPrReview:
 
     @pytest.mark.asyncio
     async def test_runs_agent_and_posts_comment_when_project_exists(self):
+        """Runs BlastRadiusAgent and posts review comment when a matching project is found."""
         from app.modules.code_provider.github.github_webhook_router import _run_pr_review
 
         mock_project = MagicMock()
