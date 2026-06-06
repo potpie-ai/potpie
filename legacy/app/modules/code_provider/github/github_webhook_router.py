@@ -37,6 +37,7 @@ logger = get_logger(__name__)
 
 
 def _verify_signature(payload: bytes, signature: str, secret: str) -> bool:
+    """Verify a GitHub webhook HMAC-SHA256 signature against the raw payload."""
     expected = "sha256=" + hmac.new(
         secret.encode(), payload, hashlib.sha256
     ).hexdigest()
@@ -44,6 +45,7 @@ def _verify_signature(payload: bytes, signature: str, secret: str) -> bool:
 
 
 def _post_pr_comment(repo_name: str, pr_number: int, body: str) -> None:
+    """Post a review comment on a GitHub PR using a token from GH_TOKEN_LIST."""
     from github import Github, GithubException
 
     token = (os.getenv("GH_TOKEN_LIST", "").split(",")[0].strip()
@@ -131,6 +133,7 @@ async def github_webhook(
     x_hub_signature_256: Optional[str] = Header(None),
     x_github_event: Optional[str] = Header(None),
 ):
+    """Receive a GitHub webhook event and enqueue an automated PR review."""
     payload = await request.body()
 
     secret = os.getenv("GITHUB_WEBHOOK_SECRET")
