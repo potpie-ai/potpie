@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "potpie-observability"
+version = "0.1.0"
+description = "Liftable observability layer: structured logging + Sentry + logfire behind one contract. app.*-free."
+requires-python = ">=3.11,<3.14"
+# Core is stdlib-only on purpose: max portability, survives a codebase rewrite.
+dependencies = []
+
+[project.optional-dependencies]
+loguru = ["loguru>=0.7.3"]
+sentry = ["sentry-sdk>=2.43.0,<3.0"]
+logfire = ["logfire>=4.32.1,<5.0"]
+fastapi = ["starlette>=1.0.1,<2.0"]
+celery = ["celery>=5.6.3,<6.0"]
+dev = ["pytest>=9.0.3,<10.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["observability"]

@@ -1,0 +1,27 @@
+{
+  "conversations": [
+    {
+      "id": "1b2c3d4e-5f67-4890-abcd-ef1234567890",
+      "title": "General",
+      "status": "active",
+      "project_ids": ["8f4e2d1c-3b5a-6978-9eaf-0c1d2e3f4a50"],
+      "agent_ids": ["6a5b4c3d-2e1f-4098-a7b6-5d4c3b2a1900"],
+      "visibility": "private",
+      "messages": [
+        {
+          "id": "2b3c4d5e-6f78-4901-9bcd-ef12345678901",
+          "content": "Hello — can you help me get oriented?",
+          "type": "HUMAN",
+          "sender_id": "__TARGET_USER_UID__",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "3c4d5e6f-7089-4012-abcd-f12345678902",
+          "content": "Of course. What would you like to work on first?",
+          "type": "AI_GENERATED",
+          "status": "ACTIVE"
+        }
+      ]
+    }
+  ]
+}

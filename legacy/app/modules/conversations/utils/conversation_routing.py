@@ -1,0 +1,583 @@
+"""
+Shared utilities for conversation routing endpoints (v1 and v2).
+Contains common functions for session management, Redis streaming, and Celery task execution.
+"""
+
+import asyncio
+import json
+import uuid
+from typing import Generator, Optional
+from observability import get_logger
+
+from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
+
+from app.modules.conversations.conversation.conversation_schema import (
+    ChatMessageResponse,
+)
+from app.modules.conversations.utils.redis_streaming import (
+    AsyncRedisStreamManager,
+    RedisStreamManager,
+)
+from app.modules.intelligence.agents.runtime.backend_selection import select_backend
+from app.modules.intelligence.agents.runtime.hatchet_backend import (
+    AGENT_RUN_OPERATION_MESSAGE,
+    AGENT_RUN_OPERATION_REGENERATE,
+    AgentRunOperation,
+    AgentRunInput,
+    enqueue_agent_run,
+)
+
+logger = get_logger(__name__)
+
+# TTL for run_id reservation lock (seconds). Reservation expires if stream not established.
+RUN_ID_RESERVATION_TTL = 120
+
+
+async def resolve_conversation_agent_id(
+    conversation_id: str, db, async_db
+) -> Optional[str]:
+    """Resolve a conversation's selected agent via the existing store (``agent_ids[0]``).
+
+    Dispatch sites pass ``agent_id=None`` (the worker resolves the agent downstream from
+    the conversation), so routers call this to let backend selection see the real agent.
+    """
+    from app.modules.conversations.conversation.conversation_store import (
+        ConversationStore,
+    )
+
+    conversation = await ConversationStore(db, async_db).get_by_id(conversation_id)
+    if conversation and conversation.agent_ids:
+        return conversation.agent_ids[0]
+    return None
+
+
+async def _dispatch_agent_run(
+    conversation_id: str,
+    run_id: str,
+    user_id: str,
+    query: str,
+    agent_id: Optional[str],
+    node_ids: list,
+    attachment_ids: list,
+    async_redis_manager: AsyncRedisStreamManager,
+    local_mode: bool,
+    tunnel_url: Optional[str],
+    operation: AgentRunOperation = AGENT_RUN_OPERATION_MESSAGE,
+) -> Optional[str]:
+    """Route an agent run operation to the selected backend.
+
+    Celery by default; Hatchet for allowlisted agents when hatchet-mode is on. Returns
+    the Celery task id (None for Hatchet). Fails closed with HTTP 503 if Hatchet is
+    selected but the enqueue fails — we never silently fall back to Celery, so the
+    caller knows the requested backend was unavailable.
+    """
+    if select_backend(agent_id) == "hatchet":
+        try:
+            enqueue_agent_run(
+                AgentRunInput(
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                    user_id=user_id,
+                    query=query,
+                    agent_id=agent_id or "",
+                    operation=operation,
+                    node_ids=node_ids,
+                    attachment_ids=attachment_ids or [],
+                    local_mode=local_mode,
+                    tunnel_url=tunnel_url,
+                )
+            )
+        except Exception as e:
+            logger.exception("Hatchet enqueue failed; failing closed with 503")
+            # Callers set "queued" before dispatch; transition the stream to a
+            # terminal error so subscribers don't sit on a stranded queued state.
+            await async_redis_manager.set_task_status(conversation_id, run_id, "error")
+            await async_redis_manager.publish_event(
+                conversation_id,
+                run_id,
+                "end",
+                {"status": "error", "message": "Hatchet agent backend unavailable"},
+            )
+            raise HTTPException(
+                status_code=503, detail="Hatchet agent backend unavailable"
+            ) from e
+        logger.info(
+            f"Routed agent run {conversation_id}:{run_id} to Hatchet (agent_id={agent_id})"
+        )
+        return None
+
+    if operation == AGENT_RUN_OPERATION_REGENERATE:
+        from app.celery.tasks.agent_tasks import execute_regenerate_background
+
+        task_result = execute_regenerate_background.delay(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+            node_ids=node_ids or [],
+            attachment_ids=attachment_ids or [],
+            local_mode=local_mode,
+        )
+        await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
+        logger.info(
+            f"Started regenerate task {task_result.id} for {conversation_id}:{run_id}"
+        )
+        return task_result.id
+
+    from app.celery.tasks.agent_tasks import execute_agent_background
+
+    task_result = execute_agent_background.delay(
+        conversation_id=conversation_id,
+        run_id=run_id,
+        user_id=user_id,
+        query=query,
+        agent_id=agent_id,
+        node_ids=node_ids,
+        attachment_ids=attachment_ids or [],
+        local_mode=local_mode,
+        tunnel_url=tunnel_url,
+    )
+    await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
+    logger.info(f"Started agent task {task_result.id} for {conversation_id}:{run_id}")
+    return task_result.id
+
+
+def normalize_run_id(
+    conversation_id: str,
+    user_id: str,
+    session_id: Optional[str] = None,
+    prev_human_message_id: Optional[str] = None,
+) -> str:
+    """
+    Generate user-scoped deterministic session IDs.
+    Format: conversation:{user_id}:{prev_human_message_id}
+    If no prev_human_message_id provided, defaults to 'new'
+    """
+    if session_id:
+        return session_id
+
+    # Use provided prev_human_message_id or default to 'new'
+    message_id = prev_human_message_id if prev_human_message_id else "new"
+    return f"conversation:{user_id}:{message_id}"
+
+
+def ensure_unique_run_id(conversation_id: str, run_id: str) -> str:
+    """
+    Ensure the run_id is unique by checking if a stream already exists.
+    If it exists, append a counter to make it unique.
+    (Sync version for Celery / sync callers.)
+    """
+    redis_manager = RedisStreamManager()
+    original_run_id = run_id
+    counter = 1
+
+    # Find a unique run_id if the original already has an active stream
+    while redis_manager.redis_client.exists(
+        redis_manager.stream_key(conversation_id, run_id)
+    ):
+        run_id = f"{original_run_id}-{counter}"
+        counter += 1
+
+    return run_id
+
+
+def _reservation_key(conversation_id: str, run_id: str) -> str:
+    """Key for atomic run_id claim; separate from stream key so stream type is unchanged."""
+    return f"chat:stream:reservation:{conversation_id}:{run_id}"
+
+
+async def async_ensure_unique_run_id(
+    conversation_id: str, run_id: str, async_redis: AsyncRedisStreamManager
+) -> str:
+    """
+    Ensure run_id is unique by atomically claiming it with Redis SET NX EX.
+    Avoids TOCTOU races vs the previous exists-then-use loop.
+    Reservation key expires after RUN_ID_RESERVATION_TTL if stream is never established.
+    """
+    original_run_id = run_id
+    counter = 1
+    while True:
+        key = _reservation_key(conversation_id, run_id)
+        value = str(uuid.uuid4())
+        claimed = await async_redis.redis_client.set(
+            key, value, nx=True, ex=RUN_ID_RESERVATION_TTL
+        )
+        if claimed:
+            # Reservation TTL may have expired while stream was still active;
+            # ensure we do not re-use a run_id that already has an active stream.
+            stream_key = async_redis.stream_key(conversation_id, run_id)
+            if await async_redis.redis_client.exists(stream_key):
+                await async_redis.redis_client.delete(key)
+                run_id = f"{original_run_id}-{counter}"
+                counter += 1
+                continue
+            return run_id
+        run_id = f"{original_run_id}-{counter}"
+        counter += 1
+
+
+def redis_stream_generator(
+    conversation_id: str, run_id: str, cursor: Optional[str] = None
+) -> Generator[str, None, None]:
+    """Stream events from Redis to client"""
+
+    def json_serializer(obj):
+        """Custom JSON serializer to handle bytes objects"""
+        if isinstance(obj, bytes):
+            return obj.decode("utf-8", errors="replace")
+        return str(obj)
+
+    redis_manager = RedisStreamManager()
+    logger.info(
+        f"Stream consumer started for {conversation_id}:{run_id}, waiting for events",
+        conversation_id=conversation_id,
+        run_id=run_id,
+    )
+
+    try:
+        for event in redis_manager.consume_stream(conversation_id, run_id, cursor):
+            # Convert to ChatMessageResponse format for compatibility
+            if event.get("type") == "chunk":
+                tool_calls = event.get("tool_calls", [])
+                content = event.get("content", "")
+                response = ChatMessageResponse(
+                    message=content,
+                    citations=event.get("citations", []),
+                    tool_calls=tool_calls,
+                    thinking=event.get("thinking"),
+                )
+                json_response = json.dumps(response.dict(), default=json_serializer)
+                yield json_response
+
+            elif event.get("type") == "queued":
+                # Send a queued status to the client
+                response = ChatMessageResponse(
+                    message="",
+                    citations=[],
+                    tool_calls=[],
+                    thinking=None,
+                )
+                json_response = json.dumps(response.dict(), default=json_serializer)
+                yield json_response
+
+            elif event.get("type") == "end":
+                # End the stream when we receive an end event
+                break
+
+    except Exception as e:
+        logger.error(f"Redis streaming error: {str(e)}")
+        # Don't yield error events to match original behavior
+
+
+async def start_celery_task_and_stream(
+    conversation_id: str,
+    run_id: str,
+    user_id: str,
+    query: str,
+    agent_id: Optional[str],
+    node_ids: list,
+    attachment_ids: list,
+    async_redis_manager: AsyncRedisStreamManager,
+    cursor: Optional[str] = None,
+    local_mode: bool = False,
+    tunnel_url: Optional[str] = None,
+) -> StreamingResponse:
+    """
+    Start a background agent task on the selected backend and return a stream.
+    Uses async Redis so the event loop is not blocked.
+    """
+    # `cursor` set ⇒ the client is reconnecting to replay an existing run's stream, so do
+    # NOT start another backend task. Re-dispatching on reconnect is harmless for Celery
+    # (the task dies with the request) but spawns duplicate *durable* Hatchet runs that
+    # keep executing and interleave into the same Redis stream. Mirror the router's
+    # `if not cursor` run_id guard: only a fresh request starts a new run.
+    if cursor is None:
+        # Set initial "queued" status before starting the task
+        await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
+
+        # Publish a queued event so the client knows the task is accepted
+        await async_redis_manager.publish_event(
+            conversation_id,
+            run_id,
+            "queued",
+            {
+                "status": "queued",
+                "message": "Task queued for processing",
+            },
+        )
+
+        # Route to the selected backend (celery default, hatchet for allowlisted agents)
+        await _dispatch_agent_run(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+            query=query,
+            agent_id=agent_id,
+            node_ids=node_ids,
+            attachment_ids=attachment_ids,
+            async_redis_manager=async_redis_manager,
+            local_mode=local_mode,
+            tunnel_url=tunnel_url,
+        )
+
+        # Wait for task to reach any terminal or active state (avoids blocking 30s if task goes straight to completed/error)
+        task_started = await async_redis_manager.wait_for_task_start(
+            conversation_id, run_id, timeout=30, require_running=False
+        )
+        if task_started:
+            status = await async_redis_manager.get_task_status(conversation_id, run_id)
+            if status in ("completed", "error"):
+                logger.info(
+                    f"Task already {status} for {conversation_id}:{run_id} - stream will contain result",
+                    status=status,
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                )
+        logger.info(
+            f"Task start check done for {conversation_id}:{run_id} (started={task_started})",
+            conversation_id=conversation_id,
+            run_id=run_id,
+            task_started=task_started,
+        )
+        if not task_started:
+            logger.warning(
+                f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued",
+                conversation_id=conversation_id,
+                run_id=run_id,
+            )
+    else:
+        logger.info(
+            f"Reconnect with cursor for {conversation_id}:{run_id} - attaching to "
+            f"existing stream (no re-dispatch)",
+            conversation_id=conversation_id,
+            run_id=run_id,
+        )
+
+    # Return Redis stream response (sync generator runs in Starlette thread pool)
+    return StreamingResponse(
+        redis_stream_generator(conversation_id, run_id, cursor),
+        media_type="text/event-stream",
+    )
+
+
+async def start_regenerate_task_and_stream(
+    conversation_id: str,
+    run_id: str,
+    user_id: str,
+    agent_id: Optional[str],
+    node_ids: list,
+    attachment_ids: list,
+    async_redis_manager: AsyncRedisStreamManager,
+    cursor: Optional[str] = None,
+    local_mode: bool = False,
+) -> StreamingResponse:
+    """Start regenerate on the same backend selected for this conversation's agent."""
+    # See start_celery_task_and_stream: a cursor means reconnect/replay, so never
+    # re-dispatch (avoids duplicate durable Hatchet runs on the same stream).
+    if cursor is None:
+        await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
+        await async_redis_manager.publish_event(
+            conversation_id,
+            run_id,
+            "queued",
+            {
+                "status": "queued",
+                "message": "Regeneration task queued for processing",
+            },
+        )
+
+        await _dispatch_agent_run(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+            query="",
+            agent_id=agent_id,
+            node_ids=node_ids,
+            attachment_ids=attachment_ids,
+            async_redis_manager=async_redis_manager,
+            local_mode=local_mode,
+            tunnel_url=None,
+            operation=AGENT_RUN_OPERATION_REGENERATE,
+        )
+
+        task_started = await async_redis_manager.wait_for_task_start(
+            conversation_id, run_id, timeout=30, require_running=False
+        )
+        logger.info(
+            f"Regenerate task start check done for {conversation_id}:{run_id} "
+            f"(started={task_started})"
+        )
+        if not task_started:
+            logger.warning(
+                f"Background regenerate task failed to start within 30s for "
+                f"{conversation_id}:{run_id} - may still be queued"
+            )
+    else:
+        logger.info(
+            f"Reconnect with cursor for {conversation_id}:{run_id} - attaching to "
+            f"existing regenerate stream (no re-dispatch)"
+        )
+
+    return StreamingResponse(
+        redis_stream_generator(conversation_id, run_id, cursor),
+        media_type="text/event-stream",
+    )
+
+
+async def start_celery_task_and_wait(
+    conversation_id: str,
+    run_id: str,
+    user_id: str,
+    query: str,
+    agent_id: Optional[str],
+    node_ids: list,
+    attachment_ids: list,
+    async_redis_manager: AsyncRedisStreamManager,
+    local_mode: bool = False,
+    tunnel_url: Optional[str] = None,
+) -> ChatMessageResponse:
+    """
+    Start a Celery background task and wait for the complete response.
+    Uses async Redis for setup; stream collection runs in thread pool.
+    """
+    # Set initial "queued" status before starting the task
+    await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
+
+    # Publish a queued event so the client knows the task is accepted
+    await async_redis_manager.publish_event(
+        conversation_id,
+        run_id,
+        "queued",
+        {
+            "status": "queued",
+            "message": "Task queued for processing",
+        },
+    )
+
+    # Route to the selected backend (celery default, hatchet for allowlisted agents)
+    await _dispatch_agent_run(
+        conversation_id=conversation_id,
+        run_id=run_id,
+        user_id=user_id,
+        query=query,
+        agent_id=agent_id,
+        node_ids=node_ids,
+        attachment_ids=attachment_ids,
+        async_redis_manager=async_redis_manager,
+        local_mode=local_mode,
+        tunnel_url=tunnel_url,
+    )
+
+    # Wait for task to reach any terminal or active state (avoids blocking 30s if task goes straight to completed/error)
+    task_started = await async_redis_manager.wait_for_task_start(
+        conversation_id, run_id, timeout=30, require_running=False
+    )
+    if task_started:
+        status = await async_redis_manager.get_task_status(conversation_id, run_id)
+        if status in ("completed", "error"):
+            logger.info(
+                f"Task already {status} for {conversation_id}:{run_id} - collecting from stream",
+                status=status,
+                conversation_id=conversation_id,
+                run_id=run_id,
+            )
+    if not task_started:
+        logger.warning(
+            f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued",
+            conversation_id=conversation_id,
+            run_id=run_id,
+        )
+
+    # Collect all chunks from the stream (sync consume_stream in thread pool)
+    full_message = ""
+    all_citations = []
+    all_tool_calls = []
+    error_message = None
+    sync_redis = RedisStreamManager()
+
+    def collect_from_stream():
+        """Synchronous function to collect all events from Redis stream"""
+        events = []
+        try:
+            for event in sync_redis.consume_stream(conversation_id, run_id):
+                events.append(event)
+                # Stop collecting when we get an end event
+                if event.get("type") == "end":
+                    break
+        except Exception as e:
+            logger.error(
+                f"Error consuming Redis stream for {conversation_id}:{run_id}: {str(e)}",
+                exc_info=True,
+            )
+            # Add error event to signal failure
+            events.append(
+                {
+                    "type": "end",
+                    "status": "error",
+                    "message": f"Stream error: {str(e)}",
+                }
+            )
+        return events
+
+    try:
+        # Run stream consumption in thread pool to avoid blocking event loop
+        events = await asyncio.to_thread(collect_from_stream)
+
+        # Process collected events
+        for event in events:
+            if event.get("type") == "chunk":
+                # Accumulate message content
+                content = event.get("content", "")
+                if content:
+                    full_message += content
+
+                # Accumulate citations (avoid duplicates)
+                citations = event.get("citations", [])
+                if citations:
+                    # Merge citations, avoiding duplicates
+                    for citation in citations:
+                        if citation not in all_citations:
+                            all_citations.append(citation)
+
+                # Accumulate tool calls
+                tool_calls = event.get("tool_calls", [])
+                if tool_calls:
+                    all_tool_calls.extend(tool_calls)
+
+            elif event.get("type") == "end":
+                status = event.get("status", "completed")
+                if status == "error":
+                    error_message = event.get("message", "Unknown error occurred")
+                    logger.error(
+                        f"Task completed with error for {conversation_id}:{run_id}: {error_message}",
+                        conversation_id=conversation_id,
+                        run_id=run_id,
+                        error_message=error_message,
+                    )
+                elif status == "cancelled":
+                    error_message = "Task was cancelled"
+                    logger.info(
+                        f"Task cancelled for {conversation_id}:{run_id}",
+                        conversation_id=conversation_id,
+                        run_id=run_id,
+                    )
+                break
+
+        # If we got an error, raise an exception
+        if error_message:
+            raise HTTPException(status_code=500, detail=error_message)
+
+        # Return the complete response
+        return ChatMessageResponse(
+            message=full_message,
+            citations=all_citations,
+            tool_calls=all_tool_calls,
+        )
+
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to collect response: {str(e)}"
+        )

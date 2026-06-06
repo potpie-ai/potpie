@@ -1,0 +1,16 @@
+{
+  "id": "webhook_01",
+  "webhookId": "webhook_01",
+  "type": "Issue",
+  "action": "create",
+  "createdAt": "2026-04-22T12:00:00Z",
+  "data": {
+    "id": "issue_42",
+    "identifier": "ENG-42",
+    "title": "Context resolver loses source provenance",
+    "description": "The context resolver should preserve Linear issue provenance.",
+    "url": "https://linear.app/potpie/issue/ENG-42/context-resolver-loses-source-provenance",
+    "team": {"id": "team_eng", "name": "Engineering"},
+    "state": {"name": "Triage", "type": "unstarted"}
+  }
+}
