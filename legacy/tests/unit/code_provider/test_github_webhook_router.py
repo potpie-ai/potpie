@@ -106,6 +106,7 @@ class TestGithubWebhookEndpoint:
         assert data["status"] == "accepted"
         assert data["pr"] == 42
         assert data["repo"] == "acme/my-repo"
+        mock_task.assert_called_once()
 
     @pytest.mark.parametrize("action", ["opened", "synchronize", "reopened"])
     def test_all_trigger_actions_accepted(self, action):

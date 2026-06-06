@@ -44,7 +44,7 @@ def _verify_signature(payload: bytes, signature: str, secret: str) -> bool:
 
 
 def _post_pr_comment(repo_name: str, pr_number: int, body: str) -> None:
-    from github import Github
+    from github import Github, GithubException
 
     token = (os.getenv("GH_TOKEN_LIST", "").split(",")[0].strip()
              or os.getenv("GITHUB_APP_TOKEN", ""))
@@ -52,10 +52,19 @@ def _post_pr_comment(repo_name: str, pr_number: int, body: str) -> None:
         logger.warning("No GitHub token available to post PR review comment")
         return
 
-    gh = Github(token)
-    repo = gh.get_repo(repo_name)
-    pr = repo.get_pull(pr_number)
-    pr.create_issue_comment(f"## Potpie PR Review\n\n{body}")
+    try:
+        gh = Github(token)
+        repo = gh.get_repo(repo_name)
+        pr = repo.get_pull(pr_number)
+        pr.create_issue_comment(f"## Potpie PR Review\n\n{body}")
+    except GithubException as e:
+        logger.error(
+            "Failed to post PR comment",
+            repo_name=repo_name,
+            pr_number=pr_number,
+            error=str(e),
+            status_code=getattr(e, "status", None),
+        )
 
 
 async def _run_pr_review(
@@ -101,7 +110,8 @@ async def _run_pr_review(
         )
 
         result = await agents_service.execute(ctx)
-        review_body = result.response if result else "Potpie could not generate a review."
+        review_body = (result.response if result and result.response
+                       else "Potpie could not generate a review.")
         _post_pr_comment(repo_name, pr_number, review_body)
 
     except Exception:
@@ -138,11 +148,14 @@ async def github_webhook(
     if action not in ("opened", "synchronize", "reopened"):
         return {"status": "ignored", "action": action}
 
-    pr = data["pull_request"]
-    repo_name = data["repository"]["full_name"]
-    pr_number = pr["number"]
-    branch = pr["head"]["ref"]
-    pr_title = pr["title"]
+    try:
+        pr = data["pull_request"]
+        repo_name = data["repository"]["full_name"]
+        pr_number = pr["number"]
+        branch = pr["head"]["ref"]
+        pr_title = pr["title"]
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=f"Malformed payload: missing {e}")
 
     background_tasks.add_task(
         _run_pr_review,
