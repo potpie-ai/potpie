@@ -4057,7 +4057,7 @@ requires-dist = [
     { name = "psycopg-binary", specifier = ">=3.2.12" },
     { name = "pyasn1", specifier = ">=0.6.3" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.12.4" },
-    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "openai", "retries", "spec", "temporal", "ui", "vertexai", "xai"], specifier = ">=1.102.0" },
+    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "openai", "retries", "spec", "temporal", "ui", "vertexai", "xai"], specifier = ">=1.105.0" },
     { name = "pydantic-ai-todo", specifier = ">=0.1.6" },
     { name = "pygithub", specifier = ">=2.8.1" },
     { name = "pygments", specifier = ">=2.20.0" },
