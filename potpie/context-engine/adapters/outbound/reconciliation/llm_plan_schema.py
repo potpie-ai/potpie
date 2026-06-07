@@ -2,19 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-
-
-class LlmEpisodeDraft(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    episode_body: str
-    source_description: str
-    reference_time: datetime | None = None
 
 
 class LlmEntityUpsert(BaseModel):
@@ -61,12 +51,11 @@ class LlmEvidenceRef(BaseModel):
 
 
 class LlmReconciliationPlan(BaseModel):
-    """Structured plan returned by the planner model (no compat PR bundle)."""
+    """Structured plan returned by the planner model."""
 
     model_config = ConfigDict(extra="forbid")
 
     summary: str
-    episodes: list[LlmEpisodeDraft] = Field(default_factory=list)
     entity_upserts: list[LlmEntityUpsert] = Field(default_factory=list)
     edge_upserts: list[LlmEdgeUpsert] = Field(default_factory=list)
     edge_deletes: list[LlmEdgeDelete] = Field(default_factory=list)

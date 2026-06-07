@@ -46,24 +46,26 @@ def causal_expand_enabled() -> bool:
     return _truthy(os.getenv("CONTEXT_ENGINE_CAUSAL_EXPAND"), True)
 
 
-def classify_modified_edges_enabled() -> bool:
-    """Allow classify-modified-edges maintenance to apply rewrites (default: on)."""
-    return _truthy(os.getenv("CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES"), True)
-
-
-def allow_edge_classify_write_enabled() -> bool:
-    """Allow non-dry-run writes for classify-modified-edges (default: on)."""
-    return _truthy(os.getenv("CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE"), True)
-
-
 def strict_extraction_enabled() -> bool:
     """Strict episodic edge extraction guard (default: on)."""
     return _truthy(os.getenv("CONTEXT_ENGINE_STRICT_EXTRACTION"), True)
 
 
 def ontology_soft_fail_enabled() -> bool:
-    """When true, unknown labels / edge types / invalid lifecycle coerce instead of rejecting."""
-    return _truthy(os.getenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL"), False)
+    """Coerce LLM-extracted labels / edge types / lifecycle values instead of rejecting (default: on).
+
+    The reconciliation agent is an LLM whose output drifts in small ways from the
+    canonical ontology (e.g. ``status='active'`` for a Decision, or an edge type
+    rendered as ``AUTHORED_BY`` instead of ``AUTHORED``). Hard-rejecting the batch
+    causes large, observable HTTP 500 storms because *every* extracted event
+    gets dropped. We let the downgrade machinery normalize what it can, record
+    what it changed, and surface that on the QualityIssue stream — so callers
+    still see the drift but the graph keeps moving forward.
+
+    Set ``CONTEXT_ENGINE_ONTOLOGY_STRICT=1`` to force the legacy hard-fail
+    behaviour (useful for tests / golden fixtures that want byte-exact plans).
+    """
+    return _truthy(os.getenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL"), True)
 
 
 def ontology_strict_enabled() -> bool:

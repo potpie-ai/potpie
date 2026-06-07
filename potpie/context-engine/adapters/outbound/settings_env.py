@@ -6,12 +6,20 @@ from domain.ports.settings import ContextEngineSettingsPort
 
 
 def context_engine_neo4j_uri() -> str | None:
-    """Neo4j for Graphiti + context-engine structural graph (optional dedicated cluster/DB)."""
-    return (os.getenv("CONTEXT_ENGINE_NEO4J_URI") or os.getenv("CONTEXT_ENGINE_NEO4J_URL") or "").strip() or None
+    """Neo4j for the context graph (optional dedicated cluster/DB)."""
+    return (
+        os.getenv("CONTEXT_ENGINE_NEO4J_URI")
+        or os.getenv("CONTEXT_ENGINE_NEO4J_URL")
+        or ""
+    ).strip() or None
 
 
 def context_engine_neo4j_user() -> str | None:
-    v = (os.getenv("CONTEXT_ENGINE_NEO4J_USERNAME") or os.getenv("CONTEXT_ENGINE_NEO4J_USER") or "").strip()
+    v = (
+        os.getenv("CONTEXT_ENGINE_NEO4J_USERNAME")
+        or os.getenv("CONTEXT_ENGINE_NEO4J_USER")
+        or ""
+    ).strip()
     return v or None
 
 
@@ -26,7 +34,9 @@ def context_engine_graph_db_backend() -> str:
 
 
 def context_engine_falkordb_url() -> str | None:
-    v = (os.getenv("CONTEXT_ENGINE_FALKORDB_URL") or os.getenv("FALKORDB_URL") or "").strip()
+    v = (
+        os.getenv("CONTEXT_ENGINE_FALKORDB_URL") or os.getenv("FALKORDB_URL") or ""
+    ).strip()
     return v or None
 
 
@@ -41,8 +51,10 @@ def context_engine_falkordb_graph_name() -> str:
 
 def context_engine_falkordb_mode() -> str:
     v = (
-        os.getenv("CONTEXT_ENGINE_FALKORDB_MODE") or os.getenv("FALKORDB_MODE") or ""
-    ).strip().lower()
+        (os.getenv("CONTEXT_ENGINE_FALKORDB_MODE") or os.getenv("FALKORDB_MODE") or "")
+        .strip()
+        .lower()
+    )
     return v or "lite"
 
 
@@ -66,10 +78,18 @@ class EnvContextEngineSettings(ContextEngineSettingsPort):
         return s in ("1", "true", "yes", "on")
 
     def neo4j_uri(self) -> str | None:
-        return context_engine_neo4j_uri() or os.getenv("NEO4J_URI") or os.getenv("NEO4J_URL")
+        return (
+            context_engine_neo4j_uri()
+            or os.getenv("NEO4J_URI")
+            or os.getenv("NEO4J_URL")
+        )
 
     def neo4j_user(self) -> str | None:
-        return context_engine_neo4j_user() or os.getenv("NEO4J_USERNAME") or os.getenv("NEO4J_USER")
+        return (
+            context_engine_neo4j_user()
+            or os.getenv("NEO4J_USERNAME")
+            or os.getenv("NEO4J_USER")
+        )
 
     def neo4j_password(self) -> str | None:
         pw = context_engine_neo4j_password()

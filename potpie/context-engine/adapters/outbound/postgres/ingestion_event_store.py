@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from adapters.outbound.postgres.models import ContextEventModel
@@ -97,7 +97,9 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
         return self._row_to_domain(row)
 
     def get_event(self, event_id: str) -> IngestionEvent | None:
-        row = self._db.scalar(select(ContextEventModel).where(ContextEventModel.id == event_id))
+        row = self._db.scalar(
+            select(ContextEventModel).where(ContextEventModel.id == event_id)
+        )
         if row is None:
             return None
         return self._row_to_domain(row)
@@ -118,8 +120,12 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
             return None
         return self._row_to_domain(row)
 
-    def transition_event(self, event_id: str, transition: EventTransition) -> IngestionEvent | None:
-        row = self._db.scalar(select(ContextEventModel).where(ContextEventModel.id == event_id))
+    def transition_event(
+        self, event_id: str, transition: EventTransition
+    ) -> IngestionEvent | None:
+        row = self._db.scalar(
+            select(ContextEventModel).where(ContextEventModel.id == event_id)
+        )
         if row is None:
             return None
         vals: dict[str, Any] = {}
@@ -134,9 +140,15 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
         if transition.completed_at is not None:
             vals["completed_at"] = transition.completed_at
         if vals:
-            self._db.execute(update(ContextEventModel).where(ContextEventModel.id == event_id).values(**vals))
+            self._db.execute(
+                update(ContextEventModel)
+                .where(ContextEventModel.id == event_id)
+                .values(**vals)
+            )
             self._db.commit()
-        refreshed = self._db.scalar(select(ContextEventModel).where(ContextEventModel.id == event_id))
+        refreshed = self._db.scalar(
+            select(ContextEventModel).where(ContextEventModel.id == event_id)
+        )
         return self._row_to_domain(refreshed) if refreshed else None
 
     def list_events(
@@ -150,22 +162,60 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
         q = select(ContextEventModel).where(ContextEventModel.pot_id == pot_id)
         if filters:
             if filters.ingestion_kinds:
-                q = q.where(ContextEventModel.ingestion_kind.in_(tuple(filters.ingestion_kinds)))
+                q = q.where(
+                    ContextEventModel.ingestion_kind.in_(tuple(filters.ingestion_kinds))
+                )
             if filters.statuses:
                 db_set = canonical_statuses_to_db_filters(tuple(filters.statuses))
                 q = q.where(ContextEventModel.status.in_(tuple(db_set)))
             if filters.source_systems:
-                q = q.where(ContextEventModel.source_system.in_(tuple(filters.source_systems)))
+                q = q.where(
+                    ContextEventModel.source_system.in_(tuple(filters.source_systems))
+                )
             if filters.source_channels:
-                q = q.where(ContextEventModel.source_channel.in_(tuple(filters.source_channels)))
+                q = q.where(
+                    ContextEventModel.source_channel.in_(tuple(filters.source_channels))
+                )
             if filters.actor_user_ids:
-                q = q.where(ContextEventModel.actor_user_id.in_(tuple(filters.actor_user_ids)))
+                q = q.where(
+                    ContextEventModel.actor_user_id.in_(tuple(filters.actor_user_ids))
+                )
             if filters.actor_surfaces:
-                q = q.where(ContextEventModel.actor_surface.in_(tuple(filters.actor_surfaces)))
+                q = q.where(
+                    ContextEventModel.actor_surface.in_(tuple(filters.actor_surfaces))
+                )
             if filters.submitted_after:
                 q = q.where(ContextEventModel.received_at >= filters.submitted_after)
             if filters.submitted_before:
                 q = q.where(ContextEventModel.received_at <= filters.submitted_before)
+            if filters.q:
+                # Phase 6: server-side free-text. Matches event_id /
+                # repo_name / event_type / action, plus payload->>'name'
+                # and payload->>'title' for raw episodes that carry a
+                # user-supplied title. Wildcard-escape user input so a
+                # ``%`` in the query doesn't broaden the search.
+                needle = (
+                    "%"
+                    + filters.q.replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                    + "%"
+                )
+                q = q.where(
+                    or_(
+                        ContextEventModel.id.ilike(needle),
+                        ContextEventModel.repo_name.ilike(needle),
+                        ContextEventModel.event_type.ilike(needle),
+                        ContextEventModel.action.ilike(needle),
+                        # payload->>'name' and payload->>'title' for raw episodes
+                        text(
+                            "context_events.payload->>'name' ILIKE :needle"
+                        ).bindparams(needle=needle),
+                        text(
+                            "context_events.payload->>'title' ILIKE :needle"
+                        ).bindparams(needle=needle),
+                    )
+                )
         if cursor:
             try:
                 ts, eid = _decode_list_cursor(cursor)
@@ -175,10 +225,14 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
             q = q.where(
                 or_(
                     ContextEventModel.received_at < ts,
-                    and_(ContextEventModel.received_at == ts, ContextEventModel.id < eid),
+                    and_(
+                        ContextEventModel.received_at == ts, ContextEventModel.id < eid
+                    ),
                 )
             )
-        q = q.order_by(ContextEventModel.received_at.desc(), ContextEventModel.id.desc()).limit(limit + 1)
+        q = q.order_by(
+            ContextEventModel.received_at.desc(), ContextEventModel.id.desc()
+        ).limit(limit + 1)
         rows = list(self._db.scalars(q).all())
         has_more = len(rows) > limit
         page_rows = rows[:limit]
@@ -208,7 +262,11 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
             vals["step_error"] = step_error
         if not vals:
             return
-        self._db.execute(update(ContextEventModel).where(ContextEventModel.id == event_id).values(**vals))
+        self._db.execute(
+            update(ContextEventModel)
+            .where(ContextEventModel.id == event_id)
+            .values(**vals)
+        )
         self._db.commit()
 
     def _row_to_domain(self, row: ContextEventModel) -> IngestionEvent:
@@ -252,7 +310,9 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
             job_id=getattr(row, "job_id", None),
             correlation_id=getattr(row, "correlation_id", None),
             idempotency_key=getattr(row, "idempotency_key", None),
-            occurred_at=row.occurred_at if isinstance(getattr(row, "occurred_at", None), datetime) else None,
+            occurred_at=row.occurred_at
+            if isinstance(getattr(row, "occurred_at", None), datetime)
+            else None,
             raw_status=row.status,
             actor=_row_to_actor(row),
         )

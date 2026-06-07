@@ -1,4 +1,15 @@
-"""Shared handlers for context-graph background jobs (Celery, Hatchet, etc.)."""
+"""Job-runner adapter: thin shim between the Celery task and the verb.
+
+One background job exists: a per-batch processor (``handle_process_batch``).
+It is session-scoped and rebuilds the container per call so host-side
+session-bound resolvers (e.g. ``SqlalchemyPotResolution``) stay valid.
+
+Backfill is no longer a standalone enumerate-then-submit sweep. A source
+attach (GitHub ``repository.added`` / Linear ``linear_team.added``) emits a
+single ``agent_reconciliation`` event; the reconciliation agent — planner
+on, via the backfill playbooks — enumerates and seeds the graph through this
+same per-batch path.
+"""
 
 from __future__ import annotations
 
@@ -7,123 +18,111 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from application.use_cases.apply_episode_step import apply_episode_step_for_event
-from application.use_cases.backfill_pot import backfill_pot_context
-from domain.ingestion_event_models import IngestionSubmissionRequest
-from domain.ingestion_kinds import INGESTION_KIND_GITHUB_MERGED_PR
-from application.use_cases.run_ingestion_agent_worker import run_ingestion_agent_for_event
-from bootstrap.container import ContextEngineContainer
+from application.use_cases.process_batch import process_batch
+from bootstrap.ingestion_server import IngestionServerContainer
+from bootstrap.observability_context import correlation_scope
+from bootstrap.observability_runtime import get_observability
+from domain.ports.observability import SPAN_KIND_CONSUMER
 
 
-def handle_backfill_pot(
+def _ingress_links(reco_ledger, batches_repo, batch_id: str) -> list[str]:
+    """W3C traceparents of the batch's events' (long-gone) ingress traces.
+
+    The batch span links back to each so an operator can pivot from the
+    async run to the request that produced an event, across the windowed
+    delay that makes live context propagation impossible.
+    """
+    links: list[str] = []
+    try:
+        for ref in batches_repo.list_events_for_batch(batch_id):
+            row = reco_ledger.get_event_by_id(ref.event_id)
+            tp = getattr(row, "correlation_id", None)
+            if tp:
+                links.append(tp)
+    except Exception:  # noqa: BLE001 — links are best-effort
+        return links
+    return links
+
+
+def handle_process_batch(
     db: Session,
-    pot_id: str,
+    batch_id: str,
     *,
-    target_repo_name: str | None = None,
-    build_container: Callable[[Session], ContextEngineContainer],
+    build_ingestion_server: Callable[[Session], IngestionServerContainer],
 ) -> dict[str, Any]:
-    container = build_container(db)
-    if container.context_graph is None:
-        return {"status": "error", "error": "context_graph_unavailable"}
-    return backfill_pot_context(
-        settings=container.settings,
-        pots=container.pots,
-        source_for_repo=container.source_for_repo,
-        ledger=container.ledger(db),
-        context_graph=container.context_graph,
-        pot_id=pot_id,
-        target_repo_name=target_repo_name,
-    )
+    """Claim one batch by id and run the reconciliation agent over it.
 
+    Called by the host worker once per ``jobs.enqueue_batch`` event. If the
+    batch is already claimed/running/done (a redundant enqueue races and
+    loses), ``claim_batch_by_id`` returns ``None`` and this is a no-op.
+    """
+    container = build_ingestion_server(db)
+    if container.reconciliation_agent is None:
+        return {"status": "skipped", "reason": "no_reconciliation_agent"}
+    batches_repo = container.batch_repository(db)
+    batch = batches_repo.claim_batch_by_id(batch_id)
+    if batch is None:
+        return {"status": "skipped", "reason": "not_pending", "batch_id": batch_id}
 
-def handle_ingest_pr(
-    db: Session,
-    pot_id: str,
-    pr_number: int,
-    *,
-    is_live_bridge: bool = True,
-    repo_name: str | None = None,
-    build_container: Callable[[Session], ContextEngineContainer],
-) -> dict[str, Any]:
-    container = build_container(db)
-    svc = container.ingestion_submission(db)
-    req = IngestionSubmissionRequest(
-        pot_id=pot_id,
-        ingestion_kind=INGESTION_KIND_GITHUB_MERGED_PR,
-        source_channel="async_job",
-        source_system="github",
-        event_type="pull_request",
-        action="merged",
-        payload={
-            "pr_number": pr_number,
-            "is_live_bridge": is_live_bridge,
-            "repo_name": repo_name,
-        },
-        repo_name=repo_name,
-    )
-    receipt = svc.submit(req, sync=True)
-    if receipt.duplicate:
-        return {
-            "status": "duplicate",
-            "pot_id": pot_id,
-            "pr_number": pr_number,
-            "event_id": receipt.event_id,
-        }
-    if receipt.status == "error":
-        return {
-            "status": "error",
-            "pot_id": pot_id,
-            "pr_number": pr_number,
-            "event_id": receipt.event_id,
-            "error": receipt.error,
-        }
-    out = dict(receipt.extras or {})
-    out.setdefault("status", "success")
-    out["event_id"] = receipt.event_id
-    out["pot_id"] = pot_id
-    out["pr_number"] = pr_number
-    return out
-
-
-def handle_ingestion_agent_run(
-    db: Session,
-    event_id: str,
-    *,
-    build_container: Callable[[Session], ContextEngineContainer],
-) -> dict[str, Any]:
-    container = build_container(db)
-    agent = container.reconciliation_agent
-    if agent is None:
-        return {"ok": False, "error": "no_reconciliation_agent"}
-    return run_ingestion_agent_for_event(
-        agent,
-        container.reconciliation_ledger(db),
-        event_id,
-        container.jobs,
-    )
-
-
-def handle_apply_episode(
-    db: Session,
-    pot_id: str,
-    event_id: str,
-    sequence: int,
-    *,
-    build_container: Callable[[Session], ContextEngineContainer],
-) -> dict[str, Any]:
-    container = build_container(db)
-    if container.context_graph is None:
-        return {"ok": False, "error": "context_graph_unavailable"}
-    r = apply_episode_step_for_event(
-        container.context_graph,
-        container.reconciliation_ledger(db),
-        event_id,
-        sequence,
-    )
+    reco_ledger = container.reconciliation_ledger(db)
+    obs = get_observability()
+    links = _ingress_links(reco_ledger, batches_repo, batch.id)
+    # The batch is the primary async trace (fan-in: N events → 1 run → M
+    # mutations). It links back to each event's ingress trace.
+    with correlation_scope(batch_id=batch.id, pot_id=batch.pot_id):
+        with obs.span(
+            "batch.process",
+            kind=SPAN_KIND_CONSUMER,
+            attributes={"batch_id": batch.id, "pot_id": batch.pot_id},
+            links=links,
+        ) as span:
+            obs.counter(
+                "ce.batch.started_total", 1, attributes={"pot_id": batch.pot_id}
+            )
+            # Time-in-pending: the windowed-5min canary. If the flusher
+            # wedges, this is what screams before anything else.
+            try:
+                if batch.created_at and batch.claimed_at:
+                    wait_ms = (
+                        batch.claimed_at - batch.created_at
+                    ).total_seconds() * 1000.0
+                    obs.histogram(
+                        "ce.batch.time_in_pending_ms",
+                        wait_ms,
+                        attributes={"pot_id": batch.pot_id},
+                    )
+            except Exception:  # noqa: BLE001 — best-effort metric
+                pass
+            outcome = process_batch(
+                batch=batch,
+                agent=container.reconciliation_agent,
+                batches=batches_repo,
+                reco_ledger=reco_ledger,
+                checkpoints=container.agent_checkpoint_store(db),
+                pots=container.pots,
+                policy=container.policy(),
+                stream_publisher=container.event_stream_publisher,
+                execution_log=container.agent_execution_log(db),
+            )
+            span.set_attribute("batch.ok", bool(outcome.ok))
+            span.set_attribute(
+                "batch.completed_events", len(outcome.completed_event_ids)
+            )
+            span.set_attribute("batch.tool_calls", outcome.tool_call_count)
+            if not outcome.ok:
+                span.set_error(outcome.error or "batch failed")
+            obs.counter(
+                "ce.batch.finished_total",
+                1,
+                attributes={
+                    "pot_id": batch.pot_id,
+                    "result": "ok" if outcome.ok else "failed",
+                },
+            )
     return {
-        "ok": r.ok,
-        "event_id": event_id,
-        "sequence": sequence,
-        "error": r.error,
-        "episode_uuids": r.episode_uuids,
+        "status": "ok" if outcome.ok else "failed",
+        "batch_id": outcome.batch_id,
+        "completed_event_ids": outcome.completed_event_ids,
+        "tool_call_count": outcome.tool_call_count,
+        "error": outcome.error,
     }

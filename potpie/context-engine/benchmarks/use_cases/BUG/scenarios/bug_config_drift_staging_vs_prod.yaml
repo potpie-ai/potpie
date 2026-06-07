@@ -1,0 +1,108 @@
+id: bug_config_drift_staging_vs_prod
+use_case: BUG
+tier: quick
+difficulty: hard
+source_mix: full
+universe: acme
+
+description: |
+  Finance reports payment status isn't updating for some prod orders; Stripe
+  shows webhook deliveries to payments-svc returning 500 in prod — but
+  staging is completely fine. The classic "works in staging, fails in prod"
+  shape.
+
+  Ground truth: PR #1175 added Stripe webhook signature verification, reading
+  a new `STRIPE_WEBHOOK_SECRET` from the secret store. The author added it to
+  the STAGING Helm values (`acme/staging/payments-svc`) and tested there, but
+  said "prod values in a follow-up" and forgot. The prod deploy of the same
+  revision succeeded because the handler reads the key LAZILY at request time
+  (not at boot) — so the drift was invisible until a real webhook arrived and
+  the handler raised. The environments doc (`docs/environments-and-secrets.md`)
+  defines the secret routing convention (`acme/<env>/<service>`). A #infra
+  Slack thread diagnoses it: works-in-staging-fails-in-prod = config drift,
+  the prod secret was never added.
+
+  A strong answer diagnoses config drift between staging and prod (the
+  missing STRIPE_WEBHOOK_SECRET in acme/prod/payments-svc), ties it to
+  PR #1175's "prod follow-up" gap, references the secret-routing convention,
+  and recommends adding the key to the prod secret path (and a boot-time
+  check so missing secrets fail fast).
+
+  Hard tier: deploy + slack + github + the environments seed, with the
+  failure mode hidden behind a successful deploy.
+
+ingest:
+  - { event: github/bug_config_drift_pr.json, at: "-14d", tags: [signal] }
+  - { event: deploy/bug_config_drift_staging_deploy.json, at: "-14d", tags: [signal] }
+  - { event: deploy/bug_config_drift_prod_deploy.json, at: "-13d", tags: [signal] }
+  - { event: slack/bug_config_drift_thread.json, at: "0d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/github_chore_noise_template.json, at: "-30d..-2d", count: 15 }
+  - { event: noise/slack_chatter_noise_template.json, at: "-20d..-1d", count: 8 }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): PR/Deployment nodes are reconciled but the
+  # topology read surfaces only Service/DataStore. The drift-diagnosis
+  # capability is graded in retrieval + the judge. Anchor on payments-svc.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*payments-svc", min_count: 1 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: debugging
+  scope: { service: payments-svc, environment: prod }
+  include: [prior_bugs, infra_topology, timeline]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [prior_bugs]
+  source_refs_min: 2
+  must_cite_event_id:
+    - github/bug_config_drift_pr.json
+    - universe/acme/11-environments-secrets.json
+  must_not_cite_event_id:
+    - noise/github_chore_noise_template.json
+  forbid_in_answer:
+    - "I don't have information"
+
+judge:
+  pass_score: 55
+  criteria:
+    - name: diagnoses_config_drift
+      weight: 30
+      pass_threshold: 4
+      prompt: |
+        Does the answer diagnose this as configuration drift between staging
+        and prod — specifically that `STRIPE_WEBHOOK_SECRET` is present in
+        acme/staging/payments-svc but MISSING from acme/prod/payments-svc?
+        A generic "it's a prod bug" without naming the drift fails.
+    - name: links_to_change
+      weight: 25
+      pass_threshold: 3
+      prompt: |
+        Does the answer tie the drift to PR #1175 (which added the secret to
+        staging values and deferred the prod follow-up) and explain why the
+        prod deploy succeeded anyway (the secret is read lazily at request
+        time, not at boot)?
+    - name: cites_convention_and_fix
+      weight: 25
+      pass_threshold: 3
+      prompt: |
+        Does the answer reference the secret-routing convention
+        (acme/<env>/<service> in AWS Secrets Manager) and recommend adding
+        STRIPE_WEBHOOK_SECRET to the prod path — ideally plus a boot-time
+        required-secret check so missing secrets fail fast?
+    - name: no_hallucination
+      weight: 20
+      pass_threshold: 5
+      prompt: |
+        Are all claims grounded? Valid references: PR #1175,
+        STRIPE_WEBHOOK_SECRET, acme/staging/payments-svc,
+        acme/prod/payments-svc, payments-svc, Stripe, AWS Secrets Manager,
+        docs/environments-and-secrets.md, bench-user-3, bench-user-4.
+        Other PRs/services/people are hallucinations.

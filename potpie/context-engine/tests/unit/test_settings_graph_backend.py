@@ -1,7 +1,7 @@
-"""Unit tests for GRAPH_DB_BACKEND + FalkorDB settings accessors.
+"""Unit tests for the GRAPH_DB_BACKEND + FalkorDB settings accessors.
 
-Covers default (neo4j), backend selection, and ``CONTEXT_ENGINE_*`` → bare-env
-fallback precedence on ``EnvContextEngineSettings``.
+Covers default (neo4j), backend selection, and the
+``CONTEXT_ENGINE_*`` → bare-env fallback precedence.
 """
 
 from __future__ import annotations
@@ -44,7 +44,9 @@ def test_falkordb_url_none_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     assert EnvContextEngineSettings().falkordb_url() is None
 
 
-def test_falkordb_url_context_engine_overrides_bare(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_falkordb_url_context_engine_overrides_bare(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _clear(monkeypatch)
     monkeypatch.setenv("FALKORDB_URL", "redis://bare:6379")
     monkeypatch.setenv("CONTEXT_ENGINE_FALKORDB_URL", "redis://dedicated:6379")
@@ -60,19 +62,22 @@ def test_falkordb_url_falls_back_to_bare(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_graph_name_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear(monkeypatch)
     assert EnvContextEngineSettings().falkordb_graph_name() == "context_graph"
-    monkeypatch.setenv("CONTEXT_ENGINE_FALKORDB_GRAPH_NAME", "my_graph")
+    monkeypatch.setenv("FALKORDB_GRAPH_NAME", "my_graph")
     assert EnvContextEngineSettings().falkordb_graph_name() == "my_graph"
 
 
 def test_mode_default_lite_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear(monkeypatch)
     assert EnvContextEngineSettings().falkordb_mode() == "lite"
-    monkeypatch.setenv("FALKORDB_MODE", "server")
+    monkeypatch.setenv("FALKORDB_MODE", "SERVER")
     assert EnvContextEngineSettings().falkordb_mode() == "server"
 
 
 def test_lite_path_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear(monkeypatch)
-    assert EnvContextEngineSettings().falkordb_lite_path() == ".potpie/context_graph/falkordb.db"
+    assert (
+        EnvContextEngineSettings().falkordb_lite_path()
+        == ".potpie/context_graph/falkordb.db"
+    )
     monkeypatch.setenv("FALKORDB_LITE_PATH", "/tmp/cg.db")
     assert EnvContextEngineSettings().falkordb_lite_path() == "/tmp/cg.db"

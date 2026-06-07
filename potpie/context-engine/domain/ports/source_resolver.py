@@ -47,8 +47,7 @@ class SourceResolverPort(Protocol):
         source_policy: str,
         budget: ResolverBudget,
         auth: ResolverAuthContext,
-    ) -> SourceResolutionResult:
-        ...
+    ) -> SourceResolutionResult: ...
 
     def capabilities(self) -> Sequence[ResolverCapabilityEntry]:
         """Advertise supported ``(provider, source_kind, policy)`` triples.

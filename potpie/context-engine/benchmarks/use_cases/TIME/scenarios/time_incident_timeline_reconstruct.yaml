@@ -1,0 +1,125 @@
+id: time_incident_timeline_reconstruct
+use_case: TIME
+tier: extended
+difficulty: hard
+source_mix: full
+universe: acme
+
+description: |
+  An engineer asks: "Walk me through the inventory-svc incident from last week
+  — what happened, in order, and how was it resolved?"
+
+  This is an incident-timeline reconstruction question that spans four
+  connectors. The engine must stitch five events from alerting, slack, linear,
+  and deploy into a single correctly-ordered narrative and identify the
+  rollback as the resolving action.
+
+  Ground truth, in strict chronological order (all on -6d, 2026-05-19):
+    1. 09:10 ALERT FIRED — Datadog "inventory-svc availability" monitor:
+       503 rate hits 11.3% on /reservations (threshold 5%). [alerting]
+    2. 09:14 SLACK #incidents — on-call bench-user-4 posts that the spike
+       started right after the rev-c0ffee deploy at 09:05 and threatens a
+       rollback if it doesn't clear. [slack]
+    3. 09:30 LINEAR OPS-451 opened — incident issue with a running timeline,
+       hypothesis = the reservation-batching path in rev-c0ffee. [linear]
+    4. 09:48 ROLLBACK — inventory-svc prod rolled back from rev-c0ffee to
+       rev-9a5b21 by bench-user-4. [deploy] <-- THE RESOLUTION
+    5. 09:55 ALERT RESOLVED — 503 rate back to 0.4%, ~7 min after the
+       rollback. [alerting]
+
+  The hard part is *cross-connector ordering and causal closure*: the five
+  events arrive within a 45-minute span from four different sources, and the
+  engine must (a) order them correctly, (b) recognize the rollback at 09:48 as
+  the action that resolved the incident (the alert clearing at 09:55 is the
+  CONSEQUENCE, not the fix), and (c) attribute the trigger to the rev-c0ffee
+  deploy. Listing the events out of order, or claiming the alert "self-
+  resolved" without crediting the rollback, fails.
+
+  (Offsets are single-unit, so the sub-hour ordering is expressed in minutes
+  around -6d: -8640m..-8585m preserves the 09:10 -> 09:55 sequence.)
+
+ingest:
+  - { event: alerting/alert_fired__inventory_503__inc_lat.json, at: "-8640m", tags: [signal] }
+  - { event: slack/incidents_thread__inventory_503__inc_lat.json, at: "-8636m", tags: [signal] }
+  - { event: linear/issue_create__OPS-451__inventory_503_incident.json, at: "-8620m", tags: [signal] }
+  - { event: deploy/rollback__inventory_svc__prod__rev_c0ffee.json, at: "-8602m", tags: [signal] }
+  - { event: alerting/alert_resolved__inventory_503__inc_lat.json, at: "-8595m", tags: [signal] }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): Alert/Message/Issue/Deployment nodes are
+  # reconciled onto the timeline but the topology query/read path surfaces only
+  # topology entities (Service/DataStore + DEPENDS_ON/USES). The ordered
+  # incident reconstruction this scenario measures is graded via
+  # retrieval_assertions.temporal + the judge. We anchor the structural floor
+  # on the inventory-svc Service the incident touched.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*inventory-svc", min_count: 1 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: debugging
+  scope: { service: inventory-svc, window_days: 14 }
+  include: [timeline, infra_topology]
+  mode: deep
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [timeline]
+  source_refs_min: 4
+  must_cite_event_id:
+    - alerting/alert_fired__inventory_503__inc_lat.json
+    - slack/incidents_thread__inventory_503__inc_lat.json
+    - linear/issue_create__OPS-451__inventory_503_incident.json
+    - deploy/rollback__inventory_svc__prod__rev_c0ffee.json
+    - alerting/alert_resolved__inventory_503__inc_lat.json
+  must_not_cite_event_id:
+    - github/pr_merged__998__inventory_unrelated.json
+  temporal:
+    must_order_correctly: true
+    window: { from: "-14d", to: "0d" }
+    out_of_window_refs_max: 0
+
+judge:
+  pass_score: 55
+  criteria:
+    - name: ordered_reconstruction
+      weight: 35
+      pass_threshold: 4
+      dimensions: [TIME]
+      prompt: |
+        Does the answer reconstruct the incident in correct chronological
+        order: alert fired (09:10) -> on-call posts in #incidents (09:14) ->
+        OPS-451 opened (09:30) -> rollback (09:48) -> alert resolved (09:55)?
+        Including approximate timestamps and keeping the five steps in order
+        passes; any reordering of the steps fails.
+    - name: rollback_is_resolution
+      weight: 30
+      pass_threshold: 4
+      dimensions: [TIME]
+      prompt: |
+        Does the answer identify the 09:48 ROLLBACK off rev-c0ffee as the
+        action that resolved the incident, with the 09:55 alert clearing as
+        the consequence? Claiming the alert "auto-resolved" or omitting the
+        rollback as the fix fails this criterion.
+    - name: attributes_trigger
+      weight: 20
+      pass_threshold: 3
+      dimensions: [TIME]
+      prompt: |
+        Does the answer attribute the trigger to the rev-c0ffee deploy (the
+        reservation-batching change) that immediately preceded the spike?
+        A reconstruction that never names the triggering deploy is incomplete
+        and fails.
+    - name: no_hallucination
+      weight: 15
+      pass_threshold: 5
+      dimensions: [TIME]
+      prompt: |
+        Are all factual claims grounded? Valid identifiers: OPS-451,
+        rev-c0ffee, rev-9a5b21, inventory-svc, bench-user-4, bench-user-2,
+        the Datadog availability monitor, the #incidents channel. Any other
+        issue ids, revisions, person names, or services are hallucinations and
+        fail this criterion.

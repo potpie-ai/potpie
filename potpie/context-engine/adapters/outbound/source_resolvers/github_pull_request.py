@@ -44,7 +44,9 @@ logger = logging.getLogger(__name__)
 
 # RepoResolver can be sync or async: ``(pot_id, ref) -> repo_name | None``.
 # Returning ``None`` emits an UNSUPPORTED_SOURCE_TYPE fallback for that ref.
-RepoResolver = Callable[[str, SourceReferenceRecord], "str | None | Awaitable[str | None]"]
+RepoResolver = Callable[
+    [str, SourceReferenceRecord], "str | None | Awaitable[str | None]"
+]
 # SourceControlFactory: ``(repo_name) -> SourceControlPort``. Typically the
 # same callable as ``ContextEngineContainer.source_for_repo``.
 SourceControlFactory = Callable[[str], SourceControlPort]
@@ -178,7 +180,8 @@ class GitHubPullRequestResolver:
                         title=_str_field(pr_data, "title"),
                         fetched_at=now_iso,
                         source_system="github",
-                        retrieval_uri=_str_field(pr_data, "html_url") or ref.retrieval_uri,
+                        retrieval_uri=_str_field(pr_data, "html_url")
+                        or ref.retrieval_uri,
                     )
                 )
                 remaining_chars = max(0, remaining_chars - len(text))
@@ -189,7 +192,9 @@ class GitHubPullRequestResolver:
                 merged = bool(pr_data.get("merged"))
                 state = str(pr_data.get("state") or "").lower()
                 verification_state = (
-                    "verified" if (merged or state in {"open", "closed"}) else "verification_failed"
+                    "verified"
+                    if (merged or state in {"open", "closed"})
+                    else "verification_failed"
                 )
                 out.verifications.append(
                     ResolvedVerification(
@@ -220,7 +225,9 @@ class GitHubPullRequestResolver:
                 for chunk, location in chunks:
                     if remaining_chars <= 0:
                         break
-                    text = clamp_text(chunk, min(budget.max_chars_per_item, remaining_chars))
+                    text = clamp_text(
+                        chunk, min(budget.max_chars_per_item, remaining_chars)
+                    )
                     if not text:
                         continue
                     out.snippets.append(

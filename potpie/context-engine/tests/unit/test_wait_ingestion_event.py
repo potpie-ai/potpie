@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from application.use_cases.wait_ingestion_event import wait_for_terminal_ingestion_event
+from application.services.ingestion_wait import wait_for_terminal_ingestion_event
 
 
 def test_wait_returns_immediately_on_terminal() -> None:
@@ -22,5 +22,7 @@ def test_wait_returns_immediately_on_terminal() -> None:
 def test_wait_returns_none_when_missing() -> None:
     store = MagicMock()
     store.get_event.return_value = None
-    out = wait_for_terminal_ingestion_event(store, "missing", timeout_seconds=0.2, poll_interval_seconds=0.05)
+    out = wait_for_terminal_ingestion_event(
+        store, "missing", timeout_seconds=0.2, poll_interval_seconds=0.05
+    )
     assert out is None

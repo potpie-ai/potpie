@@ -29,7 +29,6 @@ def _plan(**kwargs) -> ReconciliationPlan:
     return ReconciliationPlan(
         event_ref=EventRef(event_id="evt-1", pot_id="pot-1", source_system="test"),
         summary="test",
-        episodes=[],
         **kwargs,
     )
 
@@ -61,7 +60,9 @@ def test_collapses_case_variant_duplicates_and_unions_labels() -> None:
     plan = _plan(
         entity_upserts=[
             EntityUpsert("Agents", ("Entity", "Feature"), {"name": "Agents"}),
-            EntityUpsert("agents", ("Entity", "Component"), {"summary": "agent runtime"}),
+            EntityUpsert(
+                "agents", ("Entity", "Component"), {"summary": "agent runtime"}
+            ),
         ]
     )
     merges = canonicalize_reconciliation_plan(plan)
@@ -87,7 +88,9 @@ def test_rewrites_edges_and_drops_self_loops_after_merge() -> None:
         edge_upserts=[
             EdgeUpsert("RELATED_TO", "Agents", "agents"),  # becomes self-loop -> drop
             EdgeUpsert("RELATED_TO", "Agents", "context_resolve"),
-            EdgeUpsert("RELATED_TO", "agents", "context_resolve"),  # duplicate after merge
+            EdgeUpsert(
+                "RELATED_TO", "agents", "context_resolve"
+            ),  # duplicate after merge
         ],
     )
     canonicalize_reconciliation_plan(plan)

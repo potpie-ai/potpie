@@ -1,4 +1,9 @@
-"""Temporal ranking and flags for Graphiti search rows (see docs/context-graph-improvements/01)."""
+"""Temporal flags (``current`` / ``superseded`` / ``planned``) for search rows.
+
+Generic over any row dict that exposes ``valid_at`` / ``invalid_at``. Used by
+read-side surfaces that want to mark or rerank facts by their bitemporal
+validity against an ``as_of`` cursor.
+"""
 
 from __future__ import annotations
 

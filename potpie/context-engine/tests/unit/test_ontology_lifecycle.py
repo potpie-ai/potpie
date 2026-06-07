@@ -10,5 +10,7 @@ def test_lifecycle_status_enum_values() -> None:
     assert LifecycleStatus.completed.value == "completed"
 
 
-def test_generic_action_in_canonical_edges() -> None:
-    assert "GENERIC_ACTION" in EDGE_TYPES
+def test_related_to_is_the_generic_fallback_edge() -> None:
+    # The minimal topology ontology has no lifecycle edges; the only generic
+    # edge is the RELATED_TO soft-fail fallback.
+    assert "RELATED_TO" in EDGE_TYPES

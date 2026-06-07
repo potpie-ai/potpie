@@ -18,7 +18,6 @@ import argparse
 import asyncio
 import json
 import sys
-from types import SimpleNamespace
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,8 +31,8 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 from adapters.inbound.http.api.v1.context.router import create_context_router  # noqa: E402
-from adapters.inbound.cli.credentials_store import get_active_pot_id  # noqa: E402
-from adapters.inbound.cli.potpie_api_config import (  # noqa: E402
+from adapters.outbound.cli_auth.credentials_store import get_active_pot_id  # noqa: E402
+from adapters.outbound.cli_auth.potpie_api_config import (  # noqa: E402
     resolve_potpie_api_base_url,
     resolve_potpie_api_key,
 )
@@ -42,23 +41,17 @@ from adapters.outbound.http.potpie_context_api_client import (  # noqa: E402
     PotpieContextApiClient,
     PotpieContextApiError,
 )
-from adapters.outbound.intelligence.mock import MockIntelligenceProvider  # noqa: E402
-from application.services.context_resolution import ContextResolutionService  # noqa: E402
-from application.use_cases.resolve_context import resolve_context  # noqa: E402
-from bootstrap.container import ContextEngineContainer  # noqa: E402
+from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore  # noqa: E402
+from application.services.envelope_builder import envelope_to_dict  # noqa: E402
+from application.services.read_orchestrator import ReadOrchestrator  # noqa: E402
+from bootstrap.ingestion_server import IngestionServerContainer  # noqa: E402
 from bootstrap.http_projects import ExplicitPotResolution  # noqa: E402
 from domain.agent_context_port import (  # noqa: E402
     build_context_record_source_id,
-    bundle_to_agent_envelope,
     context_recipe_for_intent,
     normalize_record_type,
 )
-from domain.intelligence_models import (  # noqa: E402
-    ContextBudget,
-    ContextResolutionRequest,
-    ContextScope,
-)
-from domain.ports.jobs import NoOpJobEnqueue  # noqa: E402
+from domain.ports.context_graph_job_queue import NoOpContextGraphJobQueue  # noqa: E402
 
 DEFAULT_DATA = Path(__file__).with_name("mock_context_data.json")
 DEFAULT_REPORT = PACKAGE_ROOT / ".tmp" / "context-engine-lab-report.json"
@@ -143,8 +136,10 @@ def _run_http_e2e(args: argparse.Namespace) -> int:
 
 
 async def _mock_e2e(data: dict[str, Any]) -> dict[str, Any]:
-    provider = MockIntelligenceProvider()
-    svc = ContextResolutionService(provider)
+    # Mock mode drives the single read trunk over an (empty) in-memory claim
+    # store: each query resolves to an AgentEnvelope — backed includes come
+    # back empty, planned ones surface as unsupported_include.
+    orchestrator = ReadOrchestrator(claim_query=InMemoryClaimQueryStore())
     pot_id = str(data["pot_id"])
     repo_name = str(data["repo_name"])
     flows: list[dict[str, Any]] = []
@@ -153,30 +148,26 @@ async def _mock_e2e(data: dict[str, Any]) -> dict[str, Any]:
     for item in data["queries"]:
         recipe = context_recipe_for_intent(item.get("intent"))
         include = item.get("include") or recipe["include"]
-        req = ContextResolutionRequest(
+        env = orchestrator.resolve(
             pot_id=pot_id,
-            query=item["query"],
             intent=item.get("intent"),
+            query=item["query"],
             include=include,
-            mode=recipe["mode"],
-            source_policy=recipe["source_policy"],
-            scope=ContextScope(
-                repo_name=repo_name,
-                services=["context-engine"],
-                environment="staging",
-            ),
-            budget=ContextBudget(max_items=8, timeout_ms=2500),
+            scope={
+                "repo": repo_name,
+                "service": "context-engine",
+                "environment": "staging",
+            },
+            max_items=8,
         )
-        bundle = await resolve_context(svc, req)
-        envelope = bundle_to_agent_envelope(bundle)
+        envelope = envelope_to_dict(env)
         flow = {
             "name": item["name"],
             "ok": _validate_envelope(envelope),
-            "summary": envelope["answer"]["summary"],
-            "coverage": envelope["coverage"],
-            "freshness": envelope["freshness"],
-            "quality": envelope["quality"],
-            "source_refs": envelope["source_refs"],
+            "intent": envelope["intent"],
+            "confidence": envelope["overall_confidence"],
+            "items": len(envelope["items"]),
+            "unsupported": [u["name"] for u in envelope["unsupported_includes"]],
         }
         if not flow["ok"]:
             failures.append(
@@ -328,9 +319,7 @@ def _run_api_smoke(args: argparse.Namespace) -> int:
     data = _load_data(args.data)
     pot_id = args.pot_id or get_active_pot_id() or data.get("pot_id")
     if not pot_id:
-        raise SystemExit(
-            "pot_id missing: pass --pot-id or run `potpie pot use`"
-        )
+        raise SystemExit("pot_id missing: pass --pot-id or run `potpie pot use`")
     repo_name = args.repo_name or data.get("repo_name")
     client = PotpieContextApiClient(
         resolve_potpie_api_base_url(),
@@ -444,19 +433,12 @@ def _run_api_smoke(args: argparse.Namespace) -> int:
 
 
 def _build_in_process_client(pot_id: str, repo_name: str) -> TestClient:
-    episodic = _InMemoryEpisodicGraph()
-    structural = _InMemoryStructuralGraph()
-    provider = MockIntelligenceProvider()
-    container = ContextEngineContainer(
+    container = IngestionServerContainer(
         settings=_LabSettings(),
-        episodic=episodic,
-        structural=structural,
+        graph_writer=_InMemoryGraphWriter(),
         pots=ExplicitPotResolution({pot_id: repo_name}),
-        source_for_repo=lambda _repo_name: None,
-        intelligence_provider=provider,
-        resolution_service=ContextResolutionService(provider),
         reconciliation_agent=None,
-        jobs=NoOpJobEnqueue(),
+        jobs=NoOpContextGraphJobQueue(),
     )
 
     app = FastAPI()
@@ -466,7 +448,6 @@ def _build_in_process_client(pot_id: str, repo_name: str) -> TestClient:
             get_container=lambda: container,
             get_db=lambda: None,
             get_db_optional=lambda: None,
-            enforce_pot_access=False,
         ),
         prefix="/context",
     )
@@ -567,18 +548,14 @@ def _api_step(result: dict[str, Any], name: str, fn: Any) -> None:
 
 def _validate_envelope(envelope: dict[str, Any]) -> bool:
     required = {
-        "ok",
-        "answer",
-        "facts",
-        "evidence",
-        "source_refs",
+        "pot_id",
+        "intent",
+        "items",
         "coverage",
-        "freshness",
-        "quality",
-        "fallbacks",
-        "recommended_next_actions",
+        "unsupported_includes",
+        "overall_confidence",
     }
-    return envelope.get("ok") is True and required.issubset(envelope)
+    return required.issubset(envelope)
 
 
 def _summarize(payload: Any) -> Any:
@@ -672,292 +649,38 @@ class _LabSettings:
         return 0
 
 
-class _InMemoryEpisodicGraph:
+class _InMemoryGraphWriter:
+    """Lab-only :class:`GraphWriterPort` fake — counts mutations, no storage."""
+
     def __init__(self) -> None:
-        self._episodes: list[dict[str, Any]] = []
+        self._pots: set[str] = set()
 
     @property
     def enabled(self) -> bool:
         return True
 
-    def add_episode(
-        self,
-        pot_id: str,
-        name: str,
-        episode_body: str,
-        source_description: str,
-        reference_time: datetime,
-    ) -> str:
-        episode_uuid = f"lab-episode-{len(self._episodes) + 1}"
-        self._episodes.append(
-            {
-                "uuid": episode_uuid,
-                "pot_id": pot_id,
-                "name": name,
-                "body": episode_body,
-                "source_description": source_description,
-                "reference_time": reference_time,
-            }
-        )
-        return episode_uuid
+    async def ensure_indexes(self) -> bool:
+        return True
 
-    def write_episode_drafts(
-        self,
-        pot_id: str,
-        drafts: list[Any],
-        provenance: Any | None = None,
-    ) -> list[str]:
-        return [
-            self.add_episode(
-                pot_id,
-                getattr(draft, "name", "lab-draft"),
-                getattr(draft, "body", str(draft)),
-                getattr(provenance, "source", "lab:reconciliation"),
-                datetime.now(timezone.utc),
-            )
-            for draft in drafts
-        ]
-
-    async def add_episode_async(
-        self,
-        pot_id: str,
-        name: str,
-        episode_body: str,
-        source_description: str,
-        reference_time: datetime,
-    ) -> str:
-        return self.add_episode(
-            pot_id, name, episode_body, source_description, reference_time
-        )
-
-    def search(
-        self,
-        pot_id: str,
-        query: str,
-        limit: int = 10,
-        node_labels: list[str] | None = None,
-        repo_name: str | None = None,
-        source_description: str | None = None,
-        *,
-        include_invalidated: bool = False,
-        as_of: datetime | None = None,
-        episode_uuid: str | None = None,
-    ) -> list[Any]:
-        terms = {term.lower() for term in query.split() if len(term) > 2}
-        rows = []
-        want_ep = episode_uuid.strip() if episode_uuid and episode_uuid.strip() else None
-        for episode in self._episodes:
-            if episode["pot_id"] != pot_id:
-                continue
-            if want_ep and episode["uuid"] != want_ep:
-                continue
-            if (
-                source_description
-                and episode["source_description"] != source_description
-            ):
-                continue
-            text = f"{episode['name']} {episode['body']}".lower()
-            if terms and not any(term in text for term in terms):
-                continue
-            rt = episode["reference_time"]
-            rt_iso = rt.isoformat() if hasattr(rt, "isoformat") else str(rt)
-            rows.append(
-                SimpleNamespace(
-                    uuid=f"{episode['uuid']}-edge",
-                    name=episode["name"],
-                    summary=episode["body"],
-                    fact=episode["body"],
-                    created_at=episode["reference_time"],
-                    valid_at=episode["reference_time"],
-                    episodes=[episode["uuid"]],
-                    source_node_uuid=None,
-                    target_node_uuid=None,
-                    attributes={
-                        "source_refs": [episode["source_description"]],
-                        "reference_time": rt_iso,
-                        "episode_uuid": episode["uuid"],
-                    },
-                )
-            )
-            if len(rows) >= limit:
-                break
-        return rows
-
-    async def search_async(
-        self,
-        pot_id: str,
-        query: str,
-        limit: int = 10,
-        node_labels: list[str] | None = None,
-        repo_name: str | None = None,
-        source_description: str | None = None,
-        *,
-        include_invalidated: bool = False,
-        as_of: datetime | None = None,
-        episode_uuid: str | None = None,
-    ) -> list[Any]:
-        return self.search(
-            pot_id,
-            query,
-            limit=limit,
-            node_labels=node_labels,
-            repo_name=repo_name,
-            source_description=source_description,
-            include_invalidated=include_invalidated,
-            as_of=as_of,
-            episode_uuid=episode_uuid,
-        )
-
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
-        before = len(self._episodes)
-        self._episodes = [
-            episode for episode in self._episodes if episode["pot_id"] != pot_id
-        ]
-        return {"ok": True, "deleted": before - len(self._episodes)}
-
-    async def reset_pot_async(self, pot_id: str) -> dict[str, Any]:
-        return self.reset_pot(pot_id)
-
-
-class _InMemoryStructuralGraph:
-    def get_change_history(
-        self,
-        pot_id: str,
-        function_name: str | None,
-        file_path: str | None,
-        limit: int,
-        repo_name: str | None = None,
-        pr_number: int | None = None,
-    ) -> list[dict[str, Any]]:
-        return []
-
-    def get_file_owners(
-        self,
-        pot_id: str,
-        file_path: str,
-        limit: int,
-        repo_name: str | None = None,
-    ) -> list[dict[str, Any]]:
-        return []
-
-    def get_decisions(
-        self,
-        pot_id: str,
-        file_path: str | None,
-        function_name: str | None,
-        limit: int,
-        repo_name: str | None = None,
-        pr_number: int | None = None,
-    ) -> list[dict[str, Any]]:
-        return []
-
-    def get_pr_review_context(
-        self, pot_id: str, pr_number: int, repo_name: str | None = None
-    ) -> dict[str, Any]:
-        return {"found": False, "review_threads": []}
-
-    def get_pr_diff(
-        self,
-        pot_id: str,
-        pr_number: int,
-        file_path: str | None,
-        limit: int,
-        repo_name: str | None = None,
-    ) -> list[dict[str, Any]]:
-        return []
-
-    def get_project_graph(
-        self,
-        pot_id: str,
-        pr_number: int | None,
-        limit: int,
-        scope: dict[str, Any] | None = None,
-        include: list[str] | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "nodes": [],
-            "edges": [],
-            "scope": scope or {},
-            "include": include or [],
-        }
-
-    def get_debugging_memory(
-        self,
-        pot_id: str,
-        limit: int,
-        scope: dict[str, Any] | None = None,
-        include: list[str] | None = None,
-        query: str | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "items": [],
-            "scope": scope or {},
-            "include": include or [],
-            "query": query,
-        }
-
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
-        return {"ok": True, "deleted": 0}
-
-    def upsert_entities(self, pot_id: str, items: list[Any], provenance: Any) -> int:
-        return len(items)
-
-    def upsert_edges(self, pot_id: str, items: list[Any], provenance: Any) -> int:
-        return len(items)
-
-    def delete_edges(self, pot_id: str, items: list[Any], provenance: Any) -> int:
-        return len(items)
-
-    def apply_invalidations(
+    async def upsert_entities(
         self, pot_id: str, items: list[Any], provenance: Any
     ) -> int:
+        self._pots.add(pot_id)
         return len(items)
 
-    def expand_causal_neighbours(
-        self,
-        pot_id: str,
-        node_uuids: list[str],
-        *,
-        depth: int = 1,
-    ) -> list[dict[str, Any]]:
-        _ = pot_id
-        _ = node_uuids
-        _ = depth
-        return []
+    async def upsert_edges(self, pot_id: str, items: list[Any], provenance: Any) -> int:
+        self._pots.add(pot_id)
+        return len(items)
 
-    def walk_causal_chain_backward(
-        self,
-        pot_id: str,
-        focal_node_uuid: str,
-        *,
-        max_depth: int = 6,
-        as_of_iso: str | None = None,
-        window_days: int = 180,
-    ) -> list[dict[str, Any]]:
-        _ = pot_id
-        _ = focal_node_uuid
-        _ = max_depth
-        _ = as_of_iso
-        _ = window_days
-        return []
+    async def delete_edges(self, pot_id: str, items: list[Any], provenance: Any) -> int:
+        return len(items)
 
-    def resolve_entity_uuid_for_service_hint(
-        self,
-        pot_id: str,
-        service_hint: str,
-    ) -> str | None:
-        _ = pot_id
-        _ = service_hint
-        return None
+    async def invalidate(self, pot_id: str, items: list[Any], provenance: Any) -> int:
+        return len(items)
 
-    def get_episodic_entity_node(
-        self,
-        pot_id: str,
-        entity_uuid: str,
-    ) -> dict[str, Any] | None:
-        _ = pot_id
-        _ = entity_uuid
-        return None
+    async def reset_pot(self, pot_id: str) -> dict[str, Any]:
+        self._pots.discard(pot_id)
+        return {"ok": True}
 
 
 if __name__ == "__main__":
