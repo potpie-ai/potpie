@@ -141,6 +141,29 @@ def test_install_agent_bundle_claude_skips_changed_section_without_force(
     assert "CLAUDE.md" in result.skipped
 
 
+def test_install_agent_bundle_cursor_writes_cursor_skills(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    result = install_agent_bundle(repo, agent="cursor")
+
+    assert "AGENTS.md" in result.created
+    skill = repo / ".cursor" / "skills" / "potpie-cli" / "SKILL.md"
+    assert skill.exists()
+    assert "potpie" in skill.read_text(encoding="utf-8").lower()
+
+
+def test_install_agent_bundle_opencode_writes_opencode_skills(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    result = install_agent_bundle(repo, agent="opencode")
+
+    assert "AGENTS.md" not in result.created
+    skill = repo / ".opencode" / "skills" / "potpie-agent-context" / "SKILL.md"
+    assert skill.exists()
+
+
 def test_install_agent_bundle_invalid_agent_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Unknown agent type"):
         install_agent_bundle(tmp_path, agent="unknown")

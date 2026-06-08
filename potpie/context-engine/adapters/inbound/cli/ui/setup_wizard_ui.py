@@ -12,15 +12,20 @@ from pathlib import Path
 from typing import Any, Iterator, Literal
 
 import typer
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
-from rich.panel import Panel
 from rich.table import Table
 from rich.markup import escape
 from rich.text import Text
 
+from adapters.inbound.cli.ui.brand import (
+    LOGO_COLOR,
+    LOGO_DIM_STYLE,
+    LOGO_SEPARATOR_STYLE,
+    LOGO_STYLE,
+    LOGO_SUBTLE_SEPARATOR_STYLE,
+)
 from adapters.inbound.cli.ui.potpie_logo_anim import (
-    chomp_glyph,
     content_width_for_panel,
     panel_width_for_console,
     play_intro,
@@ -28,14 +33,39 @@ from adapters.inbound.cli.ui.potpie_logo_anim import (
 
 StepStatus = Literal["pending", "running", "done", "skipped", "failed", "warn"]
 
-_ICON: dict[StepStatus, str] = {
-    "pending": "[dim]•[/dim]",
-    "running": "[yellow]⠋[/yellow]",
-    "done": "[green]✓[/green]",
-    "failed": "[red]✗[/red]",
-    "skipped": "[dim]–[/dim]",
-    "warn": "[yellow]![/yellow]",
+_SEPARATOR_CHAR = "━"
+_SUBTLE_SEPARATOR_CHAR = "─"
+
+
+def _green_separator(width: int) -> Text:
+    """Thick green separator used in place of boxed panels."""
+    return Text(_SEPARATOR_CHAR * max(12, width), style=LOGO_SEPARATOR_STYLE)
+
+
+def _subtle_green_separator(width: int) -> Text:
+    """Slim dim-green separator (matches post-setup section breaks)."""
+    return Text(
+        _SUBTLE_SEPARATOR_CHAR * max(24, width),
+        style=LOGO_SUBTLE_SEPARATOR_STYLE,
+    )
+
+
+_ICON: dict[StepStatus, tuple[str, str]] = {
+    "pending": ("•", LOGO_DIM_STYLE),
+    "running": ("⠋", LOGO_STYLE),
+    "done": ("✓", LOGO_STYLE),
+    "failed": ("✗", "red"),
+    "skipped": ("–", LOGO_DIM_STYLE),
+    "warn": ("!", "yellow"),
 }
+_RUNNING_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
+
+def _status_icon(status: StepStatus, frame: int) -> Text:
+    glyph, style = _ICON.get(status, ("•", "dim"))
+    if status == "running":
+        glyph = _RUNNING_FRAMES[frame % len(_RUNNING_FRAMES)]
+    return Text(f"[{glyph}]", style=style)
 
 
 @dataclass
@@ -154,20 +184,14 @@ class SetupWizardUI:
 
     def _render_table(self, *, content_width: int) -> Table:
         table = Table.grid(padding=(0, 1))
-        table.add_column(width=2)
-        table.add_column(max_width=max(16, content_width - 2))
+        table.add_column(width=3)
+        table.add_column(max_width=max(16, content_width - 4))
         for step in self.steps:
-            icon = _ICON.get(step.status, "•")
+            icon = _status_icon(step.status, self._chomp_frame)
             text = step.display_label()
-            if step.status == "running" and step.chomp:
-                line = Text.assemble(
-                    chomp_glyph(self._chomp_frame),
-                    (f" {text}", "bold"),
-                )
-            else:
-                line = text
-                if step.status == "running":
-                    line = f"[bold]{text}[/bold]"
+            line = text
+            if step.status == "running":
+                line = f"[bold]{text}[/bold]"
             if step.detail:
                 detail = _truncate_middle(step.detail, max(12, content_width - 10))
                 suffix = f" [dim]{escape(detail)}[/dim]"
@@ -179,17 +203,10 @@ class SetupWizardUI:
             table.add_row(icon, line)
         return table
 
-    def _render(self, console: Console | None = None) -> Panel:
+    def _render(self, console: Console | None = None) -> Group:
         console = console or stderr_console()
         width = panel_width_for_console(console)
-        return Panel(
-            self._render_table(content_width=content_width_for_panel(width)),
-            title="[bold]Potpie setup[/bold]",
-            border_style="bright_green",
-            padding=(0, 1),
-            width=width,
-            expand=False,
-        )
+        return Group(self._render_table(content_width=content_width_for_panel(width)))
 
     def refresh(self) -> None:
         if self._live is not None:
@@ -238,7 +255,7 @@ class SetupWizardUI:
         """Mark step running, yield for work, caller sets done/fail."""
         step = self.get(step_id)
         step.status = "running"
-        if step.chomp:
+        if self.use_rich:
             self._start_chomp_ticker()
         self.refresh()
         t0 = time.perf_counter()
@@ -278,7 +295,7 @@ class SetupWizardUI:
         *,
         setup_path: str,
         data_path: str,
-        pot_name: str,
+        pot_name: str | None = None,
         already_setup: bool,
     ) -> None:
         if not self.use_rich:
@@ -293,28 +310,22 @@ class SetupWizardUI:
         cw = content_width_for_panel(width)
         console.print()
         title = (
-            "[bold green]Potpie is ready![/bold green]"
+            f"[bold {LOGO_COLOR}]Potpie is ready![/bold {LOGO_COLOR}]"
             if not already_setup
             else "[dim]Already set up — no changes needed.[/dim]"
         )
         console.print(title)
-        console.print(
-            Panel(
-                "\n".join(
-                    [
-                        f"[green]✓[/green] Config [cyan]{escape(_truncate_middle(setup_path, cw - 10))}[/cyan]",
-                        f"[green]✓[/green] Data [cyan]{escape(_truncate_middle(data_path, cw - 8))}[/cyan]",
-                        f"[green]✓[/green] Pot [bold]{escape(pot_name)}[/bold]",
-                        "",
-                        "Next: [bold]potpie status[/bold]",
-                    ]
-                ),
-                border_style="bright_green",
-                title="[bold bright_green]Paths[/bold bright_green]",
-                width=width,
-                expand=False,
+        lines = [
+            f"[{LOGO_COLOR}]✓[/{LOGO_COLOR}] Config [cyan]{escape(_truncate_middle(setup_path, cw - 10))}[/cyan]",
+            f"[{LOGO_COLOR}]✓[/{LOGO_COLOR}] Data [cyan]{escape(_truncate_middle(data_path, cw - 8))}[/cyan]",
+        ]
+        if pot_name:
+            lines.append(
+                f"[{LOGO_COLOR}]✓[/{LOGO_COLOR}] Pot [bold]{escape(pot_name)}[/bold]"
             )
-        )
+        lines.extend(["", "Next: [bold]connect tools & agents[/bold]"])
+        console.print("\n".join(lines))
+        console.print(_subtle_green_separator(width))
 
     def print_failed(self, *, step_id: str, verbose_hint: bool = True) -> None:
         step = self.get(step_id)

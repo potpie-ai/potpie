@@ -1,4 +1,4 @@
-"""Potpie logo terminal display (static SVG-derived ASCII, with fallbacks)."""
+"""Potpie logo terminal display (compact, centered, static)."""
 
 from __future__ import annotations
 
@@ -7,17 +7,20 @@ import time
 from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
-from rich.panel import Panel
 from rich.text import Text
 
+from adapters.inbound.cli.ui.brand import LOGO_COLOR, LOGO_DIM_STYLE, LOGO_STYLE
+from adapters.inbound.cli.ui.logo_rotation import render_intro_logo, render_static_intro_logo
 from adapters.inbound.cli.ui.static_logo_loader import VIEWPORT_WIDTH, load_static_logo
 
-_ACCENT = "bold #D4FF4D on #000000"
-_DIM = "dim #9AE622"
-_LOGO_STYLE = "bold #B8F032 on #000000"
-_BLINK_DIM_STYLE = "dim #6D8A1B on #000000"
-
+_ACCENT = LOGO_STYLE
+_DIM = LOGO_DIM_STYLE
 INTRO_SECONDS = 4.5
+_INTRO_LOGO_COLS = 22
+_WARMING_BASE = "Potpie is warming up"
+_WARMING_BRIGHT = f"italic bold {LOGO_COLOR}"
+_WARMING_DIM = "italic dim"
+_INTRO_FPS = 8
 
 _MIN_PANEL_WIDTH = 58
 _MAX_PANEL_WIDTH = 96
@@ -66,36 +69,37 @@ def _styled_block(art: str) -> Text:
     for i, line in enumerate(art.splitlines()):
         if i:
             out.append("\n")
-        out.append(line, style=_LOGO_STYLE)
+        out.append(line, style=LOGO_STYLE)
     return out
 
 
-def _static_logo(viewport_width: int) -> Text | None:
-    art = load_static_logo(viewport_width)
-    if art is None:
-        return None
-    return art.text
+def _warming_line(frame: int) -> Text:
+    """Animate ellipsis: one dot bright at a time, the others dim."""
+    phase = frame % 3
+    out = Text()
+    out.append(_WARMING_BASE, style=_WARMING_DIM)
+    for i in range(3):
+        style = _WARMING_BRIGHT if i == phase else _WARMING_DIM
+        out.append(".", style=style)
+    return out
 
 
-def _logo_frame(viewport_width: int, *, blink_on: bool) -> Text:
-    logo = _static_logo(viewport_width)
-    if logo is None:
-        return _styled_block(_FALLBACK_FRAMES[0 if blink_on else 2])
-    frame = logo.copy()
-    if not blink_on:
-        frame.stylize(_BLINK_DIM_STYLE)
-    return frame
+def _intro_logo(viewport_width: int, frame: int) -> Text:
+    logo_w = min(_INTRO_LOGO_COLS, viewport_width)
+    try:
+        return render_intro_logo(viewport_width=logo_w, frame=frame)
+    except Exception:
+        art = load_static_logo(logo_w)
+        if art is not None:
+            return art.text
+        return _styled_block(_FALLBACK_FRAMES[frame % len(_FALLBACK_FRAMES)])
 
 
 def chomp_glyph(frame: int) -> Text:
     """Logo token for active checklist rows."""
     art = load_static_logo(VIEWPORT_WIDTH)
-    on = (frame % 2) == 0
-    if art is not None:
-        style = "bold #B8F032 on #000000" if on else "dim #6D8A1B on #000000"
-        return Text(f" {art.chomp_token} ", style=style)
-    token = "██▐" if on else "██▌"
-    return Text(f" {token} ", style=_LOGO_STYLE)
+    token = art.chomp_token if art is not None else "@@"
+    return Text(f" [{token}] ", style=LOGO_STYLE)
 
 
 def play_intro(
@@ -105,41 +109,133 @@ def play_intro(
     seconds: float = INTRO_SECONDS,
     panel_width: int | None = None,
 ) -> None:
-    """Centered logo intro with a subtle blink animation."""
+    """Centered static logo splash (shown briefly, then cleared)."""
     width = panel_width if panel_width is not None else panel_width_for_console(console)
     content_w = content_width_for_panel(width)
+    sub = _truncate_middle(subtitle, content_w)
 
-    def render(frame_no: int) -> Panel:
-        logo = _logo_frame(content_w, blink_on=(frame_no % 2 == 0))
-        sub = _truncate_middle(subtitle, content_w)
-        body = Group(
+    def render(frame_no: int) -> Group:
+        return Group(
+            Text(""),
             Align.center(Text("potpie", style=_ACCENT)),
-            Align.center(logo),
+            Text(""),
+            Align.center(_intro_logo(content_w, frame_no)),
+            Text(""),
             Align.center(Text(sub, style=_DIM)),
-            Align.center(Text("Potpie is warming up...", style="italic dim")),
-        )
-        return Panel(
-            body,
-            border_style="bright_green",
-            padding=(0, 1),
-            title="[bold]Setup[/bold]",
-            width=width,
-            expand=False,
+            Align.center(_warming_line(frame_no)),
+            Text(""),
         )
 
-    with Live(render(0), console=console, refresh_per_second=4, transient=True) as live:
+    interval = 1.0 / _INTRO_FPS
+    with Live(render(0), console=console, refresh_per_second=_INTRO_FPS, transient=True) as live:
         tick = 0.0
         frame_no = 0
         while tick < seconds:
             live.update(render(frame_no))
-            time.sleep(0.25)
-            tick += 0.25
+            time.sleep(interval)
+            tick += interval
             frame_no += 1
 
 
 def mini_logo_text() -> Text:
     """Static logo strip."""
-    logo = _static_logo(VIEWPORT_WIDTH)
-    if logo is not None:
-        return logo
+    art = load_static_logo(min(VIEWPORT_WIDTH, 24))
+    if art is not None:
+        return art.text
     return _styled_block(_FALLBACK_FRAMES[0])
+
+
+_FINISH_SECONDS = 2.8
+_FINISH_FPS = 8
+
+
+def _celebration_sparkle(frame: int) -> Text:
+    glyphs = ("✦", "★", "✧", "·")
+    out = Text("  ")
+    for i in range(5):
+        out.append(glyphs[(frame + i) % len(glyphs)], style=_ACCENT if (frame + i) % 2 else _DIM)
+        out.append(" ")
+    return out
+
+
+def _finish_screen(
+    *,
+    headline: str,
+    subline: str,
+    logo: Text,
+    sparkle_frame: int | None,
+) -> Group:
+    """Celebration layout; ``sparkle_frame`` animates sparkles, ``None`` keeps them fixed."""
+    if sparkle_frame is None:
+        top_sparkle = Text("  ✦  ★  ✧  ·  ✦  ", style=_ACCENT)
+        bottom_sparkle = Text("  ✦  ★  ✧  ·  ✦  ", style=_ACCENT)
+    else:
+        top_sparkle = _celebration_sparkle(sparkle_frame)
+        bottom_sparkle = _celebration_sparkle(sparkle_frame + 2)
+    return Group(
+        Text(""),
+        Align.center(top_sparkle),
+        Align.center(Text("potpie", style=_ACCENT)),
+        Text(""),
+        Align.center(logo),
+        Text(""),
+        Align.center(Text.from_markup(headline)),
+        Align.center(Text(subline, style=_ACCENT)),
+        Align.center(bottom_sparkle),
+        Text(""),
+    )
+
+
+def play_setup_finish(
+    console: Console,
+    *,
+    pot_name: str,
+    seconds: float = _FINISH_SECONDS,
+    panel_width: int | None = None,
+) -> None:
+    """Animate in place, then hold the same layout as a static screen (no clear)."""
+    width = panel_width if panel_width is not None else panel_width_for_console(console)
+    content_w = content_width_for_panel(width)
+    logo_w = min(_INTRO_LOGO_COLS, content_w)
+    headline = f"Your pot [bold]{pot_name}[/bold] is ready."
+    subline = "Start ingestion."
+
+    def render_animated(frame_no: int) -> Group:
+        try:
+            logo = render_intro_logo(viewport_width=logo_w, frame=frame_no)
+        except Exception:
+            logo = _intro_logo(content_w, frame_no)
+        return _finish_screen(
+            headline=headline,
+            subline=subline,
+            logo=logo,
+            sparkle_frame=frame_no,
+        )
+
+    def render_static() -> Group:
+        try:
+            logo = render_static_intro_logo(viewport_width=logo_w)
+        except Exception:
+            logo = _intro_logo(content_w, 0)
+        return _finish_screen(
+            headline=headline,
+            subline=subline,
+            logo=logo,
+            sparkle_frame=None,
+        )
+
+    interval = 1.0 / _FINISH_FPS
+    with Live(
+        render_animated(0),
+        console=console,
+        refresh_per_second=_FINISH_FPS,
+        transient=False,
+    ) as live:
+        tick = 0.0
+        frame_no = 0
+        while tick < seconds:
+            live.update(render_animated(frame_no))
+            time.sleep(interval)
+            tick += interval
+            frame_no += 1
+        live.update(render_static(), refresh=True)

@@ -35,10 +35,11 @@ class SetupPlan:
     host_mode: str = "daemon"  # daemon | in_process — flips daemon/installer hardness
     backend: str = "embedded"  # embedded | postgres | neo4j | in_memory
     repo: str | None = "."
-    pot: str = "default"
+    pot: str = "foo-pot"
     agent: str = "claude"
     scan: bool = False
     assume_yes: bool = False
+    defer_default_pot: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +155,7 @@ def _plan_dict(plan: SetupPlan) -> dict[str, Any]:
         "pot": plan.pot,
         "agent": plan.agent,
         "scan": plan.scan,
+        "defer_default_pot": plan.defer_default_pot,
     }
 
 
