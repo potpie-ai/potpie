@@ -27,6 +27,7 @@ from domain.errors import CapabilityNotImplemented
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
 source_app = typer.Typer(help="Sources registered to a pot.")
 linear_team_app = typer.Typer(help="Linear teams attached to a context pot.")
+jira_project_app = typer.Typer(help="Jira projects reachable from a context pot.")
 
 
 def _potpie_api_client() -> PotpieContextApiClient:
@@ -264,5 +265,68 @@ def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> Non
 
 
 pot_app.add_typer(linear_team_app, name="linear-team")
+
+
+@jira_project_app.command("ingest")
+def jira_project_ingest(
+    project_key: str = typer.Argument(..., help="Jira project key, e.g. PROJ."),
+    pot: str = typer.Option(None, "--pot", help="Pot id/name (default: active pot)."),
+    count: int = typer.Option(
+        120,
+        "--count",
+        min=1,
+        max=1000,
+        help="Soft per-kind item limit for the one-shot ingestion playbook.",
+    ),
+) -> None:
+    """Queue one-shot ingestion for a Jira project's recent epics and issues."""
+    with contract():
+        key = project_key.strip()
+        if not key:
+            raise ValueError("Jira project key is required.")
+
+        pid = resolve_pot_id(get_host(), pot)
+        source_id = f"one_shot_ingest:jira:{key.lower()}:{uuid.uuid4()}"
+        try:
+            status_code, data = _potpie_api_client().submit_event(
+                pot_id=pid,
+                source_system="jira",
+                event_type="jira_project",
+                action="one_shot_ingest",
+                source_id=source_id,
+                payload={"project_key": key, "count": count},
+                provider=None,
+                provider_host=None,
+                repo_name=None,
+                occurred_at=datetime.now(timezone.utc),
+            )
+        except PotpieContextApiError as exc:
+            fail(
+                code="api_error",
+                message="Jira ingest failed.",
+                detail=str(exc.detail),
+            )
+
+        out = {
+            "status": "queued" if status_code == 202 else data.get("status", "applied"),
+            "pot_id": pid,
+            "project_key": key,
+            "count": count,
+            "source_id": source_id,
+            "event_id": data.get("event_id"),
+            "job_id": data.get("job_id") or data.get("batch_id"),
+        }
+        if status_code == 409:
+            out["status"] = "duplicate"
+        emit(
+            out,
+            human=(
+                f"Queued Jira project ingest for {key} in pot {pid} "
+                f"(event {out.get('event_id') or 'unknown'})."
+            ),
+        )
+
+
+pot_app.add_typer(jira_project_app, name="jira-project")
 
 __all__ = ["pot_app", "source_app"]
