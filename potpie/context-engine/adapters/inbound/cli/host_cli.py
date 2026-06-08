@@ -31,6 +31,7 @@ def build_app() -> typer.Typer:
 
     @app.callback()
     def _root(
+        ctx: typer.Context,
         json_: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
         verbose: bool = typer.Option(
             False, "--verbose", "-v", help="Verbose tracebacks on errors."
@@ -47,6 +48,11 @@ def build_app() -> typer.Typer:
         configure_error_output(as_json=json_)
         configure_cli_logging(verbose)
         load_cli_env()
+        from adapters.inbound.cli.sentry_runtime import configure_cli_sentry
+        from adapters.inbound.cli.telemetry_context import bind_cli_telemetry_context
+
+        bind_cli_telemetry_context(ctx, json_output=json_)
+        configure_cli_sentry()
 
     # Top-level commands (the four-tool surface + bootstrap + auth/login).
     query_cmds.register(app)

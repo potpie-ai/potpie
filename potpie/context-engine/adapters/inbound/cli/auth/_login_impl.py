@@ -11,6 +11,7 @@ inside the command bodies.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import NoReturn
 
 import typer
 
@@ -38,8 +39,8 @@ def _flags() -> tuple[bool, bool]:
 def potpie_login_impl() -> None:
     """Browser sign-in: exchange a custom token and store the Firebase session."""
     j, v = _flags()
-    store = get_store()
     try:
+        store = get_store()
         print_plain_line(
             "Opening browser to sign in...\nWaiting for authentication...",
             as_json=False,
@@ -58,6 +59,12 @@ def potpie_login_impl() -> None:
     except (PotpieCliAuthError, FirebaseSessionError, CredentialStoreError) as exc:
         emit_error("Potpie login failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_AUTH) from exc
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _capture_unexpected_potpie_auth_error(
+            exc, title="Potpie login failed", verbose=v
+        )
 
     if j:
         print_json_blob(
@@ -71,16 +78,22 @@ def potpie_login_impl() -> None:
 def potpie_logout_impl() -> None:
     """Remove Potpie CLI auth from the system keychain (revoking API keys)."""
     j, v = _flags()
-    store = get_store()
     api_key = ""
     clear_api_key = False
     try:
+        store = get_store()
         clear_api_key = store.get_potpie_auth_type() == "api_key"
         if clear_api_key:
             api_key = store.get_stored_api_key()
     except CredentialStoreError as exc:
         emit_error("Potpie logout failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_AUTH) from exc
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _capture_unexpected_potpie_auth_error(
+            exc, title="Potpie logout failed", verbose=v
+        )
 
     if api_key:
         try:
@@ -97,6 +110,12 @@ def potpie_logout_impl() -> None:
     except CredentialStoreError as exc:
         emit_error("Potpie logout failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_AUTH) from exc
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _capture_unexpected_potpie_auth_error(
+            exc, title="Potpie logout failed", verbose=v
+        )
 
     if j:
         print_json_blob({"ok": True}, as_json=True)
@@ -107,8 +126,8 @@ def potpie_logout_impl() -> None:
 def potpie_login_api_key_impl(token: str, url: str | None) -> None:
     """Store a Potpie API key (and optional base URL) in the keyring."""
     j, v = _flags()
-    store = get_store()
     try:
+        store = get_store()
         store.store_potpie_api_key(
             token, created_at=datetime.now(timezone.utc).isoformat()
         )
@@ -116,12 +135,40 @@ def potpie_login_api_key_impl(token: str, url: str | None) -> None:
     except CredentialStoreError as exc:
         emit_error("Potpie login failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_AUTH) from exc
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _capture_unexpected_potpie_auth_error(
+            exc, title="Potpie login failed", verbose=v
+        )
     path = store.credentials_path()
     print_plain_line(
         f"Saved API key to keyring ({path}).",
         as_json=j,
         json_payload={"ok": True, "auth_type": "api_key", "path": str(path)},
     )
+
+
+def _capture_unexpected_potpie_auth_error(
+    exc: BaseException,
+    *,
+    title: str,
+    verbose: bool,
+) -> NoReturn:
+    from adapters.inbound.cli.sentry_runtime import capture_unexpected_cli_error
+
+    capture_unexpected_cli_error(
+        exc,
+        error_code="unexpected_cli_error",
+        error_kind="unexpected",
+    )
+    emit_error(
+        title,
+        "Unexpected internal error.",
+        code="unexpected_cli_error",
+        verbose=verbose,
+    )
+    raise typer.Exit(code=EXIT_AUTH) from exc
 
 
 __all__ = ["potpie_login_impl", "potpie_logout_impl", "potpie_login_api_key_impl"]

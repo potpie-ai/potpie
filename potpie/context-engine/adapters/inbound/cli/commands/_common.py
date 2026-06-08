@@ -159,6 +159,21 @@ def contract() -> Iterator[None]:
         )
     except ValueError as exc:
         fail(code="validation_error", message=str(exc), exit_code=EXIT_VALIDATION)
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        from adapters.inbound.cli.sentry_runtime import capture_unexpected_cli_error
+
+        capture_unexpected_cli_error(
+            exc,
+            error_code="unexpected_cli_error",
+            error_kind="unexpected",
+        )
+        fail(
+            code="unexpected_cli_error",
+            message="Unexpected internal error.",
+            exit_code=EXIT_VALIDATION,
+        )
 
 
 def resolve_pot_id(host: Any, explicit: str | None = None) -> str:
