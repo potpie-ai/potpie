@@ -474,7 +474,7 @@ def test_get_provider_credentials_raises_when_keychain_token_missing(
         cs.get_provider_credentials("github")
 
     assert str(exc.value) == (
-        "GitHub token not found in system keychain. Run: potpie auth github login"
+        "GitHub token not found in system keychain. Run: potpie github login"
     )
 
 
@@ -507,3 +507,73 @@ def test_write_provider_credentials_raises_on_keychain_failure(
         )
 
     assert "Failed to store GitHub token in system keychain" in str(exc.value)
+
+
+def test_linux_integration_secrets_stored_in_json_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(cs.sys, "platform", "linux")
+
+    cs.write_provider_credentials(
+        "github",
+        {
+            "provider": "github",
+            "provider_host": "github.com",
+            "access_token": "linux-file-token",
+            "token_type": "bearer",
+            "scopes": ["repo"],
+            "account": {"login": "octocat", "id": 1, "name": None, "email": None},
+            "created_at": "2026-05-29T00:00:00+00:00",
+            "updated_at": "2026-05-29T00:00:00+00:00",
+            "expires_at": None,
+            "metadata": {"auth_flow": "device"},
+        },
+    )
+
+    secrets_path = cs.integration_secrets_path()
+    assert secrets_path.is_file()
+    secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
+    assert secrets["github_token"] == "linux-file-token"
+    assert ("potpie", "github_token") not in fake_keyring
+
+    metadata = json.loads(cs.credentials_path().read_text(encoding="utf-8"))
+    assert metadata["integrations"]["github"]["token_storage"] == "file"
+    assert cs.get_provider_credentials("github")["access_token"] == "linux-file-token"
+
+
+def test_linux_potpie_api_key_still_uses_keyring(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(cs.sys, "platform", "linux")
+
+    cs.store_potpie_api_key("sk-test-linux-keyring", created_at="2026-01-01T00:00:00Z")
+
+    assert fake_keyring[("potpie", "potpie_api_key")] == "sk-test-linux-keyring"
+    assert not cs.integration_secrets_path().is_file()
+
+
+def test_linux_integration_secret_falls_back_to_keyring(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(cs.sys, "platform", "linux")
+    fake_keyring[("potpie", "github_token")] = "legacy-keyring-token"
+    cs.write_integration_metadata(
+        "github",
+        {
+            "provider": "github",
+            "provider_host": "github.com",
+            "token_storage": "keychain",
+            "account": {"login": "octocat", "id": 1},
+        },
+    )
+
+    assert cs.get_provider_credentials("github")["access_token"] == "legacy-keyring-token"

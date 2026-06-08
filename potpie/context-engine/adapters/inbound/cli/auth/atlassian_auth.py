@@ -94,37 +94,35 @@ def _prompt_credentials() -> tuple[str, str]:
     return email, api_token
 
 
-def _open_atlassian_api_token_page() -> None:
-    print_plain_line("Create an API token (without scopes).", as_json=False)
+def _open_atlassian_api_token_page(product: AtlassianProduct) -> None:
+    """Show setup steps, then open the Atlassian token page after confirmation."""
+    product_label = "Jira" if product == "jira" else "Confluence"
     print_plain_line(
-        "Use an Atlassian API token without scopes for Jira and Confluence.",
+        f"{product_label} login — Atlassian API token",
         as_json=False,
     )
-    print_plain_line(
-        "You will paste the token here, then enter your email and site subdomain.",
-        as_json=False,
+    for line in (
+        "  • Create a token at id.atlassian.com (without scopes)",
+        "  • One token works for both Jira and Confluence",
+        "  • Press Enter to open the page, then paste the token with your email and site",
+    ):
+        print_plain_line(line, as_json=False)
+    typer.confirm(
+        "Press Enter to continue",
+        default=True,
+        show_default=False,
     )
-    for remaining in range(10, 0, -1):
-        prefix = "" if remaining == 10 else "\r"
-        suffix = "second" if remaining == 1 else "seconds"
-        sys.stdout.write(f"{prefix}Opening Atlassian in {remaining} {suffix}...")
-        sys.stdout.flush()
-        time.sleep(1)
-    sys.stdout.write("\rOpening Atlassian now...          \n")
-    sys.stdout.flush()
+    print_plain_line("Opening id.atlassian.com ...", as_json=False)
 
     opened = webbrowser.open(ATLASSIAN_API_TOKEN_PAGE, new=1)
     if not opened:
         print_plain_line(
-            "Could not open a browser automatically. Open this URL:",
+            "Could not open a browser. Open this URL:",
             as_json=False,
         )
         print_plain_line(ATLASSIAN_API_TOKEN_PAGE, as_json=False, markup=False)
         return
-    print_plain_line(
-        "Paste the API token here when you are done creating it.",
-        as_json=False,
-    )
+    print_plain_line("Paste the token below when you are ready.", as_json=False)
 
 
 def _auth_failure_message(
@@ -242,7 +240,7 @@ def run_atlassian_api_token_auth(
         site, last_error = _resolve_site_from_subdomain(site_subdomain or "")
     else:
         if not as_json:
-            _open_atlassian_api_token_page()
+            _open_atlassian_api_token_page(product)
         else:
             webbrowser.open(ATLASSIAN_API_TOKEN_PAGE, new=1)
         email_value, api_token_value = _prompt_credentials()

@@ -34,6 +34,8 @@ def verify_integration_access(
             except (TypeError, ValueError):
                 pass
         return _verify_linear(access_token, http=http)
+    if provider == "github":
+        return _verify_github(credentials, http=http)
     if provider == "atlassian":
         jira_ok, jira_message = _verify_atlassian_product("jira", credentials)
         if jira_ok:
@@ -89,6 +91,26 @@ def _verify_linear(
     if org:
         return True, f"ok ({name} @ {org})"
     return True, f"ok ({name})"
+
+
+def _verify_github(
+    credentials: dict[str, Any],
+    *,
+    http: HttpClient | None = None,
+) -> tuple[bool, str]:
+    from adapters.outbound.cli_auth.github import GitHubDeviceFlowError, verify_account
+
+    access_token = str(credentials.get("access_token") or "").strip()
+    if not access_token:
+        return False, "not authenticated"
+    try:
+        account = verify_account(access_token, http=http)
+    except GitHubDeviceFlowError as exc:
+        return False, str(exc)
+    login = account.login
+    if account.email:
+        return True, f"ok ({login} <{account.email}>)"
+    return True, f"ok ({login})"
 
 
 def _verify_message_for_kind(

@@ -105,11 +105,40 @@ def register(root: typer.Typer) -> None:
 
     @root.command()
     def status(
-        intent: str = typer.Option("feature", "--intent"),
-        harness: str = typer.Option("claude", "--harness"),
-        pot: str = typer.Option(None, "--pot"),
+        verify: bool = typer.Option(
+            False,
+            "--verify",
+            help="Verify integration credentials with a lightweight API check.",
+        ),
+        host: bool = typer.Option(
+            False,
+            "--host",
+            help="Show host/pot readiness instead of integration auth status.",
+        ),
+        intent: str = typer.Option(
+            "feature",
+            "--intent",
+            help="Intent for host status (use with --host or non-default harness/pot).",
+        ),
+        harness: str = typer.Option(
+            "claude",
+            "--harness",
+            help="Harness for host status (use with --host or non-default intent/pot).",
+        ),
+        pot: str = typer.Option(
+            None,
+            "--pot",
+            help="Pot for host status (use with --host or non-default intent/harness).",
+        ),
     ) -> None:
-        """Cheap aggregate: profile, daemon, active pot, backend readiness, skills, next action."""
+        """Integration auth status by default; use --host for daemon/pot readiness."""
+        host_status = host or pot is not None or intent != "feature" or harness != "claude"
+        if not host_status:
+            from adapters.inbound.cli.auth.auth_commands import integration_status
+
+            integration_status(verify=verify)
+            return
+
         with contract():
             host = get_host()
             pot_id = resolve_pot_id(host, pot)

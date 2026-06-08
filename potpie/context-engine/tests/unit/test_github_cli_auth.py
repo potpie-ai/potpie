@@ -536,7 +536,7 @@ def test_git_login_does_not_store_when_account_verification_fails(
     assert cs.get_integration_metadata("github") == {}
 
 
-def test_git_test_repos_lists_stored_account_repositories(
+def test_github_ls_lists_stored_account_repositories(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
@@ -562,7 +562,7 @@ def test_git_test_repos_lists_stored_account_repositories(
         else [],
     )
 
-    result = runner.invoke(cli_main.app, ["github", "test", "repos"])
+    result = runner.invoke(cli_main.app, ["github", "ls"])
 
     assert result.exit_code == 0, result.stdout
     assert "octocat/widgets" in result.stdout
@@ -570,15 +570,83 @@ def test_git_test_repos_lists_stored_account_repositories(
     assert "main" in result.stdout
 
 
-def test_git_test_repos_requires_stored_github_credentials(
+def test_github_test_repos_deprecated_alias(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_provider_credentials(
+        "github",
+        {
+            "provider": "github",
+            "provider_host": "github.com",
+            "access_token": "plaintext-token",
+        },
+    )
+    monkeypatch.setattr(
+        gh_cmds,
+        "list_user_owned_repositories",
+        lambda token: [{"full_name": "octocat/widgets", "private": False}],
+    )
+
+    result = runner.invoke(cli_main.app, ["github", "test", "repos"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "octocat/widgets" in result.stdout
+
+
+def test_github_ls_requires_stored_github_credentials(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
-    result = runner.invoke(cli_main.app, ["github", "test", "repos"])
+    result = runner.invoke(cli_main.app, ["github", "ls"])
 
     assert result.exit_code == 4
     assert (
-        "GitHub token not found in system keychain. Run: potpie auth github login"
+        "GitHub token not found in system keychain. Run: potpie github login"
         in result.output
     )
+
+
+def test_potpie_login_delegates_to_impl(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[bool] = []
+
+    monkeypatch.setattr(
+        "adapters.inbound.cli.auth._login_impl.potpie_login_impl",
+        lambda: called.append(True),
+    )
+
+    result = runner.invoke(cli_main.app, ["login"])
+
+    assert result.exit_code == 0, result.stdout
+    assert called == [True]
+
+
+def test_verify_integration_access_github_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adapters.outbound.cli_auth.integration_verify import verify_integration_access
+
+    class _Account:
+        login = "octocat"
+        email = "octo@example.com"
+
+    monkeypatch.setattr(
+        "adapters.outbound.cli_auth.github.verify_account",
+        lambda _token, **_: _Account(),
+    )
+
+    ok, message = verify_integration_access(
+        "github",
+        {"access_token": "gho_test"},
+    )
+    assert ok is True
+    assert "octocat" in message
+
+
+def test_verify_integration_access_github_no_token() -> None:
+    from adapters.outbound.cli_auth.integration_verify import verify_integration_access
+
+    ok, message = verify_integration_access("github", {})
+    assert ok is False
+    assert message == "not authenticated"

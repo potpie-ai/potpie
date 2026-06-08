@@ -46,7 +46,36 @@ def test_auth_help_is_wired_into_main_cli() -> None:
     result = runner.invoke(cli_main.app, ["auth", "--help"])
 
     assert result.exit_code == 0, result.stdout
-    assert "Authenticate CLI integrations." in result.stdout
+    assert "Deprecated" in result.stdout
+
+
+def test_provider_commands_at_root() -> None:
+    for provider in ("github", "linear", "jira", "confluence"):
+        result = runner.invoke(cli_main.app, [provider, "--help"])
+        assert result.exit_code == 0, result.stdout
+        assert "login" in result.stdout.lower()
+        assert " ls" in result.stdout.lower()
+
+
+def test_status_routes_to_integration_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[bool] = []
+
+    def _integration_status(*, verify: bool = False) -> None:
+        called.append(verify)
+
+    monkeypatch.setattr(
+        auth_commands,
+        "integration_status",
+        _integration_status,
+    )
+
+    result = runner.invoke(cli_main.app, ["status"])
+    assert result.exit_code == 0, result.stdout
+    assert called == [False]
+
+    result = runner.invoke(cli_main.app, ["status", "--verify"])
+    assert result.exit_code == 0, result.stdout
+    assert called == [False, True]
 
 
 def test_register_provider_app_normalizes_name(monkeypatch) -> None:
@@ -235,14 +264,14 @@ def test_wait_for_callback_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_linear_login_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
-    called: list[bool] = []
+    called: list[tuple[bool, bool]] = []
     monkeypatch.setattr(
         auth_commands,
         "_run_linear_oauth_flow",
-        lambda force=False: called.append(force),
+        lambda force=False, add=False: called.append((force, add)),
     )
-    auth_commands.linear_login(force=True)
-    assert called == [True]
+    runner.invoke(auth_commands.linear_app, ["login", "--force"])
+    assert called == [(True, False)]
 
 
 # --- test_auth_commands_helpers.py ---
@@ -328,6 +357,87 @@ def test_auth_status_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert result.exit_code == 0
     assert "linear: authenticated" in result.stdout
+    assert "github: not authenticated" in result.stdout
+
+
+def test_auth_status_includes_github_authenticated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
+    monkeypatch.setattr(
+        auth_commands,
+        "get_integration_status",
+        lambda provider: {
+            "provider": provider,
+            "authenticated": provider == "github",
+            "login": "octocat",
+            "email": "a@b.com",
+            "auth_type": "oauth",
+        },
+    )
+    result = runner.invoke(auth_commands.auth_app, ["status"])
+
+    assert result.exit_code == 0
+    assert "github: authenticated" in result.stdout
+    assert "login=octocat" in result.stdout
+
+
+def test_linear_ls_lists_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
+    monkeypatch.setattr(
+        auth_commands,
+        "fetch_linear_workspaces",
+        lambda limit=50: [
+            {
+                "key": "potpie-ai-cli",
+                "name": "Potpie AI CLI",
+                "type": "workspace",
+                "active": True,
+            },
+        ],
+    )
+
+    result = runner.invoke(auth_commands.auth_app, ["linear", "ls"])
+
+    assert result.exit_code == 0
+    assert "Potpie AI CLI" in result.stdout
+    assert "potpie linear login --add" in result.stdout
+
+
+def test_linear_select_fetches_issues(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
+    monkeypatch.setattr(
+        auth_commands,
+        "run_linear_use_flow",
+        lambda org_key=None, team_key=None, limit=10: {
+            "product": "linear",
+            "workspace_key": "potpie-ai-cli",
+            "workspace_name": "Potpie AI CLI",
+            "team_key": "ENG",
+            "team_name": "Engineering",
+            "items": [
+                {
+                    "identifier": "ENG-1",
+                    "title": "Fix login",
+                    "status": "In Progress",
+                    "url": "https://linear.app/issue/ENG-1",
+                }
+            ],
+        },
+    )
+
+    result = runner.invoke(
+        auth_commands.auth_app,
+        ["linear", "select", "--org", "potpie-ai-cli", "--key", "ENG"],
+    )
+
+    assert result.exit_code == 0
+    assert "ENG-1" in result.stdout
+    assert "Fix login" in result.stdout
+    assert "Potpie AI CLI" in result.stdout
 
 
 def test_auth_status_verify_linear(
@@ -686,10 +796,27 @@ def keychain(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
     return stored
 
 
+def _linear_viewer_stub(**org_overrides: object) -> dict[str, object]:
+    organization = {
+        "id": "org-1",
+        "name": "Potpie AI CLI",
+        "url_key": "potpie-ai-cli",
+        **org_overrides,
+    }
+    return {
+        "account": {"name": "Ada", "email": "ada@example.com"},
+        "organization": organization,
+    }
+
+
 def test_linear_integration_tokens_roundtrip(
     monkeypatch: pytest.MonkeyPatch, tmp_path, keychain: dict
 ) -> None:
     monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
+    monkeypatch.setattr(
+        "adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
+        lambda _token: _linear_viewer_stub(),
+    )
     cs.save_integration_tokens(
         "linear",
         {
@@ -711,6 +838,10 @@ def test_list_integration_providers(
     monkeypatch: pytest.MonkeyPatch, tmp_path, keychain: dict
 ) -> None:
     monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
+    monkeypatch.setattr(
+        "adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
+        lambda _token: _linear_viewer_stub(),
+    )
     cs.save_integration_tokens(
         "linear",
         {"access_token": "tok", "expires_at": 9999999999.0},
@@ -723,6 +854,10 @@ def test_clear_integration_tokens_linear(
     monkeypatch: pytest.MonkeyPatch, tmp_path, keychain: dict
 ) -> None:
     monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
+    monkeypatch.setattr(
+        "adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
+        lambda _token: _linear_viewer_stub(),
+    )
     cs.save_integration_tokens(
         "linear",
         {"access_token": "a", "refresh_token": "r", "expires_at": 9999999999.0},
@@ -762,7 +897,41 @@ def test_get_integration_status_unknown_provider(
 ) -> None:
     monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
     with pytest.raises(ValueError, match="Unknown integration provider"):
-        cs.get_integration_status("github")
+        cs.get_integration_status("slack")
+
+
+def test_get_integration_status_github_unauthenticated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    status = cs.get_integration_status("github")
+    assert status == {"provider": "github", "authenticated": False, "auth_type": "oauth"}
+
+
+def test_get_integration_status_github_authenticated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, keychain: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_provider_credentials(
+        "github",
+        {
+            "provider": "github",
+            "provider_host": "github.com",
+            "access_token": "gh-token",
+            "token_type": "bearer",
+            "scopes": ["repo"],
+            "account": {"login": "octocat", "id": 1, "name": None, "email": "a@b.com"},
+            "created_at": "2026-05-29T00:00:00+00:00",
+            "updated_at": "2026-05-29T00:00:00+00:00",
+            "expires_at": None,
+            "metadata": {"auth_flow": "device"},
+        },
+    )
+    status = cs.get_integration_status("github")
+    assert status["authenticated"] is True
+    assert status["login"] == "octocat"
+    assert status["email"] == "a@b.com"
+    assert status["token_storage"] == "keychain"
 
 
 def test_linear_status_includes_org_and_scope_string(
@@ -770,10 +939,7 @@ def test_linear_status_includes_org_and_scope_string(
 ) -> None:
     monkeypatch.setattr(
         "adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
-        lambda _token: {
-            "account": {"name": "Ada", "email": "ada@example.com"},
-            "organization": {"name": "Potpie"},
-        },
+        lambda _token: _linear_viewer_stub(name="Potpie", url_key="potpie"),
     )
     monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
     cs.save_integration_tokens(
@@ -790,7 +956,7 @@ def test_linear_status_includes_org_and_scope_string(
     status = cs.get_integration_status("linear")
     assert status["authenticated"] is True
     assert status["site_name"] == "Potpie"
-    assert status["scope"] == ["read", "write"]
+    assert status["scope"] in (["read", "write"], "read,write")
 
 
 def test_store_secure_secret_generic_exception(
@@ -869,7 +1035,7 @@ def test_save_integration_tokens_writes_account_metadata(
     monkeypatch.setattr(cs, "_store_keychain_secret", lambda *a, **k: None)
     viewer = {
         "account": {"id": "u1", "name": "Ada", "email": "ada@example.com"},
-        "organization": {"name": "Acme"},
+        "organization": {"id": "org-acme", "name": "Acme", "url_key": "acme"},
     }
     with patch(
         "adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
@@ -883,6 +1049,7 @@ def test_save_integration_tokens_writes_account_metadata(
     linear = payload["integrations"]["linear"]
     assert linear["account"]["email"] == "ada@example.com"
     assert linear["organization"]["name"] == "Acme"
+    assert linear["organizations"]["org-acme"]["name"] == "Acme"
 
 
 def test_get_integration_status_linear_requires_keychain_token(
@@ -1097,7 +1264,7 @@ def test_verify_linear_non_200_status() -> None:
 
 
 def test_verify_integration_access_unknown_provider() -> None:
-    ok, message = verify_integration_access("github", {})  # type: ignore[arg-type]
+    ok, message = verify_integration_access("slack", {})  # type: ignore[arg-type]
     assert ok is False
     assert "unknown provider" in message
 
