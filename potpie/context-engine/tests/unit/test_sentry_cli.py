@@ -14,7 +14,7 @@ from adapters.inbound.cli.telemetry_context import (
 )
 
 
-def test_cli_invocations_share_install_id_and_get_new_invocation_ids(
+def test_in_process_cli_invocations_share_install_and_daemon_session_ids(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -32,7 +32,8 @@ def test_cli_invocations_share_install_id_and_get_new_invocation_ids(
     assert second_ctx is not None
     assert first_ctx.anonymous_install_id == second_ctx.anonymous_install_id
     assert first_ctx.invocation_id != second_ctx.invocation_id
-    assert first_ctx.daemon_session_id == second_ctx.daemon_session_id
+    in_process_daemon_session_id = first_ctx.daemon_session_id
+    assert second_ctx.daemon_session_id == in_process_daemon_session_id
     assert first_ctx.command == "daemon"
     assert load_anonymous_install_id(tmp_path) == first_ctx.anonymous_install_id
 

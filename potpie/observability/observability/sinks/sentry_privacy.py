@@ -83,6 +83,19 @@ _GIT_REMOTE_RE: Final[re.Pattern[str]] = re.compile(
 _REPO_SLUG_RE: Final[re.Pattern[str]] = re.compile(
     r"(?<![:/\w.-])[\w.-]+/[\w.-]+(?:\.git)?(?![\w.-])"
 )
+_SENSITIVE_LOG_MESSAGE_MARKERS: Final[tuple[str, ...]] = (
+    "prompt",
+    "episode",
+    "source code",
+    "file contents",
+    "terminal output",
+    "confidential",
+    "secret",
+    "token",
+    "password",
+    "authorization",
+)
+_MAX_LOG_MESSAGE_CHARS: Final[int] = 240
 
 
 @dataclass(slots=True)
@@ -161,6 +174,16 @@ def scrub_sentry_breadcrumb(
         return None
     scrubbed = _scrub_value(breadcrumb)
     return scrubbed if isinstance(scrubbed, dict) else None
+
+
+def scrub_sentry_log_message(message: str) -> str | None:
+    lowered = message.lower()
+    if any(marker in lowered for marker in _SENSITIVE_LOG_MESSAGE_MARKERS):
+        return None
+    scrubbed = _scrub_string(message).strip()
+    if not scrubbed:
+        return None
+    return scrubbed[:_MAX_LOG_MESSAGE_CHARS]
 
 
 def require_staging_smoke_environment() -> None:

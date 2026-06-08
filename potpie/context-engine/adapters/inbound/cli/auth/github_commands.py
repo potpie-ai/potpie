@@ -95,6 +95,8 @@ def github_login_impl() -> None:
     except (ProviderCredentialError, CredentialStoreError) as exc:
         emit_error("GitHub login failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_AUTH) from exc
+    except typer.Exit:
+        raise
     except Exception as exc:  # noqa: BLE001
         _capture_unexpected_auth_error(exc, title="GitHub login failed", verbose=v)
 
@@ -129,6 +131,8 @@ def github_logout_impl() -> None:
     except (ProviderCredentialError, CredentialStoreError, ValueError) as exc:
         emit_error("GitHub logout failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_AUTH) from exc
+    except typer.Exit:
+        raise
     except Exception as exc:  # noqa: BLE001
         _capture_unexpected_auth_error(exc, title="GitHub logout failed", verbose=v)
 
@@ -177,6 +181,14 @@ def github_test_repos_cmd() -> None:
             verbose=v,
         )
         raise typer.Exit(code=EXIT_AUTH) from exc
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _capture_unexpected_auth_error(
+            exc,
+            title="GitHub test repos failed",
+            verbose=v,
+        )
     token = str(credentials.get("access_token") or "").strip()
     if not token:
         emit_error(
@@ -190,6 +202,8 @@ def github_test_repos_cmd() -> None:
     except GitHubDeviceFlowError as exc:
         emit_error("GitHub repository listing failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
+    except typer.Exit:
+        raise
     except Exception as exc:  # noqa: BLE001
         _capture_unexpected_auth_error(
             exc,

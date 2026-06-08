@@ -27,6 +27,7 @@ from .sentry_privacy import (
     SentryRateLimiter,
     scrub_sentry_breadcrumb,
     scrub_sentry_event,
+    scrub_sentry_log_message,
     split_sentry_fields,
 )
 
@@ -81,6 +82,9 @@ class _SentryHandler(logging.Handler):
                 if record.exc_info:
                     sentry_sdk.capture_exception(record.exc_info)
                 else:
+                    log_message = scrub_sentry_log_message(record.getMessage())
+                    if log_message is not None:
+                        scope.set_extra("log_message", log_message)
                     error_code = tags.get("error.code", "logged_error")
                     level = _LEVEL_TO_SENTRY.get(record.levelname, "error")
                     sentry_sdk.capture_message(f"potpie.{error_code}", level=level)

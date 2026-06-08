@@ -2047,7 +2047,6 @@ dependencies = [
     { name = "potpie-observability" },
     { name = "potpie-parsing" },
     { name = "potpie-sandbox" },
-    { name = "sentry-sdk" },
 ]
 
 [package.dev-dependencies]
@@ -2069,7 +2068,6 @@ requires-dist = [
     { name = "potpie-observability", editable = "potpie/observability" },
     { name = "potpie-parsing", editable = "potpie/parsing" },
     { name = "potpie-sandbox", editable = "potpie/sandbox" },
-    { name = "sentry-sdk", specifier = ">=2.61.1" },
 ]
 
 [package.metadata.requires-dev]

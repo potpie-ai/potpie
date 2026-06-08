@@ -12,6 +12,15 @@ def test_staging_smoke_skips_by_default(monkeypatch) -> None:
         require_staging_smoke_environment()
 
 
+def test_staging_smoke_allows_staging_success(monkeypatch) -> None:
+    monkeypatch.setenv("RUN_SENTRY_STAGING_SMOKE", "1")
+    monkeypatch.setenv("SENTRY_DSN", "https://public@example.com/1")
+    monkeypatch.setenv("SENTRY_ENVIRONMENT", "staging")
+    monkeypatch.setenv("SENTRY_RELEASE", "potpie-cli@test")
+
+    require_staging_smoke_environment()
+
+
 def test_staging_smoke_refuses_non_staging(monkeypatch) -> None:
     monkeypatch.setenv("RUN_SENTRY_STAGING_SMOKE", "1")
     monkeypatch.setenv("SENTRY_DSN", "https://public@example.com/1")

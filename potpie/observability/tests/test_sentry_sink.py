@@ -121,7 +121,7 @@ def test_sentry_sink_does_not_attach_sensitive_logging_breadcrumbs() -> None:
     assert "xoxb-1234567890-secret" not in blob
 
 
-def test_sentry_sink_captures_error_log_without_raw_message() -> None:
+def test_sentry_sink_captures_error_log_with_safe_scrubbed_message() -> None:
     transport = MemoryTransport()
     configure(
         ObservabilityConfig(
@@ -140,6 +140,42 @@ def test_sentry_sink_captures_error_log_without_raw_message() -> None:
     logger = get_logger("tests.sentry.plain")
 
     logger.error(
+        "database adapter failed for retryable status",
+        extra={
+            "error.code": "plain_log_error",
+            "error.kind": "unexpected",
+            "is_expected": "false",
+        },
+    )
+
+    assert len(transport.events) == 1
+    event = transport.events[0]
+    assert event["message"] == "potpie.plain_log_error"
+    assert (
+        event["extra"]["log_message"] == "database adapter failed for retryable status"
+    )
+    assert "logentry" not in event
+
+
+def test_sentry_sink_drops_sensitive_plain_log_message() -> None:
+    transport = MemoryTransport()
+    configure(
+        ObservabilityConfig(
+            service_name="potpie-cli",
+            env="staging",
+            sinks=["sentry"],
+            sentry=SentryConfig(
+                enabled=True,
+                dsn="https://public@example.com/1",
+                environment="staging",
+                release="potpie-cli@sensitive-plain-log",
+                transport=transport,
+            ),
+        )
+    )
+    logger = get_logger("tests.sentry.sensitive_plain")
+
+    logger.error(
         "agent prompt: summarize confidential roadmap for Project Zephyr",
         extra={
             "error.code": "plain_log_error",
@@ -151,6 +187,7 @@ def test_sentry_sink_captures_error_log_without_raw_message() -> None:
     assert len(transport.events) == 1
     event = transport.events[0]
     assert event["message"] == "potpie.plain_log_error"
+    assert "log_message" not in event.get("extra", {})
     assert "logentry" not in event
     blob = repr(event)
     assert "confidential roadmap" not in blob
