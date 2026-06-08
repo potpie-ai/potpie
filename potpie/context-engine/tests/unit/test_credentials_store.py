@@ -258,6 +258,8 @@ def fake_keyring(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
     monkeypatch.setattr(cs.keyring, "set_password", set_password)
     monkeypatch.setattr(cs.keyring, "get_password", get_password)
     monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
+    # Keychain-backed integration tests assume a non-Linux platform unless overridden.
+    monkeypatch.setattr(cs.sys, "platform", "darwin")
     return stored
 
 
@@ -459,6 +461,7 @@ def test_get_provider_credentials_raises_when_keychain_token_missing(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(cs.sys, "platform", "darwin")
     cs.write_integration_metadata(
         "github",
         {
@@ -483,6 +486,7 @@ def test_write_provider_credentials_raises_on_keychain_failure(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(cs.sys, "platform", "darwin")
 
     def _fail(_service: str, _username: str, _password: str) -> None:
         raise KeyringError("backend unavailable")

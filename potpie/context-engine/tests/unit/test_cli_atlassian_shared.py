@@ -734,6 +734,7 @@ def keychain(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
     monkeypatch.setattr(cs.keyring, "set_password", set_password)
     monkeypatch.setattr(cs.keyring, "get_password", get_password)
     monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
+    monkeypatch.setattr(cs.sys, "platform", "darwin")
     return stored
 
 
