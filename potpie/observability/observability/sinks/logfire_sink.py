@@ -21,6 +21,7 @@ from ..config import ObservabilityConfig
 from ..tracing import configure_tracing
 
 _HINT = "logfire sink requires logfire — install observability[logfire]"
+_logger = logging.getLogger(__name__)
 
 
 class LogfireSink:
@@ -35,9 +36,7 @@ class LogfireSink:
             raise ModuleNotFoundError(_HINT) from exc
         configure_tracing(config)
 
-    def build_handler(
-        self, config: ObservabilityConfig
-    ) -> logging.Handler | None:
+    def build_handler(self, config: ObservabilityConfig) -> logging.Handler | None:
         if not config.logfire.enabled and not config.logfire.token:
             return None
         try:
@@ -46,10 +45,12 @@ class LogfireSink:
             return None
         Handler = getattr(logfire, "LogfireLoggingHandler", None)
         if Handler is None:  # pragma: no cover — older logfire fallback
+
             class _MinimalHandler(logging.Handler):
                 def emit(self, record: logging.LogRecord) -> None:
                     try:
                         import logfire as lf
+
                         fields: dict = {}
                         for attr in ("obs_context", "obs_fields"):
                             data = getattr(record, attr, None)
@@ -82,5 +83,6 @@ class LogfireSink:
                 try:
                     fn()
                     return
-                except Exception:
+                except Exception as exc:
+                    _logger.debug("logfire %s failed during shutdown: %s", name, exc)
                     continue

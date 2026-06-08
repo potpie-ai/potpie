@@ -9,6 +9,7 @@ codebase, carried forward for migration parity.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 _TRUTHY = {"1", "true", "yes", "y"}
 _FALSY = {"0", "false", "no", "n"}
@@ -35,6 +36,15 @@ class SentryConfig:
     enabled: bool = False
     dsn: str | None = None
     environment: str | None = None
+    release: str | None = None
+    dist: str | None = None
+    send_default_pii: bool = False
+    before_send: Any | None = None
+    before_breadcrumb: Any | None = None
+    transport: Any | None = None
+    max_events_per_minute: int = 60
+    capture_error_logs: bool = True
+    include_source_context: bool = False
     traces_sample_rate: float = 0.25
     # Audit flagged profiles_sample_rate=1.0 in prod as a cost smell.
     profiles_sample_rate: float = 0.05
@@ -108,6 +118,8 @@ class ObservabilityConfig:
                 enabled=bool(sentry_dsn),
                 dsn=sentry_dsn,
                 environment=os.getenv("SENTRY_ENVIRONMENT", env),
+                release=os.getenv("SENTRY_RELEASE") or None,
+                dist=os.getenv("SENTRY_DIST") or None,
             ),
             logfire=LogfireConfig(
                 enabled=bool(logfire_token),

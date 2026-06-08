@@ -44,7 +44,15 @@ from contextlib import contextmanager
 from .config import ObservabilityConfig
 from .sink import Sink
 
-__all__ = ["get_logger", "configure", "log_context", "ObservabilityConfig", "Sink"]
+__all__ = [
+    "get_logger",
+    "configure",
+    "log_context",
+    "bind_context",
+    "reset_context",
+    "ObservabilityConfig",
+    "Sink",
+]
 
 _TAG = "_observability_managed"
 HANDLER_TAG = "sink"
@@ -78,9 +86,7 @@ class StructuredLogger:
         extra = kwargs.pop("extra", None) or {}
         fields = {**self._extra, **extra, **kwargs}
         passthru["extra"] = {"obs_fields": fields}
-        passthru["stacklevel"] = (
-            int(passthru.get("stacklevel", 1)) + stacklevel_offset
-        )
+        passthru["stacklevel"] = int(passthru.get("stacklevel", 1)) + stacklevel_offset
         return passthru
 
     def debug(self, msg, *args, **kwargs) -> None:
@@ -162,6 +168,7 @@ def log_context(**fields):
 # Not part of the frozen public API; the Celery integration uses these to
 # bracket a task with prerun/postrun signals where a contextmanager doesn't fit.
 
+
 def _push_context(**fields) -> object:
     cur = _context_var.get()
     return _context_var.set({**cur, **fields})
@@ -174,6 +181,14 @@ def _pop_context(token: object) -> None:
         # Token from another context (e.g. task crashed before postrun) —
         # swallow rather than mask the real error.
         pass
+
+
+def bind_context(**fields) -> object:
+    return _push_context(**fields)
+
+
+def reset_context(token: object) -> None:
+    _pop_context(token)
 
 
 def _iter_managed(root: logging.Logger):
@@ -214,14 +229,18 @@ def configure(config: "ObservabilityConfig | None" = None) -> None:
     for s in prev_sinks:
         try:
             getattr(s, "shutdown", lambda *_: None)(prev_cfg)
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).debug(
+                "observability sink shutdown failed: %s", exc
+            )
 
     for h in _iter_managed(root):
         try:
             h.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).debug(
+                "observability handler close failed: %s", exc
+            )
         root.removeHandler(h)
 
     ctx_filter = ContextFilter()
@@ -260,8 +279,10 @@ def _shutdown_all_sinks() -> None:
     for s in sinks:
         try:
             getattr(s, "shutdown", lambda *_: None)(cfg)
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).debug(
+                "observability atexit shutdown failed: %s", exc
+            )
 
 
 _install_safety_handler()

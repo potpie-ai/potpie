@@ -31,6 +31,7 @@ dependencies = [
     "potpie-parsing>=0.1.0,<0.2.0",
     "potpie-sandbox>=0.1.0,<0.2.0",
     "potpie-observability>=0.1.0,<0.2.0",
+    "sentry-sdk>=2.61.1",
 ]
 
 [project.urls]
