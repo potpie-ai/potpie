@@ -53,3 +53,27 @@ cd app/src/parsing && maturin develop
 ## Note
 
 This crate creates **graphs only**. Embeddings and search are handled by the parent `feat/colbert` module (uses Qdrant + Neo4j).
+
+## FFF Workspace Search (Lexical)
+
+The FFF search surface indexes a checked-out workspace folder on demand and provides in-memory path/content search.
+
+```rust
+use parsing_rs::{build_workspace_index, search_files};
+
+let index = build_workspace_index("/path/to/workspace").expect("workspace should be indexed");
+let files = index.search_files("auth", 5);
+
+assert!(!files.is_empty());
+```
+
+```python
+import parsing_rs
+
+index = parsing_rs.build_workspace_index("/path/to/workspace")
+print(index.file_count(), index.content_file_count())
+print([(r.path, r.score) for r in index.search_files("auth", 5)])
+```
+
+This is lexical, in-memory search only. It intentionally does not do semantic matching.
+Pre-sandbox `list_files` behavior (`potpie/parsing/src/git.rs`) is unchanged.
