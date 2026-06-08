@@ -2185,6 +2185,7 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "pytest-benchmark" },
+    { name = "tomli" },
 ]
 
 [package.metadata]
@@ -2201,6 +2202,7 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-benchmark", specifier = ">=5.2.3" },
+    { name = "tomli", specifier = ">=2.4.1" },
 ]
 
 [[package]]

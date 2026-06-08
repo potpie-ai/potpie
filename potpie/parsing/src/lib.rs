@@ -9,7 +9,7 @@ use pyo3::exceptions::PyException;
 
 pub use code_index::{create_code_indexes, get_text_files, process_files_parallel, CodeFile};
 pub use fff_search::{
-    build_bigram_index, build_file_index, build_workspace_index, search_content, search_files,
+    build_content_index, build_file_index, build_workspace_index, search_content, search_files,
     ContentIndex, ContentSearchResult, FffSearchError, FileIndex, FileSearchResult,
     IndexedFileContent, WorkspaceIndex,
 };

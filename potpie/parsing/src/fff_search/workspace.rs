@@ -1,5 +1,5 @@
 use crate::fff_search::{
-    build_bigram_index, build_file_index, ContentIndex, FffSearchError, FileIndex,
+    build_content_index, build_file_index, ContentIndex, FffSearchError, FileIndex,
     IndexedFileContent,
 };
 use ignore::{gitignore::Gitignore, WalkBuilder};
@@ -30,7 +30,7 @@ impl WorkspaceIndex {
     }
 
     pub fn content_file_count(&self) -> usize {
-        self.content_index.files.len()
+        self.content_index.files().len()
     }
 
     pub(crate) fn file_index(&self) -> &FileIndex {
@@ -77,7 +77,7 @@ pub fn build_workspace_index(root: &Path) -> Result<WorkspaceIndex, FffSearchErr
         .filter_map(|path| build_indexed_file_content(root, path))
         .collect::<Vec<_>>();
 
-    let content_index = build_bigram_index(contents);
+    let content_index = build_content_index(contents);
     let file_index = build_file_index(file_paths);
 
     Ok(WorkspaceIndex {
@@ -108,7 +108,7 @@ fn collect_workspace_files(root: &Path) -> Result<Vec<String>, FffSearchError> {
         .filter(|entry| {
             entry
                 .file_type()
-                .and_then(|file_type| Some(file_type.is_file()))
+                .map(|file_type| file_type.is_file())
                 .unwrap_or(false)
                 && !entry
                     .path()

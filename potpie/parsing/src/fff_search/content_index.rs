@@ -1,6 +1,6 @@
 use crate::fff_search::{ContentIndex, ContentSearchResult, IndexedFileContent};
 
-pub fn build_bigram_index(files: Vec<IndexedFileContent>) -> ContentIndex {
+pub fn build_content_index(files: Vec<IndexedFileContent>) -> ContentIndex {
     ContentIndex { files }
 }
 
@@ -17,7 +17,7 @@ pub fn search_content(index: &ContentIndex, query: &str, limit: usize) -> Vec<Co
 
     let mut results = Vec::<ContentSearchResult>::new();
 
-    for file in &index.files {
+    for file in index.files() {
         for (i, line) in file.content.lines().enumerate() {
             let normalized_line = line.to_lowercase();
             let line_number = u32::try_from(i + 1).unwrap_or(u32::MAX);

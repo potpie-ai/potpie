@@ -27,4 +27,5 @@ module-name = "parsing.parsing_rs"
 dev = [
     "pytest>=9.0.3",
     "pytest-benchmark>=5.2.3",
+    "tomli>=2.4.1",
 ]

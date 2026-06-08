@@ -73,15 +73,5 @@ pub fn build_workspace_index(repo_dir: String) -> PyResult<WorkspaceSearchIndex>
 }
 
 fn map_fff_error_to_py(error: FffSearchError) -> PyErr {
-    PyRuntimeError::new_err(match error {
-        FffSearchError::WorkspaceNotFound { path } => {
-            format!("workspace not found: {path}")
-        }
-        FffSearchError::WorkspaceNotDirectory { path } => {
-            format!("workspace is not a directory: {path}")
-        }
-        FffSearchError::PathOutsideWorkspace { path } => {
-            format!("path outside workspace: {path}")
-        }
-    })
+    PyRuntimeError::new_err(error.to_string())
 }

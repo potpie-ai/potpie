@@ -1,7 +1,5 @@
-use std::path::Path;
-
 use parsing_rs::{
-    build_bigram_index, build_file_index, build_workspace_index, search_content, search_files,
+    build_content_index, build_file_index, build_workspace_index, search_content, search_files,
     ContentSearchResult, FffSearchError, FileSearchResult, WorkspaceIndex,
 };
 
@@ -44,12 +42,27 @@ fn file_search_is_deterministically_ranked() {
 
 #[test]
 fn workspace_index_reports_typed_error_when_root_is_missing() {
-    let missing = Path::new("/tmp/does-not-exist-fff-search");
+    let temp_dir = tempfile::tempdir().expect("temporary folder should be created");
+    let missing_path = temp_dir.path().join("does-not-exist-fff-search");
+    let missing = missing_path.as_path();
     let err = build_workspace_index(missing).expect_err("missing root should fail");
     assert!(matches!(
         err,
         FffSearchError::WorkspaceNotFound { path } if path == missing.to_string_lossy()
     ));
+}
+
+#[test]
+fn fff_search_error_implements_standard_error_display() {
+    let error = FffSearchError::WorkspaceNotDirectory {
+        path: "/tmp/file.txt".to_string(),
+    };
+    let standard_error: &dyn std::error::Error = &error;
+
+    assert_eq!(
+        standard_error.to_string(),
+        "workspace is not a directory: /tmp/file.txt"
+    );
 }
 
 #[test]
@@ -99,12 +112,12 @@ fn search_files_returns_empty_when_query_or_limit_is_empty() {
 }
 
 #[test]
-fn build_bigram_index_searches_literal_content_when_lines_match() {
+fn build_content_index_searches_literal_content_when_lines_match() {
     let files = vec![parsing_rs::IndexedFileContent {
         path: "src/lib.rs".to_string(),
         content: "fn login() {}\nfn logout() {}".to_string(),
     }];
-    let index = build_bigram_index(files);
+    let index = build_content_index(files);
     let results = search_content(&index, "login", 5);
 
     assert_eq!(results.len(), 1);
@@ -120,7 +133,7 @@ fn search_content_matches_case_insensitively() {
         path: "src/lib.rs".to_string(),
         content: "fn LoginHandler() {}\n".to_string(),
     }];
-    let index = build_bigram_index(files);
+    let index = build_content_index(files);
 
     let results = search_content(&index, "loginhandler", 5);
 
@@ -135,7 +148,7 @@ fn search_content_matches_unicode_case_insensitively() {
         path: "docs/notes.md".to_string(),
         content: "CAFÉ_SEARCH lives here\n".to_string(),
     }];
-    let index = build_bigram_index(files);
+    let index = build_content_index(files);
 
     let results = search_content(&index, "café_search", 5);
 
@@ -149,7 +162,7 @@ fn search_content_uses_token_fallback_when_phrase_does_not_match() {
         path: "src/lib.rs".to_string(),
         content: "function handler routes login quickly\nother line".to_string(),
     }];
-    let index = build_bigram_index(files);
+    let index = build_content_index(files);
     let results = search_content(&index, "login quickly handler", 5);
 
     assert_eq!(results.len(), 1);
@@ -163,7 +176,7 @@ fn search_content_treats_regex_chars_as_literal() {
         path: "src/test.txt".to_string(),
         content: "login.*test\n".to_string(),
     }];
-    let index = build_bigram_index(files);
+    let index = build_content_index(files);
 
     assert_eq!(search_content(&index, "login.*", 5).len(), 1);
     assert_eq!(search_content(&index, "login.test", 5).len(), 0);
@@ -175,7 +188,7 @@ fn search_content_returns_empty_when_query_or_limit_is_empty() {
         path: "src/lib.rs".to_string(),
         content: "hello world".to_string(),
     }];
-    let index = build_bigram_index(files);
+    let index = build_content_index(files);
 
     assert!(search_content(&index, "", 10).is_empty());
     assert!(search_content(&index, "hello", 0).is_empty());
@@ -189,7 +202,7 @@ fn search_content_snippet_is_trimmed_to_200_chars() {
         content: format!("{long_line}\nsecond\n"),
     }];
 
-    let index = build_bigram_index(files);
+    let index = build_content_index(files);
     let results = search_content(&index, "a", 1);
 
     assert_eq!(results[0].snippet.len(), 200);
@@ -198,7 +211,7 @@ fn search_content_snippet_is_trimmed_to_200_chars() {
 #[test]
 fn _contract_types_are_visible() {
     let _build_file_idx = build_file_index(Vec::<String>::new());
-    let _build_bigram_idx = build_bigram_index(Vec::<parsing_rs::IndexedFileContent>::new());
+    let _build_content_idx = build_content_index(Vec::<parsing_rs::IndexedFileContent>::new());
     let _search_file_result = FileSearchResult {
         path: String::new(),
         score: 0,
@@ -247,7 +260,7 @@ fn generated_content_search_returns_only_expected_matches() {
         })
         .collect::<Vec<_>>();
 
-    let index = build_bigram_index(files);
+    let index = build_content_index(files);
     let results = search_content(&index, "login handler", 20);
 
     assert_eq!(results.len(), 20);

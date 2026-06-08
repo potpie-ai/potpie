@@ -56,11 +56,12 @@ fn workspace_index_ignores_git_directory_and_ignored_entries() {
 
     let index = build_workspace_index(workspace).expect("workspace index should be built");
     let paths: Vec<String> = index
-        .search_files("visible", 10)
+        .search_files("md", 10)
         .into_iter()
         .map(|r| r.path)
         .collect();
 
+    assert!(paths.iter().any(|path| path == "notes.md"));
     assert!(!paths.iter().any(|path| path.contains(".git")));
     assert!(!paths.iter().any(|path| path == "ignored.md"));
     assert_eq!(index.file_count(), 2);

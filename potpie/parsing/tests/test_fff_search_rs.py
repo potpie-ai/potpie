@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import tomli
 
 from parsing_rs import build_workspace_index
 
@@ -84,10 +85,22 @@ def test_build_workspace_index_result_fields_are_readonly_and_present(
     assert hasattr(content_result, "snippet")
     assert hasattr(content_result, "score")
 
+    with pytest.raises(AttributeError):
+        setattr(file_result, "path", "mutated")
+    with pytest.raises(AttributeError):
+        setattr(file_result, "score", 0)
+    with pytest.raises(AttributeError):
+        setattr(content_result, "path", "mutated")
+    with pytest.raises(AttributeError):
+        setattr(content_result, "line", 0)
+    with pytest.raises(AttributeError):
+        setattr(content_result, "snippet", "mutated")
+    with pytest.raises(AttributeError):
+        setattr(content_result, "score", 0)
+
 
 def test_python_package_supports_python_3_11_to_3_13() -> None:
     pyproject = Path(__file__).parents[1] / "pyproject.toml"
+    data = tomli.loads(pyproject.read_text())
 
-    content = pyproject.read_text()
-
-    assert 'requires-python = ">=3.11,<3.14"' in content
+    assert data["project"]["requires-python"] == ">=3.11,<3.14"
