@@ -33,7 +33,6 @@ def fake_keyring(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
     monkeypatch.setattr(cs.keyring, "set_password", _set_password)
     monkeypatch.setattr(cs.keyring, "get_password", _get_password)
     monkeypatch.setattr(cs.keyring, "delete_password", _delete_password)
-    monkeypatch.setattr(cs.sys, "platform", "darwin")
     return store
 
 

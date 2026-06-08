@@ -54,7 +54,7 @@ def test_provider_commands_at_root() -> None:
         result = runner.invoke(cli_main.app, [provider, "--help"])
         assert result.exit_code == 0, result.stdout
         assert "login" in result.stdout.lower()
-        assert "ls" in result.stdout.lower()
+        assert " ls" in result.stdout.lower()
 
 
 def test_status_routes_to_integration_auth(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -793,7 +793,6 @@ def keychain(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
     monkeypatch.setattr(cs.keyring, "set_password", set_password)
     monkeypatch.setattr(cs.keyring, "get_password", get_password)
     monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
-    monkeypatch.setattr(cs.sys, "platform", "darwin")
     return stored
 
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 from __future__ import annotations
 import socket
 import threading
-import time
 import urllib.error
 import urllib.request
 from typing import Callable
@@ -61,6 +60,7 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+<<<<<<< HEAD
 def _run_oauth_callback_test(
     *,
     port: int,
@@ -89,10 +89,22 @@ def _run_oauth_callback_test(
     return result_box["result"]
 
 
+=======
+>>>>>>> parent of 85dea603 (Fix context-engine CI tests for Linux and missing fixtures.)
 def test_wait_for_oauth_callback_success() -> None:
     port = _free_port()
-    hit_url = f"http://127.0.0.1:{port}/callback?code=auth-code&state=xyz"
-    result = _run_oauth_callback_test(port=port, hit_url=hit_url)
+
+    def hit_server() -> None:
+        url = f"http://127.0.0.1:{port}/callback?code=auth-code&state=xyz"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            assert resp.status == 200
+
+    thread = threading.Thread(target=hit_server, daemon=True)
+    thread.start()
+    result = wait_for_oauth_callback(
+        host="127.0.0.1", port=port, path="/callback", timeout=5.0
+    )
+    thread.join(timeout=5.0)
 
     assert result.ok is True
     assert result.code == "auth-code"
@@ -101,8 +113,16 @@ def test_wait_for_oauth_callback_success() -> None:
 
 def test_wait_for_oauth_callback_error_query() -> None:
     port = _free_port()
-    hit_url = f"http://127.0.0.1:{port}/callback?error=access_denied"
-    result = _run_oauth_callback_test(port=port, hit_url=hit_url)
+
+    def hit_server() -> None:
+        url = f"http://127.0.0.1:{port}/callback?error=access_denied"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            assert resp.status == 200
+
+    thread = threading.Thread(target=hit_server, daemon=True)
+    thread.start()
+    result = wait_for_oauth_callback(host="127.0.0.1", port=port, timeout=5.0)
+    thread.join(timeout=5.0)
 
     assert result.ok is False
     assert result.error == "access_denied"
@@ -110,34 +130,24 @@ def test_wait_for_oauth_callback_error_query() -> None:
 
 def test_wait_for_oauth_callback_wrong_path_returns_404() -> None:
     port = _free_port()
-    hit_url = f"http://127.0.0.1:{port}/callback?code=ignored"
 
-    def on_hit(url: str) -> None:
+    def hit_server() -> None:
+        url = f"http://127.0.0.1:{port}/callback?code=ignored"
         try:
             urllib.request.urlopen(url, timeout=5)
         except urllib.error.HTTPError as exc:
             assert exc.code == 404
 
-    result_box: dict[str, OAuthCallbackResult | BaseException] = {}
-
-    def serve() -> None:
-        try:
-            result_box["result"] = wait_for_oauth_callback(
-                host="127.0.0.1",
-                port=port,
-                path="/other",
-                timeout=0.5,
-            )
-        except BaseException as exc:
-            result_box["result"] = exc
-
-    server_thread = threading.Thread(target=serve, daemon=True)
-    server_thread.start()
-    time.sleep(0.15)
-    on_hit(hit_url)
-    server_thread.join(timeout=2.0)
-
-    assert isinstance(result_box["result"], TimeoutError)
+    thread = threading.Thread(target=hit_server, daemon=True)
+    thread.start()
+    with pytest.raises(TimeoutError):
+        wait_for_oauth_callback(
+            host="127.0.0.1",
+            port=port,
+            path="/other",
+            timeout=0.5,
+        )
+    thread.join(timeout=2.0)
 
 
 # --- test_pkce.py ---
