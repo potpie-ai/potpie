@@ -200,6 +200,76 @@ def linear_team_ingest(
         )
 
 
+@linear_team_app.command("diff-sync")
+def linear_team_diff_sync(
+    team: str = typer.Argument(..., help="Linear team id or key, e.g. ENG."),
+    pot: str = typer.Option(None, "--pot", help="Pot id/name (default: active pot)."),
+    since: str = typer.Option(
+        None,
+        "--since",
+        help="ISO-8601 lower bound for source enumeration. Omit to use the "
+        "last graph-audit cursor from history.",
+    ),
+    count: int = typer.Option(
+        120,
+        "--count",
+        min=1,
+        max=1000,
+        help="Soft per-kind item limit for the diff-sync playbook.",
+    ),
+) -> None:
+    """Queue an incremental graph-audit diff-sync for a Linear team."""
+    with contract():
+        team_key = team.strip()
+        if not team_key:
+            raise ValueError("Linear team id/key is required.")
+
+        pid = resolve_pot_id(get_host(), pot)
+        source_id = f"diff_sync:linear:{team_key.lower()}:{uuid.uuid4()}"
+        payload: dict[str, object] = {"team": team_key, "count": count}
+        if since:
+            payload["since"] = since
+        try:
+            status_code, data = _potpie_api_client().submit_event(
+                pot_id=pid,
+                source_system="linear",
+                event_type="linear_team",
+                action="diff_sync",
+                source_id=source_id,
+                payload=payload,
+                provider=None,
+                provider_host=None,
+                repo_name=None,
+                occurred_at=datetime.now(timezone.utc),
+            )
+        except PotpieContextApiError as exc:
+            fail(
+                code="api_error",
+                message="Linear diff-sync failed.",
+                detail=str(exc.detail),
+            )
+
+        out = {
+            "status": "queued" if status_code == 202 else data.get("status", "applied"),
+            "pot_id": pid,
+            "team": team_key,
+            "since": since,
+            "count": count,
+            "source_id": source_id,
+            "event_id": data.get("event_id"),
+            "batch_id": data.get("batch_id"),
+        }
+        if status_code == 409:
+            out["status"] = "duplicate"
+        emit(
+            out,
+            human=(
+                f"Queued Linear team diff-sync for {team_key} in pot {pid} "
+                f"(event {out.get('event_id') or 'unknown'})."
+            ),
+        )
+
+
 @pot_app.command("archive")
 def pot_archive(ref: str) -> None:
     with contract():
@@ -322,6 +392,76 @@ def jira_project_ingest(
             out,
             human=(
                 f"Queued Jira project ingest for {key} in pot {pid} "
+                f"(event {out.get('event_id') or 'unknown'})."
+            ),
+        )
+
+
+@jira_project_app.command("diff-sync")
+def jira_project_diff_sync(
+    project_key: str = typer.Argument(..., help="Jira project key, e.g. PROJ."),
+    pot: str = typer.Option(None, "--pot", help="Pot id/name (default: active pot)."),
+    since: str = typer.Option(
+        None,
+        "--since",
+        help="ISO-8601 lower bound for source enumeration. Omit to use the "
+        "last graph-audit cursor from history.",
+    ),
+    count: int = typer.Option(
+        120,
+        "--count",
+        min=1,
+        max=1000,
+        help="Soft per-kind item limit for the diff-sync playbook.",
+    ),
+) -> None:
+    """Queue an incremental graph-audit diff-sync for a Jira project."""
+    with contract():
+        key = project_key.strip()
+        if not key:
+            raise ValueError("Jira project key is required.")
+
+        pid = resolve_pot_id(get_host(), pot)
+        source_id = f"diff_sync:jira:{key.lower()}:{uuid.uuid4()}"
+        payload: dict[str, object] = {"project_key": key, "count": count}
+        if since:
+            payload["since"] = since
+        try:
+            status_code, data = _potpie_api_client().submit_event(
+                pot_id=pid,
+                source_system="jira",
+                event_type="jira_project",
+                action="diff_sync",
+                source_id=source_id,
+                payload=payload,
+                provider=None,
+                provider_host=None,
+                repo_name=None,
+                occurred_at=datetime.now(timezone.utc),
+            )
+        except PotpieContextApiError as exc:
+            fail(
+                code="api_error",
+                message="Jira diff-sync failed.",
+                detail=str(exc.detail),
+            )
+
+        out = {
+            "status": "queued" if status_code == 202 else data.get("status", "applied"),
+            "pot_id": pid,
+            "project_key": key,
+            "since": since,
+            "count": count,
+            "source_id": source_id,
+            "event_id": data.get("event_id"),
+            "job_id": data.get("job_id") or data.get("batch_id"),
+        }
+        if status_code == 409:
+            out["status"] = "duplicate"
+        emit(
+            out,
+            human=(
+                f"Queued Jira project diff-sync for {key} in pot {pid} "
                 f"(event {out.get('event_id') or 'unknown'})."
             ),
         )
