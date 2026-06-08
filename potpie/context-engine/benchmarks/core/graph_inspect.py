@@ -208,7 +208,7 @@ def _pick_label(labels: Any) -> str:
         return labels
     if not isinstance(labels, (list, tuple)):
         return ""
-    specific = [str(l) for l in labels if str(l) not in _BASE_LABELS]
+    specific = [str(label) for label in labels if str(label) not in _BASE_LABELS]
     if specific:
         return specific[0]
     return str(labels[0]) if labels else ""

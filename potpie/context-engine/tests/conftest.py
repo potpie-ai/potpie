@@ -11,14 +11,17 @@ import pytest
 def _reset_cli_store():
     """Reset the process-wide injected credential store after each test.
 
-    ``set_store`` (commands/_common) caches a store in module state; clear it so a
-    fake injected by one test never leaks into the next (mirrors host isolation).
+    ``commands/_common`` caches CLI flags, host, and store in module state; clear
+    them so fakes injected by one test never leak into the next.
     """
     yield
     try:
         from adapters.inbound.cli.commands import _common
 
         _common._state["store"] = None
+        _common._state["host"] = None
+        _common._state["json"] = False
+        _common._state["verbose"] = False
     except Exception:
         pass
 

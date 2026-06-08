@@ -77,7 +77,6 @@ def test_fail_closed_when_pot_id_missing():
 
 def test_tool_schema_signature_preserved():
     """functools.wraps must keep the model-facing arg schema intact."""
-    tools = _tools({"acme/widgets"})
     builder = build_github_tools(
         lambda r: _FakePort(),
         allowed_repos_for_pot=lambda _p: {"acme/widgets"},
