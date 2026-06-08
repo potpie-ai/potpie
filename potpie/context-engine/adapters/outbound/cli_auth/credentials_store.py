@@ -206,7 +206,12 @@ def _delete_integration_file_secret(name: str) -> None:
     if key not in secrets:
         return
     secrets.pop(key, None)
-    _write_integration_secrets_file(secrets)
+    try:
+        _write_integration_secrets_file(secrets)
+    except OSError as exc:
+        raise CredentialStoreError(
+            f"Failed to remove {key} from local credentials file: {exc}"
+        ) from exc
 
 
 def store_secure_secret(name: str, secret: str, *, label: str | None = None) -> None:
@@ -635,7 +640,10 @@ def _store_secret(name: str, secret: str, *, label: str) -> None:
 
 def _delete_secret(name: str, *, label: str) -> None:
     if _uses_linux_integration_file_storage(name):
-        _delete_integration_file_secret(name)
+        try:
+            _delete_integration_file_secret(name)
+        except CredentialStoreError as exc:
+            raise ProviderCredentialError(str(exc)) from exc
         try:
             delete_secure_secret(name, label=label)
         except CredentialStoreError as exc:

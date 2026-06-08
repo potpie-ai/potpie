@@ -61,14 +61,14 @@ def run_linear_use_flow(
 
     teams = fetch_linear_teams(organization_id=org_id)
     default_team = str(team_key or "").strip().upper()
-    if team_key or (default_team and (not sys.stdin.isatty() or team_key)):
+    if team_key or default_team or not sys.stdin.isatty():
         picked_team = resolve_linear_team(
             teams,
             team_key=default_team or None,
             credentials=ctx,
             organization_id=org_id,
         )
-    elif teams:
+    elif teams and sys.stdin.isatty():
         picked_team = _prompt_workspace(teams, label="Linear team")
     else:
         raise LinearReadError("No Linear teams found for this workspace.")

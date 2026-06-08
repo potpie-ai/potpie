@@ -581,3 +581,39 @@ def test_linux_integration_secret_falls_back_to_keyring(
     )
 
     assert cs.get_provider_credentials("github")["access_token"] == "legacy-keyring-token"
+
+
+def test_linux_delete_integration_secret_surfaces_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(cs.sys, "platform", "linux")
+    cs.write_provider_credentials(
+        "github",
+        {
+            "provider": "github",
+            "provider_host": "github.com",
+            "access_token": "linux-file-token",
+            "token_type": "bearer",
+            "scopes": ["repo"],
+            "account": {"login": "octocat", "id": 1, "name": None, "email": None},
+            "created_at": "2026-05-29T00:00:00+00:00",
+            "updated_at": "2026-05-29T00:00:00+00:00",
+            "expires_at": None,
+            "metadata": {"auth_flow": "device"},
+        },
+    )
+
+    def _fail_write(_secrets: dict[str, str]) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(cs, "_write_integration_secrets_file", _fail_write)
+
+    with pytest.raises(cs.ProviderCredentialError) as exc:
+        cs.clear_provider_credentials("github")
+
+    assert "Failed to remove github_token from local credentials file" in str(
+        exc.value
+    )

@@ -111,6 +111,46 @@ def test_run_linear_use_flow_non_interactive_org_and_team(
     assert result["team_key"] == "ENG"
 
 
+def test_run_linear_use_flow_non_interactive_org_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Org-only non-interactive runs must not call the team prompt."""
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(lr, "load_linear_read_credentials", lambda **_: {"access_token": "t"})
+    monkeypatch.setattr(
+        lr,
+        "fetch_linear_workspaces",
+        lambda: [{"id": "org-1", "key": "acme", "name": "Acme"}],
+    )
+    monkeypatch.setattr(lr, "activate_linear_organization", lambda _org: None)
+    monkeypatch.setattr(
+        lr,
+        "resolve_linear_organization",
+        lambda workspaces, **_: workspaces[0],
+    )
+    monkeypatch.setattr(
+        lr,
+        "fetch_linear_teams",
+        lambda **_: [{"id": "t1", "key": "ENG", "name": "Engineering"}],
+    )
+    resolve_team = MagicMock(return_value={"id": "t1", "key": "ENG", "name": "Engineering"})
+    monkeypatch.setattr(lr, "resolve_linear_team", resolve_team)
+    prompt = MagicMock()
+    monkeypatch.setattr(lr, "_prompt_workspace", prompt)
+    monkeypatch.setattr(
+        lr,
+        "fetch_linear_issues_in_team",
+        lambda *_a, **_k: [{"identifier": "ENG-1"}],
+    )
+    monkeypatch.setattr(lr, "save_linear_workspace_prefs", lambda **_k: None)
+
+    result = lr.run_linear_use_flow(org_key="acme")
+
+    assert result["team_key"] == "ENG"
+    resolve_team.assert_called_once()
+    prompt.assert_not_called()
+
+
 def test_run_linear_use_flow_missing_org_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

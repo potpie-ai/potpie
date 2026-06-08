@@ -49,6 +49,7 @@ from adapters.outbound.cli_auth.atlassian_client import (  # noqa: F401  (re-exp
 from adapters.outbound.cli_auth.credentials_store import (
     ProviderCredentialError,
     credentials_path,
+    integration_token_storage,
 )
 from adapters.inbound.cli.commands._common import EXIT_AUTH, get_store
 from adapters.inbound.cli.ui.output import emit_error, print_plain_line
@@ -107,11 +108,14 @@ def _open_atlassian_api_token_page(product: AtlassianProduct) -> None:
         "  • Press Enter to open the page, then paste the token with your email and site",
     ):
         print_plain_line(line, as_json=False)
-    typer.confirm(
+    confirmed = typer.confirm(
         "Press Enter to continue",
         default=True,
         show_default=False,
     )
+    if not confirmed:
+        return
+
     print_plain_line("Opening id.atlassian.com ...", as_json=False)
 
     opened = webbrowser.open(ATLASSIAN_API_TOKEN_PAGE, new=1)
@@ -297,7 +301,7 @@ def run_atlassian_api_token_auth(
             "site_name": site["site_name"],
             "cloud_id": payload["cloud_id"],
             "path": str(credentials_path()),
-            "token_storage": "keychain",
+            "token_storage": integration_token_storage(),
             "product_verified": product,
         },
     )

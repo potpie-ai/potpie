@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from typing import Callable
 import pytest
 from adapters.inbound.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
@@ -66,7 +67,7 @@ def _run_oauth_callback_test(
     hit_url: str,
     path: str = "/callback",
     timeout: float = 5.0,
-    on_hit: callable | None = None,
+    on_hit: Callable[[str], None] | None = None,
 ) -> OAuthCallbackResult:
     """Start the callback server first, then hit it (avoids CI race)."""
     result_box: dict[str, OAuthCallbackResult] = {}

@@ -260,7 +260,7 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
                 )
                 return
             print_plain_line(
-                f"Linear is already connected"
+                "Linear is already connected"
                 + (f" ({names})." if names else "."),
                 as_json=False,
             )

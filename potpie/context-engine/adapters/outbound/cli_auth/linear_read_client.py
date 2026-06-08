@@ -267,10 +267,18 @@ def resolve_linear_organization(
     """Resolve a workspace dict from key, id, saved prefs, or interactive default."""
     creds = credentials or {}
     prefs = linear_workspaces_from_entry(creds)
-    ref = _normalize_org_ref(
-        org_key or prefs.get("linear_organization_key") or organization_id or ""
-    )
-    org_id = str(organization_id or prefs.get("linear_organization_id") or "").strip()
+    explicit_key = str(org_key or "").strip()
+    explicit_id = str(organization_id or "").strip()
+    if explicit_key or explicit_id:
+        ref = _normalize_org_ref(explicit_key or explicit_id)
+        org_id = explicit_id
+    else:
+        ref = _normalize_org_ref(
+            prefs.get("linear_organization_key")
+            or prefs.get("linear_organization_id")
+            or ""
+        )
+        org_id = str(prefs.get("linear_organization_id") or "").strip()
     if org_id:
         match = next((row for row in workspaces if str(row.get("id")) == org_id), None)
         if match:
@@ -313,8 +321,14 @@ def resolve_linear_team(
     saved_org = str(prefs.get("linear_organization_id") or "").strip()
     if organization_id and saved_org and saved_org != organization_id:
         prefs = {}
-    key = str(team_key or prefs.get("linear_team") or "").strip().upper()
-    tid = str(team_id or prefs.get("linear_team_id") or "").strip()
+    explicit_key = str(team_key or "").strip().upper()
+    explicit_id = str(team_id or "").strip()
+    if explicit_key:
+        key = explicit_key
+        tid = explicit_id
+    else:
+        key = str(prefs.get("linear_team") or "").strip().upper()
+        tid = str(explicit_id or prefs.get("linear_team_id") or "").strip()
     if key:
         match = next((team for team in teams if team.get("key") == key), None)
         if match:

@@ -19,6 +19,7 @@ from adapters.inbound.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, g
 from adapters.outbound.cli_auth.credentials_store import (
     CredentialStoreError,
     ProviderCredentialError,
+    _integration_secret_store_label,
     get_integration_status,
 )
 from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
@@ -188,7 +189,8 @@ def github_ls_impl() -> None:
     if not token:
         emit_error(
             "GitHub credentials not found",
-            "GitHub token not found in system keychain. Run: potpie github login",
+            f"GitHub token not found in {_integration_secret_store_label()}. "
+            "Run: potpie github login",
             verbose=v,
         )
         raise typer.Exit(code=EXIT_AUTH)

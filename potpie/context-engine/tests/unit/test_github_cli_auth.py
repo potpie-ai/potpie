@@ -604,7 +604,8 @@ def test_github_ls_requires_stored_github_credentials(
 
     assert result.exit_code == 4
     assert (
-        "GitHub token not found in system keychain. Run: potpie github login"
+        f"GitHub token not found in {cs._integration_secret_store_label()}. "
+        "Run: potpie github login"
         in result.output
     )
 

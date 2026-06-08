@@ -200,6 +200,23 @@ def test_resolve_linear_organization_by_key() -> None:
     assert match["id"] == "org-1"
 
 
+def test_resolve_linear_organization_explicit_key_ignores_saved_prefs() -> None:
+    workspaces = [
+        {"id": "org-1", "key": "potpie-ai", "name": "Potpie AI", "active": False},
+        {"id": "org-2", "key": "other", "name": "Other", "active": True},
+    ]
+    creds = {
+        "linear_organization_id": "org-2",
+        "linear_organization_key": "other",
+    }
+    match = lrc.resolve_linear_organization(
+        workspaces,
+        org_key="potpie-ai",
+        credentials=creds,
+    )
+    assert match["id"] == "org-1"
+
+
 def test_resolve_linear_organization_prefers_active() -> None:
     workspaces = [
         {"id": "org-1", "key": "a", "name": "A", "active": False},
@@ -224,6 +241,13 @@ def test_resolve_linear_team_unknown_key_returns_stub() -> None:
     teams: list[dict] = []
     match = lrc.resolve_linear_team(teams, team_key="ENG", team_id="t9")
     assert match == {"id": "t9", "key": "ENG", "name": "ENG"}
+
+
+def test_resolve_linear_team_explicit_key_ignores_saved_team_id() -> None:
+    teams: list[dict] = []
+    creds = {"linear_team_id": "stale-t1", "linear_team": "OLD"}
+    match = lrc.resolve_linear_team(teams, team_key="ENG", credentials=creds)
+    assert match == {"id": "", "key": "ENG", "name": "ENG"}
 
 
 def test_resolve_linear_team_clears_prefs_on_org_mismatch() -> None:

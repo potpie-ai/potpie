@@ -709,6 +709,66 @@ def test_run_atlassian_auth_opens_token_page_after_enter(
     assert prompts == ["Enter your API token", "Enter your Atlassian email"]
 
 
+@pytest.mark.parametrize("product", ["jira", "confluence"])
+def test_run_atlassian_auth_skips_browser_when_confirm_declined(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    product: str,
+) -> None:
+    monkeypatch.setattr(atlassian_auth.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_get_product_credentials",
+        lambda _product: {},
+    )
+    site = {
+        "cloud_id": "cloud-1",
+        "site_url": "https://team.atlassian.net",
+        "site_name": "Team",
+    }
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_prompt_and_resolve_site",
+        lambda: (site, None),
+    )
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_finalize_selected_site",
+        lambda *_args: (site, None),
+    )
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_save_product_credentials",
+        lambda *_args: None,
+    )
+    opened_urls: list[str] = []
+    monkeypatch.setattr(
+        atlassian_auth.webbrowser,
+        "open",
+        lambda url, **_kwargs: opened_urls.append(url) or True,
+    )
+    monkeypatch.setattr(
+        atlassian_auth.typer,
+        "confirm",
+        lambda *_args, **_kwargs: False,
+    )
+    prompt_values = iter(["api-token-secret", "user@example.com"])
+    prompts: list[str] = []
+
+    def _prompt(label: str, **_kwargs: object) -> str:
+        prompts.append(label)
+        return next(prompt_values)
+
+    monkeypatch.setattr(atlassian_auth.typer, "prompt", _prompt)
+
+    run_atlassian_api_token_auth(product, force=True)
+
+    out = capsys.readouterr().out
+    assert "Opening id.atlassian.com ..." not in out
+    assert opened_urls == []
+    assert prompts == ["Enter your API token", "Enter your Atlassian email"]
+
+
 # --- test_atlassian_auth_discovery.py ---
 
 
