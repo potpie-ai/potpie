@@ -536,7 +536,7 @@ def test_git_login_does_not_store_when_account_verification_fails(
     assert cs.get_integration_metadata("github") == {}
 
 
-def test_github_ls_lists_stored_account_repositories(
+def test_github_repos_lists_stored_account_repositories(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
@@ -562,7 +562,7 @@ def test_github_ls_lists_stored_account_repositories(
         else [],
     )
 
-    result = runner.invoke(cli_main.app, ["github", "ls"])
+    result = runner.invoke(cli_main.app, ["github", "repos"])
 
     assert result.exit_code == 0, result.stdout
     assert "octocat/widgets" in result.stdout
@@ -594,12 +594,12 @@ def test_github_test_repos_deprecated_alias(
     assert "octocat/widgets" in result.stdout
 
 
-def test_github_ls_requires_stored_github_credentials(
+def test_github_repos_requires_stored_github_credentials(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
-    result = runner.invoke(cli_main.app, ["github", "ls"])
+    result = runner.invoke(cli_main.app, ["github", "repos"])
 
     assert result.exit_code == 4
     assert (

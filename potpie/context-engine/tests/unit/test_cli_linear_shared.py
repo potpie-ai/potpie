@@ -50,11 +50,17 @@ def test_auth_help_is_wired_into_main_cli() -> None:
 
 
 def test_provider_commands_at_root() -> None:
-    for provider in ("github", "linear", "jira", "confluence"):
+    list_commands = {
+        "github": "repos",
+        "linear": "ls",
+        "jira": "ls",
+        "confluence": "ls",
+    }
+    for provider, list_cmd in list_commands.items():
         result = runner.invoke(cli_main.app, [provider, "--help"])
         assert result.exit_code == 0, result.stdout
         assert "login" in result.stdout.lower()
-        assert " ls" in result.stdout.lower()
+        assert f" {list_cmd}" in result.stdout.lower()
 
 
 def test_status_routes_to_integration_auth(monkeypatch: pytest.MonkeyPatch) -> None:

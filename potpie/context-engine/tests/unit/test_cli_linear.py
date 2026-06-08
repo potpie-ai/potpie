@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from __future__ import annotations
 import socket
 import threading
 import urllib.error
 import urllib.request
-from typing import Callable
 import pytest
 from adapters.inbound.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
@@ -60,37 +58,6 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-<<<<<<< HEAD
-def _run_oauth_callback_test(
-    *,
-    port: int,
-    hit_url: str,
-    path: str = "/callback",
-    timeout: float = 5.0,
-    on_hit: Callable[[str], None] | None = None,
-) -> OAuthCallbackResult:
-    """Start the callback server first, then hit it (avoids CI race)."""
-    result_box: dict[str, OAuthCallbackResult] = {}
-
-    def serve() -> None:
-        result_box["result"] = wait_for_oauth_callback(
-            host="127.0.0.1", port=port, path=path, timeout=timeout
-        )
-
-    server_thread = threading.Thread(target=serve, daemon=True)
-    server_thread.start()
-    time.sleep(0.15)
-    if on_hit is not None:
-        on_hit(hit_url)
-    else:
-        with urllib.request.urlopen(hit_url, timeout=timeout) as resp:
-            assert resp.status == 200
-    server_thread.join(timeout=timeout + 1.0)
-    return result_box["result"]
-
-
-=======
->>>>>>> parent of 85dea603 (Fix context-engine CI tests for Linux and missing fixtures.)
 def test_wait_for_oauth_callback_success() -> None:
     port = _free_port()
 
