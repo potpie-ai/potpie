@@ -52,9 +52,7 @@ def test_resolver_capabilities_to_payload_round_trips() -> None:
     payload = resolver_capabilities_to_payload(
         [ResolverCapability(policy="summary", available=False, reason="not_wired")]
     )
-    assert payload == [
-        {"policy": "summary", "available": False, "reason": "not_wired"}
-    ]
+    assert payload == [{"policy": "summary", "available": False, "reason": "not_wired"}]
 
 
 def test_status_source_to_payload_serializes_datetimes() -> None:
@@ -93,7 +91,9 @@ def test_event_ledger_health_to_payload_serializes_timestamps() -> None:
     assert out["recent_errors"] == [{"event_id": "e1", "error": "boom"}]
 
 
-def test_derive_pot_last_success_at_prefers_most_recent_across_sources_and_ledger() -> None:
+def test_derive_pot_last_success_at_prefers_most_recent_across_sources_and_ledger() -> (
+    None
+):
     older = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
     newer = older + timedelta(hours=6)
     src_old = _src(source_id="s_old", last_success_at=older)
@@ -128,7 +128,11 @@ def test_source_capabilities_for_mirrors_default_when_sync_enabled() -> None:
 def test_source_capabilities_for_disables_all_when_sync_off() -> None:
     caps = source_capabilities_for(_src(sync_enabled=False))
     assert all(c.available is False for c in caps)
-    assert all(c.reason == "Source sync is disabled." for c in caps if c.policy == "references_only")
+    assert all(
+        c.reason == "Source sync is disabled."
+        for c in caps
+        if c.policy == "references_only"
+    )
 
 
 def test_status_source_to_payload_includes_capabilities() -> None:
@@ -168,9 +172,7 @@ def test_source_capabilities_for_upgrades_via_resolver_advertised_policies() -> 
 
 
 def test_source_capabilities_for_resolver_does_not_override_sync_off() -> None:
-    adv = _StubResolverAdvertiser(
-        [("github", "repository", frozenset({"summary"}))]
-    )
+    adv = _StubResolverAdvertiser([("github", "repository", frozenset({"summary"}))])
     caps = source_capabilities_for(
         _src(provider="github", source_kind="repository", sync_enabled=False),
         resolver=adv,
@@ -179,9 +181,7 @@ def test_source_capabilities_for_resolver_does_not_override_sync_off() -> None:
 
 
 def test_status_source_to_payload_passes_resolver() -> None:
-    adv = _StubResolverAdvertiser(
-        [("github", "repository", frozenset({"summary"}))]
-    )
+    adv = _StubResolverAdvertiser([("github", "repository", frozenset({"summary"}))])
     payload = status_source_to_payload(
         _src(provider="github", source_kind="repository"),
         resolver=adv,
@@ -194,11 +194,9 @@ def test_reconciliation_ledger_health_to_payload_empty() -> None:
     out = reconciliation_ledger_health_to_payload(ReconciliationLedgerHealth())
     assert out == {
         "run_counts": {},
-        "step_counts": {},
         "last_run_success_at": None,
         "last_run_failure_at": None,
         "recent_failed_runs": [],
-        "stuck_step_samples": [],
     }
 
 
@@ -206,19 +204,15 @@ def test_reconciliation_ledger_health_to_payload_serializes_timestamps() -> None
     ts = datetime(2026, 4, 21, 9, 0, tzinfo=timezone.utc)
     h = ReconciliationLedgerHealth(
         run_counts={"succeeded": 3, "failed": 1},
-        step_counts={"applied": 8, "failed": 2},
         last_run_success_at=ts,
         last_run_failure_at=ts,
         recent_failed_runs=[{"run_id": "r1", "error": "boom"}],
-        stuck_step_samples=[{"step_id": "s1", "status": "applying"}],
     )
     out = reconciliation_ledger_health_to_payload(h)
     assert out["run_counts"] == {"succeeded": 3, "failed": 1}
-    assert out["step_counts"] == {"applied": 8, "failed": 2}
     assert out["last_run_success_at"] == ts.isoformat()
     assert out["last_run_failure_at"] == ts.isoformat()
     assert out["recent_failed_runs"][0]["run_id"] == "r1"
-    assert out["stuck_step_samples"][0]["status"] == "applying"
 
 
 def test_build_source_capability_matrix_dedupes_by_provider_and_kind() -> None:
@@ -246,17 +240,13 @@ def test_source_capability_matrix_to_payload_includes_capabilities() -> None:
 def test_derive_maintenance_jobs_flags_event_errors_and_failed_runs() -> None:
     jobs = derive_maintenance_jobs(
         event_ledger=EventLedgerHealth(counts={"error": 3}),
-        reconciliation=ReconciliationLedgerHealth(
-            run_counts={"failed": 2},
-            stuck_step_samples=[{"step_id": "s1"}],
-        ),
+        reconciliation=ReconciliationLedgerHealth(run_counts={"failed": 2}),
         open_conflicts=[{"auto_resolvable": False, "issue_uuid": "i1"}],
     )
     actions = [j.action for j in jobs]
     assert actions == [
         "events.replay",
         "reconciliation.retry_failed_runs",
-        "reconciliation.retry_stuck_steps",
         "conflicts.resolve",
     ]
     assert all(j.severity == "warning" for j in jobs)
@@ -282,8 +272,17 @@ def test_derive_maintenance_jobs_ignores_auto_resolvable_conflicts() -> None:
 
 def test_maintenance_jobs_to_payload_round_trips() -> None:
     payload = maintenance_jobs_to_payload(
-        [MaintenanceJob(action="events.replay", reason="r", severity="warning", params={"n": 1})]
+        [
+            MaintenanceJob(
+                action="events.replay", reason="r", severity="warning", params={"n": 1}
+            )
+        ]
     )
     assert payload == [
-        {"action": "events.replay", "reason": "r", "severity": "warning", "params": {"n": 1}}
+        {
+            "action": "events.replay",
+            "reason": "r",
+            "severity": "warning",
+            "params": {"n": 1},
+        }
     ]

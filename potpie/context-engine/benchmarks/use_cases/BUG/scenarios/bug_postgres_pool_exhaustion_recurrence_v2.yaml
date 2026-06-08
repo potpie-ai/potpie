@@ -1,0 +1,137 @@
+id: bug_postgres_pool_exhaustion_recurrence_v2
+use_case: BUG
+tier: quick
+difficulty: hard
+source_mix: full
+universe: acme
+
+description: |
+  Multi-source variant of the canonical pool-exhaustion recurrence. The
+  same OPS-218 → OPS-389 story, but the evidence is now spread across FOUR
+  sources instead of one Linear feed — exactly the reconciliation stress
+  the bench exists to measure.
+
+  Ground truth (90 days ago): checkout-api hit Postgres pool exhaustion
+  (OPS-218). PR #875 bumped per-worker connections 4→8; 12 workers × 8 + 4
+  admin = 100/100 pool pegged during the 09:15-09:45 UTC ramp. The fix
+  (PR #892) clamped per-worker back to 4, added a FLEET-WIDE
+  `pg_pool_utilization` Datadog monitor at 80% on every prod DB, and wrote
+  `runbooks/db-pool-exhaustion.md`. The OPS-220 postmortem recorded the
+  rule: fleet expansions >25% need a DBA pool-ceiling check (later
+  formalised as ADR-045).
+
+  Today (OPS-389): a new engineer (bench-user-4) reports inventory-svc
+  503s in the same 09:15-09:45 window with the same `connection_pool_exhausted`
+  error after an 18→24 worker expansion (+33%). This time the evidence
+  arrives as: the fleet `pg_pool_utilization` monitor FIRING for
+  inventory-prod-db (alerting), a #incidents Slack thread where the DBA
+  makes the OPS-218 connection in real time, and the OPS-389 Linear issue.
+
+  A strong agent answer must:
+    1. Recognise this is a recurrence of OPS-218 (same signature + root-cause class).
+    2. Surface PR #892 (the prior fix) and the runbook it created.
+    3. Cite the OPS-220 decision / ADR-045 +25% rule and note the current
+       +33% expansion violated it (no DBA sign-off).
+    4. Give concrete first steps tied to the prior fix (check
+       pg_stat_activity, clamp inventory-svc per-worker to 4, follow the runbook).
+
+  Hard because the signal is spread across linear + slack + github +
+  alerting and buried under distractor incidents/alerts; the engine must
+  bind the multi-source story into one case and retrieve it from a fresh,
+  differently-worded symptom.
+
+ingest:
+  - { event: linear/issue_create__OPS-218.json, at: "-90d", tags: [signal] }
+  - { event: linear/comment_create__OPS-218__root_cause.json, at: "-89d", tags: [signal] }
+  - { event: github/bug_pool_pr892_fix.json, at: "-85d", tags: [signal] }
+  - { event: linear/comment_create__OPS-218__fix_landed.json, at: "-85d", tags: [signal] }
+  - { event: linear/issue_state_change__OPS-218__in_progress_to_done.json, at: "-85d", tags: [signal] }
+  - { event: linear/issue_create__OPS-220__postmortem.json, at: "-80d", tags: [signal] }
+  - { event: alerting/bug_pool_inventory_alert.json, at: "0d", tags: [signal] }
+  - { event: slack/bug_pool_incidents_thread.json, at: "0d", tags: [signal] }
+  - { event: linear/issue_create__OPS-389.json, at: "0d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/linear_issue_noise_template.json, at: "-80d..-2d", count: 14 }
+  - { event: noise/alerting_noise_template.json, at: "-60d..-1d", count: 10 }
+  - { event: noise/slack_chatter_noise_template.json, at: "-40d..-1d", count: 8 }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): Issue/Decision/Person/Alert nodes are
+  # reconciled but the topology read surfaces only Service/DataStore +
+  # DEPENDS_ON/USES. The recurrence-detection capability is graded in the
+  # synthesis judge + retrieval below. We anchor the structural floor on
+  # the two services the incidents touch.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*(checkout-api|inventory-svc)", min_count: 1 }
+    - { label: DataStore, key_pattern: "datastore:.*inventory-prod-db", min_count: 1 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: debugging
+  scope: { service: inventory-svc }
+  include: [prior_bugs, infra_topology, timeline]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [prior_bugs]
+  source_refs_min: 3
+  must_cite_event_id:
+    - linear/issue_create__OPS-218.json
+    - linear/issue_create__OPS-220__postmortem.json
+    - github/bug_pool_pr892_fix.json
+  must_not_cite_event_id:
+    - noise/linear_issue_noise_template.json
+  forbid_in_answer:
+    - "I don't have information"
+    - "no prior incidents"
+
+judge:
+  pass_score: 60
+  criteria:
+    - name: surfaces_prior_incident
+      weight: 25
+      pass_threshold: 4
+      prompt: |
+        Does the answer explicitly reference OPS-218 (the prior checkout-api
+        pool-exhaustion incident from ~90 days ago) by its identifier, AND
+        surface the prior fix PR #892 (clamp per-worker to 4 + fleet
+        pg_pool_utilization alert + runbook)? Vague "a similar past incident"
+        does not count.
+    - name: identifies_recurrence_pattern
+      weight: 20
+      pass_threshold: 3
+      prompt: |
+        Does the answer connect today's inventory-svc symptoms (the firing
+        pg_pool_utilization alert, the 09:15-09:45 window, the +33% fleet
+        expansion) to the OPS-218 root-cause class — i.e. recognise this is
+        a recurrence rather than a novel incident?
+    - name: cites_decision_or_policy
+      weight: 20
+      pass_threshold: 3
+      prompt: |
+        Does the answer cite the OPS-220 postmortem rule / ADR-045 (fleet
+        expansions >25% require a DBA pool-ceiling check) AND note the
+        current 18→24 (+33%) expansion violated it / skipped DBA sign-off?
+    - name: actionable_first_steps
+      weight: 20
+      pass_threshold: 3
+      prompt: |
+        Does the answer give concrete first actions tied to the prior fix —
+        e.g. check pg_stat_activity on inventory-prod-db, clamp
+        inventory-svc DEFAULT_DB_CONNECTIONS_PER_WORKER to 4, follow
+        runbooks/db-pool-exhaustion.md? A purely descriptive answer fails.
+    - name: no_hallucination
+      weight: 15
+      pass_threshold: 5
+      prompt: |
+        Are all factual claims grounded? Valid identifiers: OPS-218,
+        OPS-220, OPS-389, PR #875, PR #892, ADR-045,
+        runbooks/db-pool-exhaustion.md, checkout-api, inventory-svc,
+        checkout-prod-db, inventory-prod-db, pg_pool_utilization,
+        bench-user-1..6. Any other PR numbers, file paths, SHAs, people, or
+        services are hallucinations and fail this criterion.

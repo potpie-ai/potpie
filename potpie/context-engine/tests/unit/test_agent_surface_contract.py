@@ -33,7 +33,12 @@ from domain.agent_context_port import (
 pytestmark = pytest.mark.unit
 
 
-EXPECTED_TOOLS = {"context_resolve", "context_search", "context_record", "context_status"}
+EXPECTED_TOOLS = {
+    "context_resolve",
+    "context_search",
+    "context_record",
+    "context_status",
+}
 VALID_MODES = {"fast", "balanced", "deep"}
 VALID_SOURCE_POLICIES = {"references_only", "summary", "verify", "snippets"}
 
@@ -44,13 +49,6 @@ def test_mcp_exposes_exactly_the_four_agent_tools() -> None:
     assert names == EXPECTED_TOOLS, (
         f"MCP tool surface drift: expected {EXPECTED_TOOLS}, got {names}"
     )
-
-
-def test_mcp_does_not_expose_private_ingest_helper() -> None:
-    # context_ingest_episode exists in the module for internal use but must NOT
-    # be registered as an MCP tool.
-    names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert "context_ingest_episode" not in names
 
 
 def test_every_recipe_is_a_context_resolve_shape() -> None:

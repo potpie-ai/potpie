@@ -4,59 +4,33 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import Any, Iterable
 
 from domain.ontology import (
+    FACT_FAMILY_FRESHNESS_TTL_HOURS,
+    SOURCE_OF_TRUTH_POLICIES,
+    fact_family_for_label,
     object_counterparty_uuid_for_edge,
     predicate_family_for_episodic_supersede,
     temporal_subject_key_for_edge,
 )
 from domain.source_references import SourceFallback, SourceReferenceRecord
 
-if TYPE_CHECKING:
-    from domain.intelligence_models import CoverageReport
 
-FACT_FAMILY_FRESHNESS_TTL_HOURS: dict[str, int] = {
-    "ownership": 24 * 14,
-    "code": 24 * 7,
-    "change": 24 * 30,
-    "decision": 24 * 180,
-    "discussion": 24 * 90,
-    "document": 24 * 30,
-    "runbook": 24 * 30,
-    "service": 24 * 14,
-    "environment": 24 * 7,
-    "deployment": 24 * 3,
-    "incident": 12,
-    "alert": 2,
-    "fix": 24 * 90,
-    "bugpattern": 24 * 90,
-    "diagnosticsignal": 24 * 30,
-    "preference": 24 * 60,
-    "agentinstruction": 24 * 30,
-    "unknown": 24 * 30,
-}
+@dataclass
+class CoverageReport:
+    """Per-resolve coverage: which evidence families were available vs missing."""
 
-SOURCE_OF_TRUTH_POLICIES: dict[str, str] = {
-    "ownership": "authoritative_external_truth",
-    "code": "authoritative_code_truth",
-    "change": "authoritative_external_truth",
-    "decision": "canonicalized_memory",
-    "discussion": "authoritative_external_truth",
-    "document": "authoritative_external_truth",
-    "runbook": "authoritative_external_truth",
-    "service": "canonicalized_memory",
-    "environment": "authoritative_external_truth",
-    "deployment": "authoritative_external_truth",
-    "incident": "authoritative_external_truth",
-    "alert": "authoritative_external_truth",
-    "fix": "canonicalized_memory",
-    "bugpattern": "canonicalized_memory",
-    "diagnosticsignal": "canonicalized_memory",
-    "preference": "soft_inference",
-    "agentinstruction": "authoritative_code_truth",
-    "unknown": "canonicalized_memory",
-}
+    status: str  # "complete", "partial", "empty"
+    available: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+    missing_reasons: dict[str, str] = field(default_factory=dict)
+
+
+# Freshness TTL and source-of-truth policy are derived from entity specs in
+# :mod:`domain.ontology`. Edit ``fact_family`` / ``freshness_ttl_hours`` /
+# ``source_of_truth`` on the relevant entity to change behavior — no edits
+# needed here.
 
 MAINTENANCE_JOB_FAMILIES: tuple[str, ...] = (
     "verify_entity",
@@ -69,7 +43,6 @@ MAINTENANCE_JOB_FAMILIES: tuple[str, ...] = (
     "compact_or_archive_evidence",
     "resolve_alias_candidates",
     "cleanup_orphans",
-    "classify_modified_edges",
 )
 
 
@@ -94,29 +67,61 @@ class GraphQualityReport:
     resolved_conflicts: list[dict[str, Any]] = field(default_factory=list)
 
 
+# Aliases from external ``source_type`` strings (e.g. "PullRequest", "PR")
+# to ontology fact-family ids. Maintained as data so renaming an entity only
+# requires updating its spec and (if applicable) one row here.
+_SOURCE_TYPE_ALIASES: dict[str, str] = {
+    "pullrequest": "change",
+    "pr": "change",
+    "commit": "change",
+    "issue": "change",
+    "ticket": "change",
+    "bugpattern": "bug_pattern",
+    "agentinstruction": "policy",
+    "preference": "policy",
+    "constraint": "policy",
+    "diagnosticsignal": "observation",
+}
+
+
 def fact_family_for_source_type(source_type: str | None) -> str:
-    value = (source_type or "unknown").strip().lower().replace("_", "")
-    if value in {"pullrequest", "pr", "commit", "issue", "ticket"}:
-        return "change"
-    if value in {"diagnosticsignal"}:
-        return "diagnosticsignal"
-    if value in {"bugpattern"}:
-        return "bugpattern"
-    if value in {"agentinstruction"}:
-        return "agentinstruction"
-    if value in FACT_FAMILY_FRESHNESS_TTL_HOURS:
-        return value
+    """Resolve a free-form source type string to an ontology fact family.
+
+    Resolution order:
+        1. Direct alias in :data:`_SOURCE_TYPE_ALIASES`.
+        2. Canonical label lookup (e.g. ``"Policy"`` → fact_family from spec).
+        3. Direct family name match (already a fact family id).
+        4. ``"unknown"`` fallback.
+    """
+    if not source_type:
+        return "unknown"
+    raw = source_type.strip()
+    normalized = raw.lower().replace("_", "")
+    if normalized in _SOURCE_TYPE_ALIASES:
+        return _SOURCE_TYPE_ALIASES[normalized]
+    # Try as a canonical label first (handles "Decision", "Policy", "Fix"...).
+    by_label = fact_family_for_label(raw)
+    if by_label != "unknown":
+        return by_label
+    # Try as a snake_case family id directly.
+    family_candidate = raw.lower()
+    if family_candidate in FACT_FAMILY_FRESHNESS_TTL_HOURS:
+        return family_candidate
+    if normalized in FACT_FAMILY_FRESHNESS_TTL_HOURS:
+        return normalized
     return "unknown"
 
 
 def freshness_ttl_hours_for_source_type(source_type: str | None) -> int:
     family = fact_family_for_source_type(source_type)
-    return FACT_FAMILY_FRESHNESS_TTL_HOURS[family]
+    return FACT_FAMILY_FRESHNESS_TTL_HOURS.get(
+        family, FACT_FAMILY_FRESHNESS_TTL_HOURS["unknown"]
+    )
 
 
 def source_of_truth_for_source_type(source_type: str | None) -> str:
     family = fact_family_for_source_type(source_type)
-    return SOURCE_OF_TRUTH_POLICIES[family]
+    return SOURCE_OF_TRUTH_POLICIES.get(family, SOURCE_OF_TRUTH_POLICIES["unknown"])
 
 
 def make_source_ref(source_type: str, **kwargs) -> "SourceReferenceRecord":
@@ -126,7 +131,9 @@ def make_source_ref(source_type: str, **kwargs) -> "SourceReferenceRecord":
     """
     from domain.source_references import SourceReferenceRecord
 
-    kwargs.setdefault("freshness_ttl_hours", freshness_ttl_hours_for_source_type(source_type))
+    kwargs.setdefault(
+        "freshness_ttl_hours", freshness_ttl_hours_for_source_type(source_type)
+    )
     return SourceReferenceRecord(source_type=source_type, **kwargs)
 
 
@@ -360,7 +367,9 @@ def classify_predicate_family_pair(
     }
 
 
-def detect_family_conflicts(edges: Iterable[EpisodicEdgeConflictInput]) -> list[dict[str, Any]]:
+def detect_family_conflicts(
+    edges: Iterable[EpisodicEdgeConflictInput],
+) -> list[dict[str, Any]]:
     """Find contradicting live edges per predicate family + subject (pairwise, O(k²) per bucket)."""
     from collections import defaultdict
 
@@ -414,7 +423,8 @@ def detect_family_conflicts(edges: Iterable[EpisodicEdgeConflictInput]) -> list[
                     older, newer = (ei, ej) if ti <= tj else (ej, ei)
                 else:
                     older, newer = sorted(
-                        (ei, ej), key=lambda e: (_effective_edge_time(e) is None, e.uuid)
+                        (ei, ej),
+                        key=lambda e: (_effective_edge_time(e) is None, e.uuid),
                     )
                 key = (
                     fam,

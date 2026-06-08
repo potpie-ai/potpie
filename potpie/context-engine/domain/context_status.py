@@ -44,14 +44,12 @@ class EventLedgerHealth:
 
 @dataclass(slots=True)
 class ReconciliationLedgerHealth:
-    """Reconciliation pipeline health: runs + apply steps for a pot."""
+    """Reconciliation pipeline health: agent run counts for a pot."""
 
     run_counts: dict[str, int] = field(default_factory=dict)
-    step_counts: dict[str, int] = field(default_factory=dict)
     last_run_success_at: datetime | None = None
     last_run_failure_at: datetime | None = None
     recent_failed_runs: list[dict[str, Any]] = field(default_factory=list)
-    stuck_step_samples: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -125,15 +123,15 @@ _SOURCE_CAPABILITY_OVERRIDES: dict[tuple[str, str], dict[str, ResolverCapability
 
 
 class ResolverCapabilityAdvertiser(Protocol):
-    """Narrow read-only view of :class:`SourceResolverPort.capabilities`.
+    """Narrow read-only view of the fetch-capable connector capabilities.
 
     Declared here (not imported) to avoid a cycle between ``context_status``
-    and ``domain.ports.source_resolver``. The only thing the status layer
+    and the source-connector registry. The only thing the status layer
     needs is the list of ``(provider, source_kind, policies)`` triples.
+    Satisfied by :meth:`SourceConnectorRegistry.capabilities`.
     """
 
-    def capabilities(self) -> Sequence[Any]:
-        ...
+    def capabilities(self) -> Sequence[Any]: ...
 
 
 def _resolver_capability_map(
@@ -214,7 +212,6 @@ def reconciliation_ledger_health_to_payload(
 ) -> dict[str, Any]:
     return {
         "run_counts": dict(health.run_counts),
-        "step_counts": dict(health.step_counts),
         "last_run_success_at": (
             health.last_run_success_at.isoformat()
             if health.last_run_success_at
@@ -226,7 +223,6 @@ def reconciliation_ledger_health_to_payload(
             else None
         ),
         "recent_failed_runs": list(health.recent_failed_runs),
-        "stuck_step_samples": list(health.stuck_step_samples),
     }
 
 
@@ -304,19 +300,11 @@ def derive_maintenance_jobs(
                 params={"run_count": failed_runs},
             )
         )
-    stuck = len(reconciliation.stuck_step_samples)
-    if stuck > 0:
-        jobs.append(
-            MaintenanceJob(
-                action="reconciliation.retry_stuck_steps",
-                reason=f"{stuck} apply step(s) stuck in applying/failed; retry or hard-reset after triage.",
-                severity="warning",
-                params={"step_count": stuck},
-            )
-        )
     conflicts = list(open_conflicts or [])
     hard_conflicts = [
-        c for c in conflicts if isinstance(c, dict) and c.get("auto_resolvable") is False
+        c
+        for c in conflicts
+        if isinstance(c, dict) and c.get("auto_resolvable") is False
     ]
     if hard_conflicts:
         jobs.append(

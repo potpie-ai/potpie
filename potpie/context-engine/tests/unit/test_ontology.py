@@ -1,289 +1,161 @@
-"""Unit tests for the canonical context graph ontology."""
+"""Unit tests for the unified context-engine ontology.
 
-from datetime import datetime, timezone
+Covers topology + memory + timeline catalogs, plus validation and
+predicate-family helpers. Memory-tier coverage lives in
+``test_record_types.py`` and the coherence-invariant module's own checks.
+"""
+
+from __future__ import annotations
 
 import pytest
 
-from application.use_cases.reconciliation_validation import validate_reconciliation_plan
-from domain.context_events import EventRef
-from domain.errors import ReconciliationPlanValidationError
 from domain.graph_mutations import EdgeUpsert, EntityUpsert
 from domain.ontology import (
     ALLOWED_LIFECYCLE_STATUSES,
-    EDGE_TYPES,
-    ENTITY_TYPES,
+    CANONICAL_EDGE_TYPES,
+    CANONICAL_LABELS,
     ONTOLOGY_VERSION,
+    SINGLETON_EDGE_TYPES,
     allowed_edge_types_between,
     predicate_family_for_episodic_supersede,
     temporal_subject_key_for_edge,
     validate_structural_mutations,
 )
-from domain.reconciliation import EpisodeDraft, ReconciliationPlan
 
 pytestmark = pytest.mark.unit
 
 
-def test_allowed_lifecycle_statuses_export() -> None:
-    assert "unknown" in ALLOWED_LIFECYCLE_STATUSES
-    assert "accepted" in ALLOWED_LIFECYCLE_STATUSES
+# --- Catalog ---------------------------------------------------------------
 
 
-def test_phase_one_catalog_contains_project_context_domains() -> None:
-    assert ONTOLOGY_VERSION == "2026-04-phase-8-timeline"
+def test_version_is_the_unified_version() -> None:
+    assert ONTOLOGY_VERSION == "2026-05-unified-v1"
+
+
+def test_catalog_contains_the_seven_topology_entities() -> None:
     for label in (
-        "Pot",
         "Repository",
         "Service",
-        "Feature",
-        "Functionality",
-        "Deployment",
-        "Incident",
-        "BugPattern",
-        "Fix",
-        "SourceReference",
-        "AgentInstruction",
-        "LocalWorkflow",
-        "Agent",
-        "QualityIssue",
-        "MaintenanceJob",
-        "MaterializedAccessPath",
-        "LegacyArtifact",
+        "Environment",
+        "DataStore",
+        "Cluster",
+        "Team",
+        "Person",
     ):
-        assert label in ENTITY_TYPES
+        assert label in CANONICAL_LABELS
 
-    for edge_type in (
-        "SCOPES",
-        "BACKED_BY",
-        "IMPLEMENTS",
-        "EVIDENCED_BY",
-        "MATCHES_PATTERN",
+
+def test_catalog_contains_memory_tier_anchors() -> None:
+    for label in ("Preference", "Policy", "BugPattern", "Fix", "Decision"):
+        assert label in CANONICAL_LABELS
+
+
+def test_catalog_contains_timeline_entities() -> None:
+    for label in ("Activity", "Period"):
+        assert label in CANONICAL_LABELS
+
+
+def test_catalog_contains_the_seven_topology_edges() -> None:
+    for edge in (
+        "DEFINED_IN",
+        "DEPLOYED_TO",
+        "DEPENDS_ON",
+        "USES",
+        "HOSTED_ON",
+        "OWNED_BY",
+        "MEMBER_OF",
+    ):
+        assert edge in CANONICAL_EDGE_TYPES
+
+
+def test_catalog_contains_memory_predicates() -> None:
+    for edge in (
+        "POLICY_APPLIES_TO",
+        "REPRODUCES",
         "RESOLVED",
-        "HAS_SIGNAL",
-        "INFORMS",
-        "FLAGS",
-        "REPAIRS",
-        "MATERIALIZES",
-        "RELATED_TO",
+        "ATTEMPTED_FIX_FAILED",
+        "VERIFIED",
+        "DECIDED",
+        "AFFECTS",
     ):
-        assert edge_type in EDGE_TYPES
+        assert edge in CANONICAL_EDGE_TYPES
 
 
-def test_phase_five_debugging_memory_edges_are_valid() -> None:
-    errors = validate_structural_mutations(
-        [
-            EntityUpsert(
-                entity_key="fix:timeout",
-                labels=("Entity", "Fix"),
-                properties={
-                    "summary": "Increase ingestion timeout",
-                    "fix_type": "configuration",
-                },
-            ),
-            EntityUpsert(
-                entity_key="pattern:timeout",
-                labels=("Entity", "BugPattern"),
-                properties={"summary": "Repository ingestion timeout"},
-            ),
-            EntityUpsert(
-                entity_key="signal:timeout",
-                labels=("Entity", "DiagnosticSignal"),
-                properties={
-                    "signal_type": "error_signature",
-                    "summary": "Timeout while fetching repository metadata",
-                },
-            ),
-        ],
-        [
-            EdgeUpsert("RESOLVED", "fix:timeout", "pattern:timeout", {}),
-            EdgeUpsert("HAS_SIGNAL", "pattern:timeout", "signal:timeout", {}),
-        ],
-        [],
-    )
-    assert errors == []
+def test_catalog_contains_timeline_predicates() -> None:
+    for edge in ("TOUCHED", "PERFORMED", "AUTHORED", "MENTIONS", "IN_PERIOD"):
+        assert edge in CANONICAL_EDGE_TYPES
+
+
+def test_related_to_is_the_generic_fallback_edge() -> None:
+    assert "RELATED_TO" in CANONICAL_EDGE_TYPES
+
+
+def test_allowed_lifecycle_statuses_export() -> None:
+    assert "unknown" in ALLOWED_LIFECYCLE_STATUSES
+    assert "completed" in ALLOWED_LIFECYCLE_STATUSES
+
+
+# --- Validation ------------------------------------------------------------
+
+
+def _valid_topology_plan() -> tuple[list[EntityUpsert], list[EdgeUpsert]]:
+    entities = [
+        EntityUpsert("service:auth", ("Entity", "Service"), {}),
+        EntityUpsert("environment:prod", ("Entity", "Environment"), {}),
+        EntityUpsert("team:identity", ("Entity", "Team"), {}),
+    ]
+    edges = [
+        EdgeUpsert("DEPLOYED_TO", "service:auth", "environment:prod", {}),
+        EdgeUpsert("OWNED_BY", "service:auth", "team:identity", {}),
+    ]
+    return entities, edges
 
 
 def test_validates_canonical_entities_and_edges() -> None:
+    entities, edges = _valid_topology_plan()
+    assert validate_structural_mutations(entities, edges, []) == []
+
+
+def test_rejects_unknown_label() -> None:
     errors = validate_structural_mutations(
-        [
-            EntityUpsert(
-                entity_key="service:api",
-                labels=("Entity", "Service"),
-                properties={
-                    "name": "api",
-                    "criticality": "high",
-                    "lifecycle_state": "active",
-                },
-            ),
-            EntityUpsert(
-                entity_key="repo:potpie",
-                labels=("Entity", "Repository"),
-                properties={"name": "potpie", "provider": "github"},
-            ),
-        ],
-        [EdgeUpsert("BACKED_BY", "service:api", "repo:potpie", {})],
-        [],
+        [EntityUpsert("x:1", ("Entity", "Bogus"), {})], [], []
     )
-    assert errors == []
+    assert any("unknown canonical labels" in e for e in errors)
 
 
-def test_rejects_unknown_labels_and_missing_required_properties() -> None:
+def test_rejects_unknown_edge_type() -> None:
     errors = validate_structural_mutations(
-        [
-            EntityUpsert(
-                entity_key="svc:bad", labels=("Entity", "Service"), properties={}
-            )
-        ],
-        [],
-        [],
+        [], [EdgeUpsert("NOPE", "service:auth", "environment:prod", {})], []
     )
-    assert any("missing required properties" in error for error in errors)
-
-    errors = validate_structural_mutations(
-        [
-            EntityUpsert(
-                entity_key="x:1", labels=("Entity", "GitHubOnlyThing"), properties={}
-            )
-        ],
-        [],
-        [],
-    )
-    assert any("unknown canonical labels" in error for error in errors)
-    assert any("at least one public canonical label" in error for error in errors)
-
-
-def test_validates_source_reference_freshness_metadata() -> None:
-    errors = validate_structural_mutations(
-        [
-            EntityUpsert(
-                entity_key="source-ref:bad",
-                labels=("Entity", "SourceReference"),
-                properties={
-                    "source_system": "github",
-                    "external_id": "pr:1",
-                    "ref_type": "pull_request",
-                    "last_seen_at": "not-a-date",
-                    "access": "maybe",
-                    "sync_status": "lost",
-                    "freshness_ttl_hours": "never",
-                    "verification_state": "guessing",
-                },
-            )
-        ],
-        [],
-        [],
-    )
-    assert any("last_seen_at" in error for error in errors)
-    assert any("access" in error for error in errors)
-    assert any("sync_status" in error for error in errors)
-    assert any("freshness_ttl_hours" in error for error in errors)
-    assert any("verification_state" in error for error in errors)
-
-
-def test_phase_seven_quality_drift_edges_are_valid() -> None:
-    errors = validate_structural_mutations(
-        [
-            EntityUpsert(
-                entity_key="quality:stale-doc",
-                labels=("Entity", "QualityIssue"),
-                properties={
-                    "code": "stale_facts",
-                    "severity": "warning",
-                    "status": "active",
-                },
-            ),
-            EntityUpsert(
-                entity_key="job:verify-docs",
-                labels=("Entity", "MaintenanceJob"),
-                properties={"job_type": "verify_entity", "status": "active"},
-            ),
-            EntityUpsert(
-                entity_key="view:service-runbooks",
-                labels=("Entity", "MaterializedAccessPath"),
-                properties={
-                    "name": "service to runbooks",
-                    "pattern_type": "service_runbook_lookup",
-                },
-            ),
-            EntityUpsert(
-                entity_key="doc:runbook",
-                labels=("Entity", "Document"),
-                properties={"title": "Runbook", "source_uri": "repo://runbook.md"},
-            ),
-        ],
-        [
-            EdgeUpsert("FLAGS", "quality:stale-doc", "doc:runbook", {}),
-            EdgeUpsert("REPAIRS", "job:verify-docs", "doc:runbook", {}),
-            EdgeUpsert("MATERIALIZES", "view:service-runbooks", "doc:runbook", {}),
-        ],
-        [],
-    )
-    assert errors == []
+    assert any("unknown canonical edge type" in e for e in errors)
 
 
 def test_rejects_invalid_edge_endpoint_labels_when_known_in_batch() -> None:
-    errors = validate_structural_mutations(
-        [
-            EntityUpsert(
-                entity_key="feature:ctx",
-                labels=("Entity", "Feature"),
-                properties={"name": "Context"},
-            ),
-            EntityUpsert(
-                entity_key="incident:1",
-                labels=("Entity", "Incident"),
-                properties={"title": "Outage", "severity": "sev2", "status": "open"},
-            ),
-        ],
-        [EdgeUpsert("IMPLEMENTS", "incident:1", "feature:ctx", {})],
-        [],
-    )
-    assert any("invalid endpoint labels" in error for error in errors)
+    entities = [
+        EntityUpsert("service:auth", ("Entity", "Service"), {}),
+        EntityUpsert("team:identity", ("Entity", "Team"), {}),
+    ]
+    # DEPLOYED_TO is Service->Environment, not Service->Team.
+    edges = [EdgeUpsert("DEPLOYED_TO", "service:auth", "team:identity", {})]
+    errors = validate_structural_mutations(entities, edges, [])
+    assert any("invalid endpoint labels" in e for e in errors)
 
 
-def test_code_graph_labels_match_code_asset_bridge_edges() -> None:
-    assert "TOUCHES_CODE" in allowed_edge_types_between(("Feature",), ("FILE",))
+def test_allowed_edge_types_between_service_and_environment() -> None:
+    assert "DEPLOYED_TO" in allowed_edge_types_between(("Service",), ("Environment",))
 
 
-def test_predicate_family_episodic_supersede_chose_requires_datastore_hint() -> None:
-    assert predicate_family_for_episodic_supersede("CHOSE", ()) is None
-    assert predicate_family_for_episodic_supersede("CHOSE", ("Entity",)) is None
+# --- Cardinality + predicate families --------------------------------------
+
+
+def test_owned_by_is_the_only_singleton() -> None:
+    assert SINGLETON_EDGE_TYPES == frozenset({"OWNED_BY"})
+
+
+def test_owner_binding_predicate_family() -> None:
+    assert predicate_family_for_episodic_supersede("OWNED_BY") == "owner_binding"
+    # owner_binding groups contradictions by the owned subject.
     assert (
-        predicate_family_for_episodic_supersede("CHOSE", ("Entity", "DataStore"))
-        == "datastore_binding"
+        temporal_subject_key_for_edge("OWNED_BY", "service:auth", "team:x")
+        == "service:auth"
     )
-    assert predicate_family_for_episodic_supersede("CHOSE", ("Decision",)) is None
-
-
-def test_temporal_subject_key_for_edge_chose_with_resolved_family() -> None:
-    assert (
-        temporal_subject_key_for_edge(
-            "CHOSE",
-            "svc",
-            "mongo",
-            predicate_family="datastore_binding",
-        )
-        == "svc"
-    )
-
-
-def test_reconciliation_plan_validation_uses_ontology_boundary() -> None:
-    plan = ReconciliationPlan(
-        event_ref=EventRef(event_id="e1", source_system="test", pot_id="p1"),
-        summary="bad structural mutation",
-        episodes=[
-            EpisodeDraft(
-                name="n",
-                episode_body="b",
-                source_description="test",
-                reference_time=datetime(2026, 4, 17, tzinfo=timezone.utc),
-            )
-        ],
-        entity_upserts=[
-            EntityUpsert(entity_key="x:1", labels=("Entity",), properties={})
-        ],
-    )
-
-    with pytest.raises(
-        ReconciliationPlanValidationError, match="ontology validation failed"
-    ):
-        validate_reconciliation_plan(plan, "p1")

@@ -1,0 +1,140 @@
+id: combo_decision_lookup_with_recency
+use_case: COMBO
+tier: quick
+difficulty: medium
+source_mix: full
+universe: acme
+dimensions: [PREF, TIME]
+
+description: |
+  An engineer asks the agent: "Has the logging convention changed in the
+  last 60 days?"
+
+  This is a deceptively composite question. Answering it well requires
+  both a preference lens and a recency lens, and the two pull in
+  different directions:
+
+    - PREF side:  the current convention is ADR-021 — structlog, kw-args
+                  only, required keys service/env/request_id, no f-strings
+                  in log calls (lint ACME010/ACME011). The ADR is ~400
+                  days old and stable. The agent must state the CURRENT
+                  convention accurately.
+    - TIME side:  the convention has NOT materially changed in 60 days.
+                  But there IS recent activity around it: an #eng-standards
+                  thread 20 days ago and a notion status page both
+                  explicitly REAFFIRM ADR-021 without modifying it, and
+                  note the OTEL spans work added tracing without replacing
+                  structlog. The correct answer is "no material change,
+                  but it was reaffirmed ~20 days ago."
+
+  The trap: an agent that sees recent logging-adjacent activity (the
+  reaffirmation thread, the OTEL spans) and concludes the convention
+  "changed" is wrong. An agent that says "no change" but misses that it
+  was recently reaffirmed is incomplete on the TIME axis.
+
+  Failure modes:
+    - Misstates or omits the actual structlog convention → PREF fails.
+    - Says the convention changed (hallucinated change from reaffirmation
+      activity) → TIME fails and the no-invented-changes criterion fails.
+    - Says "no change" with no awareness of the recent reaffirmation →
+      TIME shallow.
+
+  `by_dimension` splits this into a PREF score (states the convention)
+  and a TIME score (correct recency verdict).
+
+ingest:
+  # Current convention (PREF), stable and old.
+  - { event: universe/acme/22-adr-021-logging.json, at: "-400d", tags: [signal] }
+  # Recent reaffirmations (TIME) — activity, but NOT a change.
+  - { event: slack/eng_standards__structlog_reaffirmed.json, at: "-20d", tags: [signal] }
+  - { event: notion/logging_convention_status.json, at: "-19d", tags: [signal] }
+
+distractor_events:
+  - { event: "noise/slack_chatter_noise_template.json", at: "-55d..-2d", count: 15, shape: "noise/random" }
+  - { event: "noise/linear_issue_noise_template.json", at: "-55d..-2d", count: 10, shape: "noise/random" }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): neither declared dimension is structurally
+  # gradeable. PREF (ADR-021 Decision / Document) and TIME (recent Slack /
+  # Notion reaffirmation events) are reconciled but the topology read
+  # surfaces only Service / DataStore + DEPENDS_ON / USES, not Decision /
+  # Document / Message event tiers — a structural assertion on them would
+  # grade a read-layer gap. Both dimensions are graded via the synthesis
+  # judge + retrieval_assertions. We anchor the structural floor on a
+  # Service the topology read surfaces (any Python service ADR-021 affects).
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*(checkout-api|inventory-svc|payments-svc)", min_count: 1 }
+  graph_must_not_contain:
+    - { label: Issue, key_pattern: "NOISE-.*", max_count: 0 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: docs
+  scope: { topic: "logging convention", window_days: 60 }
+  include: [coding_preferences, timeline, decisions, owners, docs]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [coding_preferences, timeline]
+  source_refs_min: 2
+  must_cite_event_id:
+    - universe/acme/22-adr-021-logging.json
+    - slack/eng_standards__structlog_reaffirmed.json
+  must_not_cite_event_id:
+    - noise/slack_chatter_noise_template.json
+    - noise/linear_issue_noise_template.json
+  forbid_in_answer:
+    - "I don't have information"
+    - "no logging convention"
+
+judge:
+  pass_score: 65
+  criteria:
+    # PREF side ---
+    - name: states_current_convention
+      weight: 30
+      pass_threshold: 4
+      dimensions: [PREF]
+      prompt: |
+        Does the answer state the current logging convention accurately —
+        ADR-021: structlog with keyword args only, no f-strings in log
+        calls, required context keys (service/env/request_id), enforced by
+        lint ACME010/ACME011? A vague "use structured logging" without
+        naming ADR-021 / structlog / kw-args fails.
+    # TIME side ---
+    - name: correct_recency_verdict
+      weight: 30
+      pass_threshold: 4
+      dimensions: [TIME]
+      prompt: |
+        Does the answer correctly conclude that the convention has NOT
+        materially changed in the last 60 days, while noting it WAS
+        reaffirmed ~20 days ago (the #eng-standards thread / notion status
+        page) and that the OTEL spans work added tracing without replacing
+        structlog? Both halves — "no material change" AND "recently
+        reaffirmed" — are needed for full credit.
+    - name: no_invented_change
+      weight: 25
+      pass_threshold: 5
+      dimensions: [TIME]
+      prompt: |
+        Does the answer AVOID claiming the convention changed? The recent
+        reaffirmation activity and the OTEL spans are bait — an answer
+        that infers a change (e.g. "switched to stdlib JSON logging" or
+        "logging now goes through OTEL") from that activity is a
+        hallucination and fails.
+    # Cross-dimension integration ---
+    - name: coherent_recency_qualified_answer
+      weight: 15
+      pass_threshold: 3
+      prompt: |
+        Does the answer read as one coherent recency-qualified statement
+        ("the convention is X [PREF]; it has not changed in 60 days but
+        was reaffirmed on <date> [TIME]") rather than two disconnected
+        facts? Are all claims grounded (valid: ADR-021, structlog,
+        ACME010, ACME011, PR #1151)? Invented ADRs or convention names
+        fail.

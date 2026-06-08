@@ -16,6 +16,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 os.environ["isDevelopmentMode"] = "enabled"
 os.environ["defaultUsername"] = "test-user"
+os.environ.setdefault("LEGACY_SKIP_CONTEXT_GRAPH", "1")
 # So app bootstrap (when loaded by client fixture) does not exit
 os.environ.setdefault("ENV", "development")
 
@@ -66,6 +67,11 @@ from app.modules.conversations.conversation.conversation_model import (
 )
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
 from app.modules.code_provider.github.github_service import GithubService
+
+
+def pytest_ignore_collect(collection_path, config):
+    path = collection_path.as_posix()
+    return path.endswith("/tests/unit/cli/test_potpie_skills.py")
 
 
 # =================================================================

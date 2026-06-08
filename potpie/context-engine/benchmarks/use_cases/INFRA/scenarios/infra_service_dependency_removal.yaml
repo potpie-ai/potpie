@@ -1,0 +1,126 @@
+id: infra_service_dependency_removal
+use_case: INFRA
+tier: extended
+difficulty: adversarial
+source_mix: adversarial
+universe: acme
+
+description: |
+  An engineer asks how checkout-api talks to notifications-svc today. The
+  trap: the codebase changed recently, but the docs did not. A fresh PR
+  removed checkout-api's DIRECT synchronous call to notifications-svc and
+  moved order confirmations to async-via-orders-topic; an OLDER README
+  still lists notifications-svc as a direct dependency. The engine must
+  reflect the FRESH state and surface the conflict instead of parroting the
+  stale doc.
+
+  Ground-truth:
+    - CURRENT (PR #1205, merged -5d): checkout-api no longer calls
+      notifications-svc synchronously. checkout-api emits `OrderPlaced` onto
+      orders-topic (which it already did); notifications-svc consumes that
+      event and sends confirmations asynchronously. The old
+      NotificationsClient is deleted. Net: `checkout-api → notifications-svc`
+      is NO LONGER a direct dependency — it is async-via-topic
+      (checkout-api → orders-topic → notifications-svc).
+    - STALE (README, authored -120d): still lists notifications-svc under
+      checkout-api's direct Dependencies as a "direct synchronous
+      POST /notify call" that checkout-api blocks on.
+    - The seed architecture (00-architecture.json) and the canonical
+      checkout README already describe the orders-topic fan-out, so the
+      async path is consistent with the rest of the universe.
+
+  Why it's hard (adversarial): the older README outweighs the PR in raw
+  word count and reads authoritatively, so a naive retrieval will answer
+  "checkout-api calls notifications-svc directly." The correct answer must
+  (a) state the current path is async via orders-topic, NOT a direct call,
+  and (b) explicitly flag that the older README is stale / conflicts with
+  the merged PR #1205.
+
+  NOTE (read-layer gating): the live snapshot read surfaces only topology
+  entities (Service / DataStore + DEPENDS_ON / USES). Both checkout-api and
+  notifications-svc are anchored structurally; whether the engine reflects
+  the FRESH (async) relationship and flags the stale doc is graded in the
+  synthesis judge. We forbid Service nodes minted from non-service strings.
+
+ingest:
+  - { event: repo_docs/checkout_api_readme_stale_direct_notifications.json, at: "-120d", tags: [signal] }
+  - { event: github/pr_merged__1205__checkout_notifications_async.json, at: "-5d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/github_chore_noise_template.json, at: "-100d..-3d", count: 14 }
+  - { event: noise/slack_chatter_noise_template.json, at: "-60d..-2d", count: 8 }
+
+post_ingest_assertions:
+  graph_must_contain_entities:
+    - { label: Service, min_count: 7 }
+    - { label: Service, key_pattern: "service:.*checkout-api", min_count: 1 }
+    - { label: Service, key_pattern: "service:.*notifications-svc", min_count: 1 }
+  graph_must_not_contain:
+    - { label: Service, key_pattern: "(?i)(orders-topic|notificationsclient|post-?notify|orderplaced)", max_count: 0 }
+    - { label: Service, key_pattern: "type:chore", max_count: 0 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: debugging
+  scope: { service: checkout-api }
+  include: [infra_topology, owners, docs]
+  mode: verify
+  source_policy: verify
+
+retrieval_assertions:
+  required_includes_used: [infra_topology]
+  source_refs_min: 2
+  must_cite_event_id:
+    - github/pr_merged__1205__checkout_notifications_async.json
+  must_not_cite_event_id:
+    - noise/github_chore_noise_template.json
+    - noise/slack_chatter_noise_template.json
+  forbid_in_answer:
+    - "direct synchronous POST /notify"
+
+judge:
+  pass_score: 45
+  criteria:
+    - name: current_path_is_async
+      weight: 34
+      pass_threshold: 4
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer state that, as of today, checkout-api does NOT call
+        notifications-svc directly/synchronously — the relationship is async
+        via orders-topic (checkout-api emits OrderPlaced; notifications-svc
+        consumes it and sends confirmations)? Answering that checkout-api
+        calls notifications-svc directly (the stale README's claim) fails
+        this criterion.
+    - name: flags_stale_doc_conflict
+      weight: 30
+      pass_threshold: 4
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer explicitly flag the conflict — that the older
+        checkout-api README still lists notifications-svc as a direct
+        dependency and is now stale/outdated relative to the merged PR
+        #1205? Silently picking the right answer without naming the
+        conflict earns partial credit; silently picking the stale answer
+        fails.
+    - name: cites_fresh_source
+      weight: 18
+      pass_threshold: 3
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer ground the current state in the recent PR (#1205,
+        ~5 days ago) rather than in the ~120-day-old README? Privileging
+        the older document over the fresher change fails this.
+    - name: no_invented_services
+      weight: 18
+      pass_threshold: 5
+      dimensions: [INFRA]
+      prompt: |
+        Are all services named drawn from the canonical Acme service list
+        (checkout-api, inventory-svc, payments-svc, notifications-svc,
+        auth-svc, web-app, analytics-pipeline)? Treating orders-topic, the
+        OrderPlaced event, or NotificationsClient as if it were one of
+        Acme's own services fails this criterion.

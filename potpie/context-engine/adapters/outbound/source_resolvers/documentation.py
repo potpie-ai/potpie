@@ -319,7 +319,9 @@ class DocumentationUriResolver:
         stored = " ".join(p for p in (ref.title, ref.summary) if p)
         if not stored:
             return None
-        return clamp_text(stored, min(budget.max_chars_per_item, remaining_chars)) or None
+        return (
+            clamp_text(stored, min(budget.max_chars_per_item, remaining_chars)) or None
+        )
 
 
 def _is_doc_ref(ref: SourceReferenceRecord) -> bool:

@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
-from adapters.inbound.cli.agent_installer import (
+from adapters.outbound.skills.agent_installer import (
     install_agent_bundle,
+    iter_template_files,
     resolve_install_root,
 )
-from adapters.inbound.cli.main import app
 
 
 def test_resolve_install_root_prefers_git_repo(tmp_path: Path) -> None:
@@ -30,13 +28,7 @@ def test_install_agent_bundle_creates_expected_files(tmp_path: Path) -> None:
 
     result = install_agent_bundle(repo)
 
-    expected = {
-        "AGENTS.md",
-        ".agents/skills/potpie-agent-context",
-        ".agents/skills/potpie-cli",
-        ".agents/skills/potpie-cli-troubleshooting",
-        ".agents/skills/potpie-pot-scope",
-    }
+    expected = {rel.as_posix() for rel, _ in iter_template_files()}
     created = set(result.created)
     assert created == expected
     assert not result.updated
@@ -71,21 +63,6 @@ def test_install_agent_bundle_overwrites_with_force(tmp_path: Path) -> None:
     assert "# Context Engine" in target.read_text(encoding="utf-8")
 
 
-def test_init_agent_cli_json_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("adapters.inbound.cli.main.load_cli_env", lambda: None)
-    runner = CliRunner()
-
-    result = runner.invoke(app, ["--json", "init-agent", str(tmp_path)])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["root"] == str(tmp_path.resolve())
-    assert "AGENTS.md" in payload["created"]
-
-
 # --- Claude bundle tests ---
 
 
@@ -99,6 +76,8 @@ def test_install_agent_bundle_claude_creates_claude_files(tmp_path: Path) -> Non
     content = (repo / "CLAUDE.md").read_text(encoding="utf-8")
     assert "<!-- potpie-start -->" in content
     assert "context_resolve" in content
+    assert (repo / ".claude" / "commands" / "potpie-feature.md").exists()
+    assert (repo / ".claude" / "commands" / "potpie-record.md").exists()
 
 
 def test_install_agent_bundle_claude_merges_into_existing_claude_md(
@@ -162,34 +141,29 @@ def test_install_agent_bundle_claude_skips_changed_section_without_force(
     assert "CLAUDE.md" in result.skipped
 
 
+def test_install_agent_bundle_cursor_writes_cursor_skills(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    result = install_agent_bundle(repo, agent="cursor")
+
+    assert "AGENTS.md" in result.created
+    skill = repo / ".cursor" / "skills" / "potpie-cli" / "SKILL.md"
+    assert skill.exists()
+    assert "potpie" in skill.read_text(encoding="utf-8").lower()
+
+
+def test_install_agent_bundle_opencode_writes_opencode_skills(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    result = install_agent_bundle(repo, agent="opencode")
+
+    assert "AGENTS.md" not in result.created
+    skill = repo / ".opencode" / "skills" / "potpie-agent-context" / "SKILL.md"
+    assert skill.exists()
+
+
 def test_install_agent_bundle_invalid_agent_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Unknown agent type"):
         install_agent_bundle(tmp_path, agent="unknown")
-
-
-def test_init_agent_cli_claude_json_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("adapters.inbound.cli.main.load_cli_env", lambda: None)
-    runner = CliRunner()
-
-    result = runner.invoke(app, ["--json", "init-agent", "claude", str(tmp_path)])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert "CLAUDE.md" in payload["created"]
-
-
-def test_init_agent_cli_path_without_agent_type(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A bare path as first arg (not an agent type) should default to codex/agent bundle."""
-    monkeypatch.setattr("adapters.inbound.cli.main.load_cli_env", lambda: None)
-    runner = CliRunner()
-
-    result = runner.invoke(app, ["--json", "init-agent", str(tmp_path)])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.stdout)
-    assert "AGENTS.md" in payload["created"]

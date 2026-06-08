@@ -8,7 +8,7 @@ from domain.deterministic_extractors import (
     extract_ticket_from_branch,
     parse_diff_hunks,
 )
-from domain.review_thread_grouper import group_review_threads
+from adapters.outbound.connectors.github.review_threads import group_review_threads
 
 pytestmark = pytest.mark.unit
 
@@ -19,7 +19,10 @@ class TestDeterministicExtractors:
         assert extract_issue_refs(text) == [12, 34]
 
     def test_extract_ticket_from_branch(self):
-        assert extract_ticket_from_branch("feature/PLAT-123-add-intelligence") == "PLAT-123"
+        assert (
+            extract_ticket_from_branch("feature/PLAT-123-add-intelligence")
+            == "PLAT-123"
+        )
         assert extract_ticket_from_branch("chore/no-ticket") is None
 
     def test_extract_feature_from_milestone_first(self):
@@ -33,12 +36,7 @@ class TestDeterministicExtractors:
 
     def test_parse_diff_hunks(self):
         patch = (
-            "@@ -10,2 +20,5 @@\n"
-            " old\n"
-            " new\n"
-            "@@ -40 +70 @@\n"
-            " line\n"
-            "@@ -100,1 +200,0 @@\n"
+            "@@ -10,2 +20,5 @@\n old\n new\n@@ -40 +70 @@\n line\n@@ -100,1 +200,0 @@\n"
         )
         assert parse_diff_hunks(patch) == [(20, 24), (70, 70)]
 

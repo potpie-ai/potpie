@@ -13,7 +13,7 @@ from domain.graph_quality import (
     freshness_ttl_hours_for_source_type,
     source_of_truth_for_source_type,
 )
-from domain.intelligence_models import CoverageReport
+from domain.graph_quality import CoverageReport
 from domain.source_references import SourceReferenceRecord
 
 pytestmark = pytest.mark.unit
@@ -70,26 +70,30 @@ def test_graph_quality_degrades_on_source_access_gap() -> None:
 
 
 def test_fact_family_policies_are_source_type_aware() -> None:
+    # Topology facts (code-derived) are fresher-by-default than generic unknowns.
     assert freshness_ttl_hours_for_source_type(
-        "Alert"
-    ) < freshness_ttl_hours_for_source_type("Decision")
-    assert source_of_truth_for_source_type("Code") == "authoritative_code_truth"
-    assert source_of_truth_for_source_type("Preference") == "soft_inference"
+        "Service"
+    ) < freshness_ttl_hours_for_source_type("Mystery")
+    # Code-derived topology / ownership families are authoritative-code truth.
+    assert source_of_truth_for_source_type("Service") == "authoritative_code_truth"
+    assert source_of_truth_for_source_type("Team") == "authoritative_code_truth"
 
 
 def test_detect_family_conflicts_same_valid_at_is_contradiction() -> None:
+    # Two USES edges from one service to different datastores, same valid_at
+    # → datastore_binding contradiction.
     t = datetime(2025, 1, 15, tzinfo=timezone.utc)
     edges = [
         EpisodicEdgeConflictInput(
             uuid="e1",
-            name="USES_DATA_STORE",
+            name="USES",
             source_uuid="svc",
             target_uuid="mongo",
             valid_at=t,
         ),
         EpisodicEdgeConflictInput(
             uuid="e2",
-            name="STORED_IN",
+            name="USES",
             source_uuid="svc",
             target_uuid="pg",
             valid_at=t,
@@ -102,47 +106,20 @@ def test_detect_family_conflicts_same_valid_at_is_contradiction() -> None:
     assert {out[0]["edge_a_uuid"], out[0]["edge_b_uuid"]} == {"e1", "e2"}
 
 
-def test_detect_family_conflicts_chose_vs_migrated_with_datastore_hint() -> None:
-    """``CHOSE`` joins datastore family when the target has ``DataStore`` (fix 02)."""
-    t_old = datetime(2025, 1, 15, tzinfo=timezone.utc)
-    t_new = datetime(2025, 8, 12, tzinfo=timezone.utc)
-    edges = [
-        EpisodicEdgeConflictInput(
-            uuid="e-chose",
-            name="CHOSE",
-            source_uuid="ledger",
-            target_uuid="mongo",
-            valid_at=t_old,
-            target_labels=("Entity", "DataStore"),
-        ),
-        EpisodicEdgeConflictInput(
-            uuid="e-mig",
-            name="MIGRATED_TO",
-            source_uuid="ledger",
-            target_uuid="pg",
-            valid_at=t_new,
-        ),
-    ]
-    out = detect_family_conflicts(edges)
-    assert len(out) == 1
-    assert out[0]["conflict_type"] == "supersession_pending"
-    assert {out[0]["edge_a_uuid"], out[0]["edge_b_uuid"]} == {"e-chose", "e-mig"}
-
-
 def test_detect_family_conflicts_distinct_valid_at_supersession_pending() -> None:
     t_old = datetime(2025, 1, 15, tzinfo=timezone.utc)
     t_new = datetime(2025, 8, 15, tzinfo=timezone.utc)
     edges = [
         EpisodicEdgeConflictInput(
             uuid="e1",
-            name="USES_DATA_STORE",
+            name="USES",
             source_uuid="svc",
             target_uuid="mongo",
             valid_at=t_old,
         ),
         EpisodicEdgeConflictInput(
             uuid="e2",
-            name="USES_DATA_STORE",
+            name="USES",
             source_uuid="svc",
             target_uuid="pg",
             valid_at=t_new,

@@ -1,7 +1,8 @@
-"""HTTP client for Potpie /api/v2/context (X-API-Key)."""
+"""HTTP client for Potpie /api/v2/context (API key or Firebase Bearer)."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 from datetime import datetime
 from typing import Any, Optional
@@ -48,14 +49,23 @@ class PotpieContextApiClient:
     def __init__(
         self,
         base_url: str,
-        api_key: str,
+        api_key: str | None = None,
         *,
+        auth_headers: dict[str, str] | None = None,
+        auth_headers_provider: Callable[[], dict[str, str]] | None = None,
+        reauth_provider: Callable[[], dict[str, str]] | None = None,
         timeout: float = 120.0,
         client_surface: str | None = None,
         client_name: str | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
-        self._api_key = api_key.strip()
+        self._api_key = (api_key or "").strip()
+        self._auth_headers = dict(auth_headers or {})
+        self._auth_headers_provider = auth_headers_provider
+        # Called only on a 401 to force-refresh auth (e.g. a new Firebase ID
+        # token). Distinct from auth_headers_provider, which returns the cached
+        # headers used for the normal request.
+        self._reauth_provider = reauth_provider
         self._timeout = timeout
         self._client_surface = (client_surface or "").strip() or None
         self._client_name = (client_name or "").strip() or None
@@ -73,13 +83,52 @@ class PotpieContextApiClient:
         return h
 
     def _headers(self) -> dict[str, str]:
+        auth_headers = (
+            self._auth_headers_provider()
+            if self._auth_headers_provider is not None
+            else dict(self._auth_headers)
+        )
+        if not auth_headers and self._api_key:
+            auth_headers = {"X-API-Key": self._api_key}
         base = {
-            "X-API-Key": self._api_key,
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+        base.update(auth_headers)
         base.update(self._client_headers())
         return base
+
+    def _get_headers(self) -> dict[str, str]:
+        headers = self._headers()
+        headers.pop("Content-Type", None)
+        return headers
+
+    def _refresh_auth_headers(self) -> bool:
+        """Force-refresh auth headers after a 401.
+
+        Returns True only when fresh headers were obtained AND differ from those
+        just sent — so the caller retries only when a retry can actually succeed.
+        A static API key (unchanged headers) yields False and no wasted retry.
+        """
+        if self._reauth_provider is None:
+            return False
+        try:
+            fresh = dict(self._reauth_provider() or {})
+        except Exception:
+            return False
+        if not fresh:
+            return False
+        previous = (
+            self._auth_headers_provider()
+            if self._auth_headers_provider is not None
+            else self._auth_headers
+        )
+        if fresh == dict(previous or {}):
+            return False
+        # Pin the refreshed headers so _headers() uses them for the retry.
+        self._auth_headers = fresh
+        self._auth_headers_provider = None
+        return True
 
     def _raise_for_status(self, r: httpx.Response) -> None:
         if r.is_success:
@@ -91,16 +140,44 @@ class PotpieContextApiClient:
             detail = r.text or r.reason_phrase
         raise PotpieContextApiError(r.status_code, detail)
 
+    def _get_with_auth_retry(
+        self,
+        url: str,
+        *,
+        params: Optional[dict[str, Any]] = None,
+    ) -> httpx.Response:
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.get(url, headers=self._get_headers(), params=params)
+            if response.status_code == 401 and self._refresh_auth_headers():
+                response = client.get(url, headers=self._get_headers(), params=params)
+            return response
+
+    def _post_with_auth_retry(
+        self,
+        url: str,
+        *,
+        json_body: Any = None,
+        params: Optional[dict[str, Any]] = None,
+    ) -> httpx.Response:
+        with httpx.Client(timeout=self._timeout) as client:
+            response = client.post(
+                url,
+                headers=self._headers(),
+                json=json_body,
+                params=params,
+            )
+            if response.status_code == 401 and self._refresh_auth_headers():
+                response = client.post(
+                    url,
+                    headers=self._headers(),
+                    json=json_body,
+                    params=params,
+                )
+            return response
+
     def list_context_pots(self) -> list[dict[str, Any]]:
         """GET /api/v2/context/pots — user-owned context pots (independent of projects)."""
-        with httpx.Client(timeout=self._timeout) as client:
-            r = client.get(
-                self._url("/pots"),
-                headers={
-                    "X-API-Key": self._api_key,
-                    "Accept": "application/json",
-                },
-            )
+        r = self._get_with_auth_retry(self._url("/pots"))
         self._raise_for_status(r)
         data = r.json()
         if isinstance(data, list):
@@ -131,14 +208,9 @@ class PotpieContextApiClient:
     def get_context_pot_slug_availability(self, slug: str) -> dict[str, Any]:
         """GET /api/v2/context/pots/slug-availability/{slug}."""
         encoded_slug = quote(slug.strip(), safe="")
-        with httpx.Client(timeout=self._timeout) as client:
-            r = client.get(
-                self._url(f"/pots/slug-availability/{encoded_slug}"),
-                headers={
-                    "X-API-Key": self._api_key,
-                    "Accept": "application/json",
-                },
-            )
+        r = self._get_with_auth_retry(
+            self._url(f"/pots/slug-availability/{encoded_slug}")
+        )
         self._raise_for_status(r)
         out = r.json()
         return out if isinstance(out, dict) else {}
@@ -155,14 +227,7 @@ class PotpieContextApiClient:
 
     def list_pot_repositories(self, pot_id: str) -> list[dict[str, Any]]:
         """GET /api/v2/context/pots/{pot_id}/repositories."""
-        with httpx.Client(timeout=self._timeout) as client:
-            r = client.get(
-                self._url(f"/pots/{pot_id}/repositories"),
-                headers={
-                    "X-API-Key": self._api_key,
-                    "Accept": "application/json",
-                },
-            )
+        r = self._get_with_auth_retry(self._url(f"/pots/{pot_id}/repositories"))
         self._raise_for_status(r)
         data = r.json()
         if isinstance(data, list):
@@ -190,6 +255,73 @@ class PotpieContextApiClient:
         out = r.json()
         return out if isinstance(out, dict) else {}
 
+    def submit_event(
+        self,
+        *,
+        pot_id: str,
+        source_system: str,
+        event_type: str,
+        action: str,
+        source_id: str,
+        payload: dict[str, Any] | None = None,
+        repo_name: str | None = None,
+        provider: str | None = "github",
+        provider_host: str | None = "github.com",
+        event_id: str | None = None,
+        ingestion_kind: str | None = None,
+        occurred_at: datetime | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """POST /api/v2/context/events/reconcile.
+
+        Used by host-side triggers (CLI, scripts) to drop a normalized context
+        event into the ingestion submission pipeline. Returns the raw status +
+        body so callers can branch on 202 (queued) vs 409 (duplicate).
+        """
+        body: dict[str, Any] = {
+            "pot_id": pot_id,
+            "source_system": source_system,
+            "event_type": event_type,
+            "action": action,
+            "source_id": source_id,
+            "payload": payload or {},
+        }
+        if repo_name is not None:
+            body["repo_name"] = repo_name
+        if provider is not None:
+            body["provider"] = provider
+        if provider_host is not None:
+            body["provider_host"] = provider_host
+        if event_id is not None:
+            body["event_id"] = event_id
+        if ingestion_kind is not None:
+            body["ingestion_kind"] = ingestion_kind
+        if occurred_at is not None:
+            body["occurred_at"] = occurred_at
+        r = self.post_context("/events/reconcile", json_body=body)
+        if r.status_code in (200, 202):
+            try:
+                return r.status_code, r.json()
+            except json.JSONDecodeError:
+                raise PotpieContextApiError(r.status_code, r.text) from None
+        if r.status_code == 409:
+            try:
+                detail = r.json().get("detail", {})
+            except Exception:
+                detail = {}
+            if isinstance(detail, dict) and (
+                detail.get("error") == "duplicate_event" or detail.get("event_id")
+            ):
+                return r.status_code, detail
+        self._raise_for_status(r)
+        return r.status_code, {}
+
+    def classify_modified_edges(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /maintenance/classify-modified-edges (dry-run by default)."""
+        r = self.post_context("/maintenance/classify-modified-edges", json_body=body)
+        self._raise_for_status(r)
+        out = r.json()
+        return out if isinstance(out, dict) else {}
+
     def get_health(self) -> tuple[int, Optional[dict[str, Any]]]:
         """GET /health on the same host as base_url."""
         with httpx.Client(timeout=min(self._timeout, 30.0)) as client:
@@ -211,13 +343,11 @@ class PotpieContextApiClient:
         params: Optional[dict[str, Any]] = None,
     ) -> httpx.Response:
         body = _json_body_for_httpx(json_body) if json_body is not None else None
-        with httpx.Client(timeout=self._timeout) as client:
-            return client.post(
-                self._url(path),
-                headers=self._headers(),
-                json=body,
-                params=params,
-            )
+        return self._post_with_auth_retry(
+            self._url(path),
+            json_body=body,
+            params=params,
+        )
 
     def get_context(
         self,
@@ -225,80 +355,13 @@ class PotpieContextApiClient:
         *,
         params: Optional[dict[str, Any]] = None,
     ) -> httpx.Response:
-        with httpx.Client(timeout=self._timeout) as client:
-            return client.get(
-                self._url(path),
-                headers={
-                    "X-API-Key": self._api_key,
-                    "Accept": "application/json",
-                },
-                params=params,
-            )
+        return self._get_with_auth_retry(self._url(path), params=params)
 
     def context_graph_query(self, body: dict[str, Any]) -> dict[str, Any]:
         r = self.post_context("/query/context-graph", json_body=body)
         self._raise_for_status(r)
         out = r.json()
         return out if isinstance(out, dict) else {}
-
-    def classify_modified_edges(self, body: dict[str, Any]) -> dict[str, Any]:
-        """POST /maintenance/classify-modified-edges (dry-run by default)."""
-        r = self.post_context("/maintenance/classify-modified-edges", json_body=body)
-        self._raise_for_status(r)
-        out = r.json()
-        return out if isinstance(out, dict) else {}
-
-    def submit_event(
-        self,
-        *,
-        pot_id: str,
-        source_system: str,
-        event_type: str,
-        action: str,
-        source_id: str,
-        payload: dict[str, Any],
-        provider: Optional[str] = None,
-        provider_host: Optional[str] = None,
-        repo_name: Optional[str] = None,
-        occurred_at: Optional[datetime] = None,
-    ) -> tuple[int, dict[str, Any]]:
-        """POST /events/reconcile for source-scoped reconciliation events."""
-        body: dict[str, Any] = {
-            "pot_id": pot_id,
-            "source_system": source_system,
-            "event_type": event_type,
-            "action": action,
-            "source_id": source_id,
-            "payload": payload,
-        }
-        if provider is not None:
-            body["provider"] = provider
-        if provider_host is not None:
-            body["provider_host"] = provider_host
-        if repo_name is not None:
-            body["repo_name"] = repo_name
-        if occurred_at is not None:
-            body["occurred_at"] = occurred_at
-
-        r = self.post_context("/events/reconcile", json_body=body)
-        if r.status_code in (200, 202):
-            try:
-                return r.status_code, r.json()
-            except json.JSONDecodeError:
-                raise PotpieContextApiError(r.status_code, r.text) from None
-        if r.status_code == 409:
-            try:
-                detail = r.json().get("detail", {})
-                if (
-                    isinstance(detail, dict)
-                    and detail.get("event_id")
-                    and detail.get("error") == "duplicate_event"
-                ):
-                    return r.status_code, detail
-            except Exception:
-                pass
-        self._raise_for_status(r)
-        return r.status_code, {}
 
     def ingest(self, body: dict[str, Any], *, sync: bool) -> tuple[int, dict[str, Any]]:
         params = {"sync": "true"} if sync else None
@@ -313,7 +376,7 @@ class PotpieContextApiClient:
                     "status": "reconciliation_rejected",
                     "errors": [],
                     "event_id": None,
-                    "episode_uuid": None,
+                    "mutation_id": None,
                     "downgrades": [],
                 }
             raise IngestRejectedError(payload)
@@ -325,7 +388,10 @@ class PotpieContextApiClient:
         if r.status_code == 409:
             try:
                 detail = r.json().get("detail", {})
-                if isinstance(detail, dict) and detail.get("error") == "duplicate_ingest":
+                if (
+                    isinstance(detail, dict)
+                    and detail.get("error") == "duplicate_ingest"
+                ):
                     return r.status_code, detail
             except Exception:
                 pass
@@ -372,31 +438,6 @@ class PotpieContextApiClient:
 
     def status(self, body: dict[str, Any]) -> dict[str, Any]:
         r = self.post_context("/status", json_body=body)
-        self._raise_for_status(r)
-        out = r.json()
-        return out if isinstance(out, dict) else {}
-
-    def conflicts_list(self, pot_id: str) -> dict[str, Any]:
-        r = self.post_context("/conflicts/list", json_body={"pot_id": pot_id})
-        self._raise_for_status(r)
-        out = r.json()
-        return out if isinstance(out, dict) else {}
-
-    def conflicts_resolve(
-        self,
-        pot_id: str,
-        issue_uuid: str,
-        *,
-        action: str = "supersede_older",
-    ) -> dict[str, Any]:
-        r = self.post_context(
-            "/conflicts/resolve",
-            json_body={
-                "pot_id": pot_id,
-                "issue_uuid": issue_uuid,
-                "action": action,
-            },
-        )
         self._raise_for_status(r)
         out = r.json()
         return out if isinstance(out, dict) else {}
