@@ -12,7 +12,7 @@ from adapters.outbound.skills.agent_installer import (
     iter_template_files,
     resolve_install_root,
 )
-from adapters.outbound.skills.builtin_catalog import catalog_by_id
+from adapters.outbound.skills.bundle_catalog import catalog_by_id
 
 
 def test_resolve_install_root_prefers_git_repo(tmp_path: Path) -> None:
@@ -42,12 +42,14 @@ def test_install_agent_bundle_creates_expected_files(tmp_path: Path) -> None:
 
 def test_packaged_skill_names_match_directories_and_catalog() -> None:
     catalog = catalog_by_id()
-    for rel_path, content in iter_template_files():
+    for rel_path, _content in iter_template_files():
         if rel_path.name != "SKILL.md":
             continue
         skill_id = rel_path.parent.name
         assert skill_id in catalog
-        assert f'name: "{skill_id}"' in content or f"name: {skill_id}" in content
+        assert catalog[skill_id].id == skill_id
+        assert catalog[skill_id].version
+        assert catalog[skill_id].description
 
 
 def test_install_skill_bundle_writes_to_global_root(tmp_path: Path) -> None:

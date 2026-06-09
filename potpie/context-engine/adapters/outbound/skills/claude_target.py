@@ -14,7 +14,7 @@ from adapters.outbound.skills.agent_installer import (
     install_skill_bundle,
     project_skill_path,
 )
-from adapters.outbound.skills.builtin_catalog import RECOMMENDED_SKILL_IDS
+from adapters.outbound.skills.bundle_catalog import RECOMMENDED_SKILL_IDS
 
 
 @dataclass(slots=True)

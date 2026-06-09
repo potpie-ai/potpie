@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from adapters.outbound.skills.claude_target import ProjectAgentTarget
-from adapters.outbound.skills.builtin_catalog import (
+from adapters.outbound.skills.bundle_catalog import (
     RECOMMENDED_SKILL_IDS,
     catalog_by_id,
 )

@@ -1,5 +1,7 @@
 ---
 name: "potpie-pot-scope"
+version: "1"
+recommended: true
 description: "Use when the task is about pot resolution: pot use, env maps, git origin parsing, repo-to-pot mapping, or search/ingest scope inference."
 ---
 
