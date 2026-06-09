@@ -1,11 +1,25 @@
 # ruff: noqa: S101
 
 from pathlib import Path
+import tomllib
+from typing import Protocol
 
 import pytest
-import tomli
 
 from parsing_rs import build_workspace_index
+
+
+class ReadonlyResult(Protocol):
+    pass
+
+
+def _assert_readonly_assignment(
+    result_name: str,
+    result: ReadonlyResult,
+    assignment: str,
+) -> None:
+    with pytest.raises(AttributeError):
+        exec(assignment, {}, {result_name: result})  # noqa: S102
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -85,22 +99,26 @@ def test_build_workspace_index_result_fields_are_readonly_and_present(
     assert hasattr(content_result, "snippet")
     assert hasattr(content_result, "score")
 
-    with pytest.raises(AttributeError):
-        setattr(file_result, "path", "mutated")
-    with pytest.raises(AttributeError):
-        setattr(file_result, "score", 0)
-    with pytest.raises(AttributeError):
-        setattr(content_result, "path", "mutated")
-    with pytest.raises(AttributeError):
-        setattr(content_result, "line", 0)
-    with pytest.raises(AttributeError):
-        setattr(content_result, "snippet", "mutated")
-    with pytest.raises(AttributeError):
-        setattr(content_result, "score", 0)
+    _assert_readonly_assignment(
+        "file_result", file_result, "file_result.path = 'mutated'"
+    )
+    _assert_readonly_assignment("file_result", file_result, "file_result.score = 0")
+    _assert_readonly_assignment(
+        "content_result", content_result, "content_result.path = 'mutated'"
+    )
+    _assert_readonly_assignment(
+        "content_result", content_result, "content_result.line = 0"
+    )
+    _assert_readonly_assignment(
+        "content_result", content_result, "content_result.snippet = 'mutated'"
+    )
+    _assert_readonly_assignment(
+        "content_result", content_result, "content_result.score = 0"
+    )
 
 
 def test_python_package_supports_python_3_11_to_3_13() -> None:
     pyproject = Path(__file__).parents[1] / "pyproject.toml"
-    data = tomli.loads(pyproject.read_text())
+    data = tomllib.loads(pyproject.read_text())
 
     assert data["project"]["requires-python"] == ">=3.11,<3.14"
