@@ -15,13 +15,16 @@ from rich.markup import escape
 from adapters.inbound.cli.auth.atlassian_auth import run_atlassian_api_token_auth
 from adapters.inbound.cli.auth.atlassian_read import (
     AtlassianReadError,
-    fetch_confluence_content_sample,
     fetch_confluence_spaces_sample,
-    fetch_jira_issues_sample,
     fetch_jira_projects,
     run_confluence_use_flow,
     run_jira_use_flow,
 )
+from adapters.outbound.cli_auth.linear_read_client import (
+    LinearReadError,
+    fetch_linear_workspaces,
+)
+from adapters.inbound.cli.auth.linear_read import run_linear_use_flow
 from adapters.outbound.cli_auth.callback_server import (
     OAuthCallbackResult,
     wait_for_oauth_callback,
@@ -53,13 +56,15 @@ from adapters.outbound.cli_auth.provider_config import (
 )
 from adapters.outbound.cli_auth.token_exchange import exchange_authorization_code
 
-auth_app = typer.Typer(help="Authenticate CLI integrations.")
-linear_app = typer.Typer(help="Linear authentication.")
-jira_app = typer.Typer(help="Jira authentication and read.")
-confluence_app = typer.Typer(help="Confluence authentication and read.")
+auth_app = typer.Typer(
+    help="[Deprecated] Use `potpie <provider>` and `potpie status` instead.",
+)
+linear_app = typer.Typer(help="Linear integration.")
+jira_app = typer.Typer(help="Jira integration and read.")
+confluence_app = typer.Typer(help="Confluence integration and read.")
 
 _OAUTH_CALLBACK_TIMEOUT = 300.0
-_ALL_PROVIDERS: tuple[Provider, ...] = ("linear", "jira", "confluence")
+_ALL_PROVIDERS: tuple[Provider, ...] = ("github", "linear", "jira", "confluence")
 
 
 def _canonical_provider_for_json(product: str) -> str:
@@ -71,11 +76,29 @@ def _canonical_provider_for_json(product: str) -> str:
 
 
 def register_provider_app(name: str, provider_app: typer.Typer) -> None:
-    """Register a provider-specific auth sub-application."""
+    """Register a provider app under the deprecated ``auth`` namespace."""
     key = str(name or "").strip().lower()
     if not key:
         raise ValueError("provider app name must be non-empty")
     auth_app.add_typer(provider_app, name=key)
+
+
+def _print_standard_logout(
+    *,
+    was_authenticated: bool,
+    provider: str,
+    j: bool,
+) -> None:
+    if was_authenticated:
+        message = "Logged out successfully."
+    else:
+        message = (
+            "No active session found. Any stale local credentials were removed."
+        )
+    payload: dict[str, Any] = {"ok": True, "provider": provider}
+    if not was_authenticated:
+        payload["cleared_stale"] = True
+    print_plain_line(message, as_json=j, json_payload=payload)
 
 
 def _flags() -> tuple[bool, bool]:
@@ -195,13 +218,13 @@ def _print_linear_login_success(
     print_json_blob(payload, as_json=True)
 
 
-def _run_linear_oauth_flow(*, force: bool = False) -> None:
+def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
     load_cli_env()
     j, v = _flags()
     store = get_store()
 
     status = get_integration_status("linear")
-    if status.get("authenticated") and not force:
+    if status.get("authenticated") and not force and not add:
         if token_needs_refresh(status.get("expires_at")):
             if _try_refresh_linear_session():
                 _print_linear_login_success(
@@ -215,7 +238,38 @@ def _run_linear_oauth_flow(*, force: bool = False) -> None:
                     as_json=False,
                 )
         else:
-            _handle_already_connected("linear", status)
+            from adapters.outbound.cli_auth.credentials_store import (
+                list_linear_organizations,
+            )
+
+            orgs = list_linear_organizations()
+            names = ", ".join(
+                str(org.get("name") or org.get("key") or org.get("id") or "workspace")
+                for org in orgs
+            )
+            if j:
+                print_json_blob(
+                    {
+                        "ok": True,
+                        "already_connected": True,
+                        "provider": "linear",
+                        "workspaces": orgs,
+                        "hint": "Run with --add to connect another Linear workspace.",
+                    },
+                    as_json=True,
+                )
+                return
+            print_plain_line(
+                "Linear is already connected"
+                + (f" ({names})." if names else "."),
+                as_json=False,
+            )
+            print_plain_line(
+                "Linear OAuth authorizes one workspace per login. "
+                "Run `potpie linear login --add` and choose another workspace "
+                "in the browser (e.g. Potpie).",
+                as_json=False,
+            )
             return
 
     client_id = get_client_id("linear")
@@ -274,6 +328,11 @@ def _run_linear_oauth_flow(*, force: bool = False) -> None:
             "Opening browser for Linear authentication...",
             as_json=False,
         )
+        if add:
+            print_plain_line(
+                "Choose the Linear workspace to connect in the browser.",
+                as_json=False,
+            )
         print_plain_line(
             f"If the browser does not open, visit:\n{auth_url}",
             as_json=False,
@@ -361,13 +420,8 @@ def run_integration_login(provider: str, *, force: bool = False) -> None:
     raise ValueError(f"Unknown integration provider {provider!r}.")
 
 
-@auth_app.command("status")
-def auth_status(
-    verify: bool = typer.Option(
-        False,
-        "--verify",
-        help="Run a lightweight read-only API check for authenticated providers.",
-    ),
+def integration_status(
+    verify: bool = False,
 ) -> None:
     """Show local integration auth status."""
     load_cli_env()
@@ -381,6 +435,8 @@ def auth_status(
             try:
                 if provider == "linear":
                     credentials = ensure_valid_integration_tokens(provider)
+                elif provider == "github":
+                    credentials = get_store().get_provider_credentials("github")
                 else:
                     credentials = get_integration_tokens(provider)
             except (ValueError, RuntimeError, ProviderCredentialError) as exc:
@@ -429,17 +485,60 @@ def auth_status(
         _print_remote_line("  ".join(parts))
 
 
-@auth_app.command("logout")
-def auth_logout(
-    provider: str = typer.Argument(
-        ...,
-        help="Provider to log out: linear, jira, or confluence.",
+@auth_app.command("status")
+def auth_status(
+    verify: bool = typer.Option(
+        False,
+        "--verify",
+        help="Run a lightweight read-only API check for authenticated providers.",
     ),
 ) -> None:
-    """Remove locally stored credentials for a provider."""
+    """Deprecated: use ``potpie status``."""
+    integration_status(verify=verify)
+
+
+def linear_logout_impl() -> None:
+    """Remove stored Linear credentials with workspace-aware messaging."""
     load_cli_env()
     j, v = _flags()
     store = get_store()
+    existing = get_integration_status("linear")
+    was_authenticated = bool(existing.get("authenticated"))
+    workspace_name = existing.get("site_name")
+
+    if not was_authenticated:
+        emit_error(
+            "linear not authenticated",
+            "No stored credentials to revoke.",
+            verbose=v,
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        store.clear_integration_tokens("linear")
+    except (ProviderCredentialError, ValueError) as exc:
+        emit_error("linear logout failed", str(exc), verbose=v)
+        raise typer.Exit(code=EXIT_AUTH) from exc
+
+    if j:
+        print_json_blob({"ok": True, "provider": "linear"}, as_json=True)
+        return
+
+    org_suffix = f" ({workspace_name})" if workspace_name else ""
+    print_plain_line(
+        f"Logged out of Linear workspace{org_suffix}.",
+        as_json=False,
+    )
+    print_plain_line(
+        "Connect another workspace: potpie linear login --add",
+        as_json=False,
+    )
+
+
+def auth_logout(provider: str) -> None:
+    """Remove locally stored credentials for a provider."""
+    load_cli_env()
+    j, v = _flags()
     key = provider.strip().lower()
     if key in {"wiki", "conf"}:
         key = "confluence"
@@ -451,16 +550,18 @@ def auth_logout(
         )
         raise typer.Exit(code=1)
 
+    if key == "linear":
+        linear_logout_impl()
+        return
+    if key == "github":
+        from adapters.inbound.cli.auth.github_commands import github_logout_impl
+
+        github_logout_impl()
+        return
+
+    store = get_store()
     existing = get_integration_status(key)
     was_authenticated = bool(existing.get("authenticated"))
-
-    if key == "linear" and not was_authenticated:
-        emit_error(
-            f"{key} not authenticated",
-            "No stored credentials to revoke.",
-            verbose=v,
-        )
-        raise typer.Exit(code=1)
 
     try:
         store.clear_integration_tokens(key)
@@ -468,24 +569,32 @@ def auth_logout(
         emit_error(f"{key} logout failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_AUTH) from exc
 
-    if was_authenticated:
-        message = f"Logged out of {key}."
-    else:
-        message = f"No active {key} session; removed any stale local credentials."
-    payload: dict[str, Any] = {"ok": True, "provider": key}
-    if not was_authenticated:
-        payload["cleared_stale"] = True
-    print_plain_line(message, as_json=j, json_payload=payload)
+    _print_standard_logout(
+        was_authenticated=was_authenticated,
+        provider=key,
+        j=j,
+    )
+
+
+@auth_app.command("logout")
+def auth_logout_cmd(
+    provider: str = typer.Argument(
+        ...,
+        help="Deprecated. Provider to log out: github, linear, jira, or confluence.",
+    ),
+) -> None:
+    """Deprecated: use ``potpie <provider> logout``."""
+    auth_logout(provider)
 
 
 @auth_app.command("revoke", hidden=True)
 def auth_revoke(
     provider: str = typer.Argument(
         ...,
-        help="Deprecated. Use `potpie auth logout <provider>`.",
+        help="Deprecated. Use `potpie <provider> logout`.",
     ),
 ) -> None:
-    """Deprecated alias for `potpie auth logout`."""
+    """Deprecated alias for provider logout."""
     auth_logout(provider)
 
 
@@ -518,20 +627,151 @@ def linear_login(
     force: bool = typer.Option(
         False,
         "--force",
-        help="Re-authenticate even if Linear is already connected.",
+        help="Re-authenticate the active Linear workspace.",
+    ),
+    add: bool = typer.Option(
+        False,
+        "--add",
+        help="Connect an additional Linear workspace (authorize again in the browser).",
     ),
 ) -> None:
     """Authenticate with Linear via OAuth (PKCE)."""
-    _run_linear_oauth_flow(force=force)
+    _run_linear_oauth_flow(force=force, add=add)
 
 
 @linear_app.command("logout")
 def linear_logout() -> None:
     """Remove stored Linear credentials."""
-    auth_logout("linear")
+    linear_logout_impl()
 
 
-register_provider_app("linear", linear_app)
+@linear_app.command("ls")
+def linear_ls(
+    limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
+) -> None:
+    """List Linear workspaces connected to this CLI."""
+    load_cli_env()
+    j, v = _flags()
+    try:
+        rows = fetch_linear_workspaces(limit=limit)
+    except LinearReadError as exc:
+        emit_error("Linear workspace list failed", str(exc), verbose=v)
+        raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
+    if j:
+        print_json_blob(
+            {"ok": True, "provider": "linear", "workspaces": rows}, as_json=True
+        )
+        return
+    print_plain_line("Linear workspaces:", as_json=False)
+    if not rows:
+        print_plain_line("  (none — run: potpie linear login)", as_json=False)
+        return
+    for row in rows:
+        active_suffix = "  (active)" if row.get("active") else ""
+        _print_remote_line(
+            f"  {_esc(row.get('key'))}\t{_esc(row.get('name'))}"
+            f"\t{_esc(row.get('type'))}{active_suffix}",
+        )
+    print_plain_line(
+        "\nConnect another workspace: potpie linear login --add",
+        as_json=False,
+    )
+    print_plain_line("Fetch issues: potpie linear select", as_json=False)
+
+
+@linear_app.command("select")
+def linear_select(
+    org: str | None = typer.Option(
+        None,
+        "--org",
+        "-o",
+        help="Linear workspace url key or name (e.g. potpie).",
+    ),
+    key: str | None = typer.Option(None, "--key", "-k", help="Linear team key."),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
+) -> None:
+    """Select a Linear workspace and team, then fetch issues in the terminal."""
+    load_cli_env()
+    j, v = _flags()
+    try:
+        result = run_linear_use_flow(org_key=org, team_key=key, limit=limit)
+    except LinearReadError as exc:
+        emit_error("Linear fetch failed", str(exc), verbose=v)
+        raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
+    _run_product_use_result(result, product_label="Linear")
+
+
+def _print_linear_issue_row(row: dict[str, Any]) -> None:
+    identifier = _esc(row.get("identifier") or row.get("id"))
+    summary = _esc(row.get("title") or row.get("summary"))
+    _print_remote_line(f"\n{identifier}  {summary}".rstrip())
+    if row.get("team"):
+        _print_remote_line(f"  Team: {_esc(row.get('team'))}")
+    if row.get("status"):
+        _print_remote_line(f"  Status: {_esc(row.get('status'))}")
+    if row.get("assignee"):
+        _print_remote_line(f"  Assignee: {_esc(row.get('assignee'))}")
+    if row.get("priority") is not None:
+        _print_remote_line(f"  Priority: {_esc(row.get('priority'))}")
+    if row.get("updated"):
+        _print_remote_line(f"  Updated: {_esc(row.get('updated'))}")
+    if row.get("url"):
+        _print_remote_line(f"  URL: {_esc(row.get('url'))}")
+
+
+
+def _build_auth_compat_linear() -> typer.Typer:
+    app = typer.Typer(help="[Deprecated] use `potpie linear`.")
+    app.command("login")(linear_login)
+    app.command("logout")(linear_logout)
+    app.command("ls")(linear_ls)
+    app.command("select")(linear_select)
+    return app
+
+
+def _build_auth_compat_jira() -> typer.Typer:
+    app = typer.Typer(help="[Deprecated] use `potpie jira`.")
+    app.command("login")(jira_login)
+    app.command("logout")(jira_logout)
+    app.command("ls")(jira_ls)
+    app.command("select")(jira_select)
+    return app
+
+
+def _build_auth_compat_confluence() -> typer.Typer:
+    app = typer.Typer(help="[Deprecated] use `potpie confluence`.")
+    app.command("login")(confluence_login)
+    app.command("logout")(confluence_logout)
+    app.command("ls")(confluence_ls)
+    app.command("select")(confluence_select)
+    return app
+
+
+def _register_auth_compat_providers() -> None:
+    """Mount deprecated ``potpie auth <provider>`` mirrors on ``auth_app``."""
+    from adapters.inbound.cli.auth.github_commands import (
+        _build_auth_compat_github,
+    )
+
+    register_provider_app("github", _build_auth_compat_github())
+    register_provider_app("linear", _build_auth_compat_linear())
+    register_provider_app("jira", _build_auth_compat_jira())
+    register_provider_app("confluence", _build_auth_compat_confluence())
+
+
+def register_integration_commands(root: typer.Typer) -> None:
+    """Mount provider commands at the CLI root and the deprecated ``auth`` group."""
+    from adapters.inbound.cli.auth.github_commands import (
+        git_app,
+        github_app,
+    )
+
+    root.add_typer(github_app, name="github")
+    root.add_typer(git_app, name="git")
+    root.add_typer(linear_app, name="linear")
+    root.add_typer(jira_app, name="jira")
+    root.add_typer(confluence_app, name="confluence")
+    root.add_typer(auth_app, name="auth")
 
 
 def _print_jira_issue_row(row: dict[str, Any]) -> None:
@@ -589,55 +829,6 @@ def _print_wiki_row(row: dict[str, Any], *, pages: bool) -> None:
         _print_remote_line(f"    {_esc(row.get('url'))}")
 
 
-def _run_atlassian_quick_read(
-    *,
-    product: str,
-    fetcher,
-    limit: int,
-    hint_cmd: str = "potpie auth jira select",
-    display_name: str | None = None,
-) -> None:
-    load_cli_env()
-    j, v = _flags()
-    name = display_name or ("Confluence" if product == "wiki" else product.capitalize())
-    try:
-        rows = fetcher(limit=limit)
-    except AtlassianReadError as exc:
-        emit_error(f"{name} read failed", str(exc), verbose=v)
-        raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
-
-    if j:
-        print_json_blob(
-            {
-                "ok": True,
-                "provider": "jira" if product == "jira" else "confluence",
-                "product": product,
-                "count": len(rows),
-                "items": rows,
-            },
-            as_json=True,
-        )
-        return
-
-    pages = product == "wiki" and rows and "title" in (rows[0] or {})
-    row_label = "pages" if pages else ("issues" if product == "jira" else "spaces")
-    print_plain_line(f"{name} ({len(rows)} {row_label}):", as_json=False)
-    if not rows:
-        print_plain_line(f"  (no results — run: {hint_cmd})", as_json=False)
-        return
-    for row in rows:
-        if product == "jira":
-            if row.get("description") or row.get("url"):
-                _print_jira_issue_row(row)
-            else:
-                _print_remote_line(
-                    f"  {_esc(row.get('key'))}\t{_esc(row.get('status'))}"
-                    f"\t{_esc(row.get('project'))}\t{_esc(row.get('summary'))}",
-                )
-        else:
-            _print_wiki_row(row, pages=pages)
-
-
 def _run_product_use_result(
     result: dict[str, Any],
     *,
@@ -656,11 +847,18 @@ def _run_product_use_result(
         f"{product_label} workspace: {_esc(result.get('workspace_key'))} "
         f"({_esc(result.get('workspace_name'))})",
     )
+    if result.get("product") == "linear" and result.get("team_key"):
+        _print_remote_line(
+            f"{product_label} team: {_esc(result.get('team_key'))} "
+            f"({_esc(result.get('team_name'))})",
+        )
     rows = result.get("items") or []
     print_plain_line(f"{len(rows)} item(s):", as_json=False)
     for row in rows:
         if result["product"] == "jira":
             _print_jira_issue_row(row)
+        elif result["product"] == "linear":
+            _print_linear_issue_row(row)
         else:
             _print_wiki_row(row, pages=True)
 
@@ -734,7 +932,7 @@ def jira_ls(
         )
         if row.get("url"):
             _print_remote_line(f"    {_esc(row.get('url'))}")
-    print_plain_line("\nFetch issues: potpie auth jira select", as_json=False)
+    print_plain_line("\nFetch issues: potpie jira select", as_json=False)
 
 
 @jira_app.command("select")
@@ -751,20 +949,6 @@ def jira_select(
         emit_error("Jira fetch failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
     _run_product_use_result(result, product_label="Jira")
-
-
-@jira_app.command("issues")
-def jira_issues(
-    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
-) -> None:
-    """Fetch recent Jira issues (saved project, or first project)."""
-    _run_atlassian_quick_read(
-        product="jira",
-        fetcher=fetch_jira_issues_sample,
-        limit=limit,
-        hint_cmd="potpie auth jira select",
-        display_name="Jira",
-    )
 
 
 @confluence_app.command("login")
@@ -834,7 +1018,7 @@ def confluence_ls(
         _print_remote_line(
             f"  {_esc(row.get('key'))}\t{_esc(row.get('name'))}\t{_esc(row.get('type'))}",
         )
-    print_plain_line("\nFetch pages: potpie auth confluence select", as_json=False)
+    print_plain_line("\nFetch pages: potpie confluence select", as_json=False)
 
 
 @confluence_app.command("select")
@@ -853,19 +1037,4 @@ def confluence_select(
     _run_product_use_result(result, product_label="Confluence")
 
 
-@confluence_app.command("pages")
-def confluence_pages(
-    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
-) -> None:
-    """Fetch Confluence pages (saved space) or list spaces if none saved."""
-    _run_atlassian_quick_read(
-        product="wiki",
-        fetcher=fetch_confluence_content_sample,
-        limit=limit,
-        hint_cmd="potpie auth confluence select",
-        display_name="Confluence",
-    )
-
-
-register_provider_app("jira", jira_app)
-register_provider_app("confluence", confluence_app)
+_register_auth_compat_providers()

@@ -16,21 +16,25 @@ from adapters.outbound.cli_auth.github import (
     request_device_code,
     verify_account,
 )
-from adapters.inbound.cli.auth.auth_commands import register_provider_app
 from adapters.inbound.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
 from adapters.outbound.cli_auth.credentials_store import (
     CredentialStoreError,
     ProviderCredentialError,
+    _integration_secret_store_label,
+    get_integration_status,
 )
 from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
 
-github_app = typer.Typer(help="GitHub authentication.")
-github_test_app = typer.Typer(help="GitHub test helpers.")
-git_app = typer.Typer(
-    help="Deprecated: use `potpie auth github` instead.",
+github_app = typer.Typer(help="GitHub integration.")
+github_test_app = typer.Typer(
+    help="Deprecated: use `potpie github repos`.",
     hidden=True,
 )
-git_test_app = typer.Typer(help="Git provider test helpers.", hidden=True)
+git_app = typer.Typer(
+    help="Deprecated: use `potpie github` instead.",
+    hidden=True,
+)
+git_test_app = typer.Typer(help="Deprecated: use `potpie github repos`.", hidden=True)
 
 
 def _flags() -> tuple[bool, bool]:
@@ -125,6 +129,8 @@ def github_login_impl() -> None:
 def github_logout_impl() -> None:
     """Remove GitHub credentials from keychain and config."""
     j, v = _flags()
+    store = get_store()
+    was_authenticated = bool(get_integration_status("github").get("authenticated"))
     try:
         store = get_store()
         store.clear_provider_credentials("github")
@@ -137,9 +143,19 @@ def github_logout_impl() -> None:
         _capture_unexpected_auth_error(exc, title="GitHub logout failed", verbose=v)
 
     if j:
-        print_json_blob({"ok": True, "provider": "github"}, as_json=True)
+        payload: dict[str, object] = {"ok": True, "provider": "github"}
+        if not was_authenticated:
+            payload["cleared_stale"] = True
+        print_json_blob(payload, as_json=True)
         return
-    print_plain_line("Logged out of GitHub.", as_json=False)
+
+    from adapters.inbound.cli.auth.auth_commands import _print_standard_logout
+
+    _print_standard_logout(
+        was_authenticated=was_authenticated,
+        provider="github",
+        j=False,
+    )
 
 
 @github_app.command("login")
@@ -156,19 +172,17 @@ def github_logout_cmd() -> None:
 
 @git_app.command("login", hidden=True)
 def git_login_cmd() -> None:
-    """Deprecated alias for `potpie auth github login`."""
+    """Deprecated alias for `potpie github login`."""
     github_login_impl()
 
 
 @git_app.command("logout", hidden=True)
 def git_logout_cmd() -> None:
-    """Deprecated alias for `potpie auth github logout`."""
+    """Deprecated alias for `potpie github logout`."""
     github_logout_impl()
 
 
-@github_test_app.command("repos")
-@git_test_app.command("repos")
-def github_test_repos_cmd() -> None:
+def github_repos_impl() -> None:
     """List GitHub repositories owned by the authenticated user."""
     j, v = _flags()
     try:
@@ -193,7 +207,8 @@ def github_test_repos_cmd() -> None:
     if not token:
         emit_error(
             "GitHub credentials not found",
-            "GitHub token not found in system keychain. Run: potpie auth github login",
+            f"GitHub token not found in {_integration_secret_store_label()}. "
+            "Run: potpie github login",
             verbose=v,
         )
         raise typer.Exit(code=EXIT_AUTH)
@@ -226,35 +241,33 @@ def github_test_repos_cmd() -> None:
         )
 
 
+@github_app.command("repos")
+def github_repos_cmd() -> None:
+    """List GitHub repositories you can access."""
+    github_repos_impl()
+
+
+@github_test_app.command("repos", hidden=True)
+@git_test_app.command("repos", hidden=True)
+def github_test_repos_cmd() -> None:
+    """Deprecated alias for ``potpie github repos``."""
+    github_repos_impl()
+
+
+def _build_auth_compat_github() -> typer.Typer:
+    app = typer.Typer(help="[Deprecated] use `potpie github`.")
+    app.command("login")(github_login_cmd)
+    app.command("logout")(github_logout_cmd)
+    app.command("repos")(github_repos_cmd)
+    return app
+
+
+github_app.add_typer(github_test_app, name="test")
+git_app.add_typer(git_test_app, name="test")
+
+
 def register_github_commands(root_app: typer.Typer) -> None:
-    """Wire GitHub auth and test commands into the root CLI."""
-    register_provider_app("github", github_app)
-    github_root = typer.Typer(
-        help="GitHub CLI helpers (use `potpie auth github` to sign in).",
-    )
-    github_root.add_typer(github_test_app, name="test")
-    root_app.add_typer(github_root, name="github")
-    git_app.add_typer(git_test_app, name="test")
-    root_app.add_typer(git_app, name="git")
+    """Deprecated: use ``register_integration_commands``."""
+    from adapters.inbound.cli.auth.auth_commands import register_integration_commands
 
-
-def _capture_unexpected_auth_error(
-    exc: BaseException,
-    *,
-    title: str,
-    verbose: bool,
-) -> NoReturn:
-    from adapters.inbound.cli.sentry_runtime import capture_unexpected_cli_error
-
-    capture_unexpected_cli_error(
-        exc,
-        error_code="unexpected_cli_error",
-        error_kind="unexpected",
-    )
-    emit_error(
-        title,
-        "Unexpected internal error.",
-        code="unexpected_cli_error",
-        verbose=verbose,
-    )
-    raise typer.Exit(code=EXIT_AUTH) from exc
+    register_integration_commands(root_app)

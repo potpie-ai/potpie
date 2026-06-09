@@ -43,7 +43,7 @@ def test_auth_help_is_wired_into_main_cli() -> None:
     result = runner.invoke(cli_main.app, ["auth", "--help"])
 
     assert result.exit_code == 0, result.stdout
-    assert "Authenticate CLI integrations." in result.stdout
+    assert "Deprecated" in result.stdout
 
 
 def test_register_provider_app_normalizes_name(monkeypatch) -> None:
@@ -296,25 +296,6 @@ def test_auth_status_verify_token_error(monkeypatch: pytest.MonkeyPatch) -> None
     assert result.exit_code == 0
     assert '"verified": false' in result.stdout
     assert "token load broke" in result.stdout
-
-
-def test_jira_issues_read_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mock_cli(monkeypatch, json_mode=False)
-    monkeypatch.setattr(
-        auth_commands,
-        "fetch_jira_issues_sample",
-        lambda **_kwargs: (_ for _ in ()).throw(AtlassianReadError("not connected")),
-    )
-    captured: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        auth_commands,
-        "emit_error",
-        lambda title, message, **kwargs: captured.append((title, message)),
-    )
-    with pytest.raises(typer.Exit):
-        auth_commands.jira_issues(limit=5)
-    assert captured
-    assert "Jira read failed" in captured[0][0]
 
 
 # --- test_auth_commands_helpers.py ---
@@ -976,7 +957,7 @@ def test_get_integration_status_unknown_provider(
 ) -> None:
     monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
     with pytest.raises(ValueError, match="Unknown integration provider"):
-        cs.get_integration_status("github")
+        cs.get_integration_status("slack")
 
 
 def test_store_secure_secret_generic_exception(
@@ -1165,7 +1146,7 @@ def test_verify_message_for_kind() -> None:
 
 
 def test_verify_integration_access_unknown_provider() -> None:
-    ok, message = verify_integration_access("github", {})  # type: ignore[arg-type]
+    ok, message = verify_integration_access("slack", {})  # type: ignore[arg-type]
     assert ok is False
     assert "unknown provider" in message
 

@@ -8,7 +8,9 @@ from typing import Any
 
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 
-_LINEAR_VIEWER_QUERY = "query { viewer { id name email organization { id name } } }"
+_LINEAR_VIEWER_QUERY = (
+    "query { viewer { id name email organization { id name urlKey } } }"
+)
 
 
 def utc_now_iso() -> str:
@@ -69,6 +71,9 @@ def fetch_linear_viewer(
         org_name = org_payload.get("name")
         if org_name:
             organization["name"] = str(org_name)
+        url_key = org_payload.get("urlKey") or org_payload.get("url_key")
+        if url_key:
+            organization["url_key"] = str(url_key)
 
     out: dict[str, Any] = {}
     if account:
@@ -162,7 +167,23 @@ def build_linear_integration_record(
     _apply_optional_fields(
         record, tokens, prior, ("expires_at", "expires_in", "cloud_id")
     )
+    workspaces = prior.get("workspaces")
+    if isinstance(workspaces, dict) and workspaces:
+        record["workspaces"] = workspaces
+    organizations = prior.get("organizations")
+    if isinstance(organizations, dict) and organizations:
+        record["organizations"] = organizations
+    active_org = prior.get("active_organization_id")
+    if active_org:
+        record["active_organization_id"] = active_org
     return record
+
+
+def linear_workspaces_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    workspaces = entry.get("workspaces")
+    if isinstance(workspaces, dict):
+        return workspaces
+    return {}
 
 
 def build_product_integration_record(

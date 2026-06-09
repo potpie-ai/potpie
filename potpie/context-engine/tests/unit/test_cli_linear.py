@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from __future__ import annotations
 import socket
 import threading
 import time
@@ -480,6 +479,7 @@ def test_run_linear_oauth_flow_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_linear_oauth_flow_already_connected(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
@@ -489,16 +489,16 @@ def test_run_linear_oauth_flow_already_connected(
         lambda _p: {"authenticated": True, "expires_at": 9999999999.0},
     )
     monkeypatch.setattr(auth_commands, "token_needs_refresh", lambda _x: False)
-    handled: list[str] = []
     monkeypatch.setattr(
-        auth_commands,
-        "_handle_already_connected",
-        lambda provider, status: handled.append(provider),
+        "adapters.outbound.cli_auth.credentials_store.list_linear_organizations",
+        lambda: [{"id": "org-1", "name": "Potpie AI CLI", "key": "potpie-ai-cli"}],
     )
 
     auth_commands._run_linear_oauth_flow()
 
-    assert handled == ["linear"]
+    out = capsys.readouterr().out
+    assert "already connected" in out.lower()
+    assert "--add" in out
 
 
 def test_run_linear_oauth_flow_missing_client_id(
