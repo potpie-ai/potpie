@@ -43,7 +43,7 @@ def test_cli_jira_project_ingest_submits_repo_less_event(monkeypatch) -> None:
 
     result = CliRunner().invoke(
         pots.jira_project_app,
-        ["PROJ", "--pot", "pot-1", "--count", "7"],
+        ["ingest", "PROJ", "--pot", "pot-1", "--count", "7"],
     )
 
     assert result.exit_code == 0, result.stdout
@@ -71,7 +71,7 @@ def test_cli_jira_project_ingest_plain_message_for_duplicate(monkeypatch) -> Non
 
     result = CliRunner().invoke(
         pots.jira_project_app,
-        ["PROJ", "--pot", "pot-1"],
+        ["ingest", "PROJ", "--pot", "pot-1"],
     )
 
     assert result.exit_code == 0, result.stdout
@@ -88,7 +88,7 @@ def test_cli_jira_project_ingest_surfaces_api_error(monkeypatch) -> None:
     _install(monkeypatch, fake, json_mode=False)
 
     result = CliRunner().invoke(
-        pots.jira_project_app, ["PROJ", "--pot", "pot-1"]
+        pots.jira_project_app, ["ingest", "PROJ", "--pot", "pot-1"]
     )
 
     assert result.exit_code != 0
