@@ -1,5 +1,7 @@
 ---
 name: "potpie-cli"
+version: "1"
+recommended: true
 description: "Use when the task involves running, explaining, or troubleshooting the Potpie CLI. Covers doctor, login, pot management, search, and ingest commands."
 ---
 

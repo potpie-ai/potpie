@@ -148,19 +148,110 @@ def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any
     return results
 
 
+def install_agents_globally(agents: list[str]) -> list[tuple[str, Any]]:
+    """Install packaged skill bundles into each harness's global skill location."""
+    from adapters.inbound.cli.commands._common import get_host
+    from adapters.outbound.skills.agent_installer import AGENT_TYPES
+
+    host = get_host()
+    results: list[tuple[str, Any]] = []
+    for agent in agents:
+        key = agent.strip().lower()
+        if key not in AGENT_TYPES or key == "default":
+            continue
+        results.append((key, host.skills.install(agent=key, scope="global")))
+    return results
+
+
+def _agent_label(agent: str) -> str:
+    labels = dict(POST_SETUP_AGENT_OPTIONS)
+    return labels.get(agent, agent)
+
+
 def _print_agent_install_summary(repo: Path, results: list[tuple[str, Any]]) -> None:
     from adapters.inbound.cli.ui.output import print_plain_line
 
-    root = repo.resolve()
     for agent, result in results:
         created = len(result.created)
         updated = len(result.updated)
         unchanged = len(result.unchanged)
         print_plain_line(
-            f"Installed {agent} skills into {root} "
+            f"{_agent_label(agent)} repo skills installed successfully "
             f"({created} new, {updated} updated, {unchanged} unchanged).",
             as_json=False,
         )
+
+
+def _install_agents_globally_with_progress(agents: list[str]) -> list[tuple[str, Any]]:
+    from adapters.inbound.cli.ui.output import print_plain_line
+
+    results: list[tuple[str, Any]] = []
+    if rich_enabled(as_json=False):
+        from rich.console import Group
+        from rich.live import Live
+        from rich.text import Text
+
+        from adapters.inbound.cli.ui.setup_wizard_ui import stderr_console
+
+        completed: list[tuple[str, str]] = []
+
+        def render(active_label: str | None = None, dots: str = "") -> Group:
+            lines = [Text("Potpie skills", style="bold")]
+            for label, status in completed:
+                lines.append(Text(f"  ✓ {label} ({status})", style="green"))
+            if active_label:
+                lines.append(Text(f"  Installing {active_label} skills{dots}", style="white"))
+            return Group(*lines)
+
+        with Live(render(), console=stderr_console(), refresh_per_second=12) as live:
+            for agent in agents:
+                label = _agent_label(agent)
+                for dots in ("   ", ".  ", ".. ", "...", " ..", "  ."):
+                    live.update(render(label, dots))
+                    time.sleep(0.06)
+                result = install_agents_globally([agent])
+                results.extend(result)
+                if _result_changed(result):
+                    completed.append((label, "installed"))
+                else:
+                    completed.append((label, "already installed"))
+                live.update(render())
+        return results
+
+    for agent in agents:
+        label = _agent_label(agent)
+        print_plain_line(
+            f"Installing Potpie skills for {label}...",
+            as_json=False,
+            markup=False,
+        )
+        result = install_agents_globally([agent])
+        results.extend(result)
+        if _result_changed(result):
+            print_plain_line(
+                f"✓ {label} (installed)",
+                as_json=False,
+                markup=False,
+            )
+        else:
+            print_plain_line(
+                f"✓ {label} (already installed)",
+                as_json=False,
+                markup=False,
+            )
+    return results
+
+
+def _result_changed(result: list[tuple[str, Any]]) -> bool:
+    return any(bool(getattr(item, "changed", ())) for _, item in result)
+
+
+def _format_agent_list(labels: list[str]) -> str:
+    if len(labels) <= 1:
+        return labels[0] if labels else ""
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return f"{', '.join(labels[:-1])}, and {labels[-1]}"
 
 
 def _try_login(handler) -> None:
@@ -176,9 +267,12 @@ def _try_login(handler) -> None:
 
 
 def _maybe_prompt_agent_skills(*, repo: Path, setup_agent: str) -> None:
-    from adapters.inbound.cli.ui.interactive_prompts import prompt_multi_checkbox
+    from adapters.inbound.cli.ui.interactive_prompts import (
+        prompt_multi_checkbox,
+        prompt_yes_no,
+    )
 
-    valid = frozenset(POST_SETUP_AGENT_ORDER)
+    valid = frozenset(agent for agent in POST_SETUP_AGENT_ORDER if agent != "default")
     default_checked = (
         frozenset({setup_agent.strip().lower()})
         if setup_agent.strip().lower() in valid
@@ -186,8 +280,12 @@ def _maybe_prompt_agent_skills(*, repo: Path, setup_agent: str) -> None:
     )
     try:
         selected = prompt_multi_checkbox(
-            "Which agent harnesses should receive Potpie skills?",
-            list(POST_SETUP_AGENT_OPTIONS),
+            "Which agent harnesses should receive Potpie skills globally?",
+            [
+                (option_id, label)
+                for option_id, label in POST_SETUP_AGENT_OPTIONS
+                if option_id != "default"
+            ],
             default_checked=default_checked,
         )
     except (KeyboardInterrupt, EOFError):
@@ -197,10 +295,24 @@ def _maybe_prompt_agent_skills(*, repo: Path, setup_agent: str) -> None:
         return
 
     selected_set = frozenset(selected)
-    agents = [agent for agent in POST_SETUP_AGENT_ORDER if agent in selected_set]
-    results = install_agents_to_repo(repo, agents)
-    if results:
-        _print_agent_install_summary(repo, results)
+    agents = [
+        agent
+        for agent in POST_SETUP_AGENT_ORDER
+        if agent in selected_set and agent != "default"
+    ]
+    _install_agents_globally_with_progress(agents)
+
+    try:
+        install_repo = prompt_yes_no(
+            "Also install Potpie skills into this repo?",
+            default=False,
+        )
+    except (KeyboardInterrupt, EOFError):
+        install_repo = False
+    if install_repo:
+        results = install_agents_to_repo(repo, agents)
+        if results:
+            _print_agent_install_summary(repo, results)
 
 
 def maybe_prompt_github_login(
@@ -209,7 +321,7 @@ def maybe_prompt_github_login(
     setup_agent: str = "claude",
     default_pot_name: str = "foo-pot",
 ) -> None:
-    """After setup: GitHub, integrations, then repo-local agent skill bundles."""
+    """After setup: GitHub, integrations, global skills, then first pot naming."""
     if not is_interactive_tty():
         return
 
@@ -291,6 +403,7 @@ __all__ = [
     "rich_enabled",
     "render_setup_report",
     "maybe_prompt_github_login",
+    "install_agents_globally",
     "install_agents_to_repo",
     "POST_SETUP_INTEGRATION_OPTIONS",
     "POST_SETUP_INTEGRATION_ORDER",

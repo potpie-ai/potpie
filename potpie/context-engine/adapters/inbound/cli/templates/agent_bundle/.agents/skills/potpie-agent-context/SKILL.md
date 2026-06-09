@@ -1,5 +1,7 @@
 ---
 name: "potpie-context"
+version: "1"
+recommended: true
 description: "Use when an agent needs project context from the context engine through MCP tools. Covers context_resolve recipes for feature, debugging, review, operations, docs, and onboarding without adding separate context tools."
 ---
 

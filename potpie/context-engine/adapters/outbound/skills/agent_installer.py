@@ -1,4 +1,4 @@
-"""Install packaged AGENTS.md / CLAUDE.md and repo-local skills into a target repository."""
+"""Install packaged AGENTS.md / CLAUDE.md and skills into agent targets."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from importlib import resources
 from pathlib import Path
+from typing import Iterable
 
 _CLAUDE_MARKER_RE = re.compile(
     r"<!-- (?:context-engine|potpie)-start -->.*?<!-- (?:context-engine|potpie)-end -->",
@@ -83,6 +84,28 @@ def _remap_skills_path(rel_path: Path, target_prefix: str) -> Path | None:
     if not posix.startswith(_SOURCE_SKILLS_PREFIX):
         return None
     return Path(target_prefix) / posix[len(_SOURCE_SKILLS_PREFIX) :]
+
+
+def _skill_id_for_path(rel_path: Path) -> str | None:
+    """Return the bundled skill id for a template path, if it is under .agents/skills."""
+    posix = rel_path.as_posix()
+    if not posix.startswith(_SOURCE_SKILLS_PREFIX):
+        return None
+    rest = posix[len(_SOURCE_SKILLS_PREFIX) :]
+    return rest.split("/", 1)[0] if rest else None
+
+
+def _normalize_skill_ids(skill_ids: Iterable[str] | None) -> frozenset[str] | None:
+    if skill_ids is None:
+        return None
+    return frozenset(sid.strip() for sid in skill_ids if sid and sid.strip())
+
+
+def _include_selected_skills(
+    rel_path: Path, selected: frozenset[str] | None
+) -> bool:
+    sid = _skill_id_for_path(rel_path)
+    return sid is not None and (selected is None or sid in selected)
 
 
 def _install_file(
@@ -168,11 +191,41 @@ def _opencode_bundle_remap(rel_path: Path) -> Path | None:
     return _remap_skills_path(rel_path, ".opencode/skills")
 
 
+def _claude_skills_bundle_remap(rel_path: Path) -> Path | None:
+    return _remap_skills_path(rel_path, ".claude/skills")
+
+
+def install_skill_bundle(
+    skills_root: str | Path,
+    *,
+    skill_ids: Iterable[str] | None = None,
+    force: bool = False,
+) -> InstallResult:
+    """Install selected packaged skills directly into a skills root.
+
+    ``skills_root`` is the directory that contains one subdirectory per skill,
+    for example ``~/.cursor/skills`` or ``~/.agents/skills``.
+    """
+    root = Path(skills_root).expanduser().resolve()
+    result = InstallResult(root=str(root))
+    selected = _normalize_skill_ids(skill_ids)
+    _install_bundle(
+        root,
+        "agent_bundle",
+        result,
+        force=force,
+        include=lambda rel: _include_selected_skills(rel, selected),
+        remap=lambda rel: Path(rel.as_posix()[len(_SOURCE_SKILLS_PREFIX) :]),
+    )
+    return result
+
+
 def install_agent_bundle(
     path: str | Path = ".",
     *,
     agent: str = "default",
     force: bool = False,
+    skill_ids: Iterable[str] | None = None,
 ) -> InstallResult:
     """Install agent bundle files into the nearest git repo root under *path*.
 
@@ -183,6 +236,7 @@ def install_agent_bundle(
     """
     root = resolve_install_root(path)
     result = InstallResult(root=str(root))
+    selected = _normalize_skill_ids(skill_ids)
 
     normalized = agent.strip().lower() if agent else "default"
     if normalized not in AGENT_TYPES:
@@ -192,13 +246,22 @@ def install_agent_bundle(
 
     if normalized == "claude":
         _install_bundle(root, "claude_bundle", result, force=force)
+        _install_bundle(
+            root,
+            "agent_bundle",
+            result,
+            force=force,
+            include=lambda rel: _include_selected_skills(rel, selected),
+            remap=_claude_skills_bundle_remap,
+        )
     elif normalized == "cursor":
         _install_bundle(
             root,
             "agent_bundle",
             result,
             force=force,
-            include=_cursor_bundle_include,
+            include=lambda rel: rel.as_posix() == "AGENTS.md"
+            or _include_selected_skills(rel, selected),
             remap=_cursor_bundle_remap,
         )
     elif normalized == "opencode":
@@ -207,10 +270,30 @@ def install_agent_bundle(
             "agent_bundle",
             result,
             force=force,
-            include=lambda rel: rel.as_posix().startswith(_SOURCE_SKILLS_PREFIX),
+            include=lambda rel: _include_selected_skills(rel, selected),
             remap=_opencode_bundle_remap,
         )
     else:
-        _install_bundle(root, "agent_bundle", result, force=force)
+        _install_bundle(
+            root,
+            "agent_bundle",
+            result,
+            force=force,
+            include=lambda rel: rel.as_posix() == "AGENTS.md"
+            or _include_selected_skills(rel, selected),
+        )
 
     return result
+
+
+def project_skill_path(root: str | Path, *, agent: str, skill_id: str) -> Path:
+    """Return the project-scope SKILL.md path for a harness and skill id."""
+    install_root = resolve_install_root(root)
+    normalized = agent.strip().lower() if agent else "default"
+    if normalized == "cursor":
+        return install_root / ".cursor" / "skills" / skill_id / "SKILL.md"
+    if normalized == "claude":
+        return install_root / ".claude" / "skills" / skill_id / "SKILL.md"
+    if normalized == "opencode":
+        return install_root / ".opencode" / "skills" / skill_id / "SKILL.md"
+    return install_root / ".agents" / "skills" / skill_id / "SKILL.md"

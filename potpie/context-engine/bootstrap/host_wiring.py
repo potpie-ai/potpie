@@ -29,7 +29,12 @@ from adapters.outbound.pots.flat_file_state_store import (
 )
 from adapters.outbound.pots.local_pot_store import LocalPotStore
 from adapters.outbound.scanners.default_registry import build_default_scanner_registry
-from adapters.outbound.skills.claude_target import ClaudeAgentTarget
+from adapters.outbound.skills.claude_target import (
+    ClaudeAgentTarget,
+    CodexAgentTarget,
+    CursorAgentTarget,
+    OpenCodeAgentTarget,
+)
 from application.services.agent_context import AgentContextService
 from application.services.auth_service import LocalAuthService
 from application.services.config_service import LocalConfigService
@@ -69,7 +74,14 @@ def build_host_shell(
 
     graph = DefaultGraphService(backend=backend)
     pots = LocalPotManagementService(store=pot_store, backend=backend)
-    skills = DefaultSkillManager(targets={"claude": ClaudeAgentTarget()})
+    skills = DefaultSkillManager(
+        targets={
+            "claude": ClaudeAgentTarget(),
+            "codex": CodexAgentTarget(),
+            "cursor": CursorAgentTarget(),
+            "opencode": OpenCodeAgentTarget(),
+        }
+    )
     agent_context = AgentContextService(
         graph=graph, pots=pots, skills=skills, profile=profile
     )

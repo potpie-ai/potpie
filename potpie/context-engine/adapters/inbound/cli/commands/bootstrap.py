@@ -71,6 +71,7 @@ def register(root: typer.Typer) -> None:
                 scan=scan,
                 assume_yes=yes,
                 defer_default_pot=use_rich,
+                defer_skills=use_rich,
             )
 
             if dry_run:

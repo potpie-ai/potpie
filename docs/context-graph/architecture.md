@@ -651,7 +651,7 @@ deferred; _(deferred)_ rows are the managed pipeline not yet migrated onto
 | Agent contract impl | `application/services/agent_context.py` (composes the three services) |
 | Graph Service _(local POC)_ | `application/services/graph_service.py` over a `GraphBackend` + `read_orchestrator.py`; `record` lowers `record_type` → ontology predicate via `RECORD_TYPES` |
 | Pot Management _(local POC)_ | `application/services/pot_management.py` + `adapters/outbound/pots/local_pot_store.py` |
-| Skill Manager _(local POC)_ | `application/services/skill_manager.py` + `adapters/outbound/skills/{builtin_catalog,claude_target}.py` |
+| Skill Manager _(local POC)_ | `application/services/skill_manager.py` + `adapters/outbound/skills/{bundle_catalog,claude_target}.py` |
 | GraphBackend adapters | `adapters/outbound/graph/backends/{in_memory,embedded,neo4j}_backend.py` + `build_backend` registry; `claim_query_analytics.py` gives any claim-backed profile real analytics |
 | Event Ledger adapters _(local POC)_ | `adapters/outbound/ledger/{managed_client,self_hosted_client,cursor_store,reconciler}.py` (`run_store.py` _(planned — HU4)_) |
 | Ingestion (working-tree scan) | `application/services/ingest_service.py` + `adapters/outbound/scanners/default_registry.py` → `HostShell.ingest` (`potpie ingest scan`) |
