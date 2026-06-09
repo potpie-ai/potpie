@@ -47,7 +47,7 @@ def _checkbox_line(*, focused: bool, checked: bool, label: str) -> Text:
 
 
 def _read_key() -> str:
-    """Read one navigation key; returns up, down, enter, yes, no, or escape."""
+    """Read one navigation key; unknown keys are ignored by callers."""
     if not sys.stdin.isatty():
         return "enter"
 
@@ -59,6 +59,8 @@ def _read_key() -> str:
             return "enter"
         if ch == " ":
             return "space"
+        if ch in ("x", "X"):
+            return "toggle"
         if ch in ("y", "Y"):
             return "yes"
         if ch in ("n", "N"):
@@ -69,7 +71,9 @@ def _read_key() -> str:
                 return "up"
             if ch2 == "P":
                 return "down"
-        return "escape"
+        if ch == "\x1b":
+            return "ignore"
+        return "ignore"
 
     import termios
     import tty
@@ -85,6 +89,8 @@ def _read_key() -> str:
             return "enter"
         if ch1 == " ":
             return "space"
+        if ch1 in ("x", "X"):
+            return "toggle"
         if ch1 in ("y", "Y"):
             return "yes"
         if ch1 in ("n", "N"):
@@ -95,10 +101,10 @@ def _read_key() -> str:
                 return "up"
             if rest == "[B":
                 return "down"
-            return "escape"
+            return "ignore"
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
-    return "escape"
+    return "ignore"
 
 
 def _cursor_up_and_clear_lines(count: int) -> None:
@@ -210,8 +216,8 @@ def prompt_yes_no(
                     chosen_index=selected,
                 )
                 return selected == 0
-            elif key == "escape":
-                return default
+            elif key == "ignore":
+                continue
     except KeyboardInterrupt:
         raise
     finally:
@@ -266,10 +272,7 @@ def prompt_multi_checkbox(
     console.print()
     console.print(message)
     console.print(
-        Text(
-            "↑/↓ move · Space to select · Enter to continue",
-            style=UI_MUTED_STYLE,
-        )
+                Text("↑/↓ move · Space/x to select · Enter to continue", style=UI_MUTED_STYLE)
     )
     _draw_checkboxes(
         console,
@@ -312,7 +315,7 @@ def prompt_multi_checkbox(
                     confirming=True,
                 )
                 return [option_id for option_id, _ in options if option_id in checked]
-            elif key == "space":
+            elif key in ("space", "toggle"):
                 if option_id in checked:
                     checked.remove(option_id)
                 else:
@@ -324,8 +327,8 @@ def prompt_multi_checkbox(
                     checked=checked,
                     repaint=True,
                 )
-            elif key == "escape":
-                return []
+            elif key == "ignore":
+                continue
     except KeyboardInterrupt:
         raise
     finally:

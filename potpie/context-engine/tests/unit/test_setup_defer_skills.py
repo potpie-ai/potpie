@@ -1,4 +1,4 @@
-"""Deferred default pot during interactive setup."""
+"""Deferred global skills during interactive setup."""
 
 from __future__ import annotations
 
@@ -16,15 +16,15 @@ def host(tmp_path, monkeypatch):
     return build_host_shell(backend=InMemoryGraphBackend())
 
 
-def test_setup_run_skips_pot_default_when_deferred(host) -> None:
+def test_setup_run_skips_skills_when_deferred(host) -> None:
     report = host.setup.run(
-        SetupPlan(repo="potpie", agent="claude", defer_default_pot=True),
+        SetupPlan(repo="potpie", agent="claude", defer_skills=True),
     )
     steps = {s.step: s.state for s in report.steps}
-    assert "pot.default" not in steps
-    assert host.pots.active_pot() is None
+    assert "skills" not in steps
+    assert host.skills.status(agent="claude").installed == ()
 
 
-def test_setup_preview_omits_pot_default_when_deferred(host) -> None:
-    preview = host.setup.preview(SetupPlan(defer_default_pot=True))
-    assert all(step.step != "pot.default" for step in preview.steps)
+def test_setup_preview_omits_skills_when_deferred(host) -> None:
+    preview = host.setup.preview(SetupPlan(defer_skills=True))
+    assert all(step.step != "skills" for step in preview.steps)

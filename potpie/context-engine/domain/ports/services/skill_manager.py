@@ -76,28 +76,50 @@ class AgentTargetPort(Protocol):
 class SkillManager(Protocol):
     """CLI-managed skill catalog and per-agent installation layer."""
 
-    def list(self) -> list[SkillInfo]:
+    def list(
+        self, *, agent: str = "claude", scope: str = "global", path: str | None = None
+    ) -> list[SkillInfo]:
         """All catalog skills (with installed/version state when known)."""
         ...
 
     def install(
-        self, *, agent: str, skill_id: str | None = None, path: str | None = None
+        self,
+        *,
+        agent: str,
+        skill_id: str | None = None,
+        path: str | None = None,
+        scope: str = "global",
     ) -> SkillOperationResult:
         """Install one skill (or the full recommended set when ``skill_id`` is
         ``None``) for an agent harness."""
         ...
 
     def update(
-        self, *, agent: str, skill_id: str | None = None, all_: bool = False
+        self,
+        *,
+        agent: str,
+        skill_id: str | None = None,
+        all_: bool = False,
+        path: str | None = None,
+        scope: str = "global",
     ) -> SkillOperationResult:
         """Update an installed skill, or all of them when ``all_``."""
         ...
 
-    def remove(self, *, agent: str, skill_id: str) -> SkillOperationResult:
+    def remove(
+        self,
+        *,
+        agent: str,
+        skill_id: str,
+        path: str | None = None,
+        scope: str = "global",
+    ) -> SkillOperationResult:
         """Remove an installed skill from an agent harness."""
         ...
 
-    def status(self, *, agent: str) -> SkillStatus:
+    def status(
+        self, *, agent: str, path: str | None = None, scope: str = "global"
+    ) -> SkillStatus:
         """Installed-vs-recommended drift for one agent."""
         ...
 

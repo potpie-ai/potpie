@@ -8,9 +8,11 @@ import pytest
 
 from adapters.outbound.skills.agent_installer import (
     install_agent_bundle,
+    install_skill_bundle,
     iter_template_files,
     resolve_install_root,
 )
+from adapters.outbound.skills.builtin_catalog import catalog_by_id
 
 
 def test_resolve_install_root_prefers_git_repo(tmp_path: Path) -> None:
@@ -25,6 +27,7 @@ def test_resolve_install_root_prefers_git_repo(tmp_path: Path) -> None:
 def test_install_agent_bundle_creates_expected_files(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / ".git").mkdir()
 
     result = install_agent_bundle(repo)
 
@@ -37,11 +40,32 @@ def test_install_agent_bundle_creates_expected_files(tmp_path: Path) -> None:
     assert (repo / ".agents" / "skills" / "potpie-cli" / "SKILL.md").exists()
 
 
+def test_packaged_skill_names_match_directories_and_catalog() -> None:
+    catalog = catalog_by_id()
+    for rel_path, content in iter_template_files():
+        if rel_path.name != "SKILL.md":
+            continue
+        skill_id = rel_path.parent.name
+        assert skill_id in catalog
+        assert f'name: "{skill_id}"' in content or f"name: {skill_id}" in content
+
+
+def test_install_skill_bundle_writes_to_global_root(tmp_path: Path) -> None:
+    root = tmp_path / "skills"
+
+    result = install_skill_bundle(root, skill_ids=("potpie-cli",))
+
+    assert "potpie-cli/SKILL.md" in result.created
+    assert (root / "potpie-cli" / "SKILL.md").exists()
+    assert not (root / "potpie-agent-context" / "SKILL.md").exists()
+
+
 def test_install_agent_bundle_skips_conflicting_files_without_force(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / ".git").mkdir()
     target = repo / "AGENTS.md"
     target.write_text("local edits\n", encoding="utf-8")
 
@@ -54,6 +78,7 @@ def test_install_agent_bundle_skips_conflicting_files_without_force(
 def test_install_agent_bundle_overwrites_with_force(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / ".git").mkdir()
     target = repo / "AGENTS.md"
     target.write_text("local edits\n", encoding="utf-8")
 
@@ -69,6 +94,7 @@ def test_install_agent_bundle_overwrites_with_force(tmp_path: Path) -> None:
 def test_install_agent_bundle_claude_creates_claude_files(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / ".git").mkdir()
 
     result = install_agent_bundle(repo, agent="claude")
 
@@ -78,6 +104,7 @@ def test_install_agent_bundle_claude_creates_claude_files(tmp_path: Path) -> Non
     assert "context_resolve" in content
     assert (repo / ".claude" / "commands" / "potpie-feature.md").exists()
     assert (repo / ".claude" / "commands" / "potpie-record.md").exists()
+    assert (repo / ".claude" / "skills" / "potpie-cli" / "SKILL.md").exists()
 
 
 def test_install_agent_bundle_claude_merges_into_existing_claude_md(
@@ -85,6 +112,7 @@ def test_install_agent_bundle_claude_merges_into_existing_claude_md(
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / ".git").mkdir()
     (repo / "CLAUDE.md").write_text(
         "# My Project\n\nExisting content.\n", encoding="utf-8"
     )
@@ -102,6 +130,7 @@ def test_install_agent_bundle_claude_merges_into_existing_claude_md(
 def test_install_agent_bundle_claude_unchanged_on_second_run(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / ".git").mkdir()
     install_agent_bundle(repo, agent="claude")
 
     result = install_agent_bundle(repo, agent="claude")
@@ -112,6 +141,7 @@ def test_install_agent_bundle_claude_unchanged_on_second_run(tmp_path: Path) -> 
 def test_install_agent_bundle_claude_updates_section_with_force(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / ".git").mkdir()
     (repo / "CLAUDE.md").write_text(
         "# Project\n\n<!-- potpie-start -->\nOLD SECTION\n<!-- potpie-end -->\n",
         encoding="utf-8",
@@ -131,6 +161,7 @@ def test_install_agent_bundle_claude_skips_changed_section_without_force(
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / ".git").mkdir()
     (repo / "CLAUDE.md").write_text(
         "<!-- potpie-start -->\nCUSTOM\n<!-- potpie-end -->\n",
         encoding="utf-8",
@@ -144,8 +175,14 @@ def test_install_agent_bundle_claude_skips_changed_section_without_force(
 def test_install_agent_bundle_cursor_writes_cursor_skills(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / ".git").mkdir()
 
-    result = install_agent_bundle(repo, agent="cursor")
+    try:
+        result = install_agent_bundle(repo, agent="cursor")
+    except PermissionError as exc:
+        if ".cursor" in str(exc):
+            pytest.skip("sandbox blocks writing .cursor directories")
+        raise
 
     assert "AGENTS.md" in result.created
     skill = repo / ".cursor" / "skills" / "potpie-cli" / "SKILL.md"
@@ -156,6 +193,7 @@ def test_install_agent_bundle_cursor_writes_cursor_skills(tmp_path: Path) -> Non
 def test_install_agent_bundle_opencode_writes_opencode_skills(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / ".git").mkdir()
 
     result = install_agent_bundle(repo, agent="opencode")
 

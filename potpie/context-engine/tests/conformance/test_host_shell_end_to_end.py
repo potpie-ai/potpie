@@ -35,6 +35,7 @@ def host(tmp_path, monkeypatch):
     # Isolate pot/skill/cursor state under tmp; use a shared in-memory backend
     # so record→resolve round-trips within the test process.
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     return build_host_shell(backend=InMemoryGraphBackend())
 
 
@@ -67,7 +68,7 @@ def test_setup_record_resolve_status_journey(host):
 
 
 def test_setup_orchestrator_provisions_and_creates_default_pot(host):
-    report = host.setup.run(SetupPlan(repo="potpie", agent="claude"))
+    report = host.setup.run(SetupPlan(repo="potpie", agent="claude", pot="default"))
     assert report.ok  # every hard step succeeded
     states = {s.step: s.state for s in report.steps}
     assert states["config"] == DONE
