@@ -1,4 +1,4 @@
-"""Potpie logo terminal display (compact, centered, static)."""
+"""Potpie logo terminal display (compact splash with side inset, static)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import time
 from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
+from rich.padding import Padding
 from rich.text import Text
 
 from adapters.inbound.cli.ui.brand import LOGO_COLOR, LOGO_DIM_STYLE, LOGO_STYLE
@@ -31,6 +32,31 @@ _FALLBACK_FRAMES: tuple[str, ...] = (
     " ███▌",
     " ▄██▐",
 )
+_SPLASH_LEFT_GAP = 4
+
+
+def _left_splash(renderable, width: int):
+    """Left-align splash content with a small inset from the border."""
+    inner_w = max(1, width - _SPLASH_LEFT_GAP)
+    return Padding(Align.left(renderable, width=inner_w), (0, 0, 0, _SPLASH_LEFT_GAP))
+
+
+def _logo_layout(logo: Text) -> tuple[int, int]:
+    """Return ``(left_offset, visual_width)`` of non-space ink inside a logo block."""
+    lines = [line for line in logo.plain.splitlines() if line.strip()]
+    if not lines:
+        return 0, _INTRO_LOGO_COLS
+    left = min(len(line) - len(line.lstrip()) for line in lines)
+    right = max(len(line.rstrip()) for line in lines)
+    return left, max(1, right - left)
+
+
+def _center_on_logo(renderable, *, logo: Text, content_w: int):
+    """Center a short label over the logo artwork (same left edge as the logo block)."""
+    left_off, vis_w = _logo_layout(logo)
+    label_w = renderable.cell_len
+    inset = _SPLASH_LEFT_GAP + left_off + max(0, (vis_w - label_w) // 2)
+    return Padding(renderable, (0, 0, 0, inset))
 
 
 def _terminal_columns(console: Console) -> int:
@@ -109,20 +135,21 @@ def play_intro(
     seconds: float = INTRO_SECONDS,
     panel_width: int | None = None,
 ) -> None:
-    """Centered static logo splash (shown briefly, then cleared)."""
+    """Left-aligned logo splash (shown briefly, then cleared)."""
     width = panel_width if panel_width is not None else panel_width_for_console(console)
     content_w = content_width_for_panel(width)
     sub = _truncate_middle(subtitle, content_w)
 
     def render(frame_no: int) -> Group:
+        logo = _intro_logo(content_w, frame_no)
         return Group(
             Text(""),
-            Align.center(Text("potpie", style=_ACCENT)),
+            _center_on_logo(Text("potpie", style=_ACCENT), logo=logo, content_w=content_w),
             Text(""),
-            Align.center(_intro_logo(content_w, frame_no)),
+            _left_splash(logo, content_w),
             Text(""),
-            Align.center(Text(sub, style=_DIM)),
-            Align.center(_warming_line(frame_no)),
+            _left_splash(Text(sub, style=_DIM), content_w),
+            _left_splash(_warming_line(frame_no), content_w),
             Text(""),
         )
 
@@ -153,8 +180,9 @@ def _celebration_sparkle(frame: int) -> Text:
     glyphs = ("✦", "★", "✧", "·")
     out = Text("  ")
     for i in range(5):
-        out.append(glyphs[(frame + i) % len(glyphs)], style=_ACCENT if (frame + i) % 2 else _DIM)
-        out.append(" ")
+        style = _ACCENT if (frame + i) % 2 else _DIM
+        out.append(glyphs[(frame + i) % len(glyphs)], style=style)
+        out.append("  ")
     return out
 
 
@@ -164,6 +192,7 @@ def _finish_screen(
     subline: str,
     logo: Text,
     sparkle_frame: int | None,
+    content_w: int,
 ) -> Group:
     """Celebration layout; ``sparkle_frame`` animates sparkles, ``None`` keeps them fixed."""
     if sparkle_frame is None:
@@ -174,14 +203,14 @@ def _finish_screen(
         bottom_sparkle = _celebration_sparkle(sparkle_frame + 2)
     return Group(
         Text(""),
-        Align.center(top_sparkle),
-        Align.center(Text("potpie", style=_ACCENT)),
+        _center_on_logo(top_sparkle, logo=logo, content_w=content_w),
+        _center_on_logo(Text("potpie", style=_ACCENT), logo=logo, content_w=content_w),
         Text(""),
-        Align.center(logo),
+        _left_splash(logo, content_w),
         Text(""),
-        Align.center(Text.from_markup(headline)),
-        Align.center(Text(subline, style=_ACCENT)),
-        Align.center(bottom_sparkle),
+        _left_splash(Text.from_markup(headline), content_w),
+        _center_on_logo(Text(subline, style=_ACCENT), logo=logo, content_w=content_w),
+        _center_on_logo(bottom_sparkle, logo=logo, content_w=content_w),
         Text(""),
     )
 
@@ -210,6 +239,7 @@ def play_setup_finish(
             subline=subline,
             logo=logo,
             sparkle_frame=frame_no,
+            content_w=content_w,
         )
 
     def render_static() -> Group:
@@ -222,6 +252,7 @@ def play_setup_finish(
             subline=subline,
             logo=logo,
             sparkle_frame=None,
+            content_w=content_w,
         )
 
     interval = 1.0 / _FINISH_FPS
