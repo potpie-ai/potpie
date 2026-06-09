@@ -4,9 +4,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from benchmarks.core.smoke import run_smoke
 
+_BENCH_ROOT = Path(__file__).resolve().parents[3] / "benchmarks"
+_UNIVERSE_ROOT = _BENCH_ROOT / "fixtures" / "raw_events" / "universe" / "acme"
+_CORPUS_SHIPPED = _UNIVERSE_ROOT.is_dir()
 
+
+@pytest.mark.skipif(
+    not _CORPUS_SHIPPED,
+    reason="Benchmark fixture corpus is not shipped in this checkout",
+)
 def test_smoke_passes_for_authored_corpus() -> None:
     """All currently-authored scenarios load, resolve their fixtures, and
     run through the in-process evaluator pipeline without raising."""
