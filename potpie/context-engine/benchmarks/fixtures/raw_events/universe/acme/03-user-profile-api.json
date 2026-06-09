@@ -1,0 +1,36 @@
+{
+  "connector": "repo_docs",
+  "event_type": "service_manifest",
+  "action": "create",
+  "source_id": "repo_docs:service_manifest:user-profile-api:create",
+  "occurred_at": "2026-01-15T00:00:00Z",
+  "repo_name": "acme/platform",
+  "payload": {
+    "path": "services/user-profile-api/service.yaml",
+    "service": {
+      "name": "user-profile-api",
+      "display_name": "User Profile API",
+      "description": "Serves account and profile endpoints. Relies on auth-service JWT validation at the gateway and passes through access tokens on internal calls.",
+      "repo": "acme/platform",
+      "path": "services/user-profile-api",
+      "language": "python",
+      "team": "@platform-identity",
+      "capabilities": [
+        "profile-read",
+        "profile-update"
+      ],
+      "dependencies": {
+        "datastores": ["profile-postgres"],
+        "services": ["auth-service", "api-gateway"]
+      },
+      "runtime": {
+        "port": 8082,
+        "health_check": "/healthz"
+      }
+    }
+  },
+  "_meta": {
+    "captured_from": "synthetic",
+    "redactions": []
+  }
+}
