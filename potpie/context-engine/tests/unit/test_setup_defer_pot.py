@@ -12,6 +12,7 @@ from domain.lifecycle import SetupPlan
 @pytest.fixture()
 def host(tmp_path, monkeypatch):
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     return build_host_shell(backend=InMemoryGraphBackend())
 
 

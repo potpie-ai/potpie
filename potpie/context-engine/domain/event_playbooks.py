@@ -365,6 +365,89 @@ _register(
 )
 
 
+# --- linear / linear_team / diff_sync --------------------------------------
+_register(
+    EventPlaybook(
+        source_system="linear",
+        event_type="linear_team",
+        action="diff_sync",
+        summary=(
+            "Incremental catch-up ingestion of Linear projects, documents, and "
+            "issues changed since the team's last successful sync cursor."
+        ),
+        available_data=(
+            "Payload carries team, optional since, and count. The embedded "
+            "skill below is authoritative for auditing existing context-graph "
+            "Activity coverage before hydrating source refs, history-file "
+            "handling, cursor overlap, and mutation reuse."
+        ),
+        extract=_load_skill_body("linear_team_diff_sync.md"),
+        skip=(
+            "Do not advance the cursor before graph writes succeed. Do not "
+            "overwrite sync history. Do not emit Fix nodes from Linear issues."
+        ),
+        tool_hints=(
+            "read_sync_history",
+            "write_sync_history",
+            "context_search",
+            "context_timeline",
+            "linear_list_projects",
+            "linear_get_project",
+            "linear_list_documents",
+            "linear_get_document",
+            "linear_list_issues",
+            "linear_get_issue",
+            "apply_graph_mutations",
+            "mark_event_processed",
+            "finish_batch",
+        ),
+        max_tool_calls=400,
+        enables_planner=True,
+    )
+)
+
+
+# --- jira / jira_project / diff_sync ---------------------------------------
+_register(
+    EventPlaybook(
+        source_system="jira",
+        event_type="jira_project",
+        action="diff_sync",
+        summary=(
+            "Incremental catch-up ingestion of Jira epics and issues changed "
+            "since the project's last successful sync cursor."
+        ),
+        available_data=(
+            "Payload carries project_key, optional since, and count. The "
+            "embedded skill below is authoritative for auditing existing "
+            "context-graph Activity coverage before hydrating source refs, "
+            "history-file handling, JQL updated searches, optional changelog "
+            "reads, and mutation reuse."
+        ),
+        extract=_load_skill_body("jira_project_diff_sync.md"),
+        skip=(
+            "Do not advance the cursor before graph writes succeed. Do not "
+            "overwrite sync history. Do not emit Fix nodes from Jira issues."
+        ),
+        tool_hints=(
+            "read_sync_history",
+            "write_sync_history",
+            "context_search",
+            "context_timeline",
+            "jira_search_issues",
+            "jira_get_issue",
+            "jira_get_issue_changelog",
+            "jira_bulk_fetch_changelogs",
+            "apply_graph_mutations",
+            "mark_event_processed",
+            "finish_batch",
+        ),
+        max_tool_calls=400,
+        enables_planner=True,
+    )
+)
+
+
 # --- github / pull_request / merged ----------------------------------------
 _register(
     EventPlaybook(

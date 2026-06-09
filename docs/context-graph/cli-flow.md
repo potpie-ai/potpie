@@ -304,10 +304,10 @@ query SQLite, Neo4j, vector indexes, hosted stores, or state tables directly.
 
 ```bash
 potpie skills list
-potpie skills install [<id>] --agent claude [--path .]
-potpie skills update [--all] [--agent claude]
-potpie skills remove <id> --agent claude
-potpie skills status --agent claude [--json]
+potpie skills install [<id>] --agent claude [--scope global|project] [--path .]
+potpie skills update [--all] [--agent claude] [--scope global|project] [--path .]
+potpie skills remove <id> --agent claude [--scope global|project] [--path .]
+potpie skills status --agent claude [--scope global|project] [--path .] [--json]
 potpie skills add <path-or-url>
 potpie cloud skills sync [--agent <id>]
 ```
@@ -315,6 +315,19 @@ potpie cloud skills sync [--agent <id>]
 Skills are CLI-managed recipes. Agents only see an advisory `skills` block in
 `context_status` with missing/outdated skills and an exact install command.
 Cloud skill sync is explicit.
+
+Skill install defaults to `--scope global`, writing to the harness's user-level
+skills directory:
+
+| Harness | Global path |
+| --- | --- |
+| Cursor | `~/.cursor/skills/<skill>/SKILL.md` |
+| Claude Code | `~/.claude/skills/<skill>/SKILL.md` |
+| OpenCode | `~/.config/opencode/skills/<skill>/SKILL.md` |
+| Codex | `$HOME/.agents/skills/<skill>/SKILL.md` |
+
+Use `--scope project --path .` when a repo-local install should be committed or
+shared with the repository.
 
 ## Output Contract
 

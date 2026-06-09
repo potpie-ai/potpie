@@ -92,6 +92,8 @@ def _skip_reason(step: str, plan: SetupPlan) -> str | None:
         return "no --repo provided"
     if step == "pot.default" and plan.defer_default_pot:
         return "named in post-setup wizard"
+    if step == "skills" and plan.defer_skills:
+        return "chosen in post-setup wizard"
     return None
 
 
@@ -102,6 +104,8 @@ def _planned_steps(plan: SetupPlan) -> list[PlannedSetupStep]:
         if step == "scan" and not plan.scan:
             continue
         if step == "pot.default" and plan.defer_default_pot:
+            continue
+        if step == "skills" and plan.defer_skills:
             continue
         steps.append(
             PlannedSetupStep(
@@ -189,7 +193,15 @@ class DefaultSetupOrchestrator:
             self._step("daemon", hard("daemon"), lambda: self.daemon.ensure(plan)),
             self._step("auth", hard("auth"), self.auth.init_local),
             self._step("source", hard("source"), lambda: self._source(plan)),
-            self._step("skills", hard("skills"), lambda: self._skills(plan)),
+            *(
+                [
+                    self._step(
+                        "skills", hard("skills"), lambda: self._skills(plan)
+                    )
+                ]
+                if not plan.defer_skills
+                else []
+            ),
         ]
         if plan.scan:
             steps.append(self._step("scan", hard("scan"), lambda: self._scan(plan)))
@@ -241,7 +253,9 @@ class DefaultSetupOrchestrator:
         self.pots.add_source(pot_id=active.pot_id, kind="repo", location=plan.repo)
         return StepResult("source", DONE, f"registered repo '{plan.repo}'")
 
-    def _skills(self, plan: SetupPlan) -> str:
+    def _skills(self, plan: SetupPlan) -> str | StepResult:
+        if plan.agent.strip().lower() == "default":
+            return StepResult("skills", SKIPPED, "no global skill target for default agent")
         result = self.skills.install(agent=plan.agent)
         return f"installed {list(result.changed)} for {plan.agent}"
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import webbrowser
+from typing import NoReturn
 
 import typer
 
@@ -75,10 +76,10 @@ def github_login_impl() -> None:
     """Authenticate the CLI with GitHub using device flow."""
     load_cli_env()
     j, v = _flags()
-    store = get_store()
     account = None
     payload = None
     try:
+        store = get_store()
         device_code = request_device_code()
         if not j:
             _open_github_device_verification(
@@ -98,6 +99,10 @@ def github_login_impl() -> None:
     except (ProviderCredentialError, CredentialStoreError) as exc:
         emit_error("GitHub login failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_AUTH) from exc
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _capture_unexpected_auth_error(exc, title="GitHub login failed", verbose=v)
 
     if j:
         print_json_blob(
@@ -127,10 +132,15 @@ def github_logout_impl() -> None:
     store = get_store()
     was_authenticated = bool(get_integration_status("github").get("authenticated"))
     try:
+        store = get_store()
         store.clear_provider_credentials("github")
     except (ProviderCredentialError, CredentialStoreError, ValueError) as exc:
         emit_error("GitHub logout failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_AUTH) from exc
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _capture_unexpected_auth_error(exc, title="GitHub logout failed", verbose=v)
 
     if j:
         payload: dict[str, object] = {"ok": True, "provider": "github"}
@@ -175,8 +185,8 @@ def git_logout_cmd() -> None:
 def github_repos_impl() -> None:
     """List GitHub repositories owned by the authenticated user."""
     j, v = _flags()
-    store = get_store()
     try:
+        store = get_store()
         credentials = store.get_provider_credentials("github")
     except (ProviderCredentialError, CredentialStoreError) as exc:
         emit_error(
@@ -185,6 +195,14 @@ def github_repos_impl() -> None:
             verbose=v,
         )
         raise typer.Exit(code=EXIT_AUTH) from exc
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _capture_unexpected_auth_error(
+            exc,
+            title="GitHub test repos failed",
+            verbose=v,
+        )
     token = str(credentials.get("access_token") or "").strip()
     if not token:
         emit_error(
@@ -199,6 +217,14 @@ def github_repos_impl() -> None:
     except GitHubDeviceFlowError as exc:
         emit_error("GitHub repository listing failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _capture_unexpected_auth_error(
+            exc,
+            title="GitHub repository listing failed",
+            verbose=v,
+        )
 
     if j:
         print_json_blob(

@@ -51,22 +51,28 @@ def build_linear_tools(
         def linear_list_issues(
             team_id: str | None = None,
             limit: int | None = None,
+            updated_since: str | None = None,
         ) -> dict[str, Any]:
             """Enumerate Linear issues (compact refs) for the backfill todo list.
 
-            Bounded by the same backfill window + item cap as the GitHub list
-            tools. Hydrate each ref via ``linear_get_issue``.
+            Bounded by the same item cap as the GitHub list tools. Without
+            ``updated_since`` the trailing backfill window applies (one-shot
+            backfill); pass ``updated_since`` (ISO-8601) for diff-sync to
+            enumerate only issues changed since the last graph-audit cursor.
+            Hydrate each ref via ``linear_get_issue``.
             """
             from domain.backfill_window import (
                 backfill_window_since,
                 clamp_backfill_limit,
             )
+            from domain.sync_cursor import parse_cursor_since
 
             try:
                 issues = fetcher.list_issues(
                     pot_id=pot_id,
                     team_id=team_id,
-                    updated_after=backfill_window_since(),
+                    updated_after=parse_cursor_since(updated_since)
+                    or backfill_window_since(),
                     limit=clamp_backfill_limit(limit),
                 )
             except PermissionError as exc:
@@ -79,18 +85,25 @@ def build_linear_tools(
         def linear_list_projects(
             team_id: str | None = None,
             limit: int | None = None,
+            updated_since: str | None = None,
         ) -> dict[str, Any]:
-            """Enumerate Linear projects (compact refs) for the backfill todo list."""
+            """Enumerate Linear projects (compact refs) for the backfill todo list.
+
+            ``updated_since`` (ISO-8601) overrides the trailing backfill window
+            for diff-sync; omit it for one-shot backfill.
+            """
             from domain.backfill_window import (
                 backfill_window_since,
                 clamp_backfill_limit,
             )
+            from domain.sync_cursor import parse_cursor_since
 
             try:
                 projects = fetcher.list_projects(
                     pot_id=pot_id,
                     team_id=team_id,
-                    updated_after=backfill_window_since(),
+                    updated_after=parse_cursor_since(updated_since)
+                    or backfill_window_since(),
                     limit=clamp_backfill_limit(limit),
                 )
             except PermissionError as exc:
@@ -116,18 +129,25 @@ def build_linear_tools(
         def linear_list_documents(
             team_id: str | None = None,
             limit: int | None = None,
+            updated_since: str | None = None,
         ) -> dict[str, Any]:
-            """Enumerate Linear documents (compact refs) for the backfill todo list."""
+            """Enumerate Linear documents (compact refs) for the backfill todo list.
+
+            ``updated_since`` (ISO-8601) overrides the trailing backfill window
+            for diff-sync; omit it for one-shot backfill.
+            """
             from domain.backfill_window import (
                 backfill_window_since,
                 clamp_backfill_limit,
             )
+            from domain.sync_cursor import parse_cursor_since
 
             try:
                 docs = fetcher.list_documents(
                     pot_id=pot_id,
                     team_id=team_id,
-                    updated_after=backfill_window_since(),
+                    updated_after=parse_cursor_since(updated_since)
+                    or backfill_window_since(),
                     limit=clamp_backfill_limit(limit),
                 )
             except PermissionError as exc:
@@ -194,7 +214,9 @@ def build_linear_tools(
                         "older/overflow issues are intentionally omitted and "
                         "resolve lazily via linear_get_issue. Use this to seed "
                         "the backfill todo list. Pass team_id only for a "
-                        "multi-team pot; otherwise the pot's team is used."
+                        "multi-team pot; otherwise the pot's team is used. "
+                        "Pass updated_since (ISO-8601) for diff-sync to "
+                        "enumerate only issues changed since the last cursor."
                     ),
                 )
             )
@@ -208,7 +230,8 @@ def build_linear_tools(
                         "team as compact refs (id/name/updated_at), newest "
                         "first. Same backfill window + item cap as "
                         "linear_list_issues. Seed the todo list, then hydrate "
-                        "each via linear_get_project."
+                        "each via linear_get_project. Pass updated_since "
+                        "(ISO-8601) for diff-sync cursor enumeration."
                     ),
                 )
             )
@@ -236,7 +259,8 @@ def build_linear_tools(
                         "newest first. Same backfill window + item cap. Seed "
                         "the todo list, then hydrate each via "
                         "linear_get_document. Standalone (non-project) docs are "
-                        "out of team scope by design."
+                        "out of team scope by design. Pass updated_since "
+                        "(ISO-8601) for diff-sync cursor enumeration."
                     ),
                 )
             )

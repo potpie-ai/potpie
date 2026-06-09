@@ -42,10 +42,21 @@ the live commands.
 
 `potpie skills install [<id>] --agent claude` materializes the packaged skill
 bundle into an agent harness (`commands/skills.py` → `HostShell.skills`). The
-bundle keeps the agent surface to the four tools above and encodes feature /
-debugging / review / operations / docs / onboarding workflows as
-`context_resolve` recipes. Agents see only an advisory `skills` block in
-`context_status` with missing/outdated skills and the exact install command.
+default scope is global, so skills are installed once into the selected
+harness's user-level skills directory:
+
+| Harness | Global path |
+|---------|-------------|
+| Cursor | `~/.cursor/skills/<skill>/SKILL.md` |
+| Claude Code | `~/.claude/skills/<skill>/SKILL.md` |
+| OpenCode | `~/.config/opencode/skills/<skill>/SKILL.md` |
+| Codex | `$HOME/.agents/skills/<skill>/SKILL.md` |
+
+Use `--scope project --path .` for repo-local installs. The bundle keeps the
+agent surface to the four tools above and encodes feature / debugging / review /
+operations / docs / onboarding workflows as `context_resolve` recipes. Agents
+see only an advisory `skills` block in `context_status` with missing/outdated
+skills and the exact install command.
 
 ## MCP
 

@@ -1,5 +1,7 @@
 ---
 name: "potpie-cli-troubleshooting"
+version: "1"
+recommended: true
 description: "Use when the Potpie CLI is failing — especially around API key, URL config, 401, 404, pot scope, or search/ingest HTTP errors."
 ---
 

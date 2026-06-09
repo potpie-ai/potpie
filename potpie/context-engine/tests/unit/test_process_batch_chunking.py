@@ -126,7 +126,6 @@ class _AgentRecorder:
 
 class TestChunkHelpers:
     def test_single_chunk_for_small_batch(self) -> None:
-        events = [_event_row(f"e{i}") for i in range(5)]
         # _chunk_events expects ContextEvent objects, but _event_row returns
         # ContextEventRow; just check the chunking math via a sentinel list.
         out = _chunk_events(["a", "b", "c"], 5)  # type: ignore[arg-type]

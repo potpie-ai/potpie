@@ -8,8 +8,10 @@ catalog and the (POC) Claude target.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from adapters.outbound.skills.builtin_catalog import (
+from adapters.outbound.skills.claude_target import ProjectAgentTarget
+from adapters.outbound.skills.bundle_catalog import (
     RECOMMENDED_SKILL_IDS,
     catalog_by_id,
 )
@@ -35,13 +37,31 @@ class DefaultSkillManager:
             )
         return target
 
-    def list(self) -> list[SkillInfo]:
+    def _target_for_scope(
+        self, *, agent: str, scope: str = "global", path: str | None = None
+    ) -> AgentTargetPort:
+        normalized_scope = scope.strip().lower() if scope else "global"
+        if normalized_scope == "global":
+            return self._target(agent)
+        if normalized_scope == "project":
+            return ProjectAgentTarget(agent=agent, path=Path(path or "."))
+        raise ValueError("scope must be 'global' or 'project'")
+
+    @staticmethod
+    def _metadata(target: AgentTargetPort, *, scope: str) -> dict[str, str]:
+        root = getattr(target, "skills_root", None) or getattr(target, "path", None)
+        metadata = {"scope": scope}
+        if root is not None:
+            metadata["target_root"] = str(root)
+        return metadata
+
+    def list(
+        self, *, agent: str = "claude", scope: str = "global", path: str | None = None
+    ) -> list[SkillInfo]:
         catalog = catalog_by_id()
-        # Mark installed-state from the first registered target, if any.
-        installed: dict[str, str] = {}
-        for target in self.targets.values():
-            installed.update(target.installed())
-            break
+        installed = self._target_for_scope(
+            agent=agent, scope=scope, path=path
+        ).installed()
         out: list[SkillInfo] = []
         for sid, info in catalog.items():
             ver = installed.get(sid)
@@ -58,26 +78,43 @@ class DefaultSkillManager:
         return out
 
     def install(
-        self, *, agent: str, skill_id: str | None = None, path: str | None = None
+        self,
+        *,
+        agent: str,
+        skill_id: str | None = None,
+        path: str | None = None,
+        scope: str = "global",
     ) -> SkillOperationResult:
-        target = self._target(agent)
+        target = self._target_for_scope(agent=agent, scope=scope, path=path)
         catalog = catalog_by_id()
         ids = [skill_id] if skill_id else list(RECOMMENDED_SKILL_IDS)
         changed: list[str] = []
+        installed = target.installed()
         for sid in ids:
             info = catalog.get(sid)
             if info is None:
                 continue
+            if installed.get(sid) == info.version:
+                continue
             target.install(skill_id=sid, version=info.version, path=path)
             changed.append(sid)
         return SkillOperationResult(
-            agent=agent, operation="install", changed=tuple(changed)
+            agent=agent,
+            operation="install",
+            changed=tuple(changed),
+            metadata=self._metadata(target, scope=scope),
         )
 
     def update(
-        self, *, agent: str, skill_id: str | None = None, all_: bool = False
+        self,
+        *,
+        agent: str,
+        skill_id: str | None = None,
+        all_: bool = False,
+        path: str | None = None,
+        scope: str = "global",
     ) -> SkillOperationResult:
-        target = self._target(agent)
+        target = self._target_for_scope(agent=agent, scope=scope, path=path)
         catalog = catalog_by_id()
         installed = target.installed()
         ids = list(installed) if (all_ or skill_id is None) else [skill_id]
@@ -88,18 +125,36 @@ class DefaultSkillManager:
                 target.install(skill_id=sid, version=info.version)
                 changed.append(sid)
         return SkillOperationResult(
-            agent=agent, operation="update", changed=tuple(changed)
+            agent=agent,
+            operation="update",
+            changed=tuple(changed),
+            metadata=self._metadata(target, scope=scope),
         )
 
-    def remove(self, *, agent: str, skill_id: str) -> SkillOperationResult:
-        self._target(agent).remove(skill_id=skill_id)
+    def remove(
+        self,
+        *,
+        agent: str,
+        skill_id: str,
+        path: str | None = None,
+        scope: str = "global",
+    ) -> SkillOperationResult:
+        target = self._target_for_scope(agent=agent, scope=scope, path=path)
+        target.remove(skill_id=skill_id)
         return SkillOperationResult(
-            agent=agent, operation="remove", changed=(skill_id,)
+            agent=agent,
+            operation="remove",
+            changed=(skill_id,),
+            metadata=self._metadata(target, scope=scope),
         )
 
-    def status(self, *, agent: str) -> SkillStatus:
+    def status(
+        self, *, agent: str, path: str | None = None, scope: str = "global"
+    ) -> SkillStatus:
         catalog = catalog_by_id()
-        installed = self._target(agent).installed()
+        installed = self._target_for_scope(
+            agent=agent, scope=scope, path=path
+        ).installed()
         installed_infos: list[SkillInfo] = []
         missing: list[SkillInfo] = []
         outdated: list[SkillInfo] = []

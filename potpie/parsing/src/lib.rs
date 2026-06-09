@@ -1,4 +1,5 @@
 mod code_index;
+mod fff_search;
 mod git;
 mod parse;
 mod tag_extract;
@@ -7,6 +8,11 @@ use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 
 pub use code_index::{create_code_indexes, get_text_files, process_files_parallel, CodeFile};
+pub use fff_search::{
+    build_content_index, build_file_index, build_workspace_index, search_content, search_files,
+    ContentIndex, ContentSearchResult, FffSearchError, FileIndex, FileSearchResult,
+    IndexedFileContent, WorkspaceIndex,
+};
 pub use git::{bare_clone, list_files, FileEntry, GitError};
 pub use parse::{index, process_file};
 pub use tag_extract::{extract_graph, extract_tags};
@@ -25,6 +31,14 @@ mod parsing_rs {
     use super::GitRefNotFoundError;
     #[pymodule_export]
     use super::GitRepositoryNotFoundError;
+    #[pymodule_export]
+    use crate::fff_search::python::build_workspace_index;
+    #[pymodule_export]
+    use crate::fff_search::python::ContentSearchResultPy;
+    #[pymodule_export]
+    use crate::fff_search::python::FileSearchResultPy;
+    #[pymodule_export]
+    use crate::fff_search::python::WorkspaceSearchIndex;
     #[pymodule_export]
     use crate::git::FileEntry;
 
