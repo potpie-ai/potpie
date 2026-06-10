@@ -18,6 +18,11 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
+def _default_keychain_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cs.sys, "platform", "darwin")
+
+
+@pytest.fixture(autouse=True)
 def fake_keyring(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
     store: dict[tuple[str, str], str] = {}
 

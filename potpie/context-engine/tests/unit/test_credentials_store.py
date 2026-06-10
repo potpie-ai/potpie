@@ -10,6 +10,11 @@ from keyring.errors import KeyringError
 from adapters.outbound.cli_auth import credentials_store as cs
 
 
+@pytest.fixture(autouse=True)
+def _default_keychain_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cs.sys, "platform", "darwin")
+
+
 def test_config_dir_respects_xdg(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

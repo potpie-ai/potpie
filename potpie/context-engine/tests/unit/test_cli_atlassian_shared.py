@@ -39,6 +39,11 @@ from adapters.outbound.cli_auth.provider_config import (
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _default_keychain_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cs.sys, "platform", "darwin")
+
+
 def test_auth_help_is_wired_into_main_cli() -> None:
     result = runner.invoke(cli_main.app, ["auth", "--help"])
 
