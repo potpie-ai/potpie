@@ -3,6 +3,7 @@ import { api } from "./api";
 import GraphView from "./GraphView";
 import Timeline from "./Timeline";
 import { CATEGORY_ORDER, KIND_ORDER, kindColor, typeCategory, typeColor } from "./theme";
+import { iconPathD } from "./icons";
 import type {
   GraphData,
   GraphEdge,
@@ -243,13 +244,8 @@ export default function App() {
                   onClick={() => pickResult(r.key)}
                   title={r.key}
                 >
-                  <span
-                    className="dot"
-                    style={{
-                      background: typeColor(
-                        r.labels.find((l) => l !== "Entity") || "Entity",
-                      ),
-                    }}
+                  <TypeBadge
+                    type={r.labels.find((l) => l !== "Entity") || "Entity"}
                   />
                   <span className="result-key">{r.key}</span>
                   <span className="score">{r.score.toFixed(2)}</span>
@@ -296,7 +292,7 @@ export default function App() {
                   </label>
                   {types.map(([type, n]) => (
                     <div className="legend-row indent" key={type}>
-                      <span className="dot" style={{ background: typeColor(type) }} />
+                      <TypeBadge type={type} />
                       <span>{type}</span>
                       <span className="legend-count">{n}</span>
                     </div>
@@ -329,13 +325,41 @@ export default function App() {
   );
 }
 
+// Mini version of the canvas node rendering (colored disc + dark type glyph),
+// so the sidebar teaches the icon → type mapping used on the graph.
+function TypeBadge({ type, size = 14 }: { type: string; size?: number }) {
+  return (
+    <svg
+      className="type-badge"
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="12" fill={typeColor(type)} />
+      <path
+        d={iconPathD(type)}
+        fill="none"
+        stroke="rgba(16,18,25,0.82)"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        transform="translate(4.8 4.8) scale(0.6)"
+      />
+    </svg>
+  );
+}
+
 function NodePanel({ node, onExpand }: { node: GraphNode; onExpand: () => void }) {
   const props = Object.entries(node.properties).filter(
     ([k]) => !k.startsWith("prov_") && k !== "uuid" && k !== "entity_key",
   );
   return (
     <div className="node-panel">
-      <div className="section-title">{node.type}</div>
+      <div className="section-title with-badge">
+        <TypeBadge type={node.type} size={16} />
+        {node.type}
+      </div>
       <div className="node-key">{node.key}</div>
       <button className="expand-btn" onClick={onExpand}>
         Expand neighborhood

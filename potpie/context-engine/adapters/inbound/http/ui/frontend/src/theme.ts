@@ -12,6 +12,7 @@ const PALETTE: Record<string, string> = {
   DataStore: "#D9C8AE",
   Cluster: "#A5ABB6",
   APIContract: "#ECB5C9",
+  Feature: "#A3A1FB",
   Preference: "#DA7194",
   Policy: "#849Ee2",
   BugPattern: "#F16667",
@@ -19,6 +20,9 @@ const PALETTE: Record<string, string> = {
   Decision: "#FFD86E",
   Document: "#6DCE9E",
   Period: "#A5ABB6",
+  // soft-fail fallback types — muted so they read as "uncategorized"
+  Observation: "#9FB3C8",
+  QualityIssue: "#D7A65E",
 };
 
 function hashHue(s: string): number {
@@ -44,6 +48,7 @@ const TYPE_CATEGORY: Record<string, Category> = {
   Cluster: "topology",
   Dependency: "topology",
   APIContract: "topology",
+  Feature: "topology",
   Team: "people",
   Person: "people",
   Activity: "timeline",
@@ -54,6 +59,8 @@ const TYPE_CATEGORY: Record<string, Category> = {
   Fix: "memory",
   Decision: "memory",
   Document: "memory",
+  Observation: "memory",
+  QualityIssue: "memory",
 };
 
 export function typeCategory(type: string): Category {

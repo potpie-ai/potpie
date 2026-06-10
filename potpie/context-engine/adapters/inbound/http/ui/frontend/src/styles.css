@@ -230,6 +230,15 @@ body {
   border-radius: 50%;
   flex: none;
 }
+.type-badge {
+  flex: none;
+  display: block;
+}
+.section-title.with-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
 
 .hint-panel,
 .node-panel,

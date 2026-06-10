@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import type { GraphData, GraphNode } from "./types";
 import { typeColor } from "./theme";
+import { ICON_BOX, nodeIcon } from "./icons";
 
 interface Props {
   data: GraphData;
@@ -11,6 +12,12 @@ interface Props {
 }
 
 const radius = (n: GraphNode) => 4 + Math.min(7, Math.sqrt(n.degree || 0) * 2.2);
+
+// Labels declutter by progressive disclosure: at far zoom only hubs are
+// captioned; zooming in lowers the degree bar until everything is labeled.
+// Hovered/selected nodes are always labeled regardless of zoom.
+const labelMinDegree = (scale: number) =>
+  scale >= 2.8 ? 0 : scale >= 1.8 ? 2 : scale >= 1.1 ? 4 : scale >= 0.7 ? 8 : 12;
 
 // react-force-graph wants {nodes, links}; links reference node ids via
 // source/target (the library rewrites those to node refs in place).
@@ -22,6 +29,7 @@ export default function GraphView({
 }: Props) {
   const fgRef = useRef<any>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const hoverRef = useRef<GraphNode | null>(null);
   const [dims, setDims] = useState({ w: 800, h: 600 });
 
   useEffect(() => {
@@ -56,6 +64,7 @@ export default function GraphView({
   const paintNode = (node: GraphNode, ctx: CanvasRenderingContext2D, scale: number) => {
     const r = radius(node);
     const selected = node.id === selectedId;
+    const hovered = node.id === hoverRef.current?.id;
     ctx.beginPath();
     ctx.arc(node.x!, node.y!, r, 0, 2 * Math.PI);
     ctx.fillStyle = typeColor(node.type);
@@ -70,15 +79,39 @@ export default function GraphView({
       ctx.lineWidth = 1 / scale;
       ctx.stroke();
     }
-    if (scale > 1.1 || selected) {
+
+    // Type glyph inside the circle — skipped while the node is too small on
+    // screen to read, so the far view stays plain dots.
+    if (r * scale >= 5) {
+      const s = (r * 1.0) / ICON_BOX;
+      ctx.save();
+      ctx.translate(node.x! - (ICON_BOX / 2) * s, node.y! - (ICON_BOX / 2) * s);
+      ctx.scale(s, s);
+      ctx.strokeStyle = "rgba(16,18,25,0.82)";
+      ctx.lineWidth = 2.4;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.stroke(nodeIcon(node.type));
+      ctx.restore();
+    }
+
+    if (selected || hovered || (node.degree || 0) >= labelMinDegree(scale)) {
       const fontSize = Math.max(2.5, 11 / scale);
-      ctx.font = `${fontSize}px -apple-system, system-ui, sans-serif`;
+      const weight = selected || hovered ? "600 " : "";
+      ctx.font = `${weight}${fontSize}px -apple-system, system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
-      ctx.fillStyle = "rgba(232,234,240,0.92)";
       const label = node.caption || node.key;
-      const text = label.length > 26 ? label.slice(0, 25) + "…" : label;
-      ctx.fillText(text, node.x!, node.y! + r + 1.5 / scale);
+      const max = selected || hovered ? 42 : 24;
+      const text = label.length > max ? label.slice(0, max - 1) + "…" : label;
+      const y = node.y! + r + 2 / scale;
+      // dark halo keeps labels readable over edges and other nodes
+      ctx.lineWidth = 3 / scale;
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(17,19,26,0.85)";
+      ctx.strokeText(text, node.x!, y);
+      ctx.fillStyle = selected || hovered ? "#ffffff" : "rgba(232,234,240,0.88)";
+      ctx.fillText(text, node.x!, y);
     }
   };
 
@@ -107,6 +140,9 @@ export default function GraphView({
         linkDirectionalArrowRelPos={0.92}
         linkLabel={(l: any) => l.predicate}
         cooldownTicks={120}
+        onNodeHover={(n: any) => {
+          hoverRef.current = (n as GraphNode) || null;
+        }}
         onNodeClick={(n: any) => onSelect(n as GraphNode)}
         onNodeRightClick={(n: any) => onExpand(n as GraphNode)}
         onBackgroundClick={() => onSelect(null)}
