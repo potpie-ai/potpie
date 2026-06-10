@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { GraphData, GraphNode } from "./types";
-import { kindColor, typeColor } from "./theme";
+import { kindColor, typeColor, UI } from "./theme";
 
 interface Props {
   data: GraphData;
@@ -123,16 +123,16 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
     <div ref={wrapRef} className="timeline">
       <svg width={svgW} height={height}>
         {/* central time spine */}
-        <line x1={cx} x2={cx} y1={spineTop} y2={spineBot} stroke="rgba(150,160,180,0.35)" strokeWidth={2} />
+        <line x1={cx} x2={cx} y1={spineTop} y2={spineBot} stroke={UI.link} strokeWidth={2} />
 
         {/* day dividers (the timeframe markers) */}
         {rows
           .filter((r): r is Divider => r.kind === "divider")
           .map((d, i) => (
             <g key={`d${i}`}>
-              <line x1={0} x2={svgW} y1={d.y + DIVIDER_H / 2} y2={d.y + DIVIDER_H / 2} stroke="rgba(150,160,180,0.12)" strokeDasharray="3 4" />
-              <rect x={cx - 58} y={d.y + 4} width={116} height={20} rx={10} fill="#1d212c" stroke="rgba(150,160,180,0.25)" />
-              <text x={cx} y={d.y + 18} fill="#c7ccd6" fontSize={11} textAnchor="middle">{d.label}</text>
+              <line x1={0} x2={svgW} y1={d.y + DIVIDER_H / 2} y2={d.y + DIVIDER_H / 2} stroke="rgba(138,167,155,0.12)" strokeDasharray="3 4" />
+              <rect x={cx - 58} y={d.y + 4} width={116} height={20} rx={10} fill={UI.panel2} stroke="rgba(138,167,155,0.25)" />
+              <text x={cx} y={d.y + 18} fill="#cfded1" fontSize={11} textAnchor="middle">{d.label}</text>
             </g>
           ))}
 
@@ -152,13 +152,13 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
                     <path
                       d={`M ${cx} ${a.y} H ${cx + a.side * 28} Q ${bx} ${a.y} ${bx} ${ny} `}
                       fill="none"
-                      stroke="rgba(150,160,180,0.3)"
+                      stroke={UI.link}
                       strokeWidth={1}
                     />
                     <text
                       x={cx + a.side * 34}
                       y={a.y + (a.side > 0 ? -5 : -5) + (j - (k - 1) / 2) * (NB_VGAP / 2)}
-                      fill="#6b7280"
+                      fill="#7d9a8d"
                       fontSize={9}
                       textAnchor={a.side > 0 ? "start" : "end"}
                     >
@@ -169,7 +169,7 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
                       cy={ny}
                       r={6}
                       fill={typeColor(nb.node.type)}
-                      stroke={nsel ? "#fff" : "rgba(13,15,21,0.6)"}
+                      stroke={nsel ? UI.ring : "rgba(2,26,24,0.6)"}
                       strokeWidth={nsel ? 2 : 1}
                       style={{ cursor: "pointer" }}
                       onClick={() => onSelect(nb.node)}
@@ -179,7 +179,7 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
                     <text
                       x={bx + a.side * 11}
                       y={ny + 3.5}
-                      fill="#aeb4c0"
+                      fill="#b9ccc0"
                       fontSize={11}
                       textAnchor={a.side > 0 ? "start" : "end"}
                       style={{ cursor: "pointer" }}
@@ -197,7 +197,7 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
                 cy={a.y}
                 r={sel ? 10 : 8}
                 fill={kindColor(a.akind)}
-                stroke={sel ? "#fff" : "#0d0f15"}
+                stroke={sel ? UI.ring : UI.bg}
                 strokeWidth={sel ? 2.5 : 2}
                 style={{ cursor: "pointer" }}
                 onClick={() => onSelect(a.node)}
@@ -209,7 +209,7 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
               <text
                 x={cx - a.side * 18}
                 y={a.y - 4}
-                fill={sel ? "#fff" : "#e6e8ee"}
+                fill={sel ? UI.labelBright : "#efe6df"}
                 fontSize={12.5}
                 fontWeight={600}
                 textAnchor={a.side > 0 ? "end" : "start"}
@@ -221,7 +221,7 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
               <text
                 x={cx - a.side * 18}
                 y={a.y + 12}
-                fill="#8b93a3"
+                fill={UI.textMuted}
                 fontSize={10.5}
                 textAnchor={a.side > 0 ? "end" : "start"}
               >

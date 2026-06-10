@@ -9,8 +9,16 @@ import {
 import { api } from "./api";
 import GraphView from "./GraphView";
 import Timeline from "./Timeline";
-import { CATEGORY_ORDER, KIND_ORDER, kindColor, typeCategory, typeColor } from "./theme";
+import {
+  CATEGORY_ORDER,
+  KIND_ORDER,
+  kindColor,
+  typeCategory,
+  typeColor,
+  UI,
+} from "./theme";
 import { iconPathD } from "./icons";
+import logoUrl from "./logo_dark.svg";
 import type {
   GraphData,
   GraphEdge,
@@ -227,7 +235,8 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="logo">◴</span> Potpie <em>Graph Explorer</em>
+          <img className="logo-img" src={logoUrl} alt="Potpie" />
+          <em>Graph Explorer</em>
         </div>
         <div className="pot-select">
           <label>Pot</label>
@@ -389,7 +398,7 @@ function TypeBadge({ type, size = 14 }: { type: string; size?: number }) {
       <path
         d={iconPathD(type)}
         fill="none"
-        stroke="rgba(16,18,25,0.82)"
+        stroke={UI.iconStroke}
         strokeWidth="2.4"
         strokeLinecap="round"
         strokeLinejoin="round"

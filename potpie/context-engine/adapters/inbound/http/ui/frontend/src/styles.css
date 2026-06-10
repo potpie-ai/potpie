@@ -1,11 +1,30 @@
+/* Potpie brand (potpie.ai), terminal-styled: a near-black neutral chassis
+   around a dark neutral "screen" (the graph/timeline canvas) matching the side
+   panels, cream text, lime primary + coral secondary accents.
+   Canvas-side counterparts: theme.ts (UI). */
 :root {
-  --bg: #0d0f15;
-  --panel: #161922;
-  --panel-2: #1d212c;
-  --border: #2a2f3a;
-  --text: #e6e8ee;
-  --muted: #8b93a3;
-  --accent: #57c7e3;
+  --bg: #0a0c0b;
+  --screen: #151916;
+  --panel: #0a0c0b;
+  --panel-2: #151916;
+  --border: #262c27;
+  --text: #efe6df;
+  --muted: #94a49a;
+  --accent: #b6e343;
+  --accent-ink: #022d2c;
+  --alert: #f15b5b;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2c332d;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3b443c;
 }
 
 * {
@@ -20,7 +39,8 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    monospace;
 }
 
 .app {
@@ -40,18 +60,21 @@ body {
   flex: none;
 }
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-weight: 600;
   font-size: 15px;
   letter-spacing: 0.2px;
+}
+.brand .logo-img {
+  height: 22px;
+  display: block;
 }
 .brand em {
   color: var(--muted);
   font-style: normal;
   font-weight: 400;
-}
-.brand .logo {
-  color: var(--accent);
-  margin-right: 4px;
 }
 .pot-select {
   display: flex;
@@ -89,7 +112,7 @@ body {
 }
 .viewtoggle button.on {
   background: var(--accent);
-  color: #06222b;
+  color: var(--accent-ink);
   font-weight: 600;
 }
 .groupby {
@@ -115,19 +138,24 @@ body {
   gap: 8px;
   align-items: center;
 }
+/* pill chips with thin lime borders, like the badges on potpie.ai */
 .chip {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
+  background: rgba(182, 227, 67, 0.07);
+  border: 1px solid rgba(182, 227, 67, 0.35);
   border-radius: 20px;
   padding: 4px 11px;
   font-size: 12px;
-  color: var(--text);
+  color: var(--accent);
 }
 .chip.muted {
+  background: transparent;
+  border-color: var(--border);
   color: var(--muted);
 }
 .chip.spin {
-  color: var(--accent);
+  background: rgba(241, 91, 91, 0.08);
+  border-color: rgba(241, 91, 91, 0.45);
+  color: var(--alert);
 }
 
 .body {
@@ -162,6 +190,7 @@ body {
   flex: 1;
   position: relative;
   min-width: 0;
+  overflow: hidden;
 }
 
 .search {
@@ -184,7 +213,7 @@ body {
 .search button,
 .expand-btn {
   background: var(--accent);
-  color: #06222b;
+  color: var(--accent-ink);
   border: none;
   border-radius: 6px;
   padding: 8px 14px;
@@ -195,6 +224,7 @@ body {
 .search button:hover,
 .expand-btn:hover {
   filter: brightness(1.08);
+  box-shadow: 0 0 14px rgba(182, 227, 67, 0.35);
 }
 
 .section-title {
@@ -203,6 +233,10 @@ body {
   letter-spacing: 0.6px;
   color: var(--muted);
   margin-bottom: 8px;
+}
+.section-title::before {
+  content: "❯ ";
+  color: var(--accent);
 }
 
 .results {
@@ -332,7 +366,7 @@ body {
   position: absolute;
   inset: 0;
   overflow: auto;
-  background: #11131a;
+  background: var(--screen);
 }
 .timeline svg {
   display: block;
@@ -357,6 +391,31 @@ body {
 .graph-canvas {
   position: absolute;
   inset: 0;
+  overflow: hidden;
+  /* isolate the canvas in its own paint layer so per-frame redraws can't
+     bleed repaints/jitter into the topbar and sidebar */
+  contain: layout paint size;
+}
+.zoom-ctl {
+  position: absolute;
+  bottom: 10px;
+  right: 12px;
+  display: flex;
+  gap: 6px;
+}
+.zoom-ctl button {
+  background: rgba(21, 25, 22, 0.85);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 4px 9px;
+  cursor: pointer;
+  min-width: 52px;
+}
+.zoom-ctl button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .graph-hint {
   position: absolute;
@@ -365,7 +424,7 @@ body {
   transform: translateX(-50%);
   color: var(--muted);
   font-size: 11px;
-  background: rgba(13, 15, 21, 0.7);
+  background: rgba(21, 25, 22, 0.85);
   padding: 4px 12px;
   border-radius: 20px;
   border: 1px solid var(--border);
@@ -377,9 +436,9 @@ body {
   left: 50%;
   transform: translateX(-50%);
   z-index: 5;
-  background: #3a1a1f;
-  border: 1px solid #d9534f;
-  color: #ffd7d7;
+  background: #34100f;
+  border: 1px solid #f15b5b;
+  color: #ffd9d2;
   padding: 8px 14px;
   border-radius: 6px;
   font-size: 13px;
