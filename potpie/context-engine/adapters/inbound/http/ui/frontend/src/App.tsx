@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { api } from "./api";
 import GraphView from "./GraphView";
 import Timeline from "./Timeline";
@@ -14,6 +21,10 @@ import type {
 } from "./types";
 
 const EMPTY: GraphData = { nodes: [], edges: [] };
+
+const SIDEBAR_W_KEY = "potpie-ui:sidebar-w";
+const SIDEBAR_W_DEFAULT = 320;
+const clampSidebarW = (w: number) => Math.min(640, Math.max(240, w));
 
 function endId(v: string | GraphNode): string {
   return typeof v === "string" ? v : v.id;
@@ -60,6 +71,37 @@ export default function App() {
     if (typeof location !== "undefined") location.hash = v === "timeline" ? "timeline" : "";
   };
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+
+  const [sidebarW, setSidebarW] = useState(() => {
+    if (typeof localStorage === "undefined") return SIDEBAR_W_DEFAULT;
+    const v = Number(localStorage.getItem(SIDEBAR_W_KEY));
+    return Number.isFinite(v) && v > 0 ? clampSidebarW(v) : SIDEBAR_W_DEFAULT;
+  });
+
+  const startSidebarResize = (e: ReactPointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarW;
+    const widthAt = (ev: PointerEvent) =>
+      clampSidebarW(startW + ev.clientX - startX);
+    const move = (ev: PointerEvent) => setSidebarW(widthAt(ev));
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      localStorage.setItem(SIDEBAR_W_KEY, String(widthAt(ev)));
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const resetSidebarW = () => {
+    setSidebarW(SIDEBAR_W_DEFAULT);
+    localStorage.setItem(SIDEBAR_W_KEY, String(SIDEBAR_W_DEFAULT));
+  };
 
   const loadPot = useCallback(async (potId: string) => {
     setBusy(true);
@@ -224,7 +266,7 @@ export default function App() {
       </header>
 
       <div className="body">
-        <aside className="sidebar">
+        <aside className="sidebar" style={{ width: sidebarW }}>
           <form className="search" onSubmit={runSearch}>
             <input
               placeholder="Search entities…"
@@ -303,6 +345,13 @@ export default function App() {
           )}
         </aside>
 
+        <div
+          className="sidebar-resizer"
+          title="Drag to resize · double-click to reset"
+          onPointerDown={startSidebarResize}
+          onDoubleClick={resetSidebarW}
+        />
+
         <main className="main">
           {error && <div className="error">{error}</div>}
           {view === "graph" ? (
@@ -364,16 +413,14 @@ function NodePanel({ node, onExpand }: { node: GraphNode; onExpand: () => void }
       <button className="expand-btn" onClick={onExpand}>
         Expand neighborhood
       </button>
-      <table className="props">
-        <tbody>
-          {props.map(([k, v]) => (
-            <tr key={k}>
-              <td className="pk">{k}</td>
-              <td className="pv">{String(v)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="props">
+        {props.map(([k, v]) => (
+          <div className="prop" key={k}>
+            <div className="pk">{k}</div>
+            <div className="pv">{String(v)}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

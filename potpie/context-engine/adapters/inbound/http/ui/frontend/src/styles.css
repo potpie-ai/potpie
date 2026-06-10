@@ -146,6 +146,18 @@ body {
   flex-direction: column;
   gap: 16px;
 }
+.sidebar-resizer {
+  flex: none;
+  width: 5px;
+  margin-left: -3px; /* overlap the sidebar border so the grab area is easy to hit */
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+}
+.sidebar-resizer:hover,
+.sidebar-resizer:active {
+  background: var(--accent);
+}
 .main {
   flex: 1;
   position: relative;
@@ -265,22 +277,19 @@ body {
   margin-bottom: 10px;
 }
 .props {
-  width: 100%;
-  border-collapse: collapse;
   font-size: 12px;
 }
-.props td {
+.props .prop {
   border-top: 1px solid var(--border);
-  padding: 5px 4px;
-  vertical-align: top;
+  padding: 6px 2px 7px;
 }
 .props .pk {
   color: var(--muted);
-  white-space: nowrap;
-  padding-right: 10px;
+  margin-bottom: 3px;
 }
 .props .pv {
   word-break: break-word;
+  line-height: 1.45;
 }
 
 .legend-row {

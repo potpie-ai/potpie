@@ -61,15 +61,27 @@ export default function GraphView({
     return () => clearTimeout(t);
   }, [graphData]);
 
-  const paintNode = (node: GraphNode, ctx: CanvasRenderingContext2D, scale: number) => {
+  // The selected node is skipped in the normal per-node pass and repainted in
+  // onRenderFramePost (emphasized), so it and its label sit above everything.
+  const paintNode = (
+    node: GraphNode,
+    ctx: CanvasRenderingContext2D,
+    scale: number,
+    emphasized = false,
+  ) => {
+    if (!emphasized && node.id === selectedId) return;
     const r = radius(node);
-    const selected = node.id === selectedId;
     const hovered = node.id === hoverRef.current?.id;
     ctx.beginPath();
     ctx.arc(node.x!, node.y!, r, 0, 2 * Math.PI);
     ctx.fillStyle = typeColor(node.type);
-    ctx.fill();
-    if (selected) {
+    if (emphasized) {
+      // glow renders in device space (unaffected by zoom) — a steady halo
+      ctx.save();
+      ctx.shadowColor = "rgba(87,199,227,0.9)";
+      ctx.shadowBlur = 24;
+      ctx.fill();
+      ctx.restore();
       ctx.lineWidth = 2 / scale;
       ctx.strokeStyle = "#ffffff";
       ctx.stroke();
@@ -78,6 +90,8 @@ export default function GraphView({
       ctx.strokeStyle = "rgba(255,255,255,0.5)";
       ctx.lineWidth = 1 / scale;
       ctx.stroke();
+    } else {
+      ctx.fill();
     }
 
     // Type glyph inside the circle — skipped while the node is too small on
@@ -95,22 +109,22 @@ export default function GraphView({
       ctx.restore();
     }
 
-    if (selected || hovered || (node.degree || 0) >= labelMinDegree(scale)) {
+    if (emphasized || hovered || (node.degree || 0) >= labelMinDegree(scale)) {
       const fontSize = Math.max(2.5, 11 / scale);
-      const weight = selected || hovered ? "600 " : "";
+      const weight = emphasized || hovered ? "600 " : "";
       ctx.font = `${weight}${fontSize}px -apple-system, system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
       const label = node.caption || node.key;
-      const max = selected || hovered ? 42 : 24;
+      const max = emphasized || hovered ? 42 : 24;
       const text = label.length > max ? label.slice(0, max - 1) + "…" : label;
       const y = node.y! + r + 2 / scale;
       // dark halo keeps labels readable over edges and other nodes
-      ctx.lineWidth = 3 / scale;
+      ctx.lineWidth = (emphasized ? 4 : 3) / scale;
       ctx.lineJoin = "round";
-      ctx.strokeStyle = "rgba(17,19,26,0.85)";
+      ctx.strokeStyle = emphasized ? "rgba(17,19,26,0.95)" : "rgba(17,19,26,0.85)";
       ctx.strokeText(text, node.x!, y);
-      ctx.fillStyle = selected || hovered ? "#ffffff" : "rgba(232,234,240,0.88)";
+      ctx.fillStyle = emphasized || hovered ? "#ffffff" : "rgba(232,234,240,0.88)";
       ctx.fillText(text, node.x!, y);
     }
   };
@@ -134,6 +148,13 @@ export default function GraphView({
         nodeRelSize={5}
         nodeCanvasObject={(n: any, ctx: any, s: any) => paintNode(n, ctx, s)}
         nodePointerAreaPaint={(n: any, c: any, ctx: any) => pointerArea(n, c, ctx)}
+        onRenderFramePost={(ctx: CanvasRenderingContext2D, scale: number) => {
+          if (!selectedId) return;
+          const n = graphData.nodes.find((x) => x.id === selectedId) as
+            | GraphNode
+            | undefined;
+          if (n && n.x != null && n.y != null) paintNode(n, ctx, scale, true);
+        }}
         linkColor={() => "rgba(150,160,180,0.35)"}
         linkWidth={1}
         linkDirectionalArrowLength={3.5}
