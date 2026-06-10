@@ -483,6 +483,7 @@ def test_write_provider_credentials_raises_on_keychain_failure(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(cs.sys, "platform", "darwin")
 
     def _fail(_service: str, _username: str, _password: str) -> None:
         raise KeyringError("backend unavailable")
@@ -516,13 +517,6 @@ def test_linux_integration_secrets_stored_in_json_file(
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr(cs.sys, "platform", "linux")
-    monkeypatch.setattr(
-        cs.keyring,
-        "set_password",
-        lambda _service, _username, _password: (_ for _ in ()).throw(
-            KeyringError("backend unavailable")
-        ),
-    )
 
     cs.write_provider_credentials(
         "github",
@@ -586,7 +580,7 @@ def test_linux_integration_secret_falls_back_to_keyring(
     assert cs.get_provider_credentials("github")["access_token"] == "legacy-keyring-token"
 
 
-def test_linux_integration_secret_prefers_keyring_when_available(
+def test_linux_integration_secret_uses_file_even_when_keyring_is_available(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     fake_keyring: dict[tuple[str, str], str],
@@ -599,7 +593,7 @@ def test_linux_integration_secret_prefers_keyring_when_available(
         {
             "provider": "github",
             "provider_host": "github.com",
-            "access_token": "linux-keychain-token",
+            "access_token": "linux-file-token",
             "token_type": "bearer",
             "scopes": ["repo"],
             "account": {"login": "octocat", "id": 1, "name": None, "email": None},
@@ -610,12 +604,12 @@ def test_linux_integration_secret_prefers_keyring_when_available(
         },
     )
 
-    assert fake_keyring[("potpie", "github_token")] == "linux-keychain-token"
-    assert not cs.integration_secrets_path().is_file()
+    assert ("potpie", "github_token") not in fake_keyring
+    assert cs.integration_secrets_path().is_file()
 
     metadata = json.loads(cs.credentials_path().read_text(encoding="utf-8"))
-    assert metadata["integrations"]["github"]["token_storage"] == "keychain"
-    assert cs.get_provider_credentials("github")["access_token"] == "linux-keychain-token"
+    assert metadata["integrations"]["github"]["token_storage"] == "file"
+    assert cs.get_provider_credentials("github")["access_token"] == "linux-file-token"
 
 
 def test_linux_delete_integration_secret_surfaces_provider_error(
@@ -625,13 +619,6 @@ def test_linux_delete_integration_secret_surfaces_provider_error(
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr(cs.sys, "platform", "linux")
-    monkeypatch.setattr(
-        cs.keyring,
-        "set_password",
-        lambda _service, _username, _password: (_ for _ in ()).throw(
-            KeyringError("backend unavailable")
-        ),
-    )
     cs.write_provider_credentials(
         "github",
         {

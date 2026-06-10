@@ -1137,7 +1137,8 @@ def test_clear_jira_credentials_preserves_shared_legacy_for_confluence_on_linux(
     cs.clear_jira_credentials()
 
     assert cs.get_confluence_credentials().get("api_token") == "wiki-tok"
-    assert cs._ATLASSIAN_LEGACY_TOKEN_SECRET in {k[1] for k in keychain}
+    secrets = cs._read_integration_secrets_file()
+    assert cs._ATLASSIAN_LEGACY_TOKEN_SECRET in secrets
 
 
 def test_clear_atlassian_credentials_removes_shared_legacy(

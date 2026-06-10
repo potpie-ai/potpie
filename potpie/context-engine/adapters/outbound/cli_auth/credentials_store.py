@@ -626,16 +626,16 @@ def _get_secret_or_empty(name: str, *, label: str) -> str:
 
 
 def _store_secret(name: str, secret: str, *, label: str) -> str:
+    if _uses_linux_integration_file_storage(name):
+        try:
+            _store_integration_file_secret(name, secret, label=label)
+        except CredentialStoreError as exc:
+            raise ProviderCredentialError(str(exc)) from exc
+        return "file"
     try:
         store_secure_secret(name, secret, label=label)
         return "keychain"
     except CredentialStoreError as exc:
-        if _uses_linux_integration_file_storage(name):
-            try:
-                _store_integration_file_secret(name, secret, label=label)
-            except CredentialStoreError as file_exc:
-                raise ProviderCredentialError(str(file_exc)) from file_exc
-            return "file"
         raise ProviderCredentialError(str(exc)) from exc
 
 
