@@ -126,7 +126,7 @@ def render_setup_report(
 POST_SETUP_INTEGRATION_OPTIONS: tuple[tuple[str, str], ...] = (
     ("linear", "Linear"),
     ("jira", "Jira"),
-    ("confluence", "Atlassian"),
+    ("confluence", "Confluence"),
 )
 POST_SETUP_INTEGRATION_ORDER: tuple[str, ...] = tuple(
     option_id for option_id, _ in POST_SETUP_INTEGRATION_OPTIONS
@@ -175,7 +175,10 @@ def install_agents_globally(agents: list[str]) -> list[tuple[str, Any]]:
 
 def _agent_label(agent: str) -> str:
     labels = dict(POST_SETUP_AGENT_OPTIONS)
-    return labels.get(agent, agent)
+    key = agent.strip().lower()
+    if key in labels:
+        return labels[key]
+    return key.replace("_", " ").title()
 
 
 def _install_agents_globally_with_progress(agents: list[str]) -> list[tuple[str, Any]]:
@@ -248,6 +251,33 @@ def _format_agent_list(labels: list[str]) -> str:
     if len(labels) == 2:
         return f"{labels[0]} and {labels[1]}"
     return f"{', '.join(labels[:-1])}, and {labels[-1]}"
+
+
+def _agent_usage_hint(agent_ids: list[str]) -> str | None:
+    if not agent_ids:
+        return None
+    labels = [_agent_label(agent_id) for agent_id in agent_ids]
+    return (
+        f"Open {_format_agent_list(labels)} — Potpie skills are ready to use."
+    )
+
+
+def _globally_installed_harnesses() -> list[str]:
+    """Harnesses that already have Potpie skills on disk (any prior setup run)."""
+    from adapters.inbound.cli.commands._common import get_host
+
+    host = get_host()
+    installed: list[str] = []
+    for agent in POST_SETUP_AGENT_ORDER:
+        if agent == "default":
+            continue
+        try:
+            status = host.skills.status(agent=agent, scope="global")
+        except ValueError:
+            continue
+        if status.installed:
+            installed.append(agent)
+    return installed
 
 
 def _try_login(handler) -> None:
@@ -356,7 +386,11 @@ def _register_repo_source(*, repo: str) -> None:
     host.pots.add_source(pot_id=active.pot_id, kind="repo", location=repo)
 
 
-def _maybe_prompt_first_pot(*, repo: Path | None, default_pot_name: str) -> None:
+def _maybe_prompt_first_pot(
+    *,
+    repo: Path | None,
+    default_pot_name: str,
+) -> None:
     from adapters.inbound.cli.commands._common import get_host
     from adapters.inbound.cli.ui.interactive_prompts import prompt_first_pot_name
     from adapters.inbound.cli.ui.potpie_logo_anim import play_setup_finish
@@ -374,7 +408,11 @@ def _maybe_prompt_first_pot(*, repo: Path | None, default_pot_name: str) -> None
     if repo_str:
         _register_repo_source(repo=repo_str)
 
-    play_setup_finish(stderr_console(), pot_name=pot.name)
+    play_setup_finish(
+        stderr_console(),
+        pot_name=pot.name,
+        agent_hint=_agent_usage_hint(_globally_installed_harnesses()),
+    )
 
 
 __all__ = [

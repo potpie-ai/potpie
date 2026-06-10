@@ -48,6 +48,38 @@ def test_maybe_prompt_agent_skills_installs_selected(
     assert globally_installed == ["claude"]
 
 
+def test_globally_installed_harnesses_reports_all_agents_with_skills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    class _Skills:
+        def status(self, *, agent: str, scope: str) -> SimpleNamespace:
+            installed = agent in {"cursor", "opencode"}
+            skills = (SimpleNamespace(id="potpie-cli"),) if installed else ()
+            return SimpleNamespace(installed=skills)
+
+    monkeypatch.setattr(
+        "adapters.inbound.cli.commands._common.get_host",
+        lambda: SimpleNamespace(skills=_Skills()),
+    )
+
+    assert setup_ux._globally_installed_harnesses() == ["cursor", "opencode"]
+
+
+def test_agent_usage_hint_formats_installed_harnesses() -> None:
+    assert setup_ux._agent_usage_hint(["claude"]) == (
+        "Open Claude — Potpie skills are ready to use."
+    )
+    assert setup_ux._agent_usage_hint(["claude", "cursor"]) == (
+        "Open Claude and Cursor — Potpie skills are ready to use."
+    )
+    assert setup_ux._agent_usage_hint(["opencode", "codex", "cursor"]) == (
+        "Open OpenCode, Codex, and Cursor — Potpie skills are ready to use."
+    )
+    assert setup_ux._agent_usage_hint([]) is None
+
+
 def test_post_setup_wizard_runs_skills_after_integrations(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
