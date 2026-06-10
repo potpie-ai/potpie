@@ -14,8 +14,11 @@ _CLAUDE_MARKER_RE = re.compile(
     re.DOTALL,
 )
 
-AGENT_TYPES = ("default", "codex", "claude", "cursor", "opencode")
+AGENT_TYPES = ("default", "codex", "claude", "claude-plugin", "cursor", "opencode")
 _SOURCE_SKILLS_PREFIX = ".agents/skills/"
+# The Claude Code plugin installs as a self-contained directory so its
+# ``.claude-plugin/plugin.json`` stays the plugin root for ``/plugin marketplace add``.
+_CLAUDE_PLUGIN_PREFIX = ".claude/potpie-plugin"
 
 
 @dataclass
@@ -53,7 +56,13 @@ def _iter_bundle_files(bundle_name: str) -> list[tuple[Path, str]]:
         for child in current.iterdir():
             child_rel = rel / child.name
             if child.is_dir():
+                # Never install compiled-bytecode caches that may sit beside the
+                # template sources (e.g. a stray ``__pycache__`` from a test run).
+                if child.name == "__pycache__":
+                    continue
                 stack.append((child, child_rel))
+                continue
+            if child.name.endswith((".pyc", ".pyo")):
                 continue
             out.append((child_rel, child.read_text(encoding="utf-8")))
     return sorted(out, key=lambda item: item[0].as_posix())
@@ -195,6 +204,11 @@ def _claude_skills_bundle_remap(rel_path: Path) -> Path | None:
     return _remap_skills_path(rel_path, ".claude/skills")
 
 
+def _claude_plugin_remap(rel_path: Path) -> Path | None:
+    # Install the whole plugin under one directory, preserving its internal layout.
+    return Path(_CLAUDE_PLUGIN_PREFIX) / rel_path
+
+
 def install_skill_bundle(
     skills_root: str | Path,
     *,
@@ -231,6 +245,7 @@ def install_agent_bundle(
 
     - ``default`` / ``codex``: ``AGENTS.md`` + ``.agents/skills/``
     - ``claude``: ``CLAUDE.md`` (+ ``.claude/`` when present in bundle)
+    - ``claude-plugin``: the Claude Code plugin under ``.claude/potpie-plugin/``
     - ``cursor``: ``AGENTS.md`` + ``.cursor/skills/``
     - ``opencode``: ``.opencode/skills/``
     """
@@ -253,6 +268,20 @@ def install_agent_bundle(
             force=force,
             include=lambda rel: _include_selected_skills(rel, selected),
             remap=_claude_skills_bundle_remap,
+        )
+    elif normalized == "claude-plugin":
+        # Works from a source checkout. NB for wheel distribution: the monorepo
+        # .gitignore ignores ``*.json``, and Hatchling's VCS-aware selector then
+        # omits the plugin's plugin.json/marketplace.json/hooks.json from the wheel
+        # even with an ``include`` glob. Shipping those in a wheel needs a
+        # ``[tool.hatch.build] artifacts`` override or a .gitignore exception
+        # (deliberately deferred: plugin install is dev/source only for now).
+        _install_bundle(
+            root,
+            "claude_plugin",
+            result,
+            force=force,
+            remap=_claude_plugin_remap,
         )
     elif normalized == "cursor":
         _install_bundle(

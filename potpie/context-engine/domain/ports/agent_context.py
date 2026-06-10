@@ -1,7 +1,7 @@
 """``AgentContextPort`` — the four-tool agent contract.
 
-This is the single public surface every inbound adapter (CLI, HTTP, MCP) binds
-to. There are exactly four tools and there will only ever be four:
+This is the single public agent surface for CLI and MCP. There are exactly four
+tools and there will only ever be four:
 
     context_resolve   resolve(ResolveRequest) -> AgentEnvelope
     context_search    search(SearchRequest)   -> AgentEnvelope
@@ -64,6 +64,10 @@ class ResolveRequest:
     source_policy: str = "references_only"
     max_items: int = 12
     as_of: datetime | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    include_invalidated: bool = False
+    freshness_preference: str = "balanced"
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 

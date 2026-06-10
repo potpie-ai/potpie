@@ -146,31 +146,6 @@ def _ingest_rejection_returns_422() -> bool:
     return v not in ("0", "false", "no", "off")
 
 
-def _context_graph_jsonable(value: Any) -> Any:
-    """Convert graph adapter payloads, including Neo4j temporal values, to JSON-safe data."""
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, datetime):
-        return value.isoformat()
-    isoformat = getattr(value, "isoformat", None)
-    if callable(isoformat):
-        try:
-            return str(isoformat())
-        except Exception:
-            pass
-    iso_format = getattr(value, "iso_format", None)
-    if callable(iso_format):
-        try:
-            return str(iso_format())
-        except Exception:
-            pass
-    if isinstance(value, dict):
-        return {str(k): _context_graph_jsonable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_context_graph_jsonable(v) for v in value]
-    return str(value)
-
-
 class BatchRetryEventsRequest(BaseModel):
     """Bulk-retry request body. Capped at 200 to avoid a runaway batch.
 
@@ -1518,31 +1493,38 @@ def create_context_router(
 
     @router.post(
         "/query/context-graph",
-        summary="Direct ContextGraphQuery endpoint",
+        summary="Unsupported legacy ContextGraphQuery endpoint",
         description=(
-            "Executes the minimal query surface directly: one graph query method "
-            "with goal, strategy, scope, filters, temporal controls, and budget."
+            "Legacy remote graph-query clients are no longer supported. Use the "
+            "local HostShell / AgentContextPort / GraphService surfaces."
         ),
     )
     async def post_context_graph_query(
-        body: ContextGraphQuery,
+        body: dict[str, Any],
         actor: Any = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
     ) -> dict[str, Any]:
+        del body
         _enforce(
             container,
             actor=actor,
             resource=RESOURCE_POT,
             action=ACTION_POT_READ,
-            pot_id=body.pot_id,
+            pot_id=None,
         )
-        if container.context_graph is None:
-            raise HTTPException(
-                status_code=503,
-                detail="Unified context graph query port is not configured.",
-            )
-        result = await container.context_graph.query_async(body)
-        return _context_graph_jsonable(result.model_dump())
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "code": "http_context_graph_query_not_supported",
+                "message": (
+                    "Remote ContextGraphQuery is no longer a supported client "
+                    "surface."
+                ),
+                "recommended_next_action": (
+                    "Use local context_resolve/context_search or graph read."
+                ),
+            },
+        )
 
     return router
 

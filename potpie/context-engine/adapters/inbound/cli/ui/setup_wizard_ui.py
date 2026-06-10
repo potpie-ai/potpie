@@ -161,7 +161,6 @@ class SetupWizardUI:
         *,
         repo: Path,
         agent: str,
-        scan: bool,
     ) -> None:
         if not self.use_rich:
             print("Potpie Setup")
@@ -170,8 +169,6 @@ class SetupWizardUI:
         console = stderr_console()
         width = panel_width_for_console(console)
         extras = f"agent {agent}"
-        if scan:
-            extras += " · scan on"
         play_intro(
             console,
             subtitle=f"Repo {repo.resolve()} · {extras}",
@@ -334,7 +331,7 @@ class SetupWizardUI:
             typer.secho(f"  {step.detail}", fg=typer.colors.RED, err=True)
         if verbose_hint:
             typer.secho(
-                "\nRun with verbose logs:\n  potpie -v setup --repo . --scan",
+                "\nRun with verbose logs:\n  potpie -v setup --repo .",
                 fg=typer.colors.YELLOW,
                 err=True,
             )

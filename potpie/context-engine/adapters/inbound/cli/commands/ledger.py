@@ -1,10 +1,8 @@
 """Event Ledger commands → ``HostShell.ledger`` (LedgerFacade).
 
-The ledger is a separate source-event service. ``ledger query`` inspects history
-without touching the graph consumer cursor; ``ledger pull --apply`` fetches a
-page using that cursor and reconciles the events into the active graph through
-the reconciler seam (the parked LLM-vs-deterministic decision). ``ledger use``
-binds a managed or self-hosted ledger; ``ledger disconnect`` clears the binding.
+The ledger is a separate source-event service. ``ledger query`` and
+``ledger pull`` inspect event history only; graph updates are intentionally left
+to the harness-facing ``context_record`` / ``graph mutate`` path.
 """
 
 from __future__ import annotations
@@ -168,7 +166,6 @@ def ledger_disconnect() -> None:
 @ledger_app.command("pull")
 def ledger_pull(
     source: str = typer.Option(..., "--source"),
-    apply: bool = typer.Option(False, "--apply"),
     filter_: str = typer.Option(
         None, "--filter", help="Reserved: server-side event filter expression."
     ),
@@ -177,22 +174,13 @@ def ledger_pull(
     with contract():
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
-        page, result = host.ledger.pull(pot_id=pot_id, source_id=source, apply=apply)
+        page = host.ledger.pull(pot_id=pot_id, source_id=source)
         emit(
             {
                 "pulled": len(page.events),
-                "applied": bool(result),
-                "claims_written": result.claims_written if result else 0,
                 "has_more": page.has_more,
             },
-            human=(
-                f"pulled {len(page.events)} events"
-                + (
-                    f", reconciled {result.claims_written} claims"
-                    if result
-                    else " (dry-run; pass --apply to reconcile)"
-                )
-            ),
+            human=f"pulled {len(page.events)} events (read-only)",
         )
 
 

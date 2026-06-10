@@ -2,8 +2,9 @@
 
 ``counts``/``freshness``/``quality`` are derivable from the claim rows, so any
 backend with a real ``claim_query`` (in_memory, embedded, neo4j) gets a working
-analytics projection without a backend-specific rebuild. ``repair`` is a no-op
-here because these projections are computed on read, never materialised.
+analytics projection without a backend-specific rebuild. ``repair`` is usually a
+no-op because these projections are computed on read, but writable backends can
+inject a narrow entity-summary repair callback.
 
 This keeps ``graph status`` / ``data_plane_status`` honest on the neo4j profile
 while the richer native projections (vector semantic, cypher inspection,
@@ -13,8 +14,12 @@ portable snapshot) remain backend-specific TODOs.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
+from adapters.outbound.graph.entity_summary_repair import (
+    ENTITY_SUMMARY_TARGET,
+    wants_entity_summary_repair,
+)
 from domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 from domain.ports.graph.analytics import RepairReport
 
@@ -28,6 +33,7 @@ class ClaimQueryAnalytics:
     """``GraphAnalyticsPort`` over a backend's canonical claim store."""
 
     claim_query: ClaimQueryPort
+    entity_summary_repair: Callable[[str], int] | None = None
 
     def _rows(self, pot_id: str) -> list[ClaimRow]:
         return list(
@@ -66,6 +72,16 @@ class ClaimQueryAnalytics:
         }
 
     def repair(self, pot_id: str, *, targets: Sequence[str] = ()) -> RepairReport:
+        if self.entity_summary_repair is not None and wants_entity_summary_repair(
+            targets
+        ):
+            repaired = self.entity_summary_repair(pot_id)
+            return RepairReport(
+                pot_id=pot_id,
+                targets=tuple(targets),
+                repaired={ENTITY_SUMMARY_TARGET: repaired},
+                detail=f"repaired {repaired} entity summaries",
+            )
         return RepairReport(
             pot_id=pot_id,
             targets=tuple(targets),

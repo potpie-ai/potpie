@@ -1636,24 +1636,6 @@ grpc = [
 ]
 
 [[package]]
-name = "graphiti-core"
-version = "0.29.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "neo4j" },
-    { name = "numpy" },
-    { name = "openai" },
-    { name = "posthog" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "tenacity" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/08/a6/0876082003a7af08f5627c0fb27b265f403a6631efe341a4a6b4bc905c50/graphiti_core-0.29.1.tar.gz", hash = "sha256:050d7cb93e3125100ae45a2bfebadcaba1601b37575330744e834156284938b3", size = 6912025, upload-time = "2026-05-21T03:33:25.069Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ed/49/e3074ab16e54f6d3f1d5fb6c3bd7ae21f5ce498ca3cb92696bd881d6eef0/graphiti_core-0.29.1-py3-none-any.whl", hash = "sha256:c04567261cc21853c66424d2378f4830ef4c6c02d7f6fb5518c215f60364f474", size = 354427, upload-time = "2026-05-21T03:33:22.939Z" },
-]
-
-[[package]]
 name = "greenlet"
 version = "3.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3917,7 +3899,6 @@ dependencies = [
     { name = "gitpython" },
     { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
-    { name = "graphiti-core" },
     { name = "greenlet" },
     { name = "grep-ast" },
     { name = "griffe" },
@@ -4020,7 +4001,6 @@ requires-dist = [
     { name = "gitpython", specifier = ">=3.1.50" },
     { name = "google-cloud-secret-manager", specifier = ">=2.25.0" },
     { name = "google-cloud-storage", specifier = ">=3.5.0" },
-    { name = "graphiti-core", specifier = ">=0.28.2" },
     { name = "greenlet", specifier = ">=3.3.0" },
     { name = "grep-ast", specifier = ">=0.6.0" },
     { name = "griffe", specifier = ">=2.0.1" },

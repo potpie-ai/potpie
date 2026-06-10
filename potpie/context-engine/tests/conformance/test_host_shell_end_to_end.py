@@ -13,6 +13,7 @@ import pytest
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from adapters.outbound.ledger.self_hosted_client import FixtureEventLedgerClient
 from bootstrap.host_wiring import build_host_shell
+from domain.context_records import ContextRecordValidationError
 from domain.lifecycle import (
     DONE,
     NOT_IMPLEMENTED,
@@ -65,6 +66,41 @@ def test_setup_record_resolve_status_journey(host):
     assert report.backend_ready
     assert report.data_plane["counts"]["claims"] == 1
     assert report.skills is not None and not report.skills.missing
+
+
+def test_context_record_rejects_malformed_known_record_details(host):
+    pot = host.pots.create_pot(name="default", repo="potpie", use=True)
+
+    with pytest.raises(ContextRecordValidationError, match="bug_pattern: 'kind'"):
+        host.agent_context.record(
+            RecordRequest(
+                pot_id=pot.pot_id,
+                record_type="bug_pattern",
+                summary="QueuePool limit exceeded under load",
+                details={"kind": 123},
+            )
+        )
+
+    status = host.graph.data_plane_status(pot.pot_id)
+    assert status.counts.get("claims", 0) == 0
+
+
+def test_context_record_preserves_summary_only_known_record(host):
+    pot = host.pots.create_pot(name="default", repo="potpie", use=True)
+
+    receipt = host.agent_context.record(
+        RecordRequest(
+            pot_id=pot.pot_id,
+            record_type="bug_pattern",
+            summary="QueuePool limit exceeded under load",
+        )
+    )
+
+    assert receipt.accepted and receipt.mutations_applied >= 1
+    env = host.agent_context.resolve(
+        ResolveRequest(pot_id=pot.pot_id, include=("raw_graph",))
+    )
+    assert any("QueuePool" in dict(i.payload).get("fact", "") for i in env.items)
 
 
 def test_setup_orchestrator_provisions_and_creates_default_pot(host):
@@ -129,6 +165,9 @@ def test_stub_backend_profiles_registered_and_fail_closed():
     from adapters.outbound.graph.backends import KNOWN_PROFILES, build_backend
     from domain.errors import CapabilityNotImplemented
 
+    assert "falkordb" in KNOWN_PROFILES
+    assert "falkordb_lite" in KNOWN_PROFILES
+
     for profile in ("postgres", "chroma", "hosted"):
         assert profile in KNOWN_PROFILES
         backend = build_backend(profile)
@@ -163,7 +202,7 @@ def test_unsupported_include_is_flagged_not_crashed(host):
     )
 
 
-def test_ledger_pull_reconciles_into_graph(tmp_path, monkeypatch):
+def test_ledger_pull_is_read_only(tmp_path, monkeypatch):
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     fixture = FixtureEventLedgerClient()
     fixture.seed(
@@ -186,16 +225,13 @@ def test_ledger_pull_reconciles_into_graph(tmp_path, monkeypatch):
     pot = host.pots.create_pot(name="default", use=True)
 
     assert host.ledger.status().available
-    page, result = host.ledger.pull(pot_id=pot.pot_id, source_id="github", apply=True)
+    page = host.ledger.pull(pot_id=pot.pot_id, source_id="github")
     assert len(page.events) == 1
-    assert result.claims_written == 1
 
     env = host.agent_context.resolve(
         ResolveRequest(pot_id=pot.pot_id, include=("raw_graph",))
     )
-    assert any(
-        "api depends on db" in dict(i.payload).get("fact", "") for i in env.items
-    )
+    assert len(env.items) == 0
 
 
 def test_ledger_query_inspects_history_without_advancing_cursor(tmp_path, monkeypatch):
@@ -228,11 +264,11 @@ def test_ledger_query_inspects_history_without_advancing_cursor(tmp_path, monkey
     assert [e.event_id for e in page.events] == ["pr1"]
 
     # because query never touched the cursor, a later pull still sees both events.
-    pulled, _ = host.ledger.pull(pot_id=pot.pot_id, source_id="github", apply=False)
+    pulled = host.ledger.pull(pot_id=pot.pot_id, source_id="github")
     assert len(pulled.events) == 2
 
 
-def test_ledger_pull_dry_run_does_not_write(tmp_path, monkeypatch):
+def test_ledger_pull_does_not_write(tmp_path, monkeypatch):
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     fixture = FixtureEventLedgerClient()
     fixture.seed(
@@ -250,8 +286,8 @@ def test_ledger_pull_dry_run_does_not_write(tmp_path, monkeypatch):
     host = build_host_shell(backend=InMemoryGraphBackend(), ledger_client=fixture)
     pot = host.pots.create_pot(name="default", use=True)
 
-    page, result = host.ledger.pull(pot_id=pot.pot_id, source_id="github", apply=False)
-    assert len(page.events) == 1 and result is None
+    page = host.ledger.pull(pot_id=pot.pot_id, source_id="github")
+    assert len(page.events) == 1
     env = host.agent_context.resolve(
         ResolveRequest(pot_id=pot.pot_id, include=("raw_graph",))
     )

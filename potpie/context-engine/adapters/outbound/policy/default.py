@@ -155,6 +155,38 @@ class DefaultPolicyAdapter:
                 REASON_CONTEXT_GRAPH_DISABLED,
                 detail="Context graph is disabled (CONTEXT_GRAPH_ENABLED).",
             )
+        # Resolve the pot (tenant boundary + existence) *before* evaluating
+        # reconciliation / feature flags. An unauthorized actor is a 403 and an
+        # unknown pot is a 404 ahead of any flag check, so we never reveal
+        # whether reconciliation/the planner is configured for a pot the caller
+        # cannot access. (Step 11 flipped the planner default to opt-in, which
+        # exposed that the flag gate previously ran ahead of pot resolution.)
+        resolved = None
+        if pot_id is not None:
+            if not self._tenant_boundary_ok(actor):
+                return PolicyDecision.deny(
+                    REASON_FORBIDDEN,
+                    detail=(
+                        "Per-actor pot authorization is not configured for "
+                        "this deployment: the host must wire an actor-scoped "
+                        "pot resolver (see DefaultPolicyAdapter contract). "
+                        "Refusing pot-scoped access. Set "
+                        "CONTEXT_ENGINE_ALLOW_NO_AUTH=1 for single-tenant "
+                        "local dev only."
+                    ),
+                    status_code=403,
+                )
+            resolved = self._pots.resolve_pot(str(pot_id))
+            if resolved is None:
+                return PolicyDecision.deny(
+                    REASON_UNKNOWN_POT,
+                    detail=(
+                        "Unknown pot_id for this user (create with POST "
+                        "/api/v2/context/pots and attach at least one repository)."
+                    ),
+                    status_code=404,
+                )
+
         if require_reco:
             if not reconciliation_enabled():
                 return PolicyDecision.deny(
@@ -192,30 +224,7 @@ class DefaultPolicyAdapter:
                 detail="Context graph is disabled (CONTEXT_GRAPH_ENABLED).",
             )
 
-        if pot_id is not None:
-            if not self._tenant_boundary_ok(actor):
-                return PolicyDecision.deny(
-                    REASON_FORBIDDEN,
-                    detail=(
-                        "Per-actor pot authorization is not configured for "
-                        "this deployment: the host must wire an actor-scoped "
-                        "pot resolver (see DefaultPolicyAdapter contract). "
-                        "Refusing pot-scoped access. Set "
-                        "CONTEXT_ENGINE_ALLOW_NO_AUTH=1 for single-tenant "
-                        "local dev only."
-                    ),
-                    status_code=403,
-                )
-            resolved = self._pots.resolve_pot(str(pot_id))
-            if resolved is None:
-                return PolicyDecision.deny(
-                    REASON_UNKNOWN_POT,
-                    detail=(
-                        "Unknown pot_id for this user (create with POST "
-                        "/api/v2/context/pots and attach at least one repository)."
-                    ),
-                    status_code=404,
-                )
+        if resolved is not None:
             return PolicyDecision.allow(resolved_pot_id=resolved.pot_id)
 
         return PolicyDecision.allow()

@@ -65,7 +65,7 @@ class RawGraphReader:
 
 
 def _candidate_key(row: ClaimRow) -> str:
-    return f"{row.predicate}:{row.subject_key}:{row.object_key}:{row.source_ref or '-'}"
+    return row.claim_key or f"{row.predicate}:{row.subject_key}:{row.object_key}"
 
 
 def _corroboration(row: ClaimRow) -> int:
@@ -80,11 +80,16 @@ def _payload_from_row(row: ClaimRow) -> dict[str, Any]:
         "predicate": row.predicate,
         "subject_key": row.subject_key,
         "object_key": row.object_key,
+        "claim_key": row.claim_key,
+        "subgraph": row.subgraph,
+        "truth": row.truth,
         "fact": row.fact,
-        "environment": row.properties.get("environment"),
-        "source_ref": row.source_ref,
+        "environment": row.environment,
+        "source_refs": list(row.source_refs),
         "source_system": row.source_system,
         "valid_at": row.valid_at.isoformat() if row.valid_at else None,
+        "valid_until": row.valid_until.isoformat() if row.valid_until else None,
+        "observed_at": row.observed_at.isoformat() if row.observed_at else None,
         "evidence_strength": row.evidence_strength,
     }
 

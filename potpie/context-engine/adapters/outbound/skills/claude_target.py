@@ -56,7 +56,7 @@ class FileBackedAgentTarget:
 
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         root = Path(path).expanduser() if path else self.skills_root
-        install_skill_bundle(root, skill_ids=(skill_id,))
+        install_skill_bundle(root, skill_ids=(skill_id,), force=True)
         data = self._load()
         if (root / skill_id / "SKILL.md").exists():
             data[skill_id] = version
@@ -104,7 +104,7 @@ class ProjectAgentTarget:
 
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         root = Path(path) if path else self.path
-        install_agent_bundle(root, agent=self.agent, skill_ids=(skill_id,))
+        install_agent_bundle(root, agent=self.agent, skill_ids=(skill_id,), force=True)
         data = self._load()
         if project_skill_path(root, agent=self.agent, skill_id=skill_id).exists():
             data[skill_id] = version

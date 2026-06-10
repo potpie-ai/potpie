@@ -1,4 +1,4 @@
-"""Validate ``ReconciliationPlan`` before deterministic apply.
+"""Validate ``MutationBatch`` before deterministic apply.
 
 When ``CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL=1`` and strict mode is off, unknown
 labels, non-catalog edge types, and invalid lifecycle values are coerced instead
@@ -15,7 +15,7 @@ from domain.canonical_label_inference import (
     enrich_reconciliation_plan_entity_labels,
 )
 from domain.entity_canonicalization import canonicalize_reconciliation_plan
-from domain.errors import ReconciliationPlanValidationError
+from domain.errors import MutationBatchValidationError
 from domain.graph_mutations import EdgeUpsert, EntityUpsert, InvalidationOp
 from domain.ontology import (
     BASE_GRAPH_LABELS,
@@ -26,7 +26,7 @@ from domain.ontology import (
     is_canonical_edge_type,
     validate_structural_mutations,
 )
-from domain.reconciliation import ReconciliationPlan
+from domain.reconciliation import MutationBatch
 from domain.reconciliation_flags import (
     infer_canonical_labels_enabled,
     ontology_soft_fail_enabled,
@@ -47,7 +47,7 @@ _OBSERVATION_FALLBACK = "Observation"
 
 
 def validate_reconciliation_plan(
-    plan: ReconciliationPlan, expected_pot_id: str
+    plan: MutationBatch, expected_pot_id: str
 ) -> None:
     plan.ontology_downgrades.clear()
     canonicalize_reconciliation_plan(plan)
@@ -86,24 +86,31 @@ def validate_reconciliation_plan(
             else f"; ... {len(ontology_errors) - 8} more"
         )
         structured = validation_lines_to_issues(ontology_errors)
-        raise ReconciliationPlanValidationError(
+        raise MutationBatchValidationError(
             f"ontology validation failed: {sample}{suffix}",
             structured_issues=tuple(structured),
         )
 
 
-def _validate_hard(plan: ReconciliationPlan, expected_pot_id: str) -> None:
-    if plan.event_ref.pot_id != expected_pot_id:
-        raise ReconciliationPlanValidationError(
+# Canonical name (Step 5a rename); ``validate_reconciliation_plan`` stays as a
+# back-compat alias for existing importers.
+validate_mutation_batch = validate_reconciliation_plan
+
+
+def _validate_hard(plan: MutationBatch, expected_pot_id: str) -> None:
+    # ``event_ref`` is optional (Step 5a): non-event writes carry no event
+    # frame. Only cross-check the pot when an event frame is present.
+    if plan.event_ref is not None and plan.event_ref.pot_id != expected_pot_id:
+        raise MutationBatchValidationError(
             "plan event_ref.pot_id does not match expected pot"
         )
 
     if len(plan.entity_upserts) > MAX_GENERIC_ENTITY_UPSERTS:
-        raise ReconciliationPlanValidationError("entity upsert cap exceeded")
+        raise MutationBatchValidationError("entity upsert cap exceeded")
     if len(plan.edge_upserts) + len(plan.edge_deletes) > MAX_GENERIC_EDGES:
-        raise ReconciliationPlanValidationError("edge mutation cap exceeded")
+        raise MutationBatchValidationError("edge mutation cap exceeded")
     if len(plan.invalidations) > MAX_INVALIDATIONS:
-        raise ReconciliationPlanValidationError("invalidation cap exceeded")
+        raise MutationBatchValidationError("invalidation cap exceeded")
 
     _validate_duplicate_entity_keys(plan.entity_upserts)
     _validate_temporal_strings(plan)
@@ -116,13 +123,13 @@ def _validate_duplicate_entity_keys(items: list[EntityUpsert]) -> None:
         if not key or not key.strip():
             continue
         if key in seen:
-            raise ReconciliationPlanValidationError(
+            raise MutationBatchValidationError(
                 f"duplicate entity_key in batch: {key!r}"
             )
         seen.add(key)
 
 
-def _validate_temporal_strings(plan: ReconciliationPlan) -> None:
+def _validate_temporal_strings(plan: MutationBatch) -> None:
     for eu in plan.entity_upserts:
         _assert_iso_temporal_props(eu.properties, eu.entity_key or "<missing>")
     for ed in plan.edge_upserts:
@@ -145,12 +152,12 @@ def _assert_iso_temporal_props(props: dict[str, object], ref: str) -> None:
         try:
             datetime.fromisoformat(s.replace("Z", "+00:00"))
         except ValueError as exc:
-            raise ReconciliationPlanValidationError(
+            raise MutationBatchValidationError(
                 f"{ref}: {key!r} must be a valid ISO 8601 timestamp"
             ) from exc
 
 
-def _apply_soft_ontology_downgrades(plan: ReconciliationPlan) -> None:
+def _apply_soft_ontology_downgrades(plan: MutationBatch) -> None:
     out = plan.ontology_downgrades
     allowed_nc = BASE_GRAPH_LABELS | CODE_GRAPH_LABELS
     _backfill_edge_required_temporal_props(plan, out)
@@ -285,7 +292,7 @@ def _coerce_lifecycle_for_label(
 
 
 def _backfill_edge_required_temporal_props(
-    plan: ReconciliationPlan, out: list[dict[str, str]]
+    plan: MutationBatch, out: list[dict[str, str]]
 ) -> None:
     """Fill ``valid_from`` / ``valid_at`` / ``observed_at`` with apply time when missing.
 
@@ -342,13 +349,13 @@ def _maybe_rewrite_unknown_edge(edge: EdgeUpsert, out: list[dict[str, str]]) -> 
     )
 
 
-def _quality_issue_attach_room(plan: ReconciliationPlan) -> bool:
+def _quality_issue_attach_room(plan: MutationBatch) -> bool:
     extra = len(plan.ontology_downgrades)
     return len(plan.entity_upserts) + extra <= MAX_GENERIC_ENTITY_UPSERTS
 
 
-def _attach_ontology_downgrade_quality_issues(plan: ReconciliationPlan) -> None:
-    ev_ref = plan.event_ref.event_id
+def _attach_ontology_downgrade_quality_issues(plan: MutationBatch) -> None:
+    ev_ref = plan.event_ref.event_id if plan.event_ref else ""
     for d in plan.ontology_downgrades:
         qid = str(uuid4())
         plan.entity_upserts.append(
@@ -373,7 +380,7 @@ def _attach_ontology_downgrade_quality_issues(plan: ReconciliationPlan) -> None:
 _MATERIAL_PLAN_THRESHOLD = 3
 
 
-def _augment_evidence_warnings(plan: ReconciliationPlan) -> None:
+def _augment_evidence_warnings(plan: MutationBatch) -> None:
     """Append non-blocking warnings when material plans ship without provenance hints.
 
     Non-blocking on purpose: deterministic planners (e.g. merged-PR) carry

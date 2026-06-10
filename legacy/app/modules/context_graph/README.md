@@ -4,7 +4,7 @@
 
 | Goal | Location |
 |------|----------|
-| Domain logic, use cases, HTTP/MCP/CLI routes, Postgres/Neo4j/Graphiti adapters, job queue port + Hatchet worker core | [`app/src/context-engine`](../../src/context-engine) |
+| Domain logic, use cases, HTTP/MCP/CLI routes, Postgres/Neo4j adapters, job queue port + Hatchet worker core | [`app/src/context-engine`](../../src/context-engine) |
 | Potpie-only glue (Celery tasks, DB-scoped container build, auth-mounted FastAPI router, intelligence bundle helpers) | **this directory** |
 
 Do **not** add portable business logic here—it belongs in the `context-engine` package so it stays testable and reusable.
@@ -25,7 +25,7 @@ There is **no** separate `tests/unit/context_graph/` tree in the repo root; that
 | Module | Purpose |
 |--------|---------|
 | `wiring.py` | `PotpieContextEngineSettings`, `SqlalchemyPotResolution`, `UserScopedContextGraphPotResolution` (``context_graph_pots`` + members + repositories only), `build_container_for_session` / `build_container_for_user_session` |
-| `context_graph_pot_model.py` | User-owned context pots (Graphiti scope independent of parsing projects) |
+| `context_graph_pot_model.py` | User-owned context pots (context scope independent of parsing projects) |
 | `context_pot_routes.py` | `GET`/`POST` `/api/v2/context/pots` (API key); mounted from [`app/api/router.py`](../../api/router.py) |
 | `celery_job_queue.py` | Celery implementation of `ContextGraphJobQueuePort` |
 | `tasks.py` | Celery task wrappers calling `application.use_cases.context_graph_jobs` |

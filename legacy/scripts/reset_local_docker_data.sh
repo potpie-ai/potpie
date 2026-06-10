@@ -24,7 +24,7 @@ done
 if [[ "$YES" != true ]]; then
   echo "This will REMOVE all local data in Docker volumes:"
   echo "  - postgres_data (Postgres DB: projects, users, context graph log, …)"
-  echo "  - neo4j_data    (code graph + Graphiti context graph)"
+  echo "  - neo4j_data    (code graph + context graph)"
   echo "  - redis_data    (Celery broker / cache)"
   echo "  - neo4j_logs"
   read -r -p "Type YES to continue: " reply

@@ -2,52 +2,75 @@
 
 This is the real seam, with a thin body behind it. ``resolve``/``search`` run the
 existing one-read-trunk (:class:`ReadOrchestrator`) over the backend's
-``claim_query`` port; ``record`` lowers a durable record into a mutation plan and
-applies it through the backend's ``mutation`` port. With the ``in_memory``
-backend this gives a working resolve → record → resolve round trip — enough to
-exercise the architecture end to end.
+``claim_query`` port. Graph Surface Lite (V1.5) adds ``catalog`` / ``read`` /
+``search_entities`` / ``mutate``:
 
-Record lowering maps ``record_type`` → its ontology predicate via
-:data:`domain.ontology.RECORD_TYPES` (e.g. ``preference`` →
-``POLICY_APPLIES_TO``), so a recorded preference surfaces in the
-``coding_preferences`` reader; free-form types fall back to ``RELATED_TO``.
+- ``catalog`` derives the contract from the ontology, the view map, and the
+  contract constants — no docs needed.
+- ``read`` maps a V2-style ``view`` onto a V1 include and routes through the
+  read trunk, stamping graph-contract metadata + ``subgraph_versions``.
+- ``search_entities`` projects claim rows into entity candidates for identity
+  resolution before a write.
+- ``mutate`` validates → risk-classifies → lowers → dry-runs or applies semantic
+  mutations through the one write door.
 
-What is deliberately shallow (and marked TODO):
-
-- ``mode`` (fast/balanced/verify/deep) is threaded into request metadata but
-  does not yet change retrieval depth.
-- The full async ingestion/reconciliation pipeline (validation, dedup,
-  provenance, structured payload schemas) is bypassed; production ``record``
-  should route through it.
+``record`` (the V1 compatibility write) is rewired through the *same* semantic
+mutation path (Step 8): it converts the structured record into a
+``SemanticMutationRequest`` and calls ``self.mutate`` — there is no private
+direct-lowering path.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
+from typing import Any, Mapping
 
 from application.services.read_orchestrator import ReadOrchestrator
+from application.services.record_to_semantic import record_to_semantic_request
+from application.services.semantic_mutation_lowering import lower_semantic_request
+from application.services.semantic_mutation_validator import validate_semantic_request
 from domain.agent_context_port import (
     build_context_record_source_id,
     normalize_record_type,
 )
-from domain.agent_envelope import AgentEnvelope
-from domain.context_events import EventRef
+from domain.agent_envelope import AgentEnvelope, EvidenceItem
 from domain.errors import CapabilityNotImplemented
-from domain.graph_mutations import EdgeUpsert, EntityUpsert
-from domain.ontology import record_type_spec
+from domain.graph_contract import (
+    APPLICABLE_MUTATION_OPS,
+    DEFERRED_OPS,
+    GRAPH_CONTRACT_VERSION,
+    ONTOLOGY_VERSION,
+    REVIEW_REQUIRED_OPS,
+    SOURCE_AUTHORITIES,
+    TRUTH_CLASSES,
+)
+from domain.graph_entity_summary import normalize_entity_properties
+from domain.graph_views import GRAPH_VIEWS, view_spec, views_for_catalog
+from domain.ontology import EDGE_TYPES, ENTITY_TYPES
 from domain.ports.agent_context import (
     RecordReceipt,
     RecordRequest,
     ResolveRequest,
     SearchRequest,
 )
+from domain.ports.claim_query import ClaimQueryFilter, ClaimRow
 from domain.ports.graph.backend import GraphBackend
-from domain.ports.services.graph_service import DataPlaneStatus
-from domain.reconciliation import ReconciliationPlan
+from domain.ports.services.graph_service import (
+    DataPlaneStatus,
+    GraphCatalogRequest,
+    GraphCatalogResult,
+    GraphEntityCandidate,
+    GraphEntitySearchRequest,
+    GraphEntitySearchResult,
+    GraphReadRequest,
+)
+from domain.semantic_mutations import (
+    SemanticMutationRequest,
+    SemanticMutationResult,
+)
 
-# Scope keys the readers compute overlap against (see
-# ``application.readers.coding_preferences._normalise_scope_for_overlap``).
-_CODE_SCOPE_KEYS = ("language", "framework", "repo", "service", "file_path", "audience")
+_COMMANDS = ("catalog", "read", "search-entities", "mutate")
 
 
 @dataclass(slots=True)
@@ -61,6 +84,10 @@ class DefaultGraphService:
         # One read trunk over the backend's canonical claim store.
         self._orchestrator = ReadOrchestrator(claim_query=self.backend.claim_query)
 
+    @property
+    def backed_includes(self) -> frozenset[str]:
+        return self._orchestrator.backed_includes
+
     # --- reads --------------------------------------------------------------
     def resolve(self, request: ResolveRequest) -> AgentEnvelope:
         return self._orchestrator.resolve(
@@ -71,8 +98,16 @@ class DefaultGraphService:
             include=list(request.include) or None,
             exclude=list(request.exclude) or None,
             as_of=request.as_of,
+            since=request.since,
+            until=request.until,
             max_items=request.max_items,
-            metadata={"mode": request.mode, "source_policy": request.source_policy},
+            freshness_preference=request.freshness_preference,
+            include_invalidated=request.include_invalidated,
+            metadata={
+                "mode": request.mode,
+                "source_policy": request.source_policy,
+                **dict(request.metadata),
+            },
         )
 
     def search(self, request: SearchRequest) -> AgentEnvelope:
@@ -88,6 +123,7 @@ class DefaultGraphService:
 
     # --- writes -------------------------------------------------------------
     def record(self, request: RecordRequest) -> RecordReceipt:
+        """Rewired through the semantic mutation path (Step 8)."""
         record_type = normalize_record_type(request.record_type)
         source_id = build_context_record_source_id(
             record_type=record_type,
@@ -96,78 +132,275 @@ class DefaultGraphService:
             source_refs=list(request.source_refs),
             idempotency_key=request.idempotency_key,
         )
-        plan = self._lower_record(request, record_type=record_type, source_id=source_id)
-        result = self.backend.mutation.apply(plan, expected_pot_id=request.pot_id)
-        applied = (
-            result.mutation_summary.entity_upserts_applied
-            + result.mutation_summary.edge_upserts_applied
+        sem_request = record_to_semantic_request(
+            request, record_type=record_type, source_id=source_id
         )
+        result = self.mutate(sem_request)
+
+        accepted = result.status in ("applied", "validated")
+        status = {
+            "applied": "recorded",
+            "validated": "recorded",
+            "review_required": "review_required",
+            "rejected": "rejected",
+            "error": "rejected",
+        }.get(result.status, "rejected")
+        detail = result.detail
+        if not detail and result.issues:
+            detail = "; ".join(i.message for i in result.issues if i.is_error) or None
         return RecordReceipt(
             pot_id=request.pot_id,
             record_type=record_type,
-            accepted=result.ok,
+            accepted=accepted and result.ok,
             record_id=source_id,
-            status="recorded" if result.ok else "rejected",
-            mutations_applied=applied,
-            detail=result.error,
+            status=status,
+            mutations_applied=result.operations_applied,
+            detail=detail,
+            metadata={
+                "graph_contract_version": result.graph_contract_version,
+                "ontology_version": result.ontology_version,
+                "mutation_id": result.mutation_id,
+                "claim_keys": list(result.claim_keys),
+                "subgraph": result.subgraphs[0] if result.subgraphs else None,
+                "subgraphs": list(result.subgraphs),
+                "truth": sem_request.operations[0].truth,
+                "risk": result.risk,
+                "auto_committed": result.auto_committed,
+            },
         )
 
-    def _lower_record(
-        self, request: RecordRequest, *, record_type: str, source_id: str
-    ) -> ReconciliationPlan:
-        """Lower a durable record onto its ontology predicate.
-
-        Drives off :data:`domain.ontology.RECORD_TYPES`: the record's anchor
-        entity gets ``spec.anchor_label`` and the claim predicate is
-        ``spec.emits_predicate`` — so e.g. a ``preference`` lands as a
-        ``POLICY_APPLIES_TO`` claim that the ``coding_preferences`` reader
-        serves. Free-form types (``emits_predicate`` is ``None``) fall back to
-        the generic ``RELATED_TO`` soft edge. The reader computes scope overlap
-        from ``properties['code_scope']`` and matches the task phrase against
-        ``fact``, so both are carried on the edge.
-        """
-        spec = record_type_spec(record_type)
-        anchor_label = spec.anchor_label if spec else record_type.capitalize()
-        predicate = (
-            spec.emits_predicate if spec and spec.emits_predicate else "RELATED_TO"
+    # --- Graph Surface Lite -------------------------------------------------
+    def catalog(self, request: GraphCatalogRequest) -> GraphCatalogResult:
+        # ``task`` is accepted but ignored in V1.5 (V2 turns it into a ranker).
+        views = views_for_catalog()
+        if request.subgraph:
+            subgraph = request.subgraph.strip()
+            known_subgraphs = sorted({str(v["subgraph"]) for v in views})
+            views = [v for v in views if v["subgraph"] == subgraph]
+            if not views:
+                raise ValueError(
+                    f"unknown graph subgraph {subgraph!r}. "
+                    f"Known subgraphs: {', '.join(known_subgraphs)}"
+                )
+        return GraphCatalogResult(
+            graph_contract_version=GRAPH_CONTRACT_VERSION,
+            ontology_version=ONTOLOGY_VERSION,
+            commands=_COMMANDS,
+            truth_classes=TRUTH_CLASSES,
+            mutation_operations=APPLICABLE_MUTATION_OPS,
+            review_required_operations=REVIEW_REQUIRED_OPS,
+            deferred_operations=DEFERRED_OPS,
+            views=tuple(views),
+            entity_types=tuple(_catalog_entity_types()),
+            predicates=tuple(_catalog_predicates()),
+            match_mode=self._match_mode(),
+            source_authorities=tuple(sorted(SOURCE_AUTHORITIES)),
         )
 
+    def read(self, request: GraphReadRequest) -> AgentEnvelope:
+        spec = view_spec(request.view)
+        if spec is None:
+            known = ", ".join(sorted(GRAPH_VIEWS))
+            raise ValueError(
+                f"unknown graph view {request.view!r}. Known views: {known}"
+            )
         scope = dict(request.scope)
-        code_scope = {
-            key: str(scope[key]) for key in _CODE_SCOPE_KEYS if scope.get(key)
-        }
-        record_key = f"{anchor_label.lower()}:{source_id}"
-        target_key = (
-            f"service:{scope['service']}"
-            if scope.get("service")
-            else f"repo:{scope.get('repo_name', request.pot_id)}"
+        if request.environment:
+            scope["environment"] = request.environment
+        env = self._orchestrator.resolve(
+            pot_id=request.pot_id,
+            intent=None,
+            query=request.query,
+            scope=scope,
+            include=[spec.v1_include],
+            as_of=request.as_of,
+            since=request.since,
+            until=request.until,
+            max_items=request.limit,
+            freshness_preference=request.freshness_preference,
+            depth=request.depth,
+            direction=request.direction,
         )
-        return ReconciliationPlan(
-            event_ref=EventRef(
-                event_id=source_id, source_system="agent", pot_id=request.pot_id
-            ),
-            summary=request.summary,
-            entity_upserts=[
-                EntityUpsert(
-                    entity_key=record_key,
-                    labels=(anchor_label,),
-                    properties={"summary": request.summary},
+        enriched = dataclasses.replace(
+            env,
+            metadata={
+                **dict(env.metadata),
+                "graph_contract_version": GRAPH_CONTRACT_VERSION,
+                "ontology_version": ONTOLOGY_VERSION,
+                "view": spec.name,
+                "subgraph": spec.subgraph,
+                "backed": spec.backed,
+                "match_mode": self._match_mode(),
+                "subgraph_versions": self._subgraph_versions(request.pot_id),
+                "inline_relations": list(spec.inline_relations),
+            },
+        )
+        if spec.inline_relations:
+            return _assemble_inline_relation_items(
+                enriched,
+                claim_query=self.backend.claim_query,
+                inline_relations=spec.inline_relations,
+            )
+        return enriched
+
+    def search_entities(
+        self, request: GraphEntitySearchRequest
+    ) -> GraphEntitySearchResult:
+        cq = self.backend.claim_query
+        predicate_in = (request.predicate,) if request.predicate else ()
+        rows = cq.find_claims(
+            ClaimQueryFilter(
+                pot_id=request.pot_id,
+                predicate_in=predicate_in,
+                fact_query=request.query or None,
+                limit=max(request.limit * 5, 25),
+            )
+        )
+        if request.environment:
+            rows = [r for r in rows if _row_env(r) == request.environment.lower()]
+
+        # Aggregate per entity: best score + supporting claims.
+        agg: dict[str, dict] = {}
+        for row in rows:
+            sim = row.properties.get("semantic_similarity")
+            score = float(sim) if isinstance(sim, (int, float)) else 0.0
+            for key in (row.subject_key, row.object_key):
+                bucket = agg.setdefault(key, {"score": 0.0, "claims": []})
+                bucket["score"] = max(bucket["score"], score)
+                bucket["claims"].append(row)
+
+        labels_map = cq.entity_labels(pot_id=request.pot_id, entity_keys=list(agg))
+        entity_props = getattr(cq, "entity_properties", None)
+
+        candidates: list[GraphEntityCandidate] = []
+        for key, bucket in agg.items():
+            labels = labels_map.get(key, ())
+            if request.type and request.type not in labels:
+                continue
+            props = (
+                entity_props(pot_id=request.pot_id, entity_key=key)
+                if callable(entity_props)
+                else {}
+            )
+            props = normalize_entity_properties(props, entity_key=key)
+            candidates.append(
+                GraphEntityCandidate(
+                    key=key,
+                    labels=tuple(labels),
+                    name=props.get("name") or _humanize(key),
+                    summary=props.get("summary"),
+                    description=props.get("description"),
+                    score=bucket["score"],
+                    supporting_claims=tuple(
+                        _claim_brief(c) for c in bucket["claims"][:5]
+                    ),
                 )
-            ],
-            edge_upserts=[
-                EdgeUpsert(
-                    edge_type=predicate,
-                    from_entity_key=record_key,
-                    to_entity_key=target_key,
-                    properties={
-                        "fact": request.summary,
-                        "record_type": record_type,
-                        "source_system": "agent",
-                        "source_ref": source_id,
-                        "code_scope": code_scope,
-                    },
-                )
-            ],
+            )
+        candidates.sort(key=lambda c: c.score, reverse=True)
+        return GraphEntitySearchResult(
+            entities=tuple(candidates[: request.limit]),
+            match_mode=self._match_mode(),
+            graph_contract_version=GRAPH_CONTRACT_VERSION,
+            ontology_version=ONTOLOGY_VERSION,
+            subgraph_versions=self._subgraph_versions(request.pot_id),
+        )
+
+    def mutate(self, request: SemanticMutationRequest) -> SemanticMutationResult:
+        plan = validate_semantic_request(request)
+        if plan.decision == "rejected":
+            return SemanticMutationResult(
+                ok=False,
+                status="rejected",
+                risk=plan.risk,
+                pot_id=request.pot_id,
+                operations_accepted=len(plan.accepted_ops),
+                issues=plan.issues,
+                detail="; ".join(i.message for i in plan.errors) or None,
+            )
+
+        # Lower the accepted ops (for preview counts + apply).
+        lower_semantic_request(request, plan)
+        preview = _batch_counts(plan)
+        claim_keys = tuple(k for op in plan.accepted_ops for k in op.claim_keys)
+        subgraphs = tuple(
+            sorted({op.subgraph for op in plan.accepted_ops if op.subgraph})
+        )
+
+        if request.dry_run:
+            return SemanticMutationResult(
+                ok=True,
+                status="validated",
+                risk=plan.risk,
+                pot_id=request.pot_id,
+                would_apply=(plan.decision == "apply"),
+                operations_accepted=len(plan.accepted_ops),
+                preview=preview,
+                claim_keys=claim_keys,
+                subgraphs=subgraphs,
+                warnings=_warnings(plan),
+                issues=plan.issues,
+            )
+
+        if plan.decision == "review_required":
+            return SemanticMutationResult(
+                ok=True,
+                status="review_required",
+                risk=plan.risk,
+                pot_id=request.pot_id,
+                auto_committed=False,
+                operations_accepted=len(plan.accepted_ops),
+                operations_applied=0,
+                claim_keys=claim_keys,
+                subgraphs=subgraphs,
+                warnings=_warnings(plan),
+                issues=plan.issues,
+                detail="operations require review and have no auto-apply path in V1.5",
+            )
+
+        # decision == "apply"
+        if plan.batch is None or not (
+            plan.batch.entity_upserts
+            or plan.batch.edge_upserts
+            or plan.batch.invalidations
+        ):
+            return SemanticMutationResult(
+                ok=True,
+                status="applied",
+                risk=plan.risk,
+                pot_id=request.pot_id,
+                auto_committed=True,
+                operations_accepted=len(plan.accepted_ops),
+                operations_applied=0,
+                mutations_applied=preview,
+                warnings=_warnings(plan),
+                issues=plan.issues,
+            )
+
+        result = self.backend.mutation.apply(
+            plan.batch,
+            expected_pot_id=request.pot_id,
+            provenance_context=plan.provenance,
+        )
+        summary = result.mutation_summary
+        return SemanticMutationResult(
+            ok=result.ok,
+            status="applied" if result.ok else "error",
+            risk=plan.risk,
+            pot_id=request.pot_id,
+            auto_committed=result.ok,
+            mutation_id=result.mutation_id,
+            operations_accepted=len(plan.accepted_ops),
+            operations_applied=len(plan.accepted_ops) if result.ok else 0,
+            mutations_applied={
+                "entity_upserts": summary.entity_upserts_applied,
+                "edge_upserts": summary.edge_upserts_applied,
+                "invalidations": summary.invalidations_applied,
+            },
+            claim_keys=claim_keys,
+            subgraphs=subgraphs,
+            warnings=_warnings(plan),
+            issues=plan.issues,
+            detail=result.error,
         )
 
     # --- status -------------------------------------------------------------
@@ -184,8 +417,282 @@ class DefaultGraphService:
             counts=counts,
             freshness=freshness,
             quality=quality,
+            match_mode=self._match_mode(),
             detail=readiness.detail,
         )
+
+    # --- internals ----------------------------------------------------------
+    def _match_mode(self) -> str:
+        mode = getattr(self.backend, "match_mode", None)
+        if mode:
+            return mode
+        return getattr(self.backend.claim_query, "match_mode", "lexical")
+
+    def _subgraph_versions(self, pot_id: str) -> dict[str, int]:
+        # V1.5 stub: a single monotonic counter (claim count) is enough for V2's
+        # optimistic concurrency to be additive later.
+        counts = _safe(lambda: dict(self.backend.analytics.counts(pot_id)), {})
+        return {"_global": int(counts.get("claims", 0))}
+
+
+# ---------------------------------------------------------------------------
+# Catalog projection
+# ---------------------------------------------------------------------------
+
+
+def _catalog_entity_types() -> list[dict]:
+    out: list[dict] = []
+    for label, spec in ENTITY_TYPES.items():
+        if not spec.public:
+            continue
+        out.append(
+            {
+                "label": label,
+                "key_prefix": spec.key_prefix,
+                "identity_policy": spec.identity_policy,
+                "category": spec.category,
+                "scope": spec.scope,
+            }
+        )
+    return out
+
+
+def _catalog_predicates() -> list[dict]:
+    out: list[dict] = []
+    for name, spec in EDGE_TYPES.items():
+        if not spec.public:
+            continue
+        out.append(
+            {
+                "name": name,
+                "category": spec.category,
+                "allowed_pairs": [list(pair) for pair in spec.allowed_pairs],
+                "singleton": spec.singleton,
+            }
+        )
+    return out
+
+
+def _batch_counts(plan) -> dict[str, int]:
+    batch = plan.batch
+    if batch is None:
+        return {"entity_upserts": 0, "edge_upserts": 0, "invalidations": 0}
+    return {
+        "entity_upserts": len(batch.entity_upserts),
+        "edge_upserts": len(batch.edge_upserts),
+        "invalidations": len(batch.invalidations),
+    }
+
+
+def _warnings(plan) -> tuple[str, ...]:
+    return tuple(i.message for i in plan.issues if not i.is_error)
+
+
+def _row_env(row: ClaimRow) -> str | None:
+    env = row.environment
+    return env.lower() if isinstance(env, str) else None
+
+
+def _claim_brief(row: ClaimRow) -> dict:
+    return {
+        "predicate": row.predicate,
+        "subject_key": row.subject_key,
+        "object_key": row.object_key,
+        "claim_key": row.claim_key,
+        "subgraph": row.subgraph,
+        "truth": row.truth,
+        "fact": row.fact,
+        "environment": _row_env(row),
+        "source_refs": list(row.source_refs),
+    }
+
+
+def _humanize(key: str) -> str:
+    body = key.split(":", 1)[1] if ":" in key else key
+    return body.replace("-", " ").replace("_", " ")
+
+
+def _assemble_inline_relation_items(
+    env: AgentEnvelope,
+    *,
+    claim_query,
+    inline_relations: tuple[str, ...],
+) -> AgentEnvelope:
+    """Project flat ranked claim items into entity payloads with relations."""
+    allowed = {p.upper() for p in inline_relations}
+    relation_groups: dict[str, list[dict[str, Any]]] = {}
+    best_item: dict[str, EvidenceItem] = {}
+
+    for item in env.items:
+        payload = dict(item.payload)
+        predicate = _str_or_none(payload.get("predicate"))
+        subject_key = _str_or_none(payload.get("subject_key"))
+        object_key = _str_or_none(payload.get("object_key"))
+        if (
+            predicate is None
+            or subject_key is None
+            or object_key is None
+            or predicate.upper() not in allowed
+        ):
+            continue
+
+        out_rel = _relation_payload(
+            item,
+            payload=payload,
+            predicate=predicate,
+            from_key=subject_key,
+            to_key=object_key,
+            direction="out",
+            related_key=object_key,
+        )
+        in_rel = _relation_payload(
+            item,
+            payload=payload,
+            predicate=predicate,
+            from_key=subject_key,
+            to_key=object_key,
+            direction="in",
+            related_key=subject_key,
+        )
+        relation_groups.setdefault(subject_key, []).append(out_rel)
+        relation_groups.setdefault(object_key, []).append(in_rel)
+        _keep_best(best_item, subject_key, item)
+        _keep_best(best_item, object_key, item)
+
+    if not relation_groups:
+        return dataclasses.replace(
+            env,
+            metadata={
+                **dict(env.metadata),
+                "read_shape": "flat_claims",
+                "inline_relation_assembly": "no_relation_payloads",
+            },
+        )
+
+    entity_keys = tuple(relation_groups)
+    labels = _safe_entity_labels(
+        claim_query, pot_id=env.pot_id, entity_keys=entity_keys
+    )
+    entity_props = getattr(claim_query, "entity_properties", None)
+    props_by_key = {
+        entity_key: normalize_entity_properties(
+            (
+                entity_props(pot_id=env.pot_id, entity_key=entity_key)
+                if callable(entity_props)
+                else {}
+            ),
+            entity_key=entity_key,
+        )
+        for entity_key in entity_keys
+    }
+
+    items: list[EvidenceItem] = []
+    for entity_key, relations in relation_groups.items():
+        top = best_item[entity_key]
+        props = props_by_key.get(entity_key, {})
+        items.append(
+            EvidenceItem(
+                include=top.include,
+                candidate_key=entity_key,
+                score=top.score,
+                coverage_status=top.coverage_status,
+                breakdown=dict(top.breakdown),
+                payload={
+                    "entity": {
+                        "key": entity_key,
+                        "labels": list(labels.get(entity_key, ())),
+                        "name": props.get("name") or _humanize(entity_key),
+                        "summary": props.get("summary"),
+                        "description": props.get("description"),
+                    },
+                    "relations": [
+                        {
+                            **rel,
+                            "related_entity": {
+                                "key": rel["related_key"],
+                                "labels": list(labels.get(rel["related_key"], ())),
+                                "name": props_by_key.get(rel["related_key"], {}).get(
+                                    "name"
+                                )
+                                or _humanize(rel["related_key"]),
+                                "summary": props_by_key.get(rel["related_key"], {}).get(
+                                    "summary"
+                                ),
+                                "description": props_by_key.get(
+                                    rel["related_key"], {}
+                                ).get("description"),
+                            },
+                        }
+                        for rel in relations
+                    ],
+                    "relation_count": len(relations),
+                },
+            )
+        )
+
+    items.sort(key=lambda item: item.score, reverse=True)
+    return dataclasses.replace(
+        env,
+        items=tuple(items),
+        metadata={
+            **dict(env.metadata),
+            "read_shape": "entity_relations",
+            "inline_relation_count": sum(len(v) for v in relation_groups.values()),
+        },
+    )
+
+
+def _relation_payload(
+    item: EvidenceItem,
+    *,
+    payload: Mapping[str, Any],
+    predicate: str,
+    from_key: str,
+    to_key: str,
+    direction: str,
+    related_key: str,
+) -> dict[str, Any]:
+    return {
+        "predicate": predicate,
+        "direction": direction,
+        "from_key": from_key,
+        "to_key": to_key,
+        "related_key": related_key,
+        "fact": payload.get("fact"),
+        "source_refs": list(payload.get("source_refs") or []),
+        "source_system": payload.get("source_system"),
+        "truth": payload.get("truth"),
+        "environment": payload.get("environment"),
+        "valid_at": payload.get("valid_at"),
+        "evidence_strength": payload.get("evidence_strength"),
+        "claim": {
+            "candidate_key": item.candidate_key,
+            "score": item.score,
+            "coverage_status": item.coverage_status,
+            "breakdown": dict(item.breakdown),
+        },
+    }
+
+
+def _keep_best(
+    best_item: dict[str, EvidenceItem], entity_key: str, item: EvidenceItem
+) -> None:
+    previous = best_item.get(entity_key)
+    if previous is None or item.score > previous.score:
+        best_item[entity_key] = item
+
+
+def _safe_entity_labels(claim_query, *, pot_id: str, entity_keys: tuple[str, ...]):
+    try:
+        return dict(claim_query.entity_labels(pot_id=pot_id, entity_keys=entity_keys))
+    except CapabilityNotImplemented:
+        return {}
+
+
+def _str_or_none(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def _safe(fn, default):

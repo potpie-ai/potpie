@@ -1,11 +1,14 @@
 # Potpie CLI Flow And Command Contract
 
-Last reviewed: 2026-05-29.
+Last reviewed: 2026-06-08.
 
-This is the target product contract for the `potpie` CLI. The same command
-language should work across local OSS and managed backends. The active pot
-decides where the CLI routes the request: local pots route to the local daemon,
-and managed pots route to the authenticated managed backend.
+This is the target product contract for the `potpie` CLI. Graph V1 keeps the
+existing compatibility wrappers while moving them onto V2-compatible graph
+internals. Graph V2 later exposes the explicit `potpie graph ...` workbench over
+the same internals. The same command language should work across local OSS and
+managed backends. The active pot decides where the CLI routes the request: local
+pots route to the local daemon, and managed pots route to the authenticated
+managed backend.
 
 ```mermaid
 flowchart TB
@@ -23,35 +26,36 @@ flowchart TB
   cg_managed_profile -. "consume events" .-> cg_ledger
 ```
 
-The CLI is the user/agent command surface for setup, login, pots, sources,
-ingestion, graph reads/writes, graph/backend admin, skills, and explicit cloud
-sync. For setup, the CLI owns flags, validation, output, and daemon bootstrap;
-the daemon-hosted `SetupOrchestrator` owns local dependency setup. Commands route
-by the active or selected pot. Selecting a managed pot after `potpie login` is
-the explicit remote boundary. Explicit ledger commands may call a managed or
-self-hosted Event Ledger without changing where graph state is stored.
+The CLI is the user/agent command surface for setup, login, pots, source
+registration, queued connector/source-event ingestion, graph reads/writes,
+graph/backend admin, skills, and explicit cloud sync. For setup, the CLI owns
+flags, validation, output, and daemon bootstrap; the daemon-hosted
+`SetupOrchestrator` owns local dependency setup. Commands route by the active or
+selected pot. Selecting a managed pot after `potpie login` is the explicit remote
+boundary. Explicit ledger commands may call a managed or self-hosted Event
+Ledger without changing where graph state is stored.
 
 ## Journey
 
 ```mermaid
 flowchart LR
   cg_setup["setup or login"]
-  cg_status["status"]
-  cg_resolve["resolve/search"]
+  cg_status["graph status"]
+  cg_read["catalog/read"]
   cg_work["work"]
-  cg_record["record"]
-  cg_ingest["ingest/sync"]
+  cg_write["propose/commit"]
+  cg_ingest["connector ingest/sync"]
 
-  cg_setup --> cg_status --> cg_resolve --> cg_work --> cg_record
+  cg_setup --> cg_status --> cg_read --> cg_work --> cg_write
   cg_ingest --> cg_status
-  cg_record --> cg_resolve
+  cg_write --> cg_read
 ```
 
 Local first run:
 
 ```bash
 pip install potpie
-potpie setup --repo . --agent claude --scan
+potpie setup --repo . --agent claude
 potpie status
 ```
 
@@ -69,14 +73,14 @@ Managed ledger use from a local graph is also explicit:
 ```bash
 potpie login
 potpie ledger use managed
-potpie ledger pull --apply
+potpie ledger pull --source <id>
 ```
 
 ## Profiles
 
 | Profile | Routes to | Storage | Lifecycle behavior |
 |---|---|---|---|
-| Local | Local daemon hosting Pot Management, Graph Service, and Skill Manager | Local state DB, embedded GraphBackend, local skill cache | `potpie setup` installs/starts daemon; the daemon provisions dependencies, creates active `default` pot, registers repo, optionally scans and installs skills. |
+| Local | Local daemon hosting Pot Management, Graph Service, and Skill Manager | Local state DB, embedded GraphBackend, local skill cache | `potpie setup` installs/starts daemon; the daemon provisions dependencies, creates active `default` pot, registers repo, and optionally installs skills. |
 | Managed | Managed backend API hosting the same services | Hosted operational DB, hosted graph/search, hosted skill/catalog stores | `potpie login` authenticates to `cloud.backend_url`; managed pots become available through the same pot commands. Cloud push/pull/sync remain explicit. |
 
 Commands default to the active pot. Before login, that is normally the local
@@ -116,8 +120,7 @@ daemon-hosted setup flow:
 4. runs migrations;
 5. creates a local `default` pot and marks it active;
 6. registers the repo source;
-7. optionally scans;
-8. optionally installs skills for the requested agent harness.
+7. optionally installs skills for the requested agent harness.
 
 `--pot <name>` only overrides the initial pot name. If an active pot already
 exists, setup reuses it unless `--pot` names another pot to create/use.
@@ -141,13 +144,12 @@ group:
 
 | Group | Code slot | Routes to |
 |---|---|---|
-| `setup` `status` `doctor` `config` `login` `logout` `whoami` | `commands/bootstrap.py` | `HostShell`; setup bootstraps daemon then routes to `SetupOrchestrator`; login routes to managed auth |
-| `resolve` `search` `record` | `commands/query.py` | `HostShell.agent_context` (`AgentContextPort`) |
+| `setup` `status` `doctor` `config` `login` `logout` `whoami` | `commands/bootstrap.py` | `HostShell`; setup bootstraps daemon then routes to `SetupOrchestrator`; login routes to managed auth; top-level `status` is product/host status only |
 | `pot` `source` | `commands/pots.py` | `HostShell.pots` (`PotManagementService`) |
 | `daemon` | `commands/daemon.py` | `HostShell.daemon` (`Daemon`) |
-| `ingest` | `commands/ingest.py` | scanner use cases _(not yet wired — returns not-implemented)_ |
 | `ledger` | `commands/ledger.py` | `HostShell.ledger` (`LedgerFacade`) |
-| `graph` `backend` | `commands/graph.py` | `HostShell.graph` + `HostShell.backend` (`GraphBackend`) |
+| `graph` | `commands/graph.py` | `HostShell.graph` (`GraphService` / Graph Workbench Port): status, catalog, describe, search-entities, read, propose, commit, history, inbox, admin |
+| `backend` | `commands/backend.py` | `HostShell.backend` (`GraphBackend`) |
 | `skills` | `commands/skills.py` | `HostShell.skills` (`SkillManager`) |
 | `cloud` | `commands/cloud.py` | explicit snapshot sync and managed skill sync |
 
@@ -160,7 +162,7 @@ migrated onto `HostShell`.
 ### Bootstrap And Profile
 
 ```bash
-potpie setup [--repo .] [--pot <name>] [--agent claude] [--scan] [--yes] [--dry-run]
+potpie setup [--repo .] [--pot <name>] [--agent claude] [--yes] [--dry-run]
 potpie login [--backend-url <url>] [--org <id>]
 potpie logout
 potpie whoami
@@ -176,7 +178,7 @@ Event Ledger binding and consumer backlog, Skill Manager drift, login state when
 relevant, and next action.
 
 `doctor` is local-profile diagnostics: paths, logs, auth/socket state,
-migrations, scanner registry, and skill drift.
+migrations, and skill drift.
 
 ### Local Daemon Admin
 
@@ -212,30 +214,19 @@ Local setup creates and uses `default`. `pot create` is for additional workspace
 boundaries. After login, managed pots appear in the same list/use surface. If a
 local pot and managed pot share a name, `potpie use` must be disambiguated with
 `--local`, `--managed`, or a qualified id. Source commands route to the active
-pot's Pot Management service.
+pot's Pot Management service. `potpie source add repo ...` only records source
+metadata for pot resolution and visibility; it does not inspect, scan, or ingest
+the repository.
 
-### Ingestion And Sync
+### Sync
 
 ```bash
-potpie ingest scan [--source <id>] [--changed] [--watch]
-potpie ingest status [--json]
-potpie ingest runs
-potpie ingest show <run-id> [--json]
-potpie ingest replay <run-id>
-potpie ingest retry <run-id> [--failed] [--timed-out]
-potpie ingest dead-letter list [--json]
-potpie ingest dead-letter retry <event-id>
-
 potpie cloud push [--pot <name>]
 potpie cloud pull [--pot <name>]
 ```
 
-Registering a source records metadata. Ingestion writes claims through scanner
-use cases, ledger event-processing runs, and the Graph Service. Cloud push/pull
-moves a pot snapshot between local and managed backends; it must remain explicit.
-
-Good first scanners: CODEOWNERS, dependency manifests, Kubernetes/Helm, OpenAPI,
-CI workflow files, service manifests, ADR indexes, and runbook indexes.
+Registering a source records metadata. Cloud push/pull moves a pot snapshot
+between local and managed backends; it must remain explicit.
 
 ### Event Ledger
 
@@ -245,7 +236,7 @@ potpie ledger use managed [--org <id>]
 potpie ledger use self-hosted <url>
 potpie ledger sources list [--json]
 potpie ledger query [--source <id>] [--type <kind>] [--since <time>] [--until <time>] [--limit <n>] [--json]
-potpie ledger pull [--source <id>] [--filter <expr>] [--apply] [--json]
+potpie ledger pull --source <id> [--filter <expr>] [--json]
 potpie ledger disconnect
 ```
 
@@ -256,40 +247,71 @@ history and returns ordered pages with opaque replay tokens.
 
 `ledger query` inspects ledger history without touching graph consumer state.
 `ledger pull` fetches a page using the selected graph consumer cursor and any
-filters. With `--apply`, the CLI/host first writes the pulled events into the
-selected graph's consumer ingestion ledger, then advances that graph's consumer
-cursor after durable enqueue. Processing, retries, timeouts, and dead-letter
-state are owned by the graph consumer's ingestion ledger. Without `--apply`, the
-command is a preview/dry-run and does not enqueue events or advance the graph
-consumer cursor.
+filters, then advances the local cursor. It does not enqueue events or write
+graph claims.
 
-### Query And Memory
+### Graph V1 Compatibility Surface
+
+Graph V1 keeps the existing top-level wrappers while their internals move to the
+V2-compatible ontology, view, semantic mutation, validation, and inbox model.
 
 ```bash
-potpie resolve "<task>" [--intent feature] [--include infra_topology,prior_bugs] [--json]
-potpie search "<lookup>" [--include prior_bugs] [--json]
-potpie record --type fix --summary "..." [--details details.json] [--source-ref ...]
-potpie record --type preference --summary "..." [--scope service:inventory-svc]
+potpie status [--json]
+potpie resolve "debug refund failures" --intent debugging [--json]
+potpie search "bulk refunds" [--json]
+potpie record --type fix --summary "..." --scope service:refunds-api [--json]
+```
+
+| CLI command | Internal target |
+|---|---|
+| `potpie status` | Future `graph status` readiness shape, with V1 compatibility output. |
+| `potpie resolve` | `intent/include` mapped to named read views. |
+| `potpie search` | Narrow entity/claim lookup over claim and semantic indexes. |
+| `potpie record` | Semantic mutation validation, low-risk commit, or inbox item. |
+
+These commands are compatibility wrappers, not the long-term product contract.
+They must not bypass semantic validation, evidence requirements, provenance, or
+inbox handling.
+
+### Graph V2 Workbench
+
+```bash
+potpie graph status [--json]
+potpie graph catalog --task "debug refund failures" [--json]
+potpie graph describe bugs --view prior_occurrences [--examples] [--json]
+potpie graph search-entities --query "bulk refunds" --subgraph features [--json]
+potpie graph read --view bugs.prior_occurrences --scope service:refunds-api [--json]
+potpie timeline recent [--time-window 7d] [--service refunds-api] [--json]
+potpie graph propose --file mutation.json [--json]
+potpie graph commit mutation-plan:01JY8T5C [--json]
+potpie graph history --entity service:payments-api [--json]
+potpie graph inbox add --summary "..." --evidence github:pr:acme/payments:955 [--json]
 ```
 
 | CLI command | Service path |
 |---|---|
-| `potpie resolve` | `context_resolve` -> Graph Service -> readers -> `AgentEnvelope` |
-| `potpie search` | `context_search` -> same envelope path |
-| `potpie record` | `context_record` -> record emitter -> graph mutation |
-| `potpie status` | `context_status` + Pot Management + Skill Manager nudge |
+| `potpie graph status` | Pot Management + Graph Service + GraphBackend + Ledger + Skill Manager readiness |
+| `potpie graph catalog` / `describe` | Ontology Catalog contracts and examples |
+| `potpie graph search-entities` | Identity Resolver over entity index, aliases, and source refs |
+| `potpie graph read` / `history` | Read View Router over claim query, semantic search, traversal projections, and audit |
+| `potpie timeline recent` | Project-wide event view over the active/current pot, deduped by source ref and sorted by occurrence time |
+| `potpie graph propose` | Plan Validator + Plan Store; no graph write |
+| `potpie graph commit` | Commit Engine applies a stored plan by `plan_id` and writes audit/history |
+| `potpie graph inbox` | Pending graph work capture and processing queue |
 
 These commands are shared across local and managed pots. The active or selected
 pot decides whether they route to the local daemon or managed backend API.
+Top-level `resolve`, `search`, `record`, and `context_*` tools remain Graph V1
+compatibility wrappers until the workbench is ready.
 
-### Graph And Backend
+### Graph Admin And Backend
 
 ```bash
-potpie graph status [--json]
-potpie graph inspect <entity-key> [--depth 2] [--json]
 potpie graph export <file>
 potpie graph import <file> [--pot <name>]
 potpie graph repair [--semantic-index] [--all]
+potpie graph reset [--confirm]
+potpie graph admin ...
 
 potpie backend list
 potpie backend status [--json]
@@ -306,14 +328,14 @@ query SQLite, Neo4j, vector indexes, hosted stores, or state tables directly.
 potpie skills list
 potpie skills install [<id>] --agent claude [--scope global|project] [--path .]
 potpie skills update [--all] [--agent claude] [--scope global|project] [--path .]
-potpie skills remove <id> --agent claude [--scope global|project] [--path .]
+potpie skills remove [<id>|--all] --agent claude [--scope global|project] [--path .]
 potpie skills status --agent claude [--scope global|project] [--path .] [--json]
 potpie skills add <path-or-url>
 potpie cloud skills sync [--agent <id>]
 ```
 
 Skills are CLI-managed recipes. Agents only see an advisory `skills` block in
-`context_status` with missing/outdated skills and an exact install command.
+`potpie graph status` with missing/outdated skills and an exact install command.
 Cloud skill sync is explicit.
 
 Skill install defaults to `--scope global`, writing to the harness's user-level
@@ -334,7 +356,7 @@ shared with the repository.
 - Human output: action-oriented summary and next command.
 - `--json`: stable fields for agents/scripts; additive changes are OK.
 - `setup --dry-run`: returns a preview document with planned steps; no mutation,
-  daemon dependency setup, scan, or skill install occurs.
+  daemon dependency setup, source registration, or skill install occurs.
 - Mutations should be idempotent when possible.
 - Destructive commands require `--confirm` or interactive confirmation.
 - Exit codes:
@@ -348,31 +370,37 @@ shared with the repository.
 
 ## First Use Cases
 
-- New repo onboarding: setup, scan, ask how services fit together.
-- Feature work: resolve preferences, topology, owners, and decisions.
-- Debugging: resolve prior bugs, recent timeline, dependencies, and runbooks.
-- Review prep: search recent decisions and project conventions for a PR.
-- Incident memory: record root cause, fix, verification, and follow-up.
+- New repo onboarding: setup, register source, run harness-led ingestion for
+  explicit docs/history, ask how services fit together.
+- Feature work: read feature context, topology, owners, and decisions.
+- Debugging: read prior bugs, recent timeline, dependencies, and runbooks.
+- Review prep: read recent decisions and project conventions for a PR.
+- Incident memory: propose root cause, fix, verification, and follow-up facts.
 - Managed work: log in to a managed backend, list managed pots, `potpie use` a
-  managed pot, then run the same resolve/search/record/status commands.
+  managed pot, then run the same `potpie graph ...` commands.
 - Managed migration: push a local pot to cloud, or pull a hosted pot for local
   work.
 - Integration-backed local graph: log in to managed Potpie, bind the managed
-  ledger, pull GitHub/Linear events, and apply them through local ingestion into
+  ledger, pull GitHub/Linear source events, and apply queued event ingestion into
   the local graph.
-- Offline work: query and record against the embedded backend without cloud auth.
+- Offline work: read and commit validated graph facts against the embedded backend
+  without cloud auth.
 
 ## Build Order
 
 1. Local setup + daemon lifecycle + health/logs.
 2. Local Pot Management with active `default` pot and source registry.
 3. Embedded GraphBackend and conformance suite.
-4. Shared `resolve/search/status/record` through daemon services.
-5. Scanner ingestion and run history.
-6. `graph`, `backend`, and `skills` commands.
-7. `potpie login` against configurable `cloud.backend_url`, unified
+4. V1 wrappers over V2-compatible ontology, named views, semantic mutations,
+   validation, and inbox handling.
+5. Canonical `potpie graph status/catalog/describe/search-entities/read` through
+   daemon services.
+6. `potpie graph propose/commit/history/inbox` through daemon services.
+7. Event Ledger run history.
+8. `backend` and `skills` commands.
+9. `potpie login` against configurable `cloud.backend_url`, unified
    local/managed pot listing and `potpie use`, and explicit cloud push/pull/skills
    sync.
-8. Event Ledger binding, consumer cursor storage, status, and pull/apply commands
-   that route applied events through ingestion.
-9. Managed profile routing for shared command groups.
+10. Event Ledger binding, consumer cursor storage, status, and pull/apply
+   commands that route queued source events through event ingestion.
+11. Managed profile routing for shared command groups.

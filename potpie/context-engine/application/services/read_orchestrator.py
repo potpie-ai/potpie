@@ -83,6 +83,8 @@ class ReadOrchestrator:
         max_items: int = 12,
         freshness_preference: str = "balanced",
         include_invalidated: bool = False,
+        depth: int | None = None,
+        direction: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> AgentEnvelope:
         intent = normalize_context_intent(intent)
@@ -98,6 +100,8 @@ class ReadOrchestrator:
             max_items=max_items,
             freshness_preference=freshness_preference,
             include_invalidated=include_invalidated,
+            depth=depth,
+            direction=direction,
         )
         results: list[IncludeResult] = []
         extra_unsupported: list[UnsupportedInclude] = []

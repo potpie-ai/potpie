@@ -97,7 +97,6 @@ dependencies = [
     "uuid6>=2025.0.1",
     "uvicorn>=0.38.0",
     "greenlet>=3.3.0",
-    "graphiti-core>=0.28.2",
     "griffe>=2.0.1",
     "tldextract>=5.3.1",
     "hatchet-sdk>=1.29.0",

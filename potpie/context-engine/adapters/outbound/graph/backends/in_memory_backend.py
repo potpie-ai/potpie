@@ -18,19 +18,34 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Sequence
 
-from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
+from adapters.outbound.graph.in_memory_reader import (
+    InMemoryClaimQueryStore,
+    card_for_row,
+)
+from adapters.outbound.graph.canonical_claim_query import CONTRACT_EDGE_KEYS
+from adapters.outbound.graph.entity_summary_repair import (
+    ENTITY_SUMMARY_TARGET,
+    repaired_entity_properties,
+    wants_entity_summary_repair,
+)
+from domain.graph_contract import evidence_strength_for_truth
+from domain.graph_entity_summary import (
+    merge_entity_display_properties,
+    normalize_entity_properties,
+)
 from domain.graph_mutations import ProvenanceContext
 from domain.lifecycle import DONE, SetupPlan, StepResult
 from domain.ports.claim_query import ClaimQueryFilter, ClaimRow
+from domain.ports.embedder import EmbedderPort
 from domain.ports.graph.analytics import RepairReport
 from domain.ports.graph.backend import BackendCapabilities
 from domain.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
 from domain.ports.graph.mutation import BackendReadiness
 from domain.ports.graph.snapshot import SnapshotManifest
 from domain.reconciliation import (
+    MutationBatch,
+    MutationResult,
     MutationSummary,
-    ReconciliationPlan,
-    ReconciliationResult,
 )
 
 _PROFILE = "in_memory"
@@ -41,6 +56,7 @@ class _Mutation:
     store: InMemoryClaimQueryStore
     on_change: Any = None
     profile: str = _PROFILE
+    embedder: EmbedderPort | None = None
 
     def _notify(self) -> None:
         if self.on_change is not None:
@@ -48,46 +64,119 @@ class _Mutation:
 
     def apply(
         self,
-        plan: ReconciliationPlan,
+        plan: MutationBatch,
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
-    ) -> ReconciliationResult:
+    ) -> MutationResult:
         summary = MutationSummary()
+        mutation_id = uuid.uuid4().hex
         for ent in plan.entity_upserts:
             self.store.set_entity_label(
                 pot_id=expected_pot_id, entity_key=ent.entity_key, labels=ent.labels
             )
+            self.store.set_entity_properties(
+                pot_id=expected_pot_id,
+                entity_key=ent.entity_key,
+                properties=merge_entity_display_properties(
+                    ent.properties,
+                    existing=self.store.entity_properties(
+                        pot_id=expected_pot_id, entity_key=ent.entity_key
+                    ),
+                    entity_key=ent.entity_key,
+                ),
+            )
             summary.entity_upserts_applied += 1
         for edge in plan.edge_upserts:
-            props = dict(edge.properties)
             self.store.add(
-                ClaimRow(
-                    pot_id=expected_pot_id,
-                    predicate=edge.edge_type,
-                    subject_key=edge.from_entity_key,
-                    object_key=edge.to_entity_key,
-                    valid_at=props.get("valid_at"),
-                    evidence_strength=props.get("evidence_strength", "stated"),
-                    source_system=props.get("source_system"),
-                    source_ref=props.get("source_ref"),
-                    fact=props.get("fact") or plan.summary,
-                    properties=props,
+                self._build_claim_row(
+                    edge, pot_id=expected_pot_id, mutation_id=mutation_id,
+                    fallback_fact=plan.summary,
                 )
             )
             summary.edge_upserts_applied += 1
-        self._notify()
-        return ReconciliationResult(
-            ok=True, mutation_id=uuid.uuid4().hex, mutation_summary=summary
+        summary.invalidations_applied = self._apply_invalidations(
+            plan, pot_id=expected_pot_id
         )
+        self._notify()
+        return MutationResult(
+            ok=True, mutation_id=mutation_id, mutation_summary=summary
+        )
+
+    def _build_claim_row(
+        self,
+        edge: Any,
+        *,
+        pot_id: str,
+        mutation_id: str,
+        fallback_fact: str,
+    ) -> ClaimRow:
+        props = dict(edge.properties)
+        props.setdefault("mutation_id", mutation_id)
+        source_refs = props.get("source_refs")
+        truth = _coerce_str(props.get("truth"))
+        row = ClaimRow(
+            pot_id=pot_id,
+            predicate=edge.edge_type,
+            subject_key=edge.from_entity_key,
+            object_key=edge.to_entity_key,
+            valid_at=_coerce_dt(props.get("valid_at")),
+            evidence_strength=evidence_strength_for_truth(truth),
+            source_system=_coerce_str(props.get("source_system")),
+            source_ref=_coerce_str(props.get("source_ref")),
+            fact=_coerce_str(props.get("fact")) or fallback_fact or None,
+            properties=_reader_extras(props),
+            fact_embedding=_vector_tuple(props.get("fact_embedding")),
+            claim_key=_coerce_str(props.get("claim_key")),
+            subgraph=_coerce_str(props.get("subgraph")),
+            truth=truth,
+            confidence=_coerce_float(props.get("confidence")),
+            description=_coerce_str(props.get("description")),
+            environment=_coerce_str(props.get("environment")),
+            observed_at=_coerce_dt(props.get("observed_at")),
+            valid_until=_coerce_dt(props.get("valid_until")),
+            mutation_id=mutation_id,
+            source_refs=tuple(source_refs) if isinstance(source_refs, (list, tuple)) else (),
+            evidence=_evidence_tuple(props.get("evidence")),
+            graph_contract_version=_coerce_str(props.get("graph_contract_version")),
+            ontology_version=_coerce_str(props.get("ontology_version")),
+        )
+        # Embed the retrieval card on write (R1/R2) so reads use a real vector.
+        if self.embedder is not None and row.fact_embedding is None:
+            row = _with_embedding(row, self.embedder.embed(card_for_row(row)))
+        return row
+
+    def _apply_invalidations(self, plan: MutationBatch, *, pot_id: str) -> int:
+        if not plan.invalidations:
+            return 0
+        now = datetime.now(timezone.utc)
+        edge_targets: set[tuple[str, str, str]] = set()
+        entity_targets: set[str] = set()
+        for inv in plan.invalidations:
+            if inv.target_edge:
+                pred, subj, obj = inv.target_edge
+                edge_targets.add((pred.upper(), subj, obj))
+            if inv.target_entity_key:
+                entity_targets.add(inv.target_entity_key)
+        count = 0
+        for i, row in enumerate(self.store.rows):
+            if row.pot_id != pot_id or row.invalid_at is not None:
+                continue
+            triple = (row.predicate.upper(), row.subject_key, row.object_key)
+            if triple in edge_targets or (
+                entity_targets & {row.subject_key, row.object_key}
+            ):
+                self.store.rows[i] = _with_invalid_at(row, now)
+                count += 1
+        return count
 
     async def apply_async(
         self,
-        plan: ReconciliationPlan,
+        plan: MutationBatch,
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
-    ) -> ReconciliationResult:
+    ) -> MutationResult:
         # In-memory mutations are pure-sync CPU work (no I/O to await); the
         # async door just delegates so async callers get a uniform surface.
         return self.apply(
@@ -105,7 +194,12 @@ class _Mutation:
         for i, row in enumerate(self.store.rows):
             if row.pot_id != pot_id or row.invalid_at is not None:
                 continue
-            if row.subject_key in keys or row.object_key in keys:
+            # Match by first-class claim_key, or by endpoint key (legacy).
+            if (
+                (row.claim_key and row.claim_key in keys)
+                or row.subject_key in keys
+                or row.object_key in keys
+            ):
                 self.store.rows[i] = _with_invalid_at(row, now)
                 invalidated += 1
         self._notify()
@@ -116,6 +210,8 @@ class _Mutation:
         self.store.rows = [r for r in self.store.rows if r.pot_id != pot_id]
         for key in [k for k in self.store.entity_label_index if k[0] == pot_id]:
             self.store.entity_label_index.pop(key, None)
+        for key in [k for k in self.store.entity_property_index if k[0] == pot_id]:
+            self.store.entity_property_index.pop(key, None)
         self._notify()
         return {"removed_claims": before - len(self.store.rows)}
 
@@ -241,12 +337,17 @@ class _Inspection:
 
     def _node(self, pot_id: str, key: str) -> GraphNode:
         labels = self.store.entity_label_index.get((pot_id, key), ())
-        return GraphNode(key=key, labels=labels)
+        props = normalize_entity_properties(
+            self.store.entity_properties(pot_id=pot_id, entity_key=key),
+            entity_key=key,
+        )
+        return GraphNode(key=key, labels=labels, properties=props)
 
 
 @dataclass(slots=True)
 class _Analytics:
     store: InMemoryClaimQueryStore
+    on_change: Any = None
 
     def _rows(self, pot_id: str) -> list[ClaimRow]:
         return [r for r in self.store.rows if r.pot_id == pot_id]
@@ -279,13 +380,43 @@ class _Analytics:
         }
 
     def repair(self, pot_id: str, *, targets: Sequence[str] = ()) -> RepairReport:
-        # Projections are derived on read here, so repair is a no-op report.
+        if wants_entity_summary_repair(targets):
+            repaired = self._repair_entity_summaries(pot_id)
+            if repaired and self.on_change is not None:
+                self.on_change()
+            return RepairReport(
+                pot_id=pot_id,
+                targets=tuple(targets),
+                repaired={ENTITY_SUMMARY_TARGET: repaired},
+                detail=f"repaired {repaired} entity summaries",
+            )
         return RepairReport(
             pot_id=pot_id,
             targets=tuple(targets),
             repaired={},
             detail="in_memory projections are computed on read; nothing to rebuild",
         )
+
+    def _repair_entity_summaries(self, pot_id: str) -> int:
+        entity_keys = {
+            key
+            for row in self._rows(pot_id)
+            for key in (row.subject_key, row.object_key)
+        }
+        entity_keys.update(
+            key for pid, key in self.store.entity_property_index if pid == pot_id
+        )
+        repaired = 0
+        for entity_key in entity_keys:
+            props = self.store.entity_properties(pot_id=pot_id, entity_key=entity_key)
+            fixed = repaired_entity_properties(entity_key, props)
+            if fixed is None:
+                continue
+            self.store.set_entity_properties(
+                pot_id=pot_id, entity_key=entity_key, properties=fixed
+            )
+            repaired += 1
+        return repaired
 
 
 @dataclass(slots=True)
@@ -345,6 +476,7 @@ class InMemoryGraphBackend:
     store: InMemoryClaimQueryStore = field(default_factory=InMemoryClaimQueryStore)
     profile_name: str = _PROFILE
     on_change: Any = None
+    embedder: EmbedderPort | None = None
     _mutation: _Mutation = field(init=False)
     _semantic: _Semantic = field(init=False)
     _inspection: _Inspection = field(init=False)
@@ -352,13 +484,24 @@ class InMemoryGraphBackend:
     _snapshot: _Snapshot = field(init=False)
 
     def __post_init__(self) -> None:
+        # The embedder powers vector search on read and embed-on-write; share it
+        # with the store so ``find_claims`` and ``mutation.apply`` agree on mode.
+        if self.embedder is not None and self.store.embedder is None:
+            self.store.embedder = self.embedder
         self._mutation = _Mutation(
-            self.store, on_change=self.on_change, profile=self.profile_name
+            self.store,
+            on_change=self.on_change,
+            profile=self.profile_name,
+            embedder=self.store.embedder,
         )
         self._semantic = _Semantic(self.store)
         self._inspection = _Inspection(self.store)
-        self._analytics = _Analytics(self.store)
+        self._analytics = _Analytics(self.store, on_change=self.on_change)
         self._snapshot = _Snapshot(self.store)
+
+    @property
+    def match_mode(self) -> str:
+        return self.store.match_mode
 
     @property
     def profile(self) -> str:
@@ -419,20 +562,65 @@ def _edge(row: ClaimRow) -> GraphEdge:
 
 
 def _with_invalid_at(row: ClaimRow, when: datetime) -> ClaimRow:
-    return ClaimRow(
-        pot_id=row.pot_id,
-        predicate=row.predicate,
-        subject_key=row.subject_key,
-        object_key=row.object_key,
-        valid_at=row.valid_at,
-        invalid_at=when,
-        evidence_strength=row.evidence_strength,
-        source_system=row.source_system,
-        source_ref=row.source_ref,
-        fact=row.fact,
-        properties=row.properties,
-        fact_embedding=row.fact_embedding,
-    )
+    import dataclasses
+
+    return dataclasses.replace(row, invalid_at=when)
+
+
+def _with_embedding(row: ClaimRow, embedding: tuple[float, ...]) -> ClaimRow:
+    import dataclasses
+
+    return dataclasses.replace(row, fact_embedding=embedding)
+
+
+def _coerce_dt(value: Any) -> datetime | None:
+    """Coerce an ISO string or datetime into a tz-aware datetime (or None)."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _coerce_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _coerce_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _vector_tuple(value: Any) -> tuple[float, ...] | None:
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)):
+        try:
+            return tuple(float(x) for x in value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _evidence_tuple(value: Any) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(dict(item) for item in value if isinstance(item, Mapping))
+
+
+def _reader_extras(props: Mapping[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in props.items() if k not in CONTRACT_EDGE_KEYS}
+
+
+def _dt_iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
 
 
 def _row_to_dict(row: ClaimRow) -> dict[str, Any]:
@@ -440,39 +628,75 @@ def _row_to_dict(row: ClaimRow) -> dict[str, Any]:
         "predicate": row.predicate,
         "subject_key": row.subject_key,
         "object_key": row.object_key,
-        "valid_at": row.valid_at.isoformat() if row.valid_at else None,
-        "evidence_strength": row.evidence_strength,
+        "valid_at": _dt_iso(row.valid_at),
+        "invalid_at": _dt_iso(row.invalid_at),
         "source_system": row.source_system,
         "source_ref": row.source_ref,
         "fact": row.fact,
         "properties": dict(row.properties),
+        "fact_embedding": list(row.fact_embedding) if row.fact_embedding else None,
+        # V1.5 first-class metadata.
+        "claim_key": row.claim_key,
+        "subgraph": row.subgraph,
+        "truth": row.truth,
+        "confidence": row.confidence,
+        "description": row.description,
+        "environment": row.environment,
+        "observed_at": _dt_iso(row.observed_at),
+        "valid_until": _dt_iso(row.valid_until),
+        "mutation_id": row.mutation_id,
+        "source_refs": list(row.source_refs),
+        "evidence": [dict(item) for item in row.evidence],
+        "graph_contract_version": row.graph_contract_version,
+        "ontology_version": row.ontology_version,
     }
 
 
 def _row_from_dict(pot_id: str, raw: Mapping[str, Any]) -> ClaimRow:
-    valid_at = raw.get("valid_at")
+    embedding = raw.get("fact_embedding")
+    source_refs = raw.get("source_refs") or ()
+    truth = _coerce_str(raw.get("truth"))
     return ClaimRow(
         pot_id=pot_id,
         predicate=raw["predicate"],
         subject_key=raw["subject_key"],
         object_key=raw["object_key"],
-        valid_at=datetime.fromisoformat(valid_at) if valid_at else None,
-        evidence_strength=raw.get("evidence_strength", "stated"),
-        source_system=raw.get("source_system"),
-        source_ref=raw.get("source_ref"),
-        fact=raw.get("fact"),
+        valid_at=_coerce_dt(raw.get("valid_at")),
+        invalid_at=_coerce_dt(raw.get("invalid_at")),
+        evidence_strength=evidence_strength_for_truth(truth),
+        source_system=_coerce_str(raw.get("source_system")),
+        source_ref=_coerce_str(raw.get("source_ref")),
+        fact=_coerce_str(raw.get("fact")),
         properties=dict(raw.get("properties", {})),
+        fact_embedding=tuple(embedding) if embedding else None,
+        claim_key=_coerce_str(raw.get("claim_key")),
+        subgraph=_coerce_str(raw.get("subgraph")),
+        truth=truth,
+        confidence=_coerce_float(raw.get("confidence")),
+        description=_coerce_str(raw.get("description")),
+        environment=_coerce_str(raw.get("environment")),
+        observed_at=_coerce_dt(raw.get("observed_at")),
+        valid_until=_coerce_dt(raw.get("valid_until")),
+        mutation_id=_coerce_str(raw.get("mutation_id")),
+        source_refs=tuple(source_refs),
+        evidence=_evidence_tuple(raw.get("evidence")),
+        graph_contract_version=_coerce_str(raw.get("graph_contract_version")),
+        ontology_version=_coerce_str(raw.get("ontology_version")),
     )
 
 
 def dump_store(store: InMemoryClaimQueryStore) -> dict[str, Any]:
     """Serialize a whole (multi-pot) claim store for persistence."""
     return {
-        "format_version": "1",
+        "format_version": "2",
         "rows": [{"pot_id": r.pot_id, **_row_to_dict(r)} for r in store.rows],
         "labels": [
             [pot_id, key, list(labels)]
             for (pot_id, key), labels in store.entity_label_index.items()
+        ],
+        "entity_properties": [
+            [pot_id, key, props]
+            for (pot_id, key), props in store.entity_property_index.items()
         ],
     }
 
@@ -484,6 +708,8 @@ def load_store(data: dict[str, Any]) -> InMemoryClaimQueryStore:
         store.add(_row_from_dict(raw["pot_id"], raw))
     for pot_id, key, labels in data.get("labels", []):
         store.set_entity_label(pot_id=pot_id, entity_key=key, labels=labels)
+    for pot_id, key, props in data.get("entity_properties", []):
+        store.set_entity_properties(pot_id=pot_id, entity_key=key, properties=props)
     return store
 
 

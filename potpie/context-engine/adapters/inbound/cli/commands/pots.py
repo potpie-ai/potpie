@@ -25,7 +25,9 @@ from adapters.outbound.http.potpie_context_api_client import (
 from domain.errors import CapabilityNotImplemented
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
-source_app = typer.Typer(help="Sources registered to a pot.")
+source_app = typer.Typer(
+    help="Source registry for a pot; registration does not ingest or scan."
+)
 linear_team_app = typer.Typer(help="Linear teams attached to a context pot.")
 jira_project_app = typer.Typer(help="Jira projects reachable from a context pot.")
 
@@ -277,22 +279,65 @@ def pot_archive(ref: str) -> None:
         emit({"id": pot.pot_id, "archived": True}, human=f"archived '{pot.name}'")
 
 
+def _resolve_repo_location(location: str) -> str:
+    """Resolve repo-source shorthand to a durable, matchable location.
+
+    ``.`` / ``current`` (and relative paths) registered verbatim can never be
+    matched back against a working tree during pot inference, so resolve them
+    eagerly: prefer the current repo's normalized git remote (stable across
+    checkouts), else the absolute path.
+    """
+    from pathlib import Path
+
+    from adapters.inbound.cli.commands._common import _current_git_remote
+
+    raw = (location or "").strip()
+    if raw.lower() in (".", "current"):
+        cwd = Path.cwd().resolve()
+        remote = _current_git_remote(cwd)
+        return remote or str(cwd)
+    if raw.startswith((".", "~")):
+        return str(Path(raw).expanduser().resolve(strict=False))
+    return raw
+
+
 @source_app.command("add")
 def source_add(
-    kind: str = typer.Argument(..., help="repo | github | linear | …"),
-    location: str = typer.Argument(...),
-    name: str = typer.Option(None, "--name"),
-    pot: str = typer.Option(None, "--pot"),
+    kind: str = typer.Argument(..., help="repo | github | linear | ..."),
+    location: str = typer.Argument(
+        ...,
+        help="Path, owner/repo, URL, or integration location to register. For "
+        "repos, '.' or 'current' registers the current repo (resolved to its "
+        "git remote or absolute path before storing).",
+    ),
+    name: str = typer.Option(None, "--name", help="Optional display/source name."),
+    pot: str = typer.Option(None, "--pot", help="Pot id/name (default: resolved pot)."),
 ) -> None:
+    """Register source metadata only; no ingestion or repository scan is started."""
     with contract():
         host = get_host()
-        pot_id = resolve_pot_id(host, pot)
+        # Registration establishes the repo→pot mapping, so the target is the
+        # explicit/active pot — never inferred from existing registrations.
+        pot_id = resolve_pot_id(host, pot, infer_from_repo=False)
+        resolved_location = (
+            _resolve_repo_location(location) if kind.strip().lower() == "repo" else location
+        )
         src = host.pots.add_source(
-            pot_id=pot_id, kind=kind, location=location, name=name
+            pot_id=pot_id, kind=kind, location=resolved_location, name=name
         )
         emit(
-            {"source_id": src.source_id, "kind": src.kind, "name": src.name},
-            human=f"added source {src.kind}:{src.name} ({src.source_id})",
+            {
+                "source_id": src.source_id,
+                "kind": src.kind,
+                "name": src.name,
+                "location": resolved_location,
+                "pot_id": pot_id,
+                "registration_only": True,
+            },
+            human=(
+                f"registered source {src.kind}:{src.name} ({src.source_id}) "
+                f"at {resolved_location}; no ingestion or scan started"
+            ),
         )
 
 
@@ -304,9 +349,16 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
         sources = host.pots.list_sources(pot_id=pot_id)
         emit(
             {
+                "pot_id": pot_id,
                 "sources": [
-                    {"id": s.source_id, "kind": s.kind, "name": s.name} for s in sources
-                ]
+                    {
+                        "id": s.source_id,
+                        "kind": s.kind,
+                        "name": s.name,
+                        "location": getattr(s, "location", None),
+                    }
+                    for s in sources
+                ],
             },
             human="\n".join(f"  {s.kind}: {s.name} ({s.source_id})" for s in sources)
             or "(no sources)",

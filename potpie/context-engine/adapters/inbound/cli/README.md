@@ -7,8 +7,8 @@ single composition root for the agent surface (shared with the MCP server).
 - **Entrypoint:** `adapters/inbound/cli/host_cli.py` (registered as the `potpie`
   console script in `pyproject.toml` → `[project.scripts]`).
 - **Command groups:** `adapters/inbound/cli/commands/` — one module per
-  `cli-flow.md` section (`bootstrap`, `query`, `pots`, `daemon`, `ingest`,
-  `ledger`, `graph`, `skills`, `cloud`).
+  `cli-flow.md` section (`bootstrap`, `query`, `pots`/`source`, `daemon`,
+  `ledger`, `graph`, `timeline`, `backend`, `skills`, `cloud`).
 - **Cross-cutting contract:** `commands/_common.py` owns `--json` output, the
   exit-code map (0 ok / 1 validation / 2 unavailable / 3 degraded / 4 auth), the
   structured error shape (`code`/`message`/`detail`/`recommended_next_action`),
@@ -33,7 +33,8 @@ The full command catalog, flags, profiles (local vs managed), and the output
 contract live in **[`docs/context-graph/cli-flow.md`](../../../../../../docs/context-graph/cli-flow.md)**.
 The end-state architecture (services, ports, composition roots) is in
 **[`docs/context-graph/architecture.md`](../../../../../../docs/context-graph/architecture.md)**.
-The in-progress scaffolding/handover plan is **[`docs/context-graph/todo.md`](../../../../../../docs/context-graph/todo.md)**.
+The in-progress Graph V1.5 handover plan is
+**[`docs/context-graph/graphv1-5-implementation-plan.md`](../../../../../../docs/context-graph/graphv1-5-implementation-plan.md)**.
 
 Run `potpie --help` (or `python -m adapters.inbound.cli.host_cli --help`) to list
 the live commands.
@@ -51,6 +52,11 @@ harness's user-level skills directory:
 | Claude Code | `~/.claude/skills/<skill>/SKILL.md` |
 | OpenCode | `~/.config/opencode/skills/<skill>/SKILL.md` |
 | Codex | `$HOME/.agents/skills/<skill>/SKILL.md` |
+
+Remove one global skill with `potpie skills remove <id> --agent claude`, or
+delete every globally installed Potpie skill for a harness with
+`potpie skills remove --all --agent claude`. Use `--scope project --path .` for
+repo-local cleanup.
 
 Use `--scope project --path .` for repo-local installs. The bundle keeps the
 agent surface to the four tools above and encodes feature / debugging / review /

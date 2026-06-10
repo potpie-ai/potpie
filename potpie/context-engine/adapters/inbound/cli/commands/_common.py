@@ -15,7 +15,10 @@ This module owns the cross-cutting concerns so the command bodies stay thin:
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Iterator
 
 import typer
@@ -56,9 +59,14 @@ def is_verbose() -> bool:
 def get_host():
     """Return the process-wide ``HostShell`` (built lazily)."""
     if _state["host"] is None:
-        from bootstrap.host_wiring import build_host_shell
+        if os.getenv("CONTEXT_ENGINE_HOST_MODE", "").strip().lower() == "in_process":
+            from bootstrap.host_wiring import build_host_shell
 
-        _state["host"] = build_host_shell()
+            _state["host"] = build_host_shell()
+        else:
+            from host.daemon_client import RemoteHostShell
+
+            _state["host"] = RemoteHostShell()
     return _state["host"]
 
 
@@ -176,8 +184,17 @@ def contract() -> Iterator[None]:
         )
 
 
-def resolve_pot_id(host: Any, explicit: str | None = None) -> str:
-    """Resolve ``--pot`` ref → id, else the active pot. Fails (exit 1) if none."""
+def resolve_pot_id(
+    host: Any, explicit: str | None = None, *, infer_from_repo: bool = True
+) -> str:
+    """Resolve ``--pot`` ref → id, else current-repo pot, else active pot.
+
+    ``infer_from_repo=False`` skips current-repo inference and goes straight to
+    the active pot. Source registration uses this: ``source add repo .`` is the
+    command that *establishes* the repo→pot mapping, so inferring its target
+    from existing registrations would route the new source to the wrong pot
+    (or fail as ambiguous when other pots already track the same repo).
+    """
     pots = host.pots
     if explicit:
         for pot in pots.list_pots():
@@ -188,14 +205,121 @@ def resolve_pot_id(host: Any, explicit: str | None = None) -> str:
             message=f"No pot matching '{explicit}'.",
             next_action="run 'potpie pot list'",
         )
+    matches = _pots_matching_current_repo(host) if infer_from_repo else []
     active = pots.active_pot()
+    if len(matches) == 1:
+        return matches[0][0]
+    if len(matches) > 1:
+        if active is not None and any(active.pot_id == pid for pid, _ in matches):
+            return active.pot_id
+        names = ", ".join(f"{name} ({pid})" for pid, name in matches)
+        fail(
+            code="ambiguous_pot",
+            message=f"Current repo is registered in multiple pots: {names}.",
+            next_action="pick one with '--pot <id-or-name>' or set it active with 'potpie pot use <id-or-name>'",
+        )
     if active is None:
         fail(
             code="no_active_pot",
-            message="No active pot.",
-            next_action="run 'potpie setup' to create and activate a pot",
+            message="No active pot, and the current repo is not registered as a source in any pot.",
+            next_action="run 'potpie setup', or create a pot with 'potpie pot create <name> --use' and register this repo with 'potpie source add repo .'",
         )
     return active.pot_id
+
+
+def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
+    """Return ``(pot_id, name)`` for every pot whose repo source matches cwd.
+
+    A pot is the project boundary, not a single repository. This helper only
+    chooses the pot from the current working tree; it does not inject a repo
+    scope into reads. Timeline queries therefore default to the whole project
+    across all repositories attached to the pot. The caller decides how to
+    disambiguate multiple matches (active pot wins; otherwise a structured
+    ``ambiguous_pot`` error).
+    """
+
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        return []
+    remote = _current_git_remote(cwd)
+    matches: list[tuple[str, str]] = []
+    try:
+        pots = list(host.pots.list_pots())
+    except Exception:  # noqa: BLE001 - pot resolution should not mask commands
+        return []
+    for pot in pots:
+        try:
+            sources = host.pots.list_sources(pot_id=pot.pot_id)
+        except Exception:  # noqa: BLE001
+            continue
+        for source in sources:
+            if getattr(source, "kind", None) != "repo":
+                continue
+            refs = {
+                str(getattr(source, "name", "") or "").strip(),
+                str(getattr(source, "location", "") or "").strip(),
+            }
+            if any(
+                _repo_source_matches_cwd(ref, cwd=cwd, remote=remote)
+                for ref in refs
+                if ref
+            ):
+                matches.append((pot.pot_id, pot.name))
+                break
+    return matches
+
+
+def _repo_source_matches_cwd(source_name: str, *, cwd: Path, remote: str | None) -> bool:
+    if not source_name:
+        return False
+    source_path = Path(source_name).expanduser()
+    if source_path.is_absolute() or source_name.startswith((".", "~")):
+        try:
+            resolved = source_path.resolve(strict=False)
+        except OSError:
+            resolved = source_path.absolute()
+        if cwd == resolved or cwd.is_relative_to(resolved) or resolved.is_relative_to(cwd):
+            return True
+
+    normalized_source = _normalize_repo_ref(source_name)
+    return bool(remote and normalized_source and normalized_source == remote)
+
+
+def _current_git_remote(cwd: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if proc.returncode != 0:
+        return None
+    return _normalize_repo_ref(proc.stdout.strip())
+
+
+def _normalize_repo_ref(value: str) -> str | None:
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith(".git"):
+        text = text[:-4]
+    if text.startswith("git@"):
+        # git@github.com:owner/repo
+        text = text[4:].replace(":", "/", 1)
+    elif "://" in text:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(text)
+        path = parsed.path.strip("/")
+        if parsed.netloc and path:
+            text = f"{parsed.netloc}/{path}"
+    return text.strip("/").lower().replace(" ", "-") or None
 
 
 __all__ = [

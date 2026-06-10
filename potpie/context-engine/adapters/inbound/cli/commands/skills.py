@@ -94,7 +94,12 @@ def skills_update(
 
 @skills_app.command("remove")
 def skills_remove(
-    skill_id: str,
+    skill_id: str | None = typer.Argument(None),
+    all_: bool = typer.Option(
+        False,
+        "--all",
+        help="Remove every installed Potpie skill for the selected agent and scope.",
+    ),
     agent: str = typer.Option("claude", "--agent"),
     path: str = typer.Option(None, "--path"),
     scope: str = typer.Option("global", "--scope"),
@@ -102,7 +107,11 @@ def skills_remove(
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
         res = get_host().skills.remove(
-            agent=agent, skill_id=skill_id, path=path, scope=effective_scope
+            agent=agent,
+            skill_id=skill_id,
+            all_=all_,
+            path=path,
+            scope=effective_scope,
         )
         emit(
             {
@@ -111,7 +120,7 @@ def skills_remove(
                 "removed": list(res.changed),
                 "metadata": dict(res.metadata),
             },
-            human=f"removed {skill_id}",
+            human=_format_skill_remove(agent=res.agent, removed=res.changed),
         )
 
 
@@ -154,6 +163,12 @@ def _format_skill_operation(
     if verb == "installed":
         return f"Potpie skills for {agent} are already installed"
     return f"Potpie skills for {agent} are already up to date"
+
+
+def _format_skill_remove(*, agent: str, removed: tuple[str, ...]) -> str:
+    if removed:
+        return f"removed Potpie skills for {agent}: {', '.join(removed)}"
+    return f"Potpie skills for {agent} are already removed"
 
 
 def _effective_scope(*, scope: str, path: str | None) -> str:

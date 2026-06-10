@@ -35,6 +35,9 @@ class SourceInfo:
     source_id: str
     kind: str  # repo | github | linear | ...
     name: str
+    location: str | None = None
+    """Registered path / remote / owner-repo ref, so harnesses can verify a
+    path-or-remote mismatch against the current working tree."""
     last_sync_at: datetime | None = None
     sync_mode: str | None = None
     status: str = "unknown"  # ok | stale | error | unknown

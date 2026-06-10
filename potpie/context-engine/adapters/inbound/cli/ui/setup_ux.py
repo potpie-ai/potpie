@@ -35,12 +35,11 @@ STEP_LABELS: dict[str, tuple[str, str]] = {
     "auth": ("Initializing local auth…", "Local auth ready"),
     "source": ("Registering repo…", "Repo registered"),
     "skills": ("Installing agent skills…", "Skills installed"),
-    "scan": ("Scanning repository…", "Repository scanned"),
 }
 
 # Rows that get the animated "chomp" glyph while running.
 CHOMP_STEPS = frozenset(
-    {"backend.provision", "state_store.provision", "daemon", "scan"}
+    {"backend.provision", "state_store.provision", "daemon"}
 )
 
 # Lifecycle StepResult.state -> wizard ChecklistStep status. A soft
@@ -67,7 +66,6 @@ def render_setup_report(
     *,
     repo: Path,
     agent: str,
-    scan: bool,
     use_rich: bool,
     config_home: Path | None = None,
     pot_name: str | None = None,
@@ -82,7 +80,7 @@ def render_setup_report(
             step.step, running, chomp=step.step in CHOMP_STEPS, done_label=done
         )
 
-    wizard.run_intro(repo=repo, agent=agent, scan=scan)
+    wizard.run_intro(repo=repo, agent=agent)
 
     failed_step_id: str | None = None
     with wizard.live():

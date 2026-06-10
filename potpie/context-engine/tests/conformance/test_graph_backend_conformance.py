@@ -28,6 +28,10 @@ POT = "conformance-pot"
 # Profiles that implement all six capabilities end to end.
 FULL_PROFILES = ["in_memory", "embedded"]
 
+# Profiles with the canonical source-of-truth ports wired and projections
+# deliberately fail-closed until implemented.
+PARTIAL_PROFILES = ["neo4j", "falkordb", "falkordb_lite"]
+
 
 def _build(profile, tmp_path):
     if profile == "embedded":
@@ -159,3 +163,30 @@ def test_embedded_unbuilt_profile_fails_closed():
         stub.search(pot_id=POT, query="x")
     assert exc.value.capability == "graph.neo4j.semantic.search"
     assert exc.value.recommended_next_action
+
+
+@pytest.mark.parametrize("profile", PARTIAL_PROFILES)
+def test_partial_backend_profiles_fail_closed_for_unbuilt_projections(profile, tmp_path):
+    backend = _build(profile, tmp_path)
+    assert isinstance(backend, GraphBackend)
+    expected = {
+        "neo4j": {"mutation", "claim_query", "semantic", "analytics"},
+        # FalkorDB profiles implement structural inspection (graph explorer /
+        # ``potpie graph inspect``) over the canonical RELATES_TO edges.
+        "falkordb": {"mutation", "claim_query", "semantic", "analytics", "inspection"},
+        "falkordb_lite": {
+            "mutation",
+            "claim_query",
+            "semantic",
+            "analytics",
+            "inspection",
+        },
+    }[profile]
+    assert set(backend.capabilities().implemented()) == expected
+    if "inspection" in expected:
+        # Implemented: answers without raising (empty pot → empty slice).
+        sl = backend.inspection.neighborhood(pot_id=POT, entity_key="pref:logging")
+        assert sl.pot_id == POT
+    else:
+        with pytest.raises(CapabilityNotImplemented):
+            backend.inspection.neighborhood(pot_id=POT, entity_key="pref:logging")

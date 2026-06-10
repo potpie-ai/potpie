@@ -80,7 +80,7 @@ path) or the internal reconciliation agent (loaded as a playbook).
 ### Phase 0 — Setup
 
 1. Trust the event payload that the team is connected; there is no
-   `sandbox_list_repos` equivalent for Linear. If a list tool returns an
+   separate attachment-list check for Linear. If a list tool returns an
    auth / not-connected error, abort with a warning. Do NOT attempt to
    connect the team from this skill.
 2. Initialize the todo list with three entries:

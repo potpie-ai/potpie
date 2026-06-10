@@ -7,7 +7,7 @@ from app.core.base_model import Base
 
 
 class ContextGraphPot(Base):
-    """A pot id (Graphiti ``group_id``); tenancy is via :class:`ContextGraphPotMember`."""
+    """A pot id (``group_id``); tenancy is via :class:`ContextGraphPotMember`."""
 
     __tablename__ = "context_graph_pots"
 

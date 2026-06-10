@@ -1,78 +1,169 @@
 # Context Engine
 
-This project uses the Potpie context engine for project memory. Before non-trivial work use it to orient yourself. After work use it to record durable learnings.
+This project uses Potpie for project memory. Before non-trivial work, read the
+graph to orient yourself. After work, record durable learnings that should help
+the next agent.
+
+The harness is the intelligence. Potpie validates, lowers, commits, audits, and
+ranks graph memory. It does not scan the repository or decide what prose means
+for you.
 
 ## Quick Start
 
 ```bash
-potpie doctor          # check setup
-potpie search "topic"  # search project memory
-potpie ingest "..."    # record an episode
-potpie pot pots        # list pots
+potpie doctor
+potpie pot list
+potpie graph catalog
 ```
 
-## The Four Tools (MCP)
+## Surfaces
 
-When Potpie MCP is configured use only the minimal port:
+Prefer the graph CLI when shell is available:
 
-- **`context_resolve`** — primary context wrap for any task. Pass `intent`, `scope`, `include`, `mode`, `source_policy`, and `budget`. This is the right entrypoint for feature work, debugging, review, operations, docs, and onboarding.
-- **`context_status`** — cheap pot readiness, freshness gaps, and recommended recipe. Run before broad or ambiguous tasks.
-- **`context_search`** — narrow follow-up lookup after `context_resolve` when a specific entity or phrase is already known.
-- **`context_record`** — save durable project learnings: decisions, fixes, preferences, workflows, bug patterns, feature notes, incident summaries, doc references.
+```bash
+potpie --json graph catalog
+potpie --json graph read --view <subgraph.view> [--query "..."] [--scope key:value] [--limit N]
+potpie --json timeline recent [--time-window 7d] [--limit N]
+potpie --json graph search-entities "text" [--type Service] [--predicate DEPENDS_ON] [--environment prod] [--limit N]
+potpie --json graph mutate --file mutation.json [--dry-run] [--allow-review-required --approved-by user:you]
+```
 
-Do not add separate tools for each context type. Express all use cases as `context_resolve` parameter recipes.
+When only MCP is configured, use the compatibility tools:
+
+- `context_status` - readiness, freshness gaps, and recommended recipe.
+- `context_resolve` - primary task context wrap.
+- `context_search` - narrow follow-up lookup after a resolve.
+- `context_record` - durable preferences, fixes, decisions, workflows, docs, and
+  incident notes.
+
+Do not add one tool per context type. Express reads as `graph read --view` or as a
+`context_resolve` recipe.
+
+## Views
+
+| View | Use it for |
+|---|---|
+| `preferences.active_preferences` | project/repo/path preferences for code work |
+| `infra_topology.service_neighborhood` | env-qualified dependencies and blast radius |
+| `recent_changes.timeline` | project-wide PRs, tickets, docs, incidents, deployments; use `potpie timeline recent` |
+| `bugs.prior_occurrences` | prior symptoms, fixes, failed attempts |
+| `decisions.active_decisions` | active architectural/product decisions |
+| `ownership.owner_context` | owners for a scope |
+| `docs.reference_context` | docs and runbooks for a scope |
+| `admin.inspection_slice` | raw canonical graph for debugging |
 
 ## Recipes
 
-**Feature work** — before implementing a feature or behavior change:
+Feature or code work:
+
 ```json
-{"intent":"feature","include":["purpose","feature_map","service_map","docs","tickets","decisions","recent_changes","owners","preferences","source_status"],"mode":"fast","source_policy":"references_only"}
+{"intent":"feature","include":["coding_preferences","infra_topology","decisions","owners","docs"],"mode":"fast","source_policy":"references_only"}
 ```
 
-**Debugging** — before investigating a bug, incident, or flaky behavior:
+Debugging:
+
 ```json
-{"intent":"debugging","include":["prior_fixes","diagnostic_signals","incidents","alerts","recent_changes","config","deployments","owners","source_status"],"mode":"fast","source_policy":"references_only"}
+{"intent":"debugging","include":["prior_bugs","infra_topology","timeline"],"mode":"fast","source_policy":"references_only"}
 ```
 
-**Review** — before reviewing a PR or risky change:
+Review:
+
 ```json
-{"intent":"review","include":["artifact","discussions","owners","recent_changes","decisions","preferences","source_status"],"mode":"balanced","source_policy":"summary"}
+{"intent":"review","include":["coding_preferences","decisions","timeline","owners"],"mode":"balanced","source_policy":"summary"}
 ```
 
-**Operations** — before deployment, runbook, alert, or production work:
+Operations:
+
 ```json
-{"intent":"operations","include":["deployments","runbooks","alerts","incidents","scripts","config","owners","source_status"],"mode":"balanced","source_policy":"summary"}
+{"intent":"operations","include":["infra_topology","timeline","owners"],"mode":"balanced","source_policy":"summary"}
 ```
 
-**Onboarding** — when entering an unfamiliar repo or service:
+Docs/onboarding:
+
 ```json
-{"intent":"onboarding","include":["purpose","repo_map","service_map","docs","local_workflows","agent_instructions","source_status"],"mode":"fast","source_policy":"references_only"}
+{"intent":"onboarding","include":["infra_topology","coding_preferences","docs","owners"],"mode":"fast","source_policy":"references_only"}
 ```
 
-## Working Rules
+## Writing
 
-- Run `context_status` or a quick `context_resolve` before broad or ambiguous tasks.
-- Start with `mode=fast` and `source_policy=references_only`. Escalate to `summary`, `verify`, `snippets`, or `deep` only when coverage, freshness, or task risk requires it.
-- Always inspect `coverage`, `freshness`, `quality`, `fallbacks`, `open_conflicts`, and `source_refs` before relying on graph memory.
-- If `quality.status` is `watch` or `degraded`, verify relevant facts against source truth before high-impact work.
-- Use `context_record` after discovering reusable project memory — especially fixes, decisions, preferences, workflows, and incident summaries.
-- Keep records compact and source-reference-first. Include refs instead of copying full diffs, logs, or threads.
+Two rules carry most of the value:
 
-## Recording Learnings
+1. Resolve identity first with `graph search-entities` before linking to an
+   existing service, repo, bug, decision, person, or document.
+2. Write retrieval-grade descriptions. Include the symptom text, synonyms, scope,
+   environment, service, files, commands, and source refs a future searcher would
+   type.
+
+Use semantic operations only: `upsert_entity`, `link_entities`, `assert_claim`,
+`append_event`, `end_relation_validity`, and `retract_claim`. Never hard-delete a
+claim; end its validity or retract it.
+
+Example infra write:
 
 ```json
 {
-  "record_type": "decision|fix|bug_pattern|investigation|diagnostic_signal|preference|workflow|feature_note|service_note|runbook_note|integration_note|incident_summary|doc_reference",
-  "summary": "...",
-  "scope": {"repo_name": "owner/repo"},
-  "source_refs": ["github:pr:42"]
+  "graph_contract_version": "v1.5",
+  "pot_id": "local/default",
+  "idempotency_key": "mutation:infra:payments-ledger-prod",
+  "created_by": {"surface": "cli", "harness": "codex"},
+  "operations": [
+    {
+      "op": "link_entities",
+      "subgraph": "infra_topology",
+      "subject": {"key": "service:payments-api", "type": "Service", "properties": {"name": "payments-api"}},
+      "predicate": "DEPENDS_ON",
+      "object": {"key": "service:ledger-api", "type": "Service", "properties": {"name": "ledger-api"}},
+      "truth": "authoritative_fact",
+      "confidence": 0.95,
+      "environment": "prod",
+      "description": "payments-api calls ledger-api in prod to post settlements; ledger-api failures surface as refund and settlement timeout incidents.",
+      "evidence": [{"source_ref": "github:pr:412", "authority": "external_system"}]
+    }
+  ]
 }
 ```
 
+`context_record` is the simpler compatibility write for preferences, bug patterns,
+fixes, verifications, decisions, doc references, workflows, runbooks, and incident
+summaries. It lowers through the same semantic mutation path.
+
+## Ingestion Boundary
+
+There is no local code scan path in the agent instructions. For a repo link, doc,
+ticket, PR, issue, or web link, the harness reads the source, decides what durable
+facts exist, and writes graph mutations. Do not infer services, dependencies,
+features, or preferences from directory names or package files alone.
+
+Existing source queue commands such as `potpie pot linear-team ingest` and
+`potpie pot jira-project ingest` queue connector events. They are not working-tree
+scans.
+
+## Responding To Nudges
+
+A hook may inject context or instructions from `potpie graph nudge`.
+
+- `inject_context` - use the injected facts for the current task.
+- `instruction` - a prompt to decide whether something durable was learned. If it
+  was, resolve identity and write a semantic mutation or `context_record`. If not,
+  do nothing.
+
 ## Skills
 
-Use the repo-local skills under `.agents/skills/` for:
+Use these repo-local skills under `.agents/skills/`:
 
-- **`potpie-agent-context`** — gathering context through MCP recipes
-- **`potpie-cli`** — running CLI commands and troubleshooting setup
-- **`potpie-pot-scope`** — resolving pot scope from git remotes or env maps
+- `potpie-project-preferences` - error handling, structure, libraries, frameworks,
+  logging, testing, and coding guidelines before code work.
+- `potpie-infra-architecture` - environments, adapters, deployment topology,
+  service dependencies, datastores, API contracts, and ownership.
+- `potpie-change-timeline` - recent or historical PRs, tickets, docs, incidents,
+  deployments, and regression correlation.
+- `potpie-debug-memory` - prior bugs, fixes, failed attempts, verification, and dev
+  setup troubleshooting.
+- `potpie-source-ingestion` - harness-led ingestion from repo links, docs, PRs,
+  issues, tickets, runbooks, logs, and web links.
+- `potpie-graph` - graph CLI contract: catalog/read/search-entities/mutate and
+  nudge handling.
+- `potpie-agent-context` - MCP `context_*` compatibility recipes.
+- `potpie-cli` - CLI setup, pot/source commands, graph commands, and
+  troubleshooting.
+- `potpie-pot-scope` - resolving active pot and repo-to-pot mapping.

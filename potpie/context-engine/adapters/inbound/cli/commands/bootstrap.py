@@ -26,14 +26,13 @@ def register(root: typer.Typer) -> None:
     @root.command()
     def setup(
         repo: str = typer.Option(".", "--repo"),
-        pot: str = typer.Option("foo-pot", "--pot"),
+        pot: str = typer.Option("default", "--pot"),
         agent: str = typer.Option("claude", "--agent"),
         backend: str = typer.Option(
             None,
             "--backend",
             help="Graph backend profile (defaults to the active backend).",
         ),
-        scan: bool = typer.Option(False, "--scan"),
         dry_run: bool = typer.Option(
             False, "--dry-run", help="Show the steps without executing."
         ),
@@ -46,10 +45,14 @@ def register(root: typer.Typer) -> None:
 
         with contract():
             host = get_host()
+            in_process = getattr(host.daemon, "in_process", False)
+            from bootstrap.host_wiring import default_backend_profile
+
+            selected_backend = backend or default_backend_profile()
             # --backend selects the storage profile for this run. Backend
             # selection happens at wiring time, so rebuild the host on the chosen
             # profile when it differs from the active one (keeps the report honest).
-            if backend and backend != host.backend.profile:
+            if in_process and backend and backend != host.backend.profile:
                 from adapters.inbound.cli.commands._common import set_host
                 from adapters.outbound.graph.backends import build_backend
                 from bootstrap.host_wiring import build_host_shell
@@ -58,26 +61,40 @@ def register(root: typer.Typer) -> None:
                     backend=build_backend(backend), profile=host.profile
                 )
                 set_host(host)
+                selected_backend = host.backend.profile
             use_rich = setup_ux.rich_enabled(as_json=is_json()) and not yes
             plan = SetupPlan(
                 mode=host.profile if host.profile in ("local", "managed") else "local",
-                host_mode="in_process"
-                if getattr(host.daemon, "in_process", False)
-                else "daemon",
-                backend=host.backend.profile,
+                host_mode="in_process" if in_process else "daemon",
+                backend=selected_backend,
                 repo=repo,
                 pot=pot,
                 agent=agent,
-                scan=scan,
                 assume_yes=yes,
                 defer_default_pot=use_rich,
                 defer_skills=use_rich,
             )
 
             if dry_run:
-                preview = host.setup.preview(plan)
+                if in_process or host.daemon.status().get("up"):
+                    preview = host.setup.preview(plan)
+                else:
+                    from bootstrap.host_wiring import build_host_shell
+
+                    preview_host = build_host_shell()
+                    preview = preview_host.setup.preview(plan)
                 emit(preview.to_dict(), human=_preview_human(preview))
                 return
+
+            if not in_process:
+                host.daemon.ensure(plan)
+                running_backend = host.backend.profile
+                if backend and running_backend != backend:
+                    raise ValueError(
+                        "daemon is already running with backend "
+                        f"{running_backend!r}; stop it with 'potpie daemon stop' "
+                        f"before running setup with backend {backend!r}"
+                    )
 
             report = host.setup.run(plan)
 
@@ -88,9 +105,8 @@ def register(root: typer.Typer) -> None:
                     report,
                     repo=Path(repo),
                     agent=agent,
-                    scan=scan,
                     use_rich=True,
-                    config_home=getattr(host.config, "home", None),
+                    config_home=getattr(host.daemon, "home", None),
                 )
                 if report.ok:
                     setup_ux.maybe_prompt_github_login(

@@ -536,7 +536,7 @@ def test_one_shot_playbook_extract_is_the_markdown_body() -> None:
     # Sanity: a few distinctive markers from the markdown must appear in the
     # rendered playbook so they end up in the agent prompt.
     for marker in (
-        "# Repo one-shot ingestion",
+        "# Repo change-history ingestion (one-shot)",
         "## Mutations (per item)",
         "## Anti-patterns",
         "Source-priority rationale",
@@ -561,10 +561,6 @@ def test_one_shot_playbook_tool_hints_reference_real_tools() -> None:
     from domain.event_playbooks import find_playbook
 
     pb = find_playbook("github", "repository", "one_shot_ingest")
-    assert "sandbox_list_repos" in pb.tool_hints, (
-        "skill asks the agent to confirm repo attachment, so the sandbox repo "
-        "listing tool must survive the playbook allowlist"
-    )
     # Every hinted github_* tool must exist on the adapter.
     adapter_methods = {
         f"github_{name}"
@@ -687,8 +683,6 @@ def test_playbook_tool_hints_include_issue_tools() -> None:
     pb = find_playbook("github", "repository", "one_shot_ingest")
     assert "github_list_issues" in pb.tool_hints
     assert "github_get_issue" in pb.tool_hints
-    # Sandbox attach-check must also be allowlisted (per prior review fix).
-    assert "sandbox_list_repos" in pb.tool_hints
 
 
 def test_skill_documents_issue_source_priority_order() -> None:

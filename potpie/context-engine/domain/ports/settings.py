@@ -18,7 +18,7 @@ class ContextEngineSettingsPort(Protocol):
     # without change: anything that doesn't override these reports the
     # default ``neo4j`` backend, leaving production untouched.
     def graph_db_backend(self) -> str:
-        """Which graph backend to use: ``neo4j`` (default) or ``falkordb``."""
+        """Which graph backend to use: ``neo4j`` (default), ``falkordb``, etc."""
         return "neo4j"
 
     def falkordb_url(self) -> str | None:

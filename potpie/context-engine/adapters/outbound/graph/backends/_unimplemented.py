@@ -16,13 +16,13 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
 from domain.errors import CapabilityNotImplemented
+from domain.graph_mutations import ProvenanceContext
 from domain.ports.claim_query import ClaimQueryFilter, ClaimRow
 from domain.ports.graph.analytics import RepairReport
 from domain.ports.graph.inspection import GraphSlice
 from domain.ports.graph.mutation import BackendReadiness
 from domain.ports.graph.snapshot import SnapshotManifest
-from domain.graph_mutations import ProvenanceContext
-from domain.reconciliation import ReconciliationPlan, ReconciliationResult
+from domain.reconciliation import MutationBatch, MutationResult
 
 
 def _raise(profile: str, capability: str, method: str) -> Any:
@@ -52,11 +52,11 @@ class UnimplementedMutation:
 
     def apply(
         self,
-        plan: ReconciliationPlan,
+        plan: MutationBatch,
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
-    ) -> ReconciliationResult:
+    ) -> MutationResult:
         return _raise(self.profile, "mutation", "apply")
 
     def invalidate(

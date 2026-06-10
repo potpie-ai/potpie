@@ -1,6 +1,6 @@
 # Observability
 
-Last reviewed: 2026-05-29.
+Last reviewed: 2026-06-05.
 
 Observability must work locally without making OSS installs heavy, and it must
 scale up to hosted tracing, metrics, logs, readiness, and cost telemetry in
@@ -51,16 +51,15 @@ attach to the same seams the Code Map (architecture.md) defines.
 |---|---|---|
 | `daemon.request` | Local daemon request. | `host/shell.py`, `host/daemon.py` |
 | `pot.status`, `pot.create`, `pot.reset`, `pot.export` | Pot Management operations. | `PotManagementService` (`application/services/pot_management.py`) |
-| `context.resolve`, `context.search`, `context.record`, `context.status` | Four-tool operations. | `AgentContextPort` (`application/services/agent_context.py`) + `GraphService` |
-| `reader.{include}` | Reader execution. | `application/readers/`, `read_orchestrator.py` |
-| `scanner.{name}` | Scanner execution. | `adapters/outbound/scanners/` |
+| `graph.status`, `graph.catalog`, `graph.describe`, `graph.search_entities`, `graph.read`, `graph.propose`, `graph.commit`, `graph.history`, `graph.inbox` | Graph V2 workbench operations. | Graph Workbench Port / `GraphService` |
+| `reader.{subgraph}.{view}` | Named read-view execution. | Ontology Catalog + Read View Router |
 | `ledger.query`, `ledger.pull`, `ledger.cursor.update` | Graph consuming an Event Ledger. | `LedgerFacade` (`host/shell.py`), `EventLedgerClientPort`, `LedgerCursorStorePort` |
 | `graph.write`, `graph.query`, `graph.inspect` | Backend capability calls. | `GraphBackend` ports (`domain/ports/graph/`) |
 | `semantic.search` | Vector semantic retrieval. | `SemanticSearchPort` (`domain/ports/graph/semantic.py`) |
 | `snapshot.export`, `snapshot.import` | Portable pot snapshot operations. | `GraphSnapshotPort` (`domain/ports/graph/snapshot.py`) |
 | `skill.catalog.fetch`, `skill.install`, `skill.update`, `skill.remove` | Skill Manager operations. | `SkillManager` + `AgentTargetPort` (`domain/ports/services/skill_manager.py`) |
 | `event_ledger.receive`, `event_ledger.normalize`, `event_ledger.append` | Event Ledger connector/webhook work. | Event Ledger service (external) |
-| `ingestion.ledger_events` | Pulled Event Ledger batch processed into graph records/claims. | consumer ingestion ledger + processing harness + `GraphService` |
+| `ingestion.ledger_events` | Pulled Event Ledger batch processed into semantic proposals, graph mutations, or claims. | consumer ingestion ledger + processing harness + `GraphService` |
 | `ingestion.retry`, `ingestion.dead_letter` | Consumer-side event retry/dead-letter handling. | consumer ingestion ledger |
 
 Batch ingestion traces should link source events to ingestion processing runs
@@ -70,10 +69,13 @@ instead of pretending delayed fan-in is one synchronous request.
 
 Minimum counters:
 
-- `ce.resolve.total{result}`
-- `ce.record.total{result,record_type}`
+- `ce.graph.status_total{result}`
+- `ce.graph.catalog_total{result}`
+- `ce.graph.read_total{result,subgraph,view}`
+- `ce.graph.propose_total{result,risk}`
+- `ce.graph.commit_total{result,risk}`
+- `ce.graph.inbox_total{operation,result}`
 - `ce.pot.operation_total{operation,result}`
-- `ce.scanner.total{result,scanner}`
 - `ce.graph.write_total{result}`
 - `ce.graph.query_total{result}`
 - `ce.semantic.search_total{result,adapter}`
@@ -88,12 +90,13 @@ Minimum counters:
 
 Useful latency histograms:
 
-- `ce.resolve.latency_ms`
-- `ce.reader.latency_ms{include}`
+- `ce.graph.read_ms{subgraph,view}`
+- `ce.graph.propose_ms`
+- `ce.graph.commit_ms`
+- `ce.reader.latency_ms{subgraph,view}`
 - `ce.graph.write_ms`
 - `ce.graph.query_ms`
 - `ce.semantic.search_ms`
-- `ce.scanner.latency_ms{scanner}`
 - `ce.ledger.pull_ms{source,binding}`
 - `ce.ledger.query_ms{source,binding}`
 - `ce.ingestion.ledger_event_ms{source,binding}`
@@ -118,7 +121,7 @@ Every request, daemon action, or ledger action should carry:
 - profile (`local` or `managed`) and configured managed backend URL host when safe;
 - ledger binding (`none`, `managed`, or `self_hosted`) when relevant;
 - service boundary (`daemon`, `pot_management`, `graph_service`,
-  `graph_backend`, `skill_manager`, `scanner`, `managed_api`,
+  `graph_backend`, `skill_manager`, `managed_api`,
   `event_ledger`);
 - backend name when safe.
 
@@ -131,7 +134,7 @@ potpie doctor
 
 ## Readiness
 
-Readiness is reported by the same owner sections used by `context_status`.
+Readiness is reported by the same owner sections used by `potpie graph status`.
 `potpie doctor` may include deeper diagnostics, but it should preserve these
 boundaries instead of flattening every dependency into one status bit.
 
@@ -145,7 +148,6 @@ Local readiness checks:
 - Graph Service;
 - active GraphBackend name/capabilities;
 - semantic index and embedder;
-- scanner registry;
 - Skill Manager catalog and installed-vs-recommended skills.
 - optional Event Ledger binding, auth, graph consumer cursors, cursor lag,
   retry backlog, timed-out leases, and dead-letter backlog.

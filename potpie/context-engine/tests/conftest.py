@@ -8,8 +8,14 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _reset_cli_store():
-    """Reset the process-wide injected credential store after each test.
+def _default_in_process_cli_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep existing CLI unit tests on the direct host unless they opt into daemon mode."""
+    monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "in_process")
+
+
+@pytest.fixture(autouse=True)
+def _reset_cli_state():
+    """Reset process-wide injected CLI state after each test.
 
     ``commands/_common`` caches CLI flags, host, and store in module state; clear
     them so fakes injected by one test never leak into the next.

@@ -52,10 +52,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Iterable
 
+from domain.graph_contract import ONTOLOGY_VERSION
 from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert
 from domain.identity import IdentityClass, IdentitySpec, register_identity
 
-ONTOLOGY_VERSION = "2026-05-unified-v1"
+# ``ONTOLOGY_VERSION`` is owned by :mod:`domain.graph_contract` (the single
+# contract home) and mirrored here so existing importers of
+# ``domain.ontology.ONTOLOGY_VERSION`` and the graph catalog never disagree.
+__all_ontology_version__ = ONTOLOGY_VERSION
 
 
 # --- Lifecycle vocabulary ---------------------------------------------------
@@ -340,17 +344,14 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         freshness_ttl_hours=WEEK,
         text_patterns=(r"\b(cluster|region|eks|gke|ecs|kubernetes|k8s)\b",),
     ),
-    # --- Scanner-emitted topology nodes ------------------------------------
-    # Code-anchored entities scanners surface during working-tree ingestion.
+    # --- Code-anchored topology nodes --------------------------------------
     # ``Dependency`` is a package-manager dependency (``requests==2.31``);
-    # ``APIContract`` is an OpenAPI operation (path + method). Both are
-    # registered by their scanner today; declared here so the central catalog
-    # owns them and the coherence check stays green.
+    # ``APIContract`` is an OpenAPI operation (path + method). Harnesses may
+    # assert these when grounded in explicit repository evidence.
     "Dependency": _e(
         "Dependency",
         "topology",
-        "A third-party package / library a service depends on. Scanner-emitted "
-        "from package manifests (pyproject.toml, package.json, ...).",
+        "A third-party package / library a service depends on.",
         identity_class=IdentityClass.EXTERNAL_ID,
         key_prefix="dependency",
         identity_policy="dependency:<ecosystem>:<name>",
@@ -364,7 +365,7 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         "APIContract",
         "topology",
         "One operation in an OpenAPI / RPC spec — a (path, method) pair a "
-        "service exposes. Scanner-emitted from OpenAPI 3.x docs.",
+        "service exposes.",
         identity_class=IdentityClass.EXTERNAL_ID,
         key_prefix="api_contract",
         identity_policy="api_contract:<service>:<method>:<path>",
@@ -373,6 +374,24 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         freshness_ttl_hours=WEEK,
         property_signatures=("http_method", "path"),
         text_patterns=(r"\bAPI\b", r"\bendpoint\b", r"\boperation\b"),
+    ),
+    # --- Product functionality ----------------------------------------------
+    # ``Feature`` is the first-class answer to "what does this repo/service
+    # do?". Harnesses assert features from authored evidence (README, docs,
+    # route specs) via PROVIDES / IMPLEMENTED_IN claims; nothing infers them
+    # from file trees.
+    "Feature": _e(
+        "Feature",
+        "product",
+        "A user-facing or system-facing capability a repository or service "
+        "provides (e.g. checkout, SSO login, usage metering).",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="feature",
+        project_map_family="features",
+        fact_family="product",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+        text_patterns=(r"\bfeature\b", r"\bcapabilit(y|ies)\b"),
     ),
     # --- People ------------------------------------------------------------
     "Team": _e(
@@ -635,6 +654,22 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         source_inferred=("Environment",),
         target_inferred=("Cluster",),
     ),
+    "PROVIDES": _x(
+        "PROVIDES",
+        "A repository or service provides a feature / capability. The spine "
+        "of 'what does this repo do'.",
+        [("Repository", "Feature"), ("Service", "Feature")],
+        category="topology",
+        target_inferred=("Feature",),
+    ),
+    "IMPLEMENTED_IN": _x(
+        "IMPLEMENTED_IN",
+        "A feature's implementation lives in a repository, service, or code "
+        "asset. The navigation backlink from capability to code.",
+        [("Feature", "Repository"), ("Feature", "Service"), ("Feature", "CodeAsset")],
+        category="topology",
+        source_inferred=("Feature",),
+    ),
     "OWNED_BY": _x(
         "OWNED_BY",
         "A service or repo is owned by a team or person (one live owner at a time).",
@@ -799,7 +834,7 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
 CANONICAL_LABELS: frozenset[str] = frozenset(ENTITY_TYPES.keys())
 CANONICAL_EDGE_TYPES: frozenset[str] = frozenset(EDGE_TYPES.keys())
 # Writer-internal bookkeeping edges. These are NOT part of the agent-facing
-# vocabulary (agents/scanners must never emit them) and so are deliberately
+# vocabulary (agents must never emit them) and so are deliberately
 # kept out of ``EDGE_TYPES`` / ``CANONICAL_EDGE_TYPES``. The canonical writer's
 # supersession machinery emits ``SUPERSEDES`` directly (see
 # ``canonical_writer._write_supersedes_claim``); declaring it here keeps the

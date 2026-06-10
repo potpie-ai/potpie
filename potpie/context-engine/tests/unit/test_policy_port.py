@@ -160,13 +160,31 @@ def test_pot_submit_event_denied_when_planner_disabled():
     assert decision.reason == REASON_AGENT_PLANNER_DISABLED
 
 
+def test_pot_record_denied_by_default_planner_is_opt_in():
+    """Step 11: the LLM planner is opt-in, so a known-pot record is denied by
+    default (no env override) — canonical writes use the local semantic path."""
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("CONTEXT_ENGINE_AGENT_PLANNER_ENABLED", None)
+        decision = _adapter(pots={"p1": "x"}).authorize(
+            actor=None,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_RECORD,
+            context={"pot_id": "p1"},
+        )
+    assert not decision.allowed
+    assert decision.reason == REASON_AGENT_PLANNER_DISABLED
+
+
 def test_pot_record_denied_when_agent_unavailable():
-    decision = _adapter(pots={"p1": "x"}, agent_available=False).authorize(
-        actor=None,
-        resource=RESOURCE_POT,
-        action=ACTION_POT_RECORD,
-        context={"pot_id": "p1"},
-    )
+    # The agent-availability gate is only reachable once the (now opt-in)
+    # planner flag is enabled; otherwise the planner-disabled gate fires first.
+    with patch.dict(os.environ, {"CONTEXT_ENGINE_AGENT_PLANNER_ENABLED": "1"}):
+        decision = _adapter(pots={"p1": "x"}, agent_available=False).authorize(
+            actor=None,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_RECORD,
+            context={"pot_id": "p1"},
+        )
     assert not decision.allowed
     assert decision.reason == REASON_RECONCILIATION_AGENT_UNAVAILABLE
 

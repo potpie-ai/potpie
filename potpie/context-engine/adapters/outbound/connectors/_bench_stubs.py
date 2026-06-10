@@ -16,9 +16,9 @@ The agent is responsible for extracting entities + claims from the
 payload. There are no more "stub plan seeds" the agent gets a chance
 to enrich; the agent owns extraction outright.
 
-If a future bench needs deterministic seeding for a payload shape, it
-should land as a config-source scanner (P4) or a path-aware activity
-stamper (P5), not a per-connector plan compiler.
+If a future bench needs seed graph state, the harness should submit explicit
+semantic mutations with evidence instead of adding a per-connector plan
+compiler.
 """
 
 from __future__ import annotations

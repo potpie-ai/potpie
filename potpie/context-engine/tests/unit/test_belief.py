@@ -31,7 +31,7 @@ def _claim(
     subject_key: str = "service:auth-svc",
     predicate: str = "DEPENDS_ON",
     object_key: str = "service:users-svc",
-    source_system: str = "k8s-scanner",
+    source_system: str = "agent-record",
     source_ref: str | None = "k8s/auth/networkpolicy.yaml",
     strength: str = "deterministic",
     observed_at: datetime | None = None,
@@ -86,8 +86,8 @@ class TestDecayWeight:
 
 class TestSourceAuthority:
     def test_high_trust_sources_outweigh_default(self) -> None:
-        assert source_authority("k8s-scanner") > 1.0
-        assert source_authority("codeowners-scanner") > 1.0
+        assert source_authority("agent-record") > 1.0
+        assert source_authority("agent-verification") > 1.0
 
     def test_ambient_sources_downweighted(self) -> None:
         assert source_authority("slack-message") < 1.0
@@ -112,7 +112,7 @@ class TestScoreObject:
         single = score_object([_claim(strength="attested")], now=NOW)
         corroborated = score_object(
             [
-                _claim(strength="attested", source_system="codeowners-scanner"),
+                _claim(strength="attested", source_system="agent-record"),
                 _claim(strength="attested", source_system="pr-body-llm"),
             ],
             now=NOW,
@@ -147,10 +147,10 @@ class TestDeriveBelief:
     def test_winner_picks_higher_score(self) -> None:
         claims = [
             # users-svc: corroborated, recent, deterministic — clear winner
-            _claim(object_key="service:users-svc", source_system="k8s-scanner"),
+            _claim(object_key="service:users-svc", source_system="agent-record"),
             _claim(
                 object_key="service:users-svc",
-                source_system="codeowners-scanner",
+                source_system="github",
             ),
             # billing-svc: single inferred LLM claim — also live, but weaker
             _claim(
@@ -182,13 +182,13 @@ class TestDeriveBelief:
         claims = [
             _claim(
                 object_key="service:billing-svc",
-                source_system="k8s-scanner",
+                source_system="agent-record",
                 observed_at=common_time,
                 valid_at=common_time,
             ),
             _claim(
                 object_key="service:invoicing-svc",
-                source_system="codeowners-scanner",
+                source_system="agent-record",
                 observed_at=common_time,
                 valid_at=common_time,
             ),

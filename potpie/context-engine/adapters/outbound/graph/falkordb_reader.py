@@ -8,8 +8,9 @@ predicates, ``labels()`` filters) runs unchanged on FalkorDB, so this adapter
 driver call + record normalization (FalkorDB returns ``result_set`` rows, not
 Neo4j ``Record`` maps).
 
-``fact_query`` keeps the Python token-overlap scoring (the native relationship
-vector index is not on the hot path; see history-local-graph-db.md).
+``fact_query`` uses FalkorDB's native relationship vector index when an embedder
+is wired. If the vector index/procedure is unavailable, the adapter falls back
+to the labeled lexical scorer so local/dev profiles still return useful rows.
 """
 
 from __future__ import annotations
@@ -20,15 +21,55 @@ from adapters.outbound.graph.falkordb_writer import (
     _records_from_result,
     build_falkordb_graph,
 )
-from adapters.outbound.graph.neo4j_reader import (
-    _ENTITY_LABELS_CYPHER,
-    _FIND_CLAIMS_CYPHER,
-    _embedding_score,
-    _iso,
-    _row_from_record,
+from adapters.outbound.graph.canonical_claim_query import (
+    ENTITY_LABELS_CYPHER,
+    FIND_CLAIMS_CYPHER,
+    iso,
+    row_from_record,
+    stamp_scored_rows,
+    stamp_similarity,
 )
 from domain.ports.claim_query import ClaimQueryFilter, ClaimRow
+from domain.ports.embedder import EmbedderPort
 from domain.ports.settings import ContextEngineSettingsPort
+
+_VECTOR_CLAIMS_CYPHER = """
+CALL db.idx.vector.queryRelationships(
+    'RELATES_TO',
+    'fact_embedding',
+    $k,
+    vecf32($embedding)
+) YIELD relationship AS r, score
+WITH r, score
+MATCH (a:Entity {group_id: $gid})-[rel:RELATES_TO]->(b:Entity {group_id: $gid})
+WHERE id(rel) = id(r)
+  AND rel.group_id = $gid
+  AND ($preds IS NULL OR rel.name IN $preds)
+  AND ($subjects IS NULL OR rel.subject_key IN $subjects)
+  AND ($objects IS NULL OR rel.object_key IN $objects)
+  AND ($sources IS NULL OR rel.source_system IN $sources)
+  AND ($include_invalid OR rel.invalid_at IS NULL)
+  AND ($as_of IS NULL OR rel.valid_at IS NULL OR rel.valid_at <= $as_of)
+  AND ($va_after IS NULL OR (rel.valid_at IS NOT NULL AND rel.valid_at >= $va_after))
+  AND ($va_before IS NULL OR rel.valid_at IS NULL OR rel.valid_at <= $va_before)
+  AND ($subject_label IS NULL OR $subject_label IN labels(a))
+  AND ($object_label IS NULL OR $object_label IN labels(b))
+RETURN rel{.*} AS props, score
+ORDER BY score ASC
+LIMIT $limit
+"""
+
+_ENTITY_PROPERTIES_CYPHER = """
+MATCH (e:Entity {group_id: $gid})
+WHERE e.entity_key = $key
+RETURN properties(e) AS props
+LIMIT 1
+"""
+
+
+def _distance_to_similarity(distance: float) -> float:
+    """FalkorDB vector queries return distance; readers expect similarity."""
+    return max(0.0, min(1.0, 1.0 - distance))
 
 
 class FalkorDBClaimQueryStore:
@@ -40,10 +81,16 @@ class FalkorDBClaimQueryStore:
         *,
         graph: Any | None = None,
         graph_provider: Callable[[], Any] | None = None,
+        embedder: EmbedderPort | None = None,
     ) -> None:
         self._settings = settings
         self._graph = graph  # injectable for unit tests
         self._graph_provider = graph_provider  # shared handle from the container
+        self._embedder = embedder
+
+    @property
+    def match_mode(self) -> str:
+        return "vector" if self._embedder is not None else "lexical"
 
     def _get_graph(self) -> Any:
         if self._graph is None:
@@ -65,45 +112,53 @@ class FalkorDBClaimQueryStore:
             "objects": list(filter_.object_key_in) or None,
             "sources": list(filter_.source_system_in) or None,
             "include_invalid": bool(filter_.include_invalidated),
-            "as_of": _iso(filter_.as_of),
-            "va_after": _iso(filter_.valid_at_after),
-            "va_before": _iso(filter_.valid_at_before),
+            "as_of": iso(filter_.as_of),
+            "va_after": iso(filter_.valid_at_after),
+            "va_before": iso(filter_.valid_at_before),
             "subject_label": filter_.subject_label,
             "object_label": filter_.object_label,
         }
-        result = self._get_graph().query(_FIND_CLAIMS_CYPHER, params=params)
-        rows = [_row_from_record(rec) for rec in _records_from_result(result)]
+        if filter_.fact_query and self._embedder is not None:
+            rows = self._find_claims_vector(filter_, params)
+            if rows:
+                return rows
+
+        rows = self._find_claims_lexical(params)
 
         if filter_.fact_query:
-            scored = sorted(
-                ((_embedding_score(row.fact, filter_.fact_query), row) for row in rows),
-                key=lambda pair: pair[0],
-                reverse=True,
-            )
-            rows = []
-            for score, row in scored:
-                props = dict(row.properties)
-                props["semantic_similarity"] = score
-                rows.append(
-                    ClaimRow(
-                        pot_id=row.pot_id,
-                        predicate=row.predicate,
-                        subject_key=row.subject_key,
-                        object_key=row.object_key,
-                        valid_at=row.valid_at,
-                        invalid_at=row.invalid_at,
-                        evidence_strength=row.evidence_strength,
-                        source_system=row.source_system,
-                        source_ref=row.source_ref,
-                        fact=row.fact,
-                        properties=props,
-                        fact_embedding=row.fact_embedding,
-                    )
-                )
+            rows = stamp_similarity(rows, filter_.fact_query)
 
         if filter_.limit is not None and filter_.limit >= 0:
             rows = rows[: filter_.limit]
         return rows
+
+    def _find_claims_lexical(self, params: Mapping[str, object]) -> list[ClaimRow]:
+        result = self._get_graph().query(FIND_CLAIMS_CYPHER, params=dict(params))
+        return [row_from_record(rec) for rec in _records_from_result(result)]
+
+    def _find_claims_vector(
+        self, filter_: ClaimQueryFilter, params: Mapping[str, object]
+    ) -> list[ClaimRow]:
+        assert filter_.fact_query is not None
+        assert self._embedder is not None
+        limit = filter_.limit if filter_.limit is not None and filter_.limit > 0 else 10
+        vector_params = {
+            **dict(params),
+            "embedding": [float(x) for x in self._embedder.embed(filter_.fact_query)],
+            "k": max(limit * 5, 50),
+            "limit": limit,
+        }
+        try:
+            result = self._get_graph().query(
+                _VECTOR_CLAIMS_CYPHER, params=vector_params
+            )
+        except Exception:
+            return []
+        scored = [
+            (_distance_to_similarity(float(rec.get("score", 1.0))), row_from_record(rec))
+            for rec in _records_from_result(result)
+        ]
+        return stamp_scored_rows(scored)
 
     def entity_labels(
         self, *, pot_id: str, entity_keys: Iterable[str]
@@ -112,12 +167,23 @@ class FalkorDBClaimQueryStore:
         if not keys:
             return {}
         result = self._get_graph().query(
-            _ENTITY_LABELS_CYPHER, params={"gid": pot_id, "keys": keys}
+            ENTITY_LABELS_CYPHER, params={"gid": pot_id, "keys": keys}
         )
         return {
             rec["key"]: tuple(lbl for lbl in (rec["labels"] or []))
             for rec in _records_from_result(result)
         }
 
+    def entity_properties(self, *, pot_id: str, entity_key: str) -> dict[str, Any]:
+        result = self._get_graph().query(
+            _ENTITY_PROPERTIES_CYPHER,
+            params={"gid": pot_id, "key": entity_key},
+        )
+        records = _records_from_result(result)
+        if not records:
+            return {}
+        props = records[0].get("props")
+        return dict(props) if isinstance(props, Mapping) else {}
 
-__all__ = ["FalkorDBClaimQueryStore"]
+
+__all__ = ["FalkorDBClaimQueryStore", "_VECTOR_CLAIMS_CYPHER"]

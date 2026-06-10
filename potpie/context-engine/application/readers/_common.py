@@ -23,6 +23,10 @@ class ReadRequest:
     max_items: int = 12
     freshness_preference: str = "balanced"
     include_invalidated: bool = False
+    # Traverse-axis controls (Query Surface). Only the neighborhood reader uses
+    # these; other readers ignore them.
+    depth: int | None = None
+    direction: str | None = None  # "out" | "in" | "both"
 
 
 @dataclass(frozen=True, slots=True)

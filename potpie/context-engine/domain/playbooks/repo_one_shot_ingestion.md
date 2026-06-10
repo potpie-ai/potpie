@@ -1,13 +1,13 @@
 ---
 name: repo-one-shot-ingestion
-description: One-time ingestion of a repository's recent merged PRs and standalone GitHub issues into the context graph. Not incremental — live updates go through the pull_request.merged and issue.opened webhook paths.
+description: One-time change-history ingestion of a repository's recent merged PRs and standalone GitHub issues into the context graph. Timeline scope only — baseline repo understanding is a separate harness-led procedure (potpie-repo-baseline). Not incremental — live updates go through the pull_request.merged and issue.opened webhook paths.
 source_system: github
 event_type: repository
 action: one_shot_ingest
 enables_planner: true
 ---
 
-# Repo one-shot ingestion
+# Repo change-history ingestion (one-shot)
 
 A reusable skill for ingesting a repository's recent **merged pull requests**
 and **standalone GitHub issues** into the context graph in a single pass.
@@ -16,9 +16,12 @@ shape, GitHub source. Designed to be invoked by either Claude Code (as a
 checklist with a compatible write path) or the internal reconciliation agent
 (loaded as a playbook).
 
-Does **not** replace `repository.added` — no sandbox file-tree walk, no
-module / feature map. Does **not** cover GitHub Discussions (no connector
-tool yet).
+Scope is **change history only**: timeline activities, clear fixes, explicit
+decisions, and evidenced bug patterns. Does not walk a working tree, does not
+build a module / feature map, and must not be used to infer the repository's
+baseline architecture — that is the separate harness-led
+`potpie-repo-baseline` procedure. It only reconciles authored GitHub source
+history. Does **not** cover GitHub Discussions (no connector tool yet).
 
 ## When to invoke
 
@@ -89,8 +92,8 @@ tool yet).
 
 ### Phase 0 — Setup
 
-1. Confirm the repo is attached (`sandbox_list_repos` if the tool exists).
-   If not, abort with a warning. Do NOT attempt to attach from this skill.
+1. Confirm the event payload names a repo (`owner/name`). If not, abort with a
+   warning. Do NOT attempt to attach or clone a repo from this skill.
 2. Initialize the todo list with two entries:
    - `Enumerate last <count> merged PRs of <repo>`
    - `Enumerate last <count> issues of <repo>`
@@ -206,7 +209,7 @@ Identity rules to respect (these are NOT free-form strings):
 - `Repository` is `SLUG_ALIAS` with `key_prefix=repo`. The body must be a
   lowercase slug — letters/digits/hyphens only — NO dots, NO slashes. So
   `repo:github.com/acme/api` is INVALID. Use `repo:<owner>-<repo>` (slugified,
-  matches what `_repo_key` in scanners produces, e.g. `repo:acme-api`).
+  e.g. `repo:acme-api`).
 - `Person` is `SLUG_ALIAS` with `key_prefix=person`. Use `person:<handle>`
   (the GitHub login lowercased; usually already slug-clean).
 - `Period` uses the production builder `timeline:period:daily:<pot>:<yyyy-mm-dd>`
@@ -365,10 +368,10 @@ ladder as soon as you can answer kind + summary + bug/decision evidence.
 
 ## Anti-patterns
 
-- Do NOT re-emit `repository.added` from this skill — that re-triggers the
-  agent's full sandbox bootstrap.
-- Do NOT walk the file tree or read source files unless commit + branch +
-  title + body + comments all leave intent unclear.
+- Do NOT re-emit `repository.added` from this skill.
+- Do NOT walk the file tree or scan source files. Read PR code diffs only as
+  the last resort described above, when commit + branch + title + body +
+  comments all leave intent unclear.
 - Do NOT page past the bounded list calls.
 - Do NOT ingest the same PR number twice — the issues list tool already
   excludes PR-shaped rows; trust it.

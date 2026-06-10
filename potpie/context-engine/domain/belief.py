@@ -8,11 +8,10 @@ returns to the agent as ``confidence``.
 Inputs the formula consumes:
 
 - ``evidence_strength`` — ordered ``deterministic > attested > inferred
-  > hypothesized``. Scanner-derived claims carry ``deterministic``;
-  LLM-extracted from PR body carry ``inferred``; agent-recorded carry
-  ``attested``.
+  > hypothesized``. Agent-recorded claims carry ``attested``; extracted
+  text claims carry ``inferred``.
 - ``valid_at`` recency vs. now and the predicate-family TTL.
-- Per-source authority weight — k8s-scanner outranks slack-message.
+- Per-source authority weight — user/agent records outrank ambient chat.
 - Corroboration count across distinct ``(source_system, source_ref)``.
 - Verification claims attached to the target (``VERIFIED`` predicate).
 - **Coverage-gap signal (F5)** — when the planner queried for N
@@ -109,12 +108,6 @@ def evidence_strength_value(name: str | None) -> int:
 
 
 _SOURCE_AUTHORITY: Mapping[str, float] = {
-    # High-trust deterministic sources (scanners reading config in-place)
-    "k8s-scanner": 1.2,
-    "kubernetes-manifest-scanner": 1.2,
-    "codeowners-scanner": 1.2,
-    "openapi-spec-scanner": 1.15,
-    "dependency-manifest-scanner": 1.15,
     # Agent-recorded structured payloads (P6) — high trust per record_type
     "agent-record": 1.1,
     "agent-verification": 1.1,
@@ -145,7 +138,7 @@ def source_authority(source_system: str | None) -> float:
 
 
 _FAMILY_TTL_HOURS: Mapping[str, float] = {
-    # Topology — stable, decays slowly. Recompute frequency matches scanner cadence.
+    # Topology — stable, decays slowly.
     "DEPENDS_ON": 24 * 30,
     "STORED_IN": 24 * 30,
     "DEPLOYED_TO": 24 * 14,
@@ -295,8 +288,8 @@ def score_object(
     ``score = max(per_claim_score) + corroboration_bonus + verification_bonus``
 
     Each ``per_claim_score = strength × decay × source_authority`` so a
-    fresh deterministic scanner claim from ``k8s-scanner`` reads as
-    ``4 × 1.0 × 1.2 = 4.8`` (label = high), while a stale inferred LLM
+    fresh deterministic source observation from ``agent-record`` reads as
+    ``4 × 1.0 × 1.1 = 4.4`` (label = high), while a stale inferred LLM
     claim from a year-old PR body reads as ``2 × 0.0 × 0.7 = 0.0``.
     """
     if not claims:

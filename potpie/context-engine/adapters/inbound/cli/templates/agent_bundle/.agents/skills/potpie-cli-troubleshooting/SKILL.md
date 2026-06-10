@@ -2,7 +2,7 @@
 name: "potpie-cli-troubleshooting"
 version: "1"
 recommended: true
-description: "Use when the Potpie CLI is failing — especially around API key, URL config, 401, 404, pot scope, or search/ingest HTTP errors."
+description: "Use when the Potpie CLI is failing, especially around API key, URL config, 401, 404, pot scope, graph reads, graph mutations, or connector source queues."
 ---
 
 # Potpie CLI Troubleshooting
@@ -39,7 +39,7 @@ Env var `POTPIE_API_KEY` overrides stored credentials.
 **`404` or `Unknown pot`**
 The pot UUID is not accessible for that user. Check:
 ```bash
-potpie pot pots          # list pots you have access to
+potpie pot list          # list local pots
 potpie pot use <correct-id>
 ```
 
@@ -61,8 +61,17 @@ potpie search <uuid> "my query"
 **Server returns `503`**
 Context graph may be disabled on the host. Check server logs.
 
-**`409 duplicate_ingest`**
-Episode already exists with that idempotency key. This is safe — re-ingesting the same content is idempotent.
+**`invalid_mutation_payload` or validation errors**
+Run the same mutation through dry-run and read the reported issue codes:
+```bash
+potpie --json graph mutate --file mutation.json --dry-run
+```
+Fix unknown entity labels, predicates, missing descriptions, missing evidence for
+high-authority truth classes, or duplicate entity keys before applying.
+
+**Connector ingest returns duplicate**
+One-shot source events are idempotent. Treat a duplicate as "already queued or
+already processed" unless the event id/source id is unexpected.
 
 ## Output and Piping
 

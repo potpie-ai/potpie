@@ -5,7 +5,7 @@ the graph enters through ``apply`` and is read back through claim query. The
 other four capability ports are rebuildable projections off this store.
 
 Records (``context_record``) and reconciled source events both lower to a
-:class:`ReconciliationPlan` and land here — there is one write door.
+:class:`MutationBatch` and land here — there is one write door.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol, Sequence
 
 from domain.graph_mutations import ProvenanceContext
-from domain.reconciliation import ReconciliationPlan, ReconciliationResult
+from domain.reconciliation import MutationBatch, MutationResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,12 +34,12 @@ class GraphMutationPort(Protocol):
 
     def apply(
         self,
-        plan: ReconciliationPlan,
+        plan: MutationBatch,
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
-    ) -> ReconciliationResult:
-        """Apply a constrained mutation plan (entity/edge upserts, deletes,
+    ) -> MutationResult:
+        """Apply a constrained mutation batch (entity/edge upserts, deletes,
         invalidations) against the canonical store for ``expected_pot_id``.
 
         Sync entry, for non-async callers (CLI, tests). Backends whose store is
@@ -50,11 +50,11 @@ class GraphMutationPort(Protocol):
 
     async def apply_async(
         self,
-        plan: ReconciliationPlan,
+        plan: MutationBatch,
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
-    ) -> ReconciliationResult:
+    ) -> MutationResult:
         """Async-native ``apply``. Preferred when called from inside an event
         loop (FastAPI handlers, agent tools, Celery workers): backends whose
         store is async (Neo4j) ``await`` their writer directly instead of

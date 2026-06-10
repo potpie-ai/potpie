@@ -15,9 +15,9 @@ import typer
 
 from adapters.inbound.cli.commands import auth as auth_cmds
 from adapters.inbound.cli.commands import bootstrap, cloud, daemon, graph, ledger, pots
-from adapters.inbound.cli.commands import ingest as ingest_cmds
 from adapters.inbound.cli.commands import query as query_cmds
 from adapters.inbound.cli.commands import skills as skills_cmds
+from adapters.inbound.cli.commands import ui as ui_cmds
 from adapters.inbound.cli.commands._common import set_json, set_verbose
 
 
@@ -58,14 +58,15 @@ def build_app() -> typer.Typer:
     query_cmds.register(app)
     bootstrap.register(app)
     auth_cmds.register(app)
+    ui_cmds.register(app)
 
     # Command groups (one per cli-flow.md section).
     app.add_typer(pots.pot_app, name="pot")
     app.add_typer(pots.source_app, name="source")
     app.add_typer(daemon.daemon_app, name="daemon")
-    app.add_typer(ingest_cmds.ingest_app, name="ingest")
     app.add_typer(ledger.ledger_app, name="ledger")
     app.add_typer(graph.graph_app, name="graph")
+    app.add_typer(graph.timeline_app, name="timeline")
     app.add_typer(graph.backend_app, name="backend")
     app.add_typer(skills_cmds.skills_app, name="skills")
     app.add_typer(cloud.cloud_app, name="cloud")

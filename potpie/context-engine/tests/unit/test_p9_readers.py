@@ -38,8 +38,13 @@ def _row(
     source_system: str = "agent",
     source_ref: str | None = None,
     fact: str | None = None,
+    claim_key: str | None = None,
+    subgraph: str | None = None,
+    truth: str = "agent_claim",
+    environment: str | None = None,
     properties: dict | None = None,
 ) -> ClaimRow:
+    ref = source_ref or f"src:{predicate}:{subject_key}"
     return ClaimRow(
         pot_id=pot_id,
         predicate=predicate,
@@ -49,9 +54,14 @@ def _row(
         invalid_at=invalid_at,
         evidence_strength=evidence_strength,
         source_system=source_system,
-        source_ref=source_ref or f"src:{predicate}:{subject_key}",
+        source_ref=ref,
         fact=fact,
         properties=properties or {},
+        claim_key=claim_key or f"claim:{predicate}:{subject_key}:{object_key}",
+        subgraph=subgraph,
+        truth=truth,
+        environment=environment,
+        source_refs=(ref,),
     )
 
 
@@ -142,7 +152,8 @@ class TestInfraTopologyReader:
                 object_key="environment:prod",
                 fact="service auth-svc deployed to prod",
                 evidence_strength="deterministic",
-                properties={"environment": "prod"},
+                truth="source_observation",
+                environment="prod",
             )
         )
         # Same service in staging (env-filtered out for prod queries).
@@ -153,7 +164,8 @@ class TestInfraTopologyReader:
                 object_key="environment:staging",
                 fact="service auth-svc deployed to staging",
                 evidence_strength="deterministic",
-                properties={"environment": "staging"},
+                truth="source_observation",
+                environment="staging",
             )
         )
         # An extra topology edge: Service USES DataStore.
@@ -190,8 +202,86 @@ class TestInfraTopologyReader:
             )
         )
         envs = {r.candidate.payload.get("environment") for r in response.items}
-        # Only prod should appear; staging filtered.
+        # Only prod should appear; staging and unqualified rows are filtered.
+        assert envs == {"prod"}
+
+    def test_environment_filter_can_include_unqualified_when_explicit(self) -> None:
+        store = self._setup_store()
+        reader = InfraTopologyReader(claim_query=store, ranker=RankingService())
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={
+                    "services": ["auth-svc"],
+                    "environment": "prod",
+                    "include_unqualified_environment": True,
+                },
+            )
+        )
+        envs = {r.candidate.payload.get("environment") for r in response.items}
+        assert "prod" in envs
+        assert None in envs
         assert "staging" not in envs
+
+    def test_environment_filter_applies_during_traversal(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="DEPENDS_ON",
+                subject_key="service:ledger-api",
+                object_key="service:cache",
+                fact="ledger depends on cache in prod",
+                environment="prod",
+            )
+        )
+        store.add(
+            _row(
+                predicate="DEPENDS_ON",
+                subject_key="service:ledger-api",
+                object_key="service:queue",
+                fact="ledger depends on queue without an environment qualifier",
+                properties={},
+            )
+        )
+        store.add(
+            _row(
+                predicate="DEPENDS_ON",
+                subject_key="service:ledger-api",
+                object_key="service:staging-worker",
+                fact="ledger depends on staging worker",
+                environment="staging",
+            )
+        )
+        store.add(
+            _row(
+                predicate="DEPENDS_ON",
+                subject_key="service:queue",
+                object_key="service:worker",
+                fact="queue depends on worker in prod",
+                environment="prod",
+            )
+        )
+        reader = InfraTopologyReader(claim_query=store, ranker=RankingService())
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"service": "ledger-api", "environment": "Prod"},
+                depth=2,
+                direction="out",
+            )
+        )
+
+        endpoints = {
+            (
+                r.candidate.payload["subject_key"],
+                r.candidate.payload["object_key"],
+                r.candidate.payload.get("environment"),
+            )
+            for r in response.items
+        }
+        assert ("service:ledger-api", "service:cache", "prod") in endpoints
+        assert all("service:queue" not in pair[:2] for pair in endpoints)
+        assert all("service:staging-worker" not in pair[:2] for pair in endpoints)
 
     def test_no_anchor_returns_neutral_overlap(self) -> None:
         store = self._setup_store()

@@ -7,7 +7,8 @@ Postgres pipeline + connectors + reconciliation agent), which is being migrated
 onto ``HostShell`` and is not imported on the CLI path.
 
 Profile selection:
-    backend profile defaults to ``embedded`` (real, JSON-persisted local stack).
+    backend profile defaults to ``falkordb_lite`` (embedded FalkorDBLite local
+    stack) on Python versions that can install it, otherwise ``embedded``.
     ``$CONTEXT_ENGINE_BACKEND`` overrides it; ``neo4j`` is the shape-first
     production target. The ledger defaults to an unbound dummy client; tests
     can inject a ``FixtureEventLedgerClient``.
@@ -16,19 +17,19 @@ Profile selection:
 from __future__ import annotations
 
 import os
+import sys
 from typing import Any
 
 from adapters.outbound.graph.backends import build_backend
 from adapters.outbound.install.local_installer import LocalInstaller
 from adapters.outbound.ledger.cursor_store import LocalLedgerCursorStore
 from adapters.outbound.ledger.managed_client import ManagedEventLedgerClient
-from adapters.outbound.ledger.reconciler import DeterministicEventReconciler
 from adapters.outbound.pots.flat_file_state_store import (
     FlatFileMigrator,
     FlatFileStateStore,
 )
 from adapters.outbound.pots.local_pot_store import LocalPotStore
-from adapters.outbound.scanners.default_registry import build_default_scanner_registry
+from adapters.outbound.session.injection_ledger import LocalInjectionLedger
 from adapters.outbound.skills.claude_target import (
     ClaudeAgentTarget,
     CodexAgentTarget,
@@ -39,7 +40,7 @@ from application.services.agent_context import AgentContextService
 from application.services.auth_service import LocalAuthService
 from application.services.config_service import LocalConfigService
 from application.services.graph_service import DefaultGraphService
-from application.services.ingest_service import IngestService
+from application.services.nudge_service import NudgeService
 from application.services.pot_management import LocalPotManagementService
 from application.services.setup_orchestrator import DefaultSetupOrchestrator
 from application.services.skill_manager import DefaultSkillManager
@@ -50,10 +51,16 @@ from host.shell import HostShell, LedgerFacade
 
 
 def default_backend_profile() -> str:
-    # 'embedded' is the OSS local default: persistent across CLI invocations.
-    # Tests inject an in_memory backend directly; $CONTEXT_ENGINE_BACKEND
-    # selects 'neo4j' (shape-first production) or 'in_memory' (ephemeral).
-    return (os.getenv("CONTEXT_ENGINE_BACKEND") or "embedded").strip().lower()
+    # 'falkordb_lite' is the OSS local default: a graph-native, persistent
+    # backend across CLI invocations. FalkorDBLite wheels start at Python 3.12,
+    # so older interpreter installs retain the JSON embedded backend unless the
+    # user explicitly selects a profile.
+    profile = os.getenv("CONTEXT_ENGINE_BACKEND") or os.getenv("GRAPH_DB_BACKEND")
+    if profile:
+        return profile.strip().lower()
+    if sys.version_info >= (3, 12):
+        return "falkordb_lite"
+    return "embedded"
 
 
 def build_host_shell(
@@ -89,15 +96,11 @@ def build_host_shell(
     ledger = LedgerFacade(
         client=ledger_client or ManagedEventLedgerClient(),
         cursors=LocalLedgerCursorStore(),
-        # The reconciler is the parked LLM-vs-deterministic seam (see its TODO).
-        reconciler=DeterministicEventReconciler(mutation=backend.mutation),
     )
 
-    # Local working-tree config scanners write through the same mutation port.
-    ingest = IngestService(
-        mutation=backend.mutation,
-        scanner_registry=build_default_scanner_registry(),
-    )
+    # The nudge brain reads through the graph service and dedups via a local
+    # per-session injection ledger (both deterministic; no model on this path).
+    nudge = NudgeService(graph=graph, ledger=LocalInjectionLedger())
 
     # Lifecycle components (each independently ownable; see the setup orchestrator).
     daemon = Daemon()
@@ -124,7 +127,7 @@ def build_host_shell(
         skills=skills,
         backend=backend,
         ledger=ledger,
-        ingest=ingest,
+        nudge=nudge,
         daemon=daemon,
         config=config,
         installer=installer,

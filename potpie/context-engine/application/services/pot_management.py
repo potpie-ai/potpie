@@ -131,6 +131,7 @@ def _source(row: dict) -> SourceInfo:
         source_id=row["source_id"],
         kind=row.get("kind", "unknown"),
         name=row.get("name", row.get("location", "")),
+        location=row.get("location"),
         status="ok",
     )
 

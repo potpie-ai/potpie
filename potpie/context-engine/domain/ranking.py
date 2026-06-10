@@ -16,7 +16,6 @@ Breaking down the score lets readers explain rankings to the agent
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Sequence
@@ -24,18 +23,24 @@ from typing import Any, Iterable, Mapping, Sequence
 from domain.belief import EvidenceStrength, decay_weight
 
 
-# Default weights — locked to the plan's ordering. The ranker uses a
-# *weighted geometric mean* over the per-factor scores (each in [0, 1])
-# so a single zero in any dimension collapses the result, but a strong
-# signal in one dimension doesn't dominate. The geometric form keeps
-# the score in [0, 1] without normalisation, which makes the ranking
-# stable across reader output sizes.
+# Default weights. Semantic similarity is the **primary recall signal** (R1/R3):
+# it carries the highest weight because, with embed-on-write + ANN, it is the
+# factor that actually separates a paraphrased match from noise. The rest
+# re-rank. ``scope_overlap`` is high too (UC1 hinges on it).
+#
+# Combination rule (R3 — the single, documented rule): a **weighted arithmetic
+# mean** of the per-factor scores (each in [0, 1]). This deliberately replaces
+# the old weighted *geometric* mean, whose ``1e-6`` floor let a single zero (a
+# low lexical-overlap score) veto an otherwise strong, recent, scope-matched
+# claim. Under a weighted sum a weak factor only re-ranks; it can never collapse
+# a candidate. Hard filters (pot / predicate / validity window / scope
+# membership) belong in the query, not here — see the readers.
 _DEFAULT_WEIGHTS: Mapping[str, float] = {
+    "semantic_similarity": 1.3,
     "strength": 1.2,
-    "recency": 1.0,
     "scope_overlap": 1.1,
+    "recency": 1.0,
     "corroboration": 0.8,
-    "semantic_similarity": 0.7,
     "coverage_quality": 0.5,
 }
 
@@ -149,18 +154,23 @@ class RankingService:
         }
 
     def _combine(self, breakdown: Mapping[str, float]) -> float:
-        log_sum = 0.0
+        """Weighted arithmetic mean of the per-factor scores (R3).
+
+        No single soft signal can veto a candidate: a zero factor contributes
+        zero to the sum rather than collapsing the product. Stays in [0, 1] and
+        is stable across reader output sizes.
+        """
+        weighted = 0.0
         weight_sum = 0.0
         for factor, value in breakdown.items():
             weight = self.weights.get(factor, 0.0)
             if weight <= 0:
                 continue
-            v = max(value, 1e-6)
-            log_sum += weight * math.log(v)
+            weighted += weight * max(0.0, min(1.0, value))
             weight_sum += weight
         if weight_sum == 0:
             return 0.0
-        return math.exp(log_sum / weight_sum)
+        return weighted / weight_sum
 
 
 # ---------------------------------------------------------------------------

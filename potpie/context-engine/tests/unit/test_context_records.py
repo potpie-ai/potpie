@@ -13,7 +13,9 @@ from domain.context_records import (
     PreferenceRecord,
     VerificationRecord,
     has_structured_schema,
+    has_structured_details,
     record_to_dict,
+    structured_detail_keys,
     validate_record_payload,
 )
 
@@ -193,6 +195,22 @@ class TestUnknownTypesFallback:
         assert has_structured_schema("fix")
         assert has_structured_schema("preference")
         assert not has_structured_schema("workflow")
+
+
+class TestStructuredDetailDetection:
+    def test_schema_keys_detect_structured_details(self) -> None:
+        assert "kind" in structured_detail_keys("bug_pattern")
+        assert has_structured_details("bug_pattern", {"kind": 123})
+
+    def test_generic_metadata_is_not_structured_details(self) -> None:
+        assert not has_structured_details(
+            "preference",
+            {"confidence": 0.7, "visibility": "project", "text": "use ruff"},
+        )
+
+    def test_unknown_record_type_has_no_structured_details(self) -> None:
+        assert structured_detail_keys("workflow") == frozenset()
+        assert not has_structured_details("workflow", {"kind": 123})
 
 
 class TestSerialisation:

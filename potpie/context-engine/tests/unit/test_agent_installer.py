@@ -174,6 +174,22 @@ def test_install_agent_bundle_claude_skips_changed_section_without_force(
     assert "CLAUDE.md" in result.skipped
 
 
+def test_install_agent_bundle_claude_plugin_lays_out_plugin_dir(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    result = install_agent_bundle(repo, agent="claude-plugin")
+
+    base = repo / ".claude" / "potpie-plugin"
+    assert (base / ".claude-plugin" / "plugin.json").exists()
+    assert (base / "hooks" / "hooks.json").exists()
+    assert (base / "hooks" / "potpie_nudge.py").exists()
+    assert (base / "skills" / "potpie-graph" / "SKILL.md").exists()
+    # Everything is created on a fresh repo; nothing skipped.
+    assert ".claude/potpie-plugin/.claude-plugin/plugin.json" in result.created
+    assert not result.skipped
+
+
 def test_install_agent_bundle_cursor_writes_cursor_skills(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

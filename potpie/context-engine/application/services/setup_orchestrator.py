@@ -68,12 +68,11 @@ _SEAM_PLAN: tuple[tuple[str, str, str], ...] = (
     ("auth", "auth", "init local auth"),
     ("source", "pot management", "register repo '{repo}'"),
     ("skills", "skill manager", "install skills for '{agent}'"),
-    ("scan", "ingestion / scan", "scan working tree"),
 )
 
 # Soft steps never gate the run. Host-gated steps are hard only for a detached
 # daemon host; an in-process host skips them.
-_SOFT_STEPS = frozenset({"auth", "source", "skills", "scan"})
+_SOFT_STEPS = frozenset({"auth", "source", "skills"})
 _HOST_GATED = frozenset({"installer", "daemon"})
 
 
@@ -98,11 +97,9 @@ def _skip_reason(step: str, plan: SetupPlan) -> str | None:
 
 
 def _planned_steps(plan: SetupPlan) -> list[PlannedSetupStep]:
-    """The ordered dry-run steps for ``plan`` (omitting scan unless requested)."""
+    """The ordered dry-run steps for ``plan``."""
     steps: list[PlannedSetupStep] = []
     for step, owner, action_tmpl in _SEAM_PLAN:
-        if step == "scan" and not plan.scan:
-            continue
         if step == "pot.default" and plan.defer_default_pot:
             continue
         if step == "skills" and plan.defer_skills:
@@ -128,7 +125,7 @@ def _planned_steps(plan: SetupPlan) -> list[PlannedSetupStep]:
 @dataclass(slots=True)
 class DefaultSetupOrchestrator:
     """Sequences config → installer → backend → pot.init → state store → migrate
-    → default pot → daemon → auth → source → skills → scan over the bespoke
+    → default pot → daemon → auth → source → skills over the bespoke
     per-component methods."""
 
     config: ConfigService
@@ -203,8 +200,6 @@ class DefaultSetupOrchestrator:
                 else []
             ),
         ]
-        if plan.scan:
-            steps.append(self._step("scan", hard("scan"), lambda: self._scan(plan)))
         return SetupReport(plan=plan, steps=tuple(steps))
 
     # --- step runner --------------------------------------------------------
@@ -258,14 +253,6 @@ class DefaultSetupOrchestrator:
             return StepResult("skills", SKIPPED, "no global skill target for default agent")
         result = self.skills.install(agent=plan.agent)
         return f"installed {list(result.changed)} for {plan.agent}"
-
-    def _scan(self, plan: SetupPlan) -> StepResult:
-        raise CapabilityNotImplemented(
-            "ingest.scan",
-            detail="scanner ingestion is not wired into setup yet",
-            recommended_next_action="run 'potpie ingest scan' once scanners land",
-        )
-
 
 def _describe(result: object) -> str | None:
     return None if result is None else str(result)
