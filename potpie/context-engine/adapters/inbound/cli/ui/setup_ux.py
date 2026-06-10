@@ -56,6 +56,19 @@ STATE_MAP: dict[str, StepStatus] = {
 # Synthetic per-row dwell so the (already-complete) run reads as live.
 _MIN_DWELL_S = 0.18
 
+# Soft steps that are hidden when they only report no-op / stub outcomes.
+_UI_HIDE_WHEN: dict[str, frozenset[str]] = {
+    "auth": frozenset({"not_implemented", "skipped"}),
+    "source": frozenset({"skipped"}),
+}
+
+
+def _visible_in_checklist(step: Any) -> bool:
+    hidden = _UI_HIDE_WHEN.get(step.step)
+    if hidden is None:
+        return True
+    return step.state not in hidden
+
 
 def rich_enabled(*, as_json: bool) -> bool:
     """True when the animated wizard should drive output (TTY, not --json)."""
@@ -69,12 +82,12 @@ def render_setup_report(
     agent: str,
     scan: bool,
     use_rich: bool,
-    config_home: Path | None = None,
     pot_name: str | None = None,
 ) -> None:
     """Replay a completed ``SetupReport`` through the animated checklist."""
     wizard = SetupWizardUI(use_rich=use_rich)
-    for step in report.steps:
+    visible_steps = [step for step in report.steps if _visible_in_checklist(step)]
+    for step in visible_steps:
         running, done = STEP_LABELS.get(step.step, (step.step, step.step))
         if step.step == "skills":
             running = f"Installing agent skills ({agent})…"
@@ -86,7 +99,7 @@ def render_setup_report(
 
     failed_step_id: str | None = None
     with wizard.live():
-        for step in report.steps:
+        for step in visible_steps:
             with wizard.run_step(step.step):
                 if use_rich:
                     time.sleep(_MIN_DWELL_S)
@@ -102,11 +115,7 @@ def render_setup_report(
         wizard.print_failed(step_id=failed_step_id)
         return
 
-    setup_path = str(config_home / "config.json") if config_home else ""
-    data_path = str(config_home) if config_home else ""
     wizard.print_complete_summary(
-        setup_path=setup_path,
-        data_path=data_path,
         pot_name=None if report.plan.defer_default_pot else (pot_name or report.plan.pot),
         already_setup=False,
     )
