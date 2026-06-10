@@ -30,7 +30,6 @@ def test_maybe_prompt_agent_skills_installs_selected(
     repo.mkdir()
     (repo / ".git").mkdir()
     globally_installed: list[str] = []
-    repo_installed: list[str] = []
 
     monkeypatch.setattr(
         interactive_prompts,
@@ -43,47 +42,10 @@ def test_maybe_prompt_agent_skills_installs_selected(
         lambda agents: globally_installed.extend(agents)
         or [(agent, object()) for agent in agents],
     )
-    monkeypatch.setattr(
-        setup_ux,
-        "install_agents_to_repo",
-        lambda _repo, agents: repo_installed.extend(agents) or [],
-    )
-    monkeypatch.setattr(interactive_prompts, "prompt_yes_no", lambda *_a, **_k: False)
 
-    setup_ux._maybe_prompt_agent_skills(repo=repo, setup_agent="claude")
+    setup_ux._maybe_prompt_agent_skills(setup_agent="claude")
 
     assert globally_installed == ["claude"]
-    assert repo_installed == []
-
-
-def test_maybe_prompt_agent_skills_can_install_repo_local(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / ".git").mkdir()
-    repo_installed: list[str] = []
-
-    monkeypatch.setattr(
-        interactive_prompts,
-        "prompt_multi_checkbox",
-        lambda *_a, **_k: ["cursor"],
-    )
-    monkeypatch.setattr(
-        setup_ux,
-        "install_agents_globally",
-        lambda agents: [(agent, object()) for agent in agents],
-    )
-    monkeypatch.setattr(
-        setup_ux,
-        "install_agents_to_repo",
-        lambda _repo, agents: repo_installed.extend(agents) or [],
-    )
-    monkeypatch.setattr(interactive_prompts, "prompt_yes_no", lambda *_a, **_k: True)
-
-    setup_ux._maybe_prompt_agent_skills(repo=repo, setup_agent="cursor")
-
-    assert repo_installed == ["cursor"]
 
 
 def test_post_setup_wizard_runs_skills_after_integrations(
@@ -109,7 +71,6 @@ def test_post_setup_wizard_runs_skills_after_integrations(
         return ["claude"]
 
     monkeypatch.setattr(interactive_prompts, "prompt_multi_checkbox", _checkbox)
-    monkeypatch.setattr(interactive_prompts, "prompt_yes_no", lambda *_a, **_k: False)
     monkeypatch.setattr(
         setup_ux,
         "install_agents_globally",

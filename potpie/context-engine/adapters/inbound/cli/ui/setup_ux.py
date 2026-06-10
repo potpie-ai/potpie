@@ -60,6 +60,7 @@ _MIN_DWELL_S = 0.18
 _UI_HIDE_WHEN: dict[str, frozenset[str]] = {
     "auth": frozenset({"not_implemented", "skipped"}),
     "source": frozenset({"skipped"}),
+    "state_store.provision": frozenset({"skipped"}),
 }
 
 
@@ -177,20 +178,6 @@ def _agent_label(agent: str) -> str:
     return labels.get(agent, agent)
 
 
-def _print_agent_install_summary(repo: Path, results: list[tuple[str, Any]]) -> None:
-    from adapters.inbound.cli.ui.output import print_plain_line
-
-    for agent, result in results:
-        created = len(result.created)
-        updated = len(result.updated)
-        unchanged = len(result.unchanged)
-        print_plain_line(
-            f"{_agent_label(agent)} repo skills installed successfully "
-            f"({created} new, {updated} updated, {unchanged} unchanged).",
-            as_json=False,
-        )
-
-
 def _install_agents_globally_with_progress(agents: list[str]) -> list[tuple[str, Any]]:
     from adapters.inbound.cli.ui.output import print_plain_line
 
@@ -275,11 +262,8 @@ def _try_login(handler) -> None:
         raise
 
 
-def _maybe_prompt_agent_skills(*, repo: Path, setup_agent: str) -> None:
-    from adapters.inbound.cli.ui.interactive_prompts import (
-        prompt_multi_checkbox,
-        prompt_yes_no,
-    )
+def _maybe_prompt_agent_skills(*, setup_agent: str) -> None:
+    from adapters.inbound.cli.ui.interactive_prompts import prompt_multi_checkbox
 
     valid = frozenset(agent for agent in POST_SETUP_AGENT_ORDER if agent != "default")
     default_checked = (
@@ -310,18 +294,6 @@ def _maybe_prompt_agent_skills(*, repo: Path, setup_agent: str) -> None:
         if agent in selected_set and agent != "default"
     ]
     _install_agents_globally_with_progress(agents)
-
-    try:
-        install_repo = prompt_yes_no(
-            "Also install Potpie skills into this repo?",
-            default=False,
-        )
-    except (KeyboardInterrupt, EOFError):
-        install_repo = False
-    if install_repo:
-        results = install_agents_to_repo(repo, agents)
-        if results:
-            _print_agent_install_summary(repo, results)
 
 
 def maybe_prompt_github_login(
@@ -366,7 +338,7 @@ def maybe_prompt_github_login(
             _try_login(lambda p=provider: run_integration_login(p))
 
     if repo is not None:
-        _maybe_prompt_agent_skills(repo=repo, setup_agent=setup_agent)
+        _maybe_prompt_agent_skills(setup_agent=setup_agent)
 
     _maybe_prompt_first_pot(repo=repo, default_pot_name=default_pot_name)
 
