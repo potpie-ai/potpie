@@ -334,7 +334,11 @@ body {
   padding: 2px 0;
 }
 .legend-row.indent {
-  padding-left: 22px;
+  padding-left: 16px;
+  cursor: pointer;
+}
+.legend-row.indent input {
+  accent-color: var(--accent);
 }
 .legend-count {
   margin-left: auto;

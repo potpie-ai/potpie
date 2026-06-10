@@ -195,9 +195,10 @@ export default function App() {
     }
   };
 
-  // Category show/hide filtering, applied to both views.
+  // Per-type show/hide filtering, applied to both views. `hidden` holds entity
+  // types; a category checkbox cascades to (and reflects) all of its types.
   const visible = useMemo(() => {
-    const ok = (n: GraphNode) => !hidden.has(typeCategory(n.type));
+    const ok = (n: GraphNode) => !hidden.has(n.type);
     const nodes = data.nodes.filter(ok);
     const ids = new Set(nodes.map((n) => n.id));
     const edges = data.edges.filter(
@@ -222,10 +223,18 @@ export default function App() {
     }));
   }, [data]);
 
-  const toggleCat = (c: string) =>
+  const toggleType = (t: string) =>
     setHidden((prev) => {
       const next = new Set(prev);
-      next.has(c) ? next.delete(c) : next.add(c);
+      next.has(t) ? next.delete(t) : next.add(t);
+      return next;
+    });
+
+  // Cascade a category checkbox to all its types: hide them all, or reveal them.
+  const setCategoryHidden = (types: string[], hide: boolean) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      for (const t of types) hide ? next.add(t) : next.delete(t);
       return next;
     });
 
@@ -330,26 +339,42 @@ export default function App() {
           {legend.length > 0 && (
             <div className="legend">
               <div className="section-title">Categories</div>
-              {legend.map(({ category, total, types }) => (
-                <div className="cat-group" key={category}>
-                  <label className="cat-head">
-                    <input
-                      type="checkbox"
-                      checked={!hidden.has(category)}
-                      onChange={() => toggleCat(category)}
-                    />
-                    <span className="cat-name">{category}</span>
-                    <span className="legend-count">{total}</span>
-                  </label>
-                  {types.map(([type, n]) => (
-                    <div className="legend-row indent" key={type}>
-                      <TypeBadge type={type} />
-                      <span>{type}</span>
-                      <span className="legend-count">{n}</span>
-                    </div>
-                  ))}
-                </div>
-              ))}
+              {legend.map(({ category, total, types }) => {
+                const typeKeys = types.map(([t]) => t);
+                const hiddenCount = typeKeys.filter((t) =>
+                  hidden.has(t),
+                ).length;
+                const allHidden = hiddenCount === typeKeys.length;
+                const someHidden = hiddenCount > 0 && !allHidden;
+                return (
+                  <div className="cat-group" key={category}>
+                    <label className="cat-head">
+                      <input
+                        type="checkbox"
+                        ref={(el) => {
+                          if (el) el.indeterminate = someHidden;
+                        }}
+                        checked={!allHidden}
+                        onChange={() => setCategoryHidden(typeKeys, !allHidden)}
+                      />
+                      <span className="cat-name">{category}</span>
+                      <span className="legend-count">{total}</span>
+                    </label>
+                    {types.map(([type, n]) => (
+                      <label className="legend-row indent" key={type}>
+                        <input
+                          type="checkbox"
+                          checked={!hidden.has(type)}
+                          onChange={() => toggleType(type)}
+                        />
+                        <TypeBadge type={type} />
+                        <span>{type}</span>
+                        <span className="legend-count">{n}</span>
+                      </label>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </aside>
