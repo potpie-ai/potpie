@@ -1101,6 +1101,45 @@ def test_clear_jira_credentials_preserves_shared_legacy_for_confluence(
     assert cs._ATLASSIAN_LEGACY_TOKEN_SECRET in {k[1] for k in keychain}
 
 
+def test_clear_jira_credentials_preserves_shared_legacy_for_confluence_on_linux(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    keychain: dict,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
+    monkeypatch.setattr(cs.sys, "platform", "linux")
+    cs.save_atlassian_credentials(
+        {
+            "email": "shared@example.com",
+            "api_token": "shared-tok",
+            "site_url": "https://team.atlassian.net",
+            "cloud_id": "cloud-shared",
+        }
+    )
+    cs.save_confluence_credentials(
+        {
+            "email": "wiki@example.com",
+            "api_token": "wiki-tok",
+            "site_url": "https://team.atlassian.net",
+            "cloud_id": "c2",
+        }
+    )
+    cs.save_jira_credentials(
+        {
+            "email": "jira@example.com",
+            "api_token": "jira-tok",
+            "site_url": "https://team.atlassian.net",
+            "cloud_id": "c1",
+        }
+    )
+
+    cs.clear_jira_credentials()
+
+    assert cs.get_confluence_credentials().get("api_token") == "wiki-tok"
+    assert cs._ATLASSIAN_LEGACY_TOKEN_SECRET in {k[1] for k in keychain}
+
+
 def test_clear_atlassian_credentials_removes_shared_legacy(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

@@ -72,12 +72,12 @@ def integration_token_storage() -> str:
     return "file" if sys.platform == "linux" else "keychain"
 
 
+def _storage_label(token_storage: str | None) -> str:
+    return "local credentials file" if token_storage == "file" else "system keychain"
+
+
 def _integration_secret_store_label() -> str:
-    return (
-        "local credentials file"
-        if sys.platform == "linux"
-        else "system keychain"
-    )
+    return _storage_label(integration_token_storage())
 
 
 def legacy_credentials_path() -> Path:
@@ -625,16 +625,17 @@ def _get_secret_or_empty(name: str, *, label: str) -> str:
         raise ProviderCredentialError(str(exc)) from exc
 
 
-def _store_secret(name: str, secret: str, *, label: str) -> None:
-    if _uses_linux_integration_file_storage(name):
-        try:
-            _store_integration_file_secret(name, secret, label=label)
-        except CredentialStoreError as exc:
-            raise ProviderCredentialError(str(exc)) from exc
-        return
+def _store_secret(name: str, secret: str, *, label: str) -> str:
     try:
         store_secure_secret(name, secret, label=label)
+        return "keychain"
     except CredentialStoreError as exc:
+        if _uses_linux_integration_file_storage(name):
+            try:
+                _store_integration_file_secret(name, secret, label=label)
+            except CredentialStoreError as file_exc:
+                raise ProviderCredentialError(str(file_exc)) from file_exc
+            return "file"
         raise ProviderCredentialError(str(exc)) from exc
 
 
@@ -655,8 +656,8 @@ def _delete_secret(name: str, *, label: str) -> None:
         raise ProviderCredentialError(str(exc)) from exc
 
 
-def _store_keychain_secret(label: str, username: str, secret: str) -> None:
-    _store_secret(username, secret, label=label)
+def _store_keychain_secret(label: str, username: str, secret: str) -> str:
+    return _store_secret(username, secret, label=label)
 
 
 def _load_keychain_secret(label: str, username: str) -> str:
@@ -793,18 +794,21 @@ def save_linear_organization_tokens(
     orgs = dict(prior.get("organizations") or {})
     access_token = str(tokens.get("access_token") or "").strip()
     refresh_token = str(tokens.get("refresh_token") or "").strip()
+    token_storage = "keychain"
     if access_token:
-        _store_keychain_secret(
+        token_storage = _store_keychain_secret(
             "Linear access token",
             _linear_access_token_secret(org_id),
             access_token,
         )
     if refresh_token:
-        _store_keychain_secret(
+        refresh_token_storage = _store_keychain_secret(
             "Linear refresh token",
             _linear_refresh_token_secret(org_id),
             refresh_token,
         )
+        if refresh_token_storage == "file":
+            token_storage = "file"
 
     scopes = tokens.get("scope") or tokens.get("scopes") or prior.get("scopes")
     org_entry: dict[str, Any] = {
@@ -822,7 +826,7 @@ def save_linear_organization_tokens(
         "provider": "linear",
         "provider_host": "linear.app",
         "auth_type": "oauth",
-        "token_storage": integration_token_storage(),
+        "token_storage": token_storage,
         "token_type": tokens.get("token_type") or prior.get("token_type") or "Bearer",
         "organizations": orgs,
         "active_organization_id": org_id,
@@ -990,14 +994,14 @@ def _save_atlassian_product_credentials(
     if not api_token:
         raise ProviderCredentialError(f"{key.capitalize()} API token is required.")
 
-    _store_keychain_secret(label, secret_name, api_token)
+    token_storage = _store_keychain_secret(label, secret_name, api_token)
     prior = _read_metadata_entry(_product_metadata_key(key))
     merged = {**prior, **credentials}
     site = atlassian_site_from_entry(merged)
     if site.get("site_url") and not merged.get("site_url"):
         merged["site_url"] = site["site_url"]
     record = build_product_integration_record(key, merged)
-    record["token_storage"] = integration_token_storage()
+    record["token_storage"] = token_storage
     _write_metadata_entry(_product_metadata_key(key), record)
 
 
@@ -1046,7 +1050,7 @@ def save_atlassian_credentials(credentials: dict[str, Any]) -> None:
     api_token = str(credentials.get("api_token") or "").strip()
     if not api_token:
         raise ProviderCredentialError("Atlassian API token is required.")
-    _store_keychain_secret(
+    token_storage = _store_keychain_secret(
         "Atlassian API token",
         _ATLASSIAN_LEGACY_TOKEN_SECRET,
         api_token,
@@ -1057,7 +1061,7 @@ def save_atlassian_credentials(credentials: dict[str, Any]) -> None:
     if site.get("site_url") and not merged.get("site_url"):
         merged["site_url"] = site["site_url"]
     record = build_atlassian_integration_record(merged)
-    record["token_storage"] = integration_token_storage()
+    record["token_storage"] = token_storage
     _write_metadata_entry(_ATLASSIAN_CREDENTIALS_KEY, record)
 
 
@@ -1371,8 +1375,11 @@ def write_provider_credentials(provider: str, payload: dict[str, Any]) -> None:
     access_token = str(stored_payload.pop("access_token", "") or "").strip()
     if not access_token:
         raise ProviderCredentialError("GitHub access token is required.")
-    _store_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET, access_token)
-    stored_payload["token_storage"] = integration_token_storage()
+    stored_payload["token_storage"] = _store_keychain_secret(
+        "GitHub token",
+        _GITHUB_TOKEN_SECRET,
+        access_token,
+    )
     write_integration_metadata(key, stored_payload)
 
 
@@ -1387,8 +1394,9 @@ def get_provider_credentials(provider: str) -> dict[str, Any]:
     result = dict(metadata)
     token = _load_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
     if not token:
+        token_storage = str(result.get("token_storage") or "").strip()
         raise ProviderCredentialError(
-            f"GitHub token not found in {_integration_secret_store_label()}. "
+            f"GitHub token not found in {_storage_label(token_storage)}. "
             "Run: potpie github login"
         )
     result["access_token"] = token

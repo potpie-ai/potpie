@@ -59,9 +59,15 @@ from adapters.outbound.cli_auth.token_exchange import exchange_authorization_cod
 auth_app = typer.Typer(
     help="[Deprecated] Use `potpie <provider>` and `potpie status` instead.",
 )
-linear_app = typer.Typer(help="Linear integration.")
-jira_app = typer.Typer(help="Jira integration and read.")
-confluence_app = typer.Typer(help="Confluence integration and read.")
+linear_app = typer.Typer(
+    help="Linear integration. Commands: login, logout, ls, select."
+)
+jira_app = typer.Typer(
+    help="Jira integration and read. Commands: login, logout, ls, select."
+)
+confluence_app = typer.Typer(
+    help="Confluence integration and read. Commands: login, logout, ls, select."
+)
 
 _OAUTH_CALLBACK_TIMEOUT = 300.0
 _ALL_PROVIDERS: tuple[Provider, ...] = ("github", "linear", "jira", "confluence")
@@ -189,13 +195,19 @@ def _print_linear_login_success(
         status.get("site_name"),
     )
     who = account[0] or account[1] or "Linear"
+    token_storage = str(status.get("token_storage") or "keychain")
+    storage_label = (
+        "system keychain"
+        if token_storage == "keychain"
+        else "local credentials file"
+    )
     org_suffix = f" @ {account[2]}" if account[2] else ""
     if refreshed:
         summary = f"Linear session refreshed for {who}{org_suffix}."
     else:
         summary = (
             f"Logged in to Linear as {who}{org_suffix}. "
-            f"Stored tokens in system keychain; metadata saved to {credentials_path()}."
+            f"Stored tokens in {storage_label}; metadata saved to {credentials_path()}."
         )
     if not j:
         print_plain_line(summary, as_json=False)
@@ -207,7 +219,7 @@ def _print_linear_login_success(
         "login": status.get("login"),
         "email": status.get("email"),
         "organization": status.get("site_name"),
-        "token_storage": "keychain",
+        "token_storage": token_storage,
         "auth_type": status.get("auth_type"),
         "expires_at": status.get("expires_at"),
     }

@@ -49,6 +49,7 @@ from adapters.outbound.cli_auth.atlassian_client import (  # noqa: F401  (re-exp
 from adapters.outbound.cli_auth.credentials_store import (
     ProviderCredentialError,
     credentials_path,
+    get_integration_status,
     integration_token_storage,
 )
 from adapters.inbound.cli.commands._common import EXIT_AUTH, get_store
@@ -286,9 +287,18 @@ def run_atlassian_api_token_auth(
         )
         raise typer.Exit(code=EXIT_AUTH) from exc
 
+    token_storage = integration_token_storage()
+    stored = get_integration_status(product)
+    if stored.get("token_storage"):
+        token_storage = str(stored["token_storage"])
+    storage_label = (
+        "system keychain"
+        if token_storage == "keychain"
+        else "local credentials file"
+    )
     summary = (
         f"Connected {product_label} to {site['site_url']}. "
-        f"Stored tokens in system keychain; metadata saved to {credentials_path()}."
+        f"Stored tokens in {storage_label}; metadata saved to {credentials_path()}."
     )
     print_plain_line(
         summary,
@@ -301,7 +311,7 @@ def run_atlassian_api_token_auth(
             "site_name": site["site_name"],
             "cloud_id": payload["cloud_id"],
             "path": str(credentials_path()),
-            "token_storage": integration_token_storage(),
+            "token_storage": token_storage,
             "product_verified": product,
         },
     )

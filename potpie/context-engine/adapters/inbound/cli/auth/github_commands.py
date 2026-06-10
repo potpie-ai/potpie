@@ -72,6 +72,28 @@ def _open_github_device_verification(user_code: str, verification_uri: str) -> N
     )
 
 
+def _capture_unexpected_auth_error(
+    exc: BaseException,
+    *,
+    title: str,
+    verbose: bool,
+) -> NoReturn:
+    from adapters.inbound.cli.sentry_runtime import capture_unexpected_cli_error
+
+    capture_unexpected_cli_error(
+        exc,
+        error_code="unexpected_cli_error",
+        error_kind="unexpected",
+    )
+    emit_error(
+        title,
+        "Unexpected internal error.",
+        code="unexpected_cli_error",
+        verbose=verbose,
+    )
+    raise typer.Exit(code=EXIT_AUTH) from exc
+
+
 def github_login_impl() -> None:
     """Authenticate the CLI with GitHub using device flow."""
     load_cli_env()
