@@ -613,6 +613,11 @@ def test_run_atlassian_auth_emits_site_discovery_error_on_tenant_http_error(
         "prompt",
         lambda *args, **kwargs: next(prompts),
     )
+    monkeypatch.setattr(
+        atlassian_auth.typer,
+        "confirm",
+        lambda *args, **kwargs: True,
+    )
 
     captured: list[tuple[str, str]] = []
 
@@ -638,7 +643,7 @@ def test_run_atlassian_auth_emits_site_discovery_error_on_tenant_http_error(
 
 
 @pytest.mark.parametrize("product", ["jira", "confluence"])
-def test_run_atlassian_auth_opens_token_page_after_countdown(
+def test_run_atlassian_auth_opens_token_page_after_enter(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     product: str,
@@ -675,10 +680,13 @@ def test_run_atlassian_auth_opens_token_page_after_countdown(
         "open",
         lambda url, **_kwargs: opened_urls.append(url) or True,
     )
-    slept: list[int] = []
-    monkeypatch.setattr(
-        atlassian_auth.time, "sleep", lambda seconds: slept.append(seconds)
-    )
+    confirms: list[str] = []
+
+    def _confirm(prompt: str, **kwargs: object) -> bool:
+        confirms.append(prompt)
+        return True
+
+    monkeypatch.setattr(atlassian_auth.typer, "confirm", _confirm)
     prompts: list[str] = []
     prompt_values = iter(["api-token-secret", "user@example.com"])
 
@@ -691,14 +699,73 @@ def test_run_atlassian_auth_opens_token_page_after_countdown(
     run_atlassian_api_token_auth(product, force=True)
 
     out = capsys.readouterr().out
-    assert "Create an API token (without scopes)." in out
-    assert "Use an Atlassian API token without scopes for Jira and Confluence." in out
-    assert "Opening Atlassian in 10 seconds..." in out
-    assert "\rOpening Atlassian in 9 seconds..." in out
-    assert "\rOpening Atlassian in 1 second..." in out
-    assert "\rOpening Atlassian now...          \n" in out
+    assert "Jira login — Atlassian API token" in out or "Confluence login — Atlassian API token" in out
+    assert "  • One token works for both Jira and Confluence" in out
+    assert "Press Enter to open the page" in out
+    assert "Opening id.atlassian.com ..." in out
+    assert "Opening Atlassian in 10 seconds..." not in out
     assert opened_urls == [atlassian_auth.ATLASSIAN_API_TOKEN_PAGE]
-    assert slept == [1] * 10
+    assert confirms == ["Press Enter to continue"]
+    assert prompts == ["Enter your API token", "Enter your Atlassian email"]
+
+
+@pytest.mark.parametrize("product", ["jira", "confluence"])
+def test_run_atlassian_auth_skips_browser_when_confirm_declined(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    product: str,
+) -> None:
+    monkeypatch.setattr(atlassian_auth.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_get_product_credentials",
+        lambda _product: {},
+    )
+    site = {
+        "cloud_id": "cloud-1",
+        "site_url": "https://team.atlassian.net",
+        "site_name": "Team",
+    }
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_prompt_and_resolve_site",
+        lambda: (site, None),
+    )
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_finalize_selected_site",
+        lambda *_args: (site, None),
+    )
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_save_product_credentials",
+        lambda *_args: None,
+    )
+    opened_urls: list[str] = []
+    monkeypatch.setattr(
+        atlassian_auth.webbrowser,
+        "open",
+        lambda url, **_kwargs: opened_urls.append(url) or True,
+    )
+    monkeypatch.setattr(
+        atlassian_auth.typer,
+        "confirm",
+        lambda *_args, **_kwargs: False,
+    )
+    prompt_values = iter(["api-token-secret", "user@example.com"])
+    prompts: list[str] = []
+
+    def _prompt(label: str, **_kwargs: object) -> str:
+        prompts.append(label)
+        return next(prompt_values)
+
+    monkeypatch.setattr(atlassian_auth.typer, "prompt", _prompt)
+
+    run_atlassian_api_token_auth(product, force=True)
+
+    out = capsys.readouterr().out
+    assert "Opening id.atlassian.com ..." not in out
+    assert opened_urls == []
     assert prompts == ["Enter your API token", "Enter your Atlassian email"]
 
 

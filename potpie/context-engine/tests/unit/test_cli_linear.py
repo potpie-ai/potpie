@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from __future__ import annotations
 import socket
 import threading
+import time
 import urllib.error
 import urllib.request
 import pytest
@@ -59,20 +59,38 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _run_oauth_callback_test(
+    *,
+    port: int,
+    hit_url: str,
+    path: str = "/callback",
+    timeout: float = 5.0,
+    on_hit: callable | None = None,
+) -> OAuthCallbackResult:
+    """Start the callback server first, then hit it (avoids CI race)."""
+    result_box: dict[str, OAuthCallbackResult] = {}
+
+    def serve() -> None:
+        result_box["result"] = wait_for_oauth_callback(
+            host="127.0.0.1", port=port, path=path, timeout=timeout
+        )
+
+    server_thread = threading.Thread(target=serve, daemon=True)
+    server_thread.start()
+    time.sleep(0.15)
+    if on_hit is not None:
+        on_hit(hit_url)
+    else:
+        with urllib.request.urlopen(hit_url, timeout=timeout) as resp:
+            assert resp.status == 200
+    server_thread.join(timeout=timeout + 1.0)
+    return result_box["result"]
+
+
 def test_wait_for_oauth_callback_success() -> None:
     port = _free_port()
-
-    def hit_server() -> None:
-        url = f"http://127.0.0.1:{port}/callback?code=auth-code&state=xyz"
-        with urllib.request.urlopen(url, timeout=5) as resp:
-            assert resp.status == 200
-
-    thread = threading.Thread(target=hit_server, daemon=True)
-    thread.start()
-    result = wait_for_oauth_callback(
-        host="127.0.0.1", port=port, path="/callback", timeout=5.0
-    )
-    thread.join(timeout=5.0)
+    hit_url = f"http://127.0.0.1:{port}/callback?code=auth-code&state=xyz"
+    result = _run_oauth_callback_test(port=port, hit_url=hit_url)
 
     assert result.ok is True
     assert result.code == "auth-code"
@@ -81,16 +99,8 @@ def test_wait_for_oauth_callback_success() -> None:
 
 def test_wait_for_oauth_callback_error_query() -> None:
     port = _free_port()
-
-    def hit_server() -> None:
-        url = f"http://127.0.0.1:{port}/callback?error=access_denied"
-        with urllib.request.urlopen(url, timeout=5) as resp:
-            assert resp.status == 200
-
-    thread = threading.Thread(target=hit_server, daemon=True)
-    thread.start()
-    result = wait_for_oauth_callback(host="127.0.0.1", port=port, timeout=5.0)
-    thread.join(timeout=5.0)
+    hit_url = f"http://127.0.0.1:{port}/callback?error=access_denied"
+    result = _run_oauth_callback_test(port=port, hit_url=hit_url)
 
     assert result.ok is False
     assert result.error == "access_denied"
@@ -98,24 +108,34 @@ def test_wait_for_oauth_callback_error_query() -> None:
 
 def test_wait_for_oauth_callback_wrong_path_returns_404() -> None:
     port = _free_port()
+    hit_url = f"http://127.0.0.1:{port}/callback?code=ignored"
 
-    def hit_server() -> None:
-        url = f"http://127.0.0.1:{port}/callback?code=ignored"
+    def on_hit(url: str) -> None:
         try:
             urllib.request.urlopen(url, timeout=5)
         except urllib.error.HTTPError as exc:
             assert exc.code == 404
 
-    thread = threading.Thread(target=hit_server, daemon=True)
-    thread.start()
-    with pytest.raises(TimeoutError):
-        wait_for_oauth_callback(
-            host="127.0.0.1",
-            port=port,
-            path="/other",
-            timeout=0.5,
-        )
-    thread.join(timeout=2.0)
+    result_box: dict[str, OAuthCallbackResult | BaseException] = {}
+
+    def serve() -> None:
+        try:
+            result_box["result"] = wait_for_oauth_callback(
+                host="127.0.0.1",
+                port=port,
+                path="/other",
+                timeout=0.5,
+            )
+        except BaseException as exc:
+            result_box["result"] = exc
+
+    server_thread = threading.Thread(target=serve, daemon=True)
+    server_thread.start()
+    time.sleep(0.15)
+    on_hit(hit_url)
+    server_thread.join(timeout=2.0)
+
+    assert isinstance(result_box["result"], TimeoutError)
 
 
 # --- test_pkce.py ---
@@ -459,6 +479,7 @@ def test_run_linear_oauth_flow_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_linear_oauth_flow_already_connected(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
@@ -468,16 +489,16 @@ def test_run_linear_oauth_flow_already_connected(
         lambda _p: {"authenticated": True, "expires_at": 9999999999.0},
     )
     monkeypatch.setattr(auth_commands, "token_needs_refresh", lambda _x: False)
-    handled: list[str] = []
     monkeypatch.setattr(
-        auth_commands,
-        "_handle_already_connected",
-        lambda provider, status: handled.append(provider),
+        "adapters.outbound.cli_auth.credentials_store.list_linear_organizations",
+        lambda: [{"id": "org-1", "name": "Potpie AI CLI", "key": "potpie-ai-cli"}],
     )
 
     auth_commands._run_linear_oauth_flow()
 
-    assert handled == ["linear"]
+    out = capsys.readouterr().out
+    assert "already connected" in out.lower()
+    assert "--add" in out
 
 
 def test_run_linear_oauth_flow_missing_client_id(

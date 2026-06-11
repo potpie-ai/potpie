@@ -1,18 +1,16 @@
-"""Integration-auth command surface: ``login``/``logout`` + ``auth`` group.
+"""Integration-auth command surface: provider logins + Potpie account auth.
 
 This registrar bolts the credential-acquisition surface onto the host-routed
 root app:
 
-- top-level ``potpie login`` / ``potpie logout`` — the real Potpie-account flow
-  (browser Firebase sign-in or ``--api-key``), implemented in ``_login_impl``;
-- ``potpie auth …`` — the integration logins (``github``/``linear``/``jira``/
-  ``confluence``) assembled in ``auth_commands`` + ``auth/github_commands``.
+- ``potpie github|linear|jira|confluence …`` — integration OAuth/API-token flows;
+- ``potpie status [--verify]`` — local integration auth status (see ``bootstrap``);
+- top-level ``potpie login`` / ``potpie logout`` — Potpie account (Firebase/API key);
+- ``potpie auth …`` — deprecated aliases for the provider commands above.
 
 These flows are inbound-adapter credential acquisition (OAuth/device-flow/keyring),
 so they do NOT route through ``HostShell``; they read the shared ``--json`` /
-``--verbose`` state from ``commands/_common`` like every other command. Heavy
-imports (httpx, webbrowser, keyring) stay inside ``register``/command bodies so
-``potpie --help`` and unrelated commands stay fast.
+``--verbose`` state from ``commands/_common`` like every other command.
 """
 
 from __future__ import annotations
@@ -21,15 +19,9 @@ import typer
 
 
 def register(root: typer.Typer) -> None:
-    # Importing auth_commands self-registers the linear/jira/confluence sub-apps
-    # into auth_app at module load; register_github_commands then attaches github
-    # into auth_app (and github/git at root). Both must run BEFORE auth_app is
-    # mounted under `auth` so the sub-apps are present.
-    from adapters.inbound.cli.auth.github_commands import register_github_commands
-    from adapters.inbound.cli.auth.auth_commands import auth_app
+    from adapters.inbound.cli.auth.auth_commands import register_integration_commands
 
-    register_github_commands(root)
-    root.add_typer(auth_app, name="auth")
+    register_integration_commands(root)
 
     @root.command("login")
     def login(

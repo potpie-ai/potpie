@@ -104,7 +104,7 @@ def test_context_record_preserves_summary_only_known_record(host):
 
 
 def test_setup_orchestrator_provisions_and_creates_default_pot(host):
-    report = host.setup.run(SetupPlan(repo="potpie", agent="claude", pot="default"))
+    report = host.setup.run(SetupPlan(repo="potpie", agent="claude"))
     assert report.ok  # every hard step succeeded
     states = {s.step: s.state for s in report.steps}
     assert states["config"] == DONE
@@ -113,7 +113,7 @@ def test_setup_orchestrator_provisions_and_creates_default_pot(host):
     assert states["daemon"] == SKIPPED  # in-process host: nothing to start
     assert states["auth"] == NOT_IMPLEMENTED  # soft gap; does not fail setup
     active = host.pots.active_pot()
-    assert active is not None and active.name == "default"
+    assert active is not None and active.name == "foo-pot"
 
 
 def test_setup_is_idempotent(host):

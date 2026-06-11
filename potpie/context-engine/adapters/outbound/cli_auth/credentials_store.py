@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 import uuid
 from pathlib import Path
 from typing import Any, Optional
@@ -15,6 +16,7 @@ from keyring.errors import KeyringError
 from adapters.outbound.cli_auth.errors import CliAuthError
 
 _CREDENTIALS_FILENAME = "credentials.json"
+_INTEGRATION_SECRETS_FILENAME = "integration_secrets.json"
 _CONFIG_DIR_NAME = "potpie"
 _LEGACY_CONFIG_DIR_NAME = "context-engine"
 _KEYRING_SERVICE = "potpie"
@@ -58,6 +60,24 @@ def legacy_config_dir() -> Path:
 
 def credentials_path() -> Path:
     return config_dir() / _CREDENTIALS_FILENAME
+
+
+def integration_secrets_path() -> Path:
+    """Linux integration token store (GitHub, Linear, Jira, Confluence)."""
+    return config_dir() / _INTEGRATION_SECRETS_FILENAME
+
+
+def integration_token_storage() -> str:
+    """Return metadata token_storage value for CLI integrations on this platform."""
+    return "file" if sys.platform == "linux" else "keychain"
+
+
+def _integration_secret_store_label() -> str:
+    return (
+        "local credentials file"
+        if sys.platform == "linux"
+        else "system keychain"
+    )
 
 
 def legacy_credentials_path() -> Path:
@@ -105,6 +125,93 @@ def _norm_secret_name(name: str) -> str:
     if not key:
         raise ValueError("secret name must be non-empty")
     return key
+
+
+def _is_integration_secret_name(name: str) -> bool:
+    """Secret keys used by GitHub, Linear, Jira, and Confluence CLI integrations."""
+    key = _norm_secret_name(name)
+    if key in {
+        _GITHUB_TOKEN_SECRET,
+        _LINEAR_ACCESS_TOKEN_SECRET,
+        _LINEAR_REFRESH_TOKEN_SECRET,
+        _JIRA_TOKEN_SECRET,
+        _CONFLUENCE_TOKEN_SECRET,
+        _ATLASSIAN_LEGACY_TOKEN_SECRET,
+    }:
+        return True
+    return key.startswith("linear_access_token_") or key.startswith(
+        "linear_refresh_token_"
+    )
+
+
+def _uses_linux_integration_file_storage(name: str) -> bool:
+    return sys.platform == "linux" and _is_integration_secret_name(name)
+
+
+def _read_integration_secrets_file() -> dict[str, str]:
+    path = integration_secrets_path()
+    if not path.is_file():
+        return {}
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in data.items():
+        if isinstance(key, str) and value is not None:
+            out[key] = str(value)
+    return out
+
+
+def _write_integration_secrets_file(secrets: dict[str, str]) -> None:
+    path = integration_secrets_path()
+    if not secrets:
+        try:
+            path.unlink(missing_ok=True)
+        except TypeError:
+            if path.is_file():
+                path.unlink()
+        return
+    _write_payload_to_path(path, secrets)
+
+
+def _store_integration_file_secret(
+    name: str,
+    secret: str,
+    *,
+    label: str | None = None,
+) -> None:
+    key = _norm_secret_name(name)
+    secrets = _read_integration_secrets_file()
+    secrets[key] = secret
+    try:
+        _write_integration_secrets_file(secrets)
+    except OSError as exc:
+        raise CredentialStoreError(
+            f"Failed to store {label or key} in local credentials file: {exc}"
+        ) from exc
+
+
+def _load_integration_file_secret(name: str) -> str:
+    key = _norm_secret_name(name)
+    return _read_integration_secrets_file().get(key, "")
+
+
+def _delete_integration_file_secret(name: str) -> None:
+    key = _norm_secret_name(name)
+    secrets = _read_integration_secrets_file()
+    if key not in secrets:
+        return
+    secrets.pop(key, None)
+    try:
+        _write_integration_secrets_file(secrets)
+    except OSError as exc:
+        raise CredentialStoreError(
+            f"Failed to remove {key} from local credentials file: {exc}"
+        ) from exc
 
 
 def store_secure_secret(name: str, secret: str, *, label: str | None = None) -> None:
@@ -503,6 +610,15 @@ def register_pot_alias(name: str, pot_id: str) -> None:
 
 
 def _get_secret_or_empty(name: str, *, label: str) -> str:
+    if _uses_linux_integration_file_storage(name):
+        value = _load_integration_file_secret(name)
+        if value:
+            return value
+        try:
+            legacy = load_secure_secret(name, label=label)
+        except CredentialStoreError as exc:
+            raise ProviderCredentialError(str(exc)) from exc
+        return legacy
     try:
         return load_secure_secret(name, label=label)
     except CredentialStoreError as exc:
@@ -510,6 +626,12 @@ def _get_secret_or_empty(name: str, *, label: str) -> str:
 
 
 def _store_secret(name: str, secret: str, *, label: str) -> None:
+    if _uses_linux_integration_file_storage(name):
+        try:
+            _store_integration_file_secret(name, secret, label=label)
+        except CredentialStoreError as exc:
+            raise ProviderCredentialError(str(exc)) from exc
+        return
     try:
         store_secure_secret(name, secret, label=label)
     except CredentialStoreError as exc:
@@ -517,6 +639,16 @@ def _store_secret(name: str, secret: str, *, label: str) -> None:
 
 
 def _delete_secret(name: str, *, label: str) -> None:
+    if _uses_linux_integration_file_storage(name):
+        try:
+            _delete_integration_file_secret(name)
+        except CredentialStoreError as exc:
+            raise ProviderCredentialError(str(exc)) from exc
+        try:
+            delete_secure_secret(name, label=label)
+        except CredentialStoreError as exc:
+            raise ProviderCredentialError(str(exc)) from exc
+        return
     try:
         delete_secure_secret(name, label=label)
     except CredentialStoreError as exc:
@@ -548,35 +680,244 @@ def _clear_metadata_entries(*keys: str) -> None:
         clear_integration_metadata(key)
 
 
+def _linear_access_token_secret(org_id: str) -> str:
+    return f"linear_access_token_{org_id}"
+
+
+def _linear_refresh_token_secret(org_id: str) -> str:
+    return f"linear_refresh_token_{org_id}"
+
+
+def _normalize_linear_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Ensure multi-workspace ``organizations`` map exists; migrate legacy shape."""
+    if not metadata:
+        return {}
+    meta = dict(metadata)
+    orgs = meta.get("organizations")
+    if isinstance(orgs, dict) and orgs:
+        if not meta.get("active_organization_id"):
+            meta["active_organization_id"] = next(iter(orgs.keys()))
+        return meta
+
+    org = meta.get("organization")
+    if not isinstance(org, dict) or not org.get("id"):
+        return meta
+
+    org_id = str(org["id"])
+    org_entry: dict[str, Any] = {
+        "id": org_id,
+        "name": org.get("name"),
+        "url_key": org.get("url_key") or org.get("urlKey"),
+        "account": meta.get("account"),
+        "expires_at": meta.get("expires_at"),
+        "scopes": meta.get("scopes") or meta.get("scope"),
+        "stored_at": meta.get("stored_at"),
+    }
+    meta["organizations"] = {org_id: org_entry}
+    meta["active_organization_id"] = org_id
+    return meta
+
+
+def _read_linear_metadata() -> dict[str, Any]:
+    return _normalize_linear_metadata(_read_metadata_entry(_LINEAR_CREDENTIALS_KEY) or {})
+
+
+def get_active_linear_organization_id() -> str | None:
+    meta = _read_linear_metadata()
+    active = str(meta.get("active_organization_id") or "").strip()
+    if active:
+        return active
+    orgs = meta.get("organizations")
+    if isinstance(orgs, dict) and len(orgs) == 1:
+        return next(iter(orgs.keys()))
+    return None
+
+
+def list_linear_organizations() -> list[dict[str, Any]]:
+    """Return connected Linear workspaces (organizations) with metadata only."""
+    meta = _read_linear_metadata()
+    orgs = meta.get("organizations")
+    if not isinstance(orgs, dict):
+        return []
+    active = str(meta.get("active_organization_id") or "").strip()
+    rows: list[dict[str, Any]] = []
+    for org_id, entry in orgs.items():
+        if not isinstance(entry, dict):
+            continue
+        row = dict(entry)
+        row["id"] = str(org_id)
+        row["active"] = str(org_id) == active
+        url_key = str(row.get("url_key") or row.get("urlKey") or "").strip()
+        row["key"] = url_key or str(row.get("name") or org_id)
+        rows.append(row)
+    rows.sort(key=lambda item: str(item.get("name") or item.get("key") or ""))
+    return rows
+
+
+def set_active_linear_organization(org_id: str) -> None:
+    meta = _read_linear_metadata()
+    orgs = meta.get("organizations")
+    if not isinstance(orgs, dict) or org_id not in orgs:
+        raise ProviderCredentialError(
+            f"Linear workspace {org_id!r} is not connected. "
+            "Run: potpie linear login --add"
+        )
+    org_entry = orgs[org_id]
+    _write_metadata_entry(
+        _LINEAR_CREDENTIALS_KEY,
+        {
+            **meta,
+            "active_organization_id": org_id,
+            "organization": {
+                "id": org_id,
+                "name": org_entry.get("name"),
+                "url_key": org_entry.get("url_key") or org_entry.get("urlKey"),
+            },
+            "account": org_entry.get("account"),
+            "expires_at": org_entry.get("expires_at"),
+            "scopes": org_entry.get("scopes"),
+        },
+    )
+
+
+def save_linear_organization_tokens(
+    org_id: str,
+    tokens: dict[str, Any],
+    *,
+    organization: dict[str, Any],
+    account: dict[str, Any] | None = None,
+) -> None:
+    from adapters.outbound.cli_auth.integration_profile import utc_now_iso
+
+    prior = _read_linear_metadata()
+    orgs = dict(prior.get("organizations") or {})
+    access_token = str(tokens.get("access_token") or "").strip()
+    refresh_token = str(tokens.get("refresh_token") or "").strip()
+    if access_token:
+        _store_keychain_secret(
+            "Linear access token",
+            _linear_access_token_secret(org_id),
+            access_token,
+        )
+    if refresh_token:
+        _store_keychain_secret(
+            "Linear refresh token",
+            _linear_refresh_token_secret(org_id),
+            refresh_token,
+        )
+
+    scopes = tokens.get("scope") or tokens.get("scopes") or prior.get("scopes")
+    org_entry: dict[str, Any] = {
+        "id": org_id,
+        "name": organization.get("name"),
+        "url_key": organization.get("url_key") or organization.get("urlKey"),
+        "account": account or organization.get("account"),
+        "expires_at": tokens.get("expires_at"),
+        "scopes": scopes,
+        "stored_at": tokens.get("stored_at") or prior.get("stored_at"),
+    }
+    orgs[org_id] = org_entry
+    now = utc_now_iso()
+    record: dict[str, Any] = {
+        "provider": "linear",
+        "provider_host": "linear.app",
+        "auth_type": "oauth",
+        "token_storage": integration_token_storage(),
+        "token_type": tokens.get("token_type") or prior.get("token_type") or "Bearer",
+        "organizations": orgs,
+        "active_organization_id": org_id,
+        "organization": {
+            "id": org_id,
+            "name": org_entry.get("name"),
+            "url_key": org_entry.get("url_key"),
+        },
+        "account": org_entry.get("account"),
+        "expires_at": org_entry.get("expires_at"),
+        "scopes": org_entry.get("scopes"),
+        "stored_at": org_entry.get("stored_at"),
+        "created_at": prior.get("created_at") or now,
+        "updated_at": now,
+        "metadata": {"auth_flow": "pkce"},
+    }
+    if isinstance(prior.get("workspaces"), dict):
+        record["workspaces"] = prior["workspaces"]
+    _write_metadata_entry(_LINEAR_CREDENTIALS_KEY, record)
+
+
+def get_linear_tokens(organization_id: str | None = None) -> dict[str, Any]:
+    """Return Linear OAuth tokens for ``organization_id`` or the active workspace."""
+    meta = _read_linear_metadata()
+    if not meta:
+        return {}
+    org_id = str(organization_id or get_active_linear_organization_id() or "").strip()
+    if not org_id:
+        return {}
+    orgs = meta.get("organizations")
+    if not isinstance(orgs, dict):
+        return {}
+    org_entry = orgs.get(org_id)
+    if not isinstance(org_entry, dict):
+        return {}
+    access_token = _load_keychain_secret(
+        "Linear access token",
+        _linear_access_token_secret(org_id),
+    )
+    if not access_token:
+        access_token = _load_keychain_secret(
+            "Linear access token",
+            _LINEAR_ACCESS_TOKEN_SECRET,
+        )
+    if not access_token:
+        return {}
+    refresh_token = _load_keychain_secret(
+        "Linear refresh token",
+        _linear_refresh_token_secret(org_id),
+    )
+    if not refresh_token:
+        refresh_token = _load_keychain_secret(
+            "Linear refresh token",
+            _LINEAR_REFRESH_TOKEN_SECRET,
+        )
+    payload: dict[str, Any] = {
+        **meta,
+        **org_entry,
+        "organization_id": org_id,
+        "organization": {
+            "id": org_id,
+            "name": org_entry.get("name"),
+            "url_key": org_entry.get("url_key") or org_entry.get("urlKey"),
+        },
+        "access_token": access_token,
+    }
+    if refresh_token:
+        payload["refresh_token"] = refresh_token
+    return payload
+
+
 def save_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
     """Store Linear OAuth tokens in keychain and metadata on disk."""
     key = _norm_integration_key(provider)
     if key != _LINEAR_CREDENTIALS_KEY:
         raise ValueError(f"{provider!r} does not use OAuth token storage.")
 
-    from adapters.outbound.cli_auth.integration_profile import (
-        build_linear_integration_record,
-    )
+    from adapters.outbound.cli_auth.integration_profile import fetch_linear_viewer
 
     access_token = str(tokens.get("access_token") or "").strip()
-    if access_token:
-        _store_keychain_secret(
-            "Linear access token",
-            _LINEAR_ACCESS_TOKEN_SECRET,
-            access_token,
-        )
-    refresh_token = str(tokens.get("refresh_token") or "").strip()
-    if refresh_token:
-        _store_keychain_secret(
-            "Linear refresh token",
-            _LINEAR_REFRESH_TOKEN_SECRET,
-            refresh_token,
-        )
+    if not access_token:
+        raise ProviderCredentialError("Linear access token is required.")
 
-    prior = _read_metadata_entry(_LINEAR_CREDENTIALS_KEY)
-    _write_metadata_entry(
-        _LINEAR_CREDENTIALS_KEY,
-        build_linear_integration_record(tokens, existing=prior),
+    profile = fetch_linear_viewer(access_token)
+    organization = profile.get("organization")
+    if not isinstance(organization, dict) or not organization.get("id"):
+        raise ProviderCredentialError(
+            "Linear login succeeded but workspace metadata was unavailable."
+        )
+    org_id = str(organization["id"])
+    save_linear_organization_tokens(
+        org_id,
+        tokens,
+        organization=organization,
+        account=profile.get("account"),
     )
 
 
@@ -655,10 +996,9 @@ def _save_atlassian_product_credentials(
     site = atlassian_site_from_entry(merged)
     if site.get("site_url") and not merged.get("site_url"):
         merged["site_url"] = site["site_url"]
-    _write_metadata_entry(
-        _product_metadata_key(key),
-        build_product_integration_record(key, merged),
-    )
+    record = build_product_integration_record(key, merged)
+    record["token_storage"] = integration_token_storage()
+    _write_metadata_entry(_product_metadata_key(key), record)
 
 
 def _get_atlassian_product_credentials(product: str) -> dict[str, Any]:
@@ -716,10 +1056,9 @@ def save_atlassian_credentials(credentials: dict[str, Any]) -> None:
     site = atlassian_site_from_entry(merged)
     if site.get("site_url") and not merged.get("site_url"):
         merged["site_url"] = site["site_url"]
-    _write_metadata_entry(
-        _ATLASSIAN_CREDENTIALS_KEY,
-        build_atlassian_integration_record(merged),
-    )
+    record = build_atlassian_integration_record(merged)
+    record["token_storage"] = integration_token_storage()
+    _write_metadata_entry(_ATLASSIAN_CREDENTIALS_KEY, record)
 
 
 def get_atlassian_credentials() -> dict[str, Any]:
@@ -756,7 +1095,7 @@ def save_jira_workspace_prefs(*, project_key: str) -> None:
     prior = get_jira_credentials()
     if not prior.get("api_token"):
         raise ProviderCredentialError(
-            "Jira is not connected. Run: potpie auth jira login"
+            "Jira is not connected. Run: potpie jira login"
         )
     workspaces = dict(prior.get("workspaces") or {})
     workspaces["jira_project"] = project_key.strip().upper()
@@ -767,11 +1106,38 @@ def save_confluence_workspace_prefs(*, space_key: str) -> None:
     prior = get_confluence_credentials()
     if not prior.get("api_token"):
         raise ProviderCredentialError(
-            "Confluence is not connected. Run: potpie auth confluence login"
+            "Confluence is not connected. Run: potpie confluence login"
         )
     workspaces = dict(prior.get("workspaces") or {})
     workspaces["confluence_space"] = space_key.strip().upper()
     save_confluence_credentials({**prior, "workspaces": workspaces})
+
+
+def save_linear_workspace_prefs(
+    *,
+    organization_id: str,
+    organization_key: str | None = None,
+    team_key: str,
+    team_id: str | None = None,
+) -> None:
+    metadata = _read_linear_metadata()
+    if not metadata:
+        raise ProviderCredentialError(
+            "Linear is not connected. Run: potpie linear login"
+        )
+    if not get_linear_tokens(organization_id).get("access_token"):
+        raise ProviderCredentialError(
+            f"Linear token not found in {_integration_secret_store_label()}. "
+            "Run: potpie linear login"
+        )
+    workspaces = dict(metadata.get("workspaces") or {})
+    workspaces["linear_organization_id"] = organization_id.strip()
+    if organization_key:
+        workspaces["linear_organization_key"] = organization_key.strip()
+    workspaces["linear_team"] = team_key.strip().upper()
+    if team_id:
+        workspaces["linear_team_id"] = team_id.strip()
+    _write_metadata_entry(_LINEAR_CREDENTIALS_KEY, {**metadata, "workspaces": workspaces})
 
 
 def save_atlassian_workspace_prefs(
@@ -789,23 +1155,7 @@ def get_integration_tokens(provider: str) -> dict[str, Any]:
     """Return integration credentials with secrets loaded from keychain."""
     key = _norm_integration_key(provider)
     if key == _LINEAR_CREDENTIALS_KEY:
-        metadata = _read_metadata_entry(key)
-        if not metadata:
-            return {}
-        access_token = _load_keychain_secret(
-            "Linear access token",
-            _LINEAR_ACCESS_TOKEN_SECRET,
-        )
-        if not access_token:
-            return {}
-        refresh_token = _load_keychain_secret(
-            "Linear refresh token",
-            _LINEAR_REFRESH_TOKEN_SECRET,
-        )
-        payload = {**metadata, "access_token": access_token}
-        if refresh_token:
-            payload["refresh_token"] = refresh_token
-        return payload
+        return get_linear_tokens()
     if key in {
         _ATLASSIAN_CREDENTIALS_KEY,
         _JIRA_CREDENTIALS_KEY,
@@ -826,6 +1176,18 @@ def clear_integration_tokens(provider: str) -> None:
     """Remove stored credentials for an integration provider."""
     key = _norm_integration_key(provider)
     if key == _LINEAR_CREDENTIALS_KEY:
+        meta = _read_linear_metadata()
+        orgs = meta.get("organizations")
+        if isinstance(orgs, dict):
+            for org_id in orgs:
+                _delete_keychain_secret(
+                    "Linear access token",
+                    _linear_access_token_secret(org_id),
+                )
+                _delete_keychain_secret(
+                    "Linear refresh token",
+                    _linear_refresh_token_secret(org_id),
+                )
         _delete_keychain_secret("Linear access token", _LINEAR_ACCESS_TOKEN_SECRET)
         _delete_keychain_secret("Linear refresh token", _LINEAR_REFRESH_TOKEN_SECRET)
         _clear_metadata_entries(_LINEAR_CREDENTIALS_KEY)
@@ -866,15 +1228,24 @@ def get_integration_status(provider: str) -> dict[str, Any]:
     key = _norm_integration_key(provider)
 
     if key == _LINEAR_CREDENTIALS_KEY:
-        entry = _read_metadata_entry(_LINEAR_CREDENTIALS_KEY)
-        if not entry:
+        meta = _read_linear_metadata()
+        orgs = meta.get("organizations")
+        if not isinstance(orgs, dict) or not orgs:
+            legacy = _load_keychain_secret(
+                "Linear access token",
+                _LINEAR_ACCESS_TOKEN_SECRET,
+            )
+            if not legacy:
+                return {"provider": key, "authenticated": False, "auth_type": "oauth"}
+        elif not any(
+            get_linear_tokens(org_id).get("access_token") for org_id in orgs.keys()
+        ):
             return {"provider": key, "authenticated": False, "auth_type": "oauth"}
-        access_token = _load_keychain_secret(
-            "Linear access token",
-            _LINEAR_ACCESS_TOKEN_SECRET,
-        )
-        if not access_token:
+
+        tokens = get_linear_tokens()
+        if not tokens.get("access_token"):
             return {"provider": key, "authenticated": False, "auth_type": "oauth"}
+        entry = _read_linear_metadata()
         account = linear_account_from_entry(entry)
         organization = entry.get("organization")
         org_name = organization.get("name") if isinstance(organization, dict) else None
@@ -882,6 +1253,7 @@ def get_integration_status(provider: str) -> dict[str, Any]:
         scope = entry.get("scope")
         if scopes is None and scope is not None:
             scopes = scope
+        connected = list_linear_organizations()
         return {
             "provider": key,
             "authenticated": True,
@@ -894,6 +1266,29 @@ def get_integration_status(provider: str) -> dict[str, Any]:
             "cloud_id": entry.get("cloud_id"),
             "stored_at": entry.get("stored_at"),
             "token_storage": entry.get("token_storage"),
+            "workspace_count": len(connected),
+        }
+
+    if key == "github":
+        entry = _read_metadata_entry("github")
+        if not entry:
+            return {"provider": key, "authenticated": False, "auth_type": "oauth"}
+        token = _load_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
+        if not token:
+            return {"provider": key, "authenticated": False, "auth_type": "oauth"}
+        account = entry.get("account")
+        account_dict = dict(account) if isinstance(account, dict) else {}
+        scopes = entry.get("scopes")
+        return {
+            "provider": key,
+            "authenticated": True,
+            "auth_type": "oauth",
+            "login": account_dict.get("login"),
+            "email": account_dict.get("email"),
+            "scope": scopes,
+            "stored_at": entry.get("updated_at") or entry.get("created_at"),
+            "token_storage": entry.get("token_storage"),
+            "provider_host": entry.get("provider_host"),
         }
 
     if key in {
@@ -977,7 +1372,7 @@ def write_provider_credentials(provider: str, payload: dict[str, Any]) -> None:
     if not access_token:
         raise ProviderCredentialError("GitHub access token is required.")
     _store_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET, access_token)
-    stored_payload["token_storage"] = "keychain"
+    stored_payload["token_storage"] = integration_token_storage()
     write_integration_metadata(key, stored_payload)
 
 
@@ -993,7 +1388,8 @@ def get_provider_credentials(provider: str) -> dict[str, Any]:
     token = _load_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
     if not token:
         raise ProviderCredentialError(
-            "GitHub token not found in system keychain. Run: potpie auth github login"
+            f"GitHub token not found in {_integration_secret_store_label()}. "
+            "Run: potpie github login"
         )
     result["access_token"] = token
     return result
