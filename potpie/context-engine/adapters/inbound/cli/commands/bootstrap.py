@@ -90,7 +90,6 @@ def register(root: typer.Typer) -> None:
                     agent=agent,
                     scan=scan,
                     use_rich=True,
-                    config_home=getattr(host.config, "home", None),
                 )
                 if report.ok:
                     setup_ux.maybe_prompt_github_login(

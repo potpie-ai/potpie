@@ -56,6 +56,20 @@ STATE_MAP: dict[str, StepStatus] = {
 # Synthetic per-row dwell so the (already-complete) run reads as live.
 _MIN_DWELL_S = 0.18
 
+# Soft steps that are hidden when they only report no-op / stub outcomes.
+_UI_HIDE_WHEN: dict[str, frozenset[str]] = {
+    "auth": frozenset({"not_implemented", "skipped"}),
+    "source": frozenset({"skipped"}),
+    "state_store.provision": frozenset({"skipped"}),
+}
+
+
+def _visible_in_checklist(step: Any) -> bool:
+    hidden = _UI_HIDE_WHEN.get(step.step)
+    if hidden is None:
+        return True
+    return step.state not in hidden
+
 
 def rich_enabled(*, as_json: bool) -> bool:
     """True when the animated wizard should drive output (TTY, not --json)."""
@@ -69,12 +83,12 @@ def render_setup_report(
     agent: str,
     scan: bool,
     use_rich: bool,
-    config_home: Path | None = None,
     pot_name: str | None = None,
 ) -> None:
     """Replay a completed ``SetupReport`` through the animated checklist."""
     wizard = SetupWizardUI(use_rich=use_rich)
-    for step in report.steps:
+    visible_steps = [step for step in report.steps if _visible_in_checklist(step)]
+    for step in visible_steps:
         running, done = STEP_LABELS.get(step.step, (step.step, step.step))
         if step.step == "skills":
             running = f"Installing agent skills ({agent})…"
@@ -86,7 +100,7 @@ def render_setup_report(
 
     failed_step_id: str | None = None
     with wizard.live():
-        for step in report.steps:
+        for step in visible_steps:
             with wizard.run_step(step.step):
                 if use_rich:
                     time.sleep(_MIN_DWELL_S)
@@ -102,11 +116,7 @@ def render_setup_report(
         wizard.print_failed(step_id=failed_step_id)
         return
 
-    setup_path = str(config_home / "config.json") if config_home else ""
-    data_path = str(config_home) if config_home else ""
     wizard.print_complete_summary(
-        setup_path=setup_path,
-        data_path=data_path,
         pot_name=None if report.plan.defer_default_pot else (pot_name or report.plan.pot),
         already_setup=False,
     )
@@ -116,7 +126,7 @@ def render_setup_report(
 POST_SETUP_INTEGRATION_OPTIONS: tuple[tuple[str, str], ...] = (
     ("linear", "Linear"),
     ("jira", "Jira"),
-    ("confluence", "Atlassian"),
+    ("confluence", "Confluence"),
 )
 POST_SETUP_INTEGRATION_ORDER: tuple[str, ...] = tuple(
     option_id for option_id, _ in POST_SETUP_INTEGRATION_OPTIONS
@@ -165,21 +175,10 @@ def install_agents_globally(agents: list[str]) -> list[tuple[str, Any]]:
 
 def _agent_label(agent: str) -> str:
     labels = dict(POST_SETUP_AGENT_OPTIONS)
-    return labels.get(agent, agent)
-
-
-def _print_agent_install_summary(repo: Path, results: list[tuple[str, Any]]) -> None:
-    from adapters.inbound.cli.ui.output import print_plain_line
-
-    for agent, result in results:
-        created = len(result.created)
-        updated = len(result.updated)
-        unchanged = len(result.unchanged)
-        print_plain_line(
-            f"{_agent_label(agent)} repo skills installed successfully "
-            f"({created} new, {updated} updated, {unchanged} unchanged).",
-            as_json=False,
-        )
+    key = agent.strip().lower()
+    if key in labels:
+        return labels[key]
+    return key.replace("_", " ").title()
 
 
 def _install_agents_globally_with_progress(agents: list[str]) -> list[tuple[str, Any]]:
@@ -254,6 +253,33 @@ def _format_agent_list(labels: list[str]) -> str:
     return f"{', '.join(labels[:-1])}, and {labels[-1]}"
 
 
+def _agent_usage_hint(agent_ids: list[str]) -> str | None:
+    if not agent_ids:
+        return None
+    labels = [_agent_label(agent_id) for agent_id in agent_ids]
+    return (
+        f"Open {_format_agent_list(labels)} — Potpie skills are ready to use."
+    )
+
+
+def _globally_installed_harnesses() -> list[str]:
+    """Harnesses that already have Potpie skills on disk (any prior setup run)."""
+    from adapters.inbound.cli.commands._common import get_host
+
+    host = get_host()
+    installed: list[str] = []
+    for agent in POST_SETUP_AGENT_ORDER:
+        if agent == "default":
+            continue
+        try:
+            status = host.skills.status(agent=agent, scope="global")
+        except ValueError:
+            continue
+        if status.installed:
+            installed.append(agent)
+    return installed
+
+
 def _try_login(handler) -> None:
     """Run a login handler; continue setup when the user declines or auth fails."""
     import typer
@@ -266,11 +292,8 @@ def _try_login(handler) -> None:
         raise
 
 
-def _maybe_prompt_agent_skills(*, repo: Path, setup_agent: str) -> None:
-    from adapters.inbound.cli.ui.interactive_prompts import (
-        prompt_multi_checkbox,
-        prompt_yes_no,
-    )
+def _maybe_prompt_agent_skills(*, setup_agent: str) -> None:
+    from adapters.inbound.cli.ui.interactive_prompts import prompt_multi_checkbox
 
     valid = frozenset(agent for agent in POST_SETUP_AGENT_ORDER if agent != "default")
     default_checked = (
@@ -301,18 +324,6 @@ def _maybe_prompt_agent_skills(*, repo: Path, setup_agent: str) -> None:
         if agent in selected_set and agent != "default"
     ]
     _install_agents_globally_with_progress(agents)
-
-    try:
-        install_repo = prompt_yes_no(
-            "Also install Potpie skills into this repo?",
-            default=False,
-        )
-    except (KeyboardInterrupt, EOFError):
-        install_repo = False
-    if install_repo:
-        results = install_agents_to_repo(repo, agents)
-        if results:
-            _print_agent_install_summary(repo, results)
 
 
 def maybe_prompt_github_login(
@@ -357,7 +368,7 @@ def maybe_prompt_github_login(
             _try_login(lambda p=provider: run_integration_login(p))
 
     if repo is not None:
-        _maybe_prompt_agent_skills(repo=repo, setup_agent=setup_agent)
+        _maybe_prompt_agent_skills(setup_agent=setup_agent)
 
     _maybe_prompt_first_pot(repo=repo, default_pot_name=default_pot_name)
 
@@ -375,7 +386,11 @@ def _register_repo_source(*, repo: str) -> None:
     host.pots.add_source(pot_id=active.pot_id, kind="repo", location=repo)
 
 
-def _maybe_prompt_first_pot(*, repo: Path | None, default_pot_name: str) -> None:
+def _maybe_prompt_first_pot(
+    *,
+    repo: Path | None,
+    default_pot_name: str,
+) -> None:
     from adapters.inbound.cli.commands._common import get_host
     from adapters.inbound.cli.ui.interactive_prompts import prompt_first_pot_name
     from adapters.inbound.cli.ui.potpie_logo_anim import play_setup_finish
@@ -393,7 +408,11 @@ def _maybe_prompt_first_pot(*, repo: Path | None, default_pot_name: str) -> None
     if repo_str:
         _register_repo_source(repo=repo_str)
 
-    play_setup_finish(stderr_console(), pot_name=pot.name)
+    play_setup_finish(
+        stderr_console(),
+        pot_name=pot.name,
+        agent_hint=_agent_usage_hint(_globally_installed_harnesses()),
+    )
 
 
 __all__ = [
