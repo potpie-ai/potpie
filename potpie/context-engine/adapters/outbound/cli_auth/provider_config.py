@@ -61,7 +61,15 @@ def get_callback_port() -> int:
 def get_client_id(provider: OAuthProvider) -> str:
     if provider != "linear":
         return ""
-    return os.getenv("LINEAR_CLIENT_ID", "").strip()
+    val = os.getenv("LINEAR_CLIENT_ID", "").strip()
+    if val:
+        return val
+    try:
+        from adapters.outbound.cli_auth._build_config import LINEAR_CLIENT_ID  # noqa: PLC0415
+
+        return LINEAR_CLIENT_ID
+    except (ImportError, AttributeError):
+        return ""
 
 
 def get_client_secret(provider: OAuthProvider) -> str:
