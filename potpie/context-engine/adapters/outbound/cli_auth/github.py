@@ -34,9 +34,21 @@ class GitHubDeviceFlowError(CliAuthError):
 
 
 def get_github_client_id() -> str:
-    """Resolve GitHub OAuth app client ID from environment (.env via load_cli_env)."""
+    """Resolve GitHub OAuth app client ID.
+
+    Precedence:
+    1. ``POTPIE_GITHUB_CLIENT_ID`` environment variable (runtime override / local dev)
+    2. Value baked into the package at wheel build time via ``_build_config``
+    """
     load_cli_env()
     client_id = os.getenv(GITHUB_CLIENT_ID_ENV, "").strip()
+    if not client_id:
+        try:
+            from adapters.outbound.cli_auth._build_config import POTPIE_GITHUB_CLIENT_ID  # noqa: PLC0415
+
+            client_id = POTPIE_GITHUB_CLIENT_ID
+        except (ImportError, AttributeError):
+            pass
     if not client_id:
         raise GitHubDeviceFlowError(
             f"{GITHUB_CLIENT_ID_ENV} is not set. "
