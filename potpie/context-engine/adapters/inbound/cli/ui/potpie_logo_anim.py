@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from rich.align import Align
 from rich.console import Console, Group
@@ -10,7 +11,7 @@ from rich.live import Live
 from rich.padding import Padding
 from rich.text import Text
 
-from adapters.inbound.cli.ui.brand import LOGO_COLOR, LOGO_DIM_STYLE, LOGO_STYLE
+from adapters.inbound.cli.ui.brand import LOGO_COLOR, LOGO_DIM_STYLE, LOGO_STYLE, UI_MUTED_STYLE
 from adapters.inbound.cli.ui.logo_rotation import render_intro_logo, render_static_intro_logo
 from adapters.inbound.cli.ui.static_logo_loader import VIEWPORT_WIDTH, load_static_logo
 
@@ -193,6 +194,7 @@ def _finish_screen(
     logo: Text,
     sparkle_frame: int | None,
     content_w: int,
+    agent_hint: str | None = None,
 ) -> Group:
     """Celebration layout; ``sparkle_frame`` animates sparkles, ``None`` keeps them fixed."""
     if sparkle_frame is None:
@@ -201,7 +203,7 @@ def _finish_screen(
     else:
         top_sparkle = _celebration_sparkle(sparkle_frame)
         bottom_sparkle = _celebration_sparkle(sparkle_frame + 2)
-    return Group(
+    body: list[Any] = [
         Text(""),
         _center_on_logo(top_sparkle, logo=logo, content_w=content_w),
         _center_on_logo(Text("potpie", style=_ACCENT), logo=logo, content_w=content_w),
@@ -211,14 +213,18 @@ def _finish_screen(
         _left_splash(Text.from_markup(headline), content_w),
         _center_on_logo(Text(subline, style=_ACCENT), logo=logo, content_w=content_w),
         _center_on_logo(bottom_sparkle, logo=logo, content_w=content_w),
-        Text(""),
-    )
+    ]
+    if agent_hint:
+        body.append(Text(agent_hint, style=UI_MUTED_STYLE))
+    body.append(Text(""))
+    return Group(*body)
 
 
 def play_setup_finish(
     console: Console,
     *,
     pot_name: str,
+    agent_hint: str | None = None,
     seconds: float = _FINISH_SECONDS,
     panel_width: int | None = None,
 ) -> None:
@@ -253,6 +259,7 @@ def play_setup_finish(
             logo=logo,
             sparkle_frame=None,
             content_w=content_w,
+            agent_hint=agent_hint,
         )
 
     interval = 1.0 / _FINISH_FPS
