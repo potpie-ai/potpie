@@ -276,7 +276,10 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
     if not client_id:
         emit_error(
             "Linear OAuth not configured",
-            "Linear OAuth client id is missing (set LINEAR_CLIENT_ID in your environment).",
+            "LINEAR_CLIENT_ID is not set and no client ID was baked into the package. "
+            "If you are developing locally, add it to potpie/.env (see .env.template). "
+            "If you installed from a wheel, ensure the package was built with the client ID "
+            "or set the environment variable.",
             verbose=v,
         )
         raise typer.Exit(code=1)
