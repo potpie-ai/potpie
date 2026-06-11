@@ -18,8 +18,8 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
-def _default_keychain_platform(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cs.sys, "platform", "darwin")
+def _default_linux_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cs.sys, "platform", "linux")
 
 
 @pytest.fixture(autouse=True)
@@ -358,7 +358,9 @@ def test_github_login_stores_token_only_after_verification(
     assert stored["access_token"] == "plaintext-token"
     assert stored["account"]["login"] == "octocat"
     assert stored["account"]["email"] == "octocat@example.com"
-    assert fake_keyring[("potpie", "github_token")] == "plaintext-token"
+    secrets = cs._read_integration_secrets_file()
+    assert secrets["github_token"] == "plaintext-token"
+    assert ("potpie", "github_token") not in fake_keyring
     raw = cs.read_credentials()
     assert "access_token" not in raw["integrations"]["github"]
     assert raw["integrations"]["github"]["account"] == {
@@ -367,7 +369,7 @@ def test_github_login_stores_token_only_after_verification(
         "name": "The Octocat",
         "email": "octocat@example.com",
     }
-    assert raw["integrations"]["github"]["token_storage"] == "keychain"
+    assert raw["integrations"]["github"]["token_storage"] == "file"
     assert opened_urls == [gh_auth.GITHUB_VERIFICATION_URI]
     assert "GitHub login requires a one-time verification code." in result.stdout
     assert "Copy this code: ABCD-EFGH" in result.stdout
@@ -489,16 +491,16 @@ def test_github_logout_clears_github_credentials(
             "provider": "github",
             "provider_host": "github.com",
             "access_token": "plaintext-token",
-            "token_storage": "keychain",
             "account": {"login": "octocat", "id": 1},
         },
     )
-    assert fake_keyring[("potpie", "github_token")] == "plaintext-token"
+    assert cs._read_integration_secrets_file()["github_token"] == "plaintext-token"
 
     result = runner.invoke(cli_main.app, ["auth", "github", "logout"])
 
     assert result.exit_code == 0, result.stdout
     assert cs.get_integration_metadata("github") == {}
+    assert "github_token" not in cs._read_integration_secrets_file()
     assert ("potpie", "github_token") not in fake_keyring
     assert "github" not in (cs.read_credentials().get("integrations") or {})
 

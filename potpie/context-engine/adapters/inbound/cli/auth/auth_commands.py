@@ -59,15 +59,9 @@ from adapters.outbound.cli_auth.token_exchange import exchange_authorization_cod
 auth_app = typer.Typer(
     help="[Deprecated] Use `potpie <provider>` and `potpie status` instead.",
 )
-linear_app = typer.Typer(
-    help="Linear integration. Commands: login, logout, ls, select."
-)
-jira_app = typer.Typer(
-    help="Jira integration and read. Commands: login, logout, ls, select."
-)
-confluence_app = typer.Typer(
-    help="Confluence integration and read. Commands: login, logout, ls, select."
-)
+linear_app = typer.Typer(help="Linear integration.")
+jira_app = typer.Typer(help="Jira integration and read.")
+confluence_app = typer.Typer(help="Confluence integration and read.")
 
 _OAUTH_CALLBACK_TIMEOUT = 300.0
 _ALL_PROVIDERS: tuple[Provider, ...] = ("github", "linear", "jira", "confluence")

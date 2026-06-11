@@ -43,8 +43,13 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
-def _default_keychain_platform(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cs.sys, "platform", "darwin")
+def _default_linux_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cs.sys, "platform", "linux")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_xdg_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
 
 def test_auth_help_is_wired_into_main_cli() -> None:
@@ -496,7 +501,7 @@ def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> Non
             "email": "ada@example.com",
             "site_name": "Acme",
             "expires_at": 12345.0,
-            "token_storage": "keychain",
+            "token_storage": "file",
             "auth_type": "oauth",
         },
     )
@@ -942,7 +947,7 @@ def test_get_integration_status_github_authenticated(
     assert status["authenticated"] is True
     assert status["login"] == "octocat"
     assert status["email"] == "a@b.com"
-    assert status["token_storage"] == "keychain"
+    assert status["token_storage"] == "file"
 
 
 def test_linear_status_includes_org_and_scope_string(
