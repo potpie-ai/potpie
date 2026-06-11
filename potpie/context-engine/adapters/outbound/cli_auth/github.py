@@ -7,6 +7,9 @@ from typing import Any
 
 import httpx
 
+from adapters.outbound.cli_auth.baked_oauth_client_ids import (
+    POTPIE_GITHUB_CLIENT_ID as BAKED_GITHUB_CLIENT_ID,
+)
 from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
 from adapters.outbound.cli_auth.errors import CliAuthError
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
@@ -38,21 +41,16 @@ def get_github_client_id() -> str:
 
     Precedence:
     1. ``POTPIE_GITHUB_CLIENT_ID`` environment variable (runtime override / local dev)
-    2. Value baked into the package at wheel build time via ``_build_config``
+    2. Value baked into the package at wheel build time
     """
     load_cli_env()
-    client_id = os.getenv(GITHUB_CLIENT_ID_ENV, "").strip()
-    if not client_id:
-        try:
-            from adapters.outbound.cli_auth._build_config import POTPIE_GITHUB_CLIENT_ID  # noqa: PLC0415
-
-            client_id = POTPIE_GITHUB_CLIENT_ID
-        except (ImportError, AttributeError):
-            pass
+    client_id = os.getenv(GITHUB_CLIENT_ID_ENV, "").strip() or BAKED_GITHUB_CLIENT_ID
     if not client_id:
         raise GitHubDeviceFlowError(
-            f"{GITHUB_CLIENT_ID_ENV} is not set. "
-            "Add it to potpie/.env (see .env.template)."
+            f"{GITHUB_CLIENT_ID_ENV} is not set and no client ID was baked into the package. "
+            "If you are developing locally, add it to potpie/.env (see .env.template). "
+            "If you installed from a wheel, ensure the package was built with the client ID "
+            "or set the environment variable."
         )
     return client_id
 

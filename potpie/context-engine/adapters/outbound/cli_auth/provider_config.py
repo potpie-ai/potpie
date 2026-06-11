@@ -6,6 +6,8 @@ import os
 from typing import Literal
 from urllib.parse import urlparse
 
+from adapters.outbound.cli_auth.baked_oauth_client_ids import LINEAR_CLIENT_ID as BAKED_LINEAR_CLIENT_ID
+
 Provider = Literal["linear", "github", "atlassian", "jira", "confluence"]
 OAuthProvider = Literal["linear"]
 AtlassianProduct = Literal["jira", "confluence"]
@@ -64,12 +66,7 @@ def get_client_id(provider: OAuthProvider) -> str:
     val = os.getenv("LINEAR_CLIENT_ID", "").strip()
     if val:
         return val
-    try:
-        from adapters.outbound.cli_auth._build_config import LINEAR_CLIENT_ID  # noqa: PLC0415
-
-        return LINEAR_CLIENT_ID
-    except (ImportError, AttributeError):
-        return ""
+    return BAKED_LINEAR_CLIENT_ID
 
 
 def get_client_secret(provider: OAuthProvider) -> str:
