@@ -1,4 +1,4 @@
-"""OAuth client IDs baked into the wheel at package build time.
+"""OAuth client IDs shipped with the package at build time.
 
 Values are written to ``_build_config.py`` by the Hatch build hook
 (``oauth_client_id_injection_hook.py``). When running from a source checkout
