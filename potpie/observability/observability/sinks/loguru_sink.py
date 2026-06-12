@@ -16,7 +16,6 @@ import logging
 from ..config import ObservabilityConfig
 
 _HINT = "loguru sink requires loguru — install observability[loguru]"
-_logger = logging.getLogger(__name__)
 
 
 class _LoguruHandler(logging.Handler):
@@ -64,7 +63,7 @@ class LoguruSink:
             if complete is not None:
                 try:
                     complete()
-                except Exception as exc:
-                    _logger.debug("loguru complete failed: %s", exc)
-        except Exception as exc:
-            _logger.debug("loguru shutdown skipped: %s", exc)
+                except Exception:
+                    pass
+        except Exception:
+            pass
