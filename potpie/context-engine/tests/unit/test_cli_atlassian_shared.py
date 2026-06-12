@@ -39,6 +39,16 @@ from adapters.outbound.cli_auth.provider_config import (
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _default_linux_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cs.sys, "platform", "linux")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_xdg_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+
 def test_auth_help_is_wired_into_main_cli() -> None:
     result = runner.invoke(cli_main.app, ["auth", "--help"])
 
@@ -419,7 +429,7 @@ def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> Non
             "site_url": "https://team.atlassian.net",
             "expires_at": 12345.0,
             "cloud_id": "cloud-1",
-            "token_storage": "keychain",
+            "token_storage": "file",
             "auth_type": "api_token",
         },
     )
@@ -1098,7 +1108,8 @@ def test_clear_jira_credentials_preserves_shared_legacy_for_confluence(
     assert "confluence" in integrations
     assert "jira" not in integrations
     assert cs._JIRA_TOKEN_SECRET not in {k[1] for k in keychain}
-    assert cs._ATLASSIAN_LEGACY_TOKEN_SECRET in {k[1] for k in keychain}
+    secrets = cs._read_integration_secrets_file()
+    assert cs._ATLASSIAN_LEGACY_TOKEN_SECRET in secrets
 
 
 def test_clear_atlassian_credentials_removes_shared_legacy(
