@@ -1,5 +1,7 @@
 """Potpie CLI visual language helpers."""
 
+from rich.markup import escape
+
 from adapters.inbound.cli.ui.brand import LOGO_COLOR, UI_FOCUS_STYLE
 from adapters.inbound.cli.ui.format import (
     format_line,
@@ -12,6 +14,17 @@ from adapters.inbound.cli.ui.format import (
 
 def test_success_markup_includes_checkmark() -> None:
     assert "✓" in success_markup("active pot → foo")
+
+
+def test_success_markup_escapes_user_markup() -> None:
+    line = success_markup("[bold red]owned[/bold red]")
+    assert "[bold red]owned[/bold red]" not in line
+    assert escape("[bold red]owned[/bold red]") in line
+
+
+def test_format_line_plain_escapes_user_markup() -> None:
+    line = format_line("[green]pot[/green]", tone="plain")
+    assert line == escape("[green]pot[/green]")
 
 
 def test_infer_line_tone_success() -> None:

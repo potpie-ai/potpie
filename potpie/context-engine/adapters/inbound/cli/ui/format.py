@@ -45,11 +45,11 @@ def use_rich(*, as_json: bool = False) -> bool:
 
 
 def success_markup(message: str) -> str:
-    return f"[{LOGO_COLOR}]✓[/{LOGO_COLOR}] {message}"
+    return f"[{LOGO_COLOR}]✓[/{LOGO_COLOR}] {escape(message)}"
 
 
 def step_markup(message: str) -> str:
-    return f"[{LOGO_DIM_STYLE}]›[/{LOGO_DIM_STYLE}] {message}"
+    return f"[{LOGO_DIM_STYLE}]›[/{LOGO_DIM_STYLE}] {escape(message)}"
 
 
 def muted_markup(message: str) -> str:
@@ -159,7 +159,9 @@ def format_line(message: str, *, tone: str | None = None) -> str:
         return title_markup(message)
     if tone == "warn":
         return f"[yellow]![/yellow] {escape(message)}"
-    return escape(message) if tone == "plain_raw" else message
+    if tone == "plain_raw":
+        return message
+    return escape(message)
 
 
 def print_line(
@@ -188,7 +190,7 @@ def print_lines(
     c = console or _stdout
     if not use_rich(as_json=as_json):
         for line in lines:
-            c.print(line)
+            c.print(line, markup=False)
         return
     for line in lines:
         if not line.strip():
@@ -236,7 +238,7 @@ def print_human_block(text: str, *, console: Console | None = None) -> None:
     """Render ``emit()`` human strings with setup-aligned styling."""
     c = console or _stdout
     if not use_rich():
-        c.print(text)
+        c.print(text, markup=False)
         return
 
     if "\n" not in text:
@@ -311,13 +313,13 @@ def print_structured_error(
 ) -> None:
     c = console or _stderr
     if not use_rich():
-        c.print(f"error: {title}")
+        c.print(f"error: {title}", markup=False)
         if message and message != title:
-            c.print(f"  {message}")
+            c.print(f"  {message}", markup=False)
         if hint:
-            c.print(f"  detail: {hint}")
+            c.print(f"  detail: {hint}", markup=False)
         if next_action:
-            c.print(f"  next: {next_action}")
+            c.print(f"  next: {next_action}", markup=False)
         return
     head, body = error_markup(title, message if message != title else "")
     c.print(head)
