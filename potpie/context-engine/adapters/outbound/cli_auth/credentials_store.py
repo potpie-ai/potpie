@@ -1380,7 +1380,11 @@ def write_provider_credentials(provider: str, payload: dict[str, Any]) -> None:
         _GITHUB_TOKEN_SECRET,
         access_token,
     )
-    write_integration_metadata(key, stored_payload)
+    try:
+        write_integration_metadata(key, stored_payload)
+    except Exception:
+        _delete_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
+        raise
 
 
 def get_provider_credentials(provider: str) -> dict[str, Any]:
