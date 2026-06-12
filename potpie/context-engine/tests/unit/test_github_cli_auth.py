@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import sys
+import types
 from typing import Any
 
 import httpx
@@ -456,6 +458,36 @@ def test_wait_for_enter_or_auto_open_times_out_on_same_line(
     assert "\r\033[KCopy the code. Press Enter to open now, or GitHub opens in 1s" in out
     assert "Opening GitHub now..." not in out
     assert sleeps == []
+
+
+def test_wait_for_enter_or_auto_open_uses_msvcrt_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    kbhit_calls = {"count": 0}
+
+    def _kbhit() -> bool:
+        kbhit_calls["count"] += 1
+        return kbhit_calls["count"] == 1
+
+    fake_msvcrt = types.SimpleNamespace(kbhit=_kbhit, getwch=lambda: "\r")
+    monkeypatch.setattr(gh_cmds.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+    monkeypatch.setattr(
+        gh_cmds,
+        "select",
+        "select",
+        lambda *_args, **_kwargs: pytest.fail("Windows path must not use select"),
+    )
+
+    gh_cmds._wait_for_enter_or_auto_open(seconds=10)
+
+    out = capsys.readouterr().out
+    assert (
+        "Copy the code. Press Enter to open now, or GitHub opens in 10s"
+        in out
+    )
+    assert "Opening GitHub now" not in out
 
 
 def test_github_login_ctrl_c_at_enter_prompt_exits_cleanly(
