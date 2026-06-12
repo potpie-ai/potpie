@@ -1,86 +1,122 @@
-# Sentry Crash Telemetry
+# Context-Engine CLI Sentry Telemetry
 
-Sentry is used for unexpected Potpie CLI and current in-process daemon failures.
-Product analytics stays separate, and backend route capture plus worker/Celery
-capture are out of scope for this ticket set.
+Sentry is used only for unexpected Potpie context-engine CLI failures. It is a
+small CLI-owned integration under `potpie/context-engine`, independent of
+`potpie/observability` and `legacy/deploy/observability`.
 
 ## Configuration
 
-Sentry is env-driven. No DSN is checked in.
+The CLI root callback loads the existing project `.env` through `load_cli_env()`.
+Telemetry code then reads the process environment only; it does not load
+additional env files and does not persist DSNs.
 
-- `SENTRY_DSN`: enables CLI Sentry when present.
-- `POTPIE_SENTRY_ENABLED=0`: hard-disable kill switch, even with a DSN.
-- `SENTRY_ENVIRONMENT`: `dev`, `staging`, or `prod`; local defaults to `dev`.
-- `SENTRY_RELEASE`: overrides release naming.
-- `SENTRY_DIST`: optional Sentry dist.
+Environment precedence:
 
-Default CLI release naming is `potpie-cli@<potpie-context-engine version>`.
-The SDK is configured with `send_default_pii=False`.
+- `POTPIE_SENTRY_DSN`, then `SENTRY_DSN`: enables Sentry when present.
+- `POTPIE_TELEMETRY_DISABLED=1`: disables all outbound telemetry.
+- `POTPIE_SENTRY_ENABLED=0`: disables Sentry only.
+- `POTPIE_SENTRY_ENVIRONMENT`, then `SENTRY_ENVIRONMENT`, default `dev`.
+- `POTPIE_SENTRY_RELEASE`, then `SENTRY_RELEASE`, default
+  `potpie-cli@<potpie-context-engine version>`.
+- `POTPIE_SENTRY_DIST`, then `SENTRY_DIST`: optional Sentry dist.
+
+Sentry initializes directly through `sentry-sdk` with:
+
+- `send_default_pii=False`
+- `include_local_variables=False`
+- `max_request_body_size="never"`
+- `before_send` event scrubbing
+- `before_breadcrumb` breadcrumb scrubbing
+
+The CLI never calls `sentry_sdk.set_user()`.
+
+## Identity State
+
+Reusable non-secret telemetry identity is stored globally:
+
+```text
+$XDG_CONFIG_HOME/potpie/telemetry/identity.json
+~/.config/potpie/telemetry/identity.json
+```
+
+The file is written with `0600` permissions through an atomic temp-file replace.
+It contains:
+
+- `schema_version`
+- `anonymous_install_id`
+- `created_at`
+- `last_seen_at`
+
+The identity file never stores DSNs, auth tokens, API keys, user IDs, org IDs,
+repo names, prompts, code, paths, headers, or request bodies. The
+`anonymous_install_id` is stable until an explicit reset flow exists. Each CLI
+run also gets an in-memory `invocation_id`; each process gets an in-memory
+`daemon_session_id`.
 
 ## Captured Errors
 
 Captured:
 
-- uncaught exceptions crossing the CLI command boundary
-- unexpected in-process daemon command failures
-- unexpected auth implementation failures
-- serialization, SDK/client response, and credential-store implementation bugs
+- unexpected exceptions crossing `commands/_common.py::contract()`
+- unexpected auth implementation failures in login/logout flows that do not use
+  `contract()`
+- unexpected daemon command failures through the normal CLI command boundary
 
 Not captured:
 
-- validation errors
-- `pot_not_found`
-- `no_active_pot`
-- `auth_required`
-- `auth_denied`
-- `auth_expired`
-- `context_engine_unavailable`
-- `not_implemented`
-- missing local config, DSN, or token
-- user cancellation
 - `typer.Exit`
-- `KeyboardInterrupt`
+- `KeyboardInterrupt`, EOF, or user cancellation
+- validation errors
+- expected domain errors such as `pot_not_found`, `no_active_pot`,
+  `context_engine_unavailable`, and `not_implemented`
+- auth denied, expired, or missing credentials
+- missing local config
+- missing DSN or disabled telemetry
 
-Captured events use stable metadata:
-
-- `error.code`
-- `error.kind`
-- `is_expected=false`
-
-Raw exception messages are not used as Sentry tags or grouping data.
-
-## Allowed Tags And Context
-
-Allowed tags:
+Captured events use stable metadata only:
 
 - `service`
-- `environment`
-- `release`
+- `command`
+- `subcommand` when available
+- `output_mode`
 - `cli_version`
 - `python_version`
 - `os`
 - `arch`
-- `command`
-- `subcommand`
-- `output_mode`
-- `exit_code`
 - `error.code`
 - `error.kind`
-- `is_expected`
+- `is_expected=false`
 
-Allowed context:
+Allowed event context:
 
 - `anonymous_install_id`
 - `invocation_id`
 - `daemon_session_id`
 
-The CLI does not call `sentry_sdk.set_user()`.
+## Privacy Scrubbing
 
-## Data Never Collected
+Telemetry code avoids attaching sensitive data in the first place. Sentry SDK
+privacy settings and hooks are the final guard before transport.
 
-Sentry events must not include:
+`before_send` removes:
 
-- email, name, user id, or org id
+- request data
+- headers
+- cookies
+- env
+- extra payloads
+- module lists
+- server name
+- stack frame locals
+- full frame paths
+- raw exception messages and values
+
+`before_breadcrumb` drops HTTP/subprocess breadcrumbs and strips breadcrumb
+`data` and `message` from kept breadcrumbs.
+
+Sentry events must not contain:
+
+- email, name, user ID, or org ID
 - prompts or episode bodies
 - source code or file contents
 - terminal output
@@ -93,50 +129,26 @@ Sentry events must not include:
 - environment variables
 - API keys, GitHub tokens, bearer tokens, or secrets
 - frame locals
-- raw exception values
-- CLI command arguments
+- raw exception messages or values
+- raw CLI command arguments
 
-`before_send` and `before_breadcrumb` enforce this before transport.
+## Local Verification
 
-## Local Tests
+Default tests use fake or in-memory Sentry surfaces and do not call the network.
 
 ```bash
-UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-observability --extra sentry pytest potpie/observability/tests -q
 UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine pytest potpie/context-engine/tests/unit/test_sentry_*.py -q
-UV_CACHE_DIR=/private/tmp/uv-cache uv run pytest potpie/observability/tests potpie/context-engine/tests/unit/test_sentry_*.py -q
-UV_CACHE_DIR=/private/tmp/uv-cache uv run ruff check potpie/observability potpie/context-engine
+UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine pytest potpie/context-engine/tests/unit/test_telemetry_*.py -q
+UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine ruff check adapters/inbound/cli tests/unit/test_sentry_*.py tests/unit/test_telemetry_*.py
 ```
 
-The automated tests use an in-memory Sentry `Transport`; default tests do not
-call the network.
-
-## Staging Smoke
-
-The staging smoke is opt-in and must refuse all non-staging environments.
-
-Required environment:
+Manual CLI smoke:
 
 ```bash
-RUN_SENTRY_STAGING_SMOKE=1
-SENTRY_DSN=<staging dsn>
-SENTRY_ENVIRONMENT=staging
-SENTRY_RELEASE=potpie-cli@<version-or-test>
+XDG_CONFIG_HOME=/tmp/potpie-xdg \
+UV_CACHE_DIR=/private/tmp/uv-cache \
+uv run --package potpie-context-engine potpie --json daemon status
 ```
 
-Smoke event contract:
-
-- `error.code=sentry.smoke_test`
-- `error.kind=unexpected`
-- `is_expected=false`
-- no sensitive payload
-- environment is `staging`
-- release is the supplied `SENTRY_RELEASE`
-- telemetry context has anonymous install, invocation, and daemon session IDs
-
-## Triage
-
-Group by release, command, `error.code`, and `cli_version`.
-Route staging events to engineering validation. Route prod regressions by
-command owner and release window. If privacy scrubbers drop or redact a value,
-debug using local logs and reproduction steps rather than expanding Sentry
-payloads.
+Expected result: command exits `0`, prints daemon status JSON, and creates
+`/tmp/potpie-xdg/potpie/telemetry/identity.json` without requiring a Sentry DSN.

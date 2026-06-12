@@ -48,11 +48,12 @@ def build_app() -> typer.Typer:
         configure_error_output(as_json=json_)
         configure_cli_logging(verbose)
         load_cli_env()
-        from adapters.inbound.cli.sentry_runtime import configure_cli_sentry
-        from adapters.inbound.cli.telemetry_context import bind_cli_telemetry_context
+        from adapters.inbound.cli.telemetry.context import bind_telemetry_context
+        from adapters.inbound.cli.telemetry.sentry_runtime import configure_cli_sentry
+        from adapters.inbound.cli.telemetry.settings import load_sentry_settings
 
-        bind_cli_telemetry_context(ctx, json_output=json_)
-        configure_cli_sentry()
+        bind_telemetry_context(ctx, json_output=json_)
+        configure_cli_sentry(load_sentry_settings())
 
     # Top-level commands (the four-tool surface + bootstrap + auth/login).
     query_cmds.register(app)

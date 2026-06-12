@@ -155,7 +155,9 @@ def _capture_unexpected_potpie_auth_error(
     title: str,
     verbose: bool,
 ) -> NoReturn:
-    from adapters.inbound.cli.sentry_runtime import capture_unexpected_cli_error
+    from adapters.inbound.cli.telemetry.sentry_runtime import (
+        capture_unexpected_cli_error,
+    )
 
     capture_unexpected_cli_error(
         exc,

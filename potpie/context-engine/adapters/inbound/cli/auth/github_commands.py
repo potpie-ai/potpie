@@ -241,6 +241,30 @@ def github_repos_impl() -> None:
         )
 
 
+def _capture_unexpected_auth_error(
+    exc: BaseException,
+    *,
+    title: str,
+    verbose: bool,
+) -> NoReturn:
+    from adapters.inbound.cli.telemetry.sentry_runtime import (
+        capture_unexpected_cli_error,
+    )
+
+    capture_unexpected_cli_error(
+        exc,
+        error_code="unexpected_cli_error",
+        error_kind="unexpected",
+    )
+    emit_error(
+        title,
+        "Unexpected internal error.",
+        code="unexpected_cli_error",
+        verbose=verbose,
+    )
+    raise typer.Exit(code=EXIT_AUTH) from exc
+
+
 @github_app.command("repos")
 def github_repos_cmd() -> None:
     """List GitHub repositories you can access."""
