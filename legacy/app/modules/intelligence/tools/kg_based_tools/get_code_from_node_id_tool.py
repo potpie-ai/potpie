@@ -219,7 +219,8 @@ class GetCodeFromNodeIdTool:
                 node_id=node_id,
                 project_id=project.id,
             )
-        return truncated_result
+            return truncated_result
+        return result
 
     @staticmethod
     def _get_relative_file_path(file_path: str) -> str:
