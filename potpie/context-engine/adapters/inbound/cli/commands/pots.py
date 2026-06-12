@@ -75,9 +75,10 @@ def pot_list(
                 for p in pots
             ],
         }
-        human_lines = [
-            f"{'*' if p.active else ' '} {p.name} ({p.pot_id}) [local]" for p in pots
-        ] or ["(no pots)"]
+        pot_rows = [
+            f"{'*' if p.active else ' '} {p.name} ({p.pot_id})" for p in pots
+        ]
+        human_lines = ["Local", *(pot_rows or ["(no pots)"])]
         if all_:
             payload["managed_pending"] = True
             human_lines.append("  (managed pots require 'potpie login' — HU3)")

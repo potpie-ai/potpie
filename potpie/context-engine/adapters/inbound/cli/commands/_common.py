@@ -92,7 +92,9 @@ def emit(payload: dict[str, Any], *, human: str) -> None:
     if is_json():
         typer.echo(json.dumps(payload, default=str))
     else:
-        typer.echo(human)
+        from adapters.inbound.cli.ui.format import print_human_block
+
+        print_human_block(human)
 
 
 def fail(
@@ -117,12 +119,14 @@ def fail(
             )
         )
     else:
-        lines = [f"error: {message}"]
-        if detail:
-            lines.append(f"  detail: {detail}")
-        if next_action:
-            lines.append(f"  next: {next_action}")
-        typer.echo("\n".join(lines), err=True)
+        from adapters.inbound.cli.ui.format import print_structured_error
+
+        print_structured_error(
+            title=message,
+            message=message,
+            hint=detail,
+            next_action=next_action,
+        )
     raise typer.Exit(code=exit_code)
 
 

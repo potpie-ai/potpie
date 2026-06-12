@@ -190,6 +190,7 @@ def _install_agents_globally_with_progress(agents: list[str]) -> list[tuple[str,
         from rich.live import Live
         from rich.text import Text
 
+        from adapters.inbound.cli.ui.brand import LOGO_STYLE, UI_MUTED_STYLE
         from adapters.inbound.cli.ui.setup_wizard_ui import stderr_console
 
         completed: list[tuple[str, str]] = []
@@ -197,9 +198,11 @@ def _install_agents_globally_with_progress(agents: list[str]) -> list[tuple[str,
         def render(active_label: str | None = None, dots: str = "") -> Group:
             lines = [Text("Potpie skills", style="bold")]
             for label, status in completed:
-                lines.append(Text(f"  ✓ {label} ({status})", style="green"))
+                lines.append(Text(f"  ✓ {label} ({status})", style=LOGO_STYLE))
             if active_label:
-                lines.append(Text(f"  Installing {active_label} skills{dots}", style="white"))
+                lines.append(
+                    Text(f"  Installing {active_label} skills{dots}", style=UI_MUTED_STYLE)
+                )
             return Group(*lines)
 
         with Live(render(), console=stderr_console(), refresh_per_second=12) as live:
