@@ -18,8 +18,6 @@ venv/
 !potpie/sandbox/daytona/**/*.json
 # Potpie CLI setup-wizard logo (generated asset, must ship in the package)
 !potpie/context-engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json
-# OAuth client IDs generated at wheel build time (see oauth_client_id_injection_hook.py)
-potpie/context-engine/adapters/outbound/cli_auth/_build_config.py
 .momentum
 db
 cli/momentum_cli/.momentum

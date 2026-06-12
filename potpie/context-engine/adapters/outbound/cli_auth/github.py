@@ -7,8 +7,8 @@ from typing import Any
 
 import httpx
 
-from adapters.outbound.cli_auth.baked_oauth_client_ids import (
-    POTPIE_GITHUB_CLIENT_ID as BAKED_GITHUB_CLIENT_ID,
+from adapters.outbound.cli_auth._oauth_client_ids import (
+    POTPIE_GITHUB_CLIENT_ID as PACKAGE_GITHUB_CLIENT_ID,
 )
 from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
 from adapters.outbound.cli_auth.oauth_client_id_messages import (
@@ -44,10 +44,10 @@ def get_github_client_id() -> str:
 
     Precedence:
     1. ``POTPIE_GITHUB_CLIENT_ID`` environment variable (runtime override / local dev)
-    2. Value baked into the package at wheel build time
+    2. Value shipped with the package at build time
     """
     load_cli_env()
-    client_id = os.getenv(GITHUB_CLIENT_ID_ENV, "").strip() or BAKED_GITHUB_CLIENT_ID
+    client_id = os.getenv(GITHUB_CLIENT_ID_ENV, "").strip() or PACKAGE_GITHUB_CLIENT_ID
     if not client_id:
         raise GitHubDeviceFlowError(missing_github_client_id_message())
     return client_id
