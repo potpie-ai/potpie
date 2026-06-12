@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import sys
 import types
 from typing import Any
 
@@ -300,23 +302,16 @@ def test_github_login_stores_token_only_after_verification(
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     opened_urls: list[str] = []
-    slept: list[int] = []
     monkeypatch.setattr(
         gh_cmds.webbrowser,
         "open",
         lambda url: opened_urls.append(url) or True,
     )
+    waited: list[bool] = []
     monkeypatch.setattr(
         gh_cmds,
-        "time",
-        types.SimpleNamespace(sleep=lambda seconds: slept.append(seconds)),
-        raising=False,
-    )
-    entered: list[str] = []
-    monkeypatch.setattr(
-        gh_cmds.typer,
-        "confirm",
-        lambda message, **_kwargs: entered.append(message) or True,
+        "_wait_for_enter_or_auto_open",
+        lambda: waited.append(True),
     )
     monkeypatch.setattr(
         gh_cmds,
@@ -366,12 +361,10 @@ def test_github_login_stores_token_only_after_verification(
     assert opened_urls == [gh_auth.GITHUB_VERIFICATION_URI]
     assert "GitHub login requires a one-time verification code." in result.stdout
     assert "Copy this code: ABCD-EFGH" in result.stdout
-    assert "Copy the code, then press Enter to open GitHub." in result.stdout
     assert "Paste the copied code into GitHub to continue." in result.stdout
     assert "Waiting for authorization" in result.stdout
     assert "Logged in to GitHub as octocat (octocat@example.com)" in result.stdout
-    assert slept == []
-    assert entered == ["Press Enter after copying the code"]
+    assert waited == [True]
 
 
 def test_github_login_prints_verification_url_when_browser_open_fails(
@@ -381,11 +374,9 @@ def test_github_login_prints_verification_url_when_browser_open_fails(
     monkeypatch.setattr(gh_cmds.webbrowser, "open", lambda _url: False)
     monkeypatch.setattr(
         gh_cmds,
-        "time",
-        types.SimpleNamespace(sleep=lambda _seconds: None),
-        raising=False,
+        "_wait_for_enter_or_auto_open",
+        lambda: None,
     )
-    monkeypatch.setattr(gh_cmds.typer, "confirm", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         gh_cmds,
         "request_device_code",
@@ -420,6 +411,197 @@ def test_github_login_prints_verification_url_when_browser_open_fails(
     assert "Could not open a browser automatically. Open this URL:" in result.stdout
     assert gh_auth.GITHUB_VERIFICATION_URI in result.stdout
     assert "Paste the copied code into GitHub to continue." not in result.stdout
+
+
+def test_wait_for_enter_or_auto_open_returns_when_enter_is_pressed(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    input_stream = io.StringIO("\n")
+    monkeypatch.setattr(
+        gh_cmds.select,
+        "select",
+        lambda _read, _write, _error, _timeout: ([input_stream], [], []),
+    )
+    monkeypatch.setattr(
+        gh_cmds.time,
+        "sleep",
+        lambda _seconds: pytest.fail("enter should skip the countdown sleep"),
+    )
+
+    gh_cmds._wait_for_enter_or_auto_open(seconds=10, input_stream=input_stream)
+
+    out = capsys.readouterr().out
+    assert (
+        "Copy the code. Press Enter to open now, or GitHub opens in 10s"
+        in out
+    )
+    assert "Opening GitHub now" not in out
+
+
+def test_wait_for_enter_or_auto_open_times_out_on_same_line(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sleeps: list[int] = []
+    monkeypatch.setattr(
+        gh_cmds.select,
+        "select",
+        lambda _read, _write, _error, _timeout: ([], [], []),
+    )
+    monkeypatch.setattr(gh_cmds.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    gh_cmds._wait_for_enter_or_auto_open(seconds=2, input_stream=io.StringIO(""))
+
+    out = capsys.readouterr().out
+    assert "\r\033[KCopy the code. Press Enter to open now, or GitHub opens in 2s" in out
+    assert "\r\033[KCopy the code. Press Enter to open now, or GitHub opens in 1s" in out
+    assert "Opening GitHub now..." not in out
+    assert sleeps == []
+
+
+def test_wait_for_enter_or_auto_open_uses_msvcrt_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    kbhit_calls = {"count": 0}
+
+    def _kbhit() -> bool:
+        kbhit_calls["count"] += 1
+        return kbhit_calls["count"] == 1
+
+    fake_msvcrt = types.SimpleNamespace(kbhit=_kbhit, getwch=lambda: "\r")
+    monkeypatch.setattr(gh_cmds.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+    monkeypatch.setattr(
+        gh_cmds,
+        "select",
+        "select",
+        lambda *_args, **_kwargs: pytest.fail("Windows path must not use select"),
+    )
+
+    gh_cmds._wait_for_enter_or_auto_open(seconds=10)
+
+    out = capsys.readouterr().out
+    assert (
+        "Copy the code. Press Enter to open now, or GitHub opens in 10s"
+        in out
+    )
+    assert "Opening GitHub now" not in out
+
+
+def test_github_login_ctrl_c_at_enter_prompt_exits_cleanly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(
+        gh_cmds.webbrowser,
+        "open",
+        lambda _url: pytest.fail("cancelled login must not open the browser"),
+    )
+
+    def _cancel() -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(gh_cmds, "_wait_for_enter_or_auto_open", _cancel)
+    monkeypatch.setattr(
+        gh_cmds,
+        "request_device_code",
+        lambda: gh_auth.DeviceCode(
+            device_code="dev-code",
+            user_code="ABCD-EFGH",
+            verification_uri=gh_auth.GITHUB_VERIFICATION_URI,
+            expires_in=900,
+            interval=5,
+        ),
+    )
+    monkeypatch.setattr(
+        gh_cmds,
+        "poll_for_access_token",
+        lambda _device: pytest.fail("cancelled login must not poll for a token"),
+    )
+
+    result = runner.invoke(cli_main.app, ["auth", "github", "login"])
+
+    assert result.exit_code == gh_cmds.EXIT_CANCELLED
+    assert "Copy this code: ABCD-EFGH" in result.stdout
+    assert "\nGitHub login cancelled." in result.stdout
+    assert "Traceback" not in result.stdout
+    assert "Abort" not in result.stdout
+    assert "NameError" not in result.stdout
+    assert cs.get_integration_metadata("github") == {}
+
+
+def test_github_login_click_abort_from_prompt_exits_cleanly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(
+        gh_cmds,
+        "_open_github_device_verification",
+        lambda *_args: (_ for _ in ()).throw(gh_cmds.Abort()),
+    )
+    monkeypatch.setattr(
+        gh_cmds,
+        "request_device_code",
+        lambda: gh_auth.DeviceCode(
+            device_code="dev-code",
+            user_code="ABCD-EFGH",
+            verification_uri=gh_auth.GITHUB_VERIFICATION_URI,
+            expires_in=900,
+            interval=5,
+        ),
+    )
+    monkeypatch.setattr(
+        gh_cmds,
+        "poll_for_access_token",
+        lambda _device: pytest.fail("cancelled login must not poll for a token"),
+    )
+
+    result = runner.invoke(cli_main.app, ["auth", "github", "login"])
+
+    assert result.exit_code == gh_cmds.EXIT_CANCELLED
+    assert "\nGitHub login cancelled." in result.stdout
+    assert "GitHub login failed" not in result.stdout
+    assert "Unexpected error" not in result.stdout
+    assert cs.get_integration_metadata("github") == {}
+
+
+def test_github_login_abort_named_exception_exits_cleanly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    class Abort(Exception):
+        pass
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(
+        gh_cmds,
+        "_open_github_device_verification",
+        lambda *_args: (_ for _ in ()).throw(Abort()),
+    )
+    monkeypatch.setattr(
+        gh_cmds,
+        "request_device_code",
+        lambda: gh_auth.DeviceCode(
+            device_code="dev-code",
+            user_code="ABCD-EFGH",
+            verification_uri=gh_auth.GITHUB_VERIFICATION_URI,
+            expires_in=900,
+            interval=5,
+        ),
+    )
+    monkeypatch.setattr(
+        gh_cmds,
+        "poll_for_access_token",
+        lambda _device: pytest.fail("cancelled login must not poll for a token"),
+    )
+
+    result = runner.invoke(cli_main.app, ["auth", "github", "login"])
+
+    assert result.exit_code == gh_cmds.EXIT_CANCELLED
+    assert "\nGitHub login cancelled." in result.stdout
+    assert "GitHub login failed" not in result.stdout
+    assert "Unexpected error" not in result.stdout
 
 
 def test_github_login_json_mode_does_not_open_browser_or_print_countdown(

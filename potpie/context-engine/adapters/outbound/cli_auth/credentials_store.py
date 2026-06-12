@@ -1373,7 +1373,11 @@ def write_provider_credentials(provider: str, payload: dict[str, Any]) -> None:
         raise ProviderCredentialError("GitHub access token is required.")
     _store_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET, access_token)
     stored_payload["token_storage"] = integration_token_storage()
-    write_integration_metadata(key, stored_payload)
+    try:
+        write_integration_metadata(key, stored_payload)
+    except Exception:
+        _delete_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
+        raise
 
 
 def get_provider_credentials(provider: str) -> dict[str, Any]:
