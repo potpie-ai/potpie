@@ -8,8 +8,8 @@ import time
 import webbrowser
 from typing import NoReturn
 
-from click.exceptions import Abort
 import typer
+from click.exceptions import Abort
 
 from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
 from adapters.outbound.cli_auth.github import (
@@ -102,14 +102,33 @@ def _finish_inline_prompt() -> None:
     sys.stdout.flush()
 
 
+def _stdin_enter_pressed_windows(*, timeout: float) -> bool:
+    import msvcrt
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if msvcrt.kbhit():
+            char = msvcrt.getwch()
+            if char in ("\r", "\n"):
+                return True
+        time.sleep(0.05)
+    return False
+
+
 def _wait_for_enter_or_auto_open(
     *,
     seconds: int = GITHUB_AUTO_OPEN_SECONDS,
     input_stream=None,
 ) -> None:
     input_stream = input_stream or sys.stdin
+    use_windows_stdin = input_stream is sys.stdin and sys.platform == "win32"
     for remaining in range(seconds, 0, -1):
         _write_inline_prompt(f"{_GITHUB_OPEN_PROMPT_PREFIX}{remaining}s")
+        if use_windows_stdin:
+            if _stdin_enter_pressed_windows(timeout=1.0):
+                _finish_inline_prompt()
+                return
+            continue
         try:
             ready, _, _ = select.select([input_stream], [], [], 1)
         except (OSError, TypeError, ValueError):
