@@ -292,6 +292,31 @@ def _try_login(handler) -> None:
         raise
 
 
+def _github_status() -> dict[str, Any]:
+    from adapters.inbound.cli.commands._common import get_store
+
+    return get_store().get_integration_status("github")
+
+
+def _github_already_authenticated() -> bool:
+    try:
+        status = _github_status()
+    except Exception:  # noqa: BLE001
+        return False
+    if not bool(status.get("authenticated")):
+        return False
+    login = str(status.get("login") or "").strip()
+    suffix = f" as {login}" if login else ""
+    from adapters.inbound.cli.ui.output import print_plain_line
+
+    print_plain_line(
+        f"GitHub already connected{suffix}; skipping login.",
+        as_json=False,
+        markup=False,
+    )
+    return True
+
+
 def _maybe_prompt_agent_skills(*, setup_agent: str) -> None:
     from adapters.inbound.cli.ui.interactive_prompts import prompt_multi_checkbox
 
@@ -342,15 +367,16 @@ def maybe_prompt_github_login(
 
     import typer
 
-    try:
-        confirmed = typer.confirm(
-            "Would you like to log in to GitHub now?",
-            default=True,
-        )
-    except (KeyboardInterrupt, EOFError):
-        confirmed = False
-    if confirmed:
-        _try_login(github_login_impl)
+    if not _github_already_authenticated():
+        try:
+            confirmed = typer.confirm(
+                "Would you like to log in to GitHub now?",
+                default=True,
+            )
+        except (KeyboardInterrupt, EOFError):
+            confirmed = False
+        if confirmed:
+            _try_login(github_login_impl)
 
     try:
         selected = prompt_multi_checkbox(
