@@ -11,6 +11,9 @@ from adapters.outbound.cli_auth.baked_oauth_client_ids import (
     POTPIE_GITHUB_CLIENT_ID as BAKED_GITHUB_CLIENT_ID,
 )
 from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+from adapters.outbound.cli_auth.oauth_client_id_messages import (
+    missing_github_client_id_message,
+)
 from adapters.outbound.cli_auth.errors import CliAuthError
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 from adapters.outbound.cli_auth.models import (
@@ -46,12 +49,7 @@ def get_github_client_id() -> str:
     load_cli_env()
     client_id = os.getenv(GITHUB_CLIENT_ID_ENV, "").strip() or BAKED_GITHUB_CLIENT_ID
     if not client_id:
-        raise GitHubDeviceFlowError(
-            f"{GITHUB_CLIENT_ID_ENV} is not set and no client ID was baked into the package. "
-            "If you are developing locally, add it to potpie/.env (see .env.template). "
-            "If you installed from a wheel, ensure the package was built with the client ID "
-            "or set the environment variable."
-        )
+        raise GitHubDeviceFlowError(missing_github_client_id_message())
     return client_id
 
 

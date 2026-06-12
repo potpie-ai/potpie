@@ -252,13 +252,13 @@ def test_refresh_access_token_requires_token() -> None:
 
 def test_exchange_missing_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tx, "get_client_id", lambda _p: "")
-    with pytest.raises(ValueError, match="client id is not configured"):
+    with pytest.raises(ValueError, match="LINEAR_CLIENT_ID"):
         tx.exchange_authorization_code("linear", code="c", code_verifier="v")
 
 
 def test_refresh_missing_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tx, "get_client_id", lambda _p: "")
-    with pytest.raises(ValueError, match="client id is not configured"):
+    with pytest.raises(ValueError, match="LINEAR_CLIENT_ID"):
         tx.refresh_access_token("linear", refresh_token="rt")
 
 
@@ -523,7 +523,8 @@ def test_run_linear_oauth_flow_missing_client_id(
         auth_commands._run_linear_oauth_flow(force=True)
 
     assert captured
-    assert "not configured" in captured[0][0].lower()
+    assert captured[0][0] == "Linear login unavailable"
+    assert "LINEAR_CLIENT_ID" in captured[0][1]
 
 
 def test_run_linear_oauth_flow_expired_reauth_message(
