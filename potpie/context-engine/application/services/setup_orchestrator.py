@@ -90,6 +90,8 @@ def _skip_reason(step: str, plan: SetupPlan) -> str | None:
         return "in-process host — no detached daemon / service unit to manage"
     if step == "source" and not plan.repo:
         return "no --repo provided"
+    if step == "source" and plan.defer_default_pot:
+        return "deferred until post-setup first pot"
     if step == "pot.default" and plan.defer_default_pot:
         return "named in post-setup wizard"
     if step == "skills" and plan.defer_skills:
@@ -194,11 +196,7 @@ class DefaultSetupOrchestrator:
             self._step("auth", hard("auth"), self.auth.init_local),
             self._step("source", hard("source"), lambda: self._source(plan)),
             *(
-                [
-                    self._step(
-                        "skills", hard("skills"), lambda: self._skills(plan)
-                    )
-                ]
+                [self._step("skills", hard("skills"), lambda: self._skills(plan))]
                 if not plan.defer_skills
                 else []
             ),
@@ -240,6 +238,8 @@ class DefaultSetupOrchestrator:
         return f"active pot '{pot.name}' ({pot.pot_id})"
 
     def _source(self, plan: SetupPlan) -> StepResult:
+        if plan.defer_default_pot:
+            return StepResult("source", SKIPPED, "deferred until post-setup first pot")
         if not plan.repo:
             return StepResult("source", SKIPPED, "no --repo")
         active = self.pots.active_pot()
@@ -255,7 +255,9 @@ class DefaultSetupOrchestrator:
 
     def _skills(self, plan: SetupPlan) -> str | StepResult:
         if plan.agent.strip().lower() == "default":
-            return StepResult("skills", SKIPPED, "no global skill target for default agent")
+            return StepResult(
+                "skills", SKIPPED, "no global skill target for default agent"
+            )
         result = self.skills.install(agent=plan.agent)
         return f"installed {list(result.changed)} for {plan.agent}"
 

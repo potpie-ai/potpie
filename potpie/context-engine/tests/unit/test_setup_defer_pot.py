@@ -6,7 +6,7 @@ import pytest
 
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from bootstrap.host_wiring import build_host_shell
-from domain.lifecycle import SetupPlan
+from domain.lifecycle import SKIPPED, SetupPlan
 
 
 @pytest.fixture()
@@ -25,6 +25,25 @@ def test_setup_run_skips_pot_default_when_deferred(host) -> None:
     assert host.pots.active_pot() is None
 
 
+def test_setup_run_defers_source_when_default_pot_deferred(host) -> None:
+    existing = host.pots.create_pot(name="existing", use=True)
+
+    report = host.setup.run(
+        SetupPlan(repo="potpie", agent="claude", defer_default_pot=True),
+    )
+
+    steps = {s.step: s for s in report.steps}
+    assert steps["source"].state == SKIPPED
+    assert steps["source"].detail == "deferred until post-setup first pot"
+    assert host.pots.list_sources(pot_id=existing.pot_id) == []
+
+
 def test_setup_preview_omits_pot_default_when_deferred(host) -> None:
     preview = host.setup.preview(SetupPlan(defer_default_pot=True))
     assert all(step.step != "pot.default" for step in preview.steps)
+
+
+def test_setup_preview_marks_source_deferred_when_default_pot_deferred(host) -> None:
+    preview = host.setup.preview(SetupPlan(defer_default_pot=True))
+    source = next(step for step in preview.steps if step.step == "source")
+    assert source.skip_reason == "deferred until post-setup first pot"
