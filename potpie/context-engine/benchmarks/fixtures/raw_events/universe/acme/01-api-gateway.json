@@ -1,0 +1,37 @@
+{
+  "connector": "repo_docs",
+  "event_type": "service_manifest",
+  "action": "create",
+  "source_id": "repo_docs:service_manifest:api-gateway:create",
+  "occurred_at": "2026-01-15T00:00:00Z",
+  "repo_name": "acme/platform",
+  "payload": {
+    "path": "services/api-gateway/service.yaml",
+    "service": {
+      "name": "api-gateway",
+      "display_name": "API Gateway",
+      "description": "Edge gateway that terminates TLS, validates JWTs via auth-service introspection, and routes traffic to downstream services.",
+      "repo": "acme/platform",
+      "path": "services/api-gateway",
+      "language": "go",
+      "team": "@platform-edge",
+      "capabilities": [
+        "jwt-validation",
+        "rate-limiting",
+        "request-routing"
+      ],
+      "dependencies": {
+        "datastores": ["gateway-redis"],
+        "services": ["auth-service"]
+      },
+      "runtime": {
+        "port": 443,
+        "health_check": "/healthz"
+      }
+    }
+  },
+  "_meta": {
+    "captured_from": "synthetic",
+    "redactions": []
+  }
+}
