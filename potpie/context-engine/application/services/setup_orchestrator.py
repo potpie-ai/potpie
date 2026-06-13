@@ -238,10 +238,10 @@ class DefaultSetupOrchestrator:
         return f"active pot '{pot.name}' ({pot.pot_id})"
 
     def _source(self, plan: SetupPlan) -> StepResult:
+        if not plan.repo:
+            return StepResult("source", SKIPPED, "no --repo provided")
         if plan.defer_default_pot:
             return StepResult("source", SKIPPED, "deferred until post-setup first pot")
-        if not plan.repo:
-            return StepResult("source", SKIPPED, "no --repo")
         active = self.pots.active_pot()
         if active is None:
             return StepResult("source", SKIPPED, "no active pot")

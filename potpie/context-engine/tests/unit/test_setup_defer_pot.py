@@ -47,3 +47,17 @@ def test_setup_preview_marks_source_deferred_when_default_pot_deferred(host) -> 
     preview = host.setup.preview(SetupPlan(defer_default_pot=True))
     source = next(step for step in preview.steps if step.step == "source")
     assert source.skip_reason == "deferred until post-setup first pot"
+
+
+def test_setup_source_reason_matches_preview_when_repo_missing_and_pot_deferred(
+    host,
+) -> None:
+    plan = SetupPlan(repo=None, defer_default_pot=True)
+
+    preview = host.setup.preview(plan)
+    report = host.setup.run(plan)
+
+    preview_source = next(step for step in preview.steps if step.step == "source")
+    run_source = next(step for step in report.steps if step.step == "source")
+    assert preview_source.skip_reason == "no --repo provided"
+    assert run_source.detail == "no --repo provided"
