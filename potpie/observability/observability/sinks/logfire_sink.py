@@ -21,7 +21,6 @@ from ..config import ObservabilityConfig
 from ..tracing import configure_tracing
 
 _HINT = "logfire sink requires logfire — install observability[logfire]"
-_logger = logging.getLogger(__name__)
 
 
 class LogfireSink:
@@ -83,6 +82,5 @@ class LogfireSink:
                 try:
                     fn()
                     return
-                except Exception as exc:
-                    _logger.debug("logfire %s failed during shutdown: %s", name, exc)
+                except Exception:
                     continue

@@ -162,7 +162,9 @@ def contract() -> Iterator[None]:
     except typer.Exit:
         raise
     except Exception as exc:  # noqa: BLE001
-        from adapters.inbound.cli.sentry_runtime import capture_unexpected_cli_error
+        from adapters.inbound.cli.telemetry.sentry_runtime import (
+            capture_unexpected_cli_error,
+        )
 
         capture_unexpected_cli_error(
             exc,

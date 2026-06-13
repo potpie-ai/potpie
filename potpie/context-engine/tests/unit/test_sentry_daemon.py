@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 
 from adapters.inbound.cli import host_cli
 from adapters.inbound.cli.commands import _common
-from adapters.inbound.cli.telemetry_context import current_telemetry_context
+from adapters.inbound.cli.telemetry.context import current_telemetry_context
 from domain.errors import CapabilityNotImplemented
 
 
@@ -32,7 +32,7 @@ def test_daemon_unexpected_failure_is_captured_with_session_id(
     captured: list[tuple[str, str, str | None]] = []
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setattr(
-        "adapters.inbound.cli.sentry_runtime.capture_unexpected_cli_error",
+        "adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
         lambda exc, *, error_code, error_kind: captured.append(
             (error_code, error_kind, current_telemetry_context().daemon_session_id)
         ),
@@ -61,7 +61,7 @@ def test_daemon_expected_not_implemented_is_not_captured(
     captured: list[BaseException] = []
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setattr(
-        "adapters.inbound.cli.sentry_runtime.capture_unexpected_cli_error",
+        "adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
         lambda exc, *, error_code, error_kind: captured.append(exc),
     )
     _common.set_host(_FakeHost())

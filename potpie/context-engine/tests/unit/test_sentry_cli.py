@@ -12,13 +12,15 @@ from adapters.inbound.cli.telemetry_context import (
     current_telemetry_context,
     load_anonymous_install_id,
 )
+from adapters.inbound.cli.telemetry.identity_store import identity_path
 
 
 def test_in_process_cli_invocations_share_install_and_daemon_session_ids(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "context-home"))
     runner = CliRunner()
 
     first = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
@@ -36,6 +38,8 @@ def test_in_process_cli_invocations_share_install_and_daemon_session_ids(
     assert second_ctx.daemon_session_id == in_process_daemon_session_id
     assert first_ctx.command == "daemon"
     assert load_anonymous_install_id(tmp_path) == first_ctx.anonymous_install_id
+    assert identity_path().is_file()
+    assert not (tmp_path / "context-home" / "telemetry" / "identity.json").exists()
 
 
 def test_expected_contract_error_does_not_capture_sentry(
@@ -43,7 +47,7 @@ def test_expected_contract_error_does_not_capture_sentry(
 ) -> None:
     captured: list[BaseException] = []
     monkeypatch.setattr(
-        "adapters.inbound.cli.sentry_runtime.capture_unexpected_cli_error",
+        "adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
         lambda exc, *, error_code, error_kind: captured.append(exc),
     )
 
@@ -61,7 +65,7 @@ def test_contract_preserves_expected_typer_exit_from_fail(
 ) -> None:
     captured: list[BaseException] = []
     monkeypatch.setattr(
-        "adapters.inbound.cli.sentry_runtime.capture_unexpected_cli_error",
+        "adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
         lambda exc, *, error_code, error_kind: captured.append(exc),
     )
     _common.set_json(True)
@@ -86,7 +90,7 @@ def test_unexpected_contract_error_is_captured_and_rendered_json(
 ) -> None:
     captured: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
-        "adapters.inbound.cli.sentry_runtime.capture_unexpected_cli_error",
+        "adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
         lambda exc, *, error_code, error_kind: captured.append(
             (type(exc).__name__, error_code, error_kind)
         ),
@@ -108,16 +112,14 @@ def test_cli_telemetry_identity_write_failure_is_nonfatal(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    home_file = tmp_path / "not-a-directory"
-    home_file.write_text("not a directory", encoding="utf-8")
-    install_id = load_anonymous_install_id(home_file)
-    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(home_file))
+    xdg_file = tmp_path / "not-a-directory"
+    xdg_file.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_file))
+    install_id = load_anonymous_install_id()
     runner = CliRunner()
 
     result = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
 
     assert install_id.startswith("install_")
-    assert result.exit_code == _common.EXIT_VALIDATION, result.output
-    payload = json.loads(result.stdout)
-    assert payload["code"] == "unexpected_cli_error"
+    assert result.exit_code == 0, result.output
     assert "NotADirectoryError" not in result.output
