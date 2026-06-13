@@ -17,6 +17,17 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
+from adapters.inbound.cli.ui.brand import LOGO_COLOR, UI_MUTED_STYLE
+from adapters.inbound.cli.ui.format import (
+    PANEL_BORDER,
+    format_line,
+    key_value_panel,
+    print_human_block,
+    print_line,
+    print_structured_error,
+    success_markup,
+)
+
 # stderr for errors so stdout stays clean for piping JSON
 _err = Console(stderr=True)
 _out = Console()
@@ -108,10 +119,13 @@ def emit_error(
             )
         print(json.dumps(payload), file=sys.stderr)
         return
-    _err.print(f"[bold red]{title}[/bold red]")
-    _err.print(f"[red]{message}[/red]")
-    if hint:
-        _err.print(f"[dim]{hint}[/dim]")
+    print_structured_error(
+        title=title,
+        message=message,
+        hint=hint,
+        next_action=next_action,
+        console=_err,
+    )
     if verbose and exc is not None:
         tb_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         _err.print(Syntax(tb_text, "python", theme="ansi_dark"))
@@ -139,56 +153,65 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
         print(json.dumps(payload))
         return
 
-    ctx_tbl = Table(show_header=False, box=None, padding=(0, 2))
-    ctx_tbl.add_row("CONTEXT_GRAPH_ENABLED", str(data.context_graph_enabled))
-    ctx_tbl.add_row(
-        "Neo4j URI (local)", "set" if data.neo4j_effective_set else "(missing)"
-    )
+    ctx_rows: list[tuple[str, str]] = [
+        ("CONTEXT_GRAPH_ENABLED", str(data.context_graph_enabled)),
+        (
+            "Neo4j URI (local)",
+            "set" if data.neo4j_effective_set else "(missing)",
+        ),
+    ]
     if data.potpie_health_ok is not None:
-        ctx_tbl.add_row(
-            "GET /health",
-            "ok" if data.potpie_health_ok else (data.potpie_health_message or "failed"),
+        ctx_rows.append(
+            (
+                "GET /health",
+                "ok"
+                if data.potpie_health_ok
+                else (data.potpie_health_message or "failed"),
+            )
         )
     if data.potpie_auth_ok is not None:
-        ctx_tbl.add_row(
-            "GET /api/v2/context/pots",
-            "ok" if data.potpie_auth_ok else (data.potpie_auth_message or "failed"),
+        ctx_rows.append(
+            (
+                "GET /api/v2/context/pots",
+                "ok"
+                if data.potpie_auth_ok
+                else (data.potpie_auth_message or "failed"),
+            )
         )
     _out.print(
-        Panel(
-            ctx_tbl,
-            title="Context graph (CLI uses Potpie /api/v2/context; Neo4j local optional)",
-            border_style="cyan",
+        key_value_panel(
+            "Context graph (CLI uses Potpie /api/v2/context; Neo4j local optional)",
+            ctx_rows,
         )
     )
 
-    pot_tbl = Table(show_header=False, box=None, padding=(0, 2))
-    pot_tbl.add_row(
-        "Repo maps (CONTEXT_ENGINE_REPO_TO_POT / CONTEXT_ENGINE_POTS)",
-        "set" if data.pot_maps_set else "(unset)",
-    )
-    pot_tbl.add_row("Active pot (`pot use`)", data.active_pot_id or "(unset)")
-    pot_tbl.add_row("POTPIE_API_KEY in env", str(data.potpie_api_key_env))
-    pot_tbl.add_row("Stored token (login)", str(data.potpie_stored_token))
-    pot_tbl.add_row(
-        "Potpie base URL",
-        data.potpie_base_url or "(unset)",
-    )
+    pot_rows: list[tuple[str, str]] = [
+        (
+            "Repo maps (CONTEXT_ENGINE_REPO_TO_POT / CONTEXT_ENGINE_POTS)",
+            "set" if data.pot_maps_set else "(unset)",
+        ),
+        ("Active pot (`pot use`)", data.active_pot_id or "(unset)"),
+        ("POTPIE_API_KEY in env", str(data.potpie_api_key_env)),
+        ("Stored token (login)", str(data.potpie_stored_token)),
+        ("Potpie base URL", data.potpie_base_url or "(unset)"),
+    ]
     if data.potpie_port_hint:
-        pot_tbl.add_row("POTPIE_PORT hint", data.potpie_port_hint)
-    _out.print(Panel(pot_tbl, title="Pot scope (CLI)", border_style="cyan"))
+        pot_rows.append(("POTPIE_PORT hint", data.potpie_port_hint))
+    _out.print(key_value_panel("Pot scope (CLI)", pot_rows))
 
-    other_tbl = Table(show_header=False, box=None, padding=(0, 2))
-    other_tbl.add_row(
-        "Postgres URL env (local / other tools)", str(data.database_url_set)
+    other_rows: list[tuple[str, str]] = [
+        ("Postgres URL env (local / other tools)", str(data.database_url_set)),
+        (
+            "GITHUB_TOKEN / CONTEXT_ENGINE_GITHUB_TOKEN",
+            str(data.github_token_set),
+        ),
+    ]
+    _out.print(
+        key_value_panel("Other (sync / ledger)", other_rows, border_style=UI_MUTED_STYLE)
     )
-    other_tbl.add_row(
-        "GITHUB_TOKEN / CONTEXT_ENGINE_GITHUB_TOKEN", str(data.github_token_set)
-    )
-    _out.print(Panel(other_tbl, title="Other (sync / ledger)", border_style="dim"))
 
     for line in data.summary_lines:
-        _out.print(line)
+        _out.print(format_line(line))
 
 
 def print_unified_status_report(
@@ -240,12 +263,14 @@ def print_unified_status_report(
             Panel(
                 Syntax(json.dumps(pot_status, indent=2), "json", theme="ansi_dark"),
                 title=f"Pot readiness (POST /status){f' · {pot_id}' if pot_id else ''}",
-                border_style="green",
+                border_style=PANEL_BORDER,
             )
         )
     elif pot_status_error:
         _out.print()
-        _out.print(f"[yellow]Pot readiness:[/yellow] [dim]{pot_status_error}[/dim]")
+        _out.print(
+            f"[yellow]![/yellow] Pot readiness: [{UI_MUTED_STYLE}]{escape(pot_status_error)}[/{UI_MUTED_STYLE}]"
+        )
 
 
 def _short_temporal_cell(value: Any) -> str:
@@ -321,7 +346,7 @@ def print_search_results(
         return
     if not rows:
         _out.print(
-            "[dim]No results (empty graph or no matches for this query / pot).[/dim]"
+            f"[{UI_MUTED_STYLE}]No results (empty graph or no matches for this query / pot).[/{UI_MUTED_STYLE}]"
         )
         return
     for i, row in enumerate(rows, start=1):
@@ -361,8 +386,8 @@ def print_search_results(
         _out.print(
             Panel(
                 "\n".join(lines),
-                title=f"{i}. {escape(name)}",
-                border_style="cyan",
+                title=f"[{LOGO_COLOR}]{i}.[/{LOGO_COLOR}] {escape(name)}",
+                border_style=PANEL_BORDER,
             )
         )
 
@@ -376,43 +401,49 @@ def print_ingest_result(out: dict[str, Any], *, as_json: bool) -> None:
         ev = str(out.get("event_id") or "")
         short = ev[:8] if len(ev) >= 8 else ev
         _err.print(
-            f"[yellow]Ingest rejected (reconciliation).[/yellow] event_id={short}"
+            f"[yellow]![/yellow] Ingest rejected (reconciliation). "
+            f"[{UI_MUTED_STYLE}]event_id={escape(short)}[/{UI_MUTED_STYLE}]"
         )
         for row in out.get("errors") or []:
             if isinstance(row, dict):
                 ent = str(row.get("entity") or "")
                 issue = str(row.get("issue") or "")
-                _err.print(f"  {ent:<18} {issue}")
+                _err.print(
+                    f"  [{UI_MUTED_STYLE}]{escape(ent):<18}[/{UI_MUTED_STYLE}] {escape(issue)}"
+                )
             else:
-                _err.print(f"  {row}")
+                _err.print(f"  [{UI_MUTED_STYLE}]{escape(str(row))}[/{UI_MUTED_STYLE}]")
         _err.print(
-            "[dim]Hint: widen ontology (see docs/context-graph/graph.md) "
-            "or rephrase the input.[/dim]"
+            f"[{UI_MUTED_STYLE}]Hint: widen ontology (see docs/context-graph/graph.md) "
+            f"or rephrase the input.[/{UI_MUTED_STYLE}]"
         )
         return
     if status == "queued":
         event_id = out.get("event_id")
         _out.print(
-            f"[green]Event queued[/green] (async). event_id={event_id} job_id={out.get('job_id')}"
+            success_markup(
+                f"Event queued (async). event_id={event_id} job_id={out.get('job_id')}"
+            )
         )
         if event_id:
             _out.print(
-                f"[dim]Next: potpie event wait {event_id}  or  potpie event show {event_id}[/dim]"
+                f"[{UI_MUTED_STYLE}]Next: potpie event wait {escape(str(event_id))}  "
+                f"or  potpie event show {escape(str(event_id))}[/{UI_MUTED_STYLE}]"
             )
         return
     mid = out.get("mutation_id")
     ev = out.get("event_id")
     if mid:
-        _out.print(f"[green]Mutations applied.[/green] mutation_id={mid}")
+        _out.print(success_markup(f"Mutations applied. mutation_id={mid}"))
     elif ev:
-        _out.print(f"[green]Mutations applied.[/green] event_id={ev}")
+        _out.print(success_markup(f"Mutations applied. event_id={ev}"))
     else:
-        _out.print("[green]Mutations applied.[/green]")
+        _out.print(success_markup("Mutations applied."))
     dgs = out.get("downgrades") or []
     if isinstance(dgs, list) and dgs:
         _out.print(
-            f"[dim]{len(dgs)} downgrades applied "
-            "(ontology soft-fail; see API downgrades / QualityIssue feed).[/dim]"
+            f"[{UI_MUTED_STYLE}]{len(dgs)} downgrades applied "
+            f"(ontology soft-fail; see API downgrades / QualityIssue feed).[/{UI_MUTED_STYLE}]"
         )
 
 
@@ -430,8 +461,12 @@ def print_plain_line(
     as_json: bool,
     json_payload: dict[str, Any] | None = None,
     markup: bool = True,
+    tone: str | None = None,
 ) -> None:
     if as_json and json_payload is not None:
         print(json.dumps(json_payload))
-    else:
-        _out.print(message, markup=markup)
+        return
+    if not markup:
+        _out.print(message, markup=False)
+        return
+    print_line(message, as_json=as_json, tone=tone, markup=True, console=_out)
