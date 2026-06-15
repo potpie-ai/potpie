@@ -17,8 +17,24 @@ from typing import Protocol
 from domain.lifecycle import SetupPlan, SetupPreview, SetupReport, StepResult
 
 
+class SetupObserver(Protocol):
+    def step_started(self, *, step: str, hard: bool) -> None: ...
+
+    def step_completed(self, *, result: StepResult, duration_ms: int) -> None: ...
+
+
+class NoOpSetupObserver:
+    def step_started(self, *, step: str, hard: bool) -> None:
+        del step, hard
+
+    def step_completed(self, *, result: StepResult, duration_ms: int) -> None:
+        del result, duration_ms
+
+
 class SetupOrchestrator(Protocol):
     """Sequences the bespoke per-component lifecycle methods."""
+
+    def set_observer(self, observer: SetupObserver) -> None: ...
 
     def preview(self, plan: SetupPlan) -> SetupPreview:
         """Dry-run: the ordered steps ``run`` would execute (owner, hard/soft,
@@ -37,4 +53,4 @@ class SetupOrchestrator(Protocol):
         ...
 
 
-__all__ = ["SetupOrchestrator"]
+__all__ = ["NoOpSetupObserver", "SetupObserver", "SetupOrchestrator"]

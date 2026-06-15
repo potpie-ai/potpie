@@ -14,6 +14,12 @@ from adapters.inbound.cli.commands._common import (
     get_host,
     resolve_pot_id,
 )
+from adapters.inbound.cli.telemetry.onboarding_events import (
+    capture_project_binding_event,
+    elapsed_ms,
+    now_ms,
+    sanitized_failure_kind,
+)
 from adapters.outbound.cli_auth.potpie_api_config import (
     resolve_potpie_api_base_url,
     resolve_potpie_auth_config,
@@ -75,9 +81,7 @@ def pot_list(
                 for p in pots
             ],
         }
-        pot_rows = [
-            f"{'*' if p.active else ' '} {p.name} ({p.pot_id})" for p in pots
-        ]
+        pot_rows = [f"{'*' if p.active else ' '} {p.name} ({p.pot_id})" for p in pots]
         human_lines = ["Local", *(pot_rows or ["(no pots)"])]
         if all_:
             payload["managed_pending"] = True
@@ -288,8 +292,35 @@ def source_add(
     with contract():
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
-        src = host.pots.add_source(
-            pot_id=pot_id, kind=kind, location=location, name=name
+        started_ms = now_ms()
+        capture_project_binding_event(
+            "cli_onboarding_repo_source_add_started",
+            entrypoint="direct_command",
+            properties={"source_kind": kind},
+        )
+        try:
+            src = host.pots.add_source(
+                pot_id=pot_id, kind=kind, location=location, name=name
+            )
+        except Exception as exc:  # noqa: BLE001
+            capture_project_binding_event(
+                "cli_onboarding_repo_source_add_failed",
+                entrypoint="direct_command",
+                properties={
+                    "source_kind": kind,
+                    "failure_kind": sanitized_failure_kind(exc),
+                    "duration_ms": elapsed_ms(started_ms),
+                },
+            )
+            raise
+        capture_project_binding_event(
+            "cli_onboarding_repo_source_add_completed",
+            entrypoint="direct_command",
+            properties={
+                "source_kind": src.kind,
+                "step_state": "done",
+                "duration_ms": elapsed_ms(started_ms),
+            },
         )
         emit(
             {"source_id": src.source_id, "kind": src.kind, "name": src.name},

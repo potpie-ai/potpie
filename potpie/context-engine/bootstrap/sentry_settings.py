@@ -32,9 +32,7 @@ def load_sentry_settings() -> SentrySettings:
     return SentrySettings(
         enabled=dsn is not None and not telemetry_disabled and not sentry_disabled,
         dsn=dsn,
-        environment=(
-            _env("POTPIE_SENTRY_ENVIRONMENT") or _env("SENTRY_ENVIRONMENT") or "dev"
-        ),
+        environment=telemetry_environment(),
         release=_env("POTPIE_SENTRY_RELEASE")
         or _env("SENTRY_RELEASE")
         or default_cli_release(),
@@ -48,6 +46,10 @@ def default_cli_release() -> str:
     except metadata.PackageNotFoundError:
         version = "0.1.0"
     return f"potpie-cli@{version}"
+
+
+def telemetry_environment() -> str:
+    return _env("POTPIE_SENTRY_ENVIRONMENT") or _env("SENTRY_ENVIRONMENT") or "dev"
 
 
 def _env(name: str) -> str | None:

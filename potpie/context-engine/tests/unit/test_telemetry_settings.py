@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.inbound.cli.telemetry.settings import load_sentry_settings
+from adapters.inbound.cli.telemetry.settings import (
+    load_sentry_settings,
+    telemetry_environment,
+)
 
 
 def test_sentry_settings_disabled_without_dsn(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -69,6 +72,7 @@ def test_potpie_sentry_env_wins_over_generic_sentry_env(
     assert settings.enabled is True
     assert settings.dsn == "https://potpie@example.invalid/1"
     assert settings.environment == "staging"
+    assert telemetry_environment() == "staging"
     assert settings.release == "potpie-cli@test"
     assert settings.dist == "cli-dist"
 

@@ -19,6 +19,10 @@ from adapters.inbound.cli.commands._common import (
     get_host,
     resolve_pot_id,
 )
+from adapters.inbound.cli.telemetry.onboarding_events import (
+    capture_activation_succeeded,
+    capture_onboarding_event,
+)
 from domain.errors import CapabilityNotImplemented
 
 ingest_app = typer.Typer(help="Scanner ingestion + run history.")
@@ -52,6 +56,11 @@ def ingest_scan(
         run_id = f"scan:{uuid.uuid4().hex}"
         result = host.ingest.scan_path(
             pot_id=pot_id, root=path, run_id=run_id, repo_name=repo_name
+        )
+        _capture_ingest_scan_activation(
+            scanners_run=len(result.scanners_run),
+            entities_upserted=result.entities_upserted,
+            edges_upserted=result.edges_upserted,
         )
         emit(
             {
@@ -129,3 +138,23 @@ def ingest_dead_letter_retry(event_id: str) -> None:
 
 
 __all__ = ["ingest_app"]
+
+
+def _capture_ingest_scan_activation(
+    *, scanners_run: int, entities_upserted: int, edges_upserted: int
+) -> None:
+    capture_onboarding_event(
+        "cli_onboarding_ingest_scan_completed",
+        phase="activation",
+        entrypoint="direct_command",
+        properties={
+            "command": "ingest scan",
+            "scanners_run_count": scanners_run,
+            "entities_upserted": entities_upserted,
+            "edges_upserted": edges_upserted,
+        },
+    )
+    capture_activation_succeeded(
+        command="ingest scan",
+        result_kind="scan_result",
+    )

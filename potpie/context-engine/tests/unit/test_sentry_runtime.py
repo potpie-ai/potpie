@@ -129,6 +129,7 @@ def test_capture_unexpected_cli_error_sets_allowlisted_scope(monkeypatch) -> Non
         anonymous_install_id="install_123",
         invocation_id="invoke_456",
         daemon_session_id="daemon_789",
+        environment="staging",
         command="daemon",
         subcommand="status",
         output_mode="json",
