@@ -22,10 +22,10 @@ from typing import Any, Iterable
 from application.readers._common import (
     ReadRequest,
     ReadResponse,
-    claim_candidate_key,
     claim_corroboration,
     claim_payload,
     coverage_status_from_count,
+    dedupe_claim_rows,
     rank_candidates,
     row_in_anchor_set,
     service_anchor_keys,
@@ -125,7 +125,7 @@ class TimelineReader:
         )
         if not anchors:
             return _filter_window(
-                self.claim_query.find_claims(base),
+                dedupe_claim_rows(self.claim_query.find_claims(base)),
                 window_after=window_after,
                 window_before=window_before,
             )
@@ -153,14 +153,7 @@ class TimelineReader:
                 fact_query=req.query,
             )
         )
-        seen: set[str] = set()
-        out: list[ClaimRow] = []
-        for row in (*mentioning, *authored):
-            key = claim_candidate_key(row)
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(row)
+        out = dedupe_claim_rows((*mentioning, *authored))
         return _filter_window(
             out, window_after=window_after, window_before=window_before
         )
@@ -254,10 +247,14 @@ def _dedupe_activity_rows(
             order.append(activity_key)
         grouped.setdefault(activity_key, []).append(row)
 
-    return [_representative_activity_row(grouped[key], anchors=anchors) for key in order]
+    return [
+        _representative_activity_row(grouped[key], anchors=anchors) for key in order
+    ]
 
 
-def _representative_activity_row(rows: list[ClaimRow], *, anchors: set[str]) -> ClaimRow:
+def _representative_activity_row(
+    rows: list[ClaimRow], *, anchors: set[str]
+) -> ClaimRow:
     def sort_key(row: ClaimRow) -> tuple[int, int, float, float]:
         predicate = row.predicate.upper()
         direct_anchor = 1 if (not anchors or row_in_anchor_set(row, anchors)) else 0

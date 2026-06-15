@@ -23,6 +23,7 @@ from application.readers._common import (
     claim_corroboration,
     claim_payload,
     coverage_status_from_count,
+    dedupe_claim_rows,
     rank_candidates,
 )
 from domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
@@ -36,12 +37,14 @@ class RawGraphReader:
     family: str = "raw_graph"
 
     def read(self, req: ReadRequest) -> ReadResponse:
-        rows = self.claim_query.find_claims(
-            ClaimQueryFilter(
-                pot_id=req.pot_id,
-                include_invalidated=req.include_invalidated,
-                as_of=req.as_of,
-                limit=max(req.max_items * 4, 32),
+        rows = dedupe_claim_rows(
+            self.claim_query.find_claims(
+                ClaimQueryFilter(
+                    pot_id=req.pot_id,
+                    include_invalidated=req.include_invalidated,
+                    as_of=req.as_of,
+                    limit=max(req.max_items * 4, 32),
+                )
             )
         )
         candidates = [

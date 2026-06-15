@@ -26,6 +26,7 @@ from application.readers._common import (
     claim_environment,
     claim_payload,
     coverage_status_from_count,
+    dedupe_claim_rows,
     rank_candidates,
     service_anchor_keys,
 )
@@ -136,10 +137,12 @@ class InfraTopologyReader:
                     limit=max(req.max_items * 4, 16),
                 )
             )
-            return _filter_environment(
-                rows,
-                environment_filter=environment_filter,
-                include_unqualified_environment=include_unqualified_environment,
+            return dedupe_claim_rows(
+                _filter_environment(
+                    rows,
+                    environment_filter=environment_filter,
+                    include_unqualified_environment=include_unqualified_environment,
+                )
             )
 
         # Traverse-axis controls: bounded depth and direction-aware walk.
@@ -191,10 +194,12 @@ class InfraTopologyReader:
                     )
                 )
 
-            hop_rows = _filter_environment(
-                hop_rows,
-                environment_filter=environment_filter,
-                include_unqualified_environment=include_unqualified_environment,
+            hop_rows = dedupe_claim_rows(
+                _filter_environment(
+                    hop_rows,
+                    environment_filter=environment_filter,
+                    include_unqualified_environment=include_unqualified_environment,
+                )
             )
             next_frontier: set[str] = set()
             for row in hop_rows:

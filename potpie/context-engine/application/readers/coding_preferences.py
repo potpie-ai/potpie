@@ -24,6 +24,7 @@ from application.readers._common import (
     claim_corroboration,
     claim_payload,
     coverage_status_from_count,
+    dedupe_claim_rows,
     rank_candidates,
 )
 from domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
@@ -41,14 +42,16 @@ class CodingPreferencesReader:
     predicate: str = "POLICY_APPLIES_TO"
 
     def read(self, req: ReadRequest) -> ReadResponse:
-        rows = self.claim_query.find_claims(
-            ClaimQueryFilter(
-                pot_id=req.pot_id,
-                predicate_in=(self.predicate,),
-                include_invalidated=req.include_invalidated,
-                as_of=req.as_of,
-                fact_query=req.query,
-                limit=max(req.max_items * 4, 16),
+        rows = dedupe_claim_rows(
+            self.claim_query.find_claims(
+                ClaimQueryFilter(
+                    pot_id=req.pot_id,
+                    predicate_in=(self.predicate,),
+                    include_invalidated=req.include_invalidated,
+                    as_of=req.as_of,
+                    fact_query=req.query,
+                    limit=max(req.max_items * 4, 16),
+                )
             )
         )
 

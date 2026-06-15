@@ -85,6 +85,34 @@ def claim_candidate_key(row: ClaimRow) -> str:
     return row.claim_key or f"{row.predicate}:{row.subject_key}:{row.object_key}"
 
 
+def dedupe_claim_rows(rows: Iterable[ClaimRow]) -> list[ClaimRow]:
+    """Preserve first occurrence of duplicate backend claim rows."""
+    seen: set[tuple[Any, ...]] = set()
+    out: list[ClaimRow] = []
+    for row in rows:
+        key = _claim_row_dedupe_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
+def _claim_row_dedupe_key(row: ClaimRow) -> tuple[Any, ...]:
+    if row.claim_key:
+        return ("claim", row.claim_key)
+    source_refs = row.source_refs
+    if not source_refs and row.source_ref:
+        source_refs = (row.source_ref,)
+    return (
+        "triple",
+        row.predicate.upper(),
+        row.subject_key,
+        row.object_key,
+        tuple(sorted(source_refs)),
+    )
+
+
 def claim_corroboration(row: ClaimRow) -> int:
     count = row.properties.get("corroboration_count")
     if isinstance(count, int) and count > 0:
@@ -179,6 +207,7 @@ __all__ = [
     "claim_environment",
     "claim_payload",
     "coverage_status_from_count",
+    "dedupe_claim_rows",
     "make_task_context",
     "rank_candidates",
     "row_in_anchor_set",

@@ -24,6 +24,7 @@ from application.readers._common import (
     claim_candidate_key,
     claim_payload,
     coverage_status_from_count,
+    dedupe_claim_rows,
     rank_candidates,
     row_in_anchor_set,
     service_anchor_keys,
@@ -49,14 +50,16 @@ class PriorBugsReader:
     def read(self, req: ReadRequest) -> ReadResponse:
         anchor_keys = service_anchor_keys(req.scope)
 
-        rows = self.claim_query.find_claims(
-            ClaimQueryFilter(
-                pot_id=req.pot_id,
-                predicate_in=_BUG_PREDICATES,
-                include_invalidated=req.include_invalidated,
-                as_of=req.as_of,
-                fact_query=req.query,
-                limit=max(req.max_items * 4, 24),
+        rows = dedupe_claim_rows(
+            self.claim_query.find_claims(
+                ClaimQueryFilter(
+                    pot_id=req.pot_id,
+                    predicate_in=_BUG_PREDICATES,
+                    include_invalidated=req.include_invalidated,
+                    as_of=req.as_of,
+                    fact_query=req.query,
+                    limit=max(req.max_items * 4, 24),
+                )
             )
         )
         rows = self._expand_bug_neighborhood(req, rows=rows, anchor_keys=anchor_keys)
@@ -201,7 +204,7 @@ class PriorBugsReader:
                 )
             )
 
-        return _dedupe_rows(expanded)
+        return dedupe_claim_rows(expanded)
 
 
 # ---------------------------------------------------------------------------
@@ -295,18 +298,6 @@ def _fix_key_for_row(row: ClaimRow) -> str | None:
         if row.subject_key.startswith("fix:"):
             return row.subject_key
     return None
-
-
-def _dedupe_rows(rows: Iterable[ClaimRow]) -> list[ClaimRow]:
-    seen: set[str] = set()
-    out: list[ClaimRow] = []
-    for row in rows:
-        key = claim_candidate_key(row)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(row)
-    return out
 
 
 def _payload_from_row(row: ClaimRow, *, verifications: int) -> dict[str, Any]:

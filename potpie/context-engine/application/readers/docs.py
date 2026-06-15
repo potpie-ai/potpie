@@ -17,6 +17,7 @@ from application.readers._common import (
     claim_corroboration,
     claim_payload,
     coverage_status_from_count,
+    dedupe_claim_rows,
     rank_candidates,
     row_in_anchor_set,
     scoped_entity_keys,
@@ -81,9 +82,13 @@ class DocsReader:
             "fact_query": req.query,
         }
         if not anchors:
-            return self.claim_query.find_claims(ClaimQueryFilter(**base))
-        return self.claim_query.find_claims(
-            ClaimQueryFilter(**base, object_key_in=anchors)
+            return dedupe_claim_rows(
+                self.claim_query.find_claims(ClaimQueryFilter(**base))
+            )
+        return dedupe_claim_rows(
+            self.claim_query.find_claims(
+                ClaimQueryFilter(**base, object_key_in=anchors)
+            )
         )
 
 

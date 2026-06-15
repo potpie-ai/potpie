@@ -16,6 +16,7 @@ from application.readers._common import (
     claim_corroboration,
     claim_payload,
     coverage_status_from_count,
+    dedupe_claim_rows,
     rank_candidates,
     row_in_anchor_set,
     scoped_entity_keys,
@@ -81,8 +82,10 @@ class OwnersReader:
             "fact_query": req.query,
         }
         if not anchors:
-            return self.claim_query.find_claims(
-                ClaimQueryFilter(**base, predicate_in=_OWNER_PREDICATES)
+            return dedupe_claim_rows(
+                self.claim_query.find_claims(
+                    ClaimQueryFilter(**base, predicate_in=_OWNER_PREDICATES)
+                )
             )
 
         rows = self.claim_query.find_claims(
@@ -118,7 +121,7 @@ class OwnersReader:
                     )
                 )
             )
-        return _dedupe_rows(rows)
+        return dedupe_claim_rows(rows)
 
 
 def _scope_overlap(row: ClaimRow, *, anchor_keys: Iterable[str]) -> float:
@@ -134,18 +137,6 @@ def _scope_overlap(row: ClaimRow, *, anchor_keys: Iterable[str]) -> float:
 
 def _payload_from_row(row: ClaimRow) -> dict[str, Any]:
     return claim_payload(row, extra={"properties": dict(row.properties or {})})
-
-
-def _dedupe_rows(rows: Iterable[ClaimRow]) -> list[ClaimRow]:
-    seen: set[str] = set()
-    out: list[ClaimRow] = []
-    for row in rows:
-        key = claim_candidate_key(row)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(row)
-    return out
 
 
 __all__ = ["OwnersReader"]

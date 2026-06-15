@@ -525,6 +525,7 @@ def _assemble_inline_relation_items(
     """Project flat ranked claim items into entity payloads with relations."""
     allowed = {p.upper() for p in inline_relations}
     relation_groups: dict[str, list[dict[str, Any]]] = {}
+    relation_keys: dict[str, set[tuple[Any, ...]]] = {}
     best_item: dict[str, EvidenceItem] = {}
 
     for item in env.items:
@@ -558,8 +559,24 @@ def _assemble_inline_relation_items(
             direction="in",
             related_key=subject_key,
         )
-        relation_groups.setdefault(subject_key, []).append(out_rel)
-        relation_groups.setdefault(object_key, []).append(in_rel)
+        _append_relation(
+            relation_groups,
+            relation_keys,
+            subject_key,
+            out_rel,
+            _relation_dedupe_key(
+                payload, predicate=predicate, from_key=subject_key, to_key=object_key
+            ),
+        )
+        _append_relation(
+            relation_groups,
+            relation_keys,
+            object_key,
+            in_rel,
+            _relation_dedupe_key(
+                payload, predicate=predicate, from_key=subject_key, to_key=object_key
+            ),
+        )
         _keep_best(best_item, subject_key, item)
         _keep_best(best_item, object_key, item)
 
@@ -681,6 +698,32 @@ def _relation_payload(
     }
 
 
+def _append_relation(
+    relation_groups: dict[str, list[dict[str, Any]]],
+    relation_keys: dict[str, set[tuple[Any, ...]]],
+    entity_key: str,
+    relation: dict[str, Any],
+    dedupe_key: tuple[Any, ...],
+) -> None:
+    seen = relation_keys.setdefault(entity_key, set())
+    if dedupe_key in seen:
+        return
+    seen.add(dedupe_key)
+    relation_groups.setdefault(entity_key, []).append(relation)
+
+
+def _relation_dedupe_key(
+    payload: Mapping[str, Any], *, predicate: str, from_key: str, to_key: str
+) -> tuple[Any, ...]:
+    claim_key = _str_or_none(payload.get("claim_key"))
+    if claim_key:
+        return ("claim", claim_key)
+    source_refs = tuple(
+        sorted(ref for ref in payload.get("source_refs") or () if isinstance(ref, str))
+    )
+    return ("triple", predicate.upper(), from_key, to_key, source_refs)
+
+
 def _keep_best(
     best_item: dict[str, EvidenceItem], entity_key: str, item: EvidenceItem
 ) -> None:
@@ -694,15 +737,21 @@ def _safe_entity_labels(claim_query, *, pot_id: str, entity_keys: tuple[str, ...
         raw = dict(claim_query.entity_labels(pot_id=pot_id, entity_keys=entity_keys))
     except CapabilityNotImplemented:
         raw = {}
-    return {key: _display_labels_for_entity(key, raw.get(key, ())) for key in entity_keys}
+    return {
+        key: _display_labels_for_entity(key, raw.get(key, ())) for key in entity_keys
+    }
 
 
-def _display_labels_for_entity(entity_key: str, labels: tuple[str, ...]) -> tuple[str, ...]:
+def _display_labels_for_entity(
+    entity_key: str, labels: tuple[str, ...]
+) -> tuple[str, ...]:
     prefix = entity_key.partition(":")[0]
     prefix_label = _KEY_PREFIX_TO_LABEL.get(prefix)
     if prefix_label:
         return (prefix_label,)
-    canonical = tuple(label for label in canonical_entity_labels(labels) if label != "Entity")
+    canonical = tuple(
+        label for label in canonical_entity_labels(labels) if label != "Entity"
+    )
     if canonical:
         return canonical
     return tuple(label for label in labels if label != "Entity")

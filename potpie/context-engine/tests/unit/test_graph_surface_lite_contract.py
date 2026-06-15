@@ -227,6 +227,50 @@ def test_preferences_view_assembles_structured_policy_relation(service) -> None:
     assert policy_rel["properties"]["policy_kind"] == "error_handling"
 
 
+def test_read_dedupes_duplicate_inline_relation_rows(service) -> None:
+    store = service.backend.claim_query
+    row = ClaimRow(
+        pot_id="p",
+        predicate="POLICY_APPLIES_TO",
+        subject_key="preference:cli-errors",
+        object_key="code:potpie-context-engine:adapters/inbound/cli",
+        claim_key="claim:cli-errors-policy",
+        truth="preference",
+        evidence_strength="attested",
+        source_ref="repo:cli-guide",
+        source_refs=("repo:cli-guide",),
+        fact="CLI graph commands should return structured errors.",
+        properties={
+            "code_scope": {"language": "python"},
+            "policy_kind": "error_handling",
+            "prescription": "Emit structured CLI errors with next actions.",
+        },
+    )
+    store.add(row)
+    store.add(row)
+
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            view="preferences.active_preferences",
+            scope={"language": "python"},
+            limit=5,
+        )
+    )
+
+    assert env.metadata["read_shape"] == "entity_relations"
+    assert env.metadata["inline_relation_count"] == 2
+    by_key = {item.candidate_key: dict(item.payload) for item in env.items}
+    assert len(by_key["preference:cli-errors"]["relations"]) == 1
+    assert (
+        by_key["preference:cli-errors"]["relations"][0]["related_key"]
+        == "code:potpie-context-engine:adapters/inbound/cli"
+    )
+    assert (
+        len(by_key["code:potpie-context-engine:adapters/inbound/cli"]["relations"]) == 1
+    )
+
+
 def test_features_view_does_not_return_generic_infra_edges(service) -> None:
     request = SemanticMutationRequest.parse(
         {
@@ -330,7 +374,9 @@ def test_search_entities_projects_canonical_labels_from_key_prefix(service) -> N
         GraphEntitySearchRequest(pot_id="p", query="context graph", type="Repository")
     ).to_dict()
 
-    repo = next(e for e in result["entities"] if e["key"] == "repo:github.com/potpie-ai/potpie")
+    repo = next(
+        e for e in result["entities"] if e["key"] == "repo:github.com/potpie-ai/potpie"
+    )
     assert repo["labels"] == ["Repository"]
 
 

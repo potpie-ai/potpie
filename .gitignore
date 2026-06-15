@@ -3,13 +3,13 @@
 *__pycache__
 .potpie/
 .venv
+.tmp/
 firebase_service_account.json
 firebase_service_account.json:Zone.Identifier
 cli/dist
 cli/.venv
 venv/
 .env
-*.json
 !seed/data/**/*.json
 !potpie/context-engine/benchmarks/data/**/*.json
 !potpie/context-engine/tests/data/**/*.json

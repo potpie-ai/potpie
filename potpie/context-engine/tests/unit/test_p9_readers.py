@@ -9,6 +9,7 @@ F1/F2/F4 fix paths produce the right answers.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
@@ -22,7 +23,7 @@ from application.readers import (
     PriorBugsReader,
     TimelineReader,
 )
-from application.readers._common import ReadRequest
+from application.readers._common import ReadRequest, dedupe_claim_rows
 from domain.ports.claim_query import ClaimRow
 from domain.ranking import RankingService
 
@@ -67,6 +68,31 @@ def _row(
         environment=environment,
         source_refs=(ref,),
     )
+
+
+def test_dedupe_claim_rows_uses_claim_key_then_triple_and_sources() -> None:
+    first = replace(
+        _row(
+            predicate="RESOLVED",
+            subject_key="fix:pool",
+            object_key="bug_pattern:pool",
+            claim_key="claim:resolved",
+            source_ref="src:first",
+        ),
+        claim_key=None,
+    )
+    duplicate = replace(first, fact="same claim from duplicate backend row")
+    distinct_source = replace(
+        first,
+        source_ref="src:second",
+        source_refs=("src:second",),
+        fact="same triple from another source",
+    )
+
+    assert dedupe_claim_rows([first, duplicate, distinct_source]) == [
+        first,
+        distinct_source,
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +431,9 @@ class TestTimelineReader:
         # PR-900 mentioned users-svc but is 14d old → outside the window
         assert response.coverage_status == "empty"
 
-    def test_window_uses_source_occurred_at_when_valid_at_is_ingestion_time(self) -> None:
+    def test_window_uses_source_occurred_at_when_valid_at_is_ingestion_time(
+        self,
+    ) -> None:
         store = InMemoryClaimQueryStore()
         store.add(
             _row(
@@ -494,7 +522,10 @@ class TestTimelineReader:
             )
         )
 
-        assert response.items[0].candidate.payload["subject_key"] == "activity:github:pr:old"
+        assert (
+            response.items[0].candidate.payload["subject_key"]
+            == "activity:github:pr:old"
+        )
 
     def test_timeline_dedupes_edges_per_activity(self) -> None:
         store = InMemoryClaimQueryStore()
@@ -555,7 +586,9 @@ class TestNewUseCaseReaders:
         reader = DecisionsReader(claim_query=store, ranker=RankingService())
 
         response = reader.read(
-            ReadRequest(pot_id="pot-1", scope={"service": "context-engine"}, max_items=10)
+            ReadRequest(
+                pot_id="pot-1", scope={"service": "context-engine"}, max_items=10
+            )
         )
 
         predicates = {r.candidate.payload["predicate"] for r in response.items}
@@ -582,7 +615,9 @@ class TestNewUseCaseReaders:
         reader = OwnersReader(claim_query=store, ranker=RankingService())
 
         response = reader.read(
-            ReadRequest(pot_id="pot-1", scope={"service": "context-engine"}, max_items=10)
+            ReadRequest(
+                pot_id="pot-1", scope={"service": "context-engine"}, max_items=10
+            )
         )
 
         predicates = {r.candidate.payload["predicate"] for r in response.items}
@@ -612,7 +647,10 @@ class TestNewUseCaseReaders:
         )
 
         assert response.items
-        assert response.items[0].candidate.payload["subject_key"] == "document:graph-runbook"
+        assert (
+            response.items[0].candidate.payload["subject_key"]
+            == "document:graph-runbook"
+        )
 
 
 # ---------------------------------------------------------------------------
