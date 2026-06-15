@@ -21,6 +21,7 @@ import sys
 from typing import Any
 
 from adapters.outbound.graph.backends import build_backend
+from adapters.outbound.graph.inbox_stores import LocalJsonGraphInboxStore
 from adapters.outbound.graph.plan_stores import LocalJsonGraphPlanStore
 from adapters.outbound.install.local_installer import LocalInstaller
 from adapters.outbound.ledger.cursor_store import LocalLedgerCursorStore
@@ -95,6 +96,7 @@ def build_host_shell(
         graph_workbench = GraphWorkbenchService(
             backend=backend,
             plan_store=LocalJsonGraphPlanStore(),
+            inbox_store=LocalJsonGraphInboxStore(),
         )
         assert_runtime_coherence(reader_backed_includes=graph.backed_includes)
         pots = LocalPotManagementService(store=pot_store, backend=backend)

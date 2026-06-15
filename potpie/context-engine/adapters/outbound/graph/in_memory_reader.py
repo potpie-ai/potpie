@@ -145,6 +145,12 @@ def _matches_filter(
         return False
     if filter_.object_key_in and row.object_key not in filter_.object_key_in:
         return False
+    if filter_.claim_key_in and row.claim_key not in filter_.claim_key_in:
+        return False
+    if filter_.subgraph_in and row.subgraph not in filter_.subgraph_in:
+        return False
+    if filter_.mutation_id_in and row.mutation_id not in filter_.mutation_id_in:
+        return False
     if filter_.source_system_in and row.source_system not in filter_.source_system_in:
         return False
     if not filter_.include_invalidated and row.invalid_at is not None:

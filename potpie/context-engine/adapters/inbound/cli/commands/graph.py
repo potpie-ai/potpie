@@ -48,8 +48,13 @@ from domain.graph_workbench_ontology import describe_contract
 from domain.nudge import NUDGE_EVENT_HELP
 
 graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
+inbox_app = typer.Typer(help="Pending graph-work inbox.")
+quality_app = typer.Typer(help="Read-only graph quality reports.")
 backend_app = typer.Typer(help="GraphBackend profile selection + health.")
 timeline_app = typer.Typer(help="Timeline reads over the active project pot.")
+
+graph_app.add_typer(inbox_app, name="inbox")
+graph_app.add_typer(quality_app, name="quality")
 
 
 class _GraphCliCommandContext:
@@ -136,8 +141,20 @@ def _emit_graph_result(
             unsupported=merged_unsupported,
             recommended_next_action=recommended_next_action
             or payload.get("recommended_next_action"),
-        )
+    )
     emit(env.to_dict(), human=human)
+
+
+def _emit_inbox_result(ctx: _GraphCliCommandContext, result) -> None:
+    _emit_graph_result(ctx, result.to_dict(), human=_inbox_human(result))
+    if not result.ok:
+        raise typer.Exit(code=EXIT_VALIDATION)
+
+
+def _emit_quality_result(ctx: _GraphCliCommandContext, result) -> None:
+    _emit_graph_result(ctx, result.to_dict(), human=_quality_human(result))
+    if not result.ok:
+        raise typer.Exit(code=EXIT_VALIDATION)
 
 
 def _emit_graph_not_implemented(
@@ -1116,54 +1133,318 @@ def graph_history(
     mutation: str = typer.Option(None, "--mutation"),
     since: str = typer.Option(None, "--since"),
     until: str = typer.Option(None, "--until"),
+    limit: int = typer.Option(50, "--limit"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
-    del entity, claim, subgraph, plan, mutation, since, until
     with _graph_command("graph.history") as ctx:
-        _set_optional_pot(ctx, pot)
-        _emit_graph_not_implemented(
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        since_dt, until_dt = _resolve_time_bounds(
+            since=since, until=until, window=None
+        )
+        result = host.graph_workbench.history(
+            pot_id=pot_id,
+            entity_key=entity,
+            claim_key=claim,
+            subgraph=subgraph,
+            plan_id=plan,
+            mutation_id=mutation,
+            since=since_dt,
+            until=until_dt,
+            limit=limit,
+        )
+        _emit_graph_result(
             ctx,
-            detail="Phase 4 will expose plan, mutation, claim, and entity history.",
-            recommended_next_action="Use graph read/search commands to inspect current graph state for now.",
+            result.to_dict(),
+            human=_history_human(result),
         )
 
 
-@graph_app.command(
-    "inbox",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def graph_inbox(
-    ctx_typer: typer.Context,
-    action: str = typer.Argument(None),
+@inbox_app.command("add")
+def graph_inbox_add(
+    summary: str = typer.Option(None, "--summary"),
+    details: str = typer.Option(None, "--details"),
+    evidence: list[str] | None = typer.Option(None, "--evidence"),
+    source_ref: list[str] | None = typer.Option(None, "--source-ref"),
+    subgraph: list[str] | None = typer.Option(None, "--subgraph"),
+    created_by: str = typer.Option(None, "--created-by"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
-    del ctx_typer, action
-    with _graph_command("graph.inbox") as ctx:
-        _set_optional_pot(ctx, pot)
-        _emit_graph_not_implemented(
-            ctx,
-            detail="Phase 5 will add pending graph-work inbox commands.",
-            recommended_next_action="Keep uncertain findings outside canonical graph facts until inbox/propose/commit exist.",
+    with _graph_command("graph.inbox.add") as ctx:
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        result = host.graph_workbench.inbox_add(
+            pot_id=pot_id,
+            summary=summary,
+            details=details,
+            evidence=tuple(evidence or ()),
+            source_refs=tuple(source_ref or ()),
+            suspected_subgraphs=tuple(subgraph or ()),
+            created_by=_parse_created_by(created_by),
         )
+        _emit_inbox_result(ctx, result)
 
 
-@graph_app.command(
-    "quality",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def graph_quality(
-    ctx_typer: typer.Context,
-    report: str = typer.Argument(None),
+@inbox_app.command("list")
+def graph_inbox_list(
+    status: list[str] | None = typer.Option(None, "--status"),
+    claimed_by: str = typer.Option(None, "--claimed-by"),
+    subgraph: str = typer.Option(None, "--subgraph"),
+    source_ref: str = typer.Option(None, "--source-ref"),
+    since: str = typer.Option(None, "--since"),
+    until: str = typer.Option(None, "--until"),
+    limit: int = typer.Option(50, "--limit"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
-    del ctx_typer, report
-    with _graph_command("graph.quality") as ctx:
-        _set_optional_pot(ctx, pot)
-        _emit_graph_not_implemented(
-            ctx,
-            detail="Phase 6 will expose graph quality findings and suggested repairs.",
-            recommended_next_action="Use `potpie graph status --json` for current backend quality counters.",
+    with _graph_command("graph.inbox.list") as ctx:
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        since_dt, until_dt = _resolve_time_bounds(
+            since=since, until=until, window=None
         )
+        result = host.graph_workbench.inbox_list(
+            pot_id=pot_id,
+            status=tuple(status or ()),
+            claimed_by=claimed_by,
+            suspected_subgraph=subgraph,
+            source_ref=source_ref,
+            since=since_dt,
+            until=until_dt,
+            limit=limit,
+        )
+        _emit_inbox_result(ctx, result)
+
+
+@inbox_app.command("show")
+def graph_inbox_show(
+    item_id: str = typer.Argument(None),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    with _graph_command("graph.inbox.show") as ctx:
+        if not item_id:
+            raise ValueError("item_id is required")
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        result = host.graph_workbench.inbox_show(pot_id=pot_id, item_id=item_id)
+        _emit_inbox_result(ctx, result)
+
+
+@inbox_app.command("claim")
+def graph_inbox_claim(
+    item_id: str = typer.Argument(None),
+    claimed_by: str = typer.Option(None, "--by", "--claimed-by"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    with _graph_command("graph.inbox.claim") as ctx:
+        if not item_id:
+            raise ValueError("item_id is required")
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        result = host.graph_workbench.inbox_claim(
+            pot_id=pot_id,
+            item_id=item_id,
+            claimed_by=claimed_by,
+        )
+        _emit_inbox_result(ctx, result)
+
+
+@inbox_app.command("mark-applied")
+def graph_inbox_mark_applied(
+    item_id: str = typer.Argument(None),
+    plan: str = typer.Option(None, "--plan"),
+    mutation: str = typer.Option(None, "--mutation"),
+    closed_by: str = typer.Option(None, "--by", "--closed-by"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    with _graph_command("graph.inbox.mark-applied") as ctx:
+        if not item_id:
+            raise ValueError("item_id is required")
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        result = host.graph_workbench.inbox_mark_applied(
+            pot_id=pot_id,
+            item_id=item_id,
+            closed_by=closed_by,
+            linked_plan_id=plan,
+            linked_mutation_id=mutation,
+        )
+        _emit_inbox_result(ctx, result)
+
+
+@inbox_app.command("mark-rejected")
+def graph_inbox_mark_rejected(
+    item_id: str = typer.Argument(None),
+    reason: str = typer.Option(None, "--reason"),
+    closed_by: str = typer.Option(None, "--by", "--closed-by"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    with _graph_command("graph.inbox.mark-rejected") as ctx:
+        if not item_id:
+            raise ValueError("item_id is required")
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        result = host.graph_workbench.inbox_mark_rejected(
+            pot_id=pot_id,
+            item_id=item_id,
+            closed_by=closed_by,
+            rejection_reason=reason,
+        )
+        _emit_inbox_result(ctx, result)
+
+
+@inbox_app.command("close")
+def graph_inbox_close(
+    item_id: str = typer.Argument(None),
+    plan: str = typer.Option(None, "--plan"),
+    mutation: str = typer.Option(None, "--mutation"),
+    reason: str = typer.Option(None, "--reason"),
+    closed_by: str = typer.Option(None, "--by", "--closed-by"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    with _graph_command("graph.inbox.close") as ctx:
+        if not item_id:
+            raise ValueError("item_id is required")
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        result = host.graph_workbench.inbox_close(
+            pot_id=pot_id,
+            item_id=item_id,
+            closed_by=closed_by,
+            linked_plan_id=plan,
+            linked_mutation_id=mutation,
+            rejection_reason=reason,
+        )
+        _emit_inbox_result(ctx, result)
+
+
+@quality_app.command("summary")
+def graph_quality_summary(
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    _run_quality_report(command="graph.quality.summary", report="summary", pot=pot)
+
+
+@quality_app.command("duplicate-candidates")
+def graph_quality_duplicate_candidates(
+    subgraph: str = typer.Option(None, "--subgraph"),
+    limit: int = typer.Option(50, "--limit"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    _run_quality_report(
+        command="graph.quality.duplicate-candidates",
+        report="duplicate-candidates",
+        pot=pot,
+        subgraph=subgraph,
+        limit=limit,
+    )
+
+
+@quality_app.command("stale-facts")
+def graph_quality_stale_facts(
+    subgraph: str = typer.Option(None, "--subgraph"),
+    limit: int = typer.Option(50, "--limit"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    _run_quality_report(
+        command="graph.quality.stale-facts",
+        report="stale-facts",
+        pot=pot,
+        subgraph=subgraph,
+        limit=limit,
+    )
+
+
+@quality_app.command("conflicting-claims")
+def graph_quality_conflicting_claims(
+    subgraph: str = typer.Option(None, "--subgraph"),
+    limit: int = typer.Option(50, "--limit"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    _run_quality_report(
+        command="graph.quality.conflicting-claims",
+        report="conflicting-claims",
+        pot=pot,
+        subgraph=subgraph,
+        limit=limit,
+    )
+
+
+@quality_app.command("orphan-entities")
+def graph_quality_orphan_entities(
+    subgraph: str = typer.Option(None, "--subgraph"),
+    limit: int = typer.Option(50, "--limit"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    _run_quality_report(
+        command="graph.quality.orphan-entities",
+        report="orphan-entities",
+        pot=pot,
+        subgraph=subgraph,
+        limit=limit,
+    )
+
+
+@quality_app.command("low-confidence")
+def graph_quality_low_confidence(
+    subgraph: str = typer.Option(None, "--subgraph"),
+    limit: int = typer.Option(50, "--limit"),
+    threshold: float = typer.Option(0.5, "--threshold"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    _run_quality_report(
+        command="graph.quality.low-confidence",
+        report="low-confidence",
+        pot=pot,
+        subgraph=subgraph,
+        limit=limit,
+        confidence_threshold=threshold,
+    )
+
+
+@quality_app.command("projection-drift")
+def graph_quality_projection_drift(
+    subgraph: str = typer.Option(None, "--subgraph"),
+    limit: int = typer.Option(50, "--limit"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    _run_quality_report(
+        command="graph.quality.projection-drift",
+        report="projection-drift",
+        pot=pot,
+        subgraph=subgraph,
+        limit=limit,
+    )
+
+
+def _run_quality_report(
+    *,
+    command: str,
+    report: str,
+    pot: str | None,
+    subgraph: str | None = None,
+    limit: int = 50,
+    confidence_threshold: float = 0.5,
+) -> None:
+    with _graph_command(command) as ctx:
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        result = host.graph_workbench.quality(
+            pot_id=pot_id,
+            report=report,
+            subgraph=subgraph,
+            limit=limit,
+            confidence_threshold=confidence_threshold,
+        )
+        _emit_quality_result(ctx, result)
 
 
 @graph_app.command("inspect")
@@ -1458,6 +1739,22 @@ def _parse_scope(scope: str | None) -> dict[str, str]:
             )
         out[key] = value
     return out
+
+
+def _parse_created_by(value: str | None) -> dict[str, Any]:
+    clean = value.strip() if isinstance(value, str) else ""
+    if not clean:
+        return {"surface": "cli"}
+    if clean.startswith("{"):
+        try:
+            parsed = json.loads(clean)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid --created-by JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("--created-by JSON must be an object")
+        parsed.setdefault("surface", "cli")
+        return parsed
+    return {"surface": "cli", "actor": clean}
 
 
 def _parse_predicates(predicate: str | None) -> tuple[str, ...]:
@@ -2049,6 +2346,61 @@ def _commit_human(result) -> str:
     lines = [head]
     if result.detail:
         lines.append(result.detail)
+    return "\n".join(lines)
+
+
+def _history_human(result) -> str:
+    payload = result.to_dict()
+    entries = payload.get("entries", [])
+    lines = [f"history: entries={len(entries)} filters={payload.get('filters', {})}"]
+    detail = payload.get("detail")
+    if detail:
+        lines.append(str(detail))
+    for entry in entries[:10]:
+        when = entry.get("occurred_at") or "unknown-time"
+        kind = entry.get("kind") or "entry"
+        status = entry.get("status") or "-"
+        summary = entry.get("summary") or entry.get("id")
+        lines.append(f"  • {when} [{kind}:{status}] {summary}")
+    return "\n".join(lines)
+
+
+def _inbox_human(result) -> str:
+    payload = result.to_dict()
+    if payload.get("item"):
+        item = payload["item"]
+        head = (
+            f"inbox {payload.get('action')}: "
+            f"{item.get('item_id')} status={item.get('status')}"
+        )
+        detail = payload.get("detail")
+        return "\n".join([head, str(detail)] if detail else [head])
+    items = payload.get("items", [])
+    lines = [f"inbox {payload.get('action')}: items={len(items)}"]
+    detail = payload.get("detail")
+    if detail:
+        lines.append(str(detail))
+    for item in items[:10]:
+        lines.append(
+            f"  {item.get('item_id')} [{item.get('status')}] {item.get('summary')}"
+        )
+    return "\n".join(lines)
+
+
+def _quality_human(result) -> str:
+    payload = result.to_dict()
+    findings = payload.get("findings", [])
+    lines = [
+        f"quality {payload.get('report')}: status={payload.get('status')} findings={len(findings)}"
+    ]
+    detail = payload.get("detail")
+    if detail:
+        lines.append(str(detail))
+    for finding in findings[:10]:
+        lines.append(
+            f"  {finding.get('finding_id')} [{finding.get('severity')}] "
+            f"{finding.get('summary')}"
+        )
     return "\n".join(lines)
 
 

@@ -734,6 +734,31 @@ Result: Ruff passed; focused tests passed (`112 passed`).
 
 Goal: agents and users can inspect what changed, why, and from which source.
 
+### Status
+
+Done on 2026-06-15 for the local CLI workbench history surface.
+
+- [x] Added `domain/graph_history.py` with request, entry, and result DTOs for
+  read-only plan/claim history.
+- [x] Extended `GraphPlanStorePort` and the local JSON plan store with bounded
+  plan listing by plan id, mutation id, and time window.
+- [x] Added `GraphWorkbenchService.history` to combine persisted plan records
+  with committed claim rows from `ClaimQueryPort`.
+- [x] Added exact claim-query filters for claim key, subgraph, and mutation id
+  across in-memory, Neo4j, and FalkorDB readers.
+- [x] Wired `potpie graph history --json` for `--entity`, `--claim`,
+  `--subgraph`, `--plan`, `--mutation`, `--since`, `--until`, and `--limit`.
+
+Deliberate first-cut choices:
+
+- History remains read-only. Corrections still flow through `propose` and
+  `commit`.
+- `--plan` can answer from the local plan store even when the active backend
+  cannot answer claim history. Claim-history capability gaps return structured
+  `unsupported` entries instead of pretending the graph is empty.
+- The first implementation uses stored plan records plus current/invalidated
+  claim rows. There is still no separate backend-native mutation ledger.
+
 ### Changes
 
 1. Add `graph history` with filters:
@@ -760,10 +785,70 @@ Goal: agents and users can inspect what changed, why, and from which source.
   that entity when the backend can answer it.
 - History reads do not mutate graph state.
 
+Implemented coverage on 2026-06-15:
+
+- `tests/unit/test_graph_workbench_plans.py` verifies history by plan, mutation,
+  and entity; local JSON plan-store listing; invalidated claim visibility; and
+  read-only behavior.
+- `tests/unit/test_graph_cli_contract.py` verifies `graph history --plan`
+  returns the V2 workbench envelope.
+- Claim-query reader and backend conformance tests continue to pass after adding
+  exact history filters.
+
+Verification run:
+
+```bash
+uv run ruff check \
+  potpie/context-engine/domain/graph_history.py \
+  potpie/context-engine/domain/ports/graph/plan_store.py \
+  potpie/context-engine/adapters/outbound/graph/plan_stores/local_json.py \
+  potpie/context-engine/domain/ports/claim_query.py \
+  potpie/context-engine/adapters/outbound/graph/in_memory_reader.py \
+  potpie/context-engine/adapters/outbound/graph/canonical_claim_query.py \
+  potpie/context-engine/adapters/outbound/graph/neo4j_reader.py \
+  potpie/context-engine/adapters/outbound/graph/falkordb_reader.py \
+  potpie/context-engine/application/services/graph_workbench.py \
+  potpie/context-engine/adapters/inbound/cli/commands/graph.py \
+  potpie/context-engine/tests/unit/test_graph_workbench_plans.py \
+  potpie/context-engine/tests/unit/test_graph_cli_contract.py
+
+uv run pytest -q \
+  potpie/context-engine/tests/unit/test_graph_workbench_plans.py \
+  potpie/context-engine/tests/unit/test_graph_cli_contract.py \
+  potpie/context-engine/tests/unit/test_neo4j_claim_query.py \
+  potpie/context-engine/tests/unit/test_falkordb_reader.py \
+  potpie/context-engine/tests/conformance/test_graph_backend_conformance.py \
+  potpie/context-engine/tests/conformance/test_graph_surface_lite_e2e.py \
+  potpie/context-engine/tests/unit/test_graph_surface_lite_contract.py
+```
+
+Result: Ruff passed; focused and reader/conformance tests passed (`102 passed`).
+
 ## Phase 5: Add Inbox
 
 Goal: uncertain or incomplete graph work has a first-class pending state without
 becoming canonical facts.
+
+### Status
+
+Done on 2026-06-15 for the local CLI workbench inbox workflow.
+
+- [x] Added `domain/graph_inbox.py` with inbox item, status, and result DTOs.
+- [x] Added `GraphInboxStorePort` and a local JSON-backed inbox store under the
+  Potpie home.
+- [x] Wired `GraphWorkbenchService` inbox methods for add, list, show, claim,
+  mark-applied, mark-rejected, and close.
+- [x] Wired `potpie graph inbox add/list/show/claim/mark-applied/mark-rejected/close --json`.
+- [x] Updated the bundled graph skill to route uncertain graph work to
+  `graph inbox add` and canonical writes through `propose`/`commit`.
+
+Deliberate first-cut choices:
+
+- Inbox items are local workbench state only. They are not exposed through graph
+  read views or claim query.
+- Closing an inbox item records a plan id, mutation id, or rejection reason.
+- `mark-applied` and `mark-rejected` are terminal specialized close operations;
+  `close` is a generic terminal close for superseded or manually resolved work.
 
 ### Changes
 
@@ -811,9 +896,75 @@ becoming canonical facts.
   `propose`/`commit`.
 - Closing an inbox item records the plan/mutation or rejection reason.
 
+Implemented coverage on 2026-06-15:
+
+- `tests/unit/test_graph_workbench_inbox.py` verifies add persistence without
+  graph fact writes, claim/apply lifecycle, rejected terminal behavior,
+  close validation, list filters, and local JSON round trip.
+- `tests/unit/test_graph_cli_contract.py` verifies V2 envelopes and option
+  routing for inbox add, list, claim, mark-applied, mark-rejected, and close.
+- Existing plan/history tests continue to pass with the optional inbox store
+  wired into `GraphWorkbenchService`.
+
+Verification run:
+
+```bash
+uv run ruff check \
+  potpie/context-engine/domain/graph_inbox.py \
+  potpie/context-engine/domain/ports/graph/inbox_store.py \
+  potpie/context-engine/adapters/outbound/graph/inbox_stores/__init__.py \
+  potpie/context-engine/adapters/outbound/graph/inbox_stores/local_json.py \
+  potpie/context-engine/application/services/graph_workbench.py \
+  potpie/context-engine/bootstrap/host_wiring.py \
+  potpie/context-engine/adapters/inbound/cli/commands/graph.py \
+  potpie/context-engine/tests/unit/test_graph_cli_contract.py \
+  potpie/context-engine/tests/unit/test_graph_workbench_inbox.py
+
+uv run pytest -q \
+  potpie/context-engine/tests/unit/test_graph_workbench_inbox.py \
+  potpie/context-engine/tests/unit/test_graph_workbench_plans.py \
+  potpie/context-engine/tests/unit/test_graph_cli_contract.py
+```
+
+Result: Ruff passed; focused inbox/plan/CLI tests passed (`45 passed`).
+Additional broader graph slice passed (`124 passed`).
+
 ## Phase 6: Add Quality Workflows
 
 Goal: long-lived pots can be inspected and repaired without raw graph surgery.
+
+### Status
+
+Done on 2026-06-15 for the local CLI workbench quality surface.
+
+- [x] Added V2 quality result DTOs in `domain/graph_quality.py` for bounded
+  read-only findings with deterministic `finding_id`, severity, affected
+  entities/claims, source refs, evidence, suggested action, metrics, filters,
+  and unsupported capability reporting.
+- [x] Added `GraphWorkbenchService.quality` with report dispatch for
+  `summary`, `duplicate-candidates`, `stale-facts`, `conflicting-claims`,
+  `orphan-entities`, `low-confidence`, and `projection-drift`.
+- [x] Backed `summary` with cheap analytics counters/freshness/quality.
+- [x] Backed bounded finding reports with `ClaimQueryPort` and
+  `GraphInspectionPort` where available, including duplicate display-name
+  candidates, stale validity markers, missing required evidence, low confidence,
+  singleton/predicate-family conflicts, orphan entities with no live useful
+  claims, invalid endpoint pairs, and inspection projection drift.
+- [x] Wired `potpie graph quality <report> --json` subcommands.
+- [x] Updated the bundled graph skill to route canonical repairs through
+  `graph propose`/`graph commit` and uncertain repairs through `graph inbox add`.
+
+Deliberate first-cut choices:
+
+- Quality findings are ephemeral/read-only workbench output. There is no quality
+  finding lifecycle store yet.
+- Duplicate detection is conservative: it groups entities by label and
+  normalized stored display name, not fuzzy semantic similarity.
+- Orphan detection reports entities that are only connected by invalidated
+  claims through the current claim-query surface. A future entity inventory port
+  can extend this to completely standalone entity upserts.
+- `graph repair` remains operator projection maintenance; semantic corrections
+  still flow through proposals.
 
 ### Changes
 
@@ -852,6 +1003,32 @@ Goal: long-lived pots can be inspected and repaired without raw graph surgery.
 - `graph quality summary` is cheap and works on local default backends.
 - Duplicate/stale/conflict/orphan reports return bounded, source-backed findings.
 - Repairs that alter canonical facts flow through `propose`/`commit`.
+
+Implemented coverage on 2026-06-15:
+
+- `tests/unit/test_graph_workbench_quality.py` verifies summary, duplicate
+  candidates, stale facts, low-confidence/missing-evidence findings, singleton
+  conflicts, orphan entities, invalid endpoint pairs, and read-only behavior.
+- `tests/unit/test_graph_cli_contract.py` verifies `graph quality summary` and
+  `graph quality low-confidence` route through the V2 workbench envelope and
+  pass report filters.
+
+Verification run:
+
+```bash
+uv run ruff check \
+  potpie/context-engine/domain/graph_quality.py \
+  potpie/context-engine/application/services/graph_workbench.py \
+  potpie/context-engine/adapters/inbound/cli/commands/graph.py \
+  potpie/context-engine/tests/unit/test_graph_workbench_quality.py \
+  potpie/context-engine/tests/unit/test_graph_cli_contract.py
+
+uv run pytest -q \
+  potpie/context-engine/tests/unit/test_graph_workbench_quality.py \
+  potpie/context-engine/tests/unit/test_graph_cli_contract.py
+```
+
+Result: Ruff passed; focused quality/CLI tests passed (`38 passed`).
 
 ## Phase 7: Complete V2 Mutation Vocabulary
 
@@ -991,29 +1168,22 @@ These are the smallest useful implementation PRs. Status is as of
 | V2-03 Neighborhood | Done | Promote bounded traversal out of `inspect` into `graph neighborhood`. | `graph.py`, `GraphInspectionPort` adapters, conformance tests |
 | V2-04 Propose | Done | Persist validated/lowered mutation plans without applying them. | `semantic_mutations.py`, validator/lowerer serializers, new plan store, tests |
 | V2-05 Commit | Done | Commit by `plan_id`, handle expiry/conflict/approval/history pointer. | plan store, `graph_workbench.py`, `graph.py`, mutation tests |
-| V2-06 History | Next | Query plan/mutation/claim history. | plan store, claim query helpers, CLI, tests |
-| V2-07 Inbox | Planned | Add inbox storage and CLI workflow. | inbox store, `graph.py`, skills, tests |
-| V2-08 Quality | Planned | Add quality command and findings. | `domain/graph_quality.py`, analytics/claim query scanners, CLI, tests |
+| V2-06 History | Done | Query plan/mutation/claim history. | plan store, claim query helpers, CLI, tests |
+| V2-07 Inbox | Done | Add inbox storage and CLI workflow. | inbox store, `graph.py`, skills, tests |
+| V2-08 Quality | Done | Add quality command and findings. | `domain/graph_quality.py`, analytics/claim query scanners, CLI, tests |
 | V2-09 Deferred Ops | Planned | Implement patch/transition/reconcile/supersede/merge under plan workflow. | contract, validator, lowerer, plan/commit/history tests |
 | V2-10 Skills | Planned | Update bundled skills and canonical workflow docs. | skill templates, `CLAUDE.md`, tests |
 
 ## Current Next Cut
 
-Start with V2-06 History.
+Start with V2-09 Deferred Ops.
 
-1. Read plan records from the plan store by `--plan <plan_id>` and return
-   proposal, approval, commit status, mutation id, claim keys, source refs, and
-   validation issues.
-2. Add `graph history --mutation <mutation_id>` by querying claim properties
-   stamped by semantic lowering and backend apply.
-3. Add `graph history --entity <key>` and `--claim <claim_key>` where the active
-   backend can answer through claim query; return structured `unsupported`
-   rather than broad or empty results when the backend cannot.
-4. Keep history read-only. Any repair or correction discovered while reading
-   history should flow through `propose`/`commit`.
-
-V2-07 Inbox should follow history, because inbox close/apply records should link
-to a plan, mutation id, or rejection reason that history can already display.
+1. Implement `patch_entity` and `transition_state` as validated plan-store
+   operations, not direct graph edits.
+2. Add audited supersession and duplicate-merge workflows on top of plan,
+   approval, commit, and history.
+3. Keep high-risk operations review-gated until the approval lifecycle is
+   explicit enough for local and hosted profiles.
 
 ## Resolved Decisions
 

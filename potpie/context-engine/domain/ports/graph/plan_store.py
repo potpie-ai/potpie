@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from domain.graph_plans import GraphMutationPlanRecord
@@ -16,6 +17,19 @@ class GraphPlanStorePort(Protocol):
 
     def get(self, *, pot_id: str, plan_id: str) -> GraphMutationPlanRecord | None:
         """Return one plan for a pot, if present."""
+        ...
+
+    def list(
+        self,
+        *,
+        pot_id: str,
+        plan_id: str | None = None,
+        mutation_id: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int | None = None,
+    ) -> tuple[GraphMutationPlanRecord, ...]:
+        """Return plan records for history and operator inspection."""
         ...
 
 

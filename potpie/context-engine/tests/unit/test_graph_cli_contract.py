@@ -14,6 +14,9 @@ from domain.graph_plans import (
     GraphMutationDiff,
     GraphMutationProposal,
 )
+from domain.graph_history import GraphHistoryEntry, GraphHistoryResult
+from domain.graph_inbox import GraphInboxItem, GraphInboxResult
+from domain.graph_quality import GraphQualityFinding, GraphQualityResult
 from domain.nudge import GraphNudgeResult
 from domain.graph_views import views_for_catalog
 from domain.ports.services.graph_service import (
@@ -122,11 +125,20 @@ class _Workbench:
         *,
         proposal: GraphMutationProposal | None = None,
         commit_result: GraphMutationCommitResult | None = None,
+        history_result: GraphHistoryResult | None = None,
+        inbox_result: GraphInboxResult | None = None,
+        quality_result: GraphQualityResult | None = None,
     ) -> None:
         self.proposal = proposal
         self.commit_result = commit_result
+        self.history_result = history_result
+        self.inbox_result = inbox_result
+        self.quality_result = quality_result
         self.propose_calls = []
         self.commit_calls = []
+        self.history_calls = []
+        self.inbox_calls = []
+        self.quality_calls = []
 
     def propose(self, payload, *, pot_id, ttl_seconds=None):
         self.propose_calls.append((payload, pot_id, ttl_seconds))
@@ -139,6 +151,60 @@ class _Workbench:
         if self.commit_result is None:
             raise AssertionError("commit should not be called")
         return self.commit_result
+
+    def history(self, **kwargs):
+        self.history_calls.append(kwargs)
+        if self.history_result is None:
+            raise AssertionError("history should not be called")
+        return self.history_result
+
+    def inbox_add(self, **kwargs):
+        self.inbox_calls.append(("add", kwargs))
+        if self.inbox_result is None:
+            raise AssertionError("inbox_add should not be called")
+        return self.inbox_result
+
+    def inbox_list(self, **kwargs):
+        self.inbox_calls.append(("list", kwargs))
+        if self.inbox_result is None:
+            raise AssertionError("inbox_list should not be called")
+        return self.inbox_result
+
+    def inbox_show(self, **kwargs):
+        self.inbox_calls.append(("show", kwargs))
+        if self.inbox_result is None:
+            raise AssertionError("inbox_show should not be called")
+        return self.inbox_result
+
+    def inbox_claim(self, **kwargs):
+        self.inbox_calls.append(("claim", kwargs))
+        if self.inbox_result is None:
+            raise AssertionError("inbox_claim should not be called")
+        return self.inbox_result
+
+    def inbox_mark_applied(self, **kwargs):
+        self.inbox_calls.append(("mark-applied", kwargs))
+        if self.inbox_result is None:
+            raise AssertionError("inbox_mark_applied should not be called")
+        return self.inbox_result
+
+    def inbox_mark_rejected(self, **kwargs):
+        self.inbox_calls.append(("mark-rejected", kwargs))
+        if self.inbox_result is None:
+            raise AssertionError("inbox_mark_rejected should not be called")
+        return self.inbox_result
+
+    def inbox_close(self, **kwargs):
+        self.inbox_calls.append(("close", kwargs))
+        if self.inbox_result is None:
+            raise AssertionError("inbox_close should not be called")
+        return self.inbox_result
+
+    def quality(self, **kwargs):
+        self.quality_calls.append(kwargs)
+        if self.quality_result is None:
+            raise AssertionError("quality should not be called")
+        return self.quality_result
 
 
 class _Host:
@@ -295,6 +361,82 @@ def _commit_result(
         new_subgraph_versions={"_global": 1} if ok else {"_global": 0},
         diff=GraphMutationDiff(edge_upserts=1, claim_keys=("claim:test",)),
         claim_keys=("claim:test",),
+    )
+
+
+def _history_result() -> GraphHistoryResult:
+    return GraphHistoryResult(
+        ok=True,
+        pot_id="p",
+        filters={"plan": "mutation-plan:test", "limit": 50},
+        entries=(
+            GraphHistoryEntry(
+                kind="plan",
+                id="mutation-plan:test",
+                status="committed",
+                plan_id="mutation-plan:test",
+                mutation_id="mutation-1",
+                occurred_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+                source_refs=("repo:manifest",),
+                summary="mutation plan committed",
+            ),
+        ),
+        subgraph_versions={"_global": 1},
+    )
+
+
+def _inbox_result(
+    *,
+    action: str = "add",
+    status: str = "pending",
+    ok: bool = True,
+) -> GraphInboxResult:
+    item = GraphInboxItem(
+        item_id="graph-inbox:test",
+        pot_id="p",
+        status=status,
+        summary="Possible graph update",
+        evidence=("github:pr:955",),
+        source_refs=("github:pr:955",),
+        suspected_subgraphs=("debugging",),
+        created_by={"surface": "cli", "actor": "codex"},
+        created_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+    )
+    return GraphInboxResult(
+        ok=ok,
+        pot_id="p",
+        action=action,
+        item=item if action != "list" else None,
+        items=(item,) if action == "list" else (),
+        filters={"limit": 50} if action == "list" else {},
+        detail=None if ok else "inbox item could not be changed",
+    )
+
+
+def _quality_result(
+    *,
+    report: str = "summary",
+    status: str = "ok",
+) -> GraphQualityResult:
+    finding = GraphQualityFinding(
+        finding_id="quality:low-confidence:test",
+        kind="low-confidence",
+        severity="warning",
+        summary="claim needs stronger evidence",
+        claim_keys=("claim:test",),
+        entity_keys=("service:web", "repo:github.com/acme/web"),
+        predicates=("DEFINED_IN",),
+        source_refs=("repo:manifest",),
+    )
+    return GraphQualityResult(
+        ok=True,
+        pot_id="p",
+        report=report,
+        status=status,
+        findings=() if report == "summary" else (finding,),
+        metrics={"counts": {"claims": 3}} if report == "summary" else {"scanned_claims": 3},
+        filters={"report": report, "limit": 50},
+        subgraph_versions={"_global": 3},
     )
 
 
@@ -458,6 +600,307 @@ def test_graph_commit_rejects_raw_payload_option() -> None:
 
     assert result.exit_code != 0
     assert workbench.commit_calls == []
+
+
+def test_graph_history_plan_returns_envelope() -> None:
+    _common.set_json(True)
+    workbench = _Workbench(history_result=_history_result())
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["history", "--plan", "mutation-plan:test"],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.history")
+    assert emitted["subgraph_versions"] == {"_global": 1}
+    assert body["entry_count"] == 1
+    assert body["entries"][0]["plan_id"] == "mutation-plan:test"
+    assert workbench.history_calls == [
+        {
+            "pot_id": "p",
+            "entity_key": None,
+            "claim_key": None,
+            "subgraph": None,
+            "plan_id": "mutation-plan:test",
+            "mutation_id": None,
+            "since": None,
+            "until": None,
+            "limit": 50,
+        }
+    ]
+
+
+def test_graph_quality_summary_returns_envelope() -> None:
+    _common.set_json(True)
+    workbench = _Workbench(quality_result=_quality_result(report="summary"))
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(graph.graph_app, ["quality", "summary"])
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.quality.summary")
+    assert emitted["subgraph_versions"] == {"_global": 3}
+    assert body["report"] == "summary"
+    assert body["metrics"]["counts"]["claims"] == 3
+    assert workbench.quality_calls == [
+        {
+            "pot_id": "p",
+            "report": "summary",
+            "subgraph": None,
+            "limit": 50,
+            "confidence_threshold": 0.5,
+        }
+    ]
+
+
+def test_graph_quality_low_confidence_passes_filters() -> None:
+    _common.set_json(True)
+    workbench = _Workbench(
+        quality_result=_quality_result(report="low-confidence", status="watch")
+    )
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "quality",
+            "low-confidence",
+            "--subgraph",
+            "infra_topology",
+            "--limit",
+            "10",
+            "--threshold",
+            "0.75",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.quality.low-confidence")
+    assert body["finding_count"] == 1
+    assert body["findings"][0]["kind"] == "low-confidence"
+    assert workbench.quality_calls == [
+        {
+            "pot_id": "p",
+            "report": "low-confidence",
+            "subgraph": "infra_topology",
+            "limit": 10,
+            "confidence_threshold": 0.75,
+        }
+    ]
+
+
+def test_graph_inbox_add_returns_pending_item_envelope() -> None:
+    _common.set_json(True)
+    workbench = _Workbench(inbox_result=_inbox_result())
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "inbox",
+            "add",
+            "--summary",
+            "Possible graph update",
+            "--evidence",
+            "github:pr:955",
+            "--source-ref",
+            "github:pr:955",
+            "--subgraph",
+            "debugging",
+            "--created-by",
+            "codex",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.inbox.add")
+    assert body["action"] == "add"
+    assert body["item"]["item_id"] == "graph-inbox:test"
+    assert body["item"]["status"] == "pending"
+    assert workbench.inbox_calls == [
+        (
+            "add",
+            {
+                "pot_id": "p",
+                "summary": "Possible graph update",
+                "details": None,
+                "evidence": ("github:pr:955",),
+                "source_refs": ("github:pr:955",),
+                "suspected_subgraphs": ("debugging",),
+                "created_by": {"surface": "cli", "actor": "codex"},
+            },
+        )
+    ]
+
+
+def test_graph_inbox_list_passes_filters() -> None:
+    _common.set_json(True)
+    workbench = _Workbench(inbox_result=_inbox_result(action="list"))
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "inbox",
+            "list",
+            "--status",
+            "pending,claimed",
+            "--claimed-by",
+            "user:alice",
+            "--subgraph",
+            "debugging",
+            "--source-ref",
+            "github:pr:955",
+            "--limit",
+            "10",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.inbox.list")
+    assert body["item_count"] == 1
+    assert workbench.inbox_calls[0] == (
+        "list",
+        {
+            "pot_id": "p",
+            "status": ("pending,claimed",),
+            "claimed_by": "user:alice",
+            "suspected_subgraph": "debugging",
+            "source_ref": "github:pr:955",
+            "since": None,
+            "until": None,
+            "limit": 10,
+        },
+    )
+
+
+def test_graph_inbox_claim_passes_actor() -> None:
+    _common.set_json(True)
+    workbench = _Workbench(inbox_result=_inbox_result(action="claim", status="claimed"))
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["inbox", "claim", "graph-inbox:test", "--by", "user:alice"],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.inbox.claim")
+    assert body["item"]["status"] == "claimed"
+    assert workbench.inbox_calls == [
+        (
+            "claim",
+            {
+                "pot_id": "p",
+                "item_id": "graph-inbox:test",
+                "claimed_by": "user:alice",
+            },
+        )
+    ]
+
+
+def test_graph_inbox_mark_applied_passes_plan_and_mutation() -> None:
+    _common.set_json(True)
+    workbench = _Workbench(
+        inbox_result=_inbox_result(action="mark-applied", status="applied")
+    )
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "inbox",
+            "mark-applied",
+            "graph-inbox:test",
+            "--plan",
+            "mutation-plan:test",
+            "--mutation",
+            "mutation-1",
+            "--by",
+            "user:alice",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.inbox.mark-applied")
+    assert body["item"]["status"] == "applied"
+    assert workbench.inbox_calls == [
+        (
+            "mark-applied",
+            {
+                "pot_id": "p",
+                "item_id": "graph-inbox:test",
+                "closed_by": "user:alice",
+                "linked_plan_id": "mutation-plan:test",
+                "linked_mutation_id": "mutation-1",
+            },
+        )
+    ]
+
+
+def test_graph_inbox_mark_rejected_and_close_record_reasons() -> None:
+    _common.set_json(True)
+    workbench = _Workbench(
+        inbox_result=_inbox_result(action="mark-rejected", status="rejected")
+    )
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    rejected = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "inbox",
+            "mark-rejected",
+            "graph-inbox:test",
+            "--reason",
+            "not enough evidence",
+            "--by",
+            "user:alice",
+        ],
+    )
+
+    assert rejected.exit_code == 0, rejected.output
+    emitted = json.loads(rejected.output)
+    _assert_graph_envelope(emitted, "graph.inbox.mark-rejected")
+    assert workbench.inbox_calls == [
+        (
+            "mark-rejected",
+            {
+                "pot_id": "p",
+                "item_id": "graph-inbox:test",
+                "closed_by": "user:alice",
+                "rejection_reason": "not enough evidence",
+            },
+        )
+    ]
+
+    workbench = _Workbench(inbox_result=_inbox_result(action="close", status="closed"))
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    closed = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "inbox",
+            "close",
+            "graph-inbox:test",
+            "--reason",
+            "superseded",
+            "--by",
+            "user:alice",
+        ],
+    )
+
+    assert closed.exit_code == 0, closed.output
+    emitted = json.loads(closed.output)
+    _assert_graph_envelope(emitted, "graph.inbox.close")
+    assert workbench.inbox_calls[0][1]["rejection_reason"] == "superseded"
 
 
 @pytest.mark.parametrize("scope", ["service", "service:"])

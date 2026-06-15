@@ -1,10 +1,10 @@
 ---
 name: "potpie-graph"
-version: "3"
-description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities` before writing, and apply validated semantic mutations with `graph mutate`. Also covers writing retrieval-grade descriptions and responding to nudges. Prefer this over the MCP context_* tools whenever the shell is available."
+version: "4"
+description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions and responding to nudges. Prefer this over the MCP context_* tools whenever the shell is available."
 ---
 
-# Potpie Graph Surface (V1.5)
+# Potpie Graph Surface (V2)
 
 The graph is project memory: preferences, prior bugs and their fixes, infra
 topology, decisions, and a timeline of changes. You are the intelligence that reads
@@ -26,13 +26,13 @@ entity types, and the predicates. Start graph-aware work here instead of reading
 docs. The catalog also reports the active `match_mode` (`vector` vs `lexical`) so you
 know whether semantic recall is on.
 
-## 2. Read — `graph read --view`
+## 2. Read - `graph read --subgraph --view`
 
 ```bash
-potpie --json graph read --view debugging.prior_occurrences --query "refund race timeout" --limit 8
-potpie --json graph read --view decisions.preferences_for_scope --scope repo:acme/x,path:src/payments/client.py
+potpie --json graph read --subgraph debugging --view prior_occurrences --query "refund race timeout" --limit 8
+potpie --json graph read --subgraph decisions --view preferences_for_scope --scope repo:acme/x,path:src/payments/client.py
 potpie --json timeline recent --limit 20
-potpie --json graph read --view infra_topology.service_neighborhood --scope service:payments-api --depth 2 --direction out --environment prod
+potpie --json graph read --subgraph infra_topology --view service_neighborhood --scope service:payments-api --depth 2 --direction out --environment prod
 ```
 
 Views and what they answer:
@@ -72,15 +72,15 @@ potpie --json graph search-entities "payments api" --type Service --limit 10
 Reuse the returned `key`. Inventing a near-duplicate key (`service:payments` vs
 `service:local:payments-api`) fragments the graph and breaks future reads.
 
-## 4. Write — `graph mutate`
+## 4. Write - `graph propose` then `graph commit`
 
-`mutate` applies a batch of **semantic** operations (never raw graph CRUD). Validate
-first with `--dry-run` for anything not obviously low-risk.
+Writes are **semantic** operations (never raw graph CRUD). First create a
+server-held plan with `propose`; then commit exactly that `plan_id`.
 
 ```bash
 potpie graph mutation-template --kind repo-baseline   # schema-only skeleton to fill
-potpie --json graph mutate --file mutation.json --dry-run
-potpie --json graph mutate --file mutation.json
+potpie --json graph propose --file mutation.json
+potpie --json graph commit mutation-plan:01JY8T5C
 ```
 
 `mutation-template` kinds: `repo-baseline`, `feature`, `preference`,
@@ -130,12 +130,50 @@ Payload is always batch-shaped:
 Applicable ops: `upsert_entity`, `link_entities`, `assert_claim`, `append_event`,
 `end_relation_validity`, `retract_claim`.
 
-- `supersede_claim` and `merge_duplicate_entities` always return `review_required` in
-  V1.5 (no server-held queue). Re-submit with approval, or drop and instead write a
-  low-authority `agent_claim`/observation.
+- `supersede_claim` and `merge_duplicate_entities` are review-required. They can be
+  proposed, but the local commit path will not apply high-risk/review-required
+  plans until the review workflow is implemented.
 - `patch_entity` and `transition_state` are deferred — model a state change as a new
   claim or `append_event` (e.g. a `VERIFIED` event), never an in-place edit.
 - Never hard-delete a claim: use `end_relation_validity` or `retract_claim`.
+
+## 5. Capture uncertainty - `graph inbox`
+
+Use the inbox when you have evidence that may matter, but you cannot safely pick
+the canonical graph update yet. Inbox items are pending work only; they do not
+appear in ordinary graph reads as facts.
+
+```bash
+potpie --json graph inbox add --summary "Refund retry PR may relate to the prior timeout bug" --evidence github:pr:acme/payments:955 --subgraph debugging
+potpie --json graph inbox list --status pending --limit 20
+potpie --json graph inbox claim graph-inbox:abc123 --by user:alice
+potpie --json graph inbox mark-applied graph-inbox:abc123 --plan mutation-plan:01JY8T5C --mutation mutation-1 --by user:alice
+potpie --json graph inbox mark-rejected graph-inbox:abc123 --reason "not enough evidence" --by user:alice
+```
+
+Processing an inbox item is normal graph work: inspect the catalog/contract, read
+the relevant views, resolve identity with `search-entities`, propose and commit a
+mutation if warranted, then mark the inbox item applied or rejected.
+
+## 6. Inspect quality - `graph quality`
+
+Quality reports are read-only. They surface graph maintenance work but never
+repair semantic facts directly.
+
+```bash
+potpie --json graph quality summary
+potpie --json graph quality duplicate-candidates --limit 20
+potpie --json graph quality stale-facts --subgraph infra_topology --limit 20
+potpie --json graph quality conflicting-claims --limit 20
+potpie --json graph quality orphan-entities --limit 20
+potpie --json graph quality low-confidence --threshold 0.75 --limit 20
+potpie --json graph quality projection-drift --limit 20
+```
+
+If a finding changes canonical meaning, repair it through `graph propose` and
+`graph commit`. If the evidence is uncertain, create a `graph inbox add` item
+instead. Reserve `graph repair` for operator projection maintenance such as
+index or summary rebuilds.
 
 ### Truth classes
 
@@ -172,7 +210,9 @@ hook never reasons — you do.
 - **`instruction`** (e.g. "you resolved `<error>` after editing `<files>` — record
   the bug+fix if non-obvious", or "capture durable learnings") → a *prompt to
   decide*, not an auto-write. Decide the truth class, resolve identity with
-  `graph search-entities`, write a retrieval-grade `description`, then `graph mutate`.
+  `graph search-entities`, write a retrieval-grade `description`, then
+  `graph propose` and `graph commit`. If the learning is useful but uncertain,
+  create a `graph inbox add` item instead.
   If nothing durable was learned, do nothing.
 
 Writes are idempotent by `idempotency_key`, so a nudge-driven capture you've already

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from domain.ontology import (
     FACT_FAMILY_FRESHNESS_TTL_HOURS,
@@ -14,6 +14,8 @@ from domain.ontology import (
     predicate_family_for_episodic_supersede,
     temporal_subject_key_for_edge,
 )
+from domain.graph_workbench import GRAPH_WORKBENCH_CONTRACT_VERSION
+from domain.graph_workbench import GRAPH_WORKBENCH_ONTOLOGY_VERSION
 from domain.source_references import SourceFallback, SourceReferenceRecord
 
 
@@ -65,6 +67,87 @@ class GraphQualityReport:
     conflicts: list[dict[str, Any]] = field(default_factory=list)
     # Auto-supersession or other automatic resolutions (informational).
     resolved_conflicts: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class GraphQualityFinding:
+    """One read-only quality finding surfaced by the V2 workbench."""
+
+    finding_id: str
+    kind: str
+    severity: str
+    summary: str
+    entity_keys: tuple[str, ...] = ()
+    claim_keys: tuple[str, ...] = ()
+    predicates: tuple[str, ...] = ()
+    subgraph: str | None = None
+    source_refs: tuple[str, ...] = ()
+    evidence: tuple[Mapping[str, Any], ...] = ()
+    detail: str | None = None
+    suggested_action: Mapping[str, Any] = field(default_factory=dict)
+    payload: Mapping[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "finding_id": self.finding_id,
+            "kind": self.kind,
+            "severity": self.severity,
+            "summary": self.summary,
+            "entity_keys": list(self.entity_keys),
+            "claim_keys": list(self.claim_keys),
+            "predicates": list(self.predicates),
+            "source_refs": list(self.source_refs),
+            "evidence": [dict(item) for item in self.evidence],
+            "suggested_action": dict(self.suggested_action),
+            "payload": dict(self.payload),
+        }
+        if self.subgraph:
+            out["subgraph"] = self.subgraph
+        if self.detail:
+            out["detail"] = self.detail
+        return out
+
+
+@dataclass(frozen=True, slots=True)
+class GraphQualityResult:
+    """V2 workbench result body for ``graph quality`` reports."""
+
+    ok: bool
+    pot_id: str
+    report: str
+    status: str
+    findings: tuple[GraphQualityFinding, ...] = ()
+    metrics: Mapping[str, Any] = field(default_factory=dict)
+    filters: Mapping[str, Any] = field(default_factory=dict)
+    warnings: tuple[str, ...] = ()
+    unsupported: tuple[Mapping[str, Any], ...] = ()
+    detail: str | None = None
+    recommended_next_action: str | None = None
+    subgraph_versions: Mapping[str, int] = field(default_factory=dict)
+    graph_contract_version: str = GRAPH_WORKBENCH_CONTRACT_VERSION
+    ontology_version: str = GRAPH_WORKBENCH_ONTOLOGY_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "ok": self.ok,
+            "pot_id": self.pot_id,
+            "report": self.report,
+            "status": self.status,
+            "findings": [finding.to_dict() for finding in self.findings],
+            "finding_count": len(self.findings),
+            "metrics": dict(self.metrics),
+            "filters": dict(self.filters),
+            "warnings": list(self.warnings),
+            "unsupported": [dict(item) for item in self.unsupported],
+            "subgraph_versions": dict(self.subgraph_versions),
+            "graph_contract_version": self.graph_contract_version,
+            "ontology_version": self.ontology_version,
+        }
+        if self.detail:
+            out["detail"] = self.detail
+        if self.recommended_next_action:
+            out["recommended_next_action"] = self.recommended_next_action
+        return out
 
 
 # Aliases from external ``source_type`` strings (e.g. "PullRequest", "PR")

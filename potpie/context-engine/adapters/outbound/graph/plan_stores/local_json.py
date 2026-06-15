@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,44 @@ class LocalJsonGraphPlanStore:
             return None
         return GraphMutationPlanRecord.from_dict(raw)
 
+    def list(
+        self,
+        *,
+        pot_id: str,
+        plan_id: str | None = None,
+        mutation_id: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int | None = None,
+    ) -> tuple[GraphMutationPlanRecord, ...]:
+        by_pot = self._load().get("plans", {}).get(pot_id, {})
+        if not isinstance(by_pot, dict):
+            return ()
+        records = [
+            GraphMutationPlanRecord.from_dict(raw)
+            for raw in by_pot.values()
+            if isinstance(raw, dict)
+        ]
+        if plan_id:
+            records = [record for record in records if record.plan_id == plan_id]
+        if mutation_id:
+            records = [
+                record for record in records if record.mutation_id == mutation_id
+            ]
+        if since or until:
+            records = [
+                record
+                for record in records
+                if _record_in_window(record, since=since, until=until)
+            ]
+        records.sort(
+            key=lambda record: record.committed_at or record.created_at,
+            reverse=True,
+        )
+        if limit is not None and limit >= 0:
+            records = records[:limit]
+        return tuple(records)
+
     def _load(self) -> dict[str, Any]:
         try:
             raw = self._path.read_text(encoding="utf-8")
@@ -63,6 +102,24 @@ class LocalJsonGraphPlanStore:
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
         tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
         tmp.replace(self._path)
+
+
+def _record_in_window(
+    record: GraphMutationPlanRecord,
+    *,
+    since: datetime | None,
+    until: datetime | None,
+) -> bool:
+    times = (record.created_at, record.committed_at)
+    for value in times:
+        if value is None:
+            continue
+        if since is not None and value < since:
+            continue
+        if until is not None and value > until:
+            continue
+        return True
+    return False
 
 
 __all__ = ["LocalJsonGraphPlanStore"]
