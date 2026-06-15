@@ -11,7 +11,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+import pytest
+
 from application.use_cases.reap_stale_batches import reap_stale_batches
+from bootstrap import sentry_metrics_runtime
 from domain.reconciliation_batch import BatchEventRef, ReconciliationBatch
 
 
@@ -42,7 +45,17 @@ class TestReapStaleBatches:
         batches.mark_batch_failed.assert_not_called()
         ledger.fail_inflight_events.assert_not_called()
 
-    def test_reaps_each_stale_batch_events_first_then_batch(self) -> None:
+    def test_reaps_each_stale_batch_events_first_then_batch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sentry_counts: list[tuple[str, int, dict[str, str]]] = []
+        monkeypatch.setattr(
+            sentry_metrics_runtime,
+            "count",
+            lambda name, value=1, *, attributes=None, unit=None: sentry_counts.append(
+                (name, value, dict(attributes or {}))
+            ),
+        )
         batches = MagicMock()
         batches.list_stale_in_flight_batches.return_value = [
             _batch("b1"),
@@ -74,6 +87,10 @@ class TestReapStaleBatches:
         ledger.fail_inflight_events.assert_any_call(
             ["b1-e1"], ledger.fail_inflight_events.call_args_list[0].args[1]
         )
+        assert sentry_counts == [
+            ("ce.batch.reaped_total", 1, {"result": "reaped"}),
+            ("ce.batch.reaped_total", 1, {"result": "reaped"}),
+        ]
 
     def test_lease_is_passed_through_to_the_repo_query(self) -> None:
         batches = MagicMock()

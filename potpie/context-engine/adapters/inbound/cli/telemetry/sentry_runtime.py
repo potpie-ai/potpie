@@ -4,13 +4,11 @@ import importlib
 from types import ModuleType
 from typing import Protocol
 
+from bootstrap.sentry_metrics_runtime import configure_metrics, metrics_configured
+
 from .context import (
     TelemetryContext,
     current_telemetry_context,
-)
-from .sentry_privacy import (
-    scrub_sentry_breadcrumb,
-    scrub_sentry_event,
 )
 from .settings import SentrySettings
 
@@ -25,24 +23,10 @@ class _SentryScope(Protocol):
 
 def configure_cli_sentry(settings: SentrySettings) -> None:
     global _configured
-    if not settings.enabled or settings.dsn is None or _configured:
+    if _configured:
         return
-    try:
-        sentry_sdk = _load_sentry_sdk()
-        sentry_sdk.init(
-            dsn=settings.dsn,
-            environment=settings.environment,
-            release=settings.release,
-            dist=settings.dist,
-            send_default_pii=False,
-            include_local_variables=False,
-            max_request_body_size="never",
-            before_send=scrub_sentry_event,
-            before_breadcrumb=scrub_sentry_breadcrumb,
-        )
-        _configured = True
-    except Exception:  # noqa: BLE001
-        return
+    configure_metrics(settings)
+    _configured = metrics_configured()
 
 
 def capture_unexpected_cli_error(
