@@ -134,6 +134,19 @@ def test_github_prompt_events_record_prompt_outcome(fake_sink: _FakeSink) -> Non
     assert fake_sink.events[1].properties["duration_ms"] == 25
 
 
+def test_github_prompt_unknown_outcome_falls_back_to_aborted(
+    fake_sink: _FakeSink,
+) -> None:
+    begin_setup_run()
+
+    capture_github_prompt_outcome("unexpected", duration_ms=25)
+
+    assert [event.name for event in fake_sink.events] == [
+        "cli_onboarding_github_prompt_aborted"
+    ]
+    assert fake_sink.events[0].properties["duration_ms"] == 25
+
+
 def test_activation_event_marks_context_results(fake_sink: _FakeSink) -> None:
     begin_setup_run()
 
@@ -171,6 +184,30 @@ def test_direct_linear_login_records_integration_funnel(
     ]
     assert fake_sink.events[0].properties["provider"] == "linear"
     assert fake_sink.events[0].properties["entrypoint"] == "direct_integration_auth"
+
+
+def test_integration_login_records_unexpected_failure(
+    fake_sink: _FakeSink,
+) -> None:
+    class _IntegrationFailure(RuntimeError):
+        pass
+
+    def _run() -> None:
+        raise _IntegrationFailure("boom")
+
+    with pytest.raises(_IntegrationFailure):
+        auth_commands._run_tracked_integration_login(
+            "linear",
+            entrypoint="direct_integration_auth",
+            runner=_run,
+        )
+
+    assert [event.name for event in fake_sink.events] == [
+        "cli_onboarding_integration_auth_started",
+        "cli_onboarding_integration_auth_failed",
+    ]
+    assert fake_sink.events[1].properties["provider"] == "linear"
+    assert fake_sink.events[1].properties["failure_kind"] == "_IntegrationFailure"
 
 
 def test_setup_picker_login_preserves_entrypoint(

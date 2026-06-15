@@ -437,7 +437,7 @@ def _run_tracked_integration_login(
     )
     try:
         runner()
-    except typer.Exit as exc:
+    except Exception as exc:  # noqa: BLE001 - auth telemetry must record failures.
         capture_integration_auth_event(
             "cli_onboarding_integration_auth_failed",
             provider=provider,

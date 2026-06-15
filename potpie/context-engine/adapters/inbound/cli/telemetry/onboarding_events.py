@@ -156,7 +156,7 @@ def capture_github_prompt_outcome(outcome: str, *, duration_ms: int) -> None:
         "declined": "cli_onboarding_github_prompt_declined",
         "aborted": "cli_onboarding_github_prompt_aborted",
         "skipped": "cli_onboarding_github_prompt_skipped",
-    }[outcome]
+    }.get(outcome, "cli_onboarding_github_prompt_aborted")
     _capture(
         name,
         "integration_auth",

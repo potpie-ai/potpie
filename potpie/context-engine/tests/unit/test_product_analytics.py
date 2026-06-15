@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from adapters.inbound.cli.telemetry import product_analytics
 from adapters.inbound.cli.telemetry.context import TelemetryContext
 from adapters.inbound.cli.telemetry.product_analytics import (
     ProductAnalyticsEvent,
@@ -66,7 +67,15 @@ def test_capture_event_uses_existing_telemetry_identity(monkeypatch) -> None:
         _telemetry_context,
     )
 
-    capture_event("cli_onboarding_setup_started", {"repo_provided": True})
+    capture_event(
+        "cli_onboarding_setup_started",
+        {
+            "anonymous_install_id": "callsite_install",
+            "environment": "callsite_env",
+            "invocation_id": "callsite_invocation",
+            "repo_provided": True,
+        },
+    )
 
     assert len(sink.events) == 1
     event = sink.events[0]
@@ -92,9 +101,13 @@ def test_capture_event_is_noop_without_telemetry_context(monkeypatch) -> None:
     assert sink.events == []
 
 
-def test_configure_product_analytics_uses_noop_when_disabled() -> None:
+def test_configure_product_analytics_uses_noop_when_disabled(monkeypatch) -> None:
     sink = _FakeSink()
     set_product_analytics_sink(sink)
+    monkeypatch.setattr(
+        "adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        _telemetry_context,
+    )
 
     configure_product_analytics(
         ProductAnalyticsSettings(
@@ -114,20 +127,10 @@ def test_posthog_sink_payload_excludes_secrets(monkeypatch) -> None:
 
     calls: list[_PostCall] = []
 
-    class _Client:
-        def __enter__(self) -> "_Client":
-            return self
+    def _send(url: str, payload: dict[str, object]) -> None:
+        calls.append(_PostCall(url=url, payload=payload))
 
-        def __exit__(self, exc_type, exc, tb) -> None:
-            return None
-
-        def post(self, url: str, *, json: dict[str, object]) -> None:
-            calls.append(_PostCall(url=url, payload=json))
-
-    monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.product_analytics.httpx.Client",
-        lambda **_kwargs: _Client(),
-    )
+    monkeypatch.setattr(product_analytics, "_send_product_analytics_payload", _send)
     sink = PostHogSink(
         ProductAnalyticsSettings(
             enabled=True,
@@ -152,3 +155,51 @@ def test_posthog_sink_payload_excludes_secrets(monkeypatch) -> None:
     properties = payload["properties"]
     assert isinstance(properties, dict)
     assert properties == {"repo_location_kind": "explicit_path"}
+
+
+def test_posthog_sink_schedules_delivery_in_background(monkeypatch) -> None:
+    @dataclass
+    class _ScheduledThread:
+        target_name: str
+        url: str
+        daemon: bool
+        name: str
+        started: bool = False
+
+    scheduled: list[_ScheduledThread] = []
+
+    class _Thread:
+        def __init__(self, *, target, kwargs, daemon: bool, name: str) -> None:
+            scheduled.append(
+                _ScheduledThread(
+                    target_name=target.__name__,
+                    url=kwargs["url"],
+                    daemon=daemon,
+                    name=name,
+                )
+            )
+
+        def start(self) -> None:
+            scheduled[0].started = True
+
+    monkeypatch.setattr(product_analytics.threading, "Thread", _Thread)
+
+    product_analytics._send_product_analytics_payload(
+        "https://us.i.posthog.com/capture/",
+        {
+            "api_key": "phc_test",
+            "event": "cli_onboarding_setup_started",
+            "distinct_id": "install_123",
+            "properties": {"repo_location_kind": "explicit_path"},
+        },
+    )
+
+    assert scheduled == [
+        _ScheduledThread(
+            target_name="_post_product_analytics_payload",
+            url="https://us.i.posthog.com/capture/",
+            daemon=True,
+            name="potpie-product-analytics",
+            started=True,
+        )
+    ]
