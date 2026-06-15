@@ -54,6 +54,8 @@ from adapters.outbound.postgres.reconciliation_ledger import (
 )
 from adapters.outbound.settings_env import EnvContextEngineSettings
 from application.services.source_connector_registry import SourceConnectorRegistry
+from bootstrap.sentry_metrics_runtime import configure_metrics
+from bootstrap.sentry_settings import load_sentry_settings
 from domain.ports.event_query_service import EventQueryService
 from domain.ports.event_stream import (
     EventStreamPublisherPort,
@@ -201,6 +203,7 @@ def build_ingestion_server(
     event_stream_publisher: EventStreamPublisherPort | None = None,
 ) -> IngestionServerContainer:
     s = settings or EnvContextEngineSettings()
+    configure_metrics(load_sentry_settings())
     telemetry_sink = telemetry or _default_telemetry()
     observability_sink = observability or _default_observability()
     # Publish to the process-global accessor so middleware / the Celery

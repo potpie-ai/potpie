@@ -51,9 +51,12 @@ def build_app() -> typer.Typer:
         from adapters.inbound.cli.telemetry.context import bind_telemetry_context
         from adapters.inbound.cli.telemetry.sentry_runtime import configure_cli_sentry
         from adapters.inbound.cli.telemetry.settings import load_sentry_settings
+        from bootstrap.sentry_metrics_runtime import configure_metrics
 
         bind_telemetry_context(ctx, json_output=json_)
-        configure_cli_sentry(load_sentry_settings())
+        settings = load_sentry_settings()
+        configure_cli_sentry(settings)
+        configure_metrics(settings)
 
     # Top-level commands (the four-tool surface + bootstrap + auth/login).
     query_cmds.register(app)

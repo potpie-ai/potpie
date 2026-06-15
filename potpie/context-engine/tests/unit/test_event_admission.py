@@ -8,8 +8,15 @@ from unittest.mock import MagicMock
 import pytest
 
 from application.services.event_admission import admit_event
+from application.services.ingestion_submission_service import (
+    DefaultIngestionSubmissionService,
+)
+from bootstrap import sentry_metrics_runtime
+from domain.actor import Actor
 from domain.context_events import ContextEvent, EventScope
 from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
+from domain.ingestion_event_models import IngestionEvent, IngestionSubmissionRequest
+from domain.ports.pot_resolution import single_github_repo_pot
 
 pytestmark = pytest.mark.unit
 
@@ -93,3 +100,172 @@ def test_enqueue_failure_does_not_raise() -> None:
     assert out.inserted is True
     assert out.batch_id == "batch-abc"
     jobs.enqueue_batch.assert_called_once_with("batch-abc")
+
+
+def test_submission_service_mirrors_inserted_admission_to_sentry_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metric_calls: list[tuple[str, int, dict[str, str]]] = []
+
+    def record_count(
+        name: str,
+        value: int = 1,
+        *,
+        attributes: dict[str, str] | None = None,
+    ) -> None:
+        metric_calls.append((name, value, {} if attributes is None else attributes))
+
+    monkeypatch.setattr(sentry_metrics_runtime, "count", record_count)
+    service = _submission_service(inserted=True)
+
+    receipt = service.submit(_submission_request())
+
+    assert receipt.event_id == "evt-1"
+    assert receipt.status == "queued"
+    assert metric_calls == [
+        (
+            "ce.ingest.events_total",
+            1,
+            {"result": "inserted"},
+        )
+    ]
+
+
+def test_submission_service_mirrors_duplicate_admission_to_sentry_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metric_calls: list[tuple[str, int, dict[str, str]]] = []
+
+    def record_count(
+        name: str,
+        value: int = 1,
+        *,
+        attributes: dict[str, str] | None = None,
+    ) -> None:
+        metric_calls.append((name, value, {} if attributes is None else attributes))
+
+    monkeypatch.setattr(sentry_metrics_runtime, "count", record_count)
+    service = _submission_service(inserted=False)
+
+    receipt = service.submit(_submission_request())
+
+    assert receipt.event_id == "evt-1"
+    assert receipt.duplicate is True
+    assert metric_calls == [
+        (
+            "ce.ingest.dedup_total",
+            1,
+            {"result": "duplicate"},
+        )
+    ]
+
+
+def test_submission_service_does_not_export_request_taxonomy_to_sentry_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metric_calls: list[tuple[str, int, dict[str, str]]] = []
+
+    def record_count(
+        name: str,
+        value: int = 1,
+        *,
+        attributes: dict[str, str] | None = None,
+    ) -> None:
+        metric_calls.append((name, value, {} if attributes is None else attributes))
+
+    monkeypatch.setattr(sentry_metrics_runtime, "count", record_count)
+    service = _submission_service(inserted=True)
+
+    service.submit(
+        _submission_request(
+            source_system="github:user@example.com",
+            event_type="pull_request:secret-token-123",
+            action="merged:/src/secrets.py",
+        )
+    )
+
+    assert metric_calls == [
+        (
+            "ce.ingest.events_total",
+            1,
+            {"result": "inserted"},
+        )
+    ]
+
+
+def _submission_service(*, inserted: bool) -> DefaultIngestionSubmissionService:
+    settings = MagicMock()
+    settings.is_enabled.return_value = True
+    pots = MagicMock()
+    pots.resolve_pot.return_value = single_github_repo_pot("pot-1", "o/r")
+    reco = MagicMock()
+    reco.append_event.return_value = ("evt-1", inserted)
+    batches = MagicMock()
+    batches.upsert_open_batch_for_pot.return_value = "batch-abc"
+    jobs = MagicMock()
+    events = MagicMock()
+    events.get_event.return_value = _ingestion_event()
+    return DefaultIngestionSubmissionService(
+        settings=settings,
+        pots=pots,
+        reconciliation_agent=MagicMock(),
+        reco_ledger=reco,
+        events=events,
+        batches=batches,
+        jobs=jobs,
+    )
+
+
+def _submission_request(
+    *,
+    source_system: str = "github",
+    event_type: str = "pull_request",
+    action: str = "merged",
+) -> IngestionSubmissionRequest:
+    return IngestionSubmissionRequest(
+        pot_id="pot-1",
+        ingestion_kind=INGESTION_KIND_AGENT_RECONCILIATION,
+        source_channel="webhook",
+        source_system=source_system,
+        event_type=event_type,
+        action=action,
+        source_id="pr_42_merged",
+        repo_name="o/r",
+        event_id="evt-1",
+        payload={
+            "batch_id": "batch-abc",
+            "event_id": "evt-1",
+            "repo_name": "o/r",
+            "source_id": "pr_42_merged",
+            "title": "Merge X",
+        },
+        metadata={"source_id": "pr_42_merged"},
+        actor=Actor(
+            user_id="user-1",
+            surface="webhook",
+            client_name="github-webhook",
+            auth_method="webhook_signature",
+        ),
+    )
+
+
+def _ingestion_event() -> IngestionEvent:
+    return IngestionEvent(
+        event_id="evt-1",
+        pot_id="pot-1",
+        ingestion_kind=INGESTION_KIND_AGENT_RECONCILIATION,
+        source_channel="webhook",
+        source_system="github",
+        event_type="pull_request",
+        action="merged",
+        source_id="pr_42_merged",
+        dedup_key=None,
+        status="queued",
+        stage="accepted",
+        submitted_at=datetime(2026, 5, 6, 9, 0, tzinfo=timezone.utc),
+        started_at=None,
+        completed_at=None,
+        error=None,
+        payload={},
+        repo_name="o/r",
+    )
