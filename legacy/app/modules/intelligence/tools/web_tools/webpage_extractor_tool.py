@@ -39,15 +39,20 @@ class WebpageExtractorTool:
         # fastCRW is a Firecrawl-API-compatible web scraper (single binary; self-host
         # or cloud). Reuse the same FirecrawlApp client and point it at the fastCRW
         # base URL. Falls back to Firecrawl when CRW_API_KEY is not set.
-        self.api_key = os.getenv("CRW_API_KEY") or os.getenv("FIRECRAWL_API_KEY")
+        crw_api_key = (os.getenv("CRW_API_KEY") or "").strip()
+        self.api_key = crw_api_key or (os.getenv("FIRECRAWL_API_KEY") or "").strip()
         self.api_url = None
-        if os.getenv("CRW_API_KEY"):
+        if crw_api_key:
             # Default to fastCRW cloud; allow self-host override via CRW_API_URL.
-            self.api_url = os.getenv("CRW_API_URL", "https://fastcrw.com/api")
+            self.api_url = (
+                os.getenv("CRW_API_URL") or ""
+            ).strip() or "https://fastcrw.com/api"
         self.firecrawl = None
         if self.api_key:
             if self.api_url:
-                self.firecrawl = FirecrawlApp(api_key=self.api_key, api_url=self.api_url)
+                self.firecrawl = FirecrawlApp(
+                    api_key=self.api_key, api_url=self.api_url
+                )
             else:
                 self.firecrawl = FirecrawlApp(api_key=self.api_key)
 
