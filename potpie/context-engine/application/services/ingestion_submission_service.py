@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from application.services.event_admission import admit_event
 from application.services.ingestion_wait import wait_for_terminal_ingestion_event
+from bootstrap import sentry_metrics_runtime
 from bootstrap.observability_context import bind_correlation, correlation_scope
 from bootstrap.observability_runtime import get_observability
 from domain.ports.observability import SPAN_KIND_SERVER
@@ -211,10 +212,18 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
                     exc_info=True,
                 )
             obs.counter("ce.ingest.events_total", 1, attributes=metric_attrs)
+            sentry_metrics_runtime.count(
+                "ce.ingest.events_total",
+                attributes={"result": "inserted"},
+            )
             if outcome.batch_id:
                 bind_correlation(batch_id=outcome.batch_id)
         else:
             obs.counter("ce.ingest.dedup_total", 1, attributes=metric_attrs)
+            sentry_metrics_runtime.count(
+                "ce.ingest.dedup_total",
+                attributes={"result": "duplicate"},
+            )
 
         if not outcome.inserted:
             ev = self._events.get_event(outcome.event_id)

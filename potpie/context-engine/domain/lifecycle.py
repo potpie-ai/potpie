@@ -45,6 +45,7 @@ class SetupPlan:
     repo: str | None = "."
     pot: str = "default"
     agent: str = "claude"
+    scan: bool = False
     assume_yes: bool = False
     defer_default_pot: bool = False
     defer_skills: bool = False
@@ -162,6 +163,7 @@ def _plan_dict(plan: SetupPlan) -> dict[str, Any]:
         "repo": plan.repo,
         "pot": plan.pot,
         "agent": plan.agent,
+        "scan": plan.scan,
         "defer_default_pot": plan.defer_default_pot,
         "defer_skills": plan.defer_skills,
     }

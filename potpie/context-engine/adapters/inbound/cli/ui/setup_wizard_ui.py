@@ -161,6 +161,7 @@ class SetupWizardUI:
         *,
         repo: Path,
         agent: str,
+        scan: bool,
     ) -> None:
         if not self.use_rich:
             print("Potpie Setup")
@@ -169,6 +170,8 @@ class SetupWizardUI:
         console = stderr_console()
         width = panel_width_for_console(console)
         extras = f"agent {agent}"
+        if scan:
+            extras += " · scan on"
         play_intro(
             console,
             subtitle=f"Repo {repo.resolve()} · {extras}",
@@ -312,7 +315,7 @@ class SetupWizardUI:
             else "[dim]Already set up — no changes needed.[/dim]"
         )
         console.print(title)
-        lines = [
+        lines: list[str] = [
             f"[{LOGO_COLOR}]✓[/{LOGO_COLOR}] Config [cyan]{escape(_truncate_middle(setup_path, cw - 10))}[/cyan]",
             f"[{LOGO_COLOR}]✓[/{LOGO_COLOR}] Data [cyan]{escape(_truncate_middle(data_path, cw - 8))}[/cyan]",
         ]

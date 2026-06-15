@@ -9,12 +9,14 @@ Sentry. This sink closes that:
    INSIDE worker_process_init (EC2) — never at module import for workers.
    default_integrations=False + explicit list (preserves the audit's
    Strawberry-not-installed safety from the original setup_sentry).
-         - build_handler(): handler at config.sentry.event_level (default ERROR)
-           that captures logged exceptions, attaching obs_context +
-          obs_fields as scope tags / extras.
-         - own_logging_integration=True (default): include LoggingIntegration while
-           disabling automatic log events and breadcrumbs.
-         - Disabled-state contract: enabled=False or no DSN -> no network handler.
+ - build_handler(): handler at config.sentry.event_level (default ERROR)
+   that calls capture_exception/capture_message, attaching obs_context +
+   obs_fields as scope tags / extras.
+ - own_logging_integration=True (default): include LoggingIntegration with
+   event_level=None so THIS sink owns the log -> event path (no double
+   capture).
+ - Disabled-state contract: enabled=False or no DSN -> setup() emits ONE
+   visible warning and build_handler returns None (no silent no-op).
 """
 
 from __future__ import annotations
@@ -23,13 +25,6 @@ import logging
 import os
 
 from ..config import ObservabilityConfig
-from .sentry_privacy import (
-    SentryRateLimiter,
-    scrub_sentry_breadcrumb,
-    scrub_sentry_event,
-    scrub_sentry_log_message,
-    split_sentry_fields,
-)
 
 _HINT = "sentry sink requires sentry-sdk — install observability[sentry]"
 _LEVEL_TO_SENTRY = {
@@ -40,56 +35,37 @@ _LEVEL_TO_SENTRY = {
     "CRITICAL": "fatal",
 }
 _logger = logging.getLogger(__name__)
-_state = {"client_key": None}
+_state = {"initialised_pid": None}
 _disabled_notices: set[tuple[int, str]] = set()
 
 
 class _SentryHandler(logging.Handler):
-    def __init__(self, config: ObservabilityConfig) -> None:
-        super().__init__()
-        self._config = config
-
     def emit(self, record: logging.LogRecord) -> None:
         try:
             import sentry_sdk
 
-            fields: dict = {
-                "service": self._config.service_name,
-                "environment": self._config.sentry.environment or self._config.env,
-                "release": self._config.sentry.release,
-            }
+            fields: dict = {}
             for attr in ("obs_context", "obs_fields"):
                 data = getattr(record, attr, None)
                 if isinstance(data, dict):
                     fields.update(data)
-            if not record.exc_info:
-                fields.setdefault("error.code", "logged_error")
-                fields.setdefault("error.kind", "unexpected")
-                fields.setdefault("is_expected", "false")
-            tags, contexts = split_sentry_fields(fields)
             # new_scope is the sentry-sdk 2.x preferred API (push_scope deprecated).
             with sentry_sdk.new_scope() as scope:
-                for k, v in tags.items():
+                for k, v in fields.items():
                     try:
-                        scope.set_tag(k, v)
-                    except Exception as exc:
-                        _logger.debug("sentry tag skipped: %s", exc)
-                for name, context in contexts.items():
-                    scope.set_context(name, context)
+                        scope.set_tag(str(k), str(v))
+                    except Exception:
+                        pass
                 scope.set_extra("logger", record.name)
                 scope.set_extra("function", record.funcName)
                 scope.set_extra("line", record.lineno)
                 if record.exc_info:
                     sentry_sdk.capture_exception(record.exc_info)
                 else:
-                    log_message = scrub_sentry_log_message(record.getMessage())
-                    if log_message is not None:
-                        scope.set_extra("log_message", log_message)
-                    error_code = tags.get("error.code", "logged_error")
-                    level = _LEVEL_TO_SENTRY.get(record.levelname, "error")
-                    sentry_sdk.capture_message(f"potpie.{error_code}", level=level)
-        except Exception as exc:
-            _logger.debug("sentry capture failed: %s", exc)
+                    level = _LEVEL_TO_SENTRY.get(record.levelname, "info")
+                    sentry_sdk.capture_message(record.getMessage(), level=level)
+        except Exception:
+            self.handleError(record)
 
 
 class SentrySink:
@@ -110,21 +86,14 @@ class SentrySink:
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(_HINT) from exc
 
-        client_key = (os.getpid(), sc.dsn, sc.environment, sc.release, id(sc.transport))
-        if _state["client_key"] == client_key:
+        if _state["initialised_pid"] == os.getpid():
             return  # idempotent within a process
 
         integrations: list = []
         if sc.own_logging_integration:
             # event_level=None disables Sentry's auto log->event capture;
-            # level=None disables automatic log breadcrumbs as a privacy default.
-            integrations.append(
-                LoggingIntegration(
-                    level=None,
-                    event_level=None,
-                    sentry_logs_level=None,
-                )
-            )
+            # our _SentryHandler owns that path.
+            integrations.append(LoggingIntegration(event_level=None))
         if sc.with_fastapi:
             try:
                 from sentry_sdk.integrations.fastapi import FastApiIntegration
@@ -140,47 +109,24 @@ class SentrySink:
             except Exception as exc:
                 _logger.debug("CeleryIntegration skipped: %s", exc)
 
-        rate_limiter = SentryRateLimiter(sc.max_events_per_minute)
-
-        def before_send(event, hint):
-            if sc.before_send is not None:
-                event = sc.before_send(event, hint)
-                if event is None:
-                    return None
-            return scrub_sentry_event(event, hint, rate_limiter=rate_limiter)
-
-        def before_breadcrumb(breadcrumb, hint):
-            if sc.before_breadcrumb is not None:
-                breadcrumb = sc.before_breadcrumb(breadcrumb, hint)
-                if breadcrumb is None:
-                    return None
-            return scrub_sentry_breadcrumb(breadcrumb, hint)
-
         try:
             sentry_sdk.init(
                 dsn=sc.dsn,
                 environment=sc.environment,
-                release=sc.release,
-                dist=sc.dist,
-                send_default_pii=sc.send_default_pii,
-                before_send=before_send,
-                before_breadcrumb=before_breadcrumb,
-                transport=sc.transport,
-                include_source_context=sc.include_source_context,
                 traces_sample_rate=sc.traces_sample_rate,
                 profiles_sample_rate=sc.profiles_sample_rate,
                 default_integrations=False,
                 integrations=integrations,
             )
-            _state["client_key"] = client_key
+            _state["initialised_pid"] = os.getpid()
         except Exception as exc:
-            _logger.debug("sentry_sdk.init failed: %s", exc)
+            _logger.warning("sentry_sdk.init failed: %s", exc)
 
     def build_handler(self, config: ObservabilityConfig) -> logging.Handler | None:
         sc = config.sentry
-        if not sc.enabled or not sc.dsn or not sc.capture_error_logs:
+        if not sc.enabled or not sc.dsn:
             return None
-        handler = _SentryHandler(config)
+        handler = _SentryHandler()
         handler.setLevel(sc.event_level)
         return handler
 
@@ -195,7 +141,7 @@ class SentrySink:
 
             try:
                 sentry_sdk.flush(timeout=2.0)
-            except Exception as exc:
-                _logger.debug("sentry flush failed: %s", exc)
-        except Exception as exc:
-            _logger.debug("sentry shutdown skipped: %s", exc)
+            except Exception:
+                pass
+        except Exception:
+            pass

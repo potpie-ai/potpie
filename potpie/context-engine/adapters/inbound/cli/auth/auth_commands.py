@@ -7,7 +7,8 @@ import threading
 import time
 import urllib.parse
 import webbrowser
-from typing import Any
+from collections.abc import Callable
+from typing import Any, Literal
 
 import typer
 from rich.markup import escape
@@ -42,6 +43,13 @@ from adapters.outbound.cli_auth.integration_session import (
 )
 from adapters.outbound.cli_auth.integration_verify import verify_integration_access
 from adapters.inbound.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
+from adapters.inbound.cli.telemetry.onboarding_events import (
+    capture_integration_auth_event,
+    current_entrypoint,
+    elapsed_ms,
+    now_ms,
+    sanitized_failure_kind,
+)
 from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
 from adapters.outbound.cli_auth.pkce import generate_pkce_pair
 from adapters.outbound.cli_auth.provider_config import (
@@ -65,6 +73,7 @@ confluence_app = typer.Typer(help="Confluence integration and read.")
 
 _OAUTH_CALLBACK_TIMEOUT = 300.0
 _ALL_PROVIDERS: tuple[Provider, ...] = ("github", "linear", "jira", "confluence")
+IntegrationAuthProvider = Literal["linear", "jira", "confluence"]
 
 
 def _canonical_provider_for_json(product: str) -> str:
@@ -92,9 +101,7 @@ def _print_standard_logout(
     if was_authenticated:
         message = "Logged out successfully."
     else:
-        message = (
-            "No active session found. Any stale local credentials were removed."
-        )
+        message = "No active session found. Any stale local credentials were removed."
     payload: dict[str, Any] = {"ok": True, "provider": provider}
     if not was_authenticated:
         payload["cleared_stale"] = True
@@ -189,13 +196,17 @@ def _print_linear_login_success(
         status.get("site_name"),
     )
     who = account[0] or account[1] or "Linear"
+    token_storage = str(status.get("token_storage") or "keychain")
+    storage_label = (
+        "system keychain" if token_storage == "keychain" else "local credentials file"
+    )
     org_suffix = f" @ {account[2]}" if account[2] else ""
     if refreshed:
         summary = f"Linear session refreshed for {who}{org_suffix}."
     else:
         summary = (
             f"Logged in to Linear as {who}{org_suffix}. "
-            f"Stored tokens in system keychain; metadata saved to {credentials_path()}."
+            f"Stored tokens in {storage_label}; metadata saved to {credentials_path()}."
         )
     if not j:
         print_plain_line(summary, as_json=False)
@@ -207,7 +218,7 @@ def _print_linear_login_success(
         "login": status.get("login"),
         "email": status.get("email"),
         "organization": status.get("site_name"),
-        "token_storage": "keychain",
+        "token_storage": token_storage,
         "auth_type": status.get("auth_type"),
         "expires_at": status.get("expires_at"),
     }
@@ -260,8 +271,7 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
                 )
                 return
             print_plain_line(
-                "Linear is already connected"
-                + (f" ({names})." if names else "."),
+                "Linear is already connected" + (f" ({names})." if names else "."),
                 as_json=False,
             )
             print_plain_line(
@@ -406,18 +416,61 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
     _print_linear_login_success(get_integration_status("linear"), tokens=tokens)
 
 
+def _integration_auth_provider(provider: str) -> IntegrationAuthProvider:
+    key = provider.strip().lower()
+    if key == "linear" or key == "jira" or key == "confluence":
+        return key
+    raise ValueError(f"Unknown integration provider {provider!r}.")
+
+
+def _run_tracked_integration_login(
+    provider: IntegrationAuthProvider,
+    *,
+    entrypoint: str,
+    runner: Callable[[], None],
+) -> None:
+    started_ms = now_ms()
+    capture_integration_auth_event(
+        "cli_onboarding_integration_auth_started",
+        provider=provider,
+        entrypoint=entrypoint,
+    )
+    try:
+        runner()
+    except Exception as exc:  # noqa: BLE001 - auth telemetry must record failures.
+        capture_integration_auth_event(
+            "cli_onboarding_integration_auth_failed",
+            provider=provider,
+            entrypoint=entrypoint,
+            duration_ms=elapsed_ms(started_ms),
+            failure_kind=sanitized_failure_kind(exc),
+        )
+        raise
+    capture_integration_auth_event(
+        "cli_onboarding_integration_auth_completed",
+        provider=provider,
+        entrypoint=entrypoint,
+        duration_ms=elapsed_ms(started_ms),
+    )
+
+
 def run_integration_login(provider: str, *, force: bool = False) -> None:
     """Run the standard login flow for ``linear``, ``jira``, or ``confluence``."""
-    key = provider.strip().lower()
-    if key == "linear":
-        _run_linear_oauth_flow(force=force)
-        return
-    if key in ("jira", "confluence"):
+    key = _integration_auth_provider(provider)
+
+    def _run() -> None:
+        if key == "linear":
+            _run_linear_oauth_flow(force=force)
+            return
         load_cli_env()
         j, v = _flags()
         run_atlassian_api_token_auth(key, force=force, as_json=j, verbose=v)
-        return
-    raise ValueError(f"Unknown integration provider {provider!r}.")
+
+    _run_tracked_integration_login(
+        key,
+        entrypoint=current_entrypoint("direct_integration_auth"),
+        runner=_run,
+    )
 
 
 def integration_status(
@@ -607,7 +660,11 @@ def auth_linear(
     ),
 ) -> None:
     """Authenticate with Linear via OAuth (PKCE)."""
-    _run_linear_oauth_flow(force=force)
+    _run_tracked_integration_login(
+        "linear",
+        entrypoint="direct_integration_auth",
+        runner=lambda: _run_linear_oauth_flow(force=force),
+    )
 
 
 def _esc(value: Any) -> str:
@@ -636,7 +693,11 @@ def linear_login(
     ),
 ) -> None:
     """Authenticate with Linear via OAuth (PKCE)."""
-    _run_linear_oauth_flow(force=force, add=add)
+    _run_tracked_integration_login(
+        "linear",
+        entrypoint="direct_integration_auth",
+        runner=lambda: _run_linear_oauth_flow(force=force, add=add),
+    )
 
 
 @linear_app.command("logout")
@@ -717,7 +778,6 @@ def _print_linear_issue_row(row: dict[str, Any]) -> None:
         _print_remote_line(f"  Updated: {_esc(row.get('updated'))}")
     if row.get("url"):
         _print_remote_line(f"  URL: {_esc(row.get('url'))}")
-
 
 
 def _build_auth_compat_linear() -> typer.Typer:
@@ -887,16 +947,24 @@ def jira_login(
     ),
 ) -> None:
     """Connect Jira with an Atlassian API token (Jira access only)."""
-    load_cli_env()
-    j, v = _flags()
-    run_atlassian_api_token_auth(
+
+    def _run() -> None:
+        load_cli_env()
+        j, v = _flags()
+        run_atlassian_api_token_auth(
+            "jira",
+            force=force,
+            as_json=j,
+            verbose=v,
+            email=email,
+            api_token=api_token,
+            site_subdomain=site_subdomain,
+        )
+
+    _run_tracked_integration_login(
         "jira",
-        force=force,
-        as_json=j,
-        verbose=v,
-        email=email,
-        api_token=api_token,
-        site_subdomain=site_subdomain,
+        entrypoint="direct_integration_auth",
+        runner=_run,
     )
 
 
@@ -975,16 +1043,24 @@ def confluence_login(
     ),
 ) -> None:
     """Connect Confluence with an Atlassian API token (Confluence access only)."""
-    load_cli_env()
-    j, v = _flags()
-    run_atlassian_api_token_auth(
+
+    def _run() -> None:
+        load_cli_env()
+        j, v = _flags()
+        run_atlassian_api_token_auth(
+            "confluence",
+            force=force,
+            as_json=j,
+            verbose=v,
+            email=email,
+            api_token=api_token,
+            site_subdomain=site_subdomain,
+        )
+
+    _run_tracked_integration_login(
         "confluence",
-        force=force,
-        as_json=j,
-        verbose=v,
-        email=email,
-        api_token=api_token,
-        site_subdomain=site_subdomain,
+        entrypoint="direct_integration_auth",
+        runner=_run,
     )
 
 

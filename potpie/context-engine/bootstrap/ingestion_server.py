@@ -22,12 +22,16 @@ from adapters.outbound.connectors.github import (
 )
 from adapters.outbound.connectors._bench_stubs import register_bench_stubs
 from adapters.outbound.connectors.notion import NotionConnector
+from adapters.outbound.graph import GraphWriterPort
+from adapters.outbound.graph import Neo4jGraphWriter as _Neo4jGraphWriter
+from adapters.outbound.graph.backends.neo4j_backend import (
+    Neo4jGraphBackend as _Neo4jGraphBackend,
+)
 from adapters.outbound.graph.backends import build_backend
 from adapters.outbound.graph.context_graph_service import ContextGraphService
 from adapters.outbound.reconciliation.context_graph_tools import (
     ContextGraphReconciliationTools,
 )
-from adapters.outbound.graph import GraphWriterPort
 from adapters.outbound.policy import DefaultPolicyAdapter
 from adapters.outbound.postgres.agent_checkpoint_store import (
     SqlAlchemyAgentCheckpointStore,
@@ -50,6 +54,8 @@ from adapters.outbound.postgres.reconciliation_ledger import (
 from adapters.outbound.settings_env import EnvContextEngineSettings
 from application.services.graph_service import DefaultGraphService
 from application.services.source_connector_registry import SourceConnectorRegistry
+from bootstrap.sentry_metrics_runtime import configure_metrics
+from bootstrap.sentry_settings import load_sentry_settings
 from domain.ports.event_query_service import EventQueryService
 from domain.ports.event_stream import (
     EventStreamPublisherPort,
@@ -76,6 +82,9 @@ from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.services.graph_service import GraphService
 from domain.ports.telemetry import TelemetryPort
 from domain.source_references import SourceReferenceRecord
+
+Neo4jGraphWriter = _Neo4jGraphWriter
+Neo4jGraphBackend = _Neo4jGraphBackend
 
 
 @dataclass
@@ -214,6 +223,7 @@ def build_ingestion_server(
     event_stream_publisher: EventStreamPublisherPort | None = None,
 ) -> IngestionServerContainer:
     s = settings or EnvContextEngineSettings()
+    configure_metrics(load_sentry_settings())
     telemetry_sink = telemetry or _default_telemetry()
     observability_sink = observability or _default_observability()
     # Publish to the process-global accessor so middleware / the Celery
@@ -241,7 +251,7 @@ def build_ingestion_server(
     backend = build_backend(backend_kind, settings=s)
     graph_writer = getattr(backend, "graph_writer", None)
     graph = DefaultGraphService(backend=backend)
-    context_graph = ContextGraphService(graph=graph)
+    context_graph = _build_context_graph_service(graph=graph, backend=backend)
     # Fail fast if the read trunk's reader set has drifted from the advertised
     # ``READER_BACKED_INCLUDES`` (see domain.coherence).
     from domain.coherence import assert_runtime_coherence
@@ -265,6 +275,17 @@ def build_ingestion_server(
         observability=observability_sink,
         event_stream_publisher=stream_publisher,
     )
+
+
+def _build_context_graph_service(
+    *,
+    graph: GraphService,
+    backend: GraphBackend,
+) -> ContextGraphPort:
+    try:
+        return ContextGraphService(graph=graph)
+    except TypeError:
+        return ContextGraphService(backend)
 
 
 def _default_telemetry() -> TelemetryPort:

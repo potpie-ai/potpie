@@ -9,6 +9,12 @@ from __future__ import annotations
 import typer
 
 from adapters.inbound.cli.commands._common import contract, emit, get_host
+from adapters.inbound.cli.telemetry.onboarding_events import (
+    capture_project_binding_event,
+    elapsed_ms,
+    now_ms,
+    sanitized_failure_kind,
+)
 
 skills_app = typer.Typer(help="CLI-managed agent skills.")
 
@@ -21,9 +27,7 @@ def skills_list(
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
-        items = get_host().skills.list(
-            agent=agent, scope=effective_scope, path=path
-        )
+        items = get_host().skills.list(agent=agent, scope=effective_scope, path=path)
         emit(
             {
                 "agent": agent,
@@ -31,7 +35,7 @@ def skills_list(
                 "skills": [
                     {"id": s.id, "version": s.version, "installed": s.installed}
                     for s in items
-                ]
+                ],
             },
             human="\n".join(
                 f"  {'✓' if s.installed else ' '} {s.id} v{s.version}" for s in items
@@ -48,11 +52,40 @@ def skills_install(
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
-        res = get_host().skills.install(
-            agent=agent,
-            skill_id=skill_id,
-            path=path,
-            scope=effective_scope,
+        started_ms = now_ms()
+        capture_project_binding_event(
+            "cli_onboarding_agent_skills_install_started",
+            entrypoint="direct_command",
+            properties={"agent": agent, "scope": effective_scope},
+        )
+        try:
+            res = get_host().skills.install(
+                agent=agent,
+                skill_id=skill_id,
+                path=path,
+                scope=effective_scope,
+            )
+        except Exception as exc:  # noqa: BLE001
+            capture_project_binding_event(
+                "cli_onboarding_agent_skills_install_failed",
+                entrypoint="direct_command",
+                properties={
+                    "agent": agent,
+                    "scope": effective_scope,
+                    "failure_kind": sanitized_failure_kind(exc),
+                    "duration_ms": elapsed_ms(started_ms),
+                },
+            )
+            raise
+        capture_project_binding_event(
+            "cli_onboarding_agent_skills_install_completed",
+            entrypoint="direct_command",
+            properties={
+                "agent": res.agent,
+                "scope": effective_scope,
+                "changed_count": len(res.changed),
+                "duration_ms": elapsed_ms(started_ms),
+            },
         )
         emit(
             {
@@ -155,9 +188,7 @@ def skills_add(source: str) -> None:
         emit({"detail": res.detail}, human=res.detail or "added")
 
 
-def _format_skill_operation(
-    *, verb: str, agent: str, changed: tuple[str, ...]
-) -> str:
+def _format_skill_operation(*, verb: str, agent: str, changed: tuple[str, ...]) -> str:
     if changed:
         return f"{verb} Potpie skills for {agent}: {', '.join(changed)}"
     if verb == "installed":

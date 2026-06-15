@@ -15,6 +15,9 @@ from adapters.inbound.cli.commands._common import (
     get_host,
     resolve_pot_id,
 )
+from adapters.inbound.cli.telemetry.onboarding_events import (
+    capture_activation_succeeded,
+)
 from domain.ports.agent_context import RecordRequest, ResolveRequest, SearchRequest
 
 
@@ -50,6 +53,7 @@ def register(root: typer.Typer) -> None:
                     mode=mode,
                 )
             )
+            _capture_context_activation(command="resolve", item_count=len(env.items))
             emit(_envelope_payload(env), human=_envelope_human(env))
 
     @root.command()
@@ -65,6 +69,7 @@ def register(root: typer.Typer) -> None:
             env = host.agent_context.search(
                 SearchRequest(pot_id=pot_id, query=query, include=_split(include))
             )
+            _capture_context_activation(command="search", item_count=len(env.items))
             emit(_envelope_payload(env), human=_envelope_human(env))
 
     @root.command()
@@ -100,7 +105,7 @@ def register(root: typer.Typer) -> None:
             )
 
 
-def _parse_scope(scope: str | None) -> dict:
+def _parse_scope(scope: str | None) -> dict[str, str]:
     if not scope:
         return {}
     out: dict[str, str] = {}
@@ -111,8 +116,20 @@ def _parse_scope(scope: str | None) -> dict:
     return out
 
 
-def _envelope_payload(env) -> dict:
-    return env.to_dict()
+def _envelope_payload(env) -> dict[str, object]:
+    return {
+        "pot_id": env.pot_id,
+        "intent": env.intent,
+        "overall_confidence": env.overall_confidence,
+        "items": [
+            {"include": i.include, "score": i.score, "payload": dict(i.payload)}
+            for i in env.items
+        ],
+        "coverage": [{"include": c.include, "status": c.status} for c in env.coverage],
+        "unsupported_includes": [
+            {"name": u.name, "reason": u.reason} for u in env.unsupported_includes
+        ],
+    }
 
 
 def _envelope_human(env) -> str:
@@ -128,3 +145,11 @@ def _envelope_human(env) -> str:
 
 
 __all__ = ["register"]
+
+
+def _capture_context_activation(*, command: str, item_count: int) -> None:
+    capture_activation_succeeded(
+        command=command,
+        result_kind="context_result",
+        item_count=item_count,
+    )

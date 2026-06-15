@@ -7,6 +7,8 @@ from all three services via ``context_status``.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 
 from adapters.inbound.cli.commands._common import (
@@ -17,8 +19,21 @@ from adapters.inbound.cli.commands._common import (
     is_json,
     resolve_pot_id,
 )
+from adapters.inbound.cli.telemetry.onboarding_events import (
+    CliSetupAnalyticsObserver,
+    begin_setup_run,
+    capture_activation_succeeded,
+    capture_project_binding_event,
+    capture_setup_completed,
+    capture_setup_dry_run_completed,
+    capture_setup_started,
+    elapsed_ms,
+    now_ms,
+)
+from adapters.inbound.cli.ui import setup_ux
+from bootstrap import sentry_metrics_runtime
 from domain.errors import CapabilityNotImplemented
-from domain.lifecycle import SetupPlan
+from domain.lifecycle import SetupPlan, SetupReport
 from domain.ports.agent_context import StatusRequest
 
 
@@ -33,22 +48,21 @@ def register(root: typer.Typer) -> None:
             "--backend",
             help="Graph backend profile (defaults to the active backend).",
         ),
+        scan: bool = typer.Option(False, "--scan"),
         dry_run: bool = typer.Option(
             False, "--dry-run", help="Show the steps without executing."
         ),
         yes: bool = typer.Option(False, "--yes", "-y", help="Assume yes for prompts."),
     ) -> None:
         """Idempotent first-run: provision config, storage, daemon, default pot, skills."""
-        from pathlib import Path
-
-        from adapters.inbound.cli.ui import setup_ux
-
         with contract():
             host = get_host()
             in_process = getattr(host.daemon, "in_process", False)
             from bootstrap.host_wiring import default_backend_profile
 
-            selected_backend = backend or default_backend_profile()
+            selected_backend = backend or getattr(
+                host.backend, "profile", default_backend_profile()
+            )
             # --backend selects the storage profile for this run. Backend
             # selection happens at wiring time, so rebuild the host on the chosen
             # profile when it differs from the active one (keeps the report honest).
@@ -62,7 +76,8 @@ def register(root: typer.Typer) -> None:
                 )
                 set_host(host)
                 selected_backend = host.backend.profile
-            use_rich = setup_ux.rich_enabled(as_json=is_json()) and not yes
+            json_output = is_json()
+            use_rich = setup_ux.rich_enabled(as_json=json_output) and not yes
             plan = SetupPlan(
                 mode=host.profile if host.profile in ("local", "managed") else "local",
                 host_mode="in_process" if in_process else "daemon",
@@ -70,9 +85,19 @@ def register(root: typer.Typer) -> None:
                 repo=repo,
                 pot=pot,
                 agent=agent,
+                scan=scan,
                 assume_yes=yes,
                 defer_default_pot=use_rich,
                 defer_skills=use_rich,
+            )
+            setup_started_ms = now_ms()
+            begin_setup_run()
+            if in_process:
+                host.setup.set_observer(CliSetupAnalyticsObserver())
+            capture_setup_started(
+                plan,
+                interactive=use_rich,
+                json_output=json_output,
             )
 
             if dry_run:
@@ -83,7 +108,13 @@ def register(root: typer.Typer) -> None:
 
                     preview_host = build_host_shell()
                     preview = preview_host.setup.preview(plan)
+                capture_setup_dry_run_completed(
+                    plan=plan,
+                    planned_step_count=len(preview.steps),
+                    hard_step_count=sum(1 for step in preview.steps if step.hard),
+                )
                 emit(preview.to_dict(), human=_preview_human(preview))
+                _emit_setup_run_metric(plan, result="dry_run", dry_run=True)
                 return
 
             if not in_process:
@@ -97,6 +128,21 @@ def register(root: typer.Typer) -> None:
                     )
 
             report = host.setup.run(plan)
+            capture_setup_completed(
+                plan=plan,
+                ok=report.ok,
+                duration_ms=elapsed_ms(setup_started_ms),
+                hard_failed_step=_first_hard_failed_step(report),
+                soft_warning_count=_soft_warning_count(report),
+            )
+            if report.ok and not use_rich:
+                _capture_plain_project_binding(report)
+            _emit_setup_run_metric(
+                report.plan,
+                result="ok" if report.ok else "degraded",
+                dry_run=False,
+            )
+            _emit_setup_step_metrics(report)
 
             # Animated wizard for interactive TTYs; --json and --yes/non-interactive
             # fall through to the plain, machine-readable emit path.
@@ -105,6 +151,7 @@ def register(root: typer.Typer) -> None:
                     report,
                     repo=Path(repo),
                     agent=agent,
+                    scan=scan,
                     use_rich=True,
                     config_home=getattr(host.daemon, "home", None),
                 )
@@ -149,7 +196,9 @@ def register(root: typer.Typer) -> None:
         ),
     ) -> None:
         """Integration auth status by default; use --host for daemon/pot readiness."""
-        host_status = host or pot is not None or intent != "feature" or harness != "claude"
+        host_status = (
+            host or pot is not None or intent != "feature" or harness != "claude"
+        )
         if not host_status:
             from adapters.inbound.cli.auth.auth_commands import integration_status
 
@@ -157,11 +206,12 @@ def register(root: typer.Typer) -> None:
             return
 
         with contract():
-            host = get_host()
-            pot_id = resolve_pot_id(host, pot)
-            report = host.agent_context.status(
+            shell = get_host()
+            pot_id = resolve_pot_id(shell, pot)
+            report = shell.agent_context.status(
                 StatusRequest(pot_id=pot_id, intent=intent, harness=harness)
             )
+            _capture_host_status_activation()
             emit(
                 {
                     "profile": report.profile,
@@ -258,7 +308,7 @@ def register(root: typer.Typer) -> None:
     root.add_typer(config_app, name="config")
 
 
-def _nudge_dict(nudge) -> dict | None:
+def _nudge_dict(nudge) -> dict[str, object] | None:
     if nudge is None:
         return None
     return {
@@ -315,4 +365,80 @@ def _status_human(report) -> str:
     return "\n".join(lines)
 
 
+def _emit_setup_run_metric(plan: SetupPlan, *, result: str, dry_run: bool) -> None:
+    sentry_metrics_runtime.count(
+        "ce.setup.runs_total",
+        attributes={
+            "result": result,
+            "backend": plan.backend,
+            "host_mode": plan.host_mode,
+            "scan": plan.scan,
+            "dry_run": dry_run,
+        },
+    )
+
+
+def _emit_setup_step_metrics(report: SetupReport) -> None:
+    for step in report.steps:
+        sentry_metrics_runtime.count(
+            "ce.setup.step_total",
+            attributes={
+                "step": step.step,
+                "state": step.state,
+                "hard": step.hard,
+            },
+        )
+
+
 __all__ = ["register"]
+
+
+def _first_hard_failed_step(report) -> str | None:
+    for step in report.steps:
+        if step.hard and not step.ok:
+            return step.step
+    return None
+
+
+def _soft_warning_count(report) -> int:
+    return sum(1 for step in report.steps if not step.hard and not step.ok)
+
+
+def _capture_plain_project_binding(report) -> None:
+    source = _step_state(report, "source")
+    skills = _step_state(report, "skills")
+    if source is None and skills is None:
+        return
+    capture_project_binding_event(
+        "cli_onboarding_project_binding_started",
+        entrypoint="setup",
+        properties={
+            "repo_provided": report.plan.repo is not None,
+            "agent": report.plan.agent,
+        },
+    )
+    completed = source in {"done", "skipped"} and skills in {"done", "skipped"}
+    capture_project_binding_event(
+        "cli_onboarding_project_binding_completed"
+        if completed
+        else "cli_onboarding_project_binding_incomplete",
+        entrypoint="setup",
+        properties={
+            "source_state": source or "missing",
+            "skills_state": skills or "missing",
+        },
+    )
+
+
+def _step_state(report, step_id: str) -> str | None:
+    for step in report.steps:
+        if step.step == step_id:
+            return step.state
+    return None
+
+
+def _capture_host_status_activation() -> None:
+    capture_activation_succeeded(
+        command="status --host",
+        result_kind="status_result",
+    )

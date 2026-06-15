@@ -10,6 +10,11 @@ from keyring.errors import KeyringError
 from adapters.outbound.cli_auth import credentials_store as cs
 
 
+@pytest.fixture(autouse=True)
+def _default_linux_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cs.sys, "platform", "linux")
+
+
 def test_config_dir_respects_xdg(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -422,12 +427,14 @@ def test_write_provider_credentials_preserves_existing_fields(
     assert data["active_pot_id"] == "11111111-1111-1111-1111-111111111111"
     assert data["pot_aliases"] == {"demo": "22222222-2222-2222-2222-222222222222"}
     assert "access_token" not in data["integrations"]["github"]
-    assert data["integrations"]["github"]["token_storage"] == "keychain"
-    assert fake_keyring[("potpie", "github_token")] == "plaintext-token"
+    assert data["integrations"]["github"]["token_storage"] == "file"
+    secrets = json.loads(cs.integration_secrets_path().read_text(encoding="utf-8"))
+    assert secrets["github_token"] == "plaintext-token"
+    assert ("potpie", "github_token") not in fake_keyring
     assert cs.get_provider_credentials("github")["access_token"] == "plaintext-token"
 
 
-def test_get_provider_credentials_reads_from_keychain(
+def test_get_provider_credentials_reads_from_integration_secrets_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     fake_keyring: dict[tuple[str, str], str],
@@ -449,12 +456,12 @@ def test_get_provider_credentials_reads_from_keychain(
         },
     )
 
-    fake_keyring[("potpie", "github_token")] = "from-keychain"
+    cs._write_integration_secrets_file({"github_token": "from-file"})
 
-    assert cs.get_provider_credentials("github")["access_token"] == "from-keychain"
+    assert cs.get_provider_credentials("github")["access_token"] == "from-file"
 
 
-def test_get_provider_credentials_raises_when_keychain_token_missing(
+def test_get_provider_credentials_raises_when_integration_secret_missing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -464,7 +471,7 @@ def test_get_provider_credentials_raises_when_keychain_token_missing(
         {
             "provider": "github",
             "provider_host": "github.com",
-            "token_storage": "keychain",
+            "token_storage": "file",
             "account": {"login": "octocat", "id": 1},
         },
     )
@@ -474,7 +481,7 @@ def test_get_provider_credentials_raises_when_keychain_token_missing(
         cs.get_provider_credentials("github")
 
     assert str(exc.value) == (
-        "GitHub token not found in system keychain. Run: potpie github login"
+        "GitHub token not found in local credentials file. Run: potpie github login"
     )
 
 
@@ -483,6 +490,7 @@ def test_write_provider_credentials_raises_on_keychain_failure(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(cs.sys, "platform", "darwin")
 
     def _fail(_service: str, _username: str, _password: str) -> None:
         raise KeyringError("backend unavailable")
@@ -515,7 +523,6 @@ def test_linux_integration_secrets_stored_in_json_file(
     fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(cs.sys, "platform", "linux")
 
     cs.write_provider_credentials(
         "github",
@@ -550,7 +557,6 @@ def test_linux_potpie_api_key_still_uses_keyring(
     fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(cs.sys, "platform", "linux")
 
     cs.store_potpie_api_key("sk-test-linux-keyring", created_at="2026-01-01T00:00:00Z")
 
@@ -564,7 +570,6 @@ def test_linux_integration_secret_falls_back_to_keyring(
     fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(cs.sys, "platform", "linux")
     fake_keyring[("potpie", "github_token")] = "legacy-keyring-token"
     cs.write_integration_metadata(
         "github",
@@ -579,13 +584,43 @@ def test_linux_integration_secret_falls_back_to_keyring(
     assert cs.get_provider_credentials("github")["access_token"] == "legacy-keyring-token"
 
 
+def test_linux_integration_secret_uses_file_even_when_keyring_is_available(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    cs.write_provider_credentials(
+        "github",
+        {
+            "provider": "github",
+            "provider_host": "github.com",
+            "access_token": "linux-file-token",
+            "token_type": "bearer",
+            "scopes": ["repo"],
+            "account": {"login": "octocat", "id": 1, "name": None, "email": None},
+            "created_at": "2026-05-29T00:00:00+00:00",
+            "updated_at": "2026-05-29T00:00:00+00:00",
+            "expires_at": None,
+            "metadata": {"auth_flow": "device"},
+        },
+    )
+
+    assert ("potpie", "github_token") not in fake_keyring
+    assert cs.integration_secrets_path().is_file()
+
+    metadata = json.loads(cs.credentials_path().read_text(encoding="utf-8"))
+    assert metadata["integrations"]["github"]["token_storage"] == "file"
+    assert cs.get_provider_credentials("github")["access_token"] == "linux-file-token"
+
+
 def test_linux_delete_integration_secret_surfaces_provider_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(cs.sys, "platform", "linux")
     cs.write_provider_credentials(
         "github",
         {

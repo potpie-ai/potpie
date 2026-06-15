@@ -17,9 +17,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Final, Iterator, NoReturn
 
 import typer
 
@@ -38,6 +39,18 @@ EXIT_DEGRADED = 3
 EXIT_AUTH = 4
 
 _state: dict[str, Any] = {"json": False, "verbose": False, "host": None, "store": None}
+_CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "arch",
+        "cli_version",
+        "command",
+        "error_code",
+        "os",
+        "output_mode",
+        "result",
+        "subcommand",
+    }
+)
 
 
 def set_json(value: bool) -> None:
@@ -100,7 +113,9 @@ def emit(payload: dict[str, Any], *, human: str) -> None:
     if is_json():
         typer.echo(json.dumps(payload, default=str))
     else:
-        typer.echo(human)
+        from adapters.inbound.cli.ui.format import print_human_block
+
+        print_human_block(human)
 
 
 def fail(
@@ -110,7 +125,7 @@ def fail(
     detail: str | None = None,
     next_action: str | None = None,
     exit_code: int = EXIT_VALIDATION,
-) -> None:
+) -> NoReturn:
     """Emit the structured error contract and exit with the given code."""
     if is_json():
         typer.echo(
@@ -125,12 +140,14 @@ def fail(
             )
         )
     else:
-        lines = [f"error: {message}"]
-        if detail:
-            lines.append(f"  detail: {detail}")
-        if next_action:
-            lines.append(f"  next: {next_action}")
-        typer.echo("\n".join(lines), err=True)
+        from adapters.inbound.cli.ui.format import print_structured_error
+
+        print_structured_error(
+            title=message,
+            message=message,
+            hint=detail,
+            next_action=next_action,
+        )
     raise typer.Exit(code=exit_code)
 
 
@@ -141,9 +158,14 @@ def contract() -> Iterator[None]:
     No command should leak a traceback; an unbuilt capability returns the
     structured not-implemented contract (exit 2) rather than crashing.
     """
+    start = time.perf_counter()
+    result = "ok"
+    error_code = "none"
     try:
         yield
     except CapabilityNotImplemented as exc:
+        result = "not_implemented"
+        error_code = "not_implemented"
         fail(
             code="not_implemented",
             message=str(exc),
@@ -152,6 +174,8 @@ def contract() -> Iterator[None]:
             exit_code=EXIT_UNAVAILABLE,
         )
     except ContextEngineDisabled as exc:
+        result = "unavailable"
+        error_code = "unavailable"
         fail(
             code="unavailable",
             message=str(exc),
@@ -159,6 +183,8 @@ def contract() -> Iterator[None]:
             exit_code=EXIT_UNAVAILABLE,
         )
     except PotNotFound as exc:
+        result = "pot_not_found"
+        error_code = "pot_not_found"
         fail(
             code="pot_not_found",
             message=str(exc),
@@ -166,11 +192,19 @@ def contract() -> Iterator[None]:
             exit_code=EXIT_VALIDATION,
         )
     except ValueError as exc:
+        result = "validation_error"
+        error_code = "validation_error"
         fail(code="validation_error", message=str(exc), exit_code=EXIT_VALIDATION)
     except typer.Exit:
+        result = "exit"
+        error_code = "exit"
         raise
     except Exception as exc:  # noqa: BLE001
-        from adapters.inbound.cli.sentry_runtime import capture_unexpected_cli_error
+        result = "unexpected"
+        error_code = "unexpected_cli_error"
+        from adapters.inbound.cli.telemetry.sentry_runtime import (
+            capture_unexpected_cli_error,
+        )
 
         capture_unexpected_cli_error(
             exc,
@@ -182,6 +216,62 @@ def contract() -> Iterator[None]:
             message="Unexpected internal error.",
             exit_code=EXIT_VALIDATION,
         )
+    finally:
+        _record_cli_contract_metrics(
+            started_at=start,
+            result=result,
+            error_code=error_code,
+        )
+
+
+def _record_cli_contract_metrics(
+    *,
+    started_at: float,
+    result: str,
+    error_code: str,
+) -> None:
+    from bootstrap import sentry_metrics_runtime
+
+    attributes = _cli_metric_attributes(result=result, error_code=error_code)
+    duration_ms = max((time.perf_counter() - started_at) * 1000.0, 0.0)
+    try:
+        sentry_metrics_runtime.count(
+            "ce.cli.invocations_total",
+            attributes=attributes,
+        )
+        sentry_metrics_runtime.distribution(
+            "ce.cli.duration_ms",
+            duration_ms,
+            unit="millisecond",
+            attributes=attributes,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        try:
+            sentry_metrics_runtime.flush(timeout=2.0)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _cli_metric_attributes(
+    *,
+    result: str,
+    error_code: str,
+) -> dict[str, str | int | float | bool]:
+    from adapters.inbound.cli.telemetry.context import current_telemetry_context
+
+    telemetry = current_telemetry_context()
+    attributes: dict[str, str | int | float | bool] = {
+        "error_code": error_code,
+        "result": result,
+    }
+    if telemetry is None:
+        return attributes
+    for key, value in telemetry.fields().items():
+        if key in _CLI_METRIC_ATTRIBUTE_KEYS:
+            attributes[key] = value
+    return attributes
 
 
 def resolve_pot_id(

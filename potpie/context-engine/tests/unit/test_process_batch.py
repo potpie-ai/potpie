@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from adapters.outbound.reconciliation.noop_agent import NoOpReconciliationAgent
+from bootstrap import sentry_metrics_runtime
 from application.use_cases.process_batch import process_batch
 from domain.ports.reconciliation_ledger import ContextEventRow
 from domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
@@ -111,6 +112,46 @@ def test_processes_pending_events_and_marks_batch_done() -> None:
     # that contract is covered in test_agent_execution_log.py.
 
 
+def test_success_mirrors_agent_and_event_sentry_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    counts: list[tuple[str, int, dict[str, str]]] = []
+    distributions: list[tuple[str, float, str | None, dict[str, str]]] = []
+    monkeypatch.setattr(
+        sentry_metrics_runtime,
+        "count",
+        lambda name, value=1, *, attributes=None, unit=None: counts.append(
+            (name, value, dict(attributes or {}))
+        ),
+    )
+    monkeypatch.setattr(
+        sentry_metrics_runtime,
+        "distribution",
+        lambda name, value, *, attributes=None, unit=None: distributions.append(
+            (name, value, unit, dict(attributes or {}))
+        ),
+    )
+    batches = MagicMock()
+    batches.list_events_for_batch.return_value = [
+        BatchEventRef(event_id="e1", added_at=_now()),
+    ]
+    ledger = MagicMock()
+    ledger.get_event_by_id.side_effect = lambda eid: _event_row(eid)
+    checkpoints = MagicMock()
+
+    process_batch(
+        batch=_batch(),
+        agent=NoOpReconciliationAgent(),
+        batches=batches,
+        reco_ledger=ledger,
+        checkpoints=checkpoints,
+        pots=_pots(),
+    )
+
+    assert ("ce.events.reconciled_total", 1, {"result": "reconciled"}) in counts
+    assert ("ce.agent.tool_calls", 0, None, {"result": "ok"}) in distributions
+
+
 def test_skips_already_processed_events() -> None:
     batches = MagicMock()
     batches.list_events_for_batch.return_value = [
@@ -209,6 +250,54 @@ def test_agent_exception_marks_batch_failed_and_events_failed() -> None:
     ledger.record_events_failed.assert_called_once()
     (failed_ids, _err), _ = ledger.record_events_failed.call_args
     assert sorted(failed_ids) == ["e1"]
+
+
+def test_failure_mirrors_agent_and_event_sentry_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    counts: list[tuple[str, int, dict[str, str]]] = []
+    distributions: list[tuple[str, float, str | None, dict[str, str]]] = []
+    monkeypatch.setattr(
+        sentry_metrics_runtime,
+        "count",
+        lambda name, value=1, *, attributes=None, unit=None: counts.append(
+            (name, value, dict(attributes or {}))
+        ),
+    )
+    monkeypatch.setattr(
+        sentry_metrics_runtime,
+        "distribution",
+        lambda name, value, *, attributes=None, unit=None: distributions.append(
+            (name, value, unit, dict(attributes or {}))
+        ),
+    )
+    batches = MagicMock()
+    batches.list_events_for_batch.return_value = [
+        BatchEventRef(event_id="e1", added_at=_now()),
+    ]
+    ledger = MagicMock()
+    ledger.get_event_by_id.return_value = _event_row("e1")
+    checkpoints = MagicMock()
+
+    class _Boom:
+        def run_batch(self, ctx, *, checkpoints=None, execution_log=None):
+            del ctx, checkpoints, execution_log
+            raise RuntimeError("kaboom")
+
+        def capability_metadata(self):
+            return {}
+
+    process_batch(
+        batch=_batch(),
+        agent=_Boom(),
+        batches=batches,
+        reco_ledger=ledger,
+        checkpoints=checkpoints,
+        pots=_pots(),
+    )
+
+    assert ("ce.events.failed_total", 1, {"result": "failed"}) in counts
+    assert ("ce.agent.tool_calls", 0, None, {"result": "failed"}) in distributions
 
 
 def test_opens_runs_and_fans_work_events_across_events() -> None:
