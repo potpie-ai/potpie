@@ -157,49 +157,60 @@ def test_posthog_sink_payload_excludes_secrets(monkeypatch) -> None:
     assert properties == {"repo_location_kind": "explicit_path"}
 
 
-def test_posthog_sink_schedules_delivery_in_background(monkeypatch) -> None:
-    @dataclass
-    class _ScheduledThread:
-        target_name: str
-        url: str
-        daemon: bool
-        name: str
-        started: bool = False
+def test_product_analytics_dispatcher_flushes_queued_events(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    thread_names: list[str] = []
+    daemon_flags: list[bool] = []
+    thread_ids: list[int | None] = []
+    release_worker = product_analytics.threading.Event()
 
-    scheduled: list[_ScheduledThread] = []
+    def _post(
+        *,
+        url: str,
+        payload: dict[str, str | dict[str, str]],
+    ) -> None:
+        worker_thread = product_analytics.threading.current_thread()
+        thread_names.append(worker_thread.name)
+        daemon_flags.append(worker_thread.daemon)
+        thread_ids.append(worker_thread.ident)
+        calls.append((url, str(payload["event"])))
+        if len(calls) == 1:
+            release_worker.wait(timeout=1.0)
 
-    class _Thread:
-        def __init__(self, *, target, kwargs, daemon: bool, name: str) -> None:
-            scheduled.append(
-                _ScheduledThread(
-                    target_name=target.__name__,
-                    url=kwargs["url"],
-                    daemon=daemon,
-                    name=name,
-                )
-            )
-
-        def start(self) -> None:
-            scheduled[0].started = True
-
-    monkeypatch.setattr(product_analytics.threading, "Thread", _Thread)
+    monkeypatch.setattr(product_analytics, "_post_product_analytics_payload", _post)
 
     product_analytics._send_product_analytics_payload(
         "https://us.i.posthog.com/capture/",
         {
             "api_key": "phc_test",
-            "event": "cli_onboarding_setup_started",
+            "event": "cli_onboarding_setup_completed",
             "distinct_id": "install_123",
             "properties": {"repo_location_kind": "explicit_path"},
         },
     )
+    product_analytics._send_product_analytics_payload(
+        "https://us.i.posthog.com/capture/",
+        {
+            "api_key": "phc_test",
+            "event": "cli_onboarding_integration_auth_failed",
+            "distinct_id": "install_123",
+            "properties": {"provider": "github"},
+        },
+    )
+    release_worker.set()
 
-    assert scheduled == [
-        _ScheduledThread(
-            target_name="_post_product_analytics_payload",
-            url="https://us.i.posthog.com/capture/",
-            daemon=True,
-            name="potpie-product-analytics",
-            started=True,
-        )
+    product_analytics._flush_product_analytics_dispatcher()
+
+    assert calls == [
+        (
+            "https://us.i.posthog.com/capture/",
+            "cli_onboarding_setup_completed",
+        ),
+        (
+            "https://us.i.posthog.com/capture/",
+            "cli_onboarding_integration_auth_failed",
+        ),
     ]
+    assert thread_names == ["potpie-product-analytics", "potpie-product-analytics"]
+    assert daemon_flags == [False, False]
+    assert len(set(thread_ids)) == 1
