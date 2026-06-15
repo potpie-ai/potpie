@@ -11,8 +11,8 @@ import pytest
 
 from adapters.outbound.session.injection_ledger import InMemoryInjectionLedger
 from application.services.nudge_service import NudgeService
-from domain.agent_envelope import AgentEnvelope, EvidenceItem
 from domain.nudge import NUDGE_POLICIES, GraphNudgeRequest, canonical_nudge_event, is_nudge_event
+from domain.ports.services.graph_service import GraphReadResult
 
 pytestmark = pytest.mark.unit
 
@@ -22,24 +22,31 @@ POT = "local/default"
 class _FakeReader:
     """Returns canned envelopes per view and records the requests it saw."""
 
-    def __init__(self, by_view: dict[str, list[EvidenceItem]]):
+    def __init__(self, by_view: dict[str, list[dict]]):
         self.by_view = by_view
         self.requests: list = []
 
-    def read(self, request) -> AgentEnvelope:
+    def read(self, request) -> GraphReadResult:
         self.requests.append(request)
-        items = tuple(self.by_view.get(request.view, ()))
-        return AgentEnvelope(pot_id=request.pot_id, intent="feature", items=items, coverage=())
+        view_name = f"{request.subgraph}.{request.view}"
+        items = tuple(self.by_view.get(view_name, ()))
+        return GraphReadResult(
+            graph_contract_version="v1.5",
+            ontology_version="2026-06-graph",
+            view=view_name,
+            subgraph=request.subgraph,
+            items=items,
+        )
 
 
-def _item(view_include: str, key: str, score: float, **payload) -> EvidenceItem:
-    return EvidenceItem(
-        include=view_include,
-        candidate_key=key,
-        score=score,
-        payload=payload,
-        coverage_status="complete",
-    )
+def _item(view_include: str, key: str, score: float, **payload) -> dict:
+    del view_include
+    return {
+        "entity_key": key,
+        "score": score,
+        "claim": {"claim_key": key},
+        **payload,
+    }
 
 
 def _svc(by_view=None, ledger=None) -> tuple[NudgeService, _FakeReader, InMemoryInjectionLedger]:
@@ -84,7 +91,7 @@ def test_dash_alias_routes_to_canonical_policy() -> None:
     )
     assert res.ok and not res.silent
     assert res.event == "pre_edit"
-    assert {req.view for req in reader.requests} == {
+    assert {f"{req.subgraph}.{req.view}" for req in reader.requests} == {
         "decisions.preferences_for_scope",
         "debugging.prior_occurrences",
     }

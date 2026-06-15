@@ -62,14 +62,15 @@ def test_read_backed_view_returns_data() -> None:
     env = svc.read(
         GraphReadRequest(
             pot_id=POT,
-            view="infra_topology.service_neighborhood",
+            subgraph="infra_topology",
+            view="service_neighborhood",
             scope={"service": "payments-api"},
             depth=2,
         )
     )
     assert env.items
-    assert env.metadata["view"] == "infra_topology.service_neighborhood"
-    assert env.metadata["subgraph_versions"]["_global"] >= 1
+    assert env.view == "infra_topology.service_neighborhood"
+    assert env.subgraph_versions["_global"] >= 1
 
 
 # 3. search-entities finds entities from a prior mutation

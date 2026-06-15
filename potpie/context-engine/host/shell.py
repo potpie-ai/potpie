@@ -10,6 +10,7 @@ command (and every HTTP/MCP handler) reaches the system through one
 Surfaces:
     .agent_context   AgentContextPort   the 4-tool agent surface (compose)
     .graph           GraphService       data plane
+    .graph_workbench GraphWorkbenchService  plan/propose/commit workflow
     .pots            PotManagementService  control plane
     .skills          SkillManager       skill catalog + install
     .backend         GraphBackend       active storage profile (6 capabilities)
@@ -41,6 +42,7 @@ from domain.ports.services.pot_management import PotManagementService
 from domain.ports.services.setup import SetupOrchestrator
 from domain.ports.services.skill_manager import SkillManager
 from application.services.nudge_service import NudgeService
+from application.services.graph_workbench import GraphWorkbenchService
 from host.daemon import Daemon
 
 
@@ -93,6 +95,7 @@ class HostShell:
 
     agent_context: AgentContextPort
     graph: GraphService
+    graph_workbench: GraphWorkbenchService
     pots: PotManagementService
     skills: SkillManager
     backend: GraphBackend

@@ -416,6 +416,39 @@ Result: `121 passed`.
 Goal: V2 reads should be contract-shaped, scoped, provenance-rich, and explicit
 about unsupported or broadened queries.
 
+### Status
+
+Done on 2026-06-15 for the canonical CLI/service read surface and bounded
+neighborhood traversal.
+
+- [x] Changed `graph read` to the canonical hard-break syntax:
+  `--subgraph <name> --view <view>`. Fully qualified `--view
+  subgraph.view` is rejected with a V2 validation envelope.
+- [x] Added `GraphReadResult` as the V2 read body contract so graph-workbench
+  callers no longer parse `AgentEnvelope` implementation details.
+- [x] Normalized read results around `items`, `coverage`, `freshness`,
+  `quality`, and `source_refs`. Cross-cutting `unsupported` and
+  `subgraph_versions` remain top-level workbench-envelope fields.
+- [x] Enforced executable view-contract filters and required narrowing inputs.
+  Unsupported filters return structured `unsupported` entries instead of being
+  ignored and causing silent broad reads.
+- [x] Implemented `graph neighborhood` through the inspection port, with
+  depth, direction, predicate, and limit controls.
+- [x] Promoted neighborhood controls into `GraphInspectionPort` and implemented
+  them for in-memory and FalkorDB inspection projections.
+- [x] Extended `search-entities` with subgraph, scope, truth, time-bound,
+  environment, and external-id filters.
+- [x] Updated graph UI and nudge service callers to consume the V2 read result
+  shape directly.
+
+Deliberate contract choices:
+
+- No compatibility alias was kept for the old read syntax. Callers must use
+  `--subgraph debugging --view prior_occurrences`, not
+  `--view debugging.prior_occurrences`.
+- The V2 workbench envelope owns `unsupported` and `subgraph_versions`; read
+  result bodies do not duplicate those fields after CLI normalization.
+
 ### Changes
 
 1. Change CLI read syntax to accept the V2 form:
@@ -473,10 +506,99 @@ about unsupported or broadened queries.
   backends where supported.
 - Add regression tests that environment-qualified infra edges remain isolated.
 
+Implemented coverage on 2026-06-15:
+
+- `tests/unit/test_graph_cli_contract.py` verifies canonical read syntax,
+  hard rejection of fully qualified `--view`, normalized timeline JSON, and
+  `graph neighborhood` success/unsupported behavior.
+- `tests/unit/test_graph_surface_lite_contract.py` verifies V2 read result
+  shape, unsupported filter reporting, extended search filters, and
+  environment-qualified infra isolation.
+- `tests/unit/test_nudge_service.py` verifies the nudge service consumes
+  `GraphReadResult`.
+- `tests/conformance/test_graph_backend_conformance.py` verifies backend
+  inspection capabilities still answer after the neighborhood port extension.
+
+Verification run:
+
+```bash
+uv run ruff check \
+  potpie/context-engine/domain/ports/services/graph_service.py \
+  potpie/context-engine/domain/graph_workbench_ontology.py \
+  potpie/context-engine/application/services/graph_service.py \
+  potpie/context-engine/adapters/inbound/cli/commands/graph.py \
+  potpie/context-engine/application/services/nudge_service.py \
+  potpie/context-engine/adapters/inbound/http/ui/router.py \
+  potpie/context-engine/adapters/outbound/graph/backends/in_memory_backend.py \
+  potpie/context-engine/adapters/outbound/graph/falkordb_inspection.py \
+  potpie/context-engine/tests/unit/test_graph_cli_contract.py \
+  potpie/context-engine/tests/unit/test_graph_surface_lite_contract.py \
+  potpie/context-engine/tests/unit/test_nudge_service.py \
+  potpie/context-engine/tests/conformance/test_graph_surface_lite_e2e.py
+
+uv run pytest -q \
+  potpie/context-engine/tests/unit/test_graph_cli_contract.py \
+  potpie/context-engine/tests/unit/test_graph_surface_lite_contract.py \
+  potpie/context-engine/tests/unit/test_nudge_service.py \
+  potpie/context-engine/tests/conformance/test_graph_surface_lite_e2e.py \
+  potpie/context-engine/tests/conformance/test_graph_backend_conformance.py \
+  potpie/context-engine/tests/unit/test_graph_workbench_ontology.py \
+  potpie/context-engine/tests/unit/test_falkordb_inspection.py
+```
+
+Result: Ruff passed; focused tests passed (`93 passed`).
+
 ## Phase 3: Split Mutate Into Propose And Commit
 
 Goal: `propose` validates and persists a plan; `commit` applies exactly that
 server-created plan by id.
+
+### Status
+
+Done on 2026-06-15 for the local CLI workbench write path.
+
+- [x] Added graph mutation-plan DTOs and JSON-safe serializers for lowered
+  `MutationBatch` and `ProvenanceContext` records.
+- [x] Added `GraphPlanStorePort` and a local JSON-backed plan store under the
+  Potpie home for cross-process CLI propose/commit flows.
+- [x] Added `GraphWorkbenchService.propose` to parse semantic mutation payloads,
+  validate with the existing semantic validator, lower applicable operations,
+  compute a diff, capture expected `_global` subgraph versions, classify risk,
+  persist the plan, and return the V2 workbench envelope body.
+- [x] Added `GraphWorkbenchService.commit` to load plans by `plan_id`, reject
+  missing, terminal, expired, stale-version, unapproved, and high-risk local
+  plans, then apply accepted plans through `GraphMutationPort.apply`.
+- [x] Wired `potpie graph propose --file ... --json` and
+  `potpie graph commit <plan_id> --json`.
+- [x] Reworked CLI `graph mutate` as a legacy transition wrapper over
+  `propose + commit`; it no longer directly calls the data-plane mutate path for
+  CLI writes.
+
+Deliberate first-cut choices:
+
+- The first conflict guard uses the existing `_global` claim-count version from
+  Phase 2. Per-subgraph counters can replace this behind the same plan record
+  field later.
+- Low-risk validated plans can commit without approval. Medium-risk plans need
+  `--approved-by`; high-risk/review-required operations persist as plans but are
+  not applied by the local Phase 3 commit path.
+- Plan TTL defaults to one hour. The CLI accepts `--ttl` values such as `30m`,
+  `1h`, `7d`, or `2w`.
+- Plan history is currently stored in the plan store only. The `graph history`
+  command remains Phase 4.
+
+Known limitations after Phase 3:
+
+- `GraphService.mutate` remains as the V1.5 data-plane/internal compatibility
+  method for existing wrappers such as `context_record`. Full wrapper migration
+  remains Phase 8.
+- The local JSON plan store is suitable for local CLI use but has no
+  transactional lease model. Hosted or multi-process installs still need a state
+  DB implementation.
+- Review-required operations such as `supersede_claim` and
+  `merge_duplicate_entities` are persisted and visible but intentionally do not
+  commit until the deferred operation vocabulary, history, and approval workflow
+  are implemented.
 
 ### Changes
 
@@ -565,6 +687,48 @@ methods for `EntityUpsert`, `EdgeUpsert`, `InvalidationOp`, `MutationBatch`, and
   stale plans.
 - Backend conformance tests proving committed plans still apply through the one
   mutation port.
+
+Implemented coverage on 2026-06-15:
+
+- `tests/unit/test_graph_workbench_plans.py` verifies propose persistence
+  without graph writes, commit-by-plan-id, stale-version conflict, medium-risk
+  approval, and local JSON plan-store round trip of lowered plans.
+- `tests/unit/test_graph_cli_contract.py` verifies `graph propose`,
+  `graph commit`, legacy `graph mutate` error routing, and that commit rejects
+  raw payload options.
+- Existing graph surface, workbench ontology, backend conformance, and nudge
+  tests continue to pass with the workbench write path in place.
+
+Verification run:
+
+```bash
+uv run ruff check \
+  potpie/context-engine/domain/graph_plans.py \
+  potpie/context-engine/domain/ports/graph/plan_store.py \
+  potpie/context-engine/adapters/outbound/graph/plan_stores/local_json.py \
+  potpie/context-engine/adapters/outbound/graph/plan_stores/__init__.py \
+  potpie/context-engine/application/services/graph_workbench.py \
+  potpie/context-engine/bootstrap/host_wiring.py \
+  potpie/context-engine/host/shell.py \
+  potpie/context-engine/host/daemon_client.py \
+  potpie/context-engine/adapters/inbound/cli/commands/graph.py \
+  potpie/context-engine/domain/graph_workbench_ontology.py \
+  potpie/context-engine/tests/unit/test_graph_workbench_plans.py \
+  potpie/context-engine/tests/unit/test_graph_cli_contract.py
+
+uv run pytest -q \
+  potpie/context-engine/tests/unit/test_graph_cli_contract.py \
+  potpie/context-engine/tests/unit/test_graph_workbench_plans.py \
+  potpie/context-engine/tests/unit/test_graph_surface_lite_contract.py \
+  potpie/context-engine/tests/conformance/test_graph_surface_lite_e2e.py \
+  potpie/context-engine/tests/conformance/test_graph_backend_conformance.py \
+  potpie/context-engine/tests/unit/test_graph_workbench_ontology.py \
+  potpie/context-engine/tests/unit/test_graph_views.py \
+  potpie/context-engine/tests/unit/test_nudge_service.py \
+  potpie/context-engine/tests/unit/test_daemon_lifecycle_runtime.py
+```
+
+Result: Ruff passed; focused tests passed (`112 passed`).
 
 ## Phase 4: Add History
 
@@ -816,59 +980,65 @@ Goal: V2 behavior is measurable and backend-independent.
 
 ## Suggested Work Packets
 
-These are the smallest useful implementation PRs.
+These are the smallest useful implementation PRs. Status is as of
+2026-06-15.
 
-| Packet | Scope | Main files |
-|---|---|---|
-| V2-00 Envelope | Add workbench envelope DTO/builder and wrap `status`/`catalog` first. | `domain/graph_workbench.py`, `application/services/graph_workbench.py`, `adapters/inbound/cli/commands/graph.py`, tests |
-| V2-01 Describe | Add executable subgraph/view contracts and `graph describe`. | `domain/graph_workbench_ontology.py`, `domain/graph_views.py`, `application/services/graph_workbench.py`, tests |
-| V2-02 Read Shape | Add `--subgraph --view`, normalized read results, unsupported filter reporting. | `graph.py`, `graph_service.py`, readers, tests |
-| V2-03 Neighborhood | Promote bounded traversal out of `inspect` into `graph neighborhood`. | `graph.py`, `GraphInspectionPort` adapters, conformance tests |
-| V2-04 Propose | Persist validated/lowered mutation plans without applying them. | `semantic_mutations.py`, validator/lowerer serializers, new plan store, tests |
-| V2-05 Commit | Commit by `plan_id`, handle expiry/conflict/approval/history pointer. | plan store, `graph_workbench.py`, `graph.py`, mutation tests |
-| V2-06 History | Query plan/mutation/claim history. | plan store, claim query helpers, CLI, tests |
-| V2-07 Inbox | Add inbox storage and CLI workflow. | inbox store, `graph.py`, skills, tests |
-| V2-08 Quality | Add quality command and findings. | `domain/graph_quality.py`, analytics/claim query scanners, CLI, tests |
-| V2-09 Deferred Ops | Implement patch/transition/reconcile/supersede/merge under plan workflow. | contract, validator, lowerer, plan/commit/history tests |
-| V2-10 Skills | Update bundled skills and canonical workflow docs. | skill templates, `CLAUDE.md`, tests |
+| Packet | Status | Scope | Main files |
+|---|---|---|---|
+| V2-00 Envelope | Done | Add workbench envelope DTO/builder and wrap `status`/`catalog` first. | `domain/graph_workbench.py`, `application/services/graph_workbench.py`, `adapters/inbound/cli/commands/graph.py`, tests |
+| V2-01 Describe | Done | Add executable subgraph/view contracts and `graph describe`. | `domain/graph_workbench_ontology.py`, `domain/graph_views.py`, `application/services/graph_workbench.py`, tests |
+| V2-02 Read Shape | Done | Add `--subgraph --view`, normalized read results, unsupported filter reporting. | `graph.py`, `graph_service.py`, readers, tests |
+| V2-03 Neighborhood | Done | Promote bounded traversal out of `inspect` into `graph neighborhood`. | `graph.py`, `GraphInspectionPort` adapters, conformance tests |
+| V2-04 Propose | Done | Persist validated/lowered mutation plans without applying them. | `semantic_mutations.py`, validator/lowerer serializers, new plan store, tests |
+| V2-05 Commit | Done | Commit by `plan_id`, handle expiry/conflict/approval/history pointer. | plan store, `graph_workbench.py`, `graph.py`, mutation tests |
+| V2-06 History | Next | Query plan/mutation/claim history. | plan store, claim query helpers, CLI, tests |
+| V2-07 Inbox | Planned | Add inbox storage and CLI workflow. | inbox store, `graph.py`, skills, tests |
+| V2-08 Quality | Planned | Add quality command and findings. | `domain/graph_quality.py`, analytics/claim query scanners, CLI, tests |
+| V2-09 Deferred Ops | Planned | Implement patch/transition/reconcile/supersede/merge under plan workflow. | contract, validator, lowerer, plan/commit/history tests |
+| V2-10 Skills | Planned | Update bundled skills and canonical workflow docs. | skill templates, `CLAUDE.md`, tests |
 
-## Recommended First Cut
+## Current Next Cut
 
-Start with V2-00 through V2-02:
+Start with V2-06 History.
 
-1. Add the V2 envelope and wrap `graph status` plus `graph catalog`.
-2. Add executable contracts and `graph describe`.
-3. Normalize `graph read --subgraph --view`; keep `--view subgraph.view` only for
-   canonical fully-qualified names.
+1. Read plan records from the plan store by `--plan <plan_id>` and return
+   proposal, approval, commit status, mutation id, claim keys, source refs, and
+   validation issues.
+2. Add `graph history --mutation <mutation_id>` by querying claim properties
+   stamped by semantic lowering and backend apply.
+3. Add `graph history --entity <key>` and `--claim <claim_key>` where the active
+   backend can answer through claim query; return structured `unsupported`
+   rather than broad or empty results when the backend cannot.
+4. Keep history read-only. Any repair or correction discovered while reading
+   history should flow through `propose`/`commit`.
 
-That gives agents a stable discovery/read loop before changing write behavior.
-Then implement V2-04 and V2-05 together, because `propose` without `commit` is
-useful for validation but not enough to replace `mutate`.
+V2-07 Inbox should follow history, because inbox close/apply records should link
+to a plan, mutation id, or rejection reason that history can already display.
 
-## Open Decisions
+## Resolved Decisions
 
-1. **Workbench service boundary**: this plan recommends a `GraphWorkbenchService`
-   facade over `GraphService`. If the team prefers extending `GraphService`
-   directly, keep the same DTOs and envelope builder so the CLI stays thin.
+1. **Workbench service boundary**: implemented as `GraphWorkbenchService`, a
+   facade above the existing `GraphService` data plane and backend capability
+   ports. The CLI stays thin and routes propose/commit through HostShell.
 
-2. **Contract version bump**: do not set `GRAPH_CONTRACT_VERSION = "v2"` until
-   the envelope, command set, describe/read shape, propose, and commit are
-   stable. Use `v2-beta` or advertise V2 support in catalog metadata if needed
-   before the formal bump.
+2. **Contract version bump**: the CLI workbench envelope reports V2. The
+   underlying data-plane catalog remains `v1.5`, exposed as
+   `data_plane_graph_contract_version`.
 
-3. **Ontology naming**: canonicalize the current public graph surface into the
-   broader V2 seed ontology: `preferences` moves under `decisions`, `bugs` moves
-   under `debugging`, `docs` moves under `knowledge`, and `ownership` moves under
-   `code_topology`.
+3. **Ontology naming**: canonical public subgraphs are `decisions`,
+   `debugging`, `recent_changes`, `infra_topology`, `features`,
+   `code_topology`, `knowledge`, and `admin`.
 
-4. **Entity key conventions**: current underscore key prefixes remain canonical.
-   Do not add hyphenated prefix aliases; store external IDs separately from graph
+4. **Entity key conventions**: underscore key prefixes remain canonical.
+   Hyphenated prefix aliases are rejected; external IDs stay separate from graph
    keys.
 
-5. **Plan store location**: local JSON under the Potpie home is enough for the
-   first local workbench. Hosted or multi-process installs should use a state DB
-   implementation with leases/transactions.
+5. **Plan store location**: first cut uses local JSON under the Potpie home.
+   Hosted or multi-process installs should add a state DB implementation with
+   leases/transactions behind `GraphPlanStorePort`.
 
-6. **Approval mechanics**: decide whether medium/high-risk local commits use
-   `--approved-by`, interactive confirmation, a signed local approval record, or
-   all of the above. The plan store should model approval independently of CLI UX.
+6. **Approval mechanics**: low-risk validated plans can commit locally without
+   approval. Medium-risk plans require `graph commit <plan_id> --approved-by
+   <user-ref>`. High-risk/review-required operations persist as plans but do not
+   commit through the local Phase 3 path until history, richer approval, and
+   deferred operation support exist.

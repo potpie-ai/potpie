@@ -218,8 +218,11 @@ def graph_catalog(
 
 @graph_app.command("read")
 def graph_read(
+    subgraph: str = typer.Option(
+        None, "--subgraph", help="Canonical graph subgraph, e.g. debugging"
+    ),
     view: str = typer.Option(
-        None, "--view", help="<subgraph>.<view>, e.g. debugging.prior_occurrences"
+        None, "--view", help="View name within --subgraph, e.g. prior_occurrences"
     ),
     query: str = typer.Option(None, "--query"),
     scope: str = typer.Option(None, "--scope", help="key:value[,key:value]"),
@@ -266,8 +269,15 @@ def graph_read(
     from domain.ports.services.graph_service import GraphReadRequest
 
     with _graph_command("graph.read") as ctx:
+        if not subgraph:
+            raise ValueError("--subgraph is required")
         if not view:
             raise ValueError("--view is required")
+        if "." in view:
+            raise ValueError(
+                "graph read now requires --subgraph <name> --view <view>; "
+                f"got fully-qualified view {view!r}"
+            )
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
@@ -278,13 +288,19 @@ def graph_read(
         parsed_scope = _parse_scope(scope)
         if repo:
             parsed_scope["repo"] = _resolve_repo_scope(repo)
-        effective_format = _effective_requested_format(view=view, requested=format_)
-        read_limit = _service_limit_for_read(
-            view=view, format_=effective_format, requested_limit=limit
+        effective_format = _effective_requested_format(
+            subgraph=subgraph, view=view, requested=format_
         )
-        env = host.graph.read(
+        read_limit = _service_limit_for_read(
+            subgraph=subgraph,
+            view=view,
+            format_=effective_format,
+            requested_limit=limit,
+        )
+        result = host.graph.read(
             GraphReadRequest(
                 pot_id=pot_id,
+                subgraph=subgraph,
                 view=view,
                 query=query,
                 scope=parsed_scope,
@@ -295,12 +311,12 @@ def graph_read(
                 direction=direction,
                 limit=read_limit,
                 freshness_preference="fresh"
-                if _is_timeline_view(view) and not query
+                if _is_timeline_view(f"{subgraph}.{view}") and not query
                 else "balanced",
             )
         )
         _emit_graph_read(
-            ctx, env, format_=format_, sort=sort, dedupe=dedupe, event_limit=limit
+            ctx, result, format_=format_, sort=sort, dedupe=dedupe, event_limit=limit
         )
 
 
@@ -337,12 +353,16 @@ def timeline_recent(
         )
         scope = {"service": service} if service else {}
         read_limit = _service_limit_for_read(
-            view="recent_changes.timeline", format_="events", requested_limit=limit
+            subgraph="recent_changes",
+            view="timeline",
+            format_="events",
+            requested_limit=limit,
         )
-        env = host.graph.read(
+        result = host.graph.read(
             GraphReadRequest(
                 pot_id=pot_id,
-                view="recent_changes.timeline",
+                subgraph="recent_changes",
+                view="timeline",
                 query=query,
                 scope=scope,
                 since=since_dt,
@@ -352,7 +372,7 @@ def timeline_recent(
             )
         )
         _emit_read(
-            env,
+            result,
             format_=format_,
             sort="occurred_at",
             dedupe="source_ref",
@@ -362,10 +382,17 @@ def timeline_recent(
 
 @graph_app.command("search-entities")
 def graph_search_entities(
-    query: str = typer.Argument(None, help="text to match entities/claims against"),
+    query_arg: str = typer.Argument(None, help="text to match entities/claims against"),
+    query: str = typer.Option(None, "--query", help="text to match entities/claims against"),
     type_: str = typer.Option(None, "--type", help="entity label filter, e.g. Service"),
     predicate: str = typer.Option(None, "--predicate"),
+    subgraph: str = typer.Option(None, "--subgraph"),
+    scope: str = typer.Option(None, "--scope", help="key:value[,key:value]"),
+    truth: str = typer.Option(None, "--truth"),
+    since: str = typer.Option(None, "--since", help="ISO instant lower bound."),
+    until: str = typer.Option(None, "--until", help="ISO instant upper bound."),
     environment: str = typer.Option(None, "--environment"),
+    external_id: str = typer.Option(None, "--external-id"),
     limit: int = typer.Option(10, "--limit"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
@@ -373,18 +400,28 @@ def graph_search_entities(
     from domain.ports.services.graph_service import GraphEntitySearchRequest
 
     with _graph_command("graph.search-entities") as ctx:
-        if not query:
+        effective_query = query or query_arg
+        if not effective_query:
             raise ValueError("query is required")
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
+        since_dt, until_dt = _resolve_time_bounds(
+            since=since, until=until, window=None
+        )
         result = host.graph.search_entities(
             GraphEntitySearchRequest(
                 pot_id=pot_id,
-                query=query,
+                query=effective_query,
                 type=type_,
                 predicate=predicate,
+                subgraph=subgraph,
+                scope=_parse_scope(scope),
+                truth=truth,
+                since=since_dt,
+                until=until_dt,
                 environment=environment,
+                external_id=external_id,
                 limit=limit,
             )
         )
@@ -411,37 +448,54 @@ def graph_mutate(
     ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
-    """Validate and directly apply semantic graph mutations."""
-    from domain.semantic_mutations import (
-        SemanticMutationParseError,
-        SemanticMutationRequest,
-    )
-
+    """Legacy transition wrapper over graph propose + commit."""
     with _graph_command("graph.mutate") as ctx:
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         payload = _load_json(file)
-        try:
-            request = SemanticMutationRequest.parse(
-                payload,
-                pot_id=pot_id,
-                dry_run=dry_run,
-                allow_review_required=allow_review_required,
-                approved_by=approved_by,
+        proposal = host.graph_workbench.propose(payload, pot_id=pot_id)
+        legacy_warning = _legacy_warning(
+            "graph.mutate", "graph.propose and graph.commit"
+        )
+        if dry_run or not proposal.ok:
+            _emit_graph_result(
+                ctx,
+                proposal.to_dict(),
+                human=_proposal_human(proposal),
+                warnings=legacy_warning,
             )
-        except SemanticMutationParseError as exc:
-            fail(code="invalid_mutation_payload", message=str(exc))
+            if not proposal.ok:
+                raise typer.Exit(code=EXIT_VALIDATION)
             return
-        result = host.graph.mutate(request)
+        if proposal.status == "review_required" and not (
+            allow_review_required and approved_by
+        ):
+            _emit_graph_result(
+                ctx,
+                proposal.to_dict(),
+                human=_proposal_human(proposal),
+                warnings=legacy_warning,
+                recommended_next_action=(
+                    f"Review the plan, then run `potpie graph commit {proposal.plan_id} "
+                    "--approved-by <user-ref> --json` when policy allows."
+                ),
+            )
+            return
+
+        result = host.graph_workbench.commit(
+            proposal.plan_id,
+            pot_id=pot_id,
+            approved_by=approved_by if allow_review_required else None,
+        )
         _emit_graph_result(
             ctx,
             result.to_dict(),
-            human=_mutate_human(result),
-            warnings=_legacy_warning("graph.mutate", "graph.propose and graph.commit"),
+            human=_commit_human(result),
+            warnings=legacy_warning,
             recommended_next_action=(
                 "Use `potpie graph propose --file <mutation.json> --json` followed "
-                "by `potpie graph commit <plan_id> --json` once the V2 write path is implemented."
+                "by `potpie graph commit <plan_id> --json`."
             ),
         )
         if not result.ok:
@@ -939,44 +993,118 @@ def graph_neighborhood(
     limit: int = typer.Option(50, "--limit"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
-    del entity, predicate, depth, direction, limit
     with _graph_command("graph.neighborhood") as ctx:
-        _set_optional_pot(ctx, pot)
-        _emit_graph_not_implemented(
+        if not entity:
+            raise ValueError("--entity is required")
+        normalized_direction = (direction or "both").strip().lower()
+        if normalized_direction not in {"out", "in", "both"}:
+            raise ValueError("--direction must be one of: out, in, both")
+        if depth < 1:
+            raise ValueError("--depth must be >= 1")
+        if limit < 1:
+            raise ValueError("--limit must be >= 1")
+        host = get_host()
+        _require_backend_capability(
+            host,
+            capability="inspection",
+            method="neighborhood",
+            command="graph neighborhood",
+        )
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        predicates = _parse_predicates(predicate)
+        sl = host.backend.inspection.neighborhood(
+            pot_id=pot_id,
+            entity_key=entity,
+            depth=depth,
+            direction=normalized_direction,
+            predicates=predicates,
+            limit=limit,
+        )
+        payload = {
+            "entity_key": entity,
+            "depth": depth,
+            "direction": normalized_direction,
+            "predicates": list(predicates),
+            "nodes": [
+                {
+                    "key": n.key,
+                    "labels": list(n.labels),
+                    "properties": dict(n.properties),
+                }
+                for n in sl.nodes
+            ],
+            "edges": [
+                {
+                    "predicate": e.predicate,
+                    "from": e.from_key,
+                    "to": e.to_key,
+                    "properties": dict(e.properties),
+                }
+                for e in sl.edges
+            ],
+            "truncated": sl.truncated,
+        }
+        _emit_graph_result(
             ctx,
-            detail="Phase 2 will route bounded traversal through the inspection port.",
-            recommended_next_action="Use legacy `potpie graph inspect <entity_key> --json` during the transition.",
+            payload,
+            human=f"{len(sl.nodes)} nodes, {len(sl.edges)} edges around {entity}",
         )
 
 
 @graph_app.command("propose")
 def graph_propose(
-    file: str = typer.Option(None, "--file"),
+    file: str = typer.Option(
+        None, "--file", help="mutation JSON path; omit to read stdin"
+    ),
+    ttl: str = typer.Option("1h", "--ttl", help="plan expiry such as 30m, 1h, 2d"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
-    del file
     with _graph_command("graph.propose") as ctx:
-        _set_optional_pot(ctx, pot)
-        _emit_graph_not_implemented(
-            ctx,
-            detail="Phase 3 will validate, lower, diff, and persist mutation plans.",
-            recommended_next_action="Use legacy `potpie graph mutate --dry-run --file <mutation.json> --json` for validation-only checks.",
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        payload = _load_json(file)
+        result = host.graph_workbench.propose(
+            payload,
+            pot_id=pot_id,
+            ttl_seconds=_parse_ttl_seconds(ttl),
         )
+        _emit_graph_result(
+            ctx,
+            result.to_dict(),
+            human=_proposal_human(result),
+        )
+        if not result.ok:
+            raise typer.Exit(code=EXIT_VALIDATION)
 
 
 @graph_app.command("commit")
 def graph_commit(
     plan_id: str = typer.Argument(None),
+    approved_by: str = typer.Option(
+        None, "--approved-by", help="user-ref for medium-risk approval"
+    ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
-    del plan_id
     with _graph_command("graph.commit") as ctx:
-        _set_optional_pot(ctx, pot)
-        _emit_graph_not_implemented(
-            ctx,
-            detail="Phase 3 will apply only server-created plans by plan_id.",
-            recommended_next_action="Use legacy `potpie graph mutate --file <mutation.json> --json` only for transition workflows.",
+        if not plan_id:
+            fail(code="validation_error", message="plan_id is required")
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        result = host.graph_workbench.commit(
+            plan_id,
+            pot_id=pot_id,
+            approved_by=approved_by,
         )
+        _emit_graph_result(
+            ctx,
+            result.to_dict(),
+            human=_commit_human(result),
+        )
+        if not result.ok:
+            raise typer.Exit(code=EXIT_VALIDATION)
 
 
 @graph_app.command("history")
@@ -1332,6 +1460,17 @@ def _parse_scope(scope: str | None) -> dict[str, str]:
     return out
 
 
+def _parse_predicates(predicate: str | None) -> tuple[str, ...]:
+    if not predicate:
+        return ()
+    out: list[str] = []
+    for raw in predicate.split(","):
+        value = raw.strip().upper()
+        if value:
+            out.append(value)
+    return tuple(dict.fromkeys(out))
+
+
 def _load_json(file: str | None) -> dict:
     """Load a mutation payload from a file or stdin."""
     if file:
@@ -1354,7 +1493,7 @@ def _load_json(file: str | None) -> dict:
 
 def _emit_graph_read(
     ctx: _GraphCliCommandContext,
-    env,
+    result,
     *,
     format_: str,
     sort: str,
@@ -1363,17 +1502,17 @@ def _emit_graph_read(
 ) -> None:
     if not is_json():
         _emit_read(
-            env, format_=format_, sort=sort, dedupe=dedupe, event_limit=event_limit
+            result, format_=format_, sort=sort, dedupe=dedupe, event_limit=event_limit
         )
         return
 
-    normalized_format = _effective_read_format(env, format_)
+    normalized_format = _effective_read_format(result, format_)
     if normalized_format == "jsonl":
-        rows = _timeline_events(env, sort=sort, dedupe=dedupe, limit=event_limit)
+        rows = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
         if not rows:
-            rows = _raw_item_rows(env)
+            rows = _raw_item_rows(result)
         payload = _read_payload(
-            env,
+            result,
             format_="raw",
             sort=sort,
             dedupe=dedupe,
@@ -1384,7 +1523,7 @@ def _emit_graph_read(
         payload["row_count"] = len(rows)
     else:
         payload = _read_payload(
-            env,
+            result,
             format_=normalized_format,
             sort=sort,
             dedupe=dedupe,
@@ -1394,7 +1533,7 @@ def _emit_graph_read(
         ctx,
         payload,
         human=_read_human(
-            env,
+            result,
             format_=normalized_format,
             sort=sort,
             dedupe=dedupe,
@@ -1404,18 +1543,18 @@ def _emit_graph_read(
 
 
 def _emit_read(
-    env, *, format_: str, sort: str, dedupe: str, event_limit: int | None = None
+    result, *, format_: str, sort: str, dedupe: str, event_limit: int | None = None
 ) -> None:
-    normalized_format = _effective_read_format(env, format_)
+    normalized_format = _effective_read_format(result, format_)
     if normalized_format == "jsonl":
-        rows = _timeline_events(env, sort=sort, dedupe=dedupe, limit=event_limit)
+        rows = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
         if not rows:
-            rows = _raw_item_rows(env)
+            rows = _raw_item_rows(result)
         for row in rows:
             typer.echo(json.dumps(row, default=str))
         return
     payload = _read_payload(
-        env,
+        result,
         format_=normalized_format,
         sort=sort,
         dedupe=dedupe,
@@ -1424,7 +1563,7 @@ def _emit_read(
     emit(
         payload,
         human=_read_human(
-            env,
+            result,
             format_=normalized_format,
             sort=sort,
             dedupe=dedupe,
@@ -1434,41 +1573,16 @@ def _emit_read(
 
 
 def _read_payload(
-    env,
+    result,
     *,
     format_: str = "raw",
     sort: str = "auto",
     dedupe: str = "auto",
     event_limit: int | None = None,
 ) -> dict:
-    from domain.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
-
-    envelope = env.to_dict()
-    meta = dict(envelope.get("metadata", {}))
-    payload = {
-        "ok": True,
-        "graph_contract_version": meta.get(
-            "graph_contract_version", GRAPH_CONTRACT_VERSION
-        ),
-        "ontology_version": meta.get("ontology_version", ONTOLOGY_VERSION),
-        "view": meta.get("view"),
-        "subgraph": meta.get("subgraph"),
-        "backed": meta.get("backed"),
-        "match_mode": meta.get("match_mode"),
-        "subgraph_versions": meta.get("subgraph_versions", {}),
-        "inline_relations": meta.get("inline_relations", []),
-        "read_shape": meta.get("read_shape", "flat_claims"),
-        "inline_relation_count": meta.get("inline_relation_count", 0),
-        "pot_id": envelope["pot_id"],
-        "intent": envelope["intent"],
-        "overall_confidence": envelope["overall_confidence"],
-        "items": envelope["items"],
-        "coverage": envelope["coverage"],
-        "unsupported_includes": envelope["unsupported_includes"],
-        "as_of": envelope["as_of"],
-    }
+    payload = result.to_dict()
     if format_ in ("events", "table"):
-        events = _timeline_events(env, sort=sort, dedupe=dedupe, limit=event_limit)
+        events = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
         payload["read_shape"] = "events"
         payload["events"] = events
         payload["event_count"] = len(events)
@@ -1477,7 +1591,7 @@ def _read_payload(
 
 
 def _read_human(
-    env,
+    result,
     *,
     format_: str = "raw",
     sort: str = "auto",
@@ -1485,49 +1599,47 @@ def _read_human(
     event_limit: int | None = None,
 ) -> str:
     if format_ in ("events", "table"):
-        return _timeline_human(env, sort=sort, dedupe=dedupe, event_limit=event_limit)
-    meta = dict(env.metadata)
+        return _timeline_human(result, sort=sort, dedupe=dedupe, event_limit=event_limit)
+    payload = result.to_dict()
+    items = payload.get("items", [])
     lines = [
-        f"view={meta.get('view')} backed={meta.get('backed')} "
-        f"items={len(env.items)} confidence={env.overall_confidence}"
+        f"view={payload.get('view')} backed={payload.get('backed')} "
+        f"items={len(items)} quality={payload.get('quality', {}).get('status')}"
     ]
-    for item in env.items[:10]:
-        payload = dict(item.payload)
-        fact = payload.get("fact") or payload.get("summary") or ""
-        entity = payload.get("entity")
-        if not fact and isinstance(entity, dict):
-            fact = f"{entity.get('key')} relations={payload.get('relation_count', 0)}"
-        lines.append(f"  • [{item.include}] {fact}")
-    for unsup in env.unsupported_includes:
-        lines.append(f"  ! {unsup.name}: {unsup.reason}")
+    for item in items[:10]:
+        fact = item.get("summary") or item.get("entity_key") or ""
+        lines.append(f"  • [{item.get('entity_type') or '?'}] {fact}")
     return "\n".join(lines)
 
 
-def _raw_item_rows(env) -> list[dict[str, Any]]:
-    return [
-        {"include": i.include, "score": i.score, "payload": dict(i.payload)}
-        for i in env.items
-    ]
+def _raw_item_rows(result) -> list[dict[str, Any]]:
+    return list(result.to_dict().get("items", []))
 
 
-def _effective_read_format(env, requested: str) -> str:
+def _effective_read_format(result, requested: str) -> str:
     value = (requested or "auto").strip().lower()
     if value not in {"auto", "raw", "events", "table", "jsonl"}:
         raise ValueError("--format must be one of: auto, raw, events, table, jsonl")
     if value == "auto":
-        return "events" if _is_timeline_view(dict(env.metadata).get("view")) else "raw"
+        return "events" if _is_timeline_view(result.to_dict().get("view")) else "raw"
     return value
 
 
-def _effective_requested_format(*, view: str, requested: str) -> str:
+def _effective_requested_format(*, subgraph: str, view: str, requested: str) -> str:
     value = (requested or "auto").strip().lower()
     if value == "auto":
-        return "events" if _is_timeline_view(view) else "raw"
+        return "events" if _is_timeline_view(f"{subgraph}.{view}") else "raw"
     return value
 
 
-def _service_limit_for_read(*, view: str, format_: str, requested_limit: int) -> int:
-    if _is_timeline_view(view) and format_ in {"events", "table", "jsonl"}:
+def _service_limit_for_read(
+    *, subgraph: str, view: str, format_: str, requested_limit: int
+) -> int:
+    if _is_timeline_view(f"{subgraph}.{view}") and format_ in {
+        "events",
+        "table",
+        "jsonl",
+    }:
         return min(max(requested_limit * 8, 40), 200)
     return requested_limit
 
@@ -1537,19 +1649,19 @@ def _is_timeline_view(view: str | None) -> bool:
 
 
 def _timeline_events(
-    env,
+    result,
     *,
     sort: str = "auto",
     dedupe: str = "auto",
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    meta = dict(env.metadata)
-    if not _is_timeline_view(meta.get("view")):
+    payload = result.to_dict()
+    if not _is_timeline_view(payload.get("view")):
         return []
     dedupe_mode = _normalize_dedupe(dedupe)
     by_key: dict[str, dict[str, Any]] = {}
     ordered: list[dict[str, Any]] = []
-    for item in env.items:
+    for item in payload.get("items", []):
         for event in _events_from_item(item):
             key = _event_dedupe_key(event, mode=dedupe_mode)
             if key is not None and key in by_key:
@@ -1566,17 +1678,20 @@ def _timeline_events(
     return events[:limit] if limit is not None and limit >= 0 else events
 
 
-def _events_from_item(item) -> list[dict[str, Any]]:
-    payload = dict(item.payload)
+def _events_from_item(item: Mapping[str, Any]) -> list[dict[str, Any]]:
+    payload = dict(item)
     relations = payload.get("relations")
+    item_score = float(payload.get("score") or 0.0)
     if isinstance(relations, list):
         return [
-            _event_from_relation(rel, item_score=item.score)
+            _event_from_relation(rel, item_score=item_score)
             for rel in relations
             if isinstance(rel, Mapping) and _relation_has_timeline_fact(rel)
         ]
-    if payload.get("activity_key") or payload.get("fact") or payload.get("source_refs"):
-        return [_event_from_flat_payload(payload, item_score=item.score)]
+    claim = payload.get("claim") if isinstance(payload.get("claim"), Mapping) else {}
+    if claim.get("source_refs") or payload.get("source_refs") or payload.get("summary"):
+        flat_payload = {**claim, **payload}
+        return [_event_from_flat_payload(flat_payload, item_score=item_score)]
     return []
 
 
@@ -1589,7 +1704,6 @@ def _relation_has_timeline_fact(rel: Mapping[str, Any]) -> bool:
 def _event_from_relation(
     rel: Mapping[str, Any], *, item_score: float
 ) -> dict[str, Any]:
-    claim = rel.get("claim") if isinstance(rel.get("claim"), Mapping) else {}
     fact = _str(rel.get("fact"))
     source_refs = _string_list(rel.get("source_refs"))
     related_entity = (
@@ -1610,14 +1724,14 @@ def _event_from_relation(
         "truth": _str(rel.get("truth")),
         "evidence_strength": _str(rel.get("evidence_strength")),
         "source_system": _str(rel.get("source_system")),
-        "score": float(claim.get("score") or item_score or 0.0),
+        "score": float(rel.get("score") or item_score or 0.0),
     }
 
 
 def _event_from_flat_payload(
     payload: Mapping[str, Any], *, item_score: float
 ) -> dict[str, Any]:
-    fact = _str(payload.get("fact"))
+    fact = _str(payload.get("fact") or payload.get("summary"))
     return {
         "activity_key": _str(payload.get("activity_key")),
         "occurred_at": _event_occurred_at(payload, fact=fact),
@@ -1735,12 +1849,13 @@ def _timeline_freshness(events: list[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def _timeline_human(
-    env, *, sort: str, dedupe: str, event_limit: int | None = None
+    result, *, sort: str, dedupe: str, event_limit: int | None = None
 ) -> str:
-    events = _timeline_events(env, sort=sort, dedupe=dedupe, limit=event_limit)
-    meta = dict(env.metadata)
+    events = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
+    payload = result.to_dict()
     lines = [
-        f"view={meta.get('view')} pot={env.pot_id} events={len(events)} confidence={env.overall_confidence}",
+        f"view={payload.get('view')} events={len(events)} "
+        f"quality={payload.get('quality', {}).get('status')}",
         "scope=project-wide pot timeline across registered repo sources; local uncommitted worktree is not included",
     ]
     for event in events[:20]:
@@ -1748,8 +1863,6 @@ def _timeline_human(
         when = event.get("occurred_at") or "unknown-date"
         fact = event.get("fact") or event.get("activity_key") or "(no fact)"
         lines.append(f"  • {when} [{refs}] {fact}")
-    for unsup in env.unsupported_includes:
-        lines.append(f"  ! {unsup.name}: {unsup.reason}")
     return "\n".join(lines)
 
 
@@ -1794,6 +1907,17 @@ def _parse_duration(value: str) -> timedelta:
     if unit == "d":
         return timedelta(days=amount)
     return timedelta(weeks=amount)
+
+
+def _parse_ttl_seconds(value: str) -> int:
+    try:
+        ttl = _parse_duration(value)
+    except ValueError as exc:
+        raise ValueError("--ttl must look like 30m, 1h, 7d, or 2w") from exc
+    seconds = int(ttl.total_seconds())
+    if seconds <= 0:
+        raise ValueError("--ttl must be positive")
+    return seconds
 
 
 def _parse_sort_dt(value: Any) -> datetime:
@@ -1898,6 +2022,33 @@ def _mutate_human(result) -> str:
     for issue in result.issues:
         marker = "error" if issue.is_error else "warn"
         lines.append(f"  [{marker}] {issue.code}: {issue.message}")
+    return "\n".join(lines)
+
+
+def _proposal_human(result) -> str:
+    lines = [
+        (
+            f"{result.status}: plan_id={result.plan_id} risk={result.risk} "
+            f"auto_applicable={result.auto_applicable}"
+        )
+    ]
+    if result.diff:
+        lines.append(f"diff: {result.diff.to_dict()}")
+    for issue in getattr(result, "issues", ()):
+        code = issue.get("code") if isinstance(issue, Mapping) else None
+        message = issue.get("message") if isinstance(issue, Mapping) else None
+        if code or message:
+            lines.append(f"  [issue] {code}: {message}")
+    return "\n".join(lines)
+
+
+def _commit_human(result) -> str:
+    head = f"{result.status}: plan_id={result.plan_id} risk={result.risk}"
+    if result.mutation_id:
+        head += f" mutation_id={result.mutation_id}"
+    lines = [head]
+    if result.detail:
+        lines.append(result.detail)
     return "\n".join(lines)
 
 

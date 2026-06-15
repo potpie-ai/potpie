@@ -21,6 +21,7 @@ import sys
 from typing import Any
 
 from adapters.outbound.graph.backends import build_backend
+from adapters.outbound.graph.plan_stores import LocalJsonGraphPlanStore
 from adapters.outbound.install.local_installer import LocalInstaller
 from adapters.outbound.ledger.cursor_store import LocalLedgerCursorStore
 from adapters.outbound.ledger.managed_client import ManagedEventLedgerClient
@@ -40,6 +41,7 @@ from application.services.agent_context import AgentContextService
 from application.services.auth_service import LocalAuthService
 from application.services.config_service import LocalConfigService
 from application.services.graph_service import DefaultGraphService
+from application.services.graph_workbench import GraphWorkbenchService
 from application.services.nudge_service import NudgeService
 from application.services.pot_management import LocalPotManagementService
 from application.services.setup_orchestrator import DefaultSetupOrchestrator
@@ -90,6 +92,10 @@ def build_host_shell(
         pot_store = LocalPotStore()
 
         graph = DefaultGraphService(backend=backend)
+        graph_workbench = GraphWorkbenchService(
+            backend=backend,
+            plan_store=LocalJsonGraphPlanStore(),
+        )
         assert_runtime_coherence(reader_backed_includes=graph.backed_includes)
         pots = LocalPotManagementService(store=pot_store, backend=backend)
         skills = DefaultSkillManager(
@@ -134,6 +140,7 @@ def build_host_shell(
         return HostShell(
             agent_context=agent_context,
             graph=graph,
+            graph_workbench=graph_workbench,
             pots=pots,
             skills=skills,
             backend=backend,

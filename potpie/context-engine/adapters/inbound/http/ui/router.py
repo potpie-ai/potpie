@@ -188,7 +188,11 @@ def build_ui_api_router(host: Any) -> APIRouter:
         q: str = Query(...),
         type: str | None = Query(None),
         predicate: str | None = Query(None),
+        subgraph: str | None = Query(None),
+        scope: str | None = Query(None),
+        truth: str | None = Query(None),
         environment: str | None = Query(None),
+        external_id: str | None = Query(None),
         limit: int = Query(15, ge=1, le=100),
         pot: str | None = Query(None),
     ) -> dict[str, Any]:
@@ -200,7 +204,11 @@ def build_ui_api_router(host: Any) -> APIRouter:
                     query=q,
                     type=type,
                     predicate=predicate,
+                    subgraph=subgraph,
+                    scope=_parse_scope(scope),
+                    truth=truth,
                     environment=environment,
+                    external_id=external_id,
                     limit=limit,
                 )
             )
@@ -242,6 +250,7 @@ def build_ui_api_router(host: Any) -> APIRouter:
 
     @router.get("/api/read")
     def read_view(
+        subgraph: str = Query(...),
         view: str = Query(...),
         query: str | None = Query(None),
         scope: str | None = Query(None),
@@ -256,6 +265,7 @@ def build_ui_api_router(host: Any) -> APIRouter:
             env = host.graph.read(
                 GraphReadRequest(
                     pot_id=pot_id,
+                    subgraph=subgraph,
                     view=view,
                     query=query,
                     scope=_parse_scope(scope),
@@ -265,24 +275,7 @@ def build_ui_api_router(host: Any) -> APIRouter:
                     limit=limit,
                 )
             )
-            meta = dict(env.metadata)
-            return {
-                "view": meta.get("view"),
-                "backed": meta.get("backed"),
-                "match_mode": meta.get("match_mode"),
-                "overall_confidence": env.overall_confidence,
-                "items": [
-                    {"include": i.include, "score": i.score, "payload": dict(i.payload)}
-                    for i in env.items
-                ],
-                "coverage": [
-                    {"include": c.include, "status": c.status} for c in env.coverage
-                ],
-                "unsupported_includes": [
-                    {"name": u.name, "reason": u.reason}
-                    for u in env.unsupported_includes
-                ],
-            }
+            return env.to_dict()
 
         return _guarded(go)
 

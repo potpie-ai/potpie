@@ -123,9 +123,20 @@ class FalkorDBInspection:
         )
 
     def neighborhood(
-        self, *, pot_id: str, entity_key: str, depth: int = 1
+        self,
+        *,
+        pot_id: str,
+        entity_key: str,
+        depth: int = 1,
+        direction: str = "both",
+        predicates: tuple[str, ...] = (),
+        limit: int | None = None,
     ) -> GraphSlice:
         depth = max(1, min(int(depth), _MAX_DEPTH))
+        max_edges = min(max(0, int(limit)), _MAX_EDGES) if limit is not None else _MAX_EDGES
+        predicate_set = {p.upper() for p in predicates if p}
+        walk_out = direction in ("out", "both")
+        walk_in = direction in ("in", "both")
         visited: set[str] = {entity_key}
         frontier: set[str] = {entity_key}
         edges: dict[tuple[str, str, str], GraphEdge] = {}
@@ -140,13 +151,20 @@ class FalkorDBInspection:
             new: set[str] = set()
             for rec in recs:
                 src, tgt, pred = rec["source"], rec["target"], rec["predicate"]
+                if predicate_set and str(pred).upper() not in predicate_set:
+                    continue
+                follows_out = walk_out and src in frontier
+                follows_in = walk_in and tgt in frontier
+                if not (follows_out or follows_in):
+                    continue
                 edges[(src, pred, tgt)] = GraphEdge(
                     predicate=pred, from_key=src, to_key=tgt
                 )
-                for k in (src, tgt):
-                    if k not in visited:
-                        new.add(k)
-                if len(edges) >= _MAX_EDGES:
+                if follows_out and tgt not in visited:
+                    new.add(tgt)
+                if follows_in and src not in visited:
+                    new.add(src)
+                if len(edges) >= max_edges:
                     truncated = True
                     break
             if truncated:

@@ -15,9 +15,8 @@ this path.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
-from domain.agent_envelope import AgentEnvelope, EvidenceItem
 from domain.nudge import (
     NUDGE_POLICIES,
     GraphNudgeRequest,
@@ -27,13 +26,13 @@ from domain.nudge import (
     canonical_nudge_event,
 )
 from domain.ports.injection_ledger import InjectionLedgerPort
-from domain.ports.services.graph_service import GraphReadRequest
+from domain.ports.services.graph_service import GraphReadRequest, GraphReadResult
 
 
 class GraphReadPort(Protocol):
     """The narrow slice of ``GraphService`` the nudge brain needs."""
 
-    def read(self, request: GraphReadRequest) -> AgentEnvelope: ...
+    def read(self, request: GraphReadRequest) -> GraphReadResult: ...
 
 
 # Scope keys worth surfacing inline in injected context.
@@ -87,27 +86,31 @@ class NudgeService:
         if request.path and "file_path" not in scope:
             scope["file_path"] = request.path
 
-        scored: list[tuple[float, str, EvidenceItem]] = []
+        scored: list[tuple[float, str, dict[str, Any]]] = []
         views_read: list[str] = []
         for spec in policy.views:
-            env = self.graph.read(
+            subgraph, view = spec.view.split(".", 1)
+            result = self.graph.read(
                 GraphReadRequest(
                     pot_id=request.pot_id,
-                    view=spec.view,
+                    subgraph=subgraph,
+                    view=view,
                     query=request.query if spec.pass_query else None,
                     scope=scope if spec.pass_scope else {},
                     limit=spec.limit,
                 )
             )
             views_read.append(spec.view)
-            for item in env.items:
-                if item.score >= policy.min_score:
-                    scored.append((item.score, spec.view, item))
+            for item in result.items:
+                payload = dict(item)
+                score = float(payload.get("score") or 0.0)
+                if score >= policy.min_score:
+                    scored.append((score, spec.view, payload))
 
         # Global rank across views, then dedup vs the session ledger + within
         # this nudge, budgeted to the caller's top-K.
         scored.sort(key=lambda t: t[0], reverse=True)
-        fresh: list[tuple[float, str, EvidenceItem]] = []
+        fresh: list[tuple[float, str, dict[str, Any]]] = []
         chosen: set[str] = set()
         for score, view, item in scored:
             key = _injection_key(item)
@@ -143,7 +146,7 @@ class NudgeService:
         )
 
 
-def _format_inject_context(items: list[tuple[float, str, EvidenceItem]]) -> str:
+def _format_inject_context(items: list[tuple[float, str, dict[str, Any]]]) -> str:
     """Compact, source-ref-first context block for the session.
 
     Leads with the agent-authored retrieval card (``description``) when present,
@@ -152,12 +155,12 @@ def _format_inject_context(items: list[tuple[float, str, EvidenceItem]]) -> str:
     """
     lines = ["Relevant project memory (Potpie graph):"]
     for _score, view, item in items:
-        payload: dict[str, Any] = dict(item.payload)
+        payload: dict[str, Any] = dict(item)
         text = (
             payload.get("description")
-            or payload.get("fact")
             or payload.get("summary")
-            or item.candidate_key
+            or payload.get("fact")
+            or payload.get("entity_key")
         )
         scope_bits: list[str] = []
         code_scope = payload.get("code_scope") if isinstance(payload.get("code_scope"), dict) else {}
@@ -179,9 +182,10 @@ def _format_inject_context(items: list[tuple[float, str, EvidenceItem]]) -> str:
     return "\n".join(lines)
 
 
-def _injection_key(item: EvidenceItem) -> str:
-    payload = dict(item.payload)
-    claim_key = payload.get("claim_key")
+def _injection_key(item: Mapping[str, Any]) -> str:
+    payload = dict(item)
+    claim = payload.get("claim") if isinstance(payload.get("claim"), dict) else {}
+    claim_key = claim.get("claim_key") or payload.get("claim_key")
     if isinstance(claim_key, str) and claim_key:
         return claim_key
     relations = payload.get("relations")
@@ -195,7 +199,7 @@ def _injection_key(item: EvidenceItem) -> str:
             rel_key = claim.get("candidate_key")
             if isinstance(rel_key, str) and rel_key:
                 return rel_key
-    return item.candidate_key
+    return str(payload.get("entity_key") or "")
 
 
 __all__ = ["GraphReadPort", "NudgeService"]

@@ -47,7 +47,14 @@ class GraphInspectionPort(Protocol):
     """Structural traversal over the canonical graph."""
 
     def neighborhood(
-        self, *, pot_id: str, entity_key: str, depth: int = 1
+        self,
+        *,
+        pot_id: str,
+        entity_key: str,
+        depth: int = 1,
+        direction: str = "both",
+        predicates: tuple[str, ...] = (),
+        limit: int | None = None,
     ) -> GraphSlice:
         """Return the subgraph within ``depth`` hops of ``entity_key``."""
         ...

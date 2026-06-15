@@ -148,6 +148,7 @@ class ViewContract:
     v1_include: str
     backed: bool
     required_scope: tuple[str, ...] = ()
+    required_any_scope: tuple[str, ...] = ()
     optional_scope: tuple[str, ...] = ()
     result_shape: str = "flat_claims"
     ranking_inputs: tuple[str, ...] = ()
@@ -168,6 +169,7 @@ class ViewContract:
             "v1_include": self.v1_include,
             "backed": self.backed,
             "required_scope": list(self.required_scope),
+            "required_any_scope": list(self.required_any_scope),
             "optional_scope": list(self.optional_scope),
             "result_shape": self.result_shape,
             "ranking_inputs": list(self.ranking_inputs),
@@ -308,7 +310,7 @@ _SUBGRAPH_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "examples": (
             ExampleCommand(
-                command='potpie graph read --view debugging.prior_occurrences --query "timeout" --json',
+                command='potpie graph read --subgraph debugging --view prior_occurrences --query "timeout" --json',
                 description="Find prior bug/fix memories for a symptom.",
             ),
         ),
@@ -344,7 +346,7 @@ _SUBGRAPH_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "examples": (
             ExampleCommand(
-                command="potpie graph read --view recent_changes.timeline --time-window 7d --json",
+                command="potpie graph read --subgraph recent_changes --view timeline --time-window 7d --json",
                 description="Read the recent project timeline.",
             ),
         ),
@@ -398,7 +400,7 @@ _SUBGRAPH_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "examples": (
             ExampleCommand(
-                command="potpie graph read --view infra_topology.service_neighborhood --scope service:payments-api --depth 2 --json",
+                command="potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:payments-api --depth 2 --json",
                 description="Read a bounded service neighborhood.",
             ),
         ),
@@ -434,7 +436,7 @@ _SUBGRAPH_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "examples": (
             ExampleCommand(
-                command='potpie graph read --view decisions.preferences_for_scope --scope path:src/app.py --query "testing" --json',
+                command='potpie graph read --subgraph decisions --view preferences_for_scope --scope path:src/app.py --query "testing" --json',
                 description="Read active preferences for a coding scope.",
             ),
         ),
@@ -456,7 +458,7 @@ _SUBGRAPH_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "examples": (
             ExampleCommand(
-                command="potpie graph read --view features.feature_context --scope repo:github.com/acme/app --json",
+                command="potpie graph read --subgraph features --view feature_context --scope repo:github.com/acme/app --json",
                 description="Read capabilities provided by a repo.",
             ),
         ),
@@ -471,7 +473,7 @@ _SUBGRAPH_DEFINITIONS: dict[str, dict[str, Any]] = {
         "keywords": ("owner", "ownership", "team", "person", "code", "path", "repo"),
         "examples": (
             ExampleCommand(
-                command="potpie graph read --view code_topology.ownership_by_path --scope path:src/app.py --json",
+                command="potpie graph read --subgraph code_topology --view ownership_by_path --scope path:src/app.py --json",
                 description="Read owners for a path or service scope.",
             ),
         ),
@@ -500,7 +502,7 @@ _SUBGRAPH_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "examples": (
             ExampleCommand(
-                command="potpie graph read --view knowledge.document_context --scope service:payments-api --json",
+                command="potpie graph read --subgraph knowledge --view document_context --scope service:payments-api --json",
                 description="Read documentation pointers for a scope.",
             ),
         ),
@@ -515,7 +517,7 @@ _SUBGRAPH_DEFINITIONS: dict[str, dict[str, Any]] = {
         "keywords": ("admin", "inspect", "raw", "graph", "operator", "visualization"),
         "examples": (
             ExampleCommand(
-                command="potpie graph read --view admin.inspection_slice --json",
+                command="potpie graph read --subgraph admin --view inspection_slice --json",
                 description="Read an operator inspection slice.",
             ),
         ),
@@ -528,13 +530,31 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
         "when_to_use": (
             "Use before writing or reviewing code so local project preferences are visible.",
         ),
-        "result_shape": "flat_claims",
-        "optional_scope": ("repo", "scope", "path", "query"),
-        "supported_filters": ("repo", "scope", "path", "query"),
+        "result_shape": "entity_relations",
+        "required_any_scope": ("repo", "scope", "path", "query", "language"),
+        "optional_scope": (
+            "repo",
+            "scope",
+            "path",
+            "file_path",
+            "language",
+            "framework",
+            "query",
+        ),
+        "supported_filters": (
+            "repo",
+            "scope",
+            "path",
+            "file_path",
+            "language",
+            "framework",
+            "audience",
+            "query",
+        ),
         "keywords": ("preference", "policy", "scope", "coding", "style"),
         "examples": (
             ExampleCommand(
-                command='potpie graph read --view decisions.preferences_for_scope --scope path:potpie/context-engine --query "testing" --json',
+                command='potpie graph read --subgraph decisions --view preferences_for_scope --scope path:potpie/context-engine --query "testing" --json',
                 description="Read scoped coding preferences.",
             ),
         ),
@@ -545,6 +565,7 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
             "Use before debugging a symptom so old fixes and failed attempts are not missed.",
         ),
         "result_shape": "entity_relations",
+        "required_any_scope": ("query", "service", "repo"),
         "optional_scope": ("query", "service", "repo", "time_window"),
         "supported_filters": (
             "query",
@@ -553,11 +574,13 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
             "since",
             "until",
             "time_window",
+            "path",
+            "file_path",
         ),
         "keywords": ("bug", "debug", "failure", "symptom", "fix", "timeout"),
         "examples": (
             ExampleCommand(
-                command='potpie graph read --view debugging.prior_occurrences --query "staging timeout" --json',
+                command='potpie graph read --subgraph debugging --view prior_occurrences --query "staging timeout" --json',
                 description="Read prior failures matching a symptom.",
             ),
         ),
@@ -569,11 +592,21 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
         ),
         "result_shape": "events",
         "optional_scope": ("scope", "time_window", "query"),
-        "supported_filters": ("scope", "query", "since", "until", "time_window"),
+        "supported_filters": (
+            "scope",
+            "query",
+            "since",
+            "until",
+            "time_window",
+            "service",
+            "repo",
+            "path",
+            "file_path",
+        ),
         "keywords": ("timeline", "recent", "change", "deploy", "merged", "after"),
         "examples": (
             ExampleCommand(
-                command="potpie graph read --view recent_changes.timeline --time-window 7d --json",
+                command="potpie graph read --subgraph recent_changes --view timeline --time-window 7d --json",
                 description="Read recent activity.",
             ),
         ),
@@ -584,8 +617,15 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
             "Use before touching service boundaries, deployment behavior, dependencies, adapters, or environment-specific config.",
         ),
         "result_shape": "entity_relations",
+        "required_any_scope": ("service", "anchor_entity_key"),
         "optional_scope": ("service", "depth", "direction", "environment"),
-        "supported_filters": ("service", "depth", "direction", "environment"),
+        "supported_filters": (
+            "service",
+            "anchor_entity_key",
+            "depth",
+            "direction",
+            "environment",
+        ),
         "keywords": (
             "service",
             "dependency",
@@ -596,7 +636,7 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
         ),
         "examples": (
             ExampleCommand(
-                command="potpie graph read --view infra_topology.service_neighborhood --scope service:payments-api --environment staging --depth 2 --json",
+                command="potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:payments-api --environment staging --depth 2 --json",
                 description="Read a service neighborhood in one environment.",
             ),
         ),
@@ -607,8 +647,15 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
             "Use to learn what a repo/service does or to locate feature implementation anchors.",
         ),
         "result_shape": "entity_relations",
+        "required_any_scope": ("scope", "service", "repo", "anchor_entity_key", "query"),
         "optional_scope": ("scope", "service", "query"),
-        "supported_filters": ("scope", "service", "query"),
+        "supported_filters": (
+            "scope",
+            "service",
+            "repo",
+            "anchor_entity_key",
+            "query",
+        ),
         "keywords": ("feature", "capability", "implements", "repo", "service"),
     },
     "decisions.active_decisions": {
@@ -617,8 +664,9 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
             "Use before architecture-sensitive work, migrations, or behavior changes.",
         ),
         "result_shape": "flat_claims",
+        "required_any_scope": ("scope", "query", "service", "repo", "path"),
         "optional_scope": ("scope", "query"),
-        "supported_filters": ("scope", "query"),
+        "supported_filters": ("scope", "query", "service", "repo", "path", "file_path"),
         "keywords": ("decision", "architecture", "adr", "choice", "migration"),
     },
     "code_topology.ownership_by_path": {
@@ -627,8 +675,16 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
             "Use before routing reviews, asking owners, or changing owned code.",
         ),
         "result_shape": "entity_relations",
+        "required_any_scope": ("scope", "path", "repo", "service", "anchor_entity_key"),
         "optional_scope": ("scope",),
-        "supported_filters": ("scope",),
+        "supported_filters": (
+            "scope",
+            "path",
+            "file_path",
+            "repo",
+            "service",
+            "anchor_entity_key",
+        ),
         "keywords": ("owner", "ownership", "team", "path", "repo"),
     },
     "knowledge.document_context": {
@@ -637,8 +693,9 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
             "Use when source docs or runbooks may hold the authoritative answer.",
         ),
         "result_shape": "flat_claims",
+        "required_any_scope": ("scope", "query", "service", "repo", "path"),
         "optional_scope": ("scope", "query"),
-        "supported_filters": ("scope", "query"),
+        "supported_filters": ("scope", "query", "service", "repo", "path", "file_path"),
         "keywords": ("docs", "document", "runbook", "reference", "note"),
     },
     "admin.inspection_slice": {
@@ -835,6 +892,7 @@ def _view_contract(spec: GraphViewSpec) -> ViewContract:
         v1_include=spec.v1_include,
         backed=spec.backed,
         required_scope=tuple(override.get("required_scope") or ()),
+        required_any_scope=tuple(override.get("required_any_scope") or ()),
         optional_scope=tuple(override.get("optional_scope") or spec.inputs),
         result_shape=str(override.get("result_shape") or "flat_claims"),
         ranking_inputs=tuple(spec.ranking_inputs),

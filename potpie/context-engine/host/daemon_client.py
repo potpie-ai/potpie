@@ -115,6 +115,7 @@ class RemoteHostShell:
         self.daemon = self.rpc.daemon
         self.agent_context = RemoteSurface(self.rpc, "agent_context")
         self.graph = RemoteSurface(self.rpc, "graph")
+        self.graph_workbench = RemoteSurface(self.rpc, "graph_workbench")
         self.pots = RemoteSurface(self.rpc, "pots")
         self.skills = RemoteSurface(self.rpc, "skills")
         self.backend = RemoteSurface(self.rpc, "backend")

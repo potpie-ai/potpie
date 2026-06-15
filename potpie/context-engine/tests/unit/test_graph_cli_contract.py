@@ -2,25 +2,28 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 
 import pytest
 from typer.testing import CliRunner
 
 from adapters.inbound.cli.commands import _common, graph
-from domain.agent_envelope import AgentEnvelope, CoverageReport, EvidenceItem
-from domain.nudge import GraphNudgeResult
-from domain.semantic_mutations import (
-    SemanticMutationResult,
-    SemanticMutationValidationIssue,
+from domain.graph_plans import (
+    GraphMutationCommitResult,
+    GraphMutationDiff,
+    GraphMutationProposal,
 )
+from domain.nudge import GraphNudgeResult
 from domain.graph_views import views_for_catalog
 from domain.ports.services.graph_service import (
     DataPlaneStatus,
     GraphCatalogResult,
     GraphEntityCandidate,
     GraphEntitySearchResult,
+    GraphReadResult,
 )
+from domain.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
 from domain.ports.graph.analytics import RepairReport
 from domain.ports.graph.backend import BackendCapabilities
 
@@ -49,12 +52,10 @@ class _Pots:
 class _Graph:
     def __init__(
         self,
-        mutate_result: SemanticMutationResult | None = None,
-        read_result: AgentEnvelope | None = None,
+        read_result: GraphReadResult | None = None,
         read_error: Exception | None = None,
         catalog_error: Exception | None = None,
     ) -> None:
-        self.mutate_result = mutate_result
         self.read_result = read_result
         self.read_error = read_error
         self.catalog_error = catalog_error
@@ -90,10 +91,6 @@ class _Graph:
             match_mode="lexical",
         )
 
-    def mutate(self, _request):
-        assert self.mutate_result is not None
-        return self.mutate_result
-
     def read(self, _request):
         self.read_called = True
         self.read_request = _request
@@ -119,14 +116,41 @@ class _Nudge:
         )
 
 
+class _Workbench:
+    def __init__(
+        self,
+        *,
+        proposal: GraphMutationProposal | None = None,
+        commit_result: GraphMutationCommitResult | None = None,
+    ) -> None:
+        self.proposal = proposal
+        self.commit_result = commit_result
+        self.propose_calls = []
+        self.commit_calls = []
+
+    def propose(self, payload, *, pot_id, ttl_seconds=None):
+        self.propose_calls.append((payload, pot_id, ttl_seconds))
+        if self.proposal is None:
+            raise AssertionError("propose should not be called")
+        return self.proposal
+
+    def commit(self, plan_id, *, pot_id, approved_by=None):
+        self.commit_calls.append((plan_id, pot_id, approved_by))
+        if self.commit_result is None:
+            raise AssertionError("commit should not be called")
+        return self.commit_result
+
+
 class _Host:
     def __init__(
         self,
         graph_service: _Graph,
         nudge_service: _Nudge | None = None,
         backend=None,
+        graph_workbench: _Workbench | None = None,
     ) -> None:
         self.graph = graph_service
+        self.graph_workbench = graph_workbench or _Workbench()
         self.nudge = nudge_service or _Nudge()
         self.pots = _Pots()
         self.backend = backend
@@ -149,6 +173,43 @@ class _Analytics:
 class _Backend:
     def __init__(self) -> None:
         self.analytics = _Analytics()
+
+    profile = "memory"
+
+    def capabilities(self) -> BackendCapabilities:
+        return BackendCapabilities(profile=self.profile, inspection=True)
+
+    @property
+    def inspection(self):
+        return _Inspection()
+
+
+class _Inspection:
+    def neighborhood(
+        self,
+        *,
+        pot_id,
+        entity_key,
+        depth=1,
+        direction="both",
+        predicates=(),
+        limit=None,
+    ):
+        return GraphSlice(
+            pot_id=pot_id,
+            nodes=(
+                GraphNode(key=entity_key, labels=("Service",), properties={"name": "web"}),
+                GraphNode(key="service:api", labels=("Service",)),
+            ),
+            edges=(
+                GraphEdge(
+                    predicate="DEPENDS_ON",
+                    from_key=entity_key,
+                    to_key="service:api",
+                    properties={"environment": "staging"},
+                ),
+            ),
+        )
 
 
 class _UnsupportedBackend:
@@ -188,6 +249,53 @@ def _valid_mutation_payload() -> dict:
             }
         ]
     }
+
+
+def _proposal(
+    *,
+    ok: bool = True,
+    status: str = "validated",
+    risk: str = "low",
+    plan_id: str = "mutation-plan:test",
+    issues: tuple[dict, ...] = (),
+) -> GraphMutationProposal:
+    return GraphMutationProposal(
+        ok=ok,
+        plan_id=plan_id,
+        status=status,
+        risk=risk,
+        pot_id="p",
+        auto_applicable=status == "validated" and risk == "low",
+        expires_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        expected_subgraph_versions={"_global": 0},
+        current_subgraph_versions={"_global": 0},
+        diff=GraphMutationDiff(edge_upserts=1, claim_keys=("claim:test",)),
+        issues=issues,
+        rejected_operations=issues,
+        claim_keys=("claim:test",),
+    )
+
+
+def _commit_result(
+    *,
+    ok: bool = True,
+    status: str = "committed",
+    plan_id: str = "mutation-plan:test",
+) -> GraphMutationCommitResult:
+    return GraphMutationCommitResult(
+        ok=ok,
+        plan_id=plan_id,
+        status=status,
+        risk="low",
+        pot_id="p",
+        mutation_id="mutation-1" if ok else None,
+        applied_at=datetime(2026, 6, 15, tzinfo=timezone.utc) if ok else None,
+        expected_subgraph_versions={"_global": 0},
+        current_subgraph_versions={"_global": 0},
+        new_subgraph_versions={"_global": 1} if ok else {"_global": 0},
+        diff=GraphMutationDiff(edge_upserts=1, claim_keys=("claim:test",)),
+        claim_keys=("claim:test",),
+    )
 
 
 def _assert_graph_envelope(payload: dict, command: str, *, ok: bool = True) -> dict:
@@ -240,6 +348,7 @@ def test_graph_repair_accepts_entity_summaries_target() -> None:
     ("args", "capability", "method"),
     [
         (["inspect", "service:web"], "inspection", "neighborhood"),
+        (["neighborhood", "--entity", "service:web"], "inspection", "neighborhood"),
         (["export", "out.json"], "snapshot", "export"),
         (["import", "in.json"], "snapshot", "import_"),
     ],
@@ -266,20 +375,20 @@ def test_graph_capability_commands_precheck_backend_capabilities(
 
 def test_graph_mutate_rejection_emits_result_and_exits_nonzero(tmp_path) -> None:
     _common.set_json(True)
-    result_payload = SemanticMutationResult(
+    proposal = _proposal(
         ok=False,
-        status="rejected",
-        risk="low",
-        pot_id="p",
+        status="invalid",
         issues=(
-            SemanticMutationValidationIssue(
-                code="invalid_endpoints",
-                message="invalid endpoint pair",
-            ),
+            {
+                "code": "invalid_endpoints",
+                "message": "invalid endpoint pair",
+                "severity": "error",
+                "op_index": 0,
+            },
         ),
     )
-    graph_service = _Graph(mutate_result=result_payload)
-    _common.set_host(_Host(graph_service))
+    workbench = _Workbench(proposal=proposal)
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
     payload_file = tmp_path / "mutation.json"
     payload_file.write_text(json.dumps(_valid_mutation_payload()), encoding="utf-8")
 
@@ -293,9 +402,62 @@ def test_graph_mutate_rejection_emits_result_and_exits_nonzero(tmp_path) -> None
     detail = _assert_graph_envelope(emitted, "graph.mutate", ok=False)
     assert detail == {}
     assert emitted["error"]["code"] == "invalid_endpoints"
-    assert emitted["error"]["detail"]["status"] == "rejected"
+    assert emitted["error"]["detail"]["status"] == "invalid"
     assert emitted["error"]["detail"]["issues"][0]["code"] == "invalid_endpoints"
     assert "legacy transition command" in emitted["warnings"][0]
+    assert workbench.commit_calls == []
+
+
+def test_graph_propose_returns_persisted_plan_envelope(tmp_path) -> None:
+    _common.set_json(True)
+    workbench = _Workbench(proposal=_proposal())
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    payload_file = tmp_path / "mutation.json"
+    payload_file.write_text(json.dumps(_valid_mutation_payload()), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["propose", "--file", str(payload_file), "--ttl", "30m"],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.propose")
+    assert body["plan_id"] == "mutation-plan:test"
+    assert body["status"] == "validated"
+    assert workbench.propose_calls[0][1:] == ("p", 1800)
+
+
+def test_graph_commit_applies_plan_id_only() -> None:
+    _common.set_json(True)
+    workbench = _Workbench(commit_result=_commit_result())
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["commit", "mutation-plan:test"],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.commit")
+    assert body["status"] == "committed"
+    assert body["mutation_id"] == "mutation-1"
+    assert workbench.commit_calls == [("mutation-plan:test", "p", None)]
+
+
+def test_graph_commit_rejects_raw_payload_option() -> None:
+    _common.set_json(True)
+    workbench = _Workbench(commit_result=_commit_result())
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["commit", "mutation-plan:test", "--file", "mutation.json"],
+    )
+
+    assert result.exit_code != 0
+    assert workbench.commit_calls == []
 
 
 @pytest.mark.parametrize("scope", ["service", "service:"])
@@ -306,7 +468,15 @@ def test_graph_read_rejects_malformed_scope_before_service_call(scope: str) -> N
 
     result = CliRunner().invoke(
         graph.graph_app,
-        ["read", "--view", "debugging.prior_occurrences", "--scope", scope],
+        [
+            "read",
+            "--subgraph",
+            "debugging",
+            "--view",
+            "prior_occurrences",
+            "--scope",
+            scope,
+        ],
     )
 
     assert result.exit_code == 1
@@ -324,7 +494,7 @@ def test_graph_read_unknown_view_uses_error_envelope() -> None:
 
     result = CliRunner().invoke(
         graph.graph_app,
-        ["read", "--view", "missing.view"],
+        ["read", "--subgraph", "missing", "--view", "view"],
     )
 
     assert result.exit_code == 1
@@ -335,65 +505,79 @@ def test_graph_read_unknown_view_uses_error_envelope() -> None:
     assert "unknown graph view" in emitted["error"]["message"]
 
 
-def _timeline_env() -> AgentEnvelope:
-    return AgentEnvelope(
-        pot_id="p",
-        intent="unknown",
-        overall_confidence="high",
-        coverage=(CoverageReport(include="timeline", status="complete"),),
-        metadata={
-            "view": "recent_changes.timeline",
-            "subgraph": "recent_changes",
-            "backed": True,
-            "read_shape": "entity_relations",
-        },
+def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:
+    _common.set_json(True)
+    graph_service = _Graph()
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["read", "--subgraph", "debugging", "--view", "debugging.prior_occurrences"],
+    )
+
+    assert result.exit_code == 1
+    assert graph_service.read_called is False
+    emitted = json.loads(result.output)
+    _assert_graph_envelope(emitted, "graph.read", ok=False)
+    assert emitted["error"]["code"] == "validation_error"
+    assert "--subgraph <name> --view <view>" in emitted["error"]["message"]
+
+
+def _timeline_env() -> GraphReadResult:
+    return GraphReadResult(
+        graph_contract_version="v1.5",
+        ontology_version="2026-06-graph",
+        view="recent_changes.timeline",
+        subgraph="recent_changes",
+        read_shape="entity_relations",
+        coverage=({"include": "timeline", "status": "complete"},),
+        freshness={"local_worktree_included": False},
+        quality={"status": "ok"},
         items=(
-            EvidenceItem(
-                include="timeline",
-                candidate_key="activity:github:pr-2",
-                score=0.9,
-                coverage_status="complete",
-                payload={
-                    "entity": {"key": "activity:github:pr-2"},
-                    "relations": [
-                        {
-                            "predicate": "TOUCHED",
-                            "from_key": "activity:github:pr-2",
-                            "to_key": "repo:github.com/acme/widgets",
-                            "fact": 'PR #2 "newer" was merged into acme/widgets on 2026-06-08 by Bob.',
-                            "source_refs": ["github:pr:2"],
-                            "truth": "timeline_event",
-                        },
-                        {
-                            "predicate": "PERFORMED",
-                            "from_key": "person:bob",
-                            "to_key": "activity:github:pr-2",
-                            "fact": 'PR #2 "newer" was merged into acme/widgets on 2026-06-08 by Bob.',
-                            "source_refs": ["github:pr:2"],
-                            "truth": "timeline_event",
-                        },
-                    ],
-                },
-            ),
-            EvidenceItem(
-                include="timeline",
-                candidate_key="activity:github:pr-1",
-                score=1.0,
-                coverage_status="complete",
-                payload={
-                    "entity": {"key": "activity:github:pr-1"},
-                    "relations": [
-                        {
-                            "predicate": "TOUCHED",
-                            "from_key": "activity:github:pr-1",
-                            "to_key": "repo:github.com/acme/widgets",
-                            "fact": 'PR #1 "older" was merged into acme/widgets on 2026-06-01 by Alice.',
-                            "source_refs": ["github:pr:1"],
-                            "truth": "timeline_event",
-                        }
-                    ],
-                },
-            ),
+            {
+                "entity_key": "activity:github:pr-2",
+                "entity_type": "Activity",
+                "score": 0.9,
+                "summary": 'PR #2 "newer" was merged into acme/widgets.',
+                "source_refs": ["github:pr:2"],
+                "truth": "timeline_event",
+                "relations": [
+                    {
+                        "predicate": "TOUCHED",
+                        "from_key": "activity:github:pr-2",
+                        "to_key": "repo:github.com/acme/widgets",
+                        "fact": 'PR #2 "newer" was merged into acme/widgets on 2026-06-08 by Bob.',
+                        "source_refs": ["github:pr:2"],
+                        "truth": "timeline_event",
+                    },
+                    {
+                        "predicate": "PERFORMED",
+                        "from_key": "person:bob",
+                        "to_key": "activity:github:pr-2",
+                        "fact": 'PR #2 "newer" was merged into acme/widgets on 2026-06-08 by Bob.',
+                        "source_refs": ["github:pr:2"],
+                        "truth": "timeline_event",
+                    },
+                ],
+            },
+            {
+                "entity_key": "activity:github:pr-1",
+                "entity_type": "Activity",
+                "score": 1.0,
+                "summary": 'PR #1 "older" was merged into acme/widgets.',
+                "source_refs": ["github:pr:1"],
+                "truth": "timeline_event",
+                "relations": [
+                    {
+                        "predicate": "TOUCHED",
+                        "from_key": "activity:github:pr-1",
+                        "to_key": "repo:github.com/acme/widgets",
+                        "fact": 'PR #1 "older" was merged into acme/widgets on 2026-06-01 by Alice.',
+                        "source_refs": ["github:pr:1"],
+                        "truth": "timeline_event",
+                    }
+                ],
+            },
         ),
     )
 
@@ -405,13 +589,23 @@ def test_graph_read_timeline_defaults_to_deduped_event_json() -> None:
 
     result = CliRunner().invoke(
         graph.graph_app,
-        ["read", "--view", "recent_changes.timeline", "--limit", "1"],
+        [
+            "read",
+            "--subgraph",
+            "recent_changes",
+            "--view",
+            "timeline",
+            "--limit",
+            "1",
+        ],
     )
 
     assert result.exit_code == 0
     assert graph_service.read_request.limit == 40
     emitted = json.loads(result.output)
     body = _assert_graph_envelope(emitted, "graph.read")
+    assert "subgraph_versions" not in body
+    assert "unsupported" not in body
     assert body["read_shape"] == "events"
     assert body["event_count"] == 1
     assert body["events"][0]["source_refs"] == ["github:pr:2"]
@@ -500,6 +694,35 @@ def test_graph_status_json_uses_workbench_envelope() -> None:
     assert body["backend"]["profile"] == "memory"
 
 
+def test_graph_neighborhood_returns_inspection_slice() -> None:
+    _common.set_json(True)
+    _common.set_host(_Host(_Graph(), backend=_Backend()))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "neighborhood",
+            "--entity",
+            "service:web",
+            "--predicate",
+            "DEPENDS_ON",
+            "--direction",
+            "out",
+            "--depth",
+            "2",
+            "--limit",
+            "5",
+        ],
+    )
+
+    assert result.exit_code == 0
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.neighborhood")
+    assert body["entity_key"] == "service:web"
+    assert body["predicates"] == ["DEPENDS_ON"]
+    assert body["edges"][0]["from"] == "service:web"
+
+
 def test_graph_describe_returns_executable_view_contract() -> None:
     _common.set_json(True)
     _common.set_host(_Host(_Graph()))
@@ -547,7 +770,8 @@ def test_timeline_recent_passes_project_scope_and_time_window() -> None:
 
     assert result.exit_code == 0
     req = graph_service.read_request
-    assert req.view == "recent_changes.timeline"
+    assert req.subgraph == "recent_changes"
+    assert req.view == "timeline"
     assert req.scope == {}
     assert req.limit == 40
     assert req.since is not None

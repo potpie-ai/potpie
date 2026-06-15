@@ -144,27 +144,26 @@ def test_read_assembles_inline_relations_for_view(service) -> None:
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            view="infra_topology.service_neighborhood",
+            subgraph="infra_topology",
+            view="service_neighborhood",
             scope={"service": "payments-api"},
             depth=1,
         )
     )
 
-    assert env.metadata["read_shape"] == "entity_relations"
-    by_key = {i.candidate_key: dict(i.payload) for i in env.items}
+    assert env.read_shape == "entity_relations"
+    by_key = {item["entity_key"]: item for item in env.items}
     payments = by_key["service:payments-api"]
-    assert payments["entity"]["labels"] == ["Service"]
-    assert payments["entity"]["summary"] == "Payments API service."
-    assert payments["entity"]["description"] == "Payments API service."
+    assert payments["entity_type"] == "Service"
+    assert payments["summary"] == "Payments API service."
     ledger = by_key["service:ledger-api"]
-    assert ledger["entity"]["summary"] == "Ledger API service."
-    assert ledger["entity"]["description"] == "Ledger API service."
+    assert ledger["summary"] == "Ledger API service."
     dep_rel = next(
         rel
         for rel in payments["relations"]
         if rel["predicate"] == "DEPENDS_ON" and rel["direction"] == "out"
     )
-    assert dep_rel["related_entity"]["summary"] == "Ledger API service."
+    assert dep_rel["related_key"] == "service:ledger-api"
     assert any(
         rel["predicate"] == "DEPENDS_ON"
         and rel["direction"] == "out"
@@ -211,7 +210,8 @@ def test_preferences_view_assembles_structured_policy_relation(service) -> None:
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            view="decisions.preferences_for_scope",
+            subgraph="decisions",
+            view="preferences_for_scope",
             scope={
                 "path": "potpie/context-engine/adapters/inbound/cli/commands/graph.py",
                 "language": "python",
@@ -220,8 +220,8 @@ def test_preferences_view_assembles_structured_policy_relation(service) -> None:
         )
     )
 
-    assert env.metadata["read_shape"] == "entity_relations"
-    rels = [rel for item in env.items for rel in dict(item.payload)["relations"]]
+    assert env.read_shape == "entity_relations"
+    rels = [rel for item in env.items for rel in item["relations"]]
     policy_rel = next(rel for rel in rels if rel["predicate"] == "POLICY_APPLIES_TO")
     assert policy_rel["properties"]["prescription"].startswith("Emit structured CLI")
     assert policy_rel["properties"]["policy_kind"] == "error_handling"
@@ -252,15 +252,16 @@ def test_read_dedupes_duplicate_inline_relation_rows(service) -> None:
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            view="decisions.preferences_for_scope",
+            subgraph="decisions",
+            view="preferences_for_scope",
             scope={"language": "python"},
             limit=5,
         )
     )
 
-    assert env.metadata["read_shape"] == "entity_relations"
-    assert env.metadata["inline_relation_count"] == 2
-    by_key = {item.candidate_key: dict(item.payload) for item in env.items}
+    assert env.read_shape == "entity_relations"
+    assert env.inline_relation_count == 2
+    by_key = {item["entity_key"]: item for item in env.items}
     assert len(by_key["preference:cli-errors"]["relations"]) == 1
     assert (
         by_key["preference:cli-errors"]["relations"][0]["related_key"]
@@ -314,14 +315,75 @@ def test_features_view_does_not_return_generic_infra_edges(service) -> None:
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            view="features.feature_context",
+            subgraph="features",
+            view="feature_context",
             scope={"anchor_entity_key": "repo:github.com/acme/widgets"},
         )
     )
 
-    assert env.metadata["read_shape"] == "entity_relations"
-    rels = [rel for item in env.items for rel in dict(item.payload)["relations"]]
+    assert env.read_shape == "entity_relations"
+    rels = [rel for item in env.items for rel in item["relations"]]
     assert {rel["predicate"] for rel in rels} == {"PROVIDES"}
+
+
+def test_read_returns_unsupported_for_filters_outside_view_contract(service) -> None:
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="debugging",
+            view="prior_occurrences",
+            query="timeout",
+            scope={"service": "api", "language": "python"},
+        )
+    )
+
+    assert env.items == ()
+    assert env.unsupported[0]["name"] == "language"
+    assert env.coverage[0]["status"] == "unsupported"
+
+
+def test_infra_read_keeps_environment_qualified_edges_isolated(service) -> None:
+    store = service.backend.claim_query
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="DEPENDS_ON",
+            subject_key="service:payments-api",
+            object_key="service:ledger-staging",
+            fact="payments uses staging ledger",
+            environment="staging",
+            subgraph="infra_topology",
+        )
+    )
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="DEPENDS_ON",
+            subject_key="service:payments-api",
+            object_key="service:ledger-prod",
+            fact="payments uses production ledger",
+            environment="prod",
+            subgraph="infra_topology",
+        )
+    )
+
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="infra_topology",
+            view="service_neighborhood",
+            scope={"service": "payments-api"},
+            environment="staging",
+            depth=1,
+        )
+    )
+
+    rels = [rel for item in env.items for rel in item["relations"]]
+    assert {rel["environment"] for rel in rels} == {"staging"}
+    assert {rel["related_key"] for rel in rels} == {
+        "service:ledger-staging",
+        "service:payments-api",
+    }
 
 
 def test_search_entities_derives_summary_for_old_nodes_without_summary(service) -> None:
@@ -380,6 +442,47 @@ def test_search_entities_projects_canonical_labels_from_key_prefix(service) -> N
     assert repo["labels"] == ["Repository"]
 
 
+def test_search_entities_filters_by_subgraph_truth_and_scope(service) -> None:
+    store = service.backend.claim_query
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="PROVIDES",
+            subject_key="repo:github.com/acme/widgets",
+            object_key="feature:payments",
+            fact="widgets provides payments",
+            subgraph="features",
+            truth="agent_claim",
+            properties={"semantic_similarity": 0.9},
+        )
+    )
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="DEPENDS_ON",
+            subject_key="service:payments",
+            object_key="service:ledger",
+            fact="payments depends on ledger",
+            subgraph="infra_topology",
+            truth="source_observation",
+            properties={"semantic_similarity": 0.95},
+        )
+    )
+
+    result = service.search_entities(
+        GraphEntitySearchRequest(
+            pot_id="p",
+            query="payments",
+            type="Feature",
+            subgraph="features",
+            truth="agent_claim",
+            scope={"repo": "github.com/acme/widgets"},
+        )
+    ).to_dict()
+
+    assert [entity["key"] for entity in result["entities"]] == ["feature:payments"]
+
+
 def test_read_projects_canonical_labels_from_key_prefix(service) -> None:
     store = service.backend.claim_query
     store.add(
@@ -407,16 +510,15 @@ def test_read_projects_canonical_labels_from_key_prefix(service) -> None:
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            view="features.feature_context",
+            subgraph="features",
+            view="feature_context",
             scope={"anchor_entity_key": "repo:github.com/potpie-ai/potpie"},
         )
     )
 
-    by_key = {i.candidate_key: dict(i.payload) for i in env.items}
-    assert by_key["repo:github.com/potpie-ai/potpie"]["entity"]["labels"] == [
-        "Repository"
-    ]
-    assert by_key["feature:context-graph"]["entity"]["labels"] == ["Feature"]
+    by_key = {item["entity_key"]: item for item in env.items}
+    assert by_key["repo:github.com/potpie-ai/potpie"]["entity_type"] == "Repository"
+    assert by_key["feature:context-graph"]["entity_type"] == "Feature"
 
 
 def test_fix_record_creates_scoped_bug_and_failed_attempt_memory(service) -> None:
@@ -438,14 +540,15 @@ def test_fix_record_creates_scoped_bug_and_failed_attempt_memory(service) -> Non
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            view="debugging.prior_occurrences",
+            subgraph="debugging",
+            view="prior_occurrences",
             query="ambiguous pot graph read",
             scope={"service": "context-engine"},
             limit=10,
         )
     )
 
-    rels = [rel for item in env.items for rel in dict(item.payload)["relations"]]
+    rels = [rel for item in env.items for rel in item["relations"]]
     predicates = {rel["predicate"] for rel in rels}
     assert {"REPRODUCES", "RESOLVED", "ATTEMPTED_FIX_FAILED"} <= predicates
 
@@ -469,14 +572,15 @@ def test_decision_record_creates_decided_and_affects_memory(service) -> None:
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            view="decisions.active_decisions",
+            subgraph="decisions",
+            view="active_decisions",
             query="semantic mutations context writes",
             scope={"service": "context-engine"},
             limit=10,
         )
     )
 
-    rels = [rel for item in env.items for rel in dict(item.payload)["relations"]]
+    rels = [rel for item in env.items for rel in item["relations"]]
     assert {"DECIDED", "AFFECTS"} <= {rel["predicate"] for rel in rels}
 
 

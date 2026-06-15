@@ -105,9 +105,10 @@ class GraphCatalogResult:
 
 @dataclass(frozen=True, slots=True)
 class GraphReadRequest:
-    """``graph read`` — a V2-style read over a named view."""
+    """``graph read`` — a V2-style read over a named subgraph/view."""
 
     pot_id: str
+    subgraph: str
     view: str
     query: str | None = None
     scope: Mapping[str, Any] = field(default_factory=dict)
@@ -120,6 +121,57 @@ class GraphReadRequest:
     depth: int | None = None
     direction: str | None = None
     environment: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GraphReadResult:
+    """Contract-shaped V2 read result.
+
+    This is the graph workbench read body. It intentionally does not expose the
+    internal ``AgentEnvelope`` used by lower-level readers.
+    """
+
+    view: str
+    subgraph: str
+    items: tuple[Mapping[str, Any], ...] = ()
+    coverage: tuple[Mapping[str, Any], ...] = ()
+    freshness: Mapping[str, Any] = field(default_factory=dict)
+    quality: Mapping[str, Any] = field(default_factory=dict)
+    source_refs: tuple[str, ...] = ()
+    match_mode: str = "lexical"
+    backed: bool = True
+    read_shape: str = "flat_claims"
+    inline_relations: tuple[str, ...] = ()
+    inline_relation_count: int = 0
+    graph_contract_version: str = ""
+    ontology_version: str = ""
+    subgraph_versions: Mapping[str, int] = field(default_factory=dict)
+    unsupported: tuple[Mapping[str, Any], ...] = ()
+    warnings: tuple[str, ...] = ()
+    as_of: datetime | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "graph_contract_version": self.graph_contract_version,
+            "ontology_version": self.ontology_version,
+            "view": self.view,
+            "subgraph": self.subgraph,
+            "backed": self.backed,
+            "match_mode": self.match_mode,
+            "read_shape": self.read_shape,
+            "inline_relations": list(self.inline_relations),
+            "inline_relation_count": self.inline_relation_count,
+            "items": [dict(item) for item in self.items],
+            "coverage": [dict(report) for report in self.coverage],
+            "freshness": dict(self.freshness),
+            "quality": dict(self.quality),
+            "source_refs": list(self.source_refs),
+            "subgraph_versions": dict(self.subgraph_versions),
+            "unsupported": [dict(item) for item in self.unsupported],
+            "warnings": list(self.warnings),
+            "as_of": self.as_of.isoformat() if self.as_of else None,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,7 +195,13 @@ class GraphEntitySearchRequest:
     query: str
     type: str | None = None
     predicate: str | None = None
+    subgraph: str | None = None
+    scope: Mapping[str, Any] = field(default_factory=dict)
+    truth: str | None = None
+    since: datetime | None = None
+    until: datetime | None = None
     environment: str | None = None
+    external_id: str | None = None
     limit: int = 10
 
 
@@ -202,7 +260,7 @@ class GraphService(Protocol):
         """Return the V1.5 graph contract (versions, views, ops, ontology)."""
         ...
 
-    def read(self, request: GraphReadRequest) -> AgentEnvelope:
+    def read(self, request: GraphReadRequest) -> GraphReadResult:
         """V2-style read over a named view, routed through the read trunk."""
         ...
 
@@ -225,5 +283,6 @@ __all__ = [
     "GraphEntitySearchRequest",
     "GraphEntitySearchResult",
     "GraphReadRequest",
+    "GraphReadResult",
     "GraphService",
 ]

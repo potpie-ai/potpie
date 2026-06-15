@@ -47,6 +47,7 @@ from domain.graph_contract import (
 )
 from domain.graph_entity_summary import normalize_entity_properties
 from domain.graph_views import GRAPH_VIEWS, view_spec, views_for_catalog
+from domain.graph_workbench_ontology import ViewContract, ontology_contract
 from domain.ontology import EDGE_TYPES, ENTITY_TYPES, canonical_entity_labels
 from domain.ports.agent_context import (
     RecordReceipt,
@@ -64,6 +65,7 @@ from domain.ports.services.graph_service import (
     GraphEntitySearchRequest,
     GraphEntitySearchResult,
     GraphReadRequest,
+    GraphReadResult,
 )
 from domain.semantic_mutations import (
     SemanticMutationRequest,
@@ -200,13 +202,62 @@ class DefaultGraphService:
             source_authorities=tuple(sorted(SOURCE_AUTHORITIES)),
         )
 
-    def read(self, request: GraphReadRequest) -> AgentEnvelope:
-        spec = view_spec(request.view)
+    def read(self, request: GraphReadRequest) -> GraphReadResult:
+        view_name = _qualified_view_name(request.subgraph, request.view)
+        contract = ontology_contract().view(view_name)
+        if contract is None:
+            known = ", ".join(sorted(GRAPH_VIEWS))
+            raise ValueError(f"unknown graph view {view_name!r}. Known views: {known}")
+        spec = view_spec(view_name)
         if spec is None:
             known = ", ".join(sorted(GRAPH_VIEWS))
-            raise ValueError(
-                f"unknown graph view {request.view!r}. Known views: {known}"
+            raise ValueError(f"unknown graph view {view_name!r}. Known views: {known}")
+
+        unsupported = _unsupported_read_filters(request, contract)
+        missing = _missing_required_read_scope(request, contract)
+        if unsupported or missing:
+            unsupported_items = tuple(
+                [*unsupported]
+                + [
+                    {
+                        "name": contract.name,
+                        "reason": "missing_required_scope",
+                        "detail": {
+                            "required_scope": list(contract.required_scope),
+                            "required_any_scope": list(contract.required_any_scope),
+                        },
+                    }
+                ]
+                if missing
+                else unsupported
             )
+            return GraphReadResult(
+                view=contract.name,
+                subgraph=contract.subgraph,
+                items=(),
+                coverage=(
+                    {
+                        "include": spec.v1_include,
+                        "status": "unsupported" if unsupported else "empty",
+                        "candidate_pool": 0,
+                    },
+                ),
+                freshness=_read_freshness(None, backend_freshness={}),
+                quality={
+                    "status": "unsupported" if unsupported else "empty",
+                    "reason": "unsupported_filter" if unsupported else "missing_required_scope",
+                },
+                source_refs=(),
+                match_mode=self._match_mode(),
+                backed=spec.backed,
+                read_shape=contract.result_shape,
+                inline_relations=spec.inline_relations,
+                graph_contract_version=GRAPH_CONTRACT_VERSION,
+                ontology_version=ONTOLOGY_VERSION,
+                subgraph_versions=self._subgraph_versions(request.pot_id),
+                unsupported=unsupported_items,
+            )
+
         scope = dict(request.scope)
         if request.environment:
             scope["environment"] = request.environment
@@ -240,12 +291,19 @@ class DefaultGraphService:
             },
         )
         if spec.inline_relations:
-            return _assemble_inline_relation_items(
+            enriched = _assemble_inline_relation_items(
                 enriched,
                 claim_query=self.backend.claim_query,
                 inline_relations=spec.inline_relations,
             )
-        return enriched
+        return _read_result_from_envelope(
+            enriched,
+            contract=contract,
+            match_mode=self._match_mode(),
+            subgraph_versions=self._subgraph_versions(request.pot_id),
+            backend_freshness=_safe(lambda: dict(self.backend.analytics.freshness(request.pot_id)), {}),
+            backend_quality=_safe(lambda: dict(self.backend.analytics.quality(request.pot_id)), {}),
+        )
 
     def search_entities(
         self, request: GraphEntitySearchRequest
@@ -257,9 +315,16 @@ class DefaultGraphService:
                 pot_id=request.pot_id,
                 predicate_in=predicate_in,
                 fact_query=request.query or None,
-                limit=max(request.limit * 5, 25),
+                valid_at_after=request.since,
+                valid_at_before=request.until,
+                limit=max(request.limit * 10, 100),
             )
         )
+        rows = [
+            row
+            for row in rows
+            if _matches_search_filters(row, request)
+        ]
         if request.environment:
             rows = [r for r in rows if _row_env(r) == request.environment.lower()]
 
@@ -287,6 +352,12 @@ class DefaultGraphService:
                 else {}
             )
             props = normalize_entity_properties(props, entity_key=key)
+            if request.external_id and not _matches_external_id(
+                key,
+                props,
+                request.external_id,
+            ):
+                continue
             candidates.append(
                 GraphEntityCandidate(
                     key=key,
@@ -475,6 +546,424 @@ def _catalog_predicates() -> list[dict]:
             }
         )
     return out
+
+
+def _qualified_view_name(subgraph: str, view: str) -> str:
+    subgraph_value = (subgraph or "").strip()
+    view_value = (view or "").strip()
+    if not subgraph_value:
+        raise ValueError("--subgraph is required")
+    if not view_value:
+        raise ValueError("--view is required")
+    if "." in view_value:
+        raise ValueError(
+            "graph read now requires --subgraph <name> --view <view>; "
+            f"got fully-qualified view {view_value!r}"
+        )
+    return f"{subgraph_value}.{view_value}"
+
+
+def _unsupported_read_filters(
+    request: GraphReadRequest, contract: ViewContract
+) -> tuple[dict[str, Any], ...]:
+    supported = set(contract.supported_filters)
+    requested = _requested_read_filters(request)
+    unsupported = sorted(name for name in requested if name not in supported)
+    return tuple(
+        {
+            "name": name,
+            "reason": "unsupported_filter",
+            "detail": {
+                "view": contract.name,
+                "supported_filters": sorted(supported),
+            },
+        }
+        for name in unsupported
+    )
+
+
+def _requested_read_filters(request: GraphReadRequest) -> set[str]:
+    requested = {
+        key
+        for key, value in dict(request.scope).items()
+        if value not in (None, "", [], ())
+    }
+    if request.query:
+        requested.add("query")
+    if request.since:
+        requested.add("since")
+    if request.until:
+        requested.add("until")
+    if request.depth is not None:
+        requested.add("depth")
+    if request.direction:
+        requested.add("direction")
+    if request.environment:
+        requested.add("environment")
+    return requested
+
+
+def _missing_required_read_scope(
+    request: GraphReadRequest, contract: ViewContract
+) -> bool:
+    return any(
+        not _read_scope_has(request, key) for key in contract.required_scope
+    ) or (
+        bool(contract.required_any_scope)
+        and not any(_read_scope_has(request, key) for key in contract.required_any_scope)
+    )
+
+
+def _read_scope_has(request: GraphReadRequest, key: str) -> bool:
+    if key == "query":
+        return bool(request.query and request.query.strip())
+    scope = dict(request.scope)
+    if key == "scope":
+        return any(value not in (None, "", [], ()) for value in scope.values())
+    aliases = {
+        "path": ("path", "file_path"),
+        "file_path": ("file_path", "path"),
+        "service": ("service", "services"),
+        "repo": ("repo", "repo_name"),
+    }.get(key, (key,))
+    return any(scope.get(alias) not in (None, "", [], ()) for alias in aliases)
+
+
+def _read_result_from_envelope(
+    env: AgentEnvelope,
+    *,
+    contract: ViewContract,
+    match_mode: str,
+    subgraph_versions: Mapping[str, int],
+    backend_freshness: Mapping[str, Any],
+    backend_quality: Mapping[str, Any],
+) -> GraphReadResult:
+    meta = dict(env.metadata)
+    items = tuple(_normalize_read_item(item) for item in env.items)
+    source_refs = _source_refs_from_items(items)
+    return GraphReadResult(
+        view=contract.name,
+        subgraph=contract.subgraph,
+        items=items,
+        coverage=tuple(_coverage_dict(report) for report in env.coverage),
+        freshness=_read_freshness(env, backend_freshness=backend_freshness),
+        quality=_read_quality(env, backend_quality=backend_quality),
+        source_refs=source_refs,
+        match_mode=match_mode,
+        backed=bool(meta.get("backed", contract.backed)),
+        read_shape=str(meta.get("read_shape") or contract.result_shape),
+        inline_relations=tuple(meta.get("inline_relations") or contract.inline_relations),
+        inline_relation_count=int(meta.get("inline_relation_count") or 0),
+        graph_contract_version=GRAPH_CONTRACT_VERSION,
+        ontology_version=ONTOLOGY_VERSION,
+        subgraph_versions=subgraph_versions,
+        unsupported=tuple(
+            {"name": item.name, "reason": item.reason}
+            for item in env.unsupported_includes
+        ),
+        as_of=env.as_of,
+    )
+
+
+def _coverage_dict(report) -> dict[str, Any]:
+    return {
+        "include": report.include,
+        "status": report.status,
+        "candidate_pool": report.candidate_pool,
+    }
+
+
+def _normalize_read_item(item: EvidenceItem) -> dict[str, Any]:
+    payload = dict(item.payload)
+    entity = payload.get("entity") if isinstance(payload.get("entity"), Mapping) else {}
+    relations_raw = payload.get("relations") if isinstance(payload.get("relations"), list) else []
+    relations = tuple(
+        _normalize_read_relation(rel)
+        for rel in relations_raw
+        if isinstance(rel, Mapping)
+    )
+    if entity:
+        entity_key = _str_or_none(entity.get("key")) or item.candidate_key
+        labels = tuple(str(label) for label in entity.get("labels") or () if label)
+        source_refs = _source_refs_from_relations(relations)
+        return {
+            "entity_key": entity_key,
+            "entity_type": _entity_type_for_key(entity_key, labels),
+            "score": item.score,
+            "summary": _first_text(
+                entity.get("summary"),
+                entity.get("description"),
+                entity.get("name"),
+                entity_key,
+            ),
+            "status": _status_from_payload(payload),
+            "relations": [dict(rel) for rel in relations],
+            "source_refs": list(source_refs),
+            "truth": _first_truth(relations) or _str_or_none(payload.get("truth")),
+            "coverage_status": item.coverage_status,
+            "breakdown": dict(item.breakdown),
+        }
+
+    source_refs = _string_tuple(payload.get("source_refs"))
+    subject_key = _str_or_none(payload.get("subject_key"))
+    object_key = _str_or_none(payload.get("object_key"))
+    entity_key = subject_key or object_key or item.candidate_key
+    return {
+        "entity_key": entity_key,
+        "entity_type": _entity_type_for_key(entity_key, ()),
+        "score": item.score,
+        "summary": _first_text(
+            payload.get("description"),
+            payload.get("fact"),
+            payload.get("summary"),
+            payload.get("name"),
+            item.candidate_key,
+        ),
+        "status": _status_from_payload(payload),
+        "claim": {
+            "claim_key": payload.get("claim_key"),
+            "predicate": payload.get("predicate"),
+            "subject_key": subject_key,
+            "object_key": object_key,
+            "environment": payload.get("environment"),
+            "valid_at": payload.get("valid_at"),
+            "valid_until": payload.get("valid_until"),
+            "observed_at": payload.get("observed_at"),
+            "evidence_strength": payload.get("evidence_strength"),
+        },
+        "relations": [],
+        "source_refs": list(source_refs),
+        "truth": _str_or_none(payload.get("truth")),
+        "coverage_status": item.coverage_status,
+        "breakdown": dict(item.breakdown),
+    }
+
+
+def _normalize_read_relation(rel: Mapping[str, Any]) -> dict[str, Any]:
+    claim = rel.get("claim") if isinstance(rel.get("claim"), Mapping) else {}
+    return {
+        "type": rel.get("predicate"),
+        "predicate": rel.get("predicate"),
+        "direction": rel.get("direction"),
+        "from": rel.get("from_key"),
+        "to": rel.get("to_key"),
+        "from_key": rel.get("from_key"),
+        "to_key": rel.get("to_key"),
+        "related_key": rel.get("related_key"),
+        "fact": rel.get("fact"),
+        "source_refs": list(_string_tuple(rel.get("source_refs"))),
+        "truth": rel.get("truth"),
+        "environment": rel.get("environment"),
+        "valid_at": rel.get("valid_at"),
+        "valid_until": rel.get("valid_until"),
+        "observed_at": rel.get("observed_at"),
+        "properties": dict(rel.get("properties") or {}),
+        "claim_key": claim.get("candidate_key"),
+        "score": claim.get("score"),
+    }
+
+
+def _read_freshness(
+    env: AgentEnvelope | None, *, backend_freshness: Mapping[str, Any]
+) -> dict[str, Any]:
+    items = tuple(_normalize_read_item(item) for item in env.items) if env else ()
+    source_refs = _source_refs_from_items(items)
+    latest = _latest_timestamp_from_items(items)
+    return {
+        "as_of": env.as_of.isoformat() if env and env.as_of else None,
+        "latest_observed_at": latest,
+        "source_refs_count": len(source_refs),
+        "backend": dict(backend_freshness),
+    }
+
+
+def _read_quality(
+    env: AgentEnvelope, *, backend_quality: Mapping[str, Any]
+) -> dict[str, Any]:
+    statuses = [report.status for report in env.coverage]
+    return {
+        "status": "ok" if statuses and all(s != "empty" for s in statuses) else "watch",
+        "coverage_statuses": statuses,
+        "confidence": env.overall_confidence,
+        "backend": dict(backend_quality),
+    }
+
+
+def _source_refs_from_items(items: tuple[Mapping[str, Any], ...]) -> tuple[str, ...]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        for ref in _string_tuple(item.get("source_refs")):
+            if ref not in seen:
+                refs.append(ref)
+                seen.add(ref)
+        relations = item.get("relations")
+        if isinstance(relations, list):
+            for rel in relations:
+                if isinstance(rel, Mapping):
+                    for ref in _string_tuple(rel.get("source_refs")):
+                        if ref not in seen:
+                            refs.append(ref)
+                            seen.add(ref)
+    return tuple(refs)
+
+
+def _source_refs_from_relations(
+    relations: tuple[Mapping[str, Any], ...]
+) -> tuple[str, ...]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for rel in relations:
+        for ref in _string_tuple(rel.get("source_refs")):
+            if ref not in seen:
+                refs.append(ref)
+                seen.add(ref)
+    return tuple(refs)
+
+
+def _latest_timestamp_from_items(items: tuple[Mapping[str, Any], ...]) -> str | None:
+    values: list[str] = []
+    for item in items:
+        claim = item.get("claim") if isinstance(item.get("claim"), Mapping) else {}
+        for key in ("observed_at", "valid_at"):
+            value = claim.get(key)
+            if isinstance(value, str) and value:
+                values.append(value)
+        relations = item.get("relations")
+        if isinstance(relations, list):
+            for rel in relations:
+                if not isinstance(rel, Mapping):
+                    continue
+                for key in ("observed_at", "valid_at"):
+                    value = rel.get(key)
+                    if isinstance(value, str) and value:
+                        values.append(value)
+    return max(values) if values else None
+
+
+def _entity_type_for_key(entity_key: str, labels: tuple[str, ...]) -> str | None:
+    prefix = entity_key.partition(":")[0]
+    if prefix in _KEY_PREFIX_TO_LABEL:
+        return _KEY_PREFIX_TO_LABEL[prefix]
+    return next((label for label in labels if label != "Entity"), None)
+
+
+def _status_from_payload(payload: Mapping[str, Any]) -> str | None:
+    for value in (
+        payload.get("status"),
+        (payload.get("properties") or {}).get("status")
+        if isinstance(payload.get("properties"), Mapping)
+        else None,
+    ):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _first_truth(relations: tuple[Mapping[str, Any], ...]) -> str | None:
+    for rel in relations:
+        truth = _str_or_none(rel.get("truth"))
+        if truth:
+            return truth
+    return None
+
+
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _string_tuple(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,) if value else ()
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item) for item in value if item)
+    return (str(value),)
+
+
+def _matches_search_filters(
+    row: ClaimRow, request: GraphEntitySearchRequest
+) -> bool:
+    if request.subgraph and row.subgraph != request.subgraph:
+        return False
+    if request.truth and row.truth != request.truth:
+        return False
+    if request.scope and not _row_matches_scope(row, request.scope):
+        return False
+    return True
+
+
+def _row_matches_scope(row: ClaimRow, scope: Mapping[str, Any]) -> bool:
+    needles = tuple(_scope_needles(scope))
+    if not needles:
+        return True
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            row.subject_key,
+            row.object_key,
+            row.fact,
+            row.description,
+            row.subgraph,
+            row.source_ref,
+            row.source_system,
+            row.environment,
+        )
+    ).lower()
+    return all(needle in haystack for needle in needles)
+
+
+def _scope_needles(scope: Mapping[str, Any]) -> list[str]:
+    needles: list[str] = []
+    for key, value in scope.items():
+        if value in (None, "", [], ()):
+            continue
+        values = value if isinstance(value, (list, tuple)) else (value,)
+        for item in values:
+            if not isinstance(item, str) or not item.strip():
+                continue
+            raw = item.strip().lower()
+            if ":" in raw:
+                needles.append(raw)
+                continue
+            prefix = {
+                "service": "service",
+                "services": "service",
+                "repo": "repo",
+                "repo_name": "repo",
+                "feature": "feature",
+                "features": "feature",
+                "environment": "environment",
+            }.get(key)
+            needles.append(f"{prefix}:{raw}" if prefix else raw)
+    return needles
+
+
+def _matches_external_id(
+    entity_key: str,
+    properties: Mapping[str, Any],
+    external_id: str,
+) -> bool:
+    wanted = external_id.strip().lower()
+    if not wanted:
+        return True
+    for key in ("external_id", "externalId", "provider_id", "source_id"):
+        value = properties.get(key)
+        if isinstance(value, str) and value.strip().lower() == wanted:
+            return True
+    for key in ("external_ids", "alternate_external_ids", "source_ids"):
+        value = properties.get(key)
+        if isinstance(value, (list, tuple)) and any(
+            isinstance(item, str) and item.strip().lower() == wanted
+            for item in value
+        ):
+            return True
+    # External-id identities keep the provider id in the canonical key body.
+    return entity_key.lower().endswith(f":{wanted}")
 
 
 def _batch_counts(plan) -> dict[str, int]:

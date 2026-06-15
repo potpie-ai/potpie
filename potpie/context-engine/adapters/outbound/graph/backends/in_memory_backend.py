@@ -266,27 +266,65 @@ class _Inspection:
     store: InMemoryClaimQueryStore
 
     def neighborhood(
-        self, *, pot_id: str, entity_key: str, depth: int = 1
+        self,
+        *,
+        pot_id: str,
+        entity_key: str,
+        depth: int = 1,
+        direction: str = "both",
+        predicates: tuple[str, ...] = (),
+        limit: int | None = None,
     ) -> GraphSlice:
         seen_nodes: dict[str, GraphNode] = {}
         edges: list[GraphEdge] = []
+        seen_edges: set[tuple[str, str, str]] = set()
         frontier = {entity_key}
+        max_edges = max(0, int(limit)) if limit is not None else None
+        predicate_set = {p.upper() for p in predicates if p}
+        walk_out = direction in ("out", "both")
+        walk_in = direction in ("in", "both")
+        truncated = False
+        visited_frontier: set[str] = set()
         for _ in range(max(1, depth)):
             next_frontier: set[str] = set()
+            current = frontier - visited_frontier
+            if not current:
+                break
+            visited_frontier.update(current)
             for row in self.store.rows:
                 if row.pot_id != pot_id:
                     continue
-                if row.subject_key in frontier or row.object_key in frontier:
+                if predicate_set and row.predicate.upper() not in predicate_set:
+                    continue
+                follows_out = walk_out and row.subject_key in current
+                follows_in = walk_in and row.object_key in current
+                if not (follows_out or follows_in):
+                    continue
+                edge_key = (row.subject_key, row.predicate, row.object_key)
+                if edge_key not in seen_edges:
+                    seen_edges.add(edge_key)
                     edges.append(_edge(row))
-                    for key in (row.subject_key, row.object_key):
-                        if key not in seen_nodes:
-                            seen_nodes[key] = self._node(pot_id, key)
-                            next_frontier.add(key)
-            frontier = next_frontier - set(seen_nodes)
+                    if max_edges is not None and len(edges) >= max_edges:
+                        truncated = True
+                for key in (row.subject_key, row.object_key):
+                    if key not in seen_nodes:
+                        seen_nodes[key] = self._node(pot_id, key)
+                if follows_out:
+                    next_frontier.add(row.object_key)
+                if follows_in:
+                    next_frontier.add(row.subject_key)
+                if truncated:
+                    break
+            if truncated:
+                break
+            frontier = next_frontier - visited_frontier
             if not frontier:
                 break
         return GraphSlice(
-            pot_id=pot_id, nodes=tuple(seen_nodes.values()), edges=tuple(edges)
+            pot_id=pot_id,
+            nodes=tuple(seen_nodes.values()),
+            edges=tuple(edges),
+            truncated=truncated,
         )
 
     def path(

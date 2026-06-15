@@ -95,8 +95,16 @@ class UnimplementedInspection:
     profile: str
 
     def neighborhood(
-        self, *, pot_id: str, entity_key: str, depth: int = 1
+        self,
+        *,
+        pot_id: str,
+        entity_key: str,
+        depth: int = 1,
+        direction: str = "both",
+        predicates: tuple[str, ...] = (),
+        limit: int | None = None,
     ) -> GraphSlice:
+        del direction, predicates, limit
         return _raise(self.profile, "inspection", "neighborhood")
 
     def path(
