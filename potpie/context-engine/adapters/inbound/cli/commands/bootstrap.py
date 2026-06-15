@@ -17,8 +17,9 @@ from adapters.inbound.cli.commands._common import (
     is_json,
     resolve_pot_id,
 )
+from bootstrap import sentry_metrics_runtime
 from domain.errors import CapabilityNotImplemented
-from domain.lifecycle import SetupPlan
+from domain.lifecycle import SetupPlan, SetupReport
 from domain.ports.agent_context import StatusRequest
 
 
@@ -77,9 +78,16 @@ def register(root: typer.Typer) -> None:
             if dry_run:
                 preview = host.setup.preview(plan)
                 emit(preview.to_dict(), human=_preview_human(preview))
+                _emit_setup_run_metric(plan, result="dry_run", dry_run=True)
                 return
 
             report = host.setup.run(plan)
+            _emit_setup_run_metric(
+                report.plan,
+                result="ok" if report.ok else "degraded",
+                dry_run=False,
+            )
+            _emit_setup_step_metrics(report)
 
             # Animated wizard for interactive TTYs; --json and --yes/non-interactive
             # fall through to the plain, machine-readable emit path.
@@ -132,7 +140,9 @@ def register(root: typer.Typer) -> None:
         ),
     ) -> None:
         """Integration auth status by default; use --host for daemon/pot readiness."""
-        host_status = host or pot is not None or intent != "feature" or harness != "claude"
+        host_status = (
+            host or pot is not None or intent != "feature" or harness != "claude"
+        )
         if not host_status:
             from adapters.inbound.cli.auth.auth_commands import integration_status
 
@@ -296,6 +306,31 @@ def _status_human(report) -> str:
     if report.recommended_next_action:
         lines.append(f"  next: {report.recommended_next_action}")
     return "\n".join(lines)
+
+
+def _emit_setup_run_metric(plan: SetupPlan, *, result: str, dry_run: bool) -> None:
+    sentry_metrics_runtime.count(
+        "ce.setup.runs_total",
+        attributes={
+            "result": result,
+            "backend": plan.backend,
+            "host_mode": plan.host_mode,
+            "scan": plan.scan,
+            "dry_run": dry_run,
+        },
+    )
+
+
+def _emit_setup_step_metrics(report: SetupReport) -> None:
+    for step in report.steps:
+        sentry_metrics_runtime.count(
+            "ce.setup.step_total",
+            attributes={
+                "step": step.step,
+                "state": step.state,
+                "hard": step.hard,
+            },
+        )
 
 
 __all__ = ["register"]

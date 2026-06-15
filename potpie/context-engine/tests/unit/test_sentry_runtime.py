@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from adapters.inbound.cli.telemetry import sentry_runtime
+from bootstrap import sentry_metrics_runtime
 from adapters.inbound.cli.telemetry.context import TelemetryContext
 from adapters.inbound.cli.telemetry.sentry_runtime import (
     capture_unexpected_cli_error,
@@ -55,6 +56,9 @@ class _FakeSentry(ModuleType):
 @pytest.fixture(autouse=True)
 def reset_sentry_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sentry_runtime, "_configured", False)
+    monkeypatch.setattr(sentry_metrics_runtime, "_configured", False)
+    monkeypatch.setattr(sentry_metrics_runtime, "_enabled", False)
+    monkeypatch.setattr(sentry_metrics_runtime, "_sentry_sdk", None)
 
 
 def test_configure_cli_sentry_uses_privacy_hooks(monkeypatch) -> None:
@@ -78,6 +82,28 @@ def test_configure_cli_sentry_uses_privacy_hooks(monkeypatch) -> None:
     assert call["max_request_body_size"] == "never"
     assert callable(call["before_send"])
     assert callable(call["before_breadcrumb"])
+
+
+def test_configure_cli_sentry_delegates_to_neutral_runtime(monkeypatch) -> None:
+    settings = SentrySettings(
+        enabled=True,
+        dsn="https://public@example.invalid/1",
+        environment="staging",
+        release="potpie-cli@test",
+        dist="cli-dist",
+    )
+    configured: list[SentrySettings] = []
+
+    def configure(settings_arg: SentrySettings) -> None:
+        configured.append(settings_arg)
+
+    monkeypatch.setattr(sentry_runtime, "configure_metrics", configure)
+    monkeypatch.setattr(sentry_runtime, "metrics_configured", lambda: True)
+
+    configure_cli_sentry(settings)
+
+    assert configured == [settings]
+    assert sentry_runtime._configured is True
 
 
 def test_configure_cli_sentry_disabled_does_not_import(monkeypatch) -> None:

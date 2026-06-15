@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Union
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,9 +11,30 @@ from typer.testing import CliRunner
 
 from adapters.inbound.cli import host_cli as cli_main
 from adapters.inbound.cli.commands import bootstrap
+from adapters.inbound.cli.commands._common import EXIT_DEGRADED
 from domain.ports.agent_context import StatusReport, StatusRequest
+from domain.lifecycle import DONE, FAILED, SetupPlan, SetupReport, StepResult
 
 runner = CliRunner()
+
+
+@dataclass(frozen=True)
+class _MetricCall:
+    name: str
+    attributes: dict[str, Union[str, bool]]
+
+
+class _FakeSetupMetrics:
+    def __init__(self) -> None:
+        self.calls: list[_MetricCall] = []
+
+    def count(
+        self,
+        name: str,
+        *,
+        attributes: dict[str, Union[str, bool]] | None = None,
+    ) -> None:
+        self.calls.append(_MetricCall(name, {} if attributes is None else attributes))
 
 
 def test_status_host_path_emits_report(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -28,7 +51,9 @@ def test_status_host_path_emits_report(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_host.agent_context.status.return_value = report
 
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
-    monkeypatch.setattr(bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot")
+    monkeypatch.setattr(
+        bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
+    )
 
     result = runner.invoke(cli_main.app, ["status", "--host"])
 
@@ -99,6 +124,7 @@ def test_status_host_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_setup_dry_run_preview(monkeypatch: pytest.MonkeyPatch) -> None:
+    metrics = _FakeSetupMetrics()
     preview = MagicMock()
     preview.to_dict.return_value = {"steps": [{"name": "config", "status": "pending"}]}
 
@@ -113,12 +139,148 @@ def test_setup_dry_run_preview(monkeypatch: pytest.MonkeyPatch) -> None:
         "adapters.inbound.cli.ui.setup_ux.rich_enabled",
         lambda **_k: False,
     )
+    monkeypatch.setattr(bootstrap, "sentry_metrics_runtime", metrics, raising=False)
 
     result = runner.invoke(cli_main.app, ["setup", "--dry-run"])
 
     assert result.exit_code == 0, result.stdout
     mock_host.setup.preview.assert_called_once()
+    mock_host.setup.run.assert_not_called()
     assert "config" in result.stdout or "steps" in result.stdout
+    assert metrics.calls == [
+        _MetricCall(
+            "ce.setup.runs_total",
+            {
+                "result": "dry_run",
+                "backend": "falkordb",
+                "host_mode": "in_process",
+                "scan": False,
+                "dry_run": True,
+            },
+        ),
+    ]
+
+
+def test_setup_success_emits_run_and_step_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics = _FakeSetupMetrics()
+    plan = SetupPlan(
+        mode="local",
+        host_mode="daemon",
+        backend="falkordb",
+        repo="/private/project",
+        pot="customer-pot",
+        agent="gpt-9",
+        scan=True,
+    )
+    report = SetupReport(
+        plan=plan,
+        steps=(
+            StepResult("config", DONE, hard=True),
+            StepResult("source", DONE, hard=False),
+        ),
+    )
+    mock_host = MagicMock()
+    mock_host.profile = "local"
+    mock_host.backend.profile = "falkordb"
+    mock_host.daemon.in_process = False
+    mock_host.setup.run.return_value = report
+
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(
+        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        lambda **_k: False,
+    )
+    monkeypatch.setattr(bootstrap, "sentry_metrics_runtime", metrics, raising=False)
+
+    result = runner.invoke(
+        cli_main.app,
+        [
+            "setup",
+            "--repo",
+            "/private/project",
+            "--pot",
+            "customer-pot",
+            "--agent",
+            "gpt-9",
+            "--scan",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert metrics.calls == [
+        _MetricCall(
+            "ce.setup.runs_total",
+            {
+                "result": "ok",
+                "backend": "falkordb",
+                "host_mode": "daemon",
+                "scan": True,
+                "dry_run": False,
+            },
+        ),
+        _MetricCall(
+            "ce.setup.step_total",
+            {"step": "config", "state": "done", "hard": True},
+        ),
+        _MetricCall(
+            "ce.setup.step_total",
+            {"step": "source", "state": "done", "hard": False},
+        ),
+    ]
+    for call in metrics.calls:
+        assert "repo" not in call.attributes
+        assert "pot" not in call.attributes
+        assert "agent" not in call.attributes
+        assert "/private/project" not in call.attributes.values()
+        assert "customer-pot" not in call.attributes.values()
+        assert "gpt-9" not in call.attributes.values()
+
+
+def test_setup_degraded_report_preserves_exit_code_and_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics = _FakeSetupMetrics()
+    plan = SetupPlan(mode="local", host_mode="daemon", backend="falkordb")
+    report = SetupReport(
+        plan=plan,
+        steps=(StepResult("backend.provision", FAILED, hard=True),),
+    )
+    assert not report.ok
+    mock_host = MagicMock()
+    mock_host.profile = "local"
+    mock_host.backend.profile = "falkordb"
+    mock_host.daemon.in_process = False
+    mock_host.setup.run.return_value = report
+
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(
+        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        lambda **_k: False,
+    )
+    monkeypatch.setattr(bootstrap, "sentry_metrics_runtime", metrics, raising=False)
+
+    result = runner.invoke(cli_main.app, ["setup", "--yes"])
+
+    assert result.exit_code == EXIT_DEGRADED, result.stdout
+    assert metrics.calls == [
+        _MetricCall(
+            "ce.setup.runs_total",
+            {
+                "result": "degraded",
+                "backend": "falkordb",
+                "host_mode": "daemon",
+                "scan": False,
+                "dry_run": False,
+            },
+        ),
+        _MetricCall(
+            "ce.setup.step_total",
+            {"step": "backend.provision", "state": "failed", "hard": True},
+        ),
+    ]
 
 
 def test_doctor_emits_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -128,9 +290,7 @@ def test_doctor_emits_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_host.backend.profile = "falkordb"
     mock_host.backend.capabilities.return_value = mock_caps
     mock_host.daemon.status.return_value = {"mode": "in_process", "up": True}
-    mock_host.ledger.status.return_value = MagicMock(
-        available=True, binding="local"
-    )
+    mock_host.ledger.status.return_value = MagicMock(available=True, binding="local")
 
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
 
