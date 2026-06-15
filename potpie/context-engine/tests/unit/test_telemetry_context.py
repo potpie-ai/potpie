@@ -13,6 +13,7 @@ def test_cli_invocations_share_install_and_daemon_session_ids(
     tmp_path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("POTPIE_SENTRY_ENVIRONMENT", "staging")
     monkeypatch.delenv("SENTRY_DSN", raising=False)
     monkeypatch.delenv("POTPIE_SENTRY_DSN", raising=False)
     runner = CliRunner()
@@ -31,6 +32,8 @@ def test_cli_invocations_share_install_and_daemon_session_ids(
     assert first_ctx.daemon_session_id == second_ctx.daemon_session_id
     assert first_ctx.command == "daemon"
     assert first_ctx.subcommand is None
+    assert first_ctx.environment == "staging"
+    assert first_ctx.analytics_properties()["environment"] == "staging"
     assert first_ctx.output_mode == "json"
     assert (
         load_or_create_identity().anonymous_install_id == first_ctx.anonymous_install_id

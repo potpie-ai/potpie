@@ -19,6 +19,13 @@ from adapters.inbound.cli.commands import ingest as ingest_cmds
 from adapters.inbound.cli.commands import query as query_cmds
 from adapters.inbound.cli.commands import skills as skills_cmds
 from adapters.inbound.cli.commands._common import set_json, set_verbose
+from adapters.inbound.cli.telemetry.context import bind_telemetry_context
+from adapters.inbound.cli.telemetry.product_analytics import configure_product_analytics
+from adapters.inbound.cli.telemetry.sentry_runtime import configure_cli_sentry
+from adapters.inbound.cli.telemetry.settings import (
+    load_product_analytics_settings,
+    load_sentry_settings,
+)
 
 
 def build_app() -> typer.Typer:
@@ -48,12 +55,10 @@ def build_app() -> typer.Typer:
         configure_error_output(as_json=json_)
         configure_cli_logging(verbose)
         load_cli_env()
-        from adapters.inbound.cli.telemetry.context import bind_telemetry_context
-        from adapters.inbound.cli.telemetry.sentry_runtime import configure_cli_sentry
-        from adapters.inbound.cli.telemetry.settings import load_sentry_settings
 
         bind_telemetry_context(ctx, json_output=json_)
         configure_cli_sentry(load_sentry_settings())
+        configure_product_analytics(load_product_analytics_settings())
 
     # Top-level commands (the four-tool surface + bootstrap + auth/login).
     query_cmds.register(app)

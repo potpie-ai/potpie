@@ -25,6 +25,19 @@ class SentrySettings:
     dist: str | None
 
 
+@dataclass(frozen=True)
+class ProductAnalyticsSettings:
+    __slots__: ClassVar[tuple[str, ...]] = (
+        "api_key",
+        "enabled",
+        "host",
+    )
+
+    enabled: bool
+    api_key: str | None
+    host: str
+
+
 def load_sentry_settings() -> SentrySettings:
     dsn = _env("POTPIE_SENTRY_DSN") or _env("SENTRY_DSN")
     telemetry_disabled = _is_truthy_flag("POTPIE_TELEMETRY_DISABLED")
@@ -32,13 +45,24 @@ def load_sentry_settings() -> SentrySettings:
     return SentrySettings(
         enabled=dsn is not None and not telemetry_disabled and not sentry_disabled,
         dsn=dsn,
-        environment=(
-            _env("POTPIE_SENTRY_ENVIRONMENT") or _env("SENTRY_ENVIRONMENT") or "dev"
-        ),
+        environment=telemetry_environment(),
         release=_env("POTPIE_SENTRY_RELEASE")
         or _env("SENTRY_RELEASE")
         or default_cli_release(),
         dist=_env("POTPIE_SENTRY_DIST") or _env("SENTRY_DIST"),
+    )
+
+
+def load_product_analytics_settings() -> ProductAnalyticsSettings:
+    api_key = _env("POTPIE_POSTHOG_API_KEY")
+    telemetry_disabled = _is_truthy_flag("POTPIE_TELEMETRY_DISABLED")
+    product_disabled = _is_falsey_flag("POTPIE_POSTHOG_ENABLED") or _is_falsey_flag(
+        "POTPIE_PRODUCT_ANALYTICS_ENABLED"
+    )
+    return ProductAnalyticsSettings(
+        enabled=api_key is not None and not telemetry_disabled and not product_disabled,
+        api_key=api_key,
+        host=_env("POTPIE_POSTHOG_HOST") or "https://us.i.posthog.com",
     )
 
 
@@ -48,6 +72,10 @@ def default_cli_release() -> str:
     except metadata.PackageNotFoundError:
         version = "0.1.0"
     return f"potpie-cli@{version}"
+
+
+def telemetry_environment() -> str:
+    return _env("POTPIE_SENTRY_ENVIRONMENT") or _env("SENTRY_ENVIRONMENT") or "dev"
 
 
 def _env(name: str) -> str | None:
