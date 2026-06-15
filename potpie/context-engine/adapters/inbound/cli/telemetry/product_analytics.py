@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import queue
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Final, Mapping, Protocol, TypeAlias
 
@@ -74,10 +75,12 @@ class _ProductAnalyticsDispatcher:
         self._ensure_worker()
 
     def flush(self) -> None:
-        self._queue.join()
+        deadline = time.monotonic() + _DISPATCH_WORKER_JOIN_TIMEOUT_SECONDS
+        while self._queue.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.01)
         worker = self._worker
         if worker is not None:
-            worker.join(timeout=_DISPATCH_WORKER_JOIN_TIMEOUT_SECONDS)
+            worker.join(timeout=max(0.0, deadline - time.monotonic()))
 
     def _ensure_worker(self) -> None:
         with self._lock:

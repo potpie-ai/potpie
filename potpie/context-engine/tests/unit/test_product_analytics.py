@@ -214,3 +214,26 @@ def test_product_analytics_dispatcher_flushes_queued_events(monkeypatch) -> None
     assert thread_names == ["potpie-product-analytics", "potpie-product-analytics"]
     assert daemon_flags == [False, False]
     assert len(set(thread_ids)) == 1
+
+
+def test_product_analytics_dispatcher_flush_uses_bounded_drain(monkeypatch) -> None:
+    dispatcher = product_analytics._ProductAnalyticsDispatcher()
+    dispatcher._queue.put_nowait(
+        product_analytics._QueuedProductAnalyticsPayload(
+            url="https://us.i.posthog.com/capture/",
+            payload={
+                "api_key": "phc_test",
+                "event": "cli_onboarding_setup_completed",
+                "distinct_id": "install_123",
+                "properties": {},
+            },
+        )
+    )
+    monkeypatch.setattr(
+        dispatcher._queue,
+        "join",
+        lambda: (_ for _ in ()).throw(AssertionError("unbounded queue.join()")),
+    )
+    monkeypatch.setattr(product_analytics, "_DISPATCH_WORKER_JOIN_TIMEOUT_SECONDS", 0.0)
+
+    dispatcher.flush()
