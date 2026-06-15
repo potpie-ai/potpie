@@ -123,6 +123,7 @@ def test_count_drops_high_cardinality_attributes(
         "command": "scan",
         "result": "ok",
         "dry_run": True,
+        "state": "src/main.py",
         "nested": {"result": "ok"},
         "items": ["one", "two"],
         "none": None,

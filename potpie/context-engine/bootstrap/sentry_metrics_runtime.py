@@ -193,6 +193,7 @@ def _is_path_like(value: str) -> bool:
         value.startswith("/")
         or value.startswith("./")
         or value.startswith("../")
+        or "/" in value
         or "\\" in value
     )
 

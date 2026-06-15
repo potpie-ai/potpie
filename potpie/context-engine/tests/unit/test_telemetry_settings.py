@@ -23,6 +23,16 @@ def test_sentry_settings_respects_global_kill_switch(monkeypatch) -> None:
     assert settings.dsn == "https://public@example.invalid/1"
 
 
+def test_sentry_settings_ignores_blank_global_kill_switch(monkeypatch) -> None:
+    monkeypatch.setenv("POTPIE_SENTRY_DSN", "https://public@example.invalid/1")
+    monkeypatch.setenv("POTPIE_TELEMETRY_DISABLED", "   ")
+
+    settings = load_sentry_settings()
+
+    assert settings.enabled is True
+    assert settings.dsn == "https://public@example.invalid/1"
+
+
 def test_sentry_settings_respects_sentry_kill_switch(monkeypatch) -> None:
     monkeypatch.setenv("POTPIE_SENTRY_DSN", "https://public@example.invalid/1")
     monkeypatch.setenv("POTPIE_SENTRY_ENABLED", "0")

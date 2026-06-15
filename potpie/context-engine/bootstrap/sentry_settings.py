@@ -65,4 +65,7 @@ def _is_falsey_flag(name: str) -> bool:
 
 def _is_truthy_flag(name: str) -> bool:
     value = os.getenv(name)
-    return value is not None and value.strip().lower() not in _FALSE_VALUES
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    return normalized != "" and normalized not in _FALSE_VALUES
