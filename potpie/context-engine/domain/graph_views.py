@@ -1,11 +1,12 @@
-"""V2-style read views over the existing V1 read trunk (Graph V1.5 Step 2 + 6a).
+"""Canonical read views over the existing V1 read trunk.
 
-A *view* is a named, V2-shaped read request (``<subgraph>.<view>``) that maps
-onto a V1 include family today, so ``graph read --view`` is forward-compatible
-without replacing the readers. Each view also declares a small contract —
-inputs, which relations are inlined (the Retrieve axis), ranking inputs, and
-whether it is a bounded traversal (the Traverse axis) — so Step 6a can wire the
-three query axes against a declaration rather than ad-hoc per-command code.
+A *view* is a named read request (``<subgraph>.<view>``) that maps onto an
+internal reader family today, so ``graph read --view`` can expose the canonical
+ontology while the data plane still reuses the current readers. Each view also
+declares a small contract — inputs, which relations are inlined (the Retrieve
+axis), ranking inputs, and whether it is a bounded traversal (the Traverse axis)
+— so Step 6a can wire the three query axes against a declaration rather than
+ad-hoc per-command code.
 
 ``backed`` is **derived**, not hand-set: a view is backed iff its ``v1_include``
 has a registered reader (``READER_BACKED_INCLUDES``). Unbacked views resolve to
@@ -29,12 +30,12 @@ class GraphViewSpec:
     """Declarative spec for one V2-style read view."""
 
     name: str
-    """Fully-qualified ``<subgraph>.<view>`` name (e.g. ``bugs.prior_occurrences``)."""
+    """Fully-qualified ``<subgraph>.<view>`` name (e.g. ``debugging.prior_occurrences``)."""
 
     subgraph: str
     view: str
     v1_include: str
-    """The V1 include family this view routes to (``prior_bugs`` etc.)."""
+    """The internal include family this view routes to (``prior_bugs`` etc.)."""
 
     description: str
     backed: bool
@@ -101,8 +102,8 @@ def _v(
 
 _VIEW_LIST: tuple[GraphViewSpec, ...] = (
     _v(
-        "preferences",
-        "active_preferences",
+        "decisions",
+        "preferences_for_scope",
         v1_include="coding_preferences",
         description="Active coding preferences / policies that apply to a scope, "
         "ranked by relevance, strength, recency, and scope overlap.",
@@ -117,7 +118,7 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
         ),
     ),
     _v(
-        "bugs",
+        "debugging",
         "prior_occurrences",
         v1_include="prior_bugs",
         description="Prior bug occurrences matching a symptom, with their fix / "
@@ -176,7 +177,7 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
     ),
     _v(
         "features",
-        "provided",
+        "feature_context",
         v1_include="features",
         description="Features / capabilities a repository or service provides "
         "(PROVIDES) and where they are implemented (IMPLEMENTED_IN). Answers "
@@ -207,16 +208,16 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
         ranking_inputs=("semantic_similarity", "recency"),
     ),
     _v(
-        "ownership",
-        "owner_context",
+        "code_topology",
+        "ownership_by_path",
         v1_include="owners",
         description="Who owns a service / repo and their team context.",
         inputs=("scope",),
         inline_relations=("OWNED_BY", "MEMBER_OF"),
     ),
     _v(
-        "docs",
-        "reference_context",
+        "knowledge",
+        "document_context",
         v1_include="docs",
         description="Reference documentation pointers for a scope.",
         inputs=("scope", "query"),

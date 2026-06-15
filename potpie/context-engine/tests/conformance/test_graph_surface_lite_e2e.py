@@ -47,13 +47,12 @@ def _link_payload(**over) -> dict:
     return {"pot_id": POT, "operations": [op]}
 
 
-# 1. catalog shows backed and planned views
+# 1. catalog shows canonical backed views
 def test_catalog_backed_and_planned() -> None:
     cat = _service().catalog(GraphCatalogRequest(pot_id=POT)).to_dict()
     backed = {v["name"] for v in cat["views"] if v["backed"]}
-    planned = {v["name"] for v in cat["views"] if not v["backed"]}
-    assert "bugs.prior_occurrences" in backed
-    assert "decisions.active_decisions" in planned
+    assert "debugging.prior_occurrences" in backed
+    assert "decisions.active_decisions" in backed
 
 
 # 2. read returns data for a backed view
@@ -151,7 +150,7 @@ def test_context_record_uses_semantic_path() -> None:
     assert receipt.accepted
     assert receipt.metadata["graph_contract_version"] == "v1.5"
     assert receipt.metadata["truth"] == "preference"
-    assert receipt.metadata["subgraph"] == "preferences"
+    assert receipt.metadata["subgraph"] == "decisions"
     assert receipt.metadata["claim_keys"]
     # It surfaces through the coding_preferences reader (POLICY_APPLIES_TO).
     env = svc.resolve(
@@ -186,7 +185,7 @@ def test_record_and_graph_mutate_produce_same_metadata() -> None:
     row = rows[0]
     # Same V1.5 metadata a direct graph-mutate write carries.
     assert row.truth == "preference"
-    assert row.subgraph == "preferences"
+    assert row.subgraph == "decisions"
     assert row.graph_contract_version == "v1.5"
     assert row.claim_key
     assert row.ontology_version == "2026-06-graph"
@@ -226,7 +225,7 @@ def test_paraphrase_retrieval_via_local_embedder() -> None:
                 "operations": [
                     {
                         "op": "assert_claim",
-                        "subgraph": "preferences",
+                        "subgraph": "decisions",
                         "subject": {"key": "preference:retry-external", "type": "Preference"},
                         "predicate": "POLICY_APPLIES_TO",
                         "object": {"key": "service:payments-api", "type": "Service"},
@@ -235,7 +234,7 @@ def test_paraphrase_retrieval_via_local_embedder() -> None:
                     },
                     {
                         "op": "assert_claim",
-                        "subgraph": "preferences",
+                        "subgraph": "decisions",
                         "subject": {"key": "preference:tabs", "type": "Preference"},
                         "predicate": "POLICY_APPLIES_TO",
                         "object": {"key": "service:payments-api", "type": "Service"},

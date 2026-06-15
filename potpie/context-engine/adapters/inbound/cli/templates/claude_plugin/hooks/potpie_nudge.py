@@ -307,7 +307,10 @@ def _failure_symptom(command: str | None, tool_response: Any) -> str | None:
         low = line.strip().lower()
         if not low:
             continue
-        if any(sig in low for sig in ("error", "assert", "failed", "exception", "traceback")):
+        if any(
+            sig in low
+            for sig in ("error", "assert", "failed", "exception", "traceback")
+        ):
             best = line.strip()
             break
     parts = [p for p in (command, best) if p]
@@ -350,7 +353,10 @@ def resolve_nudge_event(
     # Direct nudge events may be passed straight through (Codex/Cursor wiring).
     direct_event = canonical_nudge_event(hint)
     if direct_event:
-        return direct_event, {"path": file_path_of(payload), "query": command_of(payload)}
+        return direct_event, {
+            "path": file_path_of(payload),
+            "query": command_of(payload),
+        }
     return None, {}
 
 
@@ -367,7 +373,16 @@ def build_argv(
     pot: str | None = None,
     limit: int | None = None,
 ) -> list[str]:
-    argv = [potpie_bin, "--json", "graph", "nudge", "--event", nudge_event, "--session", session]
+    argv = [
+        potpie_bin,
+        "--json",
+        "graph",
+        "nudge",
+        "--event",
+        nudge_event,
+        "--session",
+        session,
+    ]
     if path:
         argv += ["--path", path]
     if query:
@@ -383,7 +398,15 @@ def render_output(claude_event: str, nudge_result: Any) -> tuple[str, int]:
     """Shape a nudge result into harness hook output. Always exit 0 (never block)."""
     if not isinstance(nudge_result, dict):
         return "", 0
-    if not nudge_result.get("ok") or nudge_result.get("silent"):
+    ok = bool(nudge_result.get("ok"))
+    if isinstance(nudge_result.get("result"), dict):
+        # Graph V2 workbench wraps command bodies under result. Keep accepting
+        # the old flat V1.5 nudge shape so installed hooks do not need a lockstep
+        # CLI upgrade.
+        nudge_result = nudge_result["result"]
+    else:
+        ok = bool(nudge_result.get("ok"))
+    if not ok or nudge_result.get("silent"):
         return "", 0
     text = nudge_result.get("inject_context") or nudge_result.get("instruction")
     if not text:
@@ -419,7 +442,9 @@ def _read_stdin_payload() -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(add_help=True, description="Potpie nudge hook adapter.")
+    parser = argparse.ArgumentParser(
+        add_help=True, description="Potpie nudge hook adapter."
+    )
     parser.add_argument("--harness", default="claude", help="claude|codex|cursor")
     parser.add_argument(
         "--event",

@@ -106,7 +106,7 @@ def _build_operation(
         return {
             **base,
             "op": "assert_claim",
-            "subgraph": "preferences",
+            "subgraph": "decisions",
             "predicate": "POLICY_APPLIES_TO",
             "truth": "preference",
             "subject": {
@@ -133,7 +133,7 @@ def _build_operation(
         return {
             **base,
             "op": "assert_claim",
-            "subgraph": "bugs",
+            "subgraph": "debugging",
             "predicate": "REPRODUCES",
             "truth": "agent_claim",
             "subject": {
@@ -170,7 +170,7 @@ def _build_operation(
             {
                 **base,
                 "op": "assert_claim",
-                "subgraph": "bugs",
+                "subgraph": "debugging",
                 "predicate": "REPRODUCES",
                 "truth": "agent_claim",
                 "subject": bug,
@@ -180,7 +180,7 @@ def _build_operation(
             {
                 **base,
                 "op": "assert_claim",
-                "subgraph": "bugs",
+                "subgraph": "debugging",
                 "predicate": main_predicate,
                 "truth": "agent_claim",
                 "subject": {
@@ -207,7 +207,7 @@ def _build_operation(
                 {
                     **base,
                     "op": "assert_claim",
-                    "subgraph": "bugs",
+                    "subgraph": "debugging",
                     "predicate": "ATTEMPTED_FIX_FAILED",
                     "truth": "agent_claim",
                     "subject": {
@@ -236,7 +236,7 @@ def _build_operation(
         return {
             **base,
             "op": "assert_claim",
-            "subgraph": "bugs",
+            "subgraph": "debugging",
             "predicate": "VERIFIED",
             "truth": "timeline_event",
             "subject": {

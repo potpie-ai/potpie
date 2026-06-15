@@ -20,7 +20,7 @@ Search by symptom, not just by component name:
 
 ```bash
 potpie --json graph read \
-  --view bugs.prior_occurrences \
+  --view debugging.prior_occurrences \
   --query "refund timeout deadlock concurrent settle retry flaky test" \
   --scope service:<service-name> \
   --limit 12

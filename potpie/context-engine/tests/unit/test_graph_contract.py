@@ -1,7 +1,7 @@
 """Contract tests for ``domain.graph_contract`` (Graph V1.5 Step 1).
 
 Locks the versioned contract constants, the truth/op/risk vocabularies, the
-key-prefix canonicalization decision, and the env-qualified edge identity key.
+key-prefix standardization decision, and the env-qualified edge identity key.
 """
 
 from __future__ import annotations
@@ -96,25 +96,26 @@ def test_risk_tiers() -> None:
     assert {r.value for r in MutationRisk} == {"low", "medium", "high"}
 
 
-# --- Key prefix canonicalization -------------------------------------------
+# --- Key prefix standardization --------------------------------------------
 
 
-def test_key_prefix_normalization_hyphen_to_underscore() -> None:
-    assert normalize_key_prefix("bug-pattern") == "bug_pattern"
-    assert normalize_key_prefix("api-contract") == "api_contract"
+def test_key_prefix_normalization_strips_only() -> None:
+    assert normalize_key_prefix(" bug_pattern ") == "bug_pattern"
+    assert normalize_key_prefix("bug-pattern") == "bug-pattern"
     assert normalize_key_prefix("service") == "service"
 
 
 def test_normalize_entity_key_preserves_body_hyphens() -> None:
-    # Only the prefix normalizes; the body (which may contain hyphens) is kept.
+    # Prefixes are exact; the body may still contain hyphens.
     assert normalize_entity_key("service:payments-api") == "service:payments-api"
-    assert normalize_entity_key("bug-pattern:refund-race") == "bug_pattern:refund-race"
+    assert normalize_entity_key(" bug_pattern:refund-race ") == "bug_pattern:refund-race"
     assert normalize_entity_key("no-colon-here") == "no-colon-here"
 
 
 def test_entity_key_prefix() -> None:
     assert entity_key_prefix("service:payments-api") == "service"
-    assert entity_key_prefix("bug-pattern:x") == "bug_pattern"
+    assert entity_key_prefix("bug_pattern:x") == "bug_pattern"
+    assert entity_key_prefix("bug-pattern:x") == "bug-pattern"
     assert entity_key_prefix("unprefixed") is None
 
 
@@ -124,11 +125,10 @@ def test_canonical_key_prefix_reads_ontology() -> None:
     assert canonical_key_prefix("Nonexistent") is None
 
 
-def test_entity_key_matches_type_accepts_both_forms() -> None:
+def test_entity_key_matches_type_requires_canonical_prefix() -> None:
     assert entity_key_matches_type("service:payments-api", "Service")
-    # Hyphenated public alias for the same canonical prefix is accepted.
-    assert entity_key_matches_type("bug-pattern:refund-race", "BugPattern")
     assert entity_key_matches_type("bug_pattern:refund-race", "BugPattern")
+    assert not entity_key_matches_type("bug-pattern:refund-race", "BugPattern")
     # Wrong prefix for the type is rejected.
     assert not entity_key_matches_type("repo:foo", "Service")
 
@@ -166,8 +166,8 @@ def test_edge_identity_key_folds_in_environment() -> None:
     assert prod != staging
 
 
-def test_edge_identity_normalizes_prefixes() -> None:
-    assert edge_identity_key("bug-pattern:x", "reproduces", "service:y") == (
+def test_edge_identity_preserves_canonical_prefixes() -> None:
+    assert edge_identity_key("bug_pattern:x", "reproduces", "service:y") == (
         "bug_pattern:x",
         "REPRODUCES",
         "service:y",
@@ -207,10 +207,10 @@ def test_make_claim_key_hashes_value_objects() -> None:
     # A long free-text value object is hashed so keys stay bounded.
     key = make_claim_key(
         pot_id="p",
-        subgraph="bugs",
+        subgraph="debugging",
         subject_key="bug_pattern:x",
         predicate="REPRODUCES",
         object_component="a very long free-text value that is not an entity key " * 5,
     )
-    assert key.startswith("claim:p:bugs:bug_pattern:x:REPRODUCES:")
+    assert key.startswith("claim:p:debugging:bug_pattern:x:REPRODUCES:")
     assert len(key) < 200

@@ -10,26 +10,178 @@ from __future__ import annotations
 import json
 import re
 import sys
+from contextlib import contextmanager
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import typer
 
+from application.services.graph_workbench import (
+    graph_error_envelope,
+    graph_not_implemented_envelope,
+    graph_success_envelope,
+    new_graph_request_id,
+    normalize_catalog_result,
+    normalize_workbench_result,
+)
 from adapters.inbound.cli.commands._common import (
+    EXIT_UNAVAILABLE,
     EXIT_VALIDATION,
     contract,
     emit,
     fail,
     get_host,
+    is_json,
+    json_error_formatter,
     resolve_pot_id,
 )
 from domain.errors import CapabilityNotImplemented
+from domain.graph_contract import GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION
+from domain.graph_contract import ONTOLOGY_VERSION
+from domain.graph_workbench import (
+    GRAPH_WORKBENCH_COMMANDS,
+    GraphUnsupported,
+    GraphWorkbenchStatus,
+)
+from domain.graph_workbench_ontology import describe_contract
 from domain.nudge import NUDGE_EVENT_HELP
 
 graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
 backend_app = typer.Typer(help="GraphBackend profile selection + health.")
 timeline_app = typer.Typer(help="Timeline reads over the active project pot.")
+
+
+class _GraphCliCommandContext:
+    def __init__(self, command: str) -> None:
+        self.command = command
+        self.request_id = new_graph_request_id()
+        self.pot_id: str | None = None
+        self.subgraph_versions: dict[str, int] = {}
+
+    def set_pot_id(self, pot_id: str | None) -> None:
+        self.pot_id = pot_id
+
+    def set_subgraph_versions(self, versions: Mapping[str, Any] | None) -> None:
+        if not versions:
+            return
+        clean: dict[str, int] = {}
+        for key, value in versions.items():
+            try:
+                clean[str(key)] = int(value)
+            except (TypeError, ValueError):
+                continue
+        self.subgraph_versions = clean
+
+    def format_error(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return graph_error_envelope(
+            command=self.command,
+            request_id=self.request_id,
+            pot_id=self.pot_id,
+            code=str(payload.get("code") or "error"),
+            message=str(payload.get("message") or "Graph command failed."),
+            detail=payload.get("detail"),
+            subgraph_versions=self.subgraph_versions,
+            recommended_next_action=payload.get("recommended_next_action"),
+        ).to_dict()
+
+
+@contextmanager
+def _graph_command(command: str):
+    ctx = _GraphCliCommandContext(command)
+    with json_error_formatter(ctx.format_error):
+        with contract():
+            yield ctx
+
+
+def _emit_graph_result(
+    ctx: _GraphCliCommandContext,
+    payload: Mapping[str, Any],
+    *,
+    human: str,
+    warnings: tuple[str, ...] = (),
+    unsupported: tuple[GraphUnsupported, ...] = (),
+    recommended_next_action: str | None = None,
+) -> None:
+    result, versions, payload_warnings, payload_unsupported = (
+        normalize_workbench_result(payload)
+    )
+    if versions:
+        ctx.set_subgraph_versions(versions)
+    merged_warnings = tuple(warnings) + payload_warnings
+    merged_unsupported = tuple(unsupported) + payload_unsupported
+
+    if payload.get("ok", True) is False:
+        env = graph_error_envelope(
+            command=ctx.command,
+            request_id=ctx.request_id,
+            pot_id=ctx.pot_id,
+            code=_error_code_from_result(payload),
+            message=_error_message_from_result(payload),
+            detail=result or None,
+            subgraph_versions=ctx.subgraph_versions,
+            warnings=merged_warnings,
+            unsupported=merged_unsupported,
+            recommended_next_action=recommended_next_action
+            or payload.get("recommended_next_action"),
+        )
+    else:
+        env = graph_success_envelope(
+            command=ctx.command,
+            request_id=ctx.request_id,
+            pot_id=ctx.pot_id,
+            result=result,
+            subgraph_versions=ctx.subgraph_versions,
+            warnings=merged_warnings,
+            unsupported=merged_unsupported,
+            recommended_next_action=recommended_next_action
+            or payload.get("recommended_next_action"),
+        )
+    emit(env.to_dict(), human=human)
+
+
+def _emit_graph_not_implemented(
+    ctx: _GraphCliCommandContext,
+    *,
+    detail: str | None = None,
+    recommended_next_action: str | None = None,
+) -> None:
+    env = graph_not_implemented_envelope(
+        command=ctx.command,
+        request_id=ctx.request_id,
+        pot_id=ctx.pot_id,
+        detail=detail,
+        recommended_next_action=recommended_next_action,
+    )
+    emit(env.to_dict(), human=detail or f"{ctx.command} is not implemented yet")
+    raise typer.Exit(code=EXIT_UNAVAILABLE)
+
+
+def _error_code_from_result(payload: Mapping[str, Any]) -> str:
+    issues = payload.get("issues")
+    if isinstance(issues, list) and issues:
+        first = issues[0]
+        if isinstance(first, Mapping) and first.get("code"):
+            return str(first["code"])
+    return str(payload.get("status") or "graph_command_failed")
+
+
+def _error_message_from_result(payload: Mapping[str, Any]) -> str:
+    if payload.get("detail"):
+        return str(payload["detail"])
+    issues = payload.get("issues")
+    if isinstance(issues, list) and issues:
+        first = issues[0]
+        if isinstance(first, Mapping) and first.get("message"):
+            return str(first["message"])
+    status = payload.get("status")
+    return f"Graph command failed with status {status!r}."
+
+
+def _legacy_warning(command: str, replacement: str) -> tuple[str, ...]:
+    return (
+        f"{command} is a legacy transition command and is not part of the canonical V2 workbench command set; use {replacement}.",
+    )
 
 
 # --- Graph Surface Lite (V1.5) ----------------------------------------------
@@ -44,29 +196,30 @@ def graph_catalog(
     """Discover the graph contract: versions, views, mutation ops, ontology."""
     from domain.ports.services.graph_service import GraphCatalogRequest
 
-    with contract():
+    with _graph_command("graph.catalog") as ctx:
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
         result = host.graph.catalog(
             GraphCatalogRequest(pot_id=pot_id, task=task, subgraph=subgraph)
         )
-        payload = result.to_dict()
+        payload = normalize_catalog_result(result.to_dict(), task=task)
         human = (
-            f"graph contract {payload['graph_contract_version']} / ontology "
-            f"{payload['ontology_version']} (match={payload['match_mode']})\n"
+            f"graph contract v2 / ontology {ONTOLOGY_VERSION} "
+            f"(data-plane={payload['data_plane_graph_contract_version']}, match={payload['match_mode']})\n"
             f"commands: {', '.join(payload['commands'])}\n"
             f"views: {', '.join(v['name'] for v in payload['views'])}\n"
             f"mutation ops: {', '.join(payload['mutation_operations'])}\n"
             f"review-required: {', '.join(payload['review_required_operations'])}\n"
             f"deferred: {', '.join(payload['deferred_operations'])}"
         )
-        emit(payload, human=human)
+        _emit_graph_result(ctx, payload, human=human)
 
 
 @graph_app.command("read")
 def graph_read(
     view: str = typer.Option(
-        ..., "--view", help="<subgraph>.<view>, e.g. bugs.prior_occurrences"
+        None, "--view", help="<subgraph>.<view>, e.g. debugging.prior_occurrences"
     ),
     query: str = typer.Option(None, "--query"),
     scope: str = typer.Option(None, "--scope", help="key:value[,key:value]"),
@@ -112,9 +265,12 @@ def graph_read(
     """V2-style read over a named view (routes through the read trunk)."""
     from domain.ports.services.graph_service import GraphReadRequest
 
-    with contract():
+    with _graph_command("graph.read") as ctx:
+        if not view:
+            raise ValueError("--view is required")
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
         del current  # pot resolution already considers the current working tree.
         since_dt, until_dt = _resolve_time_bounds(
             since=since, until=until, window=time_window
@@ -143,7 +299,9 @@ def graph_read(
                 else "balanced",
             )
         )
-        _emit_read(env, format_=format_, sort=sort, dedupe=dedupe, event_limit=limit)
+        _emit_graph_read(
+            ctx, env, format_=format_, sort=sort, dedupe=dedupe, event_limit=limit
+        )
 
 
 @timeline_app.command("recent")
@@ -204,7 +362,7 @@ def timeline_recent(
 
 @graph_app.command("search-entities")
 def graph_search_entities(
-    query: str = typer.Argument(..., help="text to match entities/claims against"),
+    query: str = typer.Argument(None, help="text to match entities/claims against"),
     type_: str = typer.Option(None, "--type", help="entity label filter, e.g. Service"),
     predicate: str = typer.Option(None, "--predicate"),
     environment: str = typer.Option(None, "--environment"),
@@ -214,9 +372,12 @@ def graph_search_entities(
     """Narrow entity/claim lookup for identity resolution before a write."""
     from domain.ports.services.graph_service import GraphEntitySearchRequest
 
-    with contract():
+    with _graph_command("graph.search-entities") as ctx:
+        if not query:
+            raise ValueError("query is required")
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
         result = host.graph.search_entities(
             GraphEntitySearchRequest(
                 pot_id=pot_id,
@@ -235,7 +396,7 @@ def graph_search_entities(
             )
             or "(no matching entities)"
         )
-        emit(payload, human=human)
+        _emit_graph_result(ctx, payload, human=human)
 
 
 @graph_app.command("mutate")
@@ -256,9 +417,10 @@ def graph_mutate(
         SemanticMutationRequest,
     )
 
-    with contract():
+    with _graph_command("graph.mutate") as ctx:
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
         payload = _load_json(file)
         try:
             request = SemanticMutationRequest.parse(
@@ -272,7 +434,16 @@ def graph_mutate(
             fail(code="invalid_mutation_payload", message=str(exc))
             return
         result = host.graph.mutate(request)
-        emit(result.to_dict(), human=_mutate_human(result))
+        _emit_graph_result(
+            ctx,
+            result.to_dict(),
+            human=_mutate_human(result),
+            warnings=_legacy_warning("graph.mutate", "graph.propose and graph.commit"),
+            recommended_next_action=(
+                "Use `potpie graph propose --file <mutation.json> --json` followed "
+                "by `potpie graph commit <plan_id> --json` once the V2 write path is implemented."
+            ),
+        )
         if not result.ok:
             raise typer.Exit(code=EXIT_VALIDATION)
 
@@ -635,7 +806,7 @@ def graph_mutation_template(
     sources it has actually read. It never inspects the repository or infers
     graph facts.
     """
-    with contract():
+    with _graph_command("graph.mutation-template") as ctx:
         template = _MUTATION_TEMPLATES.get(kind.strip().lower())
         if template is None:
             fail(
@@ -645,7 +816,19 @@ def graph_mutation_template(
             )
         rendered = json.dumps(template, indent=2)
         emit(
-            {"kind": kind, "template": template},
+            graph_success_envelope(
+                command=ctx.command,
+                request_id=ctx.request_id,
+                pot_id=ctx.pot_id,
+                result={"kind": kind, "template": template},
+                warnings=_legacy_warning(
+                    "graph.mutation-template", "graph.describe mutation examples"
+                ),
+                recommended_next_action=(
+                    "Use `potpie graph describe <subgraph> --examples --json` once "
+                    "describe is implemented."
+                ),
+            ).to_dict(),
             human=rendered,
         )
 
@@ -677,9 +860,10 @@ def graph_nudge(
     """
     from domain.nudge import GraphNudgeRequest
 
-    with contract():
+    with _graph_command("graph.nudge") as ctx:
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
         result = host.nudge.nudge(
             GraphNudgeRequest(
                 pot_id=pot_id,
@@ -691,34 +875,178 @@ def graph_nudge(
                 limit=limit,
             )
         )
-        emit(result.to_dict(), human=_nudge_human(result))
+        _emit_graph_result(
+            ctx,
+            result.to_dict(),
+            human=_nudge_human(result),
+            warnings=_legacy_warning("graph.nudge", "the installed hook adapter"),
+            recommended_next_action=(
+                "Hooks should read the `result` object from this workbench envelope."
+            ),
+        )
 
 
 @graph_app.command("status")
 def graph_status(pot: str = typer.Option(None, "--pot")) -> None:
-    with contract():
+    with _graph_command("graph.status") as ctx:
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
         dp = host.graph.data_plane_status(pot_id)
-        emit(
-            {
-                "backend": dp.backend_profile,
-                "ready": dp.backend_ready,
-                "counts": dict(dp.counts),
-                "freshness": dict(dp.freshness),
-                "quality": dict(dp.quality),
-            },
+        versions = {"_global": int(dict(dp.counts).get("claims", 0))}
+        ctx.set_subgraph_versions(versions)
+        payload = _graph_status_payload(host, pot_id, dp)
+        _emit_graph_result(
+            ctx,
+            payload,
             human=f"backend={dp.backend_profile} ready={dp.backend_ready} counts={dict(dp.counts)}",
+        )
+
+
+@graph_app.command("describe")
+def graph_describe(
+    subgraph: str = typer.Argument(None),
+    view: str = typer.Option(None, "--view"),
+    examples: bool = typer.Option(False, "--examples"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    with _graph_command("graph.describe") as ctx:
+        _set_optional_pot(ctx, pot)
+        payload = describe_contract(
+            subgraph=subgraph,
+            view=view,
+            include_examples=examples,
+        )
+        described = payload["view"]["name"] if view else payload["subgraph"]["name"]
+        _emit_graph_result(
+            ctx,
+            payload,
+            human=_describe_human(payload),
+            recommended_next_action=(
+                f"Use `potpie graph read --view {described} --json` after choosing a scope."
+                if view
+                else "Use `potpie graph describe <subgraph> --view <view> --json` for one backed view."
+            ),
+        )
+
+
+@graph_app.command("neighborhood")
+def graph_neighborhood(
+    entity: str = typer.Option(None, "--entity"),
+    predicate: str = typer.Option(None, "--predicate"),
+    depth: int = typer.Option(2, "--depth"),
+    direction: str = typer.Option("both", "--direction"),
+    limit: int = typer.Option(50, "--limit"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    del entity, predicate, depth, direction, limit
+    with _graph_command("graph.neighborhood") as ctx:
+        _set_optional_pot(ctx, pot)
+        _emit_graph_not_implemented(
+            ctx,
+            detail="Phase 2 will route bounded traversal through the inspection port.",
+            recommended_next_action="Use legacy `potpie graph inspect <entity_key> --json` during the transition.",
+        )
+
+
+@graph_app.command("propose")
+def graph_propose(
+    file: str = typer.Option(None, "--file"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    del file
+    with _graph_command("graph.propose") as ctx:
+        _set_optional_pot(ctx, pot)
+        _emit_graph_not_implemented(
+            ctx,
+            detail="Phase 3 will validate, lower, diff, and persist mutation plans.",
+            recommended_next_action="Use legacy `potpie graph mutate --dry-run --file <mutation.json> --json` for validation-only checks.",
+        )
+
+
+@graph_app.command("commit")
+def graph_commit(
+    plan_id: str = typer.Argument(None),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    del plan_id
+    with _graph_command("graph.commit") as ctx:
+        _set_optional_pot(ctx, pot)
+        _emit_graph_not_implemented(
+            ctx,
+            detail="Phase 3 will apply only server-created plans by plan_id.",
+            recommended_next_action="Use legacy `potpie graph mutate --file <mutation.json> --json` only for transition workflows.",
+        )
+
+
+@graph_app.command("history")
+def graph_history(
+    entity: str = typer.Option(None, "--entity"),
+    claim: str = typer.Option(None, "--claim"),
+    subgraph: str = typer.Option(None, "--subgraph"),
+    plan: str = typer.Option(None, "--plan"),
+    mutation: str = typer.Option(None, "--mutation"),
+    since: str = typer.Option(None, "--since"),
+    until: str = typer.Option(None, "--until"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    del entity, claim, subgraph, plan, mutation, since, until
+    with _graph_command("graph.history") as ctx:
+        _set_optional_pot(ctx, pot)
+        _emit_graph_not_implemented(
+            ctx,
+            detail="Phase 4 will expose plan, mutation, claim, and entity history.",
+            recommended_next_action="Use graph read/search commands to inspect current graph state for now.",
+        )
+
+
+@graph_app.command(
+    "inbox",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def graph_inbox(
+    ctx_typer: typer.Context,
+    action: str = typer.Argument(None),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    del ctx_typer, action
+    with _graph_command("graph.inbox") as ctx:
+        _set_optional_pot(ctx, pot)
+        _emit_graph_not_implemented(
+            ctx,
+            detail="Phase 5 will add pending graph-work inbox commands.",
+            recommended_next_action="Keep uncertain findings outside canonical graph facts until inbox/propose/commit exist.",
+        )
+
+
+@graph_app.command(
+    "quality",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def graph_quality(
+    ctx_typer: typer.Context,
+    report: str = typer.Argument(None),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    del ctx_typer, report
+    with _graph_command("graph.quality") as ctx:
+        _set_optional_pot(ctx, pot)
+        _emit_graph_not_implemented(
+            ctx,
+            detail="Phase 6 will expose graph quality findings and suggested repairs.",
+            recommended_next_action="Use `potpie graph status --json` for current backend quality counters.",
         )
 
 
 @graph_app.command("inspect")
 def graph_inspect(
-    entity_key: str,
+    entity_key: str = typer.Argument(None),
     depth: int = typer.Option(2, "--depth"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
-    with contract():
+    with _graph_command("graph.inspect") as ctx:
+        if not entity_key:
+            raise ValueError("entity_key is required")
         host = get_host()
         _require_backend_capability(
             host,
@@ -727,10 +1055,12 @@ def graph_inspect(
             command="graph inspect",
         )
         pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
         sl = host.backend.inspection.neighborhood(
             pot_id=pot_id, entity_key=entity_key, depth=depth
         )
-        emit(
+        _emit_graph_result(
+            ctx,
             {
                 "nodes": [{"key": n.key, "labels": list(n.labels)} for n in sl.nodes],
                 "edges": [
@@ -739,12 +1069,18 @@ def graph_inspect(
                 ],
             },
             human=f"{len(sl.nodes)} nodes, {len(sl.edges)} edges around {entity_key}",
+            warnings=_legacy_warning("graph.inspect", "graph.neighborhood"),
+            recommended_next_action="Use `potpie graph neighborhood --entity <key> --json` once implemented.",
         )
 
 
 @graph_app.command("export")
-def graph_export(file: str, pot: str = typer.Option(None, "--pot")) -> None:
-    with contract():
+def graph_export(
+    file: str = typer.Argument(None), pot: str = typer.Option(None, "--pot")
+) -> None:
+    with _graph_command("graph.export") as ctx:
+        if not file:
+            raise ValueError("file is required")
         host = get_host()
         _require_backend_capability(
             host,
@@ -753,16 +1089,22 @@ def graph_export(file: str, pot: str = typer.Option(None, "--pot")) -> None:
             command="graph export",
         )
         pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
         manifest = host.backend.snapshot.export(pot_id=pot_id, destination=file)
-        emit(
+        _emit_graph_result(
+            ctx,
             {"location": manifest.location, "claims": manifest.claim_count},
             human=f"exported {manifest.claim_count} claims → {manifest.location}",
         )
 
 
 @graph_app.command("import")
-def graph_import(file: str, pot: str = typer.Option(None, "--pot")) -> None:
-    with contract():
+def graph_import(
+    file: str = typer.Argument(None), pot: str = typer.Option(None, "--pot")
+) -> None:
+    with _graph_command("graph.import") as ctx:
+        if not file:
+            raise ValueError("file is required")
         host = get_host()
         _require_backend_capability(
             host,
@@ -771,8 +1113,10 @@ def graph_import(file: str, pot: str = typer.Option(None, "--pot")) -> None:
             command="graph import",
         )
         pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
         manifest = host.backend.snapshot.import_(pot_id=pot_id, source=file)
-        emit(
+        _emit_graph_result(
+            ctx,
             {"location": manifest.location, "claims": manifest.claim_count},
             human=f"imported {manifest.claim_count} claims from {manifest.location}",
         )
@@ -785,9 +1129,10 @@ def graph_repair(
     all_: bool = typer.Option(False, "--all"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
-    with contract():
+    with _graph_command("graph.repair") as ctx:
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
         targets = []
         if not all_:
             if semantic_index:
@@ -795,7 +1140,8 @@ def graph_repair(
             if entity_summaries:
                 targets.append("entity_summaries")
         report = host.backend.analytics.repair(pot_id, targets=targets)
-        emit(
+        _emit_graph_result(
+            ctx,
             {"targets": list(report.targets), "repaired": dict(report.repaired)},
             human=report.detail or f"repaired {dict(report.repaired)}",
         )
@@ -855,6 +1201,87 @@ def backend_doctor() -> None:
 
 
 # --- Graph Surface Lite helpers ---------------------------------------------
+
+
+def _set_optional_pot(ctx: _GraphCliCommandContext, pot: str | None) -> None:
+    host = get_host()
+    if pot:
+        ctx.set_pot_id(resolve_pot_id(host, pot))
+        return
+    active = _safe(lambda: host.pots.active_pot(), None)
+    if active is not None:
+        ctx.set_pot_id(getattr(active, "pot_id", None))
+
+
+def _graph_status_payload(host: Any, pot_id: str, dp) -> dict[str, Any]:
+    caps = _safe(lambda: host.backend.capabilities(), None)
+    implemented = list(caps.implemented()) if caps is not None else []
+    status = GraphWorkbenchStatus(
+        host={
+            "kind": getattr(host, "profile", "local"),
+            "liveness": "ok",
+        },
+        pot={
+            "id": pot_id,
+            "selected_backend": dp.backend_profile,
+        },
+        graph_service={
+            "graph_contract_version": "v2",
+            "data_plane_graph_contract_version": DATA_PLANE_CONTRACT_VERSION,
+            "ontology_version": ONTOLOGY_VERSION,
+            "supported_commands": list(GRAPH_WORKBENCH_COMMANDS),
+            "reader_backed_includes": list(dp.reader_backed_includes),
+            "validator_ready": True,
+            "match_mode": dp.match_mode,
+        },
+        backend={
+            "profile": dp.backend_profile,
+            "ready": dp.backend_ready,
+            "detail": dp.detail,
+            "implemented_capabilities": implemented,
+            "counts": dict(dp.counts),
+            "freshness": dict(dp.freshness),
+        },
+        ledger={"status": "not_inspected"},
+        skills={"status": "not_inspected"},
+        quality=dict(dp.quality),
+    )
+    return status.to_dict()
+
+
+def _describe_human(payload: Mapping[str, Any]) -> str:
+    subgraph = payload.get("subgraph")
+    if not isinstance(subgraph, Mapping):
+        return "graph contract"
+    view = payload.get("view")
+    if isinstance(view, Mapping):
+        filters = ", ".join(str(v) for v in view.get("supported_filters", ())) or "-"
+        relations = ", ".join(str(v) for v in view.get("inline_relations", ())) or "-"
+        return (
+            f"{view.get('name')} ({view.get('result_shape')})\n"
+            f"purpose: {view.get('purpose')}\n"
+            f"filters: {filters}\n"
+            f"relations: {relations}"
+        )
+    views = subgraph.get("views", ())
+    view_names = ", ".join(str(v.get("name")) for v in views if isinstance(v, Mapping))
+    relation_names = ", ".join(
+        str(r.get("name"))
+        for r in subgraph.get("relation_types", ())
+        if isinstance(r, Mapping)
+    )
+    return (
+        f"{subgraph.get('name')}: {subgraph.get('purpose')}\n"
+        f"views: {view_names}\n"
+        f"relations: {relation_names}"
+    )
+
+
+def _safe(fn, default):
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001
+        return default
 
 
 def _require_backend_capability(
@@ -923,6 +1350,57 @@ def _load_json(file: str | None) -> dict:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid JSON in mutation payload: {exc}") from exc
+
+
+def _emit_graph_read(
+    ctx: _GraphCliCommandContext,
+    env,
+    *,
+    format_: str,
+    sort: str,
+    dedupe: str,
+    event_limit: int | None = None,
+) -> None:
+    if not is_json():
+        _emit_read(
+            env, format_=format_, sort=sort, dedupe=dedupe, event_limit=event_limit
+        )
+        return
+
+    normalized_format = _effective_read_format(env, format_)
+    if normalized_format == "jsonl":
+        rows = _timeline_events(env, sort=sort, dedupe=dedupe, limit=event_limit)
+        if not rows:
+            rows = _raw_item_rows(env)
+        payload = _read_payload(
+            env,
+            format_="raw",
+            sort=sort,
+            dedupe=dedupe,
+            event_limit=event_limit,
+        )
+        payload["read_shape"] = "jsonl"
+        payload["rows"] = rows
+        payload["row_count"] = len(rows)
+    else:
+        payload = _read_payload(
+            env,
+            format_=normalized_format,
+            sort=sort,
+            dedupe=dedupe,
+            event_limit=event_limit,
+        )
+    _emit_graph_result(
+        ctx,
+        payload,
+        human=_read_human(
+            env,
+            format_=normalized_format,
+            sort=sort,
+            dedupe=dedupe,
+            event_limit=event_limit,
+        ),
+    )
 
 
 def _emit_read(

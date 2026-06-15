@@ -53,6 +53,7 @@ flowchart TB
 | [`graphv1.md`](./graphv1.md) | What is the desired architecture for the current implementation, including harness-owned intelligence and V2-compatible ontology? |
 | [`graphv2.md`](./graphv2.md) | What is the future graph workbench surface, read-view model, and explicit proposal/commit flow? |
 | [`workbench-ontology.md`](./workbench-ontology.md) | What is the detailed Graph V2 command contract, seed ontology, subgraph/view map, mutation DSL, and ontology evolution process? |
+| [`graphv2-implementation-plan.md`](./graphv2-implementation-plan.md) | What code changes should move the current V1.5 implementation to the V2 workbench surface? |
 | [`cli-flow.md`](./cli-flow.md) | What should the shared CLI journey and command contract look like across local and managed profiles? |
 | [`observability.md`](./observability.md) | What should logs, traces, metrics, and readiness report? |
 | [`bench-plan.md`](./bench-plan.md) | How do we validate graph quality across backends? |

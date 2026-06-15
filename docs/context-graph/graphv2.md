@@ -9,14 +9,16 @@ storage so the agent can query and update project memory directly without
 learning the whole ontology at once.
 
 This is the design document for the future graph workbench surface. It should be
-built after Graph V1 has adopted the forward-compatible ontology, evidence,
+built after Graph V1 has adopted the V2-aligned ontology, evidence,
 truth, and semantic mutation internals described in
 [`graphv1.md`](./graphv1.md). V2 should then be a surface and workflow expansion,
 not a data migration.
 
 V2 supersedes shortcut-oriented commands such as `resolve`, `search`, `record`,
 or a four-tool agent contract as the long-term product surface. During Graph V1,
-those commands may remain as compatibility wrappers over the same internals.
+those commands may remain as legacy wrappers over the same internals, but V2
+must not add compatibility aliases for renamed views, subgraphs, or key
+prefixes.
 
 The detailed command contract, seed ontology, subgraph/view map, mutation DSL,
 and ontology evolution process live in
@@ -112,16 +114,17 @@ the CLI or daemon.
 V2 should make `potpie graph ...` the only canonical graph read/write surface.
 Top-level commands such as `potpie resolve`, `potpie search`, `potpie record`,
 and MCP tools such as `context_resolve`, `context_search`, `context_record`, or
-`context_status` are Graph V1 compatibility wrappers, not Graph V2 product
-primitives. Once the workbench exists, they should either remain as thin aliases
-over `potpie graph ...` for backward compatibility or return migration
-guidance. They must not mutate canonical graph state through a private path.
+`context_status` are Graph V1 legacy wrappers, not Graph V2 product primitives.
+Once the workbench exists, they should either call the same internals with
+canonical names or return migration guidance. They must not mutate canonical
+graph state through a private path, and they must not accept obsolete view names
+or non-canonical key prefixes.
 
 | Layer | Commands | Role |
 |---|---|---|
 | Graph workbench | `potpie graph status`, `catalog`, `describe`, `search-entities`, `read`, `neighborhood`, `propose`, `commit`, `history`, `inbox` | The only canonical graph surface for harness agents. |
 | Admin | `potpie graph repair`, `export`, `import`, `reset`, `admin ...` | Operator-only graph maintenance and destructive actions. |
-| V1 compatibility wrappers | `potpie resolve`, `search`, `record`, `context_*` | Not part of the V2 product contract. Keep only as thin aliases over the same internals or return migration guidance; no direct graph writes; no private query path. |
+| V1 legacy wrappers | `potpie resolve`, `search`, `record`, `context_*` | Not part of the V2 product contract. Keep only as calls into the same internals or return migration guidance; no direct graph writes; no private query path; no obsolete view/key aliases. |
 
 Recommended graph workbench commands:
 
@@ -170,7 +173,7 @@ canonical graph facts until a harness or subagent processes them through
 | Component | Responsibility | Can Be Built Independently By Defining |
 |---|---|---|
 | Ontology Catalog | Publish subgraphs, views, entity types, relation types, mutation policies, identity rules, and examples. | Static contracts and `catalog` / `describe` output. |
-| Identity Resolver | Resolve names, aliases, external IDs, and fuzzy matches to canonical entity keys. | Entity key rules, alias records, search/ranking. |
+| Identity Resolver | Resolve names, alternate display names, external IDs, and fuzzy matches to canonical entity keys. | Entity key rules, alternate-name records, search/ranking. |
 | Read View Router | Route `subgraph + view + scope + query` into bounded retrieval plans, and back the bounded `neighborhood` traversal op (see Query Surface Model). | View contracts, result shapes, ranking, token budgets, traversal depth/direction limits. |
 | Evidence + Truth Model | Define what a fact means and how grounded it is. | Claim classes, evidence refs, authority, confidence, validity time. |
 | Semantic Mutation DSL | Define allowed agent write operations. | Pydantic/JSON schemas for mutation operations. |
@@ -209,7 +212,7 @@ Skill files should contain:
 | Goal | What the workflow is trying to update or retrieve. |
 | Required commands | Exact `potpie graph ... --json` commands the agent may call. |
 | Read recipe | Which subgraphs/views to inspect first and which scopes to pass. |
-| Identity discipline | When to call `search-entities`, how to avoid duplicates, and how to handle aliases. |
+| Identity discipline | When to call `search-entities`, how to avoid duplicates, and how to handle alternate names and external IDs. |
 | Truth discipline | How to choose `authoritative_fact`, `source_observation`, `agent_claim`, `user_decision`, `preference`, or `timeline_event`. |
 | Mutation recipe | Which semantic operations are allowed for this workflow. |
 | Evidence rules | Which source refs must be present before proposing a write. |
@@ -333,9 +336,9 @@ Inbox item shape:
 
 | Component | Persistent Data | Derived Data | Example |
 |---|---|---|---|
-| Ontology Catalog | Subgraph contracts, view contracts, mutation policies. | Task-to-subgraph recommendations. | `features`, `bugs`, `infra_topology`, `recent_changes`. |
-| Identity Resolver | Entity keys, aliases, external IDs, merge history. | Fuzzy match scores and duplicate candidates. | `feature:bulk-refunds` with aliases `Batch refunds`, `bulk refund`. |
-| Read View Router | View definitions and result schemas. | Ranked retrieval results. | `bugs.prior_occurrences` for a symptom query. |
+| Ontology Catalog | Subgraph contracts, view contracts, mutation policies. | Task-to-subgraph recommendations. | `features`, `debugging`, `infra_topology`, `recent_changes`. |
+| Identity Resolver | Entity keys, alternate names, external IDs, merge history. | Fuzzy match scores and duplicate candidates. | `feature:bulk-refunds` with alternate names `Batch refunds`, `bulk refund`. |
+| Read View Router | View definitions and result schemas. | Ranked retrieval results. | `debugging.prior_occurrences` for a symptom query. |
 | Evidence + Truth Model | Claim records and evidence refs. | Confidence and authority rollups. | `agent_claim` inferred from a PR body. |
 | Plan Store | Proposed mutation plans and validation output. | Risk score, diff summary, approval requirement. | `mutation-plan:01JY8T5C`. |
 | Commit Engine | Mutation audit records and subgraph versions. | New projection tasks. | `mutation:01JY8T6A`. |
@@ -370,7 +373,7 @@ Example output:
 {
   "matches": [
     {
-      "subgraph": "bugs",
+      "subgraph": "debugging",
       "reason": "Prior symptoms, fixes, and open regressions.",
       "recommended_views": ["prior_occurrences", "active_bug_context"]
     },
@@ -416,7 +419,7 @@ Example `graph.describe` output:
     "Feature": {
       "preferred_key": "feature:<repo-or-pot>:<slug>",
       "authoritative_external_ids": ["linear_project_id", "product_feature_id"],
-      "aliases_allowed": true
+      "alternate_names_allowed": true
     }
   },
   "entity_types": {
@@ -475,7 +478,7 @@ Example output:
       "entity_key": "feature:payments:bulk-refunds",
       "entity_type": "Feature",
       "name": "Bulk refunds",
-      "aliases": ["Batch refunds", "bulk refund processing"],
+      "alternate_names": ["Batch refunds", "bulk refund processing"],
       "match_score": 0.94,
       "source_refs": ["linear:project:bulk-refunds", "github:pr:acme/payments:812"]
     }
@@ -494,7 +497,7 @@ Entity identity record:
   "entity_key": "feature:payments:bulk-refunds",
   "entity_type": "Feature",
   "canonical_name": "Bulk refunds",
-  "aliases": ["Batch refunds", "bulk refund processing"],
+  "alternate_names": ["Batch refunds", "bulk refund processing"],
   "external_ids": {
     "linear_project_id": "lin_proj_123",
     "product_feature_id": "PF-29"
@@ -503,7 +506,7 @@ Entity identity record:
     {
       "from": "feature:payments:bulk-refund",
       "mutation_id": "mutation:01JY8T6A",
-      "reason": "Duplicate alias with same Linear project."
+      "reason": "Duplicate alternate name with same Linear project."
     }
   ]
 }
@@ -562,7 +565,7 @@ Read request shape:
 
 ```json
 {
-  "subgraph": "bugs",
+  "subgraph": "debugging",
   "view": "prior_occurrences",
   "scope": {
     "repo": "payments",
@@ -578,15 +581,15 @@ Read response shape:
 
 ```json
 {
-  "subgraph": "bugs",
+  "subgraph": "debugging",
   "view": "prior_occurrences",
   "subgraph_versions": {
-    "bugs": 401,
+    "debugging": 401,
     "recent_changes": 8813
   },
   "items": [
     {
-      "entity_key": "bug-pattern:refunds-api:partial-capture-refund-failure",
+      "entity_key": "bug_pattern:refunds-api:partial-capture-refund-failure",
       "entity_type": "BugPattern",
       "score": 0.91,
       "summary": "Refund processing fails for partial captures.",
@@ -595,7 +598,7 @@ Read response shape:
         {
           "type": "FIXES",
           "from": "pr:github:acme/payments:812",
-          "to": "bug-pattern:refunds-api:partial-capture-refund-failure",
+          "to": "bug_pattern:refunds-api:partial-capture-refund-failure",
           "valid_from": "2026-06-01T10:00:00+05:30",
           "valid_until": null
         }
@@ -722,7 +725,7 @@ Example proposal:
     },
     {
       "op": "transition_state",
-      "subgraph": "bugs",
+      "subgraph": "debugging",
       "entity_key": "bug:linear:ENG-241",
       "field": "status",
       "from": "in_progress",
@@ -1002,7 +1005,7 @@ Example quality finding:
 | `commit` accepts only `plan_id`. | Prevents mutation payload drift between validation and commit. |
 | Ordinary writes use semantic operations. | Keeps storage mechanics out of the agent prompt. |
 | `potpie graph ...` is the canonical graph surface. | Skills and agents should not choose between two graph APIs. |
-| Temporary aliases do not write directly. | `resolve`, `search`, `record`, or `context_*` cannot bypass ontology validation and commit. |
+| Legacy wrappers do not write directly. | `resolve`, `search`, `record`, or `context_*` cannot bypass ontology validation and commit. |
 | Inbox items are not graph facts. | Quick capture stays pending until a harness processes it through `propose` and `commit`. |
 | Potpie does not infer rich updates from prose. | Subgraph choice, entity linking, and claim semantics come from the harness. |
 | Administrative actions are separate. | Hard deletes, raw queries, schema edits, and projection rebuilds need stronger policy. |
@@ -1201,12 +1204,12 @@ If it guides the agent's workflow, put it in skills.
 
 2. **Identity Resolver**
    - Define canonical entity key rules.
-   - Add alias and external ID records.
+   - Add alternate-name and external ID records.
    - Implement `search-entities`.
 
 3. **Read Views**
    - Define view contracts and result schemas.
-   - Implement one view each for `features`, `bugs`, `recent_changes`, and
+   - Implement one view each for `features`, `debugging`, `recent_changes`, and
      `infra_topology`.
    - Add ranking and token budgets.
 
@@ -1238,9 +1241,8 @@ If it guides the agent's workflow, put it in skills.
 9. **CLI + Skills**
    - Add canonical `potpie graph ...` commands with stable JSON output.
    - Keep top-level `resolve` / `search` / `record` and `context_*` as Graph V1
-     compatibility wrappers until users can move to the workbench. After that,
-     keep them only as thin aliases or migration guidance over the same
-     internals.
+     legacy wrappers until users can move to the workbench. After that, keep
+     them only as calls into the same internals or migration guidance.
    - Write skills that teach task loops: discover, read, propose, commit,
      history, inbox processing, and repair.
    - Include subagent handoff prompts and failure-handling guidance.

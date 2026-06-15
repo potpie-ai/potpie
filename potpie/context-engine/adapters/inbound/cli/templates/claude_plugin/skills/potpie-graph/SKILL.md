@@ -29,8 +29,8 @@ know whether semantic recall is on.
 ## 2. Read — `graph read --view`
 
 ```bash
-potpie --json graph read --view bugs.prior_occurrences --query "refund race timeout" --limit 8
-potpie --json graph read --view preferences.active_preferences --scope repo:acme/x,path:src/payments/client.py
+potpie --json graph read --view debugging.prior_occurrences --query "refund race timeout" --limit 8
+potpie --json graph read --view decisions.preferences_for_scope --scope repo:acme/x,path:src/payments/client.py
 potpie --json timeline recent --limit 20
 potpie --json graph read --view infra_topology.service_neighborhood --scope service:payments-api --depth 2 --direction out --environment prod
 ```
@@ -39,14 +39,14 @@ Views and what they answer:
 
 | View | Inputs | Answers |
 |---|---|---|
-| `preferences.active_preferences` | `--scope repo:…,path:…` `--query` | which preferences apply to this code |
-| `bugs.prior_occurrences` | `--query` (symptom), optional `--scope service:…` | "seen this before? what fixed it" (bug + fix/PR inline) |
+| `decisions.preferences_for_scope` | `--scope repo:…,path:…` `--query` | which preferences apply to this code |
+| `debugging.prior_occurrences` | `--query` (symptom), optional `--scope service:…` | "seen this before? what fixed it" (bug + fix/PR inline) |
 | `recent_changes.timeline` | optional `--scope`, `--since`, `--until`, `--time-window` | recent PRs/tickets/activity for the project pot; use `potpie timeline recent` for the common project-wide path |
 | `infra_topology.service_neighborhood` | `--scope service:…` `--depth` `--direction` `--environment` | dependency blast-radius, env-qualified |
-| `features.provided` | optional `--scope anchor_entity_key:repo:…` | what a repo/service does (Feature nodes via `PROVIDES` / `IMPLEMENTED_IN`) |
+| `features.feature_context` | optional `--scope anchor_entity_key:repo:…` | what a repo/service does (Feature nodes via `PROVIDES` / `IMPLEMENTED_IN`) |
 | `decisions.active_decisions` | `--scope` | active decisions |
-| `ownership.owner_context` | `--scope` | who owns a scope |
-| `docs.reference_context` | `--scope` | reference docs |
+| `code_topology.ownership_by_path` | `--scope` | who owns a scope |
+| `knowledge.document_context` | `--scope` | reference docs |
 
 Reads return entities **with their immediate relations inline**, so a bug comes back
 with its `RESOLVED_BY` fix, and a service with its `DEPENDS_ON` edges — no second
@@ -95,7 +95,7 @@ read. Use the use-case templates for durable memory:
 - `timeline-change` writes source-time activity events; `occurred_at` is the
   PR/ticket/deploy time, not ingestion time.
 - `bug-fix` writes the symptom, known fix, and optional verification edge so
-  `bugs.prior_occurrences` can return the fix inline.
+  `debugging.prior_occurrences` can return the fix inline.
 
 Repo/service functionality is first-class: assert
 `PROVIDES` (repo/service → `Feature`) and `IMPLEMENTED_IN` (feature → repo/
@@ -113,7 +113,7 @@ Payload is always batch-shaped:
   "operations": [
     {
       "op": "assert_claim",
-      "subgraph": "bugs",
+      "subgraph": "debugging",
       "subject": {"key": "bug_pattern:settle-deadlock", "type": "BugPattern",
                   "properties": {"name": "settle deadlock under concurrent refund"}},
       "predicate": "REPRODUCES",

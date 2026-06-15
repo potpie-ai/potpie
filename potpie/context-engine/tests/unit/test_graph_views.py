@@ -17,28 +17,28 @@ pytestmark = pytest.mark.unit
 
 def test_initial_view_map_present() -> None:
     expected = {
-        "bugs.prior_occurrences",
+        "debugging.prior_occurrences",
         "recent_changes.timeline",
         "infra_topology.service_neighborhood",
-        "features.provided",
-        "preferences.active_preferences",
+        "features.feature_context",
+        "decisions.preferences_for_scope",
         "admin.inspection_slice",
         "decisions.active_decisions",
-        "ownership.owner_context",
-        "docs.reference_context",
+        "code_topology.ownership_by_path",
+        "knowledge.document_context",
     }
     assert expected <= set(GRAPH_VIEWS)
 
 
 def test_view_routes_to_v1_include() -> None:
-    assert view_spec("bugs.prior_occurrences").v1_include == "prior_bugs"
+    assert view_spec("debugging.prior_occurrences").v1_include == "prior_bugs"
     assert (
-        view_spec("preferences.active_preferences").v1_include == "coding_preferences"
+        view_spec("decisions.preferences_for_scope").v1_include == "coding_preferences"
     )
     assert (
         view_spec("infra_topology.service_neighborhood").v1_include == "infra_topology"
     )
-    assert view_spec("features.provided").v1_include == "features"
+    assert view_spec("features.feature_context").v1_include == "features"
 
 
 def test_backed_derived_from_reader_registry() -> None:
@@ -48,16 +48,16 @@ def test_backed_derived_from_reader_registry() -> None:
 
 def test_use_case_views_are_backed() -> None:
     assert view_spec("decisions.active_decisions").backed
-    assert view_spec("ownership.owner_context").backed
-    assert view_spec("docs.reference_context").backed
-    assert view_spec("bugs.prior_occurrences").backed
+    assert view_spec("code_topology.ownership_by_path").backed
+    assert view_spec("knowledge.document_context").backed
+    assert view_spec("debugging.prior_occurrences").backed
     assert view_spec("infra_topology.service_neighborhood").backed
-    assert view_spec("features.provided").backed
+    assert view_spec("features.feature_context").backed
 
 
 def test_traversal_flag_only_on_neighborhood_views() -> None:
     traversal = {v.name for v in GRAPH_VIEWS.values() if v.traversal}
-    assert traversal == {"infra_topology.service_neighborhood", "features.provided"}
+    assert traversal == {"infra_topology.service_neighborhood", "features.feature_context"}
 
 
 def test_neighborhood_declares_depth_direction_environment() -> None:
@@ -77,7 +77,7 @@ def test_neighborhood_documents_environment_filter_rule() -> None:
 
 
 def test_bugs_view_inlines_fix_relations() -> None:
-    spec = view_spec("bugs.prior_occurrences")
+    spec = view_spec("debugging.prior_occurrences")
     assert "RESOLVED" in spec.inline_relations
     assert "REPRODUCES" in spec.inline_relations
 
@@ -91,5 +91,5 @@ def test_catalog_entries_shape() -> None:
 
 def test_backed_views_subset() -> None:
     names = {v.name for v in backed_views()}
-    assert "bugs.prior_occurrences" in names
+    assert "debugging.prior_occurrences" in names
     assert "decisions.active_decisions" in names

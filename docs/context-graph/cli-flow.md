@@ -3,8 +3,8 @@
 Last reviewed: 2026-06-08.
 
 This is the target product contract for the `potpie` CLI. Graph V1 keeps the
-existing compatibility wrappers while moving them onto V2-compatible graph
-internals. Graph V2 later exposes the explicit `potpie graph ...` workbench over
+existing legacy wrappers while moving them onto V2-aligned graph internals.
+Graph V2 later exposes the explicit `potpie graph ...` workbench over
 the same internals. The same command language should work across local OSS and
 managed backends. The active pot decides where the CLI routes the request: local
 pots route to the local daemon, and managed pots route to the authenticated
@@ -250,10 +250,10 @@ history and returns ordered pages with opaque replay tokens.
 filters, then advances the local cursor. It does not enqueue events or write
 graph claims.
 
-### Graph V1 Compatibility Surface
+### Graph V1 Legacy Surface
 
 Graph V1 keeps the existing top-level wrappers while their internals move to the
-V2-compatible ontology, view, semantic mutation, validation, and inbox model.
+V2-aligned ontology, view, semantic mutation, validation, and inbox model.
 
 ```bash
 potpie status [--json]
@@ -264,23 +264,24 @@ potpie record --type fix --summary "..." --scope service:refunds-api [--json]
 
 | CLI command | Internal target |
 |---|---|
-| `potpie status` | Future `graph status` readiness shape, with V1 compatibility output. |
+| `potpie status` | Future `graph status` readiness shape, with V1 legacy output. |
 | `potpie resolve` | `intent/include` mapped to named read views. |
 | `potpie search` | Narrow entity/claim lookup over claim and semantic indexes. |
 | `potpie record` | Semantic mutation validation, low-risk commit, or inbox item. |
 
-These commands are compatibility wrappers, not the long-term product contract.
+These commands are legacy wrappers, not the long-term product contract.
 They must not bypass semantic validation, evidence requirements, provenance, or
-inbox handling.
+inbox handling, and they must not accept obsolete view names or non-canonical key
+prefixes.
 
 ### Graph V2 Workbench
 
 ```bash
 potpie graph status [--json]
 potpie graph catalog --task "debug refund failures" [--json]
-potpie graph describe bugs --view prior_occurrences [--examples] [--json]
+potpie graph describe debugging --view prior_occurrences [--examples] [--json]
 potpie graph search-entities --query "bulk refunds" --subgraph features [--json]
-potpie graph read --view bugs.prior_occurrences --scope service:refunds-api [--json]
+potpie graph read --view debugging.prior_occurrences --scope service:refunds-api [--json]
 potpie timeline recent [--time-window 7d] [--service refunds-api] [--json]
 potpie graph propose --file mutation.json [--json]
 potpie graph commit mutation-plan:01JY8T5C [--json]
@@ -292,7 +293,7 @@ potpie graph inbox add --summary "..." --evidence github:pr:acme/payments:955 [-
 |---|---|
 | `potpie graph status` | Pot Management + Graph Service + GraphBackend + Ledger + Skill Manager readiness |
 | `potpie graph catalog` / `describe` | Ontology Catalog contracts and examples |
-| `potpie graph search-entities` | Identity Resolver over entity index, aliases, and source refs |
+| `potpie graph search-entities` | Identity Resolver over entity index, alternate names, external IDs, and source refs |
 | `potpie graph read` / `history` | Read View Router over claim query, semantic search, traversal projections, and audit |
 | `potpie timeline recent` | Project-wide event view over the active/current pot, deduped by source ref and sorted by occurrence time |
 | `potpie graph propose` | Plan Validator + Plan Store; no graph write |
@@ -302,7 +303,7 @@ potpie graph inbox add --summary "..." --evidence github:pr:acme/payments:955 [-
 These commands are shared across local and managed pots. The active or selected
 pot decides whether they route to the local daemon or managed backend API.
 Top-level `resolve`, `search`, `record`, and `context_*` tools remain Graph V1
-compatibility wrappers until the workbench is ready.
+legacy wrappers until the workbench is ready.
 
 ### Graph Admin And Backend
 
@@ -391,7 +392,7 @@ shared with the repository.
 1. Local setup + daemon lifecycle + health/logs.
 2. Local Pot Management with active `default` pot and source registry.
 3. Embedded GraphBackend and conformance suite.
-4. V1 wrappers over V2-compatible ontology, named views, semantic mutations,
+4. V1 wrappers over V2-aligned ontology, named views, semantic mutations,
    validation, and inbox handling.
 5. Canonical `potpie graph status/catalog/describe/search-entities/read` through
    daemon services.

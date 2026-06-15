@@ -95,7 +95,7 @@ def test_agent_claim_without_evidence_allowed() -> None:
 def test_code_asset_endpoint_is_valid_for_preferences() -> None:
     op = {
         "op": "assert_claim",
-        "subgraph": "preferences",
+        "subgraph": "decisions",
         "subject": {
             "key": "preference:cli-errors",
             "type": "Preference",
@@ -245,8 +245,8 @@ def test_user_decision_is_medium_and_needs_approval() -> None:
 def test_subgraph_for_predicate() -> None:
     assert subgraph_for_predicate("PROVIDES") == "features"
     assert subgraph_for_predicate("IMPLEMENTED_IN") == "features"
-    assert subgraph_for_predicate("POLICY_APPLIES_TO") == "preferences"
-    assert subgraph_for_predicate("RESOLVED") == "bugs"
+    assert subgraph_for_predicate("POLICY_APPLIES_TO") == "decisions"
+    assert subgraph_for_predicate("RESOLVED") == "debugging"
     assert subgraph_for_predicate("DEPENDS_ON") == "infra_topology"
     assert subgraph_for_predicate("DECIDED") == "decisions"
 
@@ -358,7 +358,7 @@ def test_lowering_keeps_canonical_label_for_referenced_entity() -> None:
 def test_lowering_carries_preference_fields_on_claim() -> None:
     op = {
         "op": "assert_claim",
-        "subgraph": "preferences",
+        "subgraph": "decisions",
         "subject": {
             "key": "preference:cli-errors",
             "type": "Preference",
@@ -394,7 +394,7 @@ def test_lowering_carries_preference_fields_on_claim() -> None:
 def test_lowering_value_object_creates_observation() -> None:
     op = {
         "op": "assert_claim",
-        "subgraph": "bugs",
+        "subgraph": "debugging",
         "subject": {"key": "bug_pattern:refund-race", "type": "BugPattern"},
         "predicate": "REPRODUCES",
         "value": "fails under concurrent settle calls",

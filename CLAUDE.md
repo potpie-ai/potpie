@@ -26,17 +26,17 @@ potpie --json graph mutate --file mutation.json [--dry-run]
 ```
 
 - **`graph catalog`** — versions, readable views, applicable mutation ops. Start here.
-- **`graph read`** — ranked read over a named view (`preferences.active_preferences`,
-  `bugs.prior_occurrences`, `recent_changes.timeline`,
+- **`graph read`** — ranked read over a named view (`decisions.preferences_for_scope`,
+  `debugging.prior_occurrences`, `recent_changes.timeline`,
   `infra_topology.service_neighborhood`, `decisions.active_decisions`,
-  `ownership.owner_context`, `docs.reference_context`). Returns entities with their
-  relations inline.
+  `code_topology.ownership_by_path`, `knowledge.document_context`). Returns
+  entities with their relations inline.
 - **`graph search-entities`** — resolve an entity's canonical key *before* writing,
   so you link to the existing node instead of duplicating it.
 - **`graph mutate`** — validate + apply semantic mutations. Use `--dry-run` first for
   anything not obviously low-risk.
 
-## The Four MCP Tools (compatibility wrappers)
+## The Four MCP Tools (legacy wrappers)
 
 When only MCP is configured, use the minimal port — same engine underneath:
 

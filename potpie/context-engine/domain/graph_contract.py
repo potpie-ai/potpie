@@ -11,8 +11,7 @@ validator, the lowerer, and the CLI all read:
   deferred (so the catalog stays honest about what V1.5 can actually do)
 - :class:`MutationRisk`
 - :class:`SourceAuthority` (the supported evidence authorities)
-- canonical entity-key helpers (accept the docs' readable hyphen aliases,
-  normalize to the wired underscore prefixes)
+- canonical entity-key helpers
 - the **edge identity key**, which folds in ``environment`` when present so an
   env-qualified edge never supersedes its counterpart in another environment
   (see the plan's Query Surface section)
@@ -222,19 +221,16 @@ def is_source_authority(value: str | None) -> bool:
 
 
 # --- Entity-key helpers -----------------------------------------------------
-# DECISION (V1.5 key-prefix canonicalization): the Graph V2 docs use readable
-# hyphenated prefixes (``bug-pattern``, ``api-contract``); the wired ontology,
-# the identity registry, and 100+ call sites use the underscore form
-# (``bug_pattern``). The underscore form is **canonical** (it is what
-# ``mint_entity_key`` produces and what every reader/test expects); the
-# hyphenated form is accepted as an input alias and normalized here. This makes
-# the code canonical and accepts the doc/legacy prefixes without a churny
-# rewrite of the identity registry.
+# DECISION (V2 canonicalization): entity-key prefixes are exact. The underscore
+# form used by the ontology and identity registry is canonical
+# (``bug_pattern``, ``api_contract``). Hyphenated prefixes are not accepted as
+# aliases; hyphens remain valid in the key body
+# (``service:payments-api`` stays ``service:payments-api``).
 
 
 def normalize_key_prefix(prefix: str) -> str:
-    """Normalize a key prefix to canonical underscore form (``bug-pattern`` → ``bug_pattern``)."""
-    return prefix.strip().replace("-", "_")
+    """Normalize whitespace around a canonical key prefix."""
+    return prefix.strip()
 
 
 def entity_key_prefix(key: str) -> str | None:
@@ -246,17 +242,9 @@ def entity_key_prefix(key: str) -> str | None:
 
 
 def normalize_entity_key(key: str) -> str:
-    """Normalize an entity key's prefix to canonical form, preserving the body.
-
-    Only the text before the first colon is normalized; the body is left
-    verbatim because bodies legitimately contain hyphens
-    (``service:payments-api`` stays ``service:payments-api``).
-    """
+    """Normalize whitespace around an entity key, preserving prefix and body."""
     k = (key or "").strip()
-    if ":" not in k:
-        return k
-    prefix, _, rest = k.partition(":")
-    return f"{normalize_key_prefix(prefix)}:{rest}"
+    return k
 
 
 def canonical_key_prefix(entity_type: str) -> str | None:
@@ -268,11 +256,11 @@ def canonical_key_prefix(entity_type: str) -> str | None:
 
 
 def entity_key_matches_type(key: str, entity_type: str) -> bool:
-    """True iff ``key``'s normalized prefix matches ``entity_type``'s canonical prefix."""
+    """True iff ``key``'s prefix exactly matches ``entity_type``'s canonical prefix."""
     expected = canonical_key_prefix(entity_type)
     if expected is None:
         return False
-    return entity_key_prefix(key) == normalize_key_prefix(expected)
+    return entity_key_prefix(key) == expected
 
 
 # --- Edge identity ----------------------------------------------------------

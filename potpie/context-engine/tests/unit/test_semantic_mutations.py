@@ -82,7 +82,7 @@ def test_single_op_alias_normalizes_to_batch() -> None:
     payload = {
         "operation": "assert_claim",
         "pot_id": "p",
-        "subgraph": "preferences",
+        "subgraph": "decisions",
         "subject": {"key": "preference:wrap-retries", "type": "Preference"},
         "predicate": "POLICY_APPLIES_TO",
         "object": {"key": "service:payments", "type": "Service"},

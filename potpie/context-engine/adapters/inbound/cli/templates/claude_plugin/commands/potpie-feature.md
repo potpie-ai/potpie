@@ -5,7 +5,7 @@ deployment, adapters, or runtime behavior.
 If the `potpie` CLI is available, read the graph directly:
 
 ```bash
-potpie --json graph read --view preferences.active_preferences --scope repo:<owner/repo>
+potpie --json graph read --view decisions.preferences_for_scope --scope repo:<owner/repo>
 potpie --json graph read --view decisions.active_decisions --scope repo:<owner/repo>
 potpie --json graph read --view infra_topology.service_neighborhood --scope service:<name> --depth 2
 ```

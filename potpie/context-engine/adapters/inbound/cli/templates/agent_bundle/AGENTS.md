@@ -43,13 +43,13 @@ Do not add one tool per context type. Express reads as `graph read --view` or as
 
 | View | Use it for |
 |---|---|
-| `preferences.active_preferences` | project/repo/path preferences for code work |
+| `decisions.preferences_for_scope` | project/repo/path preferences for code work |
 | `infra_topology.service_neighborhood` | env-qualified dependencies and blast radius |
 | `recent_changes.timeline` | project-wide PRs, tickets, docs, incidents, deployments; use `potpie timeline recent` |
-| `bugs.prior_occurrences` | prior symptoms, fixes, failed attempts |
+| `debugging.prior_occurrences` | prior symptoms, fixes, failed attempts |
 | `decisions.active_decisions` | active architectural/product decisions |
-| `ownership.owner_context` | owners for a scope |
-| `docs.reference_context` | docs and runbooks for a scope |
+| `code_topology.ownership_by_path` | owners for a scope |
+| `knowledge.document_context` | docs and runbooks for a scope |
 | `admin.inspection_slice` | raw canonical graph for debugging |
 
 ## Recipes

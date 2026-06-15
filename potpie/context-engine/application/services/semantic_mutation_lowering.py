@@ -519,18 +519,18 @@ def _synthesize_fact(subject_key: str, predicate: str, object_key: str) -> str:
 _MEMORY_PREDICATE_SUBGRAPH = {
     "PROVIDES": "features",
     "IMPLEMENTED_IN": "features",
-    "POLICY_APPLIES_TO": "preferences",
-    "REPRODUCES": "bugs",
-    "RESOLVED": "bugs",
-    "ATTEMPTED_FIX_FAILED": "bugs",
-    "VERIFIED": "bugs",
+    "POLICY_APPLIES_TO": "decisions",
+    "REPRODUCES": "debugging",
+    "RESOLVED": "debugging",
+    "ATTEMPTED_FIX_FAILED": "debugging",
+    "VERIFIED": "debugging",
     "DECIDED": "decisions",
     "AFFECTS": "decisions",
 }
 _CATEGORY_SUBGRAPH = {
     "topology": "infra_topology",
-    "ownership": "ownership",
-    "people": "ownership",
+    "ownership": "code_topology",
+    "people": "code_topology",
     "timeline": "recent_changes",
     "generic": "admin",
 }

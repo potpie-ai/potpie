@@ -20,7 +20,7 @@ import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Final, Iterator, NoReturn
+from typing import Any, Callable, Final, Iterator, NoReturn
 
 import typer
 
@@ -38,7 +38,13 @@ EXIT_UNAVAILABLE = 2
 EXIT_DEGRADED = 3
 EXIT_AUTH = 4
 
-_state: dict[str, Any] = {"json": False, "verbose": False, "host": None, "store": None}
+_state: dict[str, Any] = {
+    "json": False,
+    "verbose": False,
+    "host": None,
+    "store": None,
+    "json_error_formatter": None,
+}
 _CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {
         "arch",
@@ -108,6 +114,24 @@ def set_store(store: CredentialStore) -> None:
     _state["store"] = store
 
 
+@contextmanager
+def json_error_formatter(
+    formatter: Callable[[dict[str, Any]], dict[str, Any]] | None,
+) -> Iterator[None]:
+    """Temporarily wrap JSON errors emitted by ``fail``.
+
+    This lets command groups with stricter envelopes, such as ``potpie graph``,
+    reuse the shared error boundary without changing every other CLI command's
+    documented error contract.
+    """
+    old = _state.get("json_error_formatter")
+    _state["json_error_formatter"] = formatter
+    try:
+        yield
+    finally:
+        _state["json_error_formatter"] = old
+
+
 def emit(payload: dict[str, Any], *, human: str) -> None:
     """Emit a success result: JSON when ``--json``, else a human line."""
     if is_json():
@@ -128,14 +152,18 @@ def fail(
 ) -> NoReturn:
     """Emit the structured error contract and exit with the given code."""
     if is_json():
+        payload = {
+            "code": code,
+            "message": message,
+            "detail": detail,
+            "recommended_next_action": next_action,
+        }
+        formatter = _state.get("json_error_formatter")
+        if callable(formatter):
+            payload = formatter(payload)
         typer.echo(
             json.dumps(
-                {
-                    "code": code,
-                    "message": message,
-                    "detail": detail,
-                    "recommended_next_action": next_action,
-                },
+                payload,
                 default=str,
             )
         )
@@ -360,7 +388,9 @@ def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
     return matches
 
 
-def _repo_source_matches_cwd(source_name: str, *, cwd: Path, remote: str | None) -> bool:
+def _repo_source_matches_cwd(
+    source_name: str, *, cwd: Path, remote: str | None
+) -> bool:
     if not source_name:
         return False
     source_path = Path(source_name).expanduser()
@@ -369,7 +399,11 @@ def _repo_source_matches_cwd(source_name: str, *, cwd: Path, remote: str | None)
             resolved = source_path.resolve(strict=False)
         except OSError:
             resolved = source_path.absolute()
-        if cwd == resolved or cwd.is_relative_to(resolved) or resolved.is_relative_to(cwd):
+        if (
+            cwd == resolved
+            or cwd.is_relative_to(resolved)
+            or resolved.is_relative_to(cwd)
+        ):
             return True
 
     normalized_source = _normalize_repo_ref(source_name)

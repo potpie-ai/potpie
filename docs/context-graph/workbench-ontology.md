@@ -29,7 +29,7 @@ validation, storage, and audit.
 | `potpie graph status` | Report readiness, versions, supported subgraphs/views/mutations, freshness, and skill drift. | No |
 | `potpie graph catalog` | Rank subgraphs/views for a task and return compact discovery guidance. | No |
 | `potpie graph describe` | Return a subgraph or view contract, examples, identity rules, authority rules, and mutation policy. | No |
-| `potpie graph search-entities` | Resolve names, aliases, external IDs, and duplicate candidates before writes. | No |
+| `potpie graph search-entities` | Resolve names, alternate display names, external IDs, and duplicate candidates before writes. | No |
 | `potpie graph read` | Execute a bounded named read view with scope, query, ranking, provenance, and version metadata. | No |
 | `potpie graph propose` | Validate a semantic mutation payload, classify risk, compute diff, persist a plan. | Plan only |
 | `potpie graph commit` | Atomically apply an unexpired server-created plan by `plan_id`. | Yes |
@@ -119,14 +119,14 @@ Agents should follow this loop for non-trivial work:
 |---|---|
 | Ontology bundle | Versioned set of all subgraph contracts. |
 | Subgraph contract | Purpose, entity types, relation types, views, mutations, authority, identity, examples. |
-| Entity type | Stable object type with required fields, identity policy, lifecycle fields, and aliases. |
+| Entity type | Stable object type with required fields, identity policy, lifecycle fields, and alternate names. |
 | Relation type | Directed predicate with allowed endpoint types, validity semantics, and authority rules. |
 | Claim | Canonical fact about an entity or relation with truth class, evidence, confidence, and time. |
 | Event | Append-only timeline occurrence, usually source-system generated. |
 | View | Bounded read contract with required/optional scope, result shape, ranking, budget, and coverage rules. |
 | Semantic mutation | Agent-write operation validated against ontology and source authority. |
 | Evidence ref | Pointer to source material, quote/locator, authority class, freshness, and resolver hints. |
-| Identity record | Canonical key, display name, aliases, external IDs, merge/split history. |
+| Identity record | Canonical key, display name, alternate names, external IDs, merge/split history. |
 | Quality finding | Stale, duplicate, conflict, unsupported, orphan, low-confidence, or projection-drift finding. |
 
 ## Entity Keys
@@ -146,7 +146,7 @@ Entity keys should be deterministic, readable, and pot-scoped by context.
 | Commit | `commit:<provider>:<owner>/<repo>:<sha>` |
 | Issue | `issue:<provider>:<project-or-repo>:<id>` |
 | Incident | `incident:<source>:<id-or-slug>` |
-| Bug pattern | `bug-pattern:<scope>:<symptom-slug>` |
+| Bug pattern | `bug_pattern:<scope>:<symptom-slug>` |
 | Document | `doc:<source>:<id-or-url-hash>` |
 | Source reference | `source-ref:<source-system>:<external-id>` |
 | Activity | `activity:<source-system>:<source-event-id>` |
@@ -157,7 +157,8 @@ Rules:
 - Otherwise use scoped slugs derived from canonical names.
 - Never use display names alone when provider IDs exist.
 - `search-entities` must run before creating non-authoritative entities.
-- Merges create `MERGED_FROM` history and alias records; they do not hard-delete.
+- Merges create `MERGED_FROM` history and alternate-name/external-ID records;
+  they do not hard-delete.
 
 ## Truth Classes
 
@@ -570,7 +571,7 @@ An entity type cannot be added until these are defined:
 - purpose and when agents should use it;
 - identity policy and key pattern;
 - required properties;
-- alias/external ID behavior;
+- alternate-name/external ID behavior;
 - valid relation endpoints;
 - allowed mutation operations;
 - authoritative sources for important fields;

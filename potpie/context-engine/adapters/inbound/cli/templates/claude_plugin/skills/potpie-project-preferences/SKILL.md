@@ -21,7 +21,7 @@ Prefer the graph CLI when shell is available:
 
 ```bash
 potpie --json graph read \
-  --view preferences.active_preferences \
+  --view decisions.preferences_for_scope \
   --scope repo:<owner-repo>,path:<path-or-dir> \
   --query "error handling logging retries framework testing file structure" \
   --limit 12

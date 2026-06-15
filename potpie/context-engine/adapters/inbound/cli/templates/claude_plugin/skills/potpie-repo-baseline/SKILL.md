@@ -63,7 +63,7 @@ the architecture from PR titles.
 | Datastores / integrations | `DataStore` | `USES` |
 | Explicit preferences | `Preference` | `POLICY_APPLIES_TO` |
 
-Query baselines back with `potpie --json graph read --view features.provided
+Query baselines back with `potpie --json graph read --view features.feature_context
 --scope anchor_entity_key:<repo-key>` ("what does this repo do?") and
 `--view infra_topology.service_neighborhood` (dependencies and deploy shape).
 

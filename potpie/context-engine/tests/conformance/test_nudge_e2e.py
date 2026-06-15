@@ -40,7 +40,7 @@ def _seed_bug(svc: DefaultGraphService) -> None:
                 "operations": [
                     {
                         "op": "assert_claim",
-                        "subgraph": "bugs",
+                        "subgraph": "debugging",
                         "subject": {"key": "bug_pattern:settle-deadlock", "type": "BugPattern"},
                         "predicate": "REPRODUCES",
                         "object": {"key": "service:payments-api", "type": "Service"},

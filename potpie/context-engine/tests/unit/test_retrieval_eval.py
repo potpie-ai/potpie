@@ -63,7 +63,7 @@ def test_vector_recovers_morphological_variants_lexical_misses() -> None:
                     "operations": [
                         {
                             "op": "assert_claim",
-                            "subgraph": "preferences",
+                            "subgraph": "decisions",
                             "subject": {"key": "preference:memoize", "type": "Preference"},
                             "predicate": "POLICY_APPLIES_TO",
                             "object": {"key": "service:pricing", "type": "Service"},
@@ -72,7 +72,7 @@ def test_vector_recovers_morphological_variants_lexical_misses() -> None:
                         },
                         {
                             "op": "assert_claim",
-                            "subgraph": "preferences",
+                            "subgraph": "decisions",
                             "subject": {"key": "preference:validate", "type": "Preference"},
                             "predicate": "POLICY_APPLIES_TO",
                             "object": {"key": "service:pricing", "type": "Service"},

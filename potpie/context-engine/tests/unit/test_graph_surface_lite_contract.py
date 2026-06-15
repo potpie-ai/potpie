@@ -67,16 +67,16 @@ def test_catalog_op_partitions_are_honest(service) -> None:
 def test_catalog_shows_backed_and_planned_views(service) -> None:
     cat = service.catalog(GraphCatalogRequest(pot_id="p")).to_dict()
     by_name = {v["name"]: v for v in cat["views"]}
-    assert by_name["bugs.prior_occurrences"]["backed"] is True
+    assert by_name["debugging.prior_occurrences"]["backed"] is True
     assert by_name["decisions.active_decisions"]["backed"] is True
-    assert by_name["ownership.owner_context"]["backed"] is True
-    assert by_name["docs.reference_context"]["backed"] is True
+    assert by_name["code_topology.ownership_by_path"]["backed"] is True
+    assert by_name["knowledge.document_context"]["backed"] is True
 
 
 def test_catalog_filters_by_subgraph(service) -> None:
-    cat = service.catalog(GraphCatalogRequest(pot_id="p", subgraph="bugs")).to_dict()
-    assert {v["subgraph"] for v in cat["views"]} == {"bugs"}
-    assert [v["name"] for v in cat["views"]] == ["bugs.prior_occurrences"]
+    cat = service.catalog(GraphCatalogRequest(pot_id="p", subgraph="debugging")).to_dict()
+    assert {v["subgraph"] for v in cat["views"]} == {"debugging"}
+    assert [v["name"] for v in cat["views"]] == ["debugging.prior_occurrences"]
 
 
 def test_catalog_rejects_unknown_subgraph(service) -> None:
@@ -87,10 +87,10 @@ def test_catalog_rejects_unknown_subgraph(service) -> None:
 def test_catalog_includes_ranking_inputs(service) -> None:
     cat = service.catalog(GraphCatalogRequest(pot_id="p")).to_dict()
     by_name = {v["name"]: v for v in cat["views"]}
-    assert "ranking_inputs" in by_name["bugs.prior_occurrences"]
-    assert "semantic_similarity" in by_name["bugs.prior_occurrences"]["ranking_inputs"]
+    assert "ranking_inputs" in by_name["debugging.prior_occurrences"]
+    assert "semantic_similarity" in by_name["debugging.prior_occurrences"]["ranking_inputs"]
     assert (
-        "resolution_status" not in by_name["bugs.prior_occurrences"]["ranking_inputs"]
+        "resolution_status" not in by_name["debugging.prior_occurrences"]["ranking_inputs"]
     )
 
 
@@ -180,7 +180,7 @@ def test_preferences_view_assembles_structured_policy_relation(service) -> None:
             "operations": [
                 {
                     "op": "assert_claim",
-                    "subgraph": "preferences",
+                    "subgraph": "decisions",
                     "subject": {
                         "key": "preference:cli-errors",
                         "type": "Preference",
@@ -211,7 +211,7 @@ def test_preferences_view_assembles_structured_policy_relation(service) -> None:
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            view="preferences.active_preferences",
+            view="decisions.preferences_for_scope",
             scope={
                 "path": "potpie/context-engine/adapters/inbound/cli/commands/graph.py",
                 "language": "python",
@@ -252,7 +252,7 @@ def test_read_dedupes_duplicate_inline_relation_rows(service) -> None:
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            view="preferences.active_preferences",
+            view="decisions.preferences_for_scope",
             scope={"language": "python"},
             limit=5,
         )
@@ -314,7 +314,7 @@ def test_features_view_does_not_return_generic_infra_edges(service) -> None:
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            view="features.provided",
+            view="features.feature_context",
             scope={"anchor_entity_key": "repo:github.com/acme/widgets"},
         )
     )
@@ -407,7 +407,7 @@ def test_read_projects_canonical_labels_from_key_prefix(service) -> None:
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            view="features.provided",
+            view="features.feature_context",
             scope={"anchor_entity_key": "repo:github.com/potpie-ai/potpie"},
         )
     )
@@ -438,7 +438,7 @@ def test_fix_record_creates_scoped_bug_and_failed_attempt_memory(service) -> Non
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            view="bugs.prior_occurrences",
+            view="debugging.prior_occurrences",
             query="ambiguous pot graph read",
             scope={"service": "context-engine"},
             limit=10,
