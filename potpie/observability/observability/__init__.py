@@ -44,15 +44,7 @@ from contextlib import contextmanager
 from .config import ObservabilityConfig
 from .sink import Sink
 
-__all__ = [
-    "get_logger",
-    "configure",
-    "log_context",
-    "bind_context",
-    "reset_context",
-    "ObservabilityConfig",
-    "Sink",
-]
+__all__ = ["get_logger", "configure", "log_context", "ObservabilityConfig", "Sink"]
 
 _TAG = "_observability_managed"
 HANDLER_TAG = "sink"
@@ -183,14 +175,6 @@ def _pop_context(token: object) -> None:
         pass
 
 
-def bind_context(**fields) -> object:
-    return _push_context(**fields)
-
-
-def reset_context(token: object) -> None:
-    _pop_context(token)
-
-
 def _iter_managed(root: logging.Logger):
     return [h for h in root.handlers if getattr(h, _TAG, None) is not None]
 
@@ -229,18 +213,14 @@ def configure(config: "ObservabilityConfig | None" = None) -> None:
     for s in prev_sinks:
         try:
             getattr(s, "shutdown", lambda *_: None)(prev_cfg)
-        except Exception as exc:
-            logging.getLogger(__name__).debug(
-                "observability sink shutdown failed: %s", exc
-            )
+        except Exception:
+            pass
 
     for h in _iter_managed(root):
         try:
             h.close()
-        except Exception as exc:
-            logging.getLogger(__name__).debug(
-                "observability handler close failed: %s", exc
-            )
+        except Exception:
+            pass
         root.removeHandler(h)
 
     ctx_filter = ContextFilter()
@@ -279,10 +259,8 @@ def _shutdown_all_sinks() -> None:
     for s in sinks:
         try:
             getattr(s, "shutdown", lambda *_: None)(cfg)
-        except Exception as exc:
-            logging.getLogger(__name__).debug(
-                "observability atexit shutdown failed: %s", exc
-            )
+        except Exception:
+            pass
 
 
 _install_safety_handler()
