@@ -90,6 +90,12 @@ export function typeCategory(type: string): Category {
   return TYPE_CATEGORY[type] || "topology";
 }
 
+export function typesInCategory(category: Category): string[] {
+  return Object.entries(TYPE_CATEGORY)
+    .filter(([, cat]) => cat === category)
+    .map(([type]) => type);
+}
+
 // Activity `kind` (classified at ingest: feature/fix/chore/security/removal/…),
 // used to color timeline dots so the change-history reads at a glance.
 const KIND_PALETTE: Record<string, string> = {

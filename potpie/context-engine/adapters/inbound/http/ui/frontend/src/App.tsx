@@ -15,6 +15,7 @@ import {
   kindColor,
   typeCategory,
   typeColor,
+  typesInCategory,
   UI,
 } from "./theme";
 import { iconPathD } from "./icons";
@@ -29,6 +30,7 @@ import type {
 } from "./types";
 
 const EMPTY: GraphData = { nodes: [], edges: [] };
+const TIMELINE_TYPES = typesInCategory("timeline");
 
 const SIDEBAR_W_KEY = "potpie-ui:sidebar-w";
 const SIDEBAR_W_DEFAULT = 320;
@@ -74,11 +76,23 @@ export default function App() {
       ? "timeline"
       : "graph",
   );
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+
+  const revealTimelineTypes = () =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const t of TIMELINE_TYPES) {
+        if (next.delete(t)) changed = true;
+      }
+      return changed ? next : prev;
+    });
+
   const setView = (v: "graph" | "timeline") => {
     setViewState(v);
     if (typeof location !== "undefined") location.hash = v === "timeline" ? "timeline" : "";
+    if (v === "timeline") revealTimelineTypes();
   };
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
 
   const [sidebarW, setSidebarW] = useState(() => {
     if (typeof localStorage === "undefined") return SIDEBAR_W_DEFAULT;
@@ -223,20 +237,30 @@ export default function App() {
     }));
   }, [data]);
 
-  const toggleType = (t: string) =>
+  const toggleType = (t: string) => {
+    if (view === "timeline" && TIMELINE_TYPES.includes(t)) return;
     setHidden((prev) => {
       const next = new Set(prev);
       next.has(t) ? next.delete(t) : next.add(t);
       return next;
     });
+  };
 
   // Cascade a category checkbox to all its types: hide them all, or reveal them.
-  const setCategoryHidden = (types: string[], hide: boolean) =>
+  const setCategoryHidden = (types: string[], hide: boolean) => {
+    if (
+      view === "timeline" &&
+      hide &&
+      types.every((t) => TIMELINE_TYPES.includes(t))
+    ) {
+      return;
+    }
     setHidden((prev) => {
       const next = new Set(prev);
       for (const t of types) hide ? next.add(t) : next.delete(t);
       return next;
     });
+  };
 
   const counts = status?.counts || {};
 
@@ -346,6 +370,8 @@ export default function App() {
                 ).length;
                 const allHidden = hiddenCount === typeKeys.length;
                 const someHidden = hiddenCount > 0 && !allHidden;
+                const timelineLocked =
+                  view === "timeline" && category === "timeline";
                 return (
                   <div className="cat-group" key={category}>
                     <label className="cat-head">
@@ -355,6 +381,12 @@ export default function App() {
                           if (el) el.indeterminate = someHidden;
                         }}
                         checked={!allHidden}
+                        disabled={timelineLocked}
+                        title={
+                          timelineLocked
+                            ? "Timeline types stay visible in Timeline view"
+                            : undefined
+                        }
                         onChange={() => setCategoryHidden(typeKeys, !allHidden)}
                       />
                       <span className="cat-name">{category}</span>
@@ -365,6 +397,12 @@ export default function App() {
                         <input
                           type="checkbox"
                           checked={!hidden.has(type)}
+                          disabled={timelineLocked}
+                          title={
+                            timelineLocked
+                              ? "Timeline types stay visible in Timeline view"
+                              : undefined
+                          }
                           onChange={() => toggleType(type)}
                         />
                         <TypeBadge type={type} />

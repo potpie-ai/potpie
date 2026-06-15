@@ -5,7 +5,7 @@
 # those with `make -C legacy <target>`.
 #
 # Quick start:
-#   make cli-install   # put `potpie` / `potpie-mcp` on your PATH (editable)
+#   make cli-install   # build graph-explorer UI + install potpie on your PATH (editable)
 #   make cli-status    # confirm the install is healthy
 #   make help          # list all targets
 
@@ -13,7 +13,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 .DEFAULT_GOAL := help
-.PHONY: help cli-install cli-update cli-uninstall cli-status
+.PHONY: help ui-build cli-install cli-update cli-uninstall cli-status
 
 ##@ Help
 
@@ -33,10 +33,15 @@ help: ## Show this help
 # global `potpie` reaches your local backends out of the box. Re-run
 # `make cli-install` only when dependencies or entry points change.
 CE_DIR := potpie/context-engine
+UI_FRONTEND_DIR := $(CE_DIR)/adapters/inbound/http/ui/frontend
 CLI_TOOL := potpie-context-engine
 CLI_PYTHON ?= >=3.12,<3.14
 
-cli-install: ## Install potpie + potpie-mcp globally (editable, all extras). Re-run after dep/entrypoint changes.
+ui-build: ## Build the graph-explorer SPA (npm install + vite) into frontend/dist
+	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not installed — see https://nodejs.org/"; exit 1; }
+	cd $(UI_FRONTEND_DIR) && npm install && npm run build
+
+cli-install: ui-build ## Install potpie + potpie-mcp globally (editable, all extras). Re-run after dep/entrypoint changes.
 	@command -v uv >/dev/null 2>&1 || { echo "❌ uv not installed — see https://docs.astral.sh/uv/"; exit 1; }
 	@# Drop the pre-rename "context-engine" tool if a stale copy is lingering.
 	-@uv tool uninstall context-engine >/dev/null 2>&1 || true
@@ -65,3 +70,8 @@ cli-status: ## Show the global potpie install + run a quick health check
 	  echo "python:   unknown"; \
 	fi
 	@potpie --help >/dev/null 2>&1 && echo "health:   ✓ potpie runs current source" || echo "health:   ✗ potpie failed (run: make cli-install)"
+	@if [ -f "$(UI_FRONTEND_DIR)/dist/index.html" ]; then \
+	  echo "ui:       ✓ graph explorer built ($(UI_FRONTEND_DIR)/dist)"; \
+	else \
+	  echo "ui:       ✗ not built (run: make ui-build)"; \
+	fi
