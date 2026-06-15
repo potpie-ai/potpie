@@ -88,7 +88,7 @@ Record `doc_reference`, `decision`, `preference`, `runbook_note`, `service_note`
 or infra claims only when the document explicitly says them. Preserve the URL or
 document id in `source_refs` or mutation evidence.
 
-Linear/Jira:
+Tickets/issues:
 Tickets and issues can create timeline activities, bug patterns, docs, and
 decisions. Do not emit `Fix` from an issue/ticket alone; fixes require a merged PR,
 commit, deployment, or explicit shipped-resolution source.

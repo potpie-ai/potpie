@@ -24,6 +24,7 @@ from adapters.inbound.cli.commands._common import (
     get_host,
     resolve_pot_id,
 )
+from domain.errors import CapabilityNotImplemented
 from domain.nudge import NUDGE_EVENT_HELP
 
 graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
@@ -94,7 +95,9 @@ def graph_read(
     direction: str = typer.Option(None, "--direction", help="out | in | both"),
     limit: int = typer.Option(12, "--limit"),
     sort: str = typer.Option(
-        "auto", "--sort", help="auto | score | occurred_at (timeline defaults to occurred_at)"
+        "auto",
+        "--sort",
+        help="auto | score | occurred_at (timeline defaults to occurred_at)",
     ),
     dedupe: str = typer.Option(
         "auto", "--dedupe", help="auto | none | source_ref | activity"
@@ -113,7 +116,9 @@ def graph_read(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         del current  # pot resolution already considers the current working tree.
-        since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=time_window)
+        since_dt, until_dt = _resolve_time_bounds(
+            since=since, until=until, window=time_window
+        )
         parsed_scope = _parse_scope(scope)
         if repo:
             parsed_scope["repo"] = _resolve_repo_scope(repo)
@@ -133,7 +138,9 @@ def graph_read(
                 depth=depth,
                 direction=direction,
                 limit=read_limit,
-                freshness_preference="fresh" if _is_timeline_view(view) else "balanced",
+                freshness_preference="fresh"
+                if _is_timeline_view(view) and not query
+                else "balanced",
             )
         )
         _emit_read(env, format_=format_, sort=sort, dedupe=dedupe, event_limit=limit)
@@ -167,7 +174,9 @@ def timeline_recent(
     with contract():
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
-        since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=time_window)
+        since_dt, until_dt = _resolve_time_bounds(
+            since=since, until=until, window=time_window
+        )
         scope = {"service": service} if service else {}
         read_limit = _service_limit_for_read(
             view="recent_changes.timeline", format_="events", requested_limit=limit
@@ -181,7 +190,7 @@ def timeline_recent(
                 since=since_dt,
                 until=until_dt,
                 limit=read_limit,
-                freshness_preference="fresh",
+                freshness_preference="fresh" if not query else "balanced",
             )
         )
         _emit_read(
@@ -303,7 +312,10 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
                 "confidence": 0.9,
                 "description": "<where the source says this — e.g. README features section>",
                 "evidence": [
-                    {"source_ref": "repo:<owner>/<repo>#README", "authority": "repository_metadata"}
+                    {
+                        "source_ref": "repo:<owner>/<repo>#README",
+                        "authority": "repository_metadata",
+                    }
                 ],
             },
             {
@@ -315,7 +327,10 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
                 "confidence": 0.9,
                 "description": "<which manifest/workflow defines the service>",
                 "evidence": [
-                    {"source_ref": "repo:<owner>/<repo>#package.json", "authority": "repository_metadata"}
+                    {
+                        "source_ref": "repo:<owner>/<repo>#package.json",
+                        "authority": "repository_metadata",
+                    }
                 ],
             },
         ],
@@ -337,12 +352,16 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
                 "truth": "source_observation",
                 "confidence": 0.9,
                 "description": "<evidence summary>",
-                "evidence": [{"source_ref": "<ref>", "authority": "repository_metadata"}],
+                "evidence": [
+                    {"source_ref": "<ref>", "authority": "repository_metadata"}
+                ],
             }
         ],
     },
     "preference": {
         "pot_id": "<pot-id>",
+        "idempotency_key": "preference:<owner>/<repo>:<preference-slug>",
+        "created_by": {"surface": "cli", "harness": "<harness>"},
         "operations": [
             {
                 "op": "assert_claim",
@@ -352,18 +371,144 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
                     "name": "<short preference name>",
                     "summary": "<one-line prescription>",
                     "description": "<retrieval card: when it applies, synonyms, scope>",
+                    "properties": {
+                        "policy_kind": "<error_handling|logging|testing|library_choice|file_structure>",
+                        "prescription": "<specific guidance an agent should follow>",
+                        "strength": "<hard|strong|normal|weak>",
+                        "audience": "<repo|service|path|language>",
+                    },
                 },
                 "predicate": "POLICY_APPLIES_TO",
                 "object": {"key": "repo:<host>/<owner>/<repo>", "type": "Repository"},
                 "truth": "preference",
                 "confidence": 0.9,
                 "description": "<where the preference is stated>",
+                "extra": {
+                    "repo": "<host>/<owner>/<repo>",
+                    "service": "<service-slug>",
+                    "file_path": "<optional/path/or/directory>",
+                    "language": "<language>",
+                },
                 "evidence": [{"source_ref": "<ref>", "authority": "user_statement"}],
             }
         ],
     },
+    "preference-policy": {
+        "pot_id": "<pot-id>",
+        "idempotency_key": "preference:<owner>/<repo>:<preference-slug>",
+        "created_by": {"surface": "cli", "harness": "<harness>"},
+        "operations": [
+            {
+                "op": "assert_claim",
+                "subject": {
+                    "key": "preference:<preference-slug>",
+                    "type": "Preference",
+                    "name": "<short preference name>",
+                    "summary": "<one-line prescription>",
+                    "description": "<retrieval card: task words, scope, synonyms>",
+                    "properties": {
+                        "policy_kind": "<error_handling|logging|testing|library_choice|file_structure>",
+                        "prescription": "<specific guidance an agent should follow>",
+                        "strength": "<hard|strong|normal|weak>",
+                        "audience": "<repo|service|path|language>",
+                    },
+                },
+                "predicate": "POLICY_APPLIES_TO",
+                "object": {
+                    "key": "code:<repo-or-service>:<path-or-symbol>",
+                    "type": "CodeAsset",
+                },
+                "truth": "preference",
+                "confidence": 0.9,
+                "description": "<evidence summary and why this policy applies to this scope>",
+                "extra": {
+                    "repo": "<host>/<owner>/<repo>",
+                    "service": "<service-slug>",
+                    "file_path": "<path/or/directory>",
+                    "language": "<language>",
+                },
+                "evidence": [{"source_ref": "<ref>", "authority": "user_statement"}],
+            }
+        ],
+    },
+    "infra-snapshot": {
+        "pot_id": "<pot-id>",
+        "idempotency_key": "infra:<owner>/<repo>:<service-slug>:<environment>",
+        "created_by": {"surface": "cli", "harness": "<harness>"},
+        "operations": [
+            {
+                "op": "link_entities",
+                "subject": {"key": "service:<service-slug>", "type": "Service"},
+                "predicate": "DEPLOYED_TO",
+                "object": {"key": "environment:<environment>", "type": "Environment"},
+                "truth": "source_observation",
+                "confidence": 0.95,
+                "environment": "<environment>",
+                "description": "<source showing service runs in this environment>",
+                "evidence": [
+                    {"source_ref": "<ref>", "authority": "repository_metadata"}
+                ],
+            },
+            {
+                "op": "link_entities",
+                "subject": {"key": "service:<service-slug>", "type": "Service"},
+                "predicate": "USES_ADAPTER",
+                "object": {
+                    "key": "adapter:<domain>:<adapter-slug>",
+                    "type": "Adapter",
+                    "summary": "<adapter/provider selected in this env>",
+                    "description": "<retrieval card: adapter, provider, backend, env>",
+                },
+                "truth": "source_observation",
+                "confidence": 0.9,
+                "environment": "<environment>",
+                "description": "<source showing which adapter/backend is selected>",
+                "evidence": [
+                    {"source_ref": "<ref>", "authority": "repository_metadata"}
+                ],
+            },
+            {
+                "op": "link_entities",
+                "subject": {"key": "service:<service-slug>", "type": "Service"},
+                "predicate": "DEPLOYED_WITH",
+                "object": {
+                    "key": "deployment_target:<environment>:<target-slug>",
+                    "type": "DeploymentTarget",
+                    "summary": "<deployment target/mechanism>",
+                    "description": "<retrieval card: platform, workload, deploy mechanism>",
+                },
+                "truth": "source_observation",
+                "confidence": 0.9,
+                "environment": "<environment>",
+                "description": "<source showing deployment target/mechanism>",
+                "evidence": [
+                    {"source_ref": "<ref>", "authority": "repository_metadata"}
+                ],
+            },
+            {
+                "op": "link_entities",
+                "subject": {"key": "service:<service-slug>", "type": "Service"},
+                "predicate": "CONFIGURES",
+                "object": {
+                    "key": "config:<service-or-env>:<config-name>",
+                    "type": "ConfigVariable",
+                    "summary": "<config variable>",
+                    "description": "<retrieval card: env var/config key and behavior it selects>",
+                },
+                "truth": "source_observation",
+                "confidence": 0.8,
+                "environment": "<environment>",
+                "description": "<source showing this config affects the service/adapter>",
+                "evidence": [
+                    {"source_ref": "<ref>", "authority": "repository_metadata"}
+                ],
+            },
+        ],
+    },
     "bug-fix": {
         "pot_id": "<pot-id>",
+        "idempotency_key": "bug-fix:<bug-slug>:<fix-hash>",
+        "created_by": {"surface": "cli", "harness": "<harness>"},
         "operations": [
             {
                 "op": "assert_claim",
@@ -373,6 +518,9 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
                     "name": "<symptom name>",
                     "summary": "<one-line symptom>",
                     "description": "<retrieval card: error text, symptoms, synonyms, where it shows up>",
+                    "properties": {
+                        "symptom_signature": "<stable symptom/error signature>",
+                    },
                 },
                 "predicate": "REPRODUCES",
                 "object": {"key": "service:<service-slug>", "type": "Service"},
@@ -387,12 +535,28 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
                     "type": "Fix",
                     "summary": "<one-line fix>",
                     "description": "<retrieval card: what fixed it, files touched, verification>",
+                    "properties": {
+                        "fix_steps": "<what changed or what to do>",
+                        "verification_status": "<verified|unverified|failed>",
+                    },
                 },
                 "predicate": "RESOLVED",
                 "object": {"key": "bug_pattern:<bug-slug>", "type": "BugPattern"},
                 "truth": "agent_claim",
                 "confidence": 0.8,
                 "description": "<fix summary + verification status>",
+            },
+            {
+                "op": "assert_claim",
+                "subject": {
+                    "key": "activity:<source>:<verification-id>",
+                    "type": "Activity",
+                },
+                "predicate": "VERIFIED",
+                "object": {"key": "fix:<fix-hash>", "type": "Fix"},
+                "truth": "agent_claim",
+                "confidence": 0.8,
+                "description": "<how the fix was verified, or what remains unverified>",
             },
         ],
     },
@@ -427,6 +591,29 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
                 "description": "<what happened, written for timeline recall>",
                 "actor": {"key": "person:<handle>", "type": "Person"},
                 "targets": [{"key": "service:<service-slug>", "type": "Service"}],
+                "evidence": [{"source_ref": "<ref>", "authority": "external_system"}],
+            }
+        ],
+    },
+    "timeline-change": {
+        "pot_id": "<pot-id>",
+        "idempotency_key": "timeline:<source>:<id>",
+        "created_by": {"surface": "cli", "harness": "<harness>"},
+        "operations": [
+            {
+                "op": "append_event",
+                "verb": "<verb e.g. merged_pr|linear_done|deployed|incident>",
+                "occurred_at": "<ISO-8601 timestamp>",
+                "description": "<what changed, source title, affected behavior, regression keywords>",
+                "actor": {"key": "person:<handle>", "type": "Person"},
+                "targets": [
+                    {"key": "service:<service-slug>", "type": "Service"},
+                    {
+                        "key": "code:<repo-or-service>:<path-or-symbol>",
+                        "type": "CodeAsset",
+                    },
+                ],
+                "mentions": [{"key": "feature:<feature-slug>", "type": "Feature"}],
                 "evidence": [{"source_ref": "<ref>", "authority": "external_system"}],
             }
         ],
@@ -533,6 +720,12 @@ def graph_inspect(
 ) -> None:
     with contract():
         host = get_host()
+        _require_backend_capability(
+            host,
+            capability="inspection",
+            method="neighborhood",
+            command="graph inspect",
+        )
         pot_id = resolve_pot_id(host, pot)
         sl = host.backend.inspection.neighborhood(
             pot_id=pot_id, entity_key=entity_key, depth=depth
@@ -553,6 +746,12 @@ def graph_inspect(
 def graph_export(file: str, pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
         host = get_host()
+        _require_backend_capability(
+            host,
+            capability="snapshot",
+            method="export",
+            command="graph export",
+        )
         pot_id = resolve_pot_id(host, pot)
         manifest = host.backend.snapshot.export(pot_id=pot_id, destination=file)
         emit(
@@ -565,6 +764,12 @@ def graph_export(file: str, pot: str = typer.Option(None, "--pot")) -> None:
 def graph_import(file: str, pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
         host = get_host()
+        _require_backend_capability(
+            host,
+            capability="snapshot",
+            method="import_",
+            command="graph import",
+        )
         pot_id = resolve_pot_id(host, pot)
         manifest = host.backend.snapshot.import_(pot_id=pot_id, source=file)
         emit(
@@ -650,6 +855,27 @@ def backend_doctor() -> None:
 
 
 # --- Graph Surface Lite helpers ---------------------------------------------
+
+
+def _require_backend_capability(
+    host: Any,
+    *,
+    capability: str,
+    method: str,
+    command: str,
+) -> None:
+    caps = host.backend.capabilities()
+    if bool(getattr(caps, capability, False)):
+        return
+    profile = getattr(caps, "profile", getattr(host.backend, "profile", "unknown"))
+    raise CapabilityNotImplemented(
+        f"graph.{profile}.{capability}.{method}",
+        detail=f"{command} is not supported by the active '{profile}' backend",
+        recommended_next_action=(
+            "run 'potpie backend status' to inspect capabilities, or switch to "
+            f"a backend that implements {capability}"
+        ),
+    )
 
 
 def _parse_scope(scope: str | None) -> dict[str, str]:
@@ -739,7 +965,8 @@ def _read_payload(
 ) -> dict:
     from domain.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
 
-    meta = dict(env.metadata)
+    envelope = env.to_dict()
+    meta = dict(envelope.get("metadata", {}))
     payload = {
         "ok": True,
         "graph_contract_version": meta.get(
@@ -754,16 +981,13 @@ def _read_payload(
         "inline_relations": meta.get("inline_relations", []),
         "read_shape": meta.get("read_shape", "flat_claims"),
         "inline_relation_count": meta.get("inline_relation_count", 0),
-        "pot_id": env.pot_id,
-        "overall_confidence": env.overall_confidence,
-        "items": [
-            {"include": i.include, "score": i.score, "payload": dict(i.payload)}
-            for i in env.items
-        ],
-        "coverage": [{"include": c.include, "status": c.status} for c in env.coverage],
-        "unsupported_includes": [
-            {"name": u.name, "reason": u.reason} for u in env.unsupported_includes
-        ],
+        "pot_id": envelope["pot_id"],
+        "intent": envelope["intent"],
+        "overall_confidence": envelope["overall_confidence"],
+        "items": envelope["items"],
+        "coverage": envelope["coverage"],
+        "unsupported_includes": envelope["unsupported_includes"],
+        "as_of": envelope["as_of"],
     }
     if format_ in ("events", "table"):
         events = _timeline_events(env, sort=sort, dedupe=dedupe, limit=event_limit)
@@ -852,7 +1076,9 @@ def _timeline_events(
             key = _event_dedupe_key(event, mode=dedupe_mode)
             if key is not None and key in by_key:
                 existing = by_key[key]
-                if float(event.get("score") or 0.0) > float(existing.get("score") or 0.0):
+                if float(event.get("score") or 0.0) > float(
+                    existing.get("score") or 0.0
+                ):
                     existing.update(event)
                 continue
             ordered.append(event)
@@ -877,14 +1103,22 @@ def _events_from_item(item) -> list[dict[str, Any]]:
 
 
 def _relation_has_timeline_fact(rel: Mapping[str, Any]) -> bool:
-    return bool(rel.get("fact") or rel.get("source_refs") or _activity_key_from_relation(rel))
+    return bool(
+        rel.get("fact") or rel.get("source_refs") or _activity_key_from_relation(rel)
+    )
 
 
-def _event_from_relation(rel: Mapping[str, Any], *, item_score: float) -> dict[str, Any]:
+def _event_from_relation(
+    rel: Mapping[str, Any], *, item_score: float
+) -> dict[str, Any]:
     claim = rel.get("claim") if isinstance(rel.get("claim"), Mapping) else {}
     fact = _str(rel.get("fact"))
     source_refs = _string_list(rel.get("source_refs"))
-    related_entity = rel.get("related_entity") if isinstance(rel.get("related_entity"), Mapping) else {}
+    related_entity = (
+        rel.get("related_entity")
+        if isinstance(rel.get("related_entity"), Mapping)
+        else {}
+    )
     return {
         "activity_key": _activity_key_from_relation(rel),
         "occurred_at": _event_occurred_at(rel, fact=fact),
@@ -902,7 +1136,9 @@ def _event_from_relation(rel: Mapping[str, Any], *, item_score: float) -> dict[s
     }
 
 
-def _event_from_flat_payload(payload: Mapping[str, Any], *, item_score: float) -> dict[str, Any]:
+def _event_from_flat_payload(
+    payload: Mapping[str, Any], *, item_score: float
+) -> dict[str, Any]:
     fact = _str(payload.get("fact"))
     return {
         "activity_key": _str(payload.get("activity_key")),
@@ -946,8 +1182,14 @@ def _target_key_from_relation(rel: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _event_occurred_at(payload: Mapping[str, Any], *, fact: str | None = None) -> str | None:
-    props = payload.get("properties") if isinstance(payload.get("properties"), Mapping) else {}
+def _event_occurred_at(
+    payload: Mapping[str, Any], *, fact: str | None = None
+) -> str | None:
+    props = (
+        payload.get("properties")
+        if isinstance(payload.get("properties"), Mapping)
+        else {}
+    )
     for value in (
         payload.get("occurred_at"),
         props.get("occurred_at"),
@@ -994,7 +1236,10 @@ def _sort_events(events: list[dict[str, Any]], *, sort: str) -> list[dict[str, A
         return sorted(events, key=lambda e: float(e.get("score") or 0.0), reverse=True)
     return sorted(
         events,
-        key=lambda e: (_parse_sort_dt(e.get("occurred_at")), float(e.get("score") or 0.0)),
+        key=lambda e: (
+            _parse_sort_dt(e.get("occurred_at")),
+            float(e.get("score") or 0.0),
+        ),
         reverse=True,
     )
 
@@ -1003,7 +1248,9 @@ def _timeline_freshness(events: list[Mapping[str, Any]]) -> dict[str, Any]:
     dates = [e.get("occurred_at") for e in events if e.get("occurred_at")]
     return {
         "latest_event_at": max(dates) if dates else None,
-        "source_refs_count": len({ref for e in events for ref in _string_list(e.get("source_refs"))}),
+        "source_refs_count": len(
+            {ref for e in events for ref in _string_list(e.get("source_refs"))}
+        ),
         "local_worktree_included": False,
         "note": "Timeline reads recorded graph events for the whole pot/project across repo sources; uncommitted local changes are not included unless recorded.",
     }

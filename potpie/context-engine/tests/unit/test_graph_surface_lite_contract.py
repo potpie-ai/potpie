@@ -15,6 +15,7 @@ from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBack
 from application.services.graph_service import DefaultGraphService
 from domain.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
 from domain.graph_mutations import ProvenanceContext
+from domain.ports.agent_context import RecordRequest
 from domain.ports.claim_query import ClaimRow
 from domain.ports.services.graph_service import (
     GraphCatalogRequest,
@@ -67,7 +68,9 @@ def test_catalog_shows_backed_and_planned_views(service) -> None:
     cat = service.catalog(GraphCatalogRequest(pot_id="p")).to_dict()
     by_name = {v["name"]: v for v in cat["views"]}
     assert by_name["bugs.prior_occurrences"]["backed"] is True
-    assert by_name["decisions.active_decisions"]["backed"] is False
+    assert by_name["decisions.active_decisions"]["backed"] is True
+    assert by_name["ownership.owner_context"]["backed"] is True
+    assert by_name["docs.reference_context"]["backed"] is True
 
 
 def test_catalog_filters_by_subgraph(service) -> None:
@@ -85,17 +88,23 @@ def test_catalog_includes_ranking_inputs(service) -> None:
     cat = service.catalog(GraphCatalogRequest(pot_id="p")).to_dict()
     by_name = {v["name"]: v for v in cat["views"]}
     assert "ranking_inputs" in by_name["bugs.prior_occurrences"]
+    assert "semantic_similarity" in by_name["bugs.prior_occurrences"]["ranking_inputs"]
     assert (
-        "semantic_symptom_match" in by_name["bugs.prior_occurrences"]["ranking_inputs"]
+        "resolution_status" not in by_name["bugs.prior_occurrences"]["ranking_inputs"]
     )
 
 
 def test_catalog_carries_entity_types_and_predicates(service) -> None:
     cat = service.catalog(GraphCatalogRequest(pot_id="p")).to_dict()
     labels = {e["label"] for e in cat["entity_types"]}
-    assert {"Service", "BugPattern", "Preference"} <= labels
+    assert {"Service", "BugPattern", "Preference", "CodeAsset", "Adapter"} <= labels
     predicates = {p["name"] for p in cat["predicates"]}
-    assert {"DEPENDS_ON", "POLICY_APPLIES_TO", "REPRODUCES"} <= predicates
+    assert {
+        "DEPENDS_ON",
+        "POLICY_APPLIES_TO",
+        "REPRODUCES",
+        "USES_ADAPTER",
+    } <= predicates
 
 
 def test_catalog_reports_match_mode(service) -> None:
@@ -164,6 +173,113 @@ def test_read_assembles_inline_relations_for_view(service) -> None:
     )
 
 
+def test_preferences_view_assembles_structured_policy_relation(service) -> None:
+    request = SemanticMutationRequest.parse(
+        {
+            "pot_id": "p",
+            "operations": [
+                {
+                    "op": "assert_claim",
+                    "subgraph": "preferences",
+                    "subject": {
+                        "key": "preference:cli-errors",
+                        "type": "Preference",
+                        "properties": {
+                            "policy_kind": "error_handling",
+                            "prescription": "Emit structured CLI errors with next actions.",
+                            "strength": "strong",
+                            "audience": "path",
+                        },
+                    },
+                    "predicate": "POLICY_APPLIES_TO",
+                    "object": {
+                        "key": "code:potpie-context-engine:adapters/inbound/cli",
+                        "type": "CodeAsset",
+                    },
+                    "truth": "preference",
+                    "description": "CLI graph commands should return structured errors.",
+                    "extra": {
+                        "file_path": "potpie/context-engine/adapters/inbound/cli",
+                        "language": "python",
+                    },
+                }
+            ],
+        }
+    )
+    service.mutate(request)
+
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            view="preferences.active_preferences",
+            scope={
+                "path": "potpie/context-engine/adapters/inbound/cli/commands/graph.py",
+                "language": "python",
+            },
+            limit=5,
+        )
+    )
+
+    assert env.metadata["read_shape"] == "entity_relations"
+    rels = [rel for item in env.items for rel in dict(item.payload)["relations"]]
+    policy_rel = next(rel for rel in rels if rel["predicate"] == "POLICY_APPLIES_TO")
+    assert policy_rel["properties"]["prescription"].startswith("Emit structured CLI")
+    assert policy_rel["properties"]["policy_kind"] == "error_handling"
+
+
+def test_features_view_does_not_return_generic_infra_edges(service) -> None:
+    request = SemanticMutationRequest.parse(
+        {
+            "pot_id": "p",
+            "operations": [
+                {
+                    "op": "link_entities",
+                    "subgraph": "infra_topology",
+                    "subject": {"key": "service:search-api", "type": "Service"},
+                    "predicate": "DEFINED_IN",
+                    "object": {
+                        "key": "repo:github.com/acme/widgets",
+                        "type": "Repository",
+                    },
+                    "truth": "source_observation",
+                    "evidence": [{"source_ref": "repo:manifest"}],
+                    "description": "search api lives in widgets repo",
+                },
+                {
+                    "op": "assert_claim",
+                    "subgraph": "features",
+                    "subject": {
+                        "key": "repo:github.com/acme/widgets",
+                        "type": "Repository",
+                    },
+                    "predicate": "PROVIDES",
+                    "object": {
+                        "key": "feature:search",
+                        "type": "Feature",
+                        "summary": "Search capability",
+                    },
+                    "truth": "source_observation",
+                    "evidence": [{"source_ref": "repo:README"}],
+                    "description": "README says widgets provides search.",
+                },
+            ],
+        }
+    )
+    service.mutate(request)
+
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            view="features.provided",
+            scope={"anchor_entity_key": "repo:github.com/acme/widgets"},
+        )
+    )
+
+    assert env.metadata["read_shape"] == "entity_relations"
+    rels = [rel for item in env.items for rel in dict(item.payload)["relations"]]
+    assert {rel["predicate"] for rel in rels} == {"PROVIDES"}
+
+
 def test_search_entities_derives_summary_for_old_nodes_without_summary(service) -> None:
     store = service.backend.claim_query
     store.add(
@@ -190,6 +306,132 @@ def test_search_entities_derives_summary_for_old_nodes_without_summary(service) 
     assert web["key"] == "service:web"
     assert web["summary"] == "web"
     assert web["description"] == "web"
+
+
+def test_search_entities_projects_canonical_labels_from_key_prefix(service) -> None:
+    store = service.backend.claim_query
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="PROVIDES",
+            subject_key="repo:github.com/potpie-ai/potpie",
+            object_key="feature:context-graph",
+            fact="potpie repo provides context graph memory",
+            properties={"semantic_similarity": 0.9},
+        )
+    )
+    store.set_entity_label(
+        pot_id="p",
+        entity_key="repo:github.com/potpie-ai/potpie",
+        labels=("Entity", "Repository", "Feature", "APIContract"),
+    )
+
+    result = service.search_entities(
+        GraphEntitySearchRequest(pot_id="p", query="context graph", type="Repository")
+    ).to_dict()
+
+    repo = next(e for e in result["entities"] if e["key"] == "repo:github.com/potpie-ai/potpie")
+    assert repo["labels"] == ["Repository"]
+
+
+def test_read_projects_canonical_labels_from_key_prefix(service) -> None:
+    store = service.backend.claim_query
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="PROVIDES",
+            subject_key="repo:github.com/potpie-ai/potpie",
+            object_key="feature:context-graph",
+            fact="potpie repo provides context graph memory",
+            claim_key="claim:provides",
+            subgraph="features",
+        )
+    )
+    store.set_entity_label(
+        pot_id="p",
+        entity_key="repo:github.com/potpie-ai/potpie",
+        labels=("Entity", "Repository", "Feature", "APIContract"),
+    )
+    store.set_entity_label(
+        pot_id="p",
+        entity_key="feature:context-graph",
+        labels=("Entity", "Feature", "Adapter"),
+    )
+
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            view="features.provided",
+            scope={"anchor_entity_key": "repo:github.com/potpie-ai/potpie"},
+        )
+    )
+
+    by_key = {i.candidate_key: dict(i.payload) for i in env.items}
+    assert by_key["repo:github.com/potpie-ai/potpie"]["entity"]["labels"] == [
+        "Repository"
+    ]
+    assert by_key["feature:context-graph"]["entity"]["labels"] == ["Feature"]
+
+
+def test_fix_record_creates_scoped_bug_and_failed_attempt_memory(service) -> None:
+    receipt = service.record(
+        RecordRequest(
+            pot_id="p",
+            record_type="fix",
+            summary="Pass --pot when graph scope is ambiguous.",
+            details={
+                "symptom_signature": "graph read fails with ambiguous pot",
+                "fix_steps": ["Pass --pot or configure the active pot."],
+                "attempted_failed_fixes": ["Retry graph read without a pot."],
+            },
+            scope={"service": "context-engine"},
+        )
+    )
+
+    assert receipt.accepted
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            view="bugs.prior_occurrences",
+            query="ambiguous pot graph read",
+            scope={"service": "context-engine"},
+            limit=10,
+        )
+    )
+
+    rels = [rel for item in env.items for rel in dict(item.payload)["relations"]]
+    predicates = {rel["predicate"] for rel in rels}
+    assert {"REPRODUCES", "RESOLVED", "ATTEMPTED_FIX_FAILED"} <= predicates
+
+
+def test_decision_record_creates_decided_and_affects_memory(service) -> None:
+    receipt = service.record(
+        RecordRequest(
+            pot_id="p",
+            record_type="decision",
+            summary="Use semantic graph mutations for durable context writes.",
+            details={
+                "title": "Semantic mutations own context writes",
+                "rationale": "One validated write path keeps graph memory coherent.",
+                "affects_refs": ["service:context-engine", "code:context-engine:graph"],
+            },
+            scope={"service": "context-engine"},
+        )
+    )
+
+    assert receipt.accepted
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            view="decisions.active_decisions",
+            query="semantic mutations context writes",
+            scope={"service": "context-engine"},
+            limit=10,
+        )
+    )
+
+    rels = [rel for item in env.items for rel in dict(item.payload)["relations"]]
+    assert {"DECIDED", "AFFECTS"} <= {rel["predicate"] for rel in rels}
 
 
 # --- mutate provenance -------------------------------------------------------

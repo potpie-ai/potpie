@@ -19,6 +19,7 @@ from domain.ports.services.graph_service import (
     GraphEntitySearchResult,
 )
 from domain.ports.graph.analytics import RepairReport
+from domain.ports.graph.backend import BackendCapabilities
 
 pytestmark = pytest.mark.unit
 
@@ -112,6 +113,28 @@ class _Backend:
         self.analytics = _Analytics()
 
 
+class _UnsupportedBackend:
+    profile = "neo4j"
+
+    def __init__(self) -> None:
+        self.accessed_ports: list[str] = []
+
+    def capabilities(self) -> BackendCapabilities:
+        return BackendCapabilities(
+            profile=self.profile, inspection=False, snapshot=False
+        )
+
+    @property
+    def inspection(self):
+        self.accessed_ports.append("inspection")
+        raise AssertionError("inspection port should not be reached")
+
+    @property
+    def snapshot(self):
+        self.accessed_ports.append("snapshot")
+        raise AssertionError("snapshot port should not be reached")
+
+
 def _valid_mutation_payload() -> dict:
     return {
         "operations": [
@@ -159,6 +182,33 @@ def test_graph_repair_accepts_entity_summaries_target() -> None:
     assert result.exit_code == 0, result.output
     assert backend.analytics.calls == [("p", ("entity_summaries",))]
     assert "repaired 2 entity summaries" in result.output
+
+
+@pytest.mark.parametrize(
+    ("args", "capability", "method"),
+    [
+        (["inspect", "service:web"], "inspection", "neighborhood"),
+        (["export", "out.json"], "snapshot", "export"),
+        (["import", "in.json"], "snapshot", "import_"),
+    ],
+)
+def test_graph_capability_commands_precheck_backend_capabilities(
+    args: list[str],
+    capability: str,
+    method: str,
+) -> None:
+    _common.set_json(True)
+    backend = _UnsupportedBackend()
+    _common.set_host(_Host(_Graph(), backend=backend))
+
+    result = CliRunner().invoke(graph.graph_app, args)
+
+    assert result.exit_code == _common.EXIT_UNAVAILABLE
+    emitted = json.loads(result.output)
+    assert emitted["code"] == "not_implemented"
+    assert f"graph.neo4j.{capability}.{method}" in emitted["message"]
+    assert emitted["recommended_next_action"]
+    assert backend.accessed_ports == []
 
 
 def test_graph_mutate_rejection_emits_result_and_exits_nonzero(tmp_path) -> None:

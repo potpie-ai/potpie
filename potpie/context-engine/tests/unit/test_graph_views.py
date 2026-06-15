@@ -20,6 +20,7 @@ def test_initial_view_map_present() -> None:
         "bugs.prior_occurrences",
         "recent_changes.timeline",
         "infra_topology.service_neighborhood",
+        "features.provided",
         "preferences.active_preferences",
         "admin.inspection_slice",
         "decisions.active_decisions",
@@ -37,6 +38,7 @@ def test_view_routes_to_v1_include() -> None:
     assert (
         view_spec("infra_topology.service_neighborhood").v1_include == "infra_topology"
     )
+    assert view_spec("features.provided").v1_include == "features"
 
 
 def test_backed_derived_from_reader_registry() -> None:
@@ -44,14 +46,13 @@ def test_backed_derived_from_reader_registry() -> None:
         assert spec.backed == (spec.v1_include in READER_BACKED_INCLUDES), spec.name
 
 
-def test_unbacked_views_are_honest() -> None:
-    # decisions/owners/docs have no reader yet → not backed.
-    assert not view_spec("decisions.active_decisions").backed
-    assert not view_spec("ownership.owner_context").backed
-    assert not view_spec("docs.reference_context").backed
-    # The backed core is real.
+def test_use_case_views_are_backed() -> None:
+    assert view_spec("decisions.active_decisions").backed
+    assert view_spec("ownership.owner_context").backed
+    assert view_spec("docs.reference_context").backed
     assert view_spec("bugs.prior_occurrences").backed
     assert view_spec("infra_topology.service_neighborhood").backed
+    assert view_spec("features.provided").backed
 
 
 def test_traversal_flag_only_on_neighborhood_views() -> None:
@@ -91,4 +92,4 @@ def test_catalog_entries_shape() -> None:
 def test_backed_views_subset() -> None:
     names = {v.name for v in backed_views()}
     assert "bugs.prior_occurrences" in names
-    assert "decisions.active_decisions" not in names
+    assert "decisions.active_decisions" in names

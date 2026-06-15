@@ -7,21 +7,13 @@ this shim preserves that contract without the removed legacy episodic/Neo4j DI g
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from domain.ports.pot_resolution import PotResolutionPort
 from domain.ports.pot_source_listing import PotSourceListingPort
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.settings import ContextEngineSettingsPort
-
-
-class _ResolutionServiceShim:
-    def __init__(self) -> None:
-        self._source_resolver: Any = None
-
-    def set_source_resolver(self, resolver: Any) -> None:
-        self._source_resolver = resolver
 
 
 @dataclass
@@ -33,9 +25,6 @@ class ContextEngineContainer:
     jobs: Any = None
     pot_source_listing: PotSourceListingPort | None = None
     source_resolver: Any = None
-    resolution_service: _ResolutionServiceShim = field(
-        default_factory=_ResolutionServiceShim
-    )
 
 
 def build_container(

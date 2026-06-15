@@ -209,7 +209,7 @@ daemon-hosted orchestrator → render the `SetupReport`.
 class SetupPlan:
     mode: str = "local"        # local setup; managed auth uses LoginPlan
     host_mode: str = "daemon"  # daemon | in_process
-    backend: str = "embedded"  # embedded | postgres | neo4j | in_memory
+    backend: str = default_setup_backend()  # falkordb_lite on Python >=3.12, else embedded
     repo: str | None = "."
     pot: str = "default"
     agent: str = "claude"
@@ -324,28 +324,27 @@ View Router over `GraphBackend.claim_query`, semantic search, and inspection
 projections. Generic traversal is an inspection/admin capability, not the default
 agent read path.
 
-### Semantic proposal/commit
+### Semantic Mutation
 
 ```mermaid
 flowchart LR
-  cg_propose_cmd["potpie graph propose"]
-  cg_validate["Plan Validator"]
-  cg_store["Plan Store"]
-  cg_commit_cmd["potpie graph commit <plan_id>"]
+  cg_mutate_cmd["potpie graph mutate"]
+  cg_validate["Semantic Mutation Validator"]
+  cg_lower["Semantic Lowerer"]
   cg_write["GraphMutationPort"]
-  cg_audit["history + audit"]
+  cg_audit["mutation provenance"]
   cg_project["rebuild/update projections"]
 
-  cg_propose_cmd --> cg_validate --> cg_store --> cg_commit_cmd --> cg_write
-  cg_commit_cmd --> cg_audit --> cg_project
+  cg_mutate_cmd --> cg_validate --> cg_lower --> cg_write
+  cg_write --> cg_audit --> cg_project
 ```
 
-Code slots: `commands/graph.py:propose|commit` → `HostShell.graph` →
-`GraphService.propose/commit`. `propose` validates schema, ontology, identity,
-source authority, expected versions, risk, and conflicts without writing.
-`commit` accepts only a server-created `plan_id` and applies the validated plan
-atomically through `GraphBackend.mutation.apply`, then writes audit/history and
-updates projections.
+Code slots: `commands/graph.py:mutate` → `HostShell.graph` →
+`GraphService.mutate`. A single `SemanticMutationRequest` validates schema,
+ontology, identity, source authority, risk, and conflicts; dry-run returns the
+preview without writing, and apply lowers accepted operations into one
+`GraphBackend.mutation.apply` call with mutation provenance. There is no shipped
+server-created `plan_id` or separate `propose|commit` contract.
 
 ### Harness Writes And Ledger Reads
 
@@ -428,7 +427,7 @@ Graph V1 compatibility surface:
 | `context_status` / `potpie status` | Cheap readiness, active pot, backend/source/skill health, and suggested next action. |
 | `context_resolve` / `potpie resolve` | Bounded context read through `intent`, `include`, `scope`, `mode`, and `source_policy`, internally mapped to named views. |
 | `context_search` / `potpie search` | Narrow follow-up lookup over claim and semantic indexes. |
-| `context_record` / `potpie record` | Convenience write/capture wrapper over semantic mutation validation, low-risk commit, or inbox. |
+| `context_record` / `potpie record` | Convenience write/capture wrapper over semantic mutation validation and apply. |
 
 Graph V2 workbench surface:
 
@@ -438,8 +437,7 @@ Graph V2 workbench surface:
 | `potpie graph catalog` / `describe` | Discover relevant subgraphs, views, entity/relation contracts, source authority, mutation policies, and examples. |
 | `potpie graph search-entities` | Resolve names, aliases, and external IDs before creating or linking entities. |
 | `potpie graph read` / `history` | Return bounded named views and audit history with provenance, truth class, confidence, and version metadata. |
-| `potpie graph propose` / `commit` | Validate semantic mutation plans, persist inspectable plans, and atomically apply committed plans by `plan_id`. |
-| `potpie graph inbox` | Capture pending graph work when the harness cannot yet choose a safe ontology update. |
+| `potpie graph mutate` | Validate, dry-run, or apply semantic mutation requests through the canonical graph write door. |
 
 The V1 compatibility surface is not the long-term product contract. It must not
 bypass semantic validation, evidence requirements, mutation provenance, or inbox
@@ -456,7 +454,7 @@ Common request fields:
 | `scope` | Repo, service, file, PR, ticket, feature, user, environment, or time window. |
 | `query` | Optional natural-language or keyword filter within a bounded view. |
 | `source_policy` | Evidence policy: `references_only`, `summary`, `verify`, or `snippets`. |
-| `expected_subgraph_versions` | Stale-write guard carried from reads into proposals. |
+| `expected_subgraph_versions` | Stale-write guard carried from reads into mutation requests. |
 | `evidence` | Source refs and authority metadata required for durable writes. |
 
 Read responses include:
@@ -466,20 +464,19 @@ Read responses include:
 | `items[]` | Ranked entities, claims, events, or relations matching the named view. |
 | `source_refs[]` / `evidence[]` | Pointers back to source material and authority classification. |
 | `truth` / `confidence` | Truth class and confidence for facts or claims. |
-| `subgraph_versions` | Versions the agent must carry into write proposals. |
+| `subgraph_versions` | Versions the agent should carry into write requests. |
 | `coverage[]` | Per-subgraph or per-source availability and completeness. |
 | `unsupported[]` | Requested views, scopes, or source policies that cannot be served yet. |
 
-Proposal responses include:
+Mutation responses include:
 
 | Field | Meaning |
 |---|---|
-| `plan_id` | Server-created plan identifier used for commit. |
-| `status` | `validated`, `invalid`, `conflict`, `review_required`, or `expired`. |
-| `risk` / `auto_applicable` | Risk classification and whether local auto-commit is acceptable. |
-| `diff` | Inspectable summary of entities, relations, claims, and events that would change. |
-| `warnings` / `rejected_operations` | Validation feedback and unsupported mutation operations. |
-| `affected_subgraphs` | Current and expected new subgraph versions. |
+| `status` | `validated`, `applied`, `rejected`, `review_required`, or `error`. |
+| `risk` / `auto_committed` | Risk classification and whether the request was applied automatically. |
+| `preview` / `mutations_applied` | Inspectable counts for entities, relations, claims, and invalidations. |
+| `warnings` / `issues` | Validation feedback and unsupported mutation operations. |
+| `subgraphs` / `claim_keys` | Affected subgraphs and deterministic claim identities. |
 
 `potpie graph status` is sectioned by owner so readiness remains debuggable:
 
@@ -533,7 +530,8 @@ Default profiles:
 
 | Profile | Purpose |
 |---|---|
-| `embedded` | OSS default: local, no Docker, vector search included. |
+| `falkordb_lite` | OSS default on Python ≥3.12: embedded FalkorDBLite local graph with vector search. |
+| `embedded` | JSON-persisted local fallback, no Docker. |
 | `in_memory` | Tests and conformance. |
 | `neo4j`, `postgres/pgvector`, `chroma` | Optional profiles behind the same ports. |
 | hosted profile | Managed API server storage/search adapter. |
@@ -617,8 +615,8 @@ last-enqueued position.
 
 ## Code Map
 
-The active package is `potpie/context-engine/`; older `app/src/context-engine/`
-paths may still appear in history or stale scaffolding. Graph V1 should first
+The active package is `potpie/context-engine/`; older repository layouts may
+still appear in history. Graph V1 should first
 run one forward-compatible graph model across two composition roots: the local
 agent spine (`build_host_shell`, behind the CLI + MCP if enabled) and the
 managed HTTP ingestion server (`build_ingestion_server`, consumed by the parent
@@ -629,13 +627,13 @@ migrated onto `HostShell`.
 
 | Area | Path |
 |---|---|
-| Graph V1 compatibility DTOs / Graph V2 command DTOs | Existing `AgentContextPort` DTOs now; `domain/ports/graph_workbench.py` _(planned)_ or equivalent Graph Service DTO module later |
+| Graph V1 compatibility DTOs / Graph command DTOs | Existing `AgentContextPort` DTOs plus `domain/ports/services/graph_service.py` graph command DTOs |
 | Services (interfaces) | `domain/ports/services/{graph_service,pot_management,skill_manager}.py` |
 | Graph capability ports | `domain/ports/graph/{backend,mutation,claim_query,semantic,inspection,analytics,snapshot}.py` |
 | Event Ledger consumer ports | `domain/ports/ledger/{client,cursor}.py` |
 | Host shell + daemon | `host/{shell,daemon}.py` |
 | Composition root | `bootstrap/host_wiring.py` (`build_host_shell`) |
-| Graph workbench impl | `application/services/graph_workbench.py` _(planned)_ or Graph Service methods for status/catalog/describe/search-entities/read/propose/commit/history/inbox |
+| Graph command impl | `application/services/graph_service.py` methods for catalog/read/search-entities/mutate/status |
 | Graph Service _(local POC)_ | `application/services/graph_service.py` over a `GraphBackend` + read view router; Semantic Mutation DSL operations lower into validated graph mutations |
 | Pot Management _(local POC)_ | `application/services/pot_management.py` + `adapters/outbound/pots/local_pot_store.py` |
 | Skill Manager _(local POC)_ | `application/services/skill_manager.py` + `adapters/outbound/skills/{bundle_catalog,claude_target}.py` |
@@ -657,8 +655,7 @@ boundaries are not expected to change.
 
 | Interface | File | Role |
 |---|---|---|
-| Graph Workbench Port _(planned)_ | `domain/ports/graph_workbench.py` | Product graph surface: status, catalog, describe, search-entities, read, propose, commit, history, inbox. |
-| `GraphService` | `domain/ports/services/graph_service.py` | Data plane: ontology-aware reads, identity resolution, semantic proposal validation, commit, history, and projections. |
+| `GraphService` | `domain/ports/services/graph_service.py` | Data plane: ontology-aware reads, identity resolution, semantic mutation validation/apply, status, and projections. |
 | `PotManagementService` | `domain/ports/services/pot_management.py` | Control plane: pots, active pot, sources, readiness rollup. |
 | `SkillManager` + `AgentTargetPort` | `domain/ports/services/skill_manager.py` | Catalog + per-harness install drift; advisory `SkillNudge`. |
 | `GraphBackend` | `domain/ports/graph/backend.py` | Six-capability storage bundle + `profile` + `capabilities()`. |
@@ -730,10 +727,10 @@ event-processing seams.
    install/start.
 5. Add local Pot Management with `default` active pot creation and source
    registry.
-6. Make V1 wrappers use V2-compatible ontology, named views, semantic mutation
-   validation, and inbox handling.
+6. Make V1 wrappers use V2-compatible ontology, named views, and semantic
+   mutation validation.
 7. Add canonical `potpie graph status/catalog/describe/search-entities/read`.
-8. Add `potpie graph propose/commit/history/inbox` over the same internals.
+8. Add `potpie graph mutate` over the same internals.
 9. Finish `pot`, `source`, connector ingest/diff-sync, `backend`, and `skills`
    commands.
 10. Add login to configurable managed backend URL, unified local/managed pot

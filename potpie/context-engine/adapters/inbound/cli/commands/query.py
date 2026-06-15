@@ -112,19 +112,7 @@ def _parse_scope(scope: str | None) -> dict:
 
 
 def _envelope_payload(env) -> dict:
-    return {
-        "pot_id": env.pot_id,
-        "intent": env.intent,
-        "overall_confidence": env.overall_confidence,
-        "items": [
-            {"include": i.include, "score": i.score, "payload": dict(i.payload)}
-            for i in env.items
-        ],
-        "coverage": [{"include": c.include, "status": c.status} for c in env.coverage],
-        "unsupported_includes": [
-            {"name": u.name, "reason": u.reason} for u in env.unsupported_includes
-        ],
-    }
+    return env.to_dict()
 
 
 def _envelope_human(env) -> str:

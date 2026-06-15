@@ -8,17 +8,18 @@ without a live graph.
 Semantic match (R1): when an :class:`EmbedderPort` is wired, ``fact_query`` runs
 a real cosine-similarity ranking over the persisted ``fact_embedding`` (embedding
 the retrieval card on the fly for rows that lack one). With no embedder it falls
-back to a **labeled** Jaccard token-overlap (``match_mode == "lexical"``), so an
-empty result is debuggable rather than a silent stub.
+back to the canonical lexical token-overlap scorer
+(``match_mode == "lexical"``), so an empty result is debuggable rather than a
+silent stub.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import math
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
+from adapters.outbound.graph.canonical_claim_query import embedding_score
 from domain.ports.claim_query import ClaimQueryFilter, ClaimRow
 from domain.ports.embedder import EmbedderPort
 from domain.retrieval_card import build_retrieval_card, cosine_similarity
@@ -101,7 +102,7 @@ class InMemoryClaimQueryStore:
                 for row in candidates
             ]
         else:
-            scored = [(row, _embedding_score(row, query)) for row in candidates]
+            scored = [(row, embedding_score(row.fact, query)) for row in candidates]
         scored.sort(key=lambda pair: pair[1], reverse=True)
         return [_stamp_similarity(row, score) for row, score in scored]
 
@@ -123,7 +124,9 @@ def card_for_row(row: ClaimRow) -> str:
         subject_key=row.subject_key,
         predicate=row.predicate,
         object_key=row.object_key,
-        scope=props.get("code_scope") if isinstance(props.get("code_scope"), Mapping) else None,
+        scope=props.get("code_scope")
+        if isinstance(props.get("code_scope"), Mapping)
+        else None,
     )
 
 
@@ -165,27 +168,6 @@ def _matches_filter(
         if filter_.object_label not in labels:
             return False
     return True
-
-
-def _embedding_score(row: ClaimRow, query: str) -> float:
-    """Labeled lexical fallback: token-overlap Jaccard over the retrieval card.
-
-    Used only when no :class:`EmbedderPort` is wired (``match_mode='lexical'``).
-    Scores the whole retrieval card (not just ``fact``) so the structured signal
-    still contributes, but it remains lexical — paraphrases score low. Named, not
-    silent: callers can see ``match_mode`` in status.
-    """
-    text = card_for_row(row) or (row.fact or "")
-    a = set(query.lower().split())
-    b = set(text.lower().split())
-    if not a or not b:
-        return 0.0
-    intersection = a & b
-    union = a | b
-    base = len(intersection) / len(union)
-    if intersection:
-        base = math.sqrt(base)
-    return max(0.0, min(1.0, base))
 
 
 __all__ = ["InMemoryClaimQueryStore", "card_for_row"]

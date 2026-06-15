@@ -143,7 +143,7 @@ _register(
             "PHASE 3 — explicit docs/links: if the event payload names a "
             "README, ADR, runbook, doc URL, or other authored document, read "
             "that exact source and record Document / Decision / Preference / "
-            "Runbook memory only when the text explicitly supports it.\n\n"
+            "Document memory only when the text explicitly supports it.\n\n"
             "Idempotent stable keys per artifact: ``activity:github:pr:"
             "<owner>/<repo>:<n>`` and ``activity:github:issue:<owner>/<repo>:"
             "<n>`` — so a backfilled artifact and a later live webhook "
@@ -229,206 +229,6 @@ _register(
 )
 
 
-# --- linear / linear_team / added (team backfill seed) ---------------------
-_register(
-    EventPlaybook(
-        source_system="linear",
-        event_type="linear_team",
-        action="added",
-        summary=(
-            "A Linear team was just connected to this pot. This is the "
-            "initial-backfill seed for that team: the graph has no Linear "
-            "history yet, so your job is to enumerate the team's existing "
-            "issues and seed them into the timeline."
-        ),
-        available_data=(
-            "Payload carries the Linear team id/name and the integration "
-            "binding. Three enumerators (each bounded to a trailing window + "
-            "item cap, newest-first) cover the team's history: "
-            "linear_list_issues / linear_list_projects / linear_list_documents; "
-            "linear_get_issue / linear_get_project / linear_get_document "
-            "hydrate one ref each."
-        ),
-        extract=(
-            "Your todo/plan tools are ON — use them as a durable worklist "
-            "(it survives checkpoint resume; continue an existing list, do "
-            "not re-enumerate). Enumerate ALL THREE kinds, then drain:\n"
-            "  a. linear_list_projects(), linear_list_documents(), "
-            "     linear_list_issues() — ONE call each returns the bounded "
-            "     set of compact refs. Do not page beyond them.\n"
-            "  b. Write one todo per returned ref across all three kinds. "
-            "     Prefer draining projects and documents first (they frame "
-            "     what the issues are about), then issues newest-first.\n"
-            "  c. PROJECTS: linear_get_project(id) → seed a Feature (a "
-            "     project is a unit of planned work) keyed "
-            "     ``linear:project:<id>``; edge it to the issues/Decisions it "
-            "     contains where evidenced; an Activity for its creation.\n"
-            "  d. DOCUMENTS: linear_get_document(id) → seed a Document keyed "
-            "     ``linear:document:<id>`` (title + content summary; link to "
-            "     its project via RELATED_TO when present). Specs/PRDs/RFCs "
-            "     may also justify a Decision.\n"
-            "  e. ISSUES: linear_get_issue(ref.identifier) → an Activity "
-            "     (PERFORMED + TOUCHED + IN_PERIOD); where evidenced a "
-            "     Fix / Feature / Decision and edges to the work it touches; "
-            "     comments are discussion context, not standalone facts. "
-            "     Key ``linear:issue:<identifier>`` (e.g. "
-            "     ``linear:issue:ENG-123``).\n"
-            "Stable keys make a backfilled artifact and a later live Linear "
-            "webhook converge instead of duplicating.\n"
-            "SINGLE-EVENT CONTRACT: this batch has exactly ONE event — the "
-            "linear_team.added seed. Use ITS event_id for every "
-            "apply_graph_mutations and the final mark_event_processed; "
-            "per-artifact identity is the entity_key, not the event id. Drain "
-            "the lists (or a coherent recent subset within budget), then "
-            "mark_event_processed(seed) and finish_batch."
-        ),
-        skip=(
-            "Do NOT page past the bounded list results — the window/cap is "
-            "deliberate and the tail arrives via live webhooks / future "
-            "backfill. Recent coherent breadth beats exhaustive depth. NEVER "
-            "invent an issue, project, document, comment, or state you did "
-            "not fetch — warn instead. Do not auto-resolve open issues. If a "
-            "list tool errors (e.g. the workspace has no documents API "
-            "access), record a warning and continue with the kinds that did "
-            "return — do not fabricate the missing kind."
-        ),
-        tool_hints=(
-            "linear_list_projects",
-            "linear_get_project",
-            "linear_list_documents",
-            "linear_get_document",
-            "linear_list_issues",
-            "linear_get_issue",
-            "context_infra_topology",
-            "web_fetch",
-        ),
-        max_tool_calls=400,
-        enables_planner=True,
-    )
-)
-
-
-# --- linear / linear_team / one_shot_ingest --------------------------------
-_register(
-    EventPlaybook(
-        source_system="linear",
-        event_type="linear_team",
-        action="one_shot_ingest",
-        summary=(
-            "One-time ingestion of a Linear team's recent projects, documents, "
-            "and issues into the context graph."
-        ),
-        available_data=(
-            "Payload carries team and count. The embedded skill below is "
-            "authoritative for the bounded list calls, drain order, key formats, "
-            "and mutation shapes."
-        ),
-        extract=_load_skill_body("linear_team_one_shot_ingestion.md"),
-        skip=(
-            "Do not page past the bounded list results. Do not fabricate missing "
-            "Linear projects, documents, issues, comments, or states. Do not emit "
-            "Fix nodes from issue filings alone."
-        ),
-        tool_hints=(
-            "linear_list_projects",
-            "linear_get_project",
-            "linear_list_documents",
-            "linear_get_document",
-            "linear_list_issues",
-            "linear_get_issue",
-            "apply_graph_mutations",
-            "mark_event_processed",
-            "finish_batch",
-        ),
-        max_tool_calls=400,
-        enables_planner=True,
-    )
-)
-
-
-# --- linear / linear_team / diff_sync --------------------------------------
-_register(
-    EventPlaybook(
-        source_system="linear",
-        event_type="linear_team",
-        action="diff_sync",
-        summary=(
-            "Incremental catch-up ingestion of Linear projects, documents, and "
-            "issues changed since the team's last successful sync cursor."
-        ),
-        available_data=(
-            "Payload carries team, optional since, and count. The embedded "
-            "skill below is authoritative for auditing existing context-graph "
-            "Activity coverage before hydrating source refs, history-file "
-            "handling, cursor overlap, and mutation reuse."
-        ),
-        extract=_load_skill_body("linear_team_diff_sync.md"),
-        skip=(
-            "Do not advance the cursor before graph writes succeed. Do not "
-            "overwrite sync history. Do not emit Fix nodes from Linear issues."
-        ),
-        tool_hints=(
-            "read_sync_history",
-            "write_sync_history",
-            "context_search",
-            "context_timeline",
-            "linear_list_projects",
-            "linear_get_project",
-            "linear_list_documents",
-            "linear_get_document",
-            "linear_list_issues",
-            "linear_get_issue",
-            "apply_graph_mutations",
-            "mark_event_processed",
-            "finish_batch",
-        ),
-        max_tool_calls=400,
-        enables_planner=True,
-    )
-)
-
-
-# --- jira / jira_project / diff_sync ---------------------------------------
-_register(
-    EventPlaybook(
-        source_system="jira",
-        event_type="jira_project",
-        action="diff_sync",
-        summary=(
-            "Incremental catch-up ingestion of Jira epics and issues changed "
-            "since the project's last successful sync cursor."
-        ),
-        available_data=(
-            "Payload carries project_key, optional since, and count. The "
-            "embedded skill below is authoritative for auditing existing "
-            "context-graph Activity coverage before hydrating source refs, "
-            "history-file handling, JQL updated searches, optional changelog "
-            "reads, and mutation reuse."
-        ),
-        extract=_load_skill_body("jira_project_diff_sync.md"),
-        skip=(
-            "Do not advance the cursor before graph writes succeed. Do not "
-            "overwrite sync history. Do not emit Fix nodes from Jira issues."
-        ),
-        tool_hints=(
-            "read_sync_history",
-            "write_sync_history",
-            "context_search",
-            "context_timeline",
-            "jira_search_issues",
-            "jira_get_issue",
-            "jira_get_issue_changelog",
-            "jira_bulk_fetch_changelogs",
-            "apply_graph_mutations",
-            "mark_event_processed",
-            "finish_batch",
-        ),
-        max_tool_calls=400,
-        enables_planner=True,
-    )
-)
-
-
 # --- github / pull_request / merged ----------------------------------------
 _register(
     EventPlaybook(
@@ -447,10 +247,12 @@ _register(
         ),
         extract=(
             "Always emit one Activity (with PERFORMED + TOUCHED + IN_PERIOD). "
-            "Where evidenced by the PR body, also seed: Decisions (DECIDES_FOR "
-            "the affected modules / features), Fixes (RESOLVED → BugPattern or "
-            "Incident), new Features (Feature → Module), and DEPENDS_ON / USES "
-            "edges if dependencies were added. Link the PR as evidence."
+            "Where evidenced by the PR body, also seed: Decisions (DECIDED / "
+            "AFFECTS the affected Repository, Service, Feature, or CodeAsset), "
+            "Fixes (RESOLVED → BugPattern), and new Features (PROVIDES / "
+            "IMPLEMENTED_IN → Repository, Service, or CodeAsset). Use "
+            "DEPENDS_ON / USES edges if dependencies were added. Link the PR "
+            "as evidence."
         ),
         skip=(
             "Do not invent design decisions that the PR body does not state. "
@@ -485,10 +287,10 @@ _register(
         ),
         extract=(
             "Emit an Activity for the filing. If the issue describes a bug, "
-            "consider seeding a BugPattern or DiagnosticSignal and an Incident "
-            "if user-visible. If it describes a feature request, link it to "
-            "any existing Feature it touches. Always preserve the reporter as "
-            "PERFORMED actor."
+            "consider seeding a BugPattern and an Observation for the reported "
+            "signal if it has lasting value. If it describes a feature request, "
+            "link the Activity to any existing Feature it touches. Always "
+            "preserve the reporter as PERFORMED actor."
         ),
         skip=(
             "Don't auto-resolve issues — the open event is a signal of intent, "
@@ -517,9 +319,9 @@ _register(
         ),
         extract=(
             "Take the user's intent at face value. Seed a Document where the "
-            "note has lasting value, or a Decision / Feature / Incident if the "
-            "note clearly describes one. Always emit an Activity attributing "
-            "the submission to the user."
+            "note has lasting value, or a Decision / Feature / BugPattern / "
+            "Observation if the note clearly describes one. Always emit an "
+            "Activity attributing the submission to the user."
         ),
         skip=(
             "The supplied text is the source of truth. If the note links to "

@@ -92,6 +92,35 @@ def test_agent_claim_without_evidence_allowed() -> None:
     assert plan.decision == "apply"
 
 
+def test_code_asset_endpoint_is_valid_for_preferences() -> None:
+    op = {
+        "op": "assert_claim",
+        "subgraph": "preferences",
+        "subject": {
+            "key": "preference:cli-errors",
+            "type": "Preference",
+            "properties": {
+                "policy_kind": "error_handling",
+                "prescription": "CLI commands should surface validation errors with next actions.",
+                "strength": "strong",
+            },
+        },
+        "predicate": "POLICY_APPLIES_TO",
+        "object": {
+            "key": "code:potpie-context-engine:adapters/inbound/cli",
+            "type": "CodeAsset",
+        },
+        "truth": "preference",
+        "description": "CLI graph commands should return structured errors with next actions.",
+        "extra": {"file_path": "adapters/inbound/cli", "language": "python"},
+    }
+
+    plan = validate_semantic_request(_req(op))
+
+    assert plan.ok
+    assert plan.decision == "apply"
+
+
 def test_missing_description_warns_not_rejects() -> None:
     plan = validate_semantic_request(_req(_link(description=None)))
     assert plan.ok  # still applies
@@ -214,6 +243,8 @@ def test_user_decision_is_medium_and_needs_approval() -> None:
 
 
 def test_subgraph_for_predicate() -> None:
+    assert subgraph_for_predicate("PROVIDES") == "features"
+    assert subgraph_for_predicate("IMPLEMENTED_IN") == "features"
     assert subgraph_for_predicate("POLICY_APPLIES_TO") == "preferences"
     assert subgraph_for_predicate("RESOLVED") == "bugs"
     assert subgraph_for_predicate("DEPENDS_ON") == "infra_topology"
@@ -270,6 +301,96 @@ def test_lowering_stamps_environment_into_identity() -> None:
     assert edge.properties["identity_key"][-1] == "prod"
 
 
+def test_lowering_derives_subgraph_when_omitted() -> None:
+    req = _req(
+        _link(
+            subgraph=None,
+            predicate="USES_ADAPTER",
+            object={"key": "adapter:graph-backend:embedded", "type": "Adapter"},
+            environment="local",
+        )
+    )
+    plan = validate_semantic_request(req)
+    assert plan.ok
+    lower_semantic_request(req, plan)
+
+    edge = plan.batch.edge_upserts[0]
+    assert edge.properties["subgraph"] == "infra_topology"
+    assert ":infra_topology:" in edge.properties["claim_key"]
+
+
+def test_lowering_keeps_canonical_label_for_referenced_entity() -> None:
+    req = SemanticMutationRequest.parse(
+        {
+            "pot_id": "p",
+            "operations": [
+                {
+                    "op": "upsert_entity",
+                    "subject": {
+                        "key": "repo:github.com/potpie-ai/potpie",
+                        "type": "Repository",
+                        "summary": "Potpie repo",
+                    },
+                },
+                {
+                    "op": "assert_claim",
+                    "subject": {
+                        "key": "feature:context-graph",
+                        "type": "Feature",
+                    },
+                    "predicate": "IMPLEMENTED_IN",
+                    "object": {"key": "repo:github.com/potpie-ai/potpie"},
+                    "truth": "source_observation",
+                    "description": "context graph is implemented in potpie",
+                    "evidence": [{"source_ref": "repo:README"}],
+                },
+            ],
+        }
+    )
+    plan = validate_semantic_request(req)
+    assert plan.ok
+    lower_semantic_request(req, plan)
+
+    labels = {e.entity_key: e.labels for e in plan.batch.entity_upserts}
+    assert labels["repo:github.com/potpie-ai/potpie"] == ("Repository",)
+
+
+def test_lowering_carries_preference_fields_on_claim() -> None:
+    op = {
+        "op": "assert_claim",
+        "subgraph": "preferences",
+        "subject": {
+            "key": "preference:cli-errors",
+            "type": "Preference",
+            "properties": {
+                "policy_kind": "error_handling",
+                "prescription": "Emit structured CLI errors with recommended next actions.",
+                "strength": "strong",
+                "audience": "path",
+            },
+        },
+        "predicate": "POLICY_APPLIES_TO",
+        "object": {"key": "repo:github.com/potpie-ai/potpie", "type": "Repository"},
+        "truth": "preference",
+        "description": "CLI graph commands should return structured errors with next actions.",
+        "extra": {
+            "repo": "github.com/potpie-ai/potpie",
+            "file_path": "potpie/context-engine/adapters/inbound/cli",
+            "language": "python",
+        },
+    }
+    req = _req(op)
+    plan = validate_semantic_request(req)
+    assert plan.ok
+    lower_semantic_request(req, plan)
+
+    props = plan.batch.edge_upserts[0].properties
+    assert props["policy_kind"] == "error_handling"
+    assert props["prescription"].startswith("Emit structured CLI errors")
+    assert props["strength"] == "strong"
+    assert props["code_scope"]["file_path"] == "potpie/context-engine/adapters/inbound/cli"
+
+
 def test_lowering_value_object_creates_observation() -> None:
     op = {
         "op": "assert_claim",
@@ -305,6 +426,8 @@ def test_lowering_append_event_creates_activity_and_edges() -> None:
     edge_types = {e.edge_type for e in plan.batch.edge_upserts}
     assert "PERFORMED" in edge_types
     assert "TOUCHED" in edge_types
+    for edge in plan.batch.edge_upserts:
+        assert edge.properties["valid_at"] == "2026-06-08T00:00:00Z"
     labels = {lbl for e in plan.batch.entity_upserts for lbl in e.labels}
     assert "Activity" in labels
 

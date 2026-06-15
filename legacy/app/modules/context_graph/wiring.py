@@ -443,8 +443,6 @@ def build_container_for_session(db: Session) -> ContextEngineContainer:
     container.pot_source_listing = SqlalchemyPotSourceListing(db)
     resolver = _build_source_resolver(db, source_for_repo)
     container.source_resolver = resolver
-    if container.resolution_service is not None:
-        container.resolution_service.set_source_resolver(resolver)
     return container
 
 
@@ -465,6 +463,4 @@ def build_container_for_user_session(
     container.pot_source_listing = SqlalchemyPotSourceListing(db)
     resolver = _build_source_resolver(db, source_for_repo)
     container.source_resolver = resolver
-    if container.resolution_service is not None:
-        container.resolution_service.set_source_resolver(resolver)
     return container

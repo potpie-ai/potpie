@@ -20,12 +20,7 @@ from adapters.outbound.connectors.github import (
     GitHubReadPort,
     PyGithubSourceControl,
 )
-from adapters.outbound.connectors._bench_stubs import (
-    AlertingStubConnector,
-    DeployStubConnector,
-    RepoDocsStubConnector,
-    SlackStubConnector,
-)
+from adapters.outbound.connectors._bench_stubs import register_bench_stubs
 from adapters.outbound.connectors.notion import NotionConnector
 from adapters.outbound.graph.backends import build_backend
 from adapters.outbound.graph.context_graph_service import ContextGraphService
@@ -72,6 +67,10 @@ from domain.ports.policy import PolicyPort
 from domain.ports.pot_resolution import PotResolutionPort
 from domain.ports.pot_source_listing import PotSourceListingPort
 from domain.ports.observability import NoOpObservability, ObservabilityPort
+from bootstrap.observability_wiring import (
+    default_observability as _shared_default_observability,
+    observability_enabled as _shared_observability_enabled,
+)
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.services.graph_service import GraphService
@@ -94,6 +93,7 @@ class IngestionServerContainer:
     pots: PotResolutionPort
     graph_writer: GraphWriterPort | None = None
     backend: GraphBackend | None = None
+    graph: GraphService | None = None
     connectors: SourceConnectorRegistry = field(default_factory=SourceConnectorRegistry)
     reconciliation_agent: ReconciliationAgentPort | None = None
     jobs: ContextGraphJobQueuePort | None = None
@@ -177,6 +177,7 @@ class IngestionServerContainer:
         return DefaultIngestionSubmissionService(
             settings=self.settings,
             pots=self.pots,
+            graph=self.graph,
             reconciliation_agent=self.reconciliation_agent,
             reco_ledger=self.reconciliation_ledger(session),
             events=self.ingestion_event_store(session),
@@ -254,6 +255,7 @@ def build_ingestion_server(
         settings=s,
         graph_writer=graph_writer,
         backend=backend,
+        graph=graph,
         context_graph=context_graph,
         pots=pots,
         connectors=registry,
@@ -284,10 +286,7 @@ def _default_telemetry() -> TelemetryPort:
 
 
 def _observability_enabled() -> bool:
-    import os
-
-    raw = os.getenv("CONTEXT_ENGINE_OBSERVABILITY", "").strip().lower()
-    return raw not in ("", "0", "false", "no", "off")
+    return _shared_observability_enabled()
 
 
 def _default_observability() -> ObservabilityPort:
@@ -298,29 +297,7 @@ def _default_observability() -> ObservabilityPort:
     adapter, but only when an OTLP endpoint is actually configured — so the
     feature ships dark and never tries to export into the void.
     """
-    import os
-
-    if not _observability_enabled():
-        return NoOpObservability()
-    mode = os.getenv("CONTEXT_ENGINE_OBSERVABILITY", "").strip().lower()
-    if mode == "console":
-        try:
-            from adapters.outbound.observability.console import ConsoleObservability
-
-            return ConsoleObservability()
-        except Exception:  # noqa: BLE001
-            return NoOpObservability()
-    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or os.getenv(
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
-    )
-    if not endpoint:
-        return NoOpObservability()
-    try:
-        from adapters.outbound.observability.otel import OtelObservability
-
-        return OtelObservability()
-    except Exception:  # noqa: BLE001 — missing extra / setup failure → dark
-        return NoOpObservability()
+    return _shared_default_observability()
 
 
 def _attach_reconciliation_telemetry(
@@ -451,10 +428,7 @@ def build_ingestion_server_with_github_token(
     # envelopes through reconciliation but advertise no fetch capability,
     # so production traffic that lacks a real reader will still fail
     # closed instead of silently grading against a stub.
-    registry.register(SlackStubConnector())
-    registry.register(RepoDocsStubConnector())
-    registry.register(AlertingStubConnector())
-    registry.register(DeployStubConnector())
+    register_bench_stubs(registry)
 
     return build_ingestion_server(
         settings=settings,

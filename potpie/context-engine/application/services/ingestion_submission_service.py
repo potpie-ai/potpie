@@ -1,10 +1,11 @@
 """Default :class:`IngestionSubmissionService` — single inbound for events.
 
-After Phase 4 there is exactly one ingestion path: every event flows
-through the debounced batch queue, gets debounced, and is processed by
-the reconciliation agent. The legacy ``connector_sync`` shortcut and
-its source-specific dispatch are gone — connectors contribute proposed
-plans during agent batch processing, not during inbound submission.
+Most events flow through the debounced batch queue and reconciliation agent.
+Durable ``context_record`` submissions are the deliberate exception: they route
+directly through ``GraphService.record`` so structured agent memories use the
+same deterministic semantic-mutation path as local CLI/MCP writes and do not
+require a reconciliation agent. The legacy ``connector_sync`` shortcut and its
+source-specific dispatch are gone.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from domain.context_events import (
 )
 from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
 from domain.ingestion_event_models import EventReceipt, IngestionSubmissionRequest
+from domain.ports.agent_context import RecordRequest
 from domain.ports.batch_repository import BatchRepositoryPort
 from domain.ports.context_graph_job_queue import ContextGraphJobQueuePort
 from domain.ports.ingestion_config import IngestionConfigPort
@@ -32,6 +34,7 @@ from domain.ports.ingestion_submission import IngestionSubmissionService
 from domain.ports.pot_resolution import PotResolutionPort, resolve_write_repo
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.reconciliation_ledger import ReconciliationLedgerPort
+from domain.ports.services.graph_service import GraphService
 from domain.ports.settings import ContextEngineSettingsPort
 
 logger = logging.getLogger(__name__)
@@ -51,6 +54,7 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
         *,
         settings: ContextEngineSettingsPort,
         pots: PotResolutionPort,
+        graph: GraphService | None = None,
         reconciliation_agent: ReconciliationAgentPort | None,
         reco_ledger: ReconciliationLedgerPort,
         events: IngestionEventStore,
@@ -60,6 +64,7 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
     ) -> None:
         self._settings = settings
         self._pots = pots
+        self._graph = graph
         self._reconciliation_agent = reconciliation_agent
         self._reco = reco_ledger
         self._events = events
@@ -119,8 +124,6 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
     ) -> EventReceipt:
         if not self._settings.is_enabled():
             raise ValueError("context_graph_disabled")
-        if self._reconciliation_agent is None:
-            raise ValueError("no_reconciliation_agent")
 
         resolved = self._pots.resolve_pot(request.pot_id)
         if resolved is None:
@@ -142,6 +145,12 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
 
         if not request.source_id:
             raise ValueError("source_id is required for ingestion submissions")
+
+        if _is_context_record_submission(request):
+            return self._submit_context_record(request)
+
+        if self._reconciliation_agent is None:
+            raise ValueError("no_reconciliation_agent")
 
         eid = request.event_id or str(uuid4())
         # Bind the event id for the rest of this (sync) ingress path; the
@@ -237,3 +246,94 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
                     job_id=outcome.batch_id,
                 )
         return receipt
+
+    def _submit_context_record(
+        self, request: IngestionSubmissionRequest
+    ) -> EventReceipt:
+        if self._graph is None:
+            raise ValueError("context_graph_disabled")
+
+        payload = dict(request.payload or {})
+        record = _mapping_payload(payload.get("record"), "record")
+        scope = _mapping_payload(payload.get("scope"), "scope")
+        record_type = _required_str(record.get("type") or request.action, "record.type")
+        summary = _required_str(record.get("summary"), "record.summary")
+        details = _mapping_payload(record.get("details") or {}, "record.details")
+        source_refs = _string_tuple(record.get("source_refs") or request.artifact_refs)
+        actor = request.actor
+        metadata = {
+            "surface": request.source_channel,
+            "source_system": request.source_system,
+            "source_id": request.source_id,
+            **dict(request.metadata),
+        }
+        if actor is not None:
+            metadata.update(
+                {
+                    "user": actor.user_id,
+                    "surface": actor.surface,
+                    "harness": actor.client_name,
+                }
+            )
+
+        receipt = self._graph.record(
+            RecordRequest(
+                pot_id=request.pot_id,
+                record_type=record_type,
+                summary=summary,
+                details=details,
+                scope=scope,
+                source_refs=source_refs,
+                idempotency_key=request.idempotency_key or request.source_id,
+                metadata=metadata,
+            )
+        )
+        event_id = request.event_id or str(uuid4())
+        return EventReceipt(
+            event_id=event_id,
+            status="done" if receipt.accepted else "error",
+            error=None if receipt.accepted else receipt.detail or receipt.status,
+            mutation_id=_optional_str(receipt.metadata.get("mutation_id")),
+            extras={
+                "record_id": receipt.record_id,
+                "record_status": receipt.status,
+                "mutations_applied": receipt.mutations_applied,
+                "record_metadata": dict(receipt.metadata),
+            },
+        )
+
+
+def _is_context_record_submission(request: IngestionSubmissionRequest) -> bool:
+    return request.event_type == "context_record"
+
+
+def _mapping_payload(value: object, name: str) -> dict[str, object]:
+    if isinstance(value, dict):
+        return dict(value)
+    raise ValueError(f"{name} must be an object")
+
+
+def _required_str(value: object, name: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise ValueError(f"{name} is required")
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,) if value else ()
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("record.source_refs must be a list of strings")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("record.source_refs must be a list of strings")
+        if item:
+            out.append(item)
+    return tuple(out)

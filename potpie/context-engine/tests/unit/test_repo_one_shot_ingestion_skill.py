@@ -403,7 +403,7 @@ def test_period_key_matches_production_builder() -> None:
     _, body = _read_skill()
     section = _section(body, "Mutations (per item)")
     assert "timeline:period:daily:<pot>:<yyyy-mm-dd>" in section, (
-        "Period key must match production builder (timeline_plan._period_key)"
+        "Period key must match the ontology identity_policy for Period"
     )
 
 

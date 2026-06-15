@@ -1,9 +1,9 @@
-"""No-op reconciliation agent for phase-2 smoke testing.
+"""No-op reconciliation agent — a test double, not a deployment option.
 
 Satisfies :class:`ReconciliationAgentPort` but does no LLM call and no graph
-mutation — it simply marks every event in the batch as completed. Used to
-verify that the ingest → debounce → dispatch → process plumbing works
-end-to-end before the real (pydantic-deep) agent is wired in phase 3.
+mutation — it simply marks every event in the batch as completed. Tests use
+it to verify the ingest → debounce → dispatch → process plumbing without a
+real (pydantic-deep) agent; production wiring never constructs it.
 """
 
 from __future__ import annotations

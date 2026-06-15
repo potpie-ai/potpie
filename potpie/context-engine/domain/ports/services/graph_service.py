@@ -115,6 +115,7 @@ class GraphReadRequest:
     as_of: datetime | None = None
     since: datetime | None = None
     until: datetime | None = None
+    include_invalidated: bool = False
     freshness_preference: str = "balanced"
     depth: int | None = None
     direction: str | None = None

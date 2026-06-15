@@ -1,8 +1,10 @@
 """Record a durable agent context entry — fix, decision, runbook note, etc.
 
-Backed by the same async pipeline as every other event submission. The
-verb shapes the inbound payload into an ``IngestionSubmissionRequest``
-and hands it to the configured :class:`IngestionSubmissionService`.
+The verb shapes the inbound payload into an ``IngestionSubmissionRequest`` and
+hands it to the configured :class:`IngestionSubmissionService`. The default
+managed service applies context records through the deterministic
+``GraphService.record`` path; non-record events still use the async
+reconciliation pipeline.
 """
 
 from __future__ import annotations

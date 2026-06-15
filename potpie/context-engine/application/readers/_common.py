@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Iterable, Mapping
+from typing import Any
 
+from domain.ports.claim_query import ClaimRow
 from domain.ranking import Candidate, RankedItem, RankingService, TaskContext
 
 
@@ -79,10 +81,107 @@ def rank_candidates(
     return ranked
 
 
+def claim_candidate_key(row: ClaimRow) -> str:
+    return row.claim_key or f"{row.predicate}:{row.subject_key}:{row.object_key}"
+
+
+def claim_corroboration(row: ClaimRow) -> int:
+    count = row.properties.get("corroboration_count")
+    if isinstance(count, int) and count > 0:
+        return count
+    return 1
+
+
+def claim_environment(row: ClaimRow) -> str | None:
+    env = row.environment
+    if isinstance(env, str) and env.strip():
+        return env.strip().lower()
+    return None
+
+
+def claim_payload(
+    row: ClaimRow,
+    *,
+    environment: str | None = None,
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "predicate": row.predicate,
+        "subject_key": row.subject_key,
+        "object_key": row.object_key,
+        "claim_key": row.claim_key,
+        "subgraph": row.subgraph,
+        "truth": row.truth,
+        "description": row.description,
+        "fact": row.fact,
+        "environment": (
+            environment if environment is not None else claim_environment(row)
+        ),
+        "source_refs": list(row.source_refs),
+        "source_system": row.source_system,
+        "valid_at": row.valid_at.isoformat() if row.valid_at else None,
+        "valid_until": row.valid_until.isoformat() if row.valid_until else None,
+        "observed_at": row.observed_at.isoformat() if row.observed_at else None,
+        "evidence_strength": row.evidence_strength,
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def service_anchor_keys(
+    scope: Mapping[str, Any],
+    *,
+    include_anchor_entity_key: bool = False,
+) -> list[str]:
+    return scoped_entity_keys(
+        scope,
+        prefixes=("service",),
+        include_anchor_entity_key=include_anchor_entity_key,
+    )
+
+
+def scoped_entity_keys(
+    scope: Mapping[str, Any],
+    *,
+    prefixes: Iterable[str],
+    include_anchor_entity_key: bool = False,
+) -> list[str]:
+    keys: list[str] = []
+    for prefix in prefixes:
+        values = scope.get(f"{prefix}s") or scope.get(prefix)
+        if isinstance(values, str):
+            values = (values,)
+        elif not isinstance(values, Iterable) or isinstance(values, Mapping):
+            values = ()
+        for value in values:
+            if not (isinstance(value, str) and value.strip()):
+                continue
+            key = value.strip()
+            keys.append(key if ":" in key else f"{prefix}:{key.lower()}")
+    if include_anchor_entity_key and not keys:
+        anchor = scope.get("anchor_entity_key")
+        if isinstance(anchor, str) and anchor.strip():
+            keys.append(anchor.strip())
+    return list(dict.fromkeys(keys))
+
+
+def row_in_anchor_set(row: ClaimRow, anchor_keys: Iterable[str]) -> bool:
+    anchors = set(anchor_keys)
+    return row.subject_key in anchors or row.object_key in anchors
+
+
 __all__ = [
     "ReadRequest",
     "ReadResponse",
+    "claim_candidate_key",
+    "claim_corroboration",
+    "claim_environment",
+    "claim_payload",
     "coverage_status_from_count",
     "make_task_context",
     "rank_candidates",
+    "row_in_anchor_set",
+    "scoped_entity_keys",
+    "service_anchor_keys",
 ]

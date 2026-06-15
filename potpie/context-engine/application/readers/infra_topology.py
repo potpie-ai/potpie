@@ -21,8 +21,13 @@ from typing import Any, Iterable, Mapping
 from application.readers._common import (
     ReadRequest,
     ReadResponse,
+    claim_candidate_key,
+    claim_corroboration,
+    claim_environment,
+    claim_payload,
     coverage_status_from_count,
     rank_candidates,
+    service_anchor_keys,
 )
 from domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 from domain.ranking import Candidate, RankingService
@@ -33,6 +38,9 @@ _INFRA_PREDICATES: tuple[str, ...] = (
     "DEPLOYED_TO",
     "DEPENDS_ON",
     "USES",
+    "USES_ADAPTER",
+    "CONFIGURES",
+    "DEPLOYED_WITH",
     "HOSTED_ON",
     "OWNED_BY",
     "PROVIDES",
@@ -51,7 +59,7 @@ class InfraTopologyReader:
     max_blast_radius_depth: int = 2
 
     def read(self, req: ReadRequest) -> ReadResponse:
-        anchor_keys = _anchor_entity_keys(req.scope)
+        anchor_keys = service_anchor_keys(req.scope, include_anchor_entity_key=True)
         environment_filter = _normalise_environment(req.scope.get("environment"))
         include_unqualified_environment = _scope_bool(
             req.scope, "include_unqualified_environment"
@@ -77,12 +85,12 @@ class InfraTopologyReader:
             )
             candidates.append(
                 Candidate(
-                    candidate_key=_make_candidate_key(row),
+                    candidate_key=claim_candidate_key(row),
                     payload=_payload_from_row(row),
                     strength=row.evidence_strength,
                     valid_at=row.valid_at,
                     scope_overlap=overlap,
-                    corroboration_count=_corroboration(row),
+                    corroboration_count=claim_corroboration(row),
                 )
             )
 
@@ -190,7 +198,7 @@ class InfraTopologyReader:
             )
             next_frontier: set[str] = set()
             for row in hop_rows:
-                key = _make_candidate_key(row)
+                key = claim_candidate_key(row)
                 if key in seen_rows:
                     continue
                 seen_rows[key] = row
@@ -209,24 +217,6 @@ class InfraTopologyReader:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _anchor_entity_keys(scope: Mapping[str, Any]) -> list[str]:
-    """Turn scope into the entity_keys we anchor the traversal on."""
-    keys: list[str] = []
-    services = scope.get("services") or scope.get("service")
-    if isinstance(services, str):
-        services = [services]
-    if isinstance(services, list):
-        for s in services:
-            if isinstance(s, str) and s.strip():
-                keys.append(f"service:{s.strip().lower()}")
-    if not keys:
-        # Allow caller to pass a raw entity_key directly
-        anchor = scope.get("anchor_entity_key")
-        if isinstance(anchor, str) and anchor.strip():
-            keys.append(anchor.strip())
-    return keys
 
 
 def _normalise_environment(value: Any) -> str | None:
@@ -276,10 +266,7 @@ def _matches_environment(
 
 
 def _row_environment(row: ClaimRow) -> str | None:
-    env = row.environment
-    if isinstance(env, str) and env.strip():
-        return env.strip().lower()
-    return None
+    return claim_environment(row)
 
 
 def _scope_overlap(
@@ -301,34 +288,8 @@ def _scope_overlap(
     return min(1.0, score / max(bumps, 1))
 
 
-def _corroboration(row: ClaimRow) -> int:
-    count = row.properties.get("corroboration_count")
-    if isinstance(count, int) and count > 0:
-        return count
-    return 1
-
-
-def _make_candidate_key(row: ClaimRow) -> str:
-    return row.claim_key or f"{row.predicate}:{row.subject_key}:{row.object_key}"
-
-
 def _payload_from_row(row: ClaimRow) -> dict[str, Any]:
-    return {
-        "predicate": row.predicate,
-        "subject_key": row.subject_key,
-        "object_key": row.object_key,
-        "claim_key": row.claim_key,
-        "subgraph": row.subgraph,
-        "truth": row.truth,
-        "fact": row.fact,
-        "environment": _row_environment(row),
-        "source_refs": list(row.source_refs),
-        "source_system": row.source_system,
-        "valid_at": row.valid_at.isoformat() if row.valid_at else None,
-        "valid_until": row.valid_until.isoformat() if row.valid_until else None,
-        "observed_at": row.observed_at.isoformat() if row.observed_at else None,
-        "evidence_strength": row.evidence_strength,
-    }
+    return claim_payload(row, environment=_row_environment(row))
 
 
 __all__ = ["InfraTopologyReader"]

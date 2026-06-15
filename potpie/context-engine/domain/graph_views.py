@@ -105,10 +105,16 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
         "active_preferences",
         v1_include="coding_preferences",
         description="Active coding preferences / policies that apply to a scope, "
-        "ranked by relevance, strength, recency and truth class.",
+        "ranked by relevance, strength, recency, and scope overlap.",
         inputs=("repo", "scope", "path", "query"),
         inline_relations=("POLICY_APPLIES_TO",),
-        ranking_inputs=("semantic_match", "strength", "recency", "truth_class"),
+        ranking_inputs=(
+            "semantic_similarity",
+            "strength",
+            "recency",
+            "scope_overlap",
+            "corroboration",
+        ),
     ),
     _v(
         "bugs",
@@ -118,7 +124,12 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
         "verification relations inlined.",
         inputs=("query", "service", "repo", "time_window"),
         inline_relations=("REPRODUCES", "RESOLVED", "ATTEMPTED_FIX_FAILED", "VERIFIED"),
-        ranking_inputs=("semantic_symptom_match", "recency", "resolution_status"),
+        ranking_inputs=(
+            "semantic_similarity",
+            "recency",
+            "scope_overlap",
+            "corroboration",
+        ),
     ),
     _v(
         "recent_changes",
@@ -126,9 +137,9 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
         v1_include="timeline",
         description="Recent activity (PRs, tickets, deploys) touching a scope, "
         "ordered by time.",
-        inputs=("scope", "time_window"),
+        inputs=("scope", "time_window", "query"),
         inline_relations=("TOUCHED", "PERFORMED", "MENTIONS"),
-        ranking_inputs=("recency", "scope_overlap"),
+        ranking_inputs=("semantic_similarity", "recency", "scope_overlap"),
     ),
     _v(
         "infra_topology",
@@ -140,11 +151,15 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
         inline_relations=(
             "DEPENDS_ON",
             "USES",
+            "USES_ADAPTER",
+            "CONFIGURES",
+            "DEPLOYED_WITH",
             "DEPLOYED_TO",
             "DEFINED_IN",
             "HOSTED_ON",
             "OWNED_BY",
             "PROVIDES",
+            "EXPOSES",
         ),
         traversal=True,
         extra={
@@ -162,7 +177,7 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
     _v(
         "features",
         "provided",
-        v1_include="infra_topology",
+        v1_include="features",
         description="Features / capabilities a repository or service provides "
         "(PROVIDES) and where they are implemented (IMPLEMENTED_IN). Answers "
         "'what does this repo do?'. Anchor with scope "
@@ -186,16 +201,16 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
         "decisions",
         "active_decisions",
         v1_include="decisions",
-        description="Active architectural decisions affecting a scope (planned reader).",
+        description="Active architectural decisions affecting a scope.",
         inputs=("scope", "query"),
         inline_relations=("DECIDED", "AFFECTS"),
-        ranking_inputs=("semantic_match", "recency"),
+        ranking_inputs=("semantic_similarity", "recency"),
     ),
     _v(
         "ownership",
         "owner_context",
         v1_include="owners",
-        description="Who owns a service / repo and their team context (planned reader).",
+        description="Who owns a service / repo and their team context.",
         inputs=("scope",),
         inline_relations=("OWNED_BY", "MEMBER_OF"),
     ),
@@ -203,10 +218,10 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
         "docs",
         "reference_context",
         v1_include="docs",
-        description="Reference documentation pointers for a scope (planned reader).",
+        description="Reference documentation pointers for a scope.",
         inputs=("scope", "query"),
         inline_relations=(),
-        ranking_inputs=("semantic_match",),
+        ranking_inputs=("semantic_similarity",),
     ),
 )
 

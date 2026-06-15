@@ -14,7 +14,11 @@ from datetime import datetime, timedelta, timezone
 from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
 from application.readers import (
     CodingPreferencesReader,
+    DecisionsReader,
+    DocsReader,
+    FeaturesReader,
     InfraTopologyReader,
+    OwnersReader,
     PriorBugsReader,
     TimelineReader,
 )
@@ -292,6 +296,45 @@ class TestInfraTopologyReader:
 
 
 # ---------------------------------------------------------------------------
+# FeaturesReader
+# ---------------------------------------------------------------------------
+
+
+class TestFeaturesReader:
+    def test_returns_only_feature_claims_for_anchor(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="PROVIDES",
+                subject_key="repo:github.com/acme/widgets",
+                object_key="feature:search",
+                fact="widgets repo provides search",
+                evidence_strength="deterministic",
+            )
+        )
+        store.add(
+            _row(
+                predicate="DEFINED_IN",
+                subject_key="service:search-api",
+                object_key="repo:github.com/acme/widgets",
+                fact="search api lives in widgets repo",
+                evidence_strength="deterministic",
+            )
+        )
+        reader = FeaturesReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"anchor_entity_key": "repo:github.com/acme/widgets"},
+            )
+        )
+
+        predicates = {r.candidate.payload["predicate"] for r in response.items}
+        assert predicates == {"PROVIDES"}
+
+
+# ---------------------------------------------------------------------------
 # TimelineReader (F4)
 # ---------------------------------------------------------------------------
 
@@ -362,6 +405,33 @@ class TestTimelineReader:
         # PR-900 mentioned users-svc but is 14d old → outside the window
         assert response.coverage_status == "empty"
 
+    def test_window_uses_source_occurred_at_when_valid_at_is_ingestion_time(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="TOUCHED",
+                subject_key="activity:github:pr:1043",
+                object_key="service:auth-svc",
+                fact="PR 1043 touched auth on 2026-05-10",
+                valid_at=_NOW,
+                properties={"occurred_at": "2026-05-10T12:00:00+00:00"},
+            )
+        )
+        reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"service": "auth-svc"},
+                since=datetime(2026, 5, 10, tzinfo=timezone.utc),
+                until=datetime(2026, 5, 11, tzinfo=timezone.utc),
+            )
+        )
+
+        assert response.items
+        payload = response.items[0].candidate.payload
+        assert payload["occurred_at"] == "2026-05-10T12:00:00+00:00"
+
     def test_freshness_pref_defaults_to_fresh_for_timeline(self) -> None:
         store = self._setup_store()
         # Add a stale + recent activity for the same service
@@ -392,6 +462,157 @@ class TestTimelineReader:
             "activity:github:pr:1042",
             "activity:github:pr:1100",
         }
+
+    def test_query_mode_prioritizes_relevance_over_recency(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="MENTIONS",
+                subject_key="activity:github:pr:new",
+                object_key="service:auth-svc",
+                fact="dependency maintenance and whitespace cleanup",
+                valid_at=_NOW - timedelta(hours=1),
+            )
+        )
+        store.add(
+            _row(
+                predicate="MENTIONS",
+                subject_key="activity:github:pr:old",
+                object_key="service:auth-svc",
+                fact="token refresh race caused oauth callback failures",
+                valid_at=_NOW - timedelta(days=10),
+            )
+        )
+        reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"service": "auth-svc"},
+                query="oauth callback token refresh race",
+                max_items=2,
+            )
+        )
+
+        assert response.items[0].candidate.payload["subject_key"] == "activity:github:pr:old"
+
+    def test_timeline_dedupes_edges_per_activity(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="MENTIONS",
+                subject_key="activity:github:pr:dupe",
+                object_key="service:auth-svc",
+                fact="PR mentions auth service",
+                valid_at=_NOW - timedelta(hours=2),
+            )
+        )
+        store.add(
+            _row(
+                predicate="TOUCHED",
+                subject_key="activity:github:pr:dupe",
+                object_key="service:auth-svc",
+                fact="PR touched auth service",
+                valid_at=_NOW - timedelta(hours=2),
+            )
+        )
+        reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "auth-svc"}, max_items=10)
+        )
+
+        assert len(response.items) == 1
+        payload = response.items[0].candidate.payload
+        assert payload["activity_key"] == "activity:github:pr:dupe"
+        assert payload["properties"]["activity_edge_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Decisions / Owners / Docs readers
+# ---------------------------------------------------------------------------
+
+
+class TestNewUseCaseReaders:
+    def test_decisions_reader_returns_scope_and_affected_claims(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="DECIDED",
+                subject_key="decision:use-neo4j",
+                object_key="service:context-engine",
+                fact="Use Neo4j for the context graph backend",
+            )
+        )
+        store.add(
+            _row(
+                predicate="AFFECTS",
+                subject_key="decision:use-neo4j",
+                object_key="code:context-engine:graph",
+                fact="Neo4j decision affects graph adapter code",
+            )
+        )
+        reader = DecisionsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "context-engine"}, max_items=10)
+        )
+
+        predicates = {r.candidate.payload["predicate"] for r in response.items}
+        assert {"DECIDED", "AFFECTS"} <= predicates
+
+    def test_owners_reader_returns_owner_and_team_context(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="OWNED_BY",
+                subject_key="service:context-engine",
+                object_key="person:alice",
+                fact="context engine is owned by alice",
+            )
+        )
+        store.add(
+            _row(
+                predicate="MEMBER_OF",
+                subject_key="person:alice",
+                object_key="team:platform",
+                fact="alice is on the platform team",
+            )
+        )
+        reader = OwnersReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "context-engine"}, max_items=10)
+        )
+
+        predicates = {r.candidate.payload["predicate"] for r in response.items}
+        assert {"OWNED_BY", "MEMBER_OF"} <= predicates
+
+    def test_docs_reader_returns_document_references_for_scope(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.set_entity_label(
+            pot_id="pot-1", entity_key="document:graph-runbook", labels=("Document",)
+        )
+        store.add(
+            _row(
+                predicate="RELATED_TO",
+                subject_key="document:graph-runbook",
+                object_key="service:context-engine",
+                fact="Graph runbook documents context engine operations",
+            )
+        )
+        reader = DocsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"service": "context-engine"},
+                query="graph runbook",
+            )
+        )
+
+        assert response.items
+        assert response.items[0].candidate.payload["subject_key"] == "document:graph-runbook"
 
 
 # ---------------------------------------------------------------------------
@@ -477,3 +698,37 @@ class TestPriorBugsReader:
             )
         )
         assert response.coverage_status == "empty"
+
+    def test_matching_reproduction_expands_to_known_fix(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="REPRODUCES",
+                subject_key="bug_pattern:ambiguous-pot",
+                object_key="service:context-engine",
+                fact="ambiguous pot scope causes graph read to fail",
+                evidence_strength="attested",
+            )
+        )
+        store.add(
+            _row(
+                predicate="RESOLVED",
+                subject_key="fix:explicit-pot",
+                object_key="bug_pattern:ambiguous-pot",
+                fact="pass --pot or use active pot resolution to fix ambiguous scope",
+                evidence_strength="attested",
+            )
+        )
+        reader = PriorBugsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"service": "context-engine"},
+                query="graph read fails ambiguous pot current repo",
+                max_items=10,
+            )
+        )
+
+        predicates = {r.candidate.payload["predicate"] for r in response.items}
+        assert {"REPRODUCES", "RESOLVED"} <= predicates

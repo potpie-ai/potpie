@@ -20,6 +20,9 @@ from typing import Any, Mapping
 from application.readers._common import (
     ReadRequest,
     ReadResponse,
+    claim_candidate_key,
+    claim_corroboration,
+    claim_payload,
     coverage_status_from_count,
     rank_candidates,
 )
@@ -60,11 +63,11 @@ class CodingPreferencesReader:
             sim = row.properties.get("semantic_similarity")
             candidates.append(
                 Candidate(
-                    candidate_key=_make_candidate_key(row),
+                    candidate_key=claim_candidate_key(row),
                     payload=_payload_from_row(row),
                     strength=row.evidence_strength,
                     valid_at=row.valid_at,
-                    corroboration_count=_corroboration(row),
+                    corroboration_count=claim_corroboration(row),
                     scope_overlap=overlap if scope_keys else None,
                     semantic_similarity=float(sim)
                     if isinstance(sim, (int, float))
@@ -129,32 +132,8 @@ def _scope_overlap(row: ClaimRow, task_scope: Mapping[str, str]) -> float:
     return hierarchical_scope_overlap(task_scope, rule_scope)
 
 
-def _corroboration(row: ClaimRow) -> int:
-    count = row.properties.get("corroboration_count")
-    if isinstance(count, int) and count > 0:
-        return count
-    return 1
-
-
-def _make_candidate_key(row: ClaimRow) -> str:
-    return row.claim_key or f"{row.predicate}:{row.subject_key}:{row.object_key}"
-
-
 def _payload_from_row(row: ClaimRow) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "subject_key": row.subject_key,
-        "object_key": row.object_key,
-        "claim_key": row.claim_key,
-        "subgraph": row.subgraph,
-        "truth": row.truth,
-        "fact": row.fact,
-        "source_refs": list(row.source_refs),
-        "source_system": row.source_system,
-        "valid_at": row.valid_at.isoformat() if row.valid_at else None,
-        "valid_until": row.valid_until.isoformat() if row.valid_until else None,
-        "observed_at": row.observed_at.isoformat() if row.observed_at else None,
-        "evidence_strength": row.evidence_strength,
-    }
+    payload = claim_payload(row, extra={"properties": dict(row.properties or {})})
     # Surface common preference fields the agent will want to see
     for key in ("policy_kind", "code_scope", "strength", "audience", "prescription"):
         if key in row.properties:

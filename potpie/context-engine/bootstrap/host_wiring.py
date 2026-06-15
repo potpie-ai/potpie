@@ -44,8 +44,14 @@ from application.services.nudge_service import NudgeService
 from application.services.pot_management import LocalPotManagementService
 from application.services.setup_orchestrator import DefaultSetupOrchestrator
 from application.services.skill_manager import DefaultSkillManager
+from bootstrap.logging_setup import configure_logging
+from bootstrap.observability_context import correlation_scope
+from bootstrap.observability_runtime import set_observability
+from bootstrap.observability_wiring import default_observability
+from domain.coherence import assert_runtime_coherence
 from domain.ports.graph.backend import GraphBackend
 from domain.ports.ledger.client import EventLedgerClientPort
+from domain.ports.observability import ObservabilityPort
 from host.daemon import Daemon
 from host.shell import HostShell, LedgerFacade
 
@@ -68,6 +74,7 @@ def build_host_shell(
     backend: GraphBackend | None = None,
     profile: str = "local",
     ledger_client: EventLedgerClientPort | None = None,
+    observability: ObservabilityPort | None = None,
     settings: Any = None,
 ) -> HostShell:
     """Compose a ``HostShell`` from the default local services + adapters.
@@ -76,65 +83,69 @@ def build_host_shell(
     ``InMemoryGraphBackend``); otherwise one is built from the configured
     profile. Pass ``ledger_client`` to inject a fixture ledger.
     """
-    backend = backend or build_backend(default_backend_profile(), settings=settings)
-    pot_store = LocalPotStore()
+    configure_logging()
+    set_observability(observability or default_observability())
+    with correlation_scope(source="host_shell"):
+        backend = backend or build_backend(default_backend_profile(), settings=settings)
+        pot_store = LocalPotStore()
 
-    graph = DefaultGraphService(backend=backend)
-    pots = LocalPotManagementService(store=pot_store, backend=backend)
-    skills = DefaultSkillManager(
-        targets={
-            "claude": ClaudeAgentTarget(),
-            "codex": CodexAgentTarget(),
-            "cursor": CursorAgentTarget(),
-            "opencode": OpenCodeAgentTarget(),
-        }
-    )
-    agent_context = AgentContextService(
-        graph=graph, pots=pots, skills=skills, profile=profile
-    )
+        graph = DefaultGraphService(backend=backend)
+        assert_runtime_coherence(reader_backed_includes=graph.backed_includes)
+        pots = LocalPotManagementService(store=pot_store, backend=backend)
+        skills = DefaultSkillManager(
+            targets={
+                "claude": ClaudeAgentTarget(),
+                "codex": CodexAgentTarget(),
+                "cursor": CursorAgentTarget(),
+                "opencode": OpenCodeAgentTarget(),
+            }
+        )
+        agent_context = AgentContextService(
+            graph=graph, pots=pots, skills=skills, profile=profile
+        )
 
-    ledger = LedgerFacade(
-        client=ledger_client or ManagedEventLedgerClient(),
-        cursors=LocalLedgerCursorStore(),
-    )
+        ledger = LedgerFacade(
+            client=ledger_client or ManagedEventLedgerClient(),
+            cursors=LocalLedgerCursorStore(),
+        )
 
-    # The nudge brain reads through the graph service and dedups via a local
-    # per-session injection ledger (both deterministic; no model on this path).
-    nudge = NudgeService(graph=graph, ledger=LocalInjectionLedger())
+        # The nudge brain reads through the graph service and dedups via a local
+        # per-session injection ledger (both deterministic; no model on this path).
+        nudge = NudgeService(graph=graph, ledger=LocalInjectionLedger())
 
-    # Lifecycle components (each independently ownable; see the setup orchestrator).
-    daemon = Daemon()
-    config = LocalConfigService()
-    installer = LocalInstaller()
-    auth = LocalAuthService()
-    setup = DefaultSetupOrchestrator(
-        config=config,
-        installer=installer,
-        backend=backend,
-        pots=pots,
-        # Relational state-store + migration seams (flat-file profile: skipped).
-        state_store=FlatFileStateStore(),
-        migrator=FlatFileMigrator(),
-        daemon=daemon,
-        auth=auth,
-        skills=skills,
-    )
+        # Lifecycle components (each independently ownable; see the setup orchestrator).
+        daemon = Daemon()
+        config = LocalConfigService()
+        installer = LocalInstaller()
+        auth = LocalAuthService()
+        setup = DefaultSetupOrchestrator(
+            config=config,
+            installer=installer,
+            backend=backend,
+            pots=pots,
+            # Relational state-store + migration seams (flat-file profile: skipped).
+            state_store=FlatFileStateStore(),
+            migrator=FlatFileMigrator(),
+            daemon=daemon,
+            auth=auth,
+            skills=skills,
+        )
 
-    return HostShell(
-        agent_context=agent_context,
-        graph=graph,
-        pots=pots,
-        skills=skills,
-        backend=backend,
-        ledger=ledger,
-        nudge=nudge,
-        daemon=daemon,
-        config=config,
-        installer=installer,
-        auth=auth,
-        setup=setup,
-        profile=profile,
-    )
+        return HostShell(
+            agent_context=agent_context,
+            graph=graph,
+            pots=pots,
+            skills=skills,
+            backend=backend,
+            ledger=ledger,
+            nudge=nudge,
+            daemon=daemon,
+            config=config,
+            installer=installer,
+            auth=auth,
+            setup=setup,
+            profile=profile,
+        )
 
 
 __all__ = ["build_host_shell", "default_backend_profile"]

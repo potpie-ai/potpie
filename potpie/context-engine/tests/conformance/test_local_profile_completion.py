@@ -27,6 +27,11 @@ def test_recorded_preference_surfaces_in_coding_preferences(host):
             pot_id=pot.pot_id,
             record_type="preference",
             summary="Always use ruff for linting",
+            details={
+                "policy_kind": "style",
+                "prescription": "Always use ruff for linting",
+                "code_scope": {"language": "python"},
+            },
             scope={"language": "python", "service": "context-engine"},
         )
     )

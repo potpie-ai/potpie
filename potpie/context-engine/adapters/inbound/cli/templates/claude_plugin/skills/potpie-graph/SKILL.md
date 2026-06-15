@@ -83,12 +83,24 @@ potpie --json graph mutate --file mutation.json --dry-run
 potpie --json graph mutate --file mutation.json
 ```
 
-`mutation-template` kinds: `repo-baseline`, `feature`, `preference`, `bug-fix`,
-`decision`, `timeline-event` — placeholders only; you fill them from sources you
-actually read. Repo/service functionality is first-class: assert
+`mutation-template` kinds: `repo-baseline`, `feature`, `preference`,
+`preference-policy`, `infra-snapshot`, `bug-fix`, `decision`, `timeline-event`,
+`timeline-change` — placeholders only; you fill them from sources you actually
+read. Use the use-case templates for durable memory:
+
+- `preference-policy` writes structured policy fields (`policy_kind`,
+  `prescription`, `strength`, `audience`) and can target a `CodeAsset`.
+- `infra-snapshot` writes environment-qualified service, adapter, config, and
+  deployment-target facts (`USES_ADAPTER`, `CONFIGURES`, `DEPLOYED_WITH`).
+- `timeline-change` writes source-time activity events; `occurred_at` is the
+  PR/ticket/deploy time, not ingestion time.
+- `bug-fix` writes the symptom, known fix, and optional verification edge so
+  `bugs.prior_occurrences` can return the fix inline.
+
+Repo/service functionality is first-class: assert
 `PROVIDES` (repo/service → `Feature`) and `IMPLEMENTED_IN` (feature → repo/
-service/code), each `Feature` carrying a compact `summary` and a retrieval-grade
-`description`.
+service/`CodeAsset`), each `Feature` carrying a compact `summary` and a
+retrieval-grade `description`.
 
 Payload is always batch-shaped:
 

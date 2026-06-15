@@ -32,7 +32,7 @@ from domain.graph_mutations import (
     InvalidationOp,
     ProvenanceContext,
 )
-from domain.ontology import ENTITY_TYPES
+from domain.ontology import ENTITY_TYPES, edge_spec
 from domain.reconciliation import MutationBatch
 from domain.semantic_mutations import (
     GraphEntityRef,
@@ -135,8 +135,8 @@ def _lower_claim(
     entity_by_key: dict[str, EntityUpsert],
 ) -> list[str]:
     subject = _ensure_entity(op.subject, entity_by_key, default_label="Observation")
-    subgraph = op.subgraph or "memory"
     predicate = (op.predicate or "RELATED_TO").strip().upper()
+    subgraph = op.subgraph or _subgraph_for_predicate(predicate)
 
     # Object is an entity ref or a literal value (→ Observation entity).
     if op.object is not None:
@@ -317,6 +317,8 @@ def _ensure_entity(
     key = normalize_entity_key(resolved.key)
     label = _label_for(resolved, default_label)
     existing = entity_by_key.get(key)
+    if existing is not None and label == default_label and existing.labels:
+        label = existing.labels[0]
     props = dict(existing.properties) if existing else {}
     props.update({k: v for k, v in resolved.properties.items()})
     if resolved.name:
@@ -347,10 +349,13 @@ def _ensure_entity(
 
 
 def _label_for(ref: GraphEntityRef, default_label: str) -> str:
+    prefix = normalize_entity_key(ref.key).partition(":")[0]
+    prefix_label = _PREFIX_TO_LABEL.get(prefix)
+    if prefix_label:
+        return prefix_label
     if ref.type and ref.type in ENTITY_TYPES:
         return ref.type
-    prefix = normalize_entity_key(ref.key).partition(":")[0]
-    return _PREFIX_TO_LABEL.get(prefix, default_label)
+    return default_label
 
 
 def _claim_properties(
@@ -372,7 +377,7 @@ def _claim_properties(
         {"source_ref": ev.source_ref, "authority": ev.authority, **dict(ev.metadata)}
         for ev in op.evidence
     ]
-    valid_at = op.valid_from or _now_iso()
+    valid_at = _valid_at_for_claim(op, truth=truth)
     props: dict[str, object] = {
         "claim_key": claim_key,
         "subgraph": subgraph,
@@ -404,12 +409,61 @@ def _claim_properties(
         props["occurred_at"] = op.occurred_at
     if op.valid_until:
         props["valid_until"] = op.valid_until
+    props.update(_structured_claim_fields_for(op))
     # Carry the scope hierarchy for the readers (R4) when the subject/object
     # properties or op extras name a code scope.
     code_scope = _code_scope_for(op)
     if code_scope:
         props["code_scope"] = code_scope
     return props
+
+
+def _valid_at_for_claim(op: SemanticMutation, *, truth: str) -> str:
+    if op.valid_from:
+        return op.valid_from
+    if (
+        (truth == _EVENT_TRUTH or op.op == SemanticMutationOp.append_event.value)
+        and op.occurred_at
+    ):
+        return op.occurred_at
+    return _now_iso()
+
+
+def _structured_claim_fields_for(op: SemanticMutation) -> dict[str, object]:
+    """Copy use-case fields readers need from semantic op metadata.
+
+    Entity properties describe the anchor node, while claim properties describe
+    why that anchor applies to this target. Readers rank and display the claim,
+    so fields like preference prescription or fix status must ride the edge too.
+    """
+    keys = (
+        "policy_kind",
+        "prescription",
+        "strength",
+        "audience",
+        "symptom_signature",
+        "fix_steps",
+        "verification_status",
+        "resolution_status",
+        "change_kind",
+        "ticket_key",
+        "pr_number",
+    )
+    out: dict[str, object] = {}
+    sources: list[dict[str, object]] = [dict(op.extra)]
+    if op.subject is not None:
+        sources.append(dict(op.subject.properties))
+    if op.object is not None:
+        sources.append(dict(op.object.properties))
+    for src in sources:
+        for key in keys:
+            value = src.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            out.setdefault(key, value)
+    return out
 
 
 def _code_scope_for(op: SemanticMutation) -> dict[str, str]:
@@ -460,6 +514,36 @@ def _discriminator(op: SemanticMutation, request: SemanticMutationRequest) -> st
 
 def _synthesize_fact(subject_key: str, predicate: str, object_key: str) -> str:
     return f"{subject_key} {predicate.lower().replace('_', ' ')} {object_key}"
+
+
+_MEMORY_PREDICATE_SUBGRAPH = {
+    "PROVIDES": "features",
+    "IMPLEMENTED_IN": "features",
+    "POLICY_APPLIES_TO": "preferences",
+    "REPRODUCES": "bugs",
+    "RESOLVED": "bugs",
+    "ATTEMPTED_FIX_FAILED": "bugs",
+    "VERIFIED": "bugs",
+    "DECIDED": "decisions",
+    "AFFECTS": "decisions",
+}
+_CATEGORY_SUBGRAPH = {
+    "topology": "infra_topology",
+    "ownership": "ownership",
+    "people": "ownership",
+    "timeline": "recent_changes",
+    "generic": "admin",
+}
+
+
+def _subgraph_for_predicate(predicate: str) -> str:
+    pred = (predicate or "").strip().upper()
+    if pred in _MEMORY_PREDICATE_SUBGRAPH:
+        return _MEMORY_PREDICATE_SUBGRAPH[pred]
+    spec = edge_spec(pred)
+    if spec is not None:
+        return _CATEGORY_SUBGRAPH.get(spec.category, "memory")
+    return "memory"
 
 
 def _short(text: str, *, length: int = 12) -> str:

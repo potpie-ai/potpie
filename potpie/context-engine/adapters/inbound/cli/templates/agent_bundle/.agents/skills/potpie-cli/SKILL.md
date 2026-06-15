@@ -81,10 +81,7 @@ slice.
 
 There is no local code scan command and no generic note-ingest command in the
 agent path. Repository links, docs, tickets, and PRs are interpreted by the
-harness, then written with `potpie graph mutate` or `context_record`. Existing
-source queue commands such as `potpie pot linear-team ingest` and
-`potpie pot jira-project ingest` submit connector events; they are not working-tree
-scans.
+harness, then written with `potpie graph mutate` or `context_record`.
 
 ## Common Failures
 

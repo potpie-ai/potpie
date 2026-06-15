@@ -49,6 +49,10 @@ def test_setup_record_resolve_status_journey(host):
             pot_id=pot.pot_id,
             record_type="decision",
             summary="adopt hexagonal ports",
+            details={
+                "title": "adopt hexagonal ports",
+                "rationale": "Keep application services isolated behind ports.",
+            },
             scope={"service": "context-engine"},
         )
     )
@@ -85,22 +89,20 @@ def test_context_record_rejects_malformed_known_record_details(host):
     assert status.counts.get("claims", 0) == 0
 
 
-def test_context_record_preserves_summary_only_known_record(host):
+def test_context_record_rejects_summary_only_known_record(host):
     pot = host.pots.create_pot(name="default", repo="potpie", use=True)
 
-    receipt = host.agent_context.record(
-        RecordRequest(
-            pot_id=pot.pot_id,
-            record_type="bug_pattern",
-            summary="QueuePool limit exceeded under load",
+    with pytest.raises(ContextRecordValidationError, match="bug_pattern: 'kind'"):
+        host.agent_context.record(
+            RecordRequest(
+                pot_id=pot.pot_id,
+                record_type="bug_pattern",
+                summary="QueuePool limit exceeded under load",
+            )
         )
-    )
 
-    assert receipt.accepted and receipt.mutations_applied >= 1
-    env = host.agent_context.resolve(
-        ResolveRequest(pot_id=pot.pot_id, include=("raw_graph",))
-    )
-    assert any("QueuePool" in dict(i.payload).get("fact", "") for i in env.items)
+    status = host.graph.data_plane_status(pot.pot_id)
+    assert status.counts.get("claims", 0) == 0
 
 
 def test_setup_orchestrator_provisions_and_creates_default_pot(host):
@@ -113,7 +115,7 @@ def test_setup_orchestrator_provisions_and_creates_default_pot(host):
     assert states["daemon"] == SKIPPED  # in-process host: nothing to start
     assert states["auth"] == NOT_IMPLEMENTED  # soft gap; does not fail setup
     active = host.pots.active_pot()
-    assert active is not None and active.name == "foo-pot"
+    assert active is not None and active.name == "default"
 
 
 def test_setup_is_idempotent(host):
@@ -182,7 +184,12 @@ def test_stub_backend_profiles_registered_and_fail_closed():
 def test_search_returns_envelope(host):
     pot = host.pots.create_pot(name="default", use=True)
     host.agent_context.record(
-        RecordRequest(pot_id=pot.pot_id, record_type="preference", summary="use ruff")
+        RecordRequest(
+            pot_id=pot.pot_id,
+            record_type="preference",
+            summary="use ruff",
+            details={"policy_kind": "style", "prescription": "use ruff"},
+        )
     )
     env = host.agent_context.search(
         SearchRequest(pot_id=pot.pot_id, query="ruff", include=("raw_graph",))

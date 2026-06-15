@@ -11,10 +11,9 @@ enables_planner: true
 
 A reusable skill for ingesting a repository's recent **merged pull requests**
 and **standalone GitHub issues** into the context graph in a single pass.
-Sibling to `linear_team_one_shot_ingestion`: same enumerate → batch → hydrate
-shape, GitHub source. Designed to be invoked by either Claude Code (as a
-checklist with a compatible write path) or the internal reconciliation agent
-(loaded as a playbook).
+It uses an enumerate → batch → hydrate shape for GitHub source history.
+Designed to be invoked by either Claude Code (as a checklist with a compatible
+write path) or the internal reconciliation agent (loaded as a playbook).
 
 Scope is **change history only**: timeline activities, clear fixes, explicit
 decisions, and evidenced bug patterns. Does not walk a working tree, does not
@@ -212,8 +211,8 @@ Identity rules to respect (these are NOT free-form strings):
   e.g. `repo:acme-api`).
 - `Person` is `SLUG_ALIAS` with `key_prefix=person`. Use `person:<handle>`
   (the GitHub login lowercased; usually already slug-clean).
-- `Period` uses the production builder `timeline:period:daily:<pot>:<yyyy-mm-dd>`
-  (matches `adapters/outbound/reconciliation/timeline_plan.py::_period_key`).
+- `Period` uses the key form `timeline:period:daily:<pot>:<yyyy-mm-dd>`
+  (the `Period` identity_policy in `domain/ontology.py`).
 - `Activity` is `EXTERNAL_ID` with `key_prefix=activity`. Two distinct forms:
   - PR: `activity:github:pr:<owner>/<repo>:<n>`
   - Issue: `activity:github:issue:<owner>/<repo>:<n>`
@@ -376,7 +375,7 @@ ladder as soon as you can answer kind + summary + bug/decision evidence.
 - Do NOT ingest the same PR number twice — the issues list tool already
   excludes PR-shaped rows; trust it.
 - Do NOT emit `Fix` for an issue filing. Fix is for merged PRs only.
-- Do NOT auto-close any existing Incident or open issue / BugPattern based
+- Do NOT auto-close any open issue or existing BugPattern based
   on a PR merge or issue closure alone — that is evidence, not closure.
 - Do NOT invent BugPatterns, Decisions, Services, or Persons not actually
   evidenced in the data you read. Emit a warning record instead.

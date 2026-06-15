@@ -12,6 +12,16 @@ def configure_cli_sentry() -> None:
         return
 
 
+def configure_daemon_sentry() -> None:
+    try:
+        from observability import configure, profiles
+
+        daemon_profile = getattr(profiles, "daemon", None)
+        configure(daemon_profile() if daemon_profile is not None else profiles.cli())
+    except Exception:  # noqa: BLE001
+        return
+
+
 def capture_unexpected_cli_error(
     exc: BaseException,
     *,
@@ -60,6 +70,25 @@ def capture_unexpected_cli_error(
                     if key in fields
                 },
             )
+            sentry_sdk.capture_exception(exc)
+    except Exception:  # noqa: BLE001
+        return
+
+
+def capture_unexpected_daemon_error(
+    exc: BaseException,
+    *,
+    error_code: str,
+    error_kind: str,
+) -> None:
+    try:
+        import sentry_sdk
+
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("service", "potpie-daemon")
+            scope.set_tag("error.code", error_code)
+            scope.set_tag("error.kind", error_kind)
+            scope.set_tag("is_expected", "false")
             sentry_sdk.capture_exception(exc)
     except Exception:  # noqa: BLE001
         return

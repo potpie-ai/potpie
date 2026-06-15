@@ -47,7 +47,7 @@ from domain.graph_contract import (
 )
 from domain.graph_entity_summary import normalize_entity_properties
 from domain.graph_views import GRAPH_VIEWS, view_spec, views_for_catalog
-from domain.ontology import EDGE_TYPES, ENTITY_TYPES
+from domain.ontology import EDGE_TYPES, ENTITY_TYPES, canonical_entity_labels
 from domain.ports.agent_context import (
     RecordReceipt,
     RecordRequest,
@@ -71,6 +71,9 @@ from domain.semantic_mutations import (
 )
 
 _COMMANDS = ("catalog", "read", "search-entities", "mutate")
+_KEY_PREFIX_TO_LABEL: dict[str, str] = {
+    spec.key_prefix: label for label, spec in ENTITY_TYPES.items()
+}
 
 
 @dataclass(slots=True)
@@ -218,6 +221,7 @@ class DefaultGraphService:
             until=request.until,
             max_items=request.limit,
             freshness_preference=request.freshness_preference,
+            include_invalidated=request.include_invalidated,
             depth=request.depth,
             direction=request.direction,
         )
@@ -274,7 +278,7 @@ class DefaultGraphService:
 
         candidates: list[GraphEntityCandidate] = []
         for key, bucket in agg.items():
-            labels = labels_map.get(key, ())
+            labels = _display_labels_for_entity(key, labels_map.get(key, ()))
             if request.type and request.type not in labels:
                 continue
             props = (
@@ -286,7 +290,7 @@ class DefaultGraphService:
             candidates.append(
                 GraphEntityCandidate(
                     key=key,
-                    labels=tuple(labels),
+                    labels=labels,
                     name=props.get("name") or _humanize(key),
                     summary=props.get("summary"),
                     description=props.get("description"),
@@ -664,6 +668,9 @@ def _relation_payload(
         "truth": payload.get("truth"),
         "environment": payload.get("environment"),
         "valid_at": payload.get("valid_at"),
+        "valid_until": payload.get("valid_until"),
+        "observed_at": payload.get("observed_at"),
+        "properties": dict(payload.get("properties") or {}),
         "evidence_strength": payload.get("evidence_strength"),
         "claim": {
             "candidate_key": item.candidate_key,
@@ -684,9 +691,21 @@ def _keep_best(
 
 def _safe_entity_labels(claim_query, *, pot_id: str, entity_keys: tuple[str, ...]):
     try:
-        return dict(claim_query.entity_labels(pot_id=pot_id, entity_keys=entity_keys))
+        raw = dict(claim_query.entity_labels(pot_id=pot_id, entity_keys=entity_keys))
     except CapabilityNotImplemented:
-        return {}
+        raw = {}
+    return {key: _display_labels_for_entity(key, raw.get(key, ())) for key in entity_keys}
+
+
+def _display_labels_for_entity(entity_key: str, labels: tuple[str, ...]) -> tuple[str, ...]:
+    prefix = entity_key.partition(":")[0]
+    prefix_label = _KEY_PREFIX_TO_LABEL.get(prefix)
+    if prefix_label:
+        return (prefix_label,)
+    canonical = tuple(label for label in canonical_entity_labels(labels) if label != "Entity")
+    if canonical:
+        return canonical
+    return tuple(label for label in labels if label != "Entity")
 
 
 def _str_or_none(value: Any) -> str | None:

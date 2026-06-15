@@ -375,6 +375,65 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         property_signatures=("http_method", "path"),
         text_patterns=(r"\bAPI\b", r"\bendpoint\b", r"\boperation\b"),
     ),
+    "Adapter": _e(
+        "Adapter",
+        "topology",
+        "A runtime or integration adapter selected by a service, often with "
+        "environment-specific bindings (graph backend, payment provider, auth provider).",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="adapter",
+        identity_policy="adapter:<domain>:<slug>",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        property_signatures=("adapter_kind", "provider"),
+        text_patterns=(r"\badapter\b", r"\bprovider\b", r"\bbackend\b"),
+    ),
+    "ConfigVariable": _e(
+        "ConfigVariable",
+        "topology",
+        "A named environment/config value that selects behavior for a service "
+        "or adapter.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="config",
+        identity_policy="config:<service-or-env>:<name>",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        property_signatures=("config_key", "env_var"),
+        text_patterns=(r"\bconfig\b", r"\benv var\b", r"\benvironment variable\b"),
+    ),
+    "DeploymentTarget": _e(
+        "DeploymentTarget",
+        "topology",
+        "A concrete deployment mechanism/target such as a Kubernetes workload, "
+        "container app, serverless function, or preview target.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="deployment_target",
+        identity_policy="deployment_target:<environment>:<slug>",
+        scope=True,
+        project_map_family="deployment_targets",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        property_signatures=("deployment_kind", "platform"),
+        text_patterns=(r"\bdeployment\b", r"\bworkload\b", r"\bserverless\b"),
+    ),
+    "CodeAsset": _e(
+        "CodeAsset",
+        "code",
+        "A repository code anchor: file, directory, module, class, function, "
+        "symbol, or generated-code unit. Used when project memory needs a "
+        "first-class code endpoint instead of a free-form path property.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="code",
+        identity_policy="code:<repo-or-service>:<path-or-symbol>",
+        fact_family="code",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        property_signatures=("file_path", "path", "symbol", "language"),
+        text_patterns=(r"\bfile\b", r"\bmodule\b", r"\bclass\b", r"\bfunction\b"),
+    ),
     # --- Product functionality ----------------------------------------------
     # ``Feature`` is the first-class answer to "what does this repo/service
     # do?". Harnesses assert features from authored evidence (README, docs,
@@ -636,6 +695,33 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         predicate_family="datastore_binding",
         source_inferred=("Service",),
     ),
+    "USES_ADAPTER": _x(
+        "USES_ADAPTER",
+        "A service selects or binds to a runtime/integration adapter. The edge "
+        "may be environment-qualified.",
+        [("Service", "Adapter")],
+        category="topology",
+        predicate_family="adapter_binding",
+        source_inferred=("Service",),
+        target_inferred=("Adapter",),
+    ),
+    "CONFIGURES": _x(
+        "CONFIGURES",
+        "A service or adapter is configured by a named config variable.",
+        [("Service", "ConfigVariable"), ("Adapter", "ConfigVariable")],
+        category="topology",
+        predicate_family="config_binding",
+        target_inferred=("ConfigVariable",),
+    ),
+    "DEPLOYED_WITH": _x(
+        "DEPLOYED_WITH",
+        "A service is deployed through a concrete deployment target/mechanism.",
+        [("Service", "DeploymentTarget")],
+        category="topology",
+        predicate_family="deployment_mechanism",
+        source_inferred=("Service",),
+        target_inferred=("DeploymentTarget",),
+    ),
     "EXPOSES": _x(
         "EXPOSES",
         "A service exposes an API operation (path + method) defined by an "
@@ -648,7 +734,7 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
     "HOSTED_ON": _x(
         "HOSTED_ON",
         "An environment runs on a cluster / platform.",
-        [("Environment", "Cluster")],
+        [("Environment", "Cluster"), ("DeploymentTarget", "Cluster")],
         category="topology",
         predicate_family="deployment_target",
         source_inferred=("Environment",),
@@ -707,8 +793,7 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
     ),
     "PERFORMED": _x(
         "PERFORMED",
-        "A person or team performed an activity. Direction: actor → activity, "
-        "matching ``timeline_plan.build_timeline_mutations``.",
+        "A person or team performed an activity. Direction: actor → activity.",
         [("Person", ACTIVITY_ENDPOINT), ("Team", ACTIVITY_ENDPOINT)],
         category="timeline",
         target_inferred=("Activity",),
@@ -1531,6 +1616,7 @@ PUBLIC_RECORD_TYPES: frozenset[str] = frozenset(
 # include" from "missing reader_include on a record type".
 STRUCTURAL_INCLUDES: frozenset[str] = frozenset(
     {
+        "features",
         "infra_topology",
         "timeline",
         "owners",

@@ -558,6 +558,8 @@ def _subgraph_for(op: SemanticMutation) -> str:
 
 # Predicate → subgraph (the named slice a claim belongs to).
 _MEMORY_PREDICATE_SUBGRAPH = {
+    "PROVIDES": "features",
+    "IMPLEMENTED_IN": "features",
     "POLICY_APPLIES_TO": "preferences",
     "REPRODUCES": "bugs",
     "RESOLVED": "bugs",

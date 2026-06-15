@@ -38,6 +38,7 @@ from domain.graph_contract import evidence_strength_for_truth
 from domain.ontology import (
     CANONICAL_EDGE_TYPES,
     ENTITY_TYPES,
+    canonical_entity_labels,
     is_canonical_entity_label,
 )
 from domain.retrieval_card import build_retrieval_card
@@ -301,6 +302,14 @@ async def upsert_entities_async(
                 a_summary=authored_summary,
                 a_description=authored_description,
             )
+            wanted_labels = set(canonical_entity_labels(item.labels))
+            if wanted_labels:
+                for stale in sorted(set(ENTITY_TYPES) - wanted_labels):
+                    await session.run(
+                        f"MATCH (e:Entity {{group_id: $gid, entity_key: $key}}) REMOVE e:{stale}",  # pyright: ignore[reportArgumentType]
+                        gid=pot_id,
+                        key=item.entity_key,
+                    )
             for lbl in item.labels:
                 if lbl == "Entity":
                     continue

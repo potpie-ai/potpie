@@ -8,7 +8,7 @@ description: "Use when the agent needs recent or historical change context: merg
 # Potpie Change Timeline
 
 Use this skill when debugging a regression, explaining what changed recently,
-reviewing a risky change, or ingesting source history from GitHub, Linear, Jira,
+reviewing a risky change, or ingesting source history from GitHub, tickets,
 docs, or links.
 
 ## Read First
@@ -59,16 +59,6 @@ update the graph.
 Change-history ingestion is timeline scope only. Do not use PR/issue history to
 infer a repo's baseline architecture — that is the separate `potpie-repo-baseline`
 procedure.
-
-Existing connector queue commands can be used when the product source is already
-connected:
-
-```bash
-potpie --json pot linear-team ingest ENG --pot <pot> --count 120
-potpie --json pot jira-project ingest PROJ --pot <pot> --count 120
-potpie --json pot linear-team diff-sync ENG --pot <pot> --since 2026-06-01T00:00:00Z
-potpie --json pot jira-project diff-sync PROJ --pot <pot> --since 2026-06-01T00:00:00Z
-```
 
 When the harness has already hydrated a repo link, PR, issue, document, or web
 page, write directly with `graph mutate`.

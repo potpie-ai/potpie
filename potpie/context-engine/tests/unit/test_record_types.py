@@ -18,8 +18,10 @@ from domain.agent_context_port import (
 )
 from domain.coherence import (
     OntologyCoherenceError,
+    assert_playbook_vocabulary_coherence,
     assert_runtime_coherence,
 )
+from domain.event_playbooks import EventPlaybook
 from domain.ontology import (
     EDGE_TYPES,
     ENTITY_TYPES,
@@ -137,3 +139,27 @@ def test_assert_runtime_coherence_rejects_extra_reader() -> None:
     extra = READER_BACKED_INCLUDES | {"surprise_reader"}
     with pytest.raises(OntologyCoherenceError):
         assert_runtime_coherence(reader_backed_includes=extra)
+
+
+def test_playbook_vocabulary_matches_ontology() -> None:
+    """Registered playbooks should not carry phantom labels or predicates."""
+    assert_playbook_vocabulary_coherence()
+
+
+def test_playbook_vocabulary_rejects_unknown_graph_terms() -> None:
+    playbook = EventPlaybook(
+        source_system="test",
+        event_type="thing",
+        action="happened",
+        summary="test playbook",
+        available_data="payload",
+        extract="Seed Module and DiagnosticSignal nodes; link them with DECIDES_FOR.",
+    )
+
+    with pytest.raises(OntologyCoherenceError) as exc:
+        assert_playbook_vocabulary_coherence(playbooks=[playbook])
+
+    message = str(exc.value)
+    assert "Module" in message
+    assert "DiagnosticSignal" in message
+    assert "DECIDES_FOR" in message

@@ -20,7 +20,11 @@ from typing import Any, Mapping
 
 from application.readers._common import ReadRequest
 from application.readers.coding_preferences import CodingPreferencesReader
+from application.readers.decisions import DecisionsReader
+from application.readers.docs import DocsReader
+from application.readers.features import FeaturesReader
 from application.readers.infra_topology import InfraTopologyReader
+from application.readers.owners import OwnersReader
 from application.readers.prior_bugs import PriorBugsReader
 from application.readers.raw_graph import RawGraphReader
 from application.readers.timeline_reader import TimelineReader
@@ -56,9 +60,13 @@ class ReadOrchestrator:
         # include family → reader. One reader can back multiple includes.
         self._routing = {
             "coding_preferences": CodingPreferencesReader(claim_query=cq, ranker=rk),
+            "features": FeaturesReader(claim_query=cq, ranker=rk),
             "infra_topology": InfraTopologyReader(claim_query=cq, ranker=rk),
             "timeline": TimelineReader(claim_query=cq, ranker=rk),
             "prior_bugs": PriorBugsReader(claim_query=cq, ranker=rk),
+            "decisions": DecisionsReader(claim_query=cq, ranker=rk),
+            "owners": OwnersReader(claim_query=cq, ranker=rk),
+            "docs": DocsReader(claim_query=cq, ranker=rk),
             # Visualization read: the whole canonical partition (all RELATES_TO,
             # incl. generic RELATED_TO) for the graph explorer — not a UC slice.
             "raw_graph": RawGraphReader(claim_query=cq, ranker=rk),

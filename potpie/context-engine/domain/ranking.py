@@ -20,8 +20,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Sequence
 
-from domain.belief import EvidenceStrength, decay_weight
-
 
 # Default weights. Semantic similarity is the **primary recall signal** (R1/R3):
 # it carries the highest weight because, with embed-on-write + ANN, it is the
@@ -296,11 +294,9 @@ def truncate(items: Sequence[RankedItem], *, max_items: int) -> list[RankedItem]
 
 __all__ = [
     "Candidate",
-    "EvidenceStrength",
     "RankedItem",
     "RankingService",
     "TaskContext",
     "candidate_from_edge_record",
-    "decay_weight",
     "truncate",
 ]

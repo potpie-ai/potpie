@@ -20,6 +20,9 @@ dependencies = [
     "potpie-observability[sentry]>=0.1.0,<0.2.0",
     # Default CLI backend is FalkorDBLite on Python 3.12+.
     "falkordblite>=0.10.0; python_version >= '3.12'",
+    # redis 8 enables maintenance notifications that break FalkorDBLite's
+    # hostless embedded connection; keep the bound wherever falkordblite ships.
+    "redis>=7.1,<8; python_version >= '3.12'",
 ]
 
 [project.optional-dependencies]

@@ -134,10 +134,6 @@ ticket, PR, issue, or web link, the harness reads the source, decides what durab
 facts exist, and writes graph mutations. Do not infer services, dependencies,
 features, or preferences from directory names or package files alone.
 
-Existing source queue commands such as `potpie pot linear-team ingest` and
-`potpie pot jira-project ingest` queue connector events. They are not working-tree
-scans.
-
 ## Responding To Nudges
 
 A hook may inject context or instructions from `potpie graph nudge`.

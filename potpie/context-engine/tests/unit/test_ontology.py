@@ -92,6 +92,10 @@ def test_catalog_contains_feature_entity() -> None:
     assert "Feature" in CANONICAL_LABELS
 
 
+def test_catalog_contains_code_asset_entity() -> None:
+    assert "CodeAsset" in CANONICAL_LABELS
+
+
 def test_feature_key_prefix_convention() -> None:
     from domain.ontology import entity_spec
 
@@ -115,10 +119,21 @@ def test_provides_allows_repo_and_service_to_feature() -> None:
 def test_implemented_in_allows_feature_to_repo_service_codeasset() -> None:
     assert "IMPLEMENTED_IN" in allowed_edge_types_between(("Feature",), ("Repository",))
     assert "IMPLEMENTED_IN" in allowed_edge_types_between(("Feature",), ("Service",))
+    assert "IMPLEMENTED_IN" in allowed_edge_types_between(("Feature",), ("CodeAsset",))
     assert "IMPLEMENTED_IN" in allowed_edge_types_between(("Feature",), ("FILE",))
     assert "IMPLEMENTED_IN" not in allowed_edge_types_between(
         ("Repository",), ("Feature",)
     )
+
+
+def test_catalog_contains_infra_adapter_config_entities() -> None:
+    for label in ("Adapter", "ConfigVariable", "DeploymentTarget"):
+        assert label in CANONICAL_LABELS
+
+
+def test_catalog_contains_infra_adapter_config_predicates() -> None:
+    for edge in ("USES_ADAPTER", "CONFIGURES", "DEPLOYED_WITH"):
+        assert edge in CANONICAL_EDGE_TYPES
 
 
 def test_validates_feature_provides_plan() -> None:

@@ -24,7 +24,7 @@ compiler.
 from __future__ import annotations
 
 import logging
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Protocol, Sequence
 
 from domain.context_events import ContextEvent
 from domain.ports.source_connector import SourceConnectorPort
@@ -116,9 +116,32 @@ class DeployStubConnector(_PassiveStubConnector):
     SOURCE_KIND = "deployment"
 
 
+class LinearStubConnector(_PassiveStubConnector):
+    # The real LinearConnector (webhook + fetcher consumption half) was
+    # removed without ever being registered; the bench corpus still replays
+    # linear raw-event fixtures, so the source_system keeps a passive stub.
+    KIND = "linear"
+    SOURCE_KIND = "issue"
+
+
+class _ConnectorRegistry(Protocol):
+    def register(self, connector: SourceConnectorPort) -> None: ...
+
+
+def register_bench_stubs(registry: _ConnectorRegistry) -> None:
+    """Register passive bench stubs for sources without production readers."""
+    registry.register(SlackStubConnector())
+    registry.register(RepoDocsStubConnector())
+    registry.register(AlertingStubConnector())
+    registry.register(DeployStubConnector())
+    registry.register(LinearStubConnector())
+
+
 __all__ = [
     "SlackStubConnector",
     "RepoDocsStubConnector",
     "AlertingStubConnector",
     "DeployStubConnector",
+    "LinearStubConnector",
+    "register_bench_stubs",
 ]
