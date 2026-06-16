@@ -569,6 +569,33 @@ def test_write_provider_credentials_rolls_back_keyring_token_on_metadata_failure
     assert ("potpie", "github_token") not in fake_keyring
 
 
+def test_write_provider_credentials_preserves_metadata_error_when_cleanup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    def _fail_metadata(_provider: str, _metadata: dict[str, object]) -> None:
+        raise OSError("metadata write failed")
+
+    def _fail_cleanup(_label: str, _secret_name: str) -> None:
+        raise cs.ProviderCredentialError("cleanup failed")
+
+    monkeypatch.setattr(cs, "write_integration_metadata", _fail_metadata)
+    monkeypatch.setattr(cs, "_delete_keychain_secret", _fail_cleanup)
+
+    with pytest.raises(OSError, match="metadata write failed"):
+        cs.write_provider_credentials(
+            "github",
+            {
+                "provider": "github",
+                "provider_host": "github.com",
+                "access_token": "plaintext-token",
+                "account": {"login": "octocat", "id": 1},
+            },
+        )
+
+
 def test_linux_integration_secrets_stored_in_json_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

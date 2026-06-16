@@ -478,14 +478,12 @@ def test_wait_for_enter_or_auto_open_uses_msvcrt_on_windows(
         return kbhit_calls["count"] == 1
 
     fake_msvcrt = types.SimpleNamespace(kbhit=_kbhit, getwch=lambda: "\r")
+    fake_select_module = types.SimpleNamespace(
+        select=lambda *_args, **_kwargs: pytest.fail("Windows path must not use select")
+    )
     monkeypatch.setattr(gh_cmds.sys, "platform", "win32")
     monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
-    monkeypatch.setattr(
-        gh_cmds,
-        "select",
-        "select",
-        lambda *_args, **_kwargs: pytest.fail("Windows path must not use select"),
-    )
+    monkeypatch.setattr(gh_cmds, "select", fake_select_module)
 
     gh_cmds._wait_for_enter_or_auto_open(seconds=10)
 
