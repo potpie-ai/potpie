@@ -96,6 +96,71 @@ def _end_relation_payload() -> dict:
     }
 
 
+def _patch_entity_payload() -> dict:
+    return {
+        "operations": [
+            {
+                "op": "patch_entity",
+                "subject": {"key": "service:payments-api", "type": "Service"},
+                "patch": {"summary": "Payments API service"},
+                "expected_entity_version": "entity-version:1",
+                "reason": "tighten display metadata",
+            }
+        ]
+    }
+
+
+def _transition_state_payload() -> dict:
+    return {
+        "operations": [
+            {
+                "op": "transition_state",
+                "subject": {"key": "decision:adr-1", "type": "Decision"},
+                "from_state": "proposed",
+                "to_state": "accepted",
+                "expected_entity_version": "entity-version:2",
+                "reason": "ADR approved by maintainers",
+                "observed_at": "2026-06-15T10:00:00+00:00",
+            }
+        ]
+    }
+
+
+def _supersede_claim_payload() -> dict:
+    return {
+        "operations": [
+            {
+                "op": "supersede_claim",
+                "subgraph": "infra_topology",
+                "subject": {"key": "service:payments-api", "type": "Service"},
+                "predicate": "DEPENDS_ON",
+                "object": {"key": "service:ledger-api", "type": "Service"},
+                "superseded_by": {"key": "service:ledger-v2", "type": "Service"},
+                "reason": "dependency target changed",
+                "description": "payments-api now depends on ledger-v2",
+            }
+        ]
+    }
+
+
+def _merge_duplicate_entities_payload() -> dict:
+    return {
+        "operations": [
+            {
+                "op": "merge_duplicate_entities",
+                "subject": {"key": "service:payments-api-v1", "type": "Service"},
+                "object": {"key": "service:payments-api", "type": "Service"},
+                "external_ids": {
+                    "losing": {"source": "manifest:payments-api-v1.yaml"},
+                    "winning": {"source": "manifest:payments-api.yaml"},
+                },
+                "reason": "manifests refer to the same deployable service",
+                "description": "payments-api-v1 is a duplicate identity for payments-api",
+            }
+        ]
+    }
+
+
 def test_propose_persists_plan_without_writing_graph_facts() -> None:
     workbench, backend, store = _service()
 
@@ -160,6 +225,133 @@ def test_medium_risk_plan_requires_approval_before_commit() -> None:
     assert approved.status == "committed"
     assert approved.approval is not None
     assert approved.approval.approved_by == "user:alice"
+
+
+def test_patch_entity_plan_requires_approval_then_updates_entity_metadata() -> None:
+    workbench, backend, _store = _service()
+    proposal = workbench.propose(_patch_entity_payload(), pot_id=POT)
+
+    assert proposal.ok is True
+    assert proposal.status == "review_required"
+    assert proposal.risk == "medium"
+    assert proposal.diff.entity_upserts == 1
+    blocked = workbench.commit(proposal.plan_id, pot_id=POT)
+    assert blocked.ok is False
+    assert "approval required" in (blocked.detail or "")
+
+    committed = workbench.commit(
+        proposal.plan_id,
+        pot_id=POT,
+        approved_by="user:alice",
+    )
+
+    assert committed.ok is True
+    props = backend.store.entity_properties(
+        pot_id=POT,
+        entity_key="service:payments-api",
+    )
+    assert props["summary"] == "Payments API service"
+    assert props["last_semantic_op"] == "patch_entity"
+    history = workbench.history(pot_id=POT, entity_key="service:payments-api")
+    assert any(entry.plan_id == proposal.plan_id for entry in history.entries)
+
+
+def test_transition_state_commits_entity_state_and_audit_claim() -> None:
+    workbench, backend, _store = _service()
+    proposal = workbench.propose(_transition_state_payload(), pot_id=POT)
+
+    assert proposal.ok is True
+    assert proposal.status == "review_required"
+    assert proposal.claim_keys
+    committed = workbench.commit(
+        proposal.plan_id,
+        pot_id=POT,
+        approved_by="user:alice",
+    )
+
+    assert committed.ok is True
+    props = backend.store.entity_properties(pot_id=POT, entity_key="decision:adr-1")
+    assert props["lifecycle_state"] == "accepted"
+    assert props["previous_lifecycle_state"] == "proposed"
+    rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
+    assert len(rows) == 1
+    assert rows[0].predicate == "MENTIONS"
+    assert rows[0].object_key == "decision:adr-1"
+    assert rows[0].truth == "timeline_event"
+    history = workbench.history(pot_id=POT, mutation_id=committed.mutation_id)
+    assert {entry.kind for entry in history.entries} == {"plan", "claim"}
+
+
+def test_supersede_claim_requires_approval_then_replaces_live_claim() -> None:
+    workbench, backend, _store = _service()
+    original = workbench.propose(_link_payload(), pot_id=POT)
+    workbench.commit(original.plan_id, pot_id=POT)
+
+    proposal = workbench.propose(_supersede_claim_payload(), pot_id=POT)
+
+    assert proposal.ok is True
+    assert proposal.status == "review_required"
+    assert proposal.risk == "high"
+    assert proposal.diff.edge_upserts == 1
+    assert proposal.diff.invalidations == 1
+    blocked = workbench.commit(proposal.plan_id, pot_id=POT)
+    assert blocked.ok is False
+    assert "approval required" in (blocked.detail or "")
+
+    committed = workbench.commit(
+        proposal.plan_id,
+        pot_id=POT,
+        approved_by="user:alice",
+    )
+
+    assert committed.ok is True
+    live_rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
+    assert len(live_rows) == 1
+    assert live_rows[0].predicate == "DEPENDS_ON"
+    assert live_rows[0].object_key == "service:ledger-v2"
+    all_rows = backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id=POT, include_invalidated=True)
+    )
+    assert len(all_rows) == 2
+    assert any(row.object_key == "service:ledger-api" and row.invalid_at for row in all_rows)
+    history = workbench.history(pot_id=POT, entity_key="service:ledger-api")
+    assert any(entry.plan_id == proposal.plan_id for entry in history.entries)
+
+
+def test_merge_duplicate_entities_requires_approval_and_writes_merge_record() -> None:
+    workbench, backend, _store = _service()
+    proposal = workbench.propose(_merge_duplicate_entities_payload(), pot_id=POT)
+
+    assert proposal.ok is True
+    assert proposal.status == "review_required"
+    assert proposal.risk == "high"
+    assert proposal.diff.edge_upserts == 1
+    assert proposal.diff.invalidations == 0
+    blocked = workbench.commit(proposal.plan_id, pot_id=POT)
+    assert blocked.ok is False
+    assert "approval required" in (blocked.detail or "")
+
+    committed = workbench.commit(
+        proposal.plan_id,
+        pot_id=POT,
+        approved_by="user:alice",
+    )
+
+    assert committed.ok is True
+    props = backend.store.entity_properties(
+        pot_id=POT,
+        entity_key="service:payments-api-v1",
+    )
+    assert props["merged_into"] == "service:payments-api"
+    assert props["merge_status"] == "merged_duplicate"
+    rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
+    assert len(rows) == 1
+    assert rows[0].predicate == "RELATED_TO"
+    assert rows[0].subject_key == "service:payments-api-v1"
+    assert rows[0].object_key == "service:payments-api"
+    assert rows[0].properties["merge_record"] is True
+    history = workbench.history(pot_id=POT, entity_key="service:payments-api-v1")
+    assert any(entry.plan_id == proposal.plan_id for entry in history.entries)
 
 
 def test_local_json_plan_store_round_trips_lowered_plan(tmp_path) -> None:

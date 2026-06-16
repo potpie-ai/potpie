@@ -89,6 +89,7 @@ def test_adapter_and_skill_files_exist() -> None:
         "potpie-change-timeline",
         "potpie-debug-memory",
         "potpie-source-ingestion",
+        "potpie-repo-baseline",
     ):
         assert (PLUGIN / "skills" / skill_id / "SKILL.md").is_file()
     assert (PLUGIN / "commands" / "potpie-feature.md").is_file()
@@ -109,3 +110,26 @@ def test_potpie_graph_skill_does_not_drift_across_bundles() -> None:
     ]
     bodies = {p.read_text(encoding="utf-8") for p in paths}
     assert len(bodies) == 1, "potpie-graph SKILL.md must be identical across all bundles"
+
+
+def test_shared_plugin_and_agent_skills_do_not_drift() -> None:
+    for skill_id in (
+        "potpie-change-timeline",
+        "potpie-debug-memory",
+        "potpie-infra-architecture",
+        "potpie-project-preferences",
+        "potpie-repo-baseline",
+        "potpie-source-ingestion",
+    ):
+        agent = (
+            TEMPLATES
+            / "agent_bundle"
+            / ".agents"
+            / "skills"
+            / skill_id
+            / "SKILL.md"
+        )
+        plugin = PLUGIN / "skills" / skill_id / "SKILL.md"
+        assert agent.read_text(encoding="utf-8") == plugin.read_text(encoding="utf-8"), (
+            f"{skill_id} SKILL.md must be identical in agent_bundle and claude_plugin"
+        )

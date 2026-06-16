@@ -84,12 +84,18 @@ def test_op_partitions_are_disjoint_and_complete() -> None:
     assert KNOWN_MUTATION_OPS == {op.value for op in SemanticMutationOp}
 
 
-def test_review_required_ops_are_the_two_dangerous_ones() -> None:
-    assert set(REVIEW_REQUIRED_OPS) == {"supersede_claim", "merge_duplicate_entities"}
+def test_review_required_ops_are_empty_after_phase_7b_promotion() -> None:
+    assert set(REVIEW_REQUIRED_OPS) == set()
 
 
-def test_deferred_ops_are_state_edits() -> None:
-    assert set(DEFERRED_OPS) == {"patch_entity", "transition_state"}
+def test_phase_7_correction_ops_are_applicable() -> None:
+    assert {
+        "patch_entity",
+        "transition_state",
+        "supersede_claim",
+        "merge_duplicate_entities",
+    } <= set(APPLICABLE_MUTATION_OPS)
+    assert set(DEFERRED_OPS) == set()
 
 
 def test_risk_tiers() -> None:

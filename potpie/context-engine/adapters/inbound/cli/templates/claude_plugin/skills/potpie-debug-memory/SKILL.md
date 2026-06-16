@@ -1,6 +1,6 @@
 ---
 name: "potpie-debug-memory"
-version: "3"
+version: "4"
 recommended: true
 description: "Use while debugging or troubleshooting so prior bugs, failed attempts, fixes, verifications, incidents, and dev setup gotchas surface before investigation."
 ---
@@ -10,9 +10,10 @@ description: "Use while debugging or troubleshooting so prior bugs, failed attem
 Use this skill when investigating failures, flaky tests, incidents, production
 alerts, local dev setup problems, CI failures, or recurring support issues.
 
-Debug memory is harness-led: you decide what was learned and write it through
-`context_record` / `graph mutate`; Potpie validates and stores. Nothing scans
-logs or the working tree into the graph deterministically.
+Debug memory is harness-led: you decide what was learned, create a validated
+plan with `graph propose`, and commit that plan with `graph commit`. Potpie
+validates and stores. Nothing scans logs or the working tree into the graph
+deterministically.
 
 ## Read First
 
@@ -20,7 +21,8 @@ Search by symptom, not just by component name:
 
 ```bash
 potpie --json graph read \
-  --view debugging.prior_occurrences \
+  --subgraph debugging \
+  --view prior_occurrences \
   --query "refund timeout deadlock concurrent settle retry flaky test" \
   --scope service:<service-name> \
   --limit 12
@@ -29,12 +31,12 @@ potpie --json graph read \
 Then correlate recent changes and topology:
 
 ```bash
-potpie --json timeline recent --time-window 7d --limit 20
-potpie --json timeline recent --service <service-name> --time-window 7d --limit 20
-potpie --json graph read --view infra_topology.service_neighborhood --scope service:<service-name> --depth 2 --direction both
+potpie --json graph read --subgraph recent_changes --view timeline --time-window 7d --limit 20
+potpie --json graph read --subgraph recent_changes --view timeline --scope service:<service-name> --time-window 7d --limit 20
+potpie --json graph read --subgraph infra_topology --view service_neighborhood --scope service:<service-name> --depth 2 --direction both
 ```
 
-MCP equivalent:
+MCP compatibility fallback when shell access is unavailable:
 
 ```json
 {"intent":"debugging","include":["prior_bugs","infra_topology","timeline"],"mode":"fast","source_policy":"references_only"}
@@ -57,7 +59,16 @@ Record after the investigation when the learning is reusable:
   exists yet.
 - `runbook_note` / `workflow`: repeatable troubleshooting steps.
 
-`context_record` examples:
+Write reusable debug memory through the V2 plan workflow:
+
+```bash
+potpie --json graph search-entities "<service or symptom>" --type Service --limit 10
+potpie --json graph propose --file mutation.json
+potpie --json graph commit <plan_id>
+potpie --json graph history --plan <plan_id>
+```
+
+If only MCP is configured, `context_record` can capture compact debug records:
 
 ```json
 {

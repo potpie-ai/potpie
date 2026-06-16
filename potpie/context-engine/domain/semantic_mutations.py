@@ -157,6 +157,15 @@ class SemanticMutation:
     reason: str | None = None
     superseded_by: GraphEntityRef | None = None
 
+    # patch_entity / transition_state
+    patch: Mapping[str, Any] = field(default_factory=dict)
+    expected_entity_version: str | None = None
+    from_state: str | None = None
+    to_state: str | None = None
+
+    # merge_duplicate_entities
+    external_ids: Mapping[str, Any] = field(default_factory=dict)
+
     # append_event
     verb: str | None = None
     occurred_at: str | None = None
@@ -182,6 +191,24 @@ class SemanticMutation:
         evidence = tuple(
             GraphEvidenceRef.parse(e) for e in _as_list(raw.get("evidence"))
         )
+        patch = _parse_mapping(
+            raw.get("patch")
+            if "patch" in raw
+            else raw.get("properties")
+            if op == "patch_entity" and "properties" in raw
+            else raw.get("changes")
+            if "changes" in raw
+            else None,
+            field_name="patch",
+        )
+        external_ids = _parse_mapping(
+            raw.get("external_ids")
+            if "external_ids" in raw
+            else raw.get("identity_records")
+            if "identity_records" in raw
+            else None,
+            field_name="external_ids",
+        )
         return cls(
             op=op,
             subgraph=_opt_str(raw.get("subgraph")),
@@ -199,6 +226,17 @@ class SemanticMutation:
             observed_at=_opt_str(raw.get("observed_at")),
             reason=_opt_str(raw.get("reason")),
             superseded_by=GraphEntityRef.parse(raw.get("superseded_by")),
+            patch=patch,
+            expected_entity_version=_opt_str(
+                raw.get("expected_entity_version")
+                or raw.get("expected_version")
+                or raw.get("entity_version")
+            ),
+            from_state=_opt_str(raw.get("from_state") or raw.get("expected_state")),
+            to_state=_opt_str(
+                raw.get("to_state") or raw.get("state") or raw.get("lifecycle_state")
+            ),
+            external_ids=external_ids,
             verb=_opt_str(raw.get("verb") or raw.get("verb_class")),
             occurred_at=_opt_str(raw.get("occurred_at")),
             actor=GraphEntityRef.parse(raw.get("actor")),
@@ -428,6 +466,14 @@ def _parse_entity_refs(value: Any) -> tuple[GraphEntityRef, ...]:
         if ref is not None:
             out.append(ref)
     return tuple(out)
+
+
+def _parse_mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise SemanticMutationParseError(f"'{field_name}' must be an object")
+    return dict(value)
 
 
 def _opt_str(value: Any) -> str | None:

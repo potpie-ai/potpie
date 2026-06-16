@@ -13,6 +13,8 @@ It produces no ``EventRef`` for non-event writes — provenance flows through
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from domain.graph_contract import (
@@ -124,6 +126,30 @@ def _lower_op(
     ):
         _lower_retract(op, batch=batch)
         return []
+    if name == SemanticMutationOp.supersede_claim.value:
+        return _lower_supersede_claim(
+            op,
+            request=request,
+            batch=batch,
+            entity_by_key=entity_by_key,
+        )
+    if name == SemanticMutationOp.merge_duplicate_entities.value:
+        return _lower_merge_duplicate_entities(
+            op,
+            request=request,
+            batch=batch,
+            entity_by_key=entity_by_key,
+        )
+    if name == SemanticMutationOp.patch_entity.value:
+        _lower_patch_entity(op, entity_by_key=entity_by_key)
+        return []
+    if name == SemanticMutationOp.transition_state.value:
+        return _lower_transition_state(
+            op,
+            request=request,
+            batch=batch,
+            entity_by_key=entity_by_key,
+        )
     return []
 
 
@@ -296,6 +322,263 @@ def _lower_retract(op: SemanticMutation, *, batch: MutationBatch) -> None:
                 valid_to=valid_to,
             )
         )
+
+
+def _lower_supersede_claim(
+    op: SemanticMutation,
+    *,
+    request: SemanticMutationRequest,
+    batch: MutationBatch,
+    entity_by_key: dict[str, EntityUpsert],
+) -> list[str]:
+    if op.subject is None or op.object is None or op.superseded_by is None or not op.predicate:
+        return []
+
+    predicate = op.predicate.strip().upper()
+    replacement_op = replace(
+        op,
+        op=SemanticMutationOp.assert_claim.value,
+        object=op.superseded_by,
+        superseded_by=None,
+    )
+    claim_keys = _lower_claim(
+        replacement_op,
+        request=request,
+        batch=batch,
+        entity_by_key=entity_by_key,
+    )
+    reason = op.reason or "claim superseded via semantic mutation"
+    old_subject_key = normalize_entity_key(op.subject.key)
+    old_object_key = normalize_entity_key(op.object.key)
+    replacement_key = normalize_entity_key(op.superseded_by.key)
+    for edge in batch.edge_upserts:
+        if edge.properties.get("claim_key") in claim_keys:
+            edge.properties.update(
+                {
+                    "last_semantic_op": SemanticMutationOp.supersede_claim.value,
+                    "correction_reason": reason,
+                    "supersedes_predicate": predicate,
+                    "supersedes_subject_key": old_subject_key,
+                    "supersedes_object_key": old_object_key,
+                }
+            )
+    batch.invalidations.append(
+        InvalidationOp(
+            target_entity_key=None,
+            target_edge=(predicate, old_subject_key, old_object_key),
+            reason=reason,
+            superseded_by_key=replacement_key,
+            valid_to=op.valid_until or _now_iso(),
+        )
+    )
+    return claim_keys
+
+
+def _lower_merge_duplicate_entities(
+    op: SemanticMutation,
+    *,
+    request: SemanticMutationRequest,
+    batch: MutationBatch,
+    entity_by_key: dict[str, EntityUpsert],
+) -> list[str]:
+    if op.subject is None or op.object is None:
+        return []
+
+    winning_key = normalize_entity_key(op.object.key)
+    reason = op.reason or "duplicate entity merge"
+    occurred_at = op.observed_at or _now_iso()
+    external_ids = _merge_external_ids(op)
+    losing = _ensure_entity(
+        GraphEntityRef(
+            key=op.subject.key,
+            type=op.subject.type,
+            properties={
+                "merged_into": winning_key,
+                "merge_status": "merged_duplicate",
+                "merge_reason": reason,
+                "merge_recorded_at": occurred_at,
+                "merge_external_ids": external_ids,
+                "last_semantic_op": SemanticMutationOp.merge_duplicate_entities.value,
+            },
+        ),
+        entity_by_key,
+        default_label=op.subject.type or "Observation",
+    )
+    winning = _ensure_entity(
+        op.object,
+        entity_by_key,
+        default_label=op.object.type or "Observation",
+    )
+
+    predicate = "RELATED_TO"
+    subgraph = op.subgraph or _subgraph_for_entity(op.subject)
+    description = (
+        op.description
+        or f"{losing.entity_key} was merged into {winning.entity_key}: {reason}"
+    )
+    claim_key = make_claim_key(
+        pot_id=request.pot_id,
+        subgraph=subgraph,
+        subject_key=losing.entity_key,
+        predicate=predicate,
+        object_component=winning.entity_key,
+        discriminator=_discriminator(op, request) or reason,
+        environment=op.environment,
+    )
+    props = _claim_properties(
+        op,
+        request=request,
+        subgraph=subgraph,
+        claim_key=claim_key,
+        subject_key=losing.entity_key,
+        object_key=winning.entity_key,
+        predicate=predicate,
+    )
+    props.update(
+        {
+            "fact": description,
+            "description": description,
+            "last_semantic_op": SemanticMutationOp.merge_duplicate_entities.value,
+            "merge_record": True,
+            "merge_loser_key": losing.entity_key,
+            "merge_winner_key": winning.entity_key,
+            "merge_external_ids": external_ids,
+            "correction_reason": reason,
+            "occurred_at": occurred_at,
+        }
+    )
+    batch.edge_upserts.append(
+        EdgeUpsert(
+            edge_type=predicate,
+            from_entity_key=losing.entity_key,
+            to_entity_key=winning.entity_key,
+            properties=props,
+        )
+    )
+    return [claim_key]
+
+
+def _lower_patch_entity(
+    op: SemanticMutation,
+    *,
+    entity_by_key: dict[str, EntityUpsert],
+) -> None:
+    if op.subject is None:
+        return
+    props = dict(op.patch)
+    if op.reason:
+        props["last_patch_reason"] = op.reason
+    if op.expected_entity_version:
+        props["expected_entity_version"] = op.expected_entity_version
+    props["last_semantic_op"] = SemanticMutationOp.patch_entity.value
+    _ensure_entity(
+        GraphEntityRef(
+            key=op.subject.key,
+            type=op.subject.type,
+            properties=props,
+        ),
+        entity_by_key,
+        default_label=op.subject.type or "Observation",
+    )
+
+
+def _lower_transition_state(
+    op: SemanticMutation,
+    *,
+    request: SemanticMutationRequest,
+    batch: MutationBatch,
+    entity_by_key: dict[str, EntityUpsert],
+) -> list[str]:
+    if op.subject is None or not (op.from_state and op.to_state):
+        return []
+
+    occurred_at = op.observed_at or _now_iso()
+    transition_props = {
+        "lifecycle_state": op.to_state,
+        "previous_lifecycle_state": op.from_state,
+        "state_transition_reason": op.reason or "",
+        "state_transition_at": occurred_at,
+        "last_semantic_op": SemanticMutationOp.transition_state.value,
+    }
+    if op.expected_entity_version:
+        transition_props["expected_entity_version"] = op.expected_entity_version
+    target = _ensure_entity(
+        GraphEntityRef(
+            key=op.subject.key,
+            type=op.subject.type,
+            properties=transition_props,
+        ),
+        entity_by_key,
+        default_label=op.subject.type or "Observation",
+    )
+    description = (
+        op.description
+        or f"{target.entity_key} transitioned from {op.from_state} to {op.to_state}: "
+        f"{op.reason or 'state transition'}"
+    )
+    activity_key = normalize_entity_key(
+        "activity:"
+        + _short(
+            "transition_state:"
+            f"{target.entity_key}:{op.from_state}:{op.to_state}:"
+            f"{request.idempotency_key or op.reason or description}"
+        )
+    )
+    activity = _ensure_entity(
+        GraphEntityRef(
+            key=activity_key,
+            type="Activity",
+            properties={
+                "verb_class": SemanticMutationOp.transition_state.value,
+                "occurred_at": occurred_at,
+            },
+            description=description,
+        ),
+        entity_by_key,
+        default_label="Activity",
+    )
+
+    predicate = "MENTIONS"
+    subgraph = op.subgraph or "recent_changes"
+    claim_key = make_claim_key(
+        pot_id=request.pot_id,
+        subgraph=subgraph,
+        subject_key=activity.entity_key,
+        predicate=predicate,
+        object_component=target.entity_key,
+        discriminator=_discriminator(op, request),
+        environment=op.environment,
+    )
+    props = _claim_properties(
+        op,
+        request=request,
+        subgraph=subgraph,
+        claim_key=claim_key,
+        subject_key=activity.entity_key,
+        object_key=target.entity_key,
+        predicate=predicate,
+        truth_override=_EVENT_TRUTH,
+    )
+    props.update(
+        {
+            "fact": description,
+            "description": description,
+            "verb_class": SemanticMutationOp.transition_state.value,
+            "occurred_at": occurred_at,
+            "state_transition_from": op.from_state,
+            "state_transition_to": op.to_state,
+            "state_transition_reason": op.reason or "",
+        }
+    )
+    batch.edge_upserts.append(
+        EdgeUpsert(
+            edge_type=predicate,
+            from_entity_key=activity.entity_key,
+            to_entity_key=target.entity_key,
+            properties=props,
+        )
+    )
+    return [claim_key]
 
 
 # ---------------------------------------------------------------------------
@@ -544,6 +827,21 @@ def _subgraph_for_predicate(predicate: str) -> str:
     if spec is not None:
         return _CATEGORY_SUBGRAPH.get(spec.category, "memory")
     return "memory"
+
+
+def _subgraph_for_entity(ref: GraphEntityRef | None) -> str:
+    label = _label_for(ref, "Observation") if ref is not None else "Observation"
+    spec = ENTITY_TYPES.get(label)
+    if spec is None:
+        return "admin"
+    return _CATEGORY_SUBGRAPH.get(spec.category, "memory")
+
+
+def _merge_external_ids(op: SemanticMutation) -> dict[str, object]:
+    if op.external_ids:
+        return dict(op.external_ids)
+    raw = op.extra.get("external_ids") if isinstance(op.extra, Mapping) else None
+    return dict(raw) if isinstance(raw, Mapping) else {}
 
 
 def _short(text: str, *, length: int = 12) -> str:

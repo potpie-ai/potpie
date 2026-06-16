@@ -469,6 +469,7 @@ def maybe_prompt_github_login(
 
 def _register_repo_source(*, repo: str) -> str:
     from adapters.inbound.cli.commands._common import get_host
+    from adapters.inbound.cli.repo_location import resolve_repo_location
 
     started_ms = now_ms()
     capture_project_binding_event(
@@ -493,8 +494,9 @@ def _register_repo_source(*, repo: str) -> str:
             properties={"step_state": "skipped", "duration_ms": elapsed_ms(started_ms)},
         )
         return "skipped"
+    resolved_repo = resolve_repo_location(repo)
     try:
-        host.pots.add_source(pot_id=active.pot_id, kind="repo", location=repo)
+        host.pots.add_source(pot_id=active.pot_id, kind="repo", location=resolved_repo)
     except Exception as exc:  # noqa: BLE001
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_failed",

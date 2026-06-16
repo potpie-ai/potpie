@@ -56,12 +56,16 @@ def test_catalog_op_partitions_are_honest(service) -> None:
     # Only applicable ops are advertised as mutation_operations.
     assert "link_entities" in cat["mutation_operations"]
     assert "assert_claim" in cat["mutation_operations"]
-    # supersede/merge are review_required, NOT applicable.
-    assert "supersede_claim" in cat["review_required_operations"]
-    assert "supersede_claim" not in cat["mutation_operations"]
-    # patch/transition are deferred to V2, surfaced honestly.
-    assert "patch_entity" in cat["deferred_operations"]
-    assert "patch_entity" not in cat["mutation_operations"]
+    # 7B high-risk corrections are applicable through plan/commit approval.
+    assert "supersede_claim" in cat["mutation_operations"]
+    assert "merge_duplicate_entities" in cat["mutation_operations"]
+    assert "supersede_claim" not in cat["review_required_operations"]
+    assert "merge_duplicate_entities" not in cat["review_required_operations"]
+    # Phase 7A entity correction ops are applicable through plan/commit gating.
+    assert "patch_entity" in cat["mutation_operations"]
+    assert "transition_state" in cat["mutation_operations"]
+    assert "patch_entity" not in cat["deferred_operations"]
+    assert "transition_state" not in cat["deferred_operations"]
 
 
 def test_catalog_shows_backed_and_planned_views(service) -> None:

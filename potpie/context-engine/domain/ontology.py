@@ -48,7 +48,7 @@ Design pillars:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Iterable
 
@@ -137,6 +137,10 @@ class EntityTypeSpec:
 
     required_properties: frozenset[str] = frozenset()
     lifecycle_states: frozenset[str] = frozenset()
+    lifecycle_transitions: dict[str, frozenset[str]] = field(default_factory=dict)
+    patchable_properties: frozenset[str] = frozenset(
+        {"name", "summary", "description", "title"}
+    )
     public: bool = True
 
     # --- Structural traits ---------------------------------------------------
@@ -234,6 +238,10 @@ def _e(
     """
     required = kwargs.pop("required", ())
     lifecycle = kwargs.pop("lifecycle", frozenset())
+    lifecycle_transitions = kwargs.pop("lifecycle_transitions", {})
+    patchable = kwargs.pop(
+        "patchable", ("name", "summary", "description", "title")
+    )
     if identity_policy is None:
         suffix = {
             IdentityClass.SLUG_ALIAS: "<slug>",
@@ -251,6 +259,11 @@ def _e(
         authoritative_source=authoritative_source,
         required_properties=frozenset(required),
         lifecycle_states=frozenset(lifecycle),
+        lifecycle_transitions={
+            str(source): frozenset(str(target) for target in targets)
+            for source, targets in dict(lifecycle_transitions).items()
+        },
+        patchable_properties=frozenset(str(item) for item in patchable),
         **kwargs,
     )
 
@@ -548,6 +561,10 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         source_of_truth=SOT_MEMORY,
         freshness_ttl_hours=12 * WEEK,
         lifecycle=("proposed", "active", "deprecated"),
+        lifecycle_transitions={
+            "proposed": ("active", "deprecated"),
+            "active": ("deprecated",),
+        },
     ),
     "BugPattern": _e(
         "BugPattern",
@@ -586,6 +603,11 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         source_of_truth=SOT_MEMORY,
         freshness_ttl_hours=24 * WEEK,
         lifecycle=("proposed", "accepted", "superseded", "deprecated", "rejected"),
+        lifecycle_transitions={
+            "proposed": ("accepted", "rejected"),
+            "accepted": ("superseded", "deprecated"),
+            "superseded": ("deprecated",),
+        },
         text_patterns=(r"\bdecision\b", r"\b(ADR|architecture decision)\b"),
         property_signatures=("rationale", "alternatives_rejected"),
     ),

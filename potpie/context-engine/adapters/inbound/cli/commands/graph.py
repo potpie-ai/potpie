@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 from contextlib import contextmanager
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
@@ -17,6 +18,7 @@ from typing import Any
 
 import typer
 
+from bootstrap.observability_runtime import get_observability
 from application.services.graph_workbench import (
     graph_error_envelope,
     graph_not_implemented_envelope,
@@ -44,6 +46,7 @@ from domain.graph_workbench import (
     GraphUnsupported,
     GraphWorkbenchStatus,
 )
+from domain.ports.observability import SPAN_KIND_INTERNAL
 from domain.graph_workbench_ontology import describe_contract
 from domain.nudge import NUDGE_EVENT_HELP
 
@@ -63,6 +66,9 @@ class _GraphCliCommandContext:
         self.request_id = new_graph_request_id()
         self.pot_id: str | None = None
         self.subgraph_versions: dict[str, int] = {}
+        self.telemetry_result = "ok"
+        self.telemetry_error_code = "none"
+        self.telemetry_attributes: dict[str, str] = {}
 
     def set_pot_id(self, pot_id: str | None) -> None:
         self.pot_id = pot_id
@@ -79,24 +85,176 @@ class _GraphCliCommandContext:
         self.subgraph_versions = clean
 
     def format_error(self, payload: dict[str, Any]) -> dict[str, Any]:
+        code = str(payload.get("code") or "error")
+        self.mark_result(result=code, error_code=code)
         return graph_error_envelope(
             command=self.command,
             request_id=self.request_id,
             pot_id=self.pot_id,
-            code=str(payload.get("code") or "error"),
+            code=code,
             message=str(payload.get("message") or "Graph command failed."),
             detail=payload.get("detail"),
             subgraph_versions=self.subgraph_versions,
             recommended_next_action=payload.get("recommended_next_action"),
         ).to_dict()
 
+    def mark_result(
+        self,
+        *,
+        result: str,
+        error_code: str = "none",
+        attributes: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.telemetry_result = result
+        self.telemetry_error_code = error_code
+        if attributes:
+            for key, value in attributes.items():
+                if value is None:
+                    continue
+                self.telemetry_attributes[str(key)] = str(value)
+
 
 @contextmanager
 def _graph_command(command: str):
     ctx = _GraphCliCommandContext(command)
-    with json_error_formatter(ctx.format_error):
-        with contract():
-            yield ctx
+    obs = get_observability()
+    span_name, base_attrs = _graph_telemetry_shape(command)
+    started_at = time.perf_counter()
+    with obs.span(
+        span_name,
+        kind=SPAN_KIND_INTERNAL,
+        attributes={
+            **base_attrs,
+            "command": command,
+            "request_id": ctx.request_id,
+        },
+    ) as span:
+        try:
+            with json_error_formatter(ctx.format_error):
+                with contract():
+                    yield ctx
+        except BaseException as exc:
+            if ctx.telemetry_error_code == "none":
+                if isinstance(exc, typer.Exit):
+                    result = "ok" if (exc.exit_code in (None, 0)) else "exit"
+                    ctx.mark_result(result=result, error_code="exit")
+                else:
+                    ctx.mark_result(
+                        result="unexpected",
+                        error_code=exc.__class__.__name__,
+                    )
+                    span.record_exception(exc)
+                    span.set_error(repr(exc))
+            raise
+        finally:
+            duration_ms = max((time.perf_counter() - started_at) * 1000.0, 0.0)
+            attrs = {
+                **base_attrs,
+                **ctx.telemetry_attributes,
+                "command": command,
+                "request_id": ctx.request_id,
+                "result": ctx.telemetry_result,
+                "error_code": ctx.telemetry_error_code,
+            }
+            if ctx.pot_id:
+                attrs["pot_id"] = ctx.pot_id
+            span.set_attributes(attrs)
+            if ctx.telemetry_error_code != "none":
+                span.set_error(ctx.telemetry_error_code)
+            _record_graph_command_telemetry(
+                obs,
+                command=command,
+                duration_ms=duration_ms,
+                attributes=attrs,
+            )
+
+
+def _graph_telemetry_shape(command: str) -> tuple[str, dict[str, str]]:
+    raw = command.removeprefix("graph.").replace("-", "_")
+    parts = raw.split(".")
+    if not parts:
+        return "graph.unknown", {}
+    if parts[0] == "inbox":
+        attrs = {"operation": parts[1] if len(parts) > 1 else "unknown"}
+        return "graph.inbox", attrs
+    if parts[0] == "quality":
+        attrs = {"report": parts[1] if len(parts) > 1 else "summary"}
+        return "graph.quality", attrs
+    return f"graph.{parts[0]}", {}
+
+
+def _record_graph_command_telemetry(
+    obs,
+    *,
+    command: str,
+    duration_ms: float,
+    attributes: Mapping[str, str],
+) -> None:
+    _span_name, base_attrs = _graph_telemetry_shape(command)
+    raw = command.removeprefix("graph.").replace("-", "_")
+    root = raw.split(".", 1)[0] if raw else "unknown"
+    metric_root = root
+    metric_attrs = dict(base_attrs)
+    metric_attrs.update(
+        {
+            key: value
+            for key, value in attributes.items()
+            if key
+            in {
+                "result",
+                "error_code",
+                "pot_id",
+                "subgraph",
+                "view",
+                "risk",
+                "status",
+                "operation",
+                "report",
+                "backend_profile",
+                "match_mode",
+            }
+        }
+    )
+    try:
+        obs.counter(f"ce.graph.{metric_root}_total", 1, attributes=metric_attrs)
+        obs.histogram(
+            f"ce.graph.{metric_root}_ms",
+            duration_ms,
+            attributes=metric_attrs,
+        )
+    except Exception:  # noqa: BLE001 - observability must never fail a command
+        pass
+
+
+def _graph_telemetry_attributes(result: Mapping[str, Any]) -> dict[str, str]:
+    attrs: dict[str, str] = {}
+    for key in (
+        "subgraph",
+        "view",
+        "risk",
+        "status",
+        "report",
+        "action",
+        "backend_profile",
+        "match_mode",
+    ):
+        value = result.get(key)
+        if value is not None:
+            target = "operation" if key == "action" else key
+            attrs[target] = str(value)
+    backend = result.get("backend")
+    if isinstance(backend, Mapping):
+        if backend.get("profile") is not None:
+            attrs["backend_profile"] = str(backend["profile"])
+        if backend.get("ready") is not None:
+            attrs["backend_ready"] = str(bool(backend["ready"])).lower()
+    graph_service = result.get("graph_service")
+    if (
+        isinstance(graph_service, Mapping)
+        and graph_service.get("match_mode") is not None
+    ):
+        attrs["match_mode"] = str(graph_service["match_mode"])
+    return attrs
 
 
 def _emit_graph_result(
@@ -115,6 +273,16 @@ def _emit_graph_result(
         ctx.set_subgraph_versions(versions)
     merged_warnings = tuple(warnings) + payload_warnings
     merged_unsupported = tuple(unsupported) + payload_unsupported
+    result_label = "ok"
+    error_code = "none"
+    if payload.get("ok", True) is False:
+        result_label = str(payload.get("status") or _error_code_from_result(payload))
+        error_code = _error_code_from_result(payload)
+    ctx.mark_result(
+        result=result_label,
+        error_code=error_code,
+        attributes=_graph_telemetry_attributes(result),
+    )
 
     if payload.get("ok", True) is False:
         env = graph_error_envelope(
@@ -871,7 +1039,7 @@ def graph_mutation_template(
         help=f"template kind: {' | '.join(sorted(_MUTATION_TEMPLATES))}",
     ),
 ) -> None:
-    """Print a schema-only mutation skeleton for `graph mutate`.
+    """Print a schema-only mutation skeleton for `graph propose`.
 
     Pure schema helper: emits placeholders for the harness to fill from
     sources it has actually read. It never inspects the repository or infers
@@ -967,10 +1135,17 @@ def graph_status(pot: str = typer.Option(None, "--pot")) -> None:
         versions = {"_global": int(dict(dp.counts).get("claims", 0))}
         ctx.set_subgraph_versions(versions)
         payload = _graph_status_payload(host, pot_id, dp)
+        recommended = None
+        if not dp.backend_ready:
+            recommended = (
+                "Run `potpie backend doctor` to inspect graph backend readiness "
+                "and capability-specific failures."
+            )
         _emit_graph_result(
             ctx,
             payload,
             human=f"backend={dp.backend_profile} ready={dp.backend_ready} counts={dict(dp.counts)}",
+            recommended_next_action=recommended,
         )
 
 
@@ -988,13 +1163,15 @@ def graph_describe(
             view=view,
             include_examples=examples,
         )
-        described = payload["view"]["name"] if view else payload["subgraph"]["name"]
+        subgraph_name = payload["subgraph"]["name"]
+        described = payload["view"]["name"] if view else subgraph_name
+        described_view = described.split(".", 1)[1] if "." in described else described
         _emit_graph_result(
             ctx,
             payload,
             human=_describe_human(payload),
             recommended_next_action=(
-                f"Use `potpie graph read --view {described} --json` after choosing a scope."
+                f"Use `potpie graph read --subgraph {subgraph_name} --view {described_view} --json` after choosing a scope."
                 if view
                 else "Use `potpie graph describe <subgraph> --view <view> --json` for one backed view."
             ),
@@ -1647,6 +1824,13 @@ def _graph_status_payload(host: Any, pot_id: str, dp) -> dict[str, Any]:
             "profile": dp.backend_profile,
             "ready": dp.backend_ready,
             "detail": dp.detail,
+            "readiness_command": "potpie backend doctor",
+            "recommended_next_action": (
+                "Run `potpie backend doctor` to inspect graph backend readiness "
+                "and capability-specific failures."
+            )
+            if not dp.backend_ready
+            else None,
             "implemented_capabilities": implemented,
             "counts": dict(dp.counts),
             "freshness": dict(dp.freshness),

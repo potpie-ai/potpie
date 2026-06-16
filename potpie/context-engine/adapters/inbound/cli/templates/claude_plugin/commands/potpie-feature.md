@@ -5,9 +5,11 @@ deployment, adapters, or runtime behavior.
 If the `potpie` CLI is available, read the graph directly:
 
 ```bash
-potpie --json graph read --view decisions.preferences_for_scope --scope repo:<owner/repo>
-potpie --json graph read --view decisions.active_decisions --scope repo:<owner/repo>
-potpie --json graph read --view infra_topology.service_neighborhood --scope service:<name> --depth 2
+potpie --json graph catalog --task "feature work in repo:<owner/repo>"
+potpie --json graph describe decisions --view preferences_for_scope --examples
+potpie --json graph read --subgraph decisions --view preferences_for_scope --scope repo:<owner/repo>
+potpie --json graph read --subgraph decisions --view active_decisions --scope repo:<owner/repo>
+potpie --json graph read --subgraph infra_topology --view service_neighborhood --scope service:<name> --depth 2
 ```
 
 Otherwise, run `context_resolve` with this recipe (MCP):

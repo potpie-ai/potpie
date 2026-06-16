@@ -1,6 +1,6 @@
 ---
 name: "potpie-cli-troubleshooting"
-version: "1"
+version: "2"
 recommended: true
 description: "Use when the Potpie CLI is failing, especially around API key, URL config, 401, 404, pot scope, graph reads, graph mutations, or connector source queues."
 ---
@@ -62,9 +62,9 @@ potpie search <uuid> "my query"
 Context graph may be disabled on the host. Check server logs.
 
 **`invalid_mutation_payload` or validation errors**
-Run the same mutation through dry-run and read the reported issue codes:
+Run the same mutation through `graph propose` and read the reported issue codes:
 ```bash
-potpie --json graph mutate --file mutation.json --dry-run
+potpie --json graph propose --file mutation.json
 ```
 Fix unknown entity labels, predicates, missing descriptions, missing evidence for
 high-authority truth classes, or duplicate entity keys before applying.

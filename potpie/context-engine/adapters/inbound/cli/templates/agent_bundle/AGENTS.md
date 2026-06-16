@@ -13,7 +13,8 @@ for you.
 ```bash
 potpie doctor
 potpie pot list
-potpie graph catalog
+potpie graph status
+potpie graph catalog --task "<task>"
 ```
 
 ## Surfaces
@@ -21,11 +22,14 @@ potpie graph catalog
 Prefer the graph CLI when shell is available:
 
 ```bash
-potpie --json graph catalog
-potpie --json graph read --view <subgraph.view> [--query "..."] [--scope key:value] [--limit N]
-potpie --json timeline recent [--time-window 7d] [--limit N]
+potpie --json graph status
+potpie --json graph catalog --task "<task>"
+potpie --json graph describe <subgraph> --view <view> --examples
+potpie --json graph read --subgraph <subgraph> --view <view> [--query "..."] [--scope key:value] [--limit N]
 potpie --json graph search-entities "text" [--type Service] [--predicate DEPENDS_ON] [--environment prod] [--limit N]
-potpie --json graph mutate --file mutation.json [--dry-run] [--allow-review-required --approved-by user:you]
+potpie --json graph propose --file mutation.json
+potpie --json graph commit <plan_id>
+potpie --json graph history --plan <plan_id>
 ```
 
 When only MCP is configured, use the compatibility tools:
@@ -36,8 +40,9 @@ When only MCP is configured, use the compatibility tools:
 - `context_record` - durable preferences, fixes, decisions, workflows, docs, and
   incident notes.
 
-Do not add one tool per context type. Express reads as `graph read --view` or as a
-`context_resolve` recipe.
+Do not add one tool per context type. Express reads as
+`graph read --subgraph <subgraph> --view <view>` or as a `context_resolve`
+recipe.
 
 ## Views
 
@@ -45,7 +50,7 @@ Do not add one tool per context type. Express reads as `graph read --view` or as
 |---|---|
 | `decisions.preferences_for_scope` | project/repo/path preferences for code work |
 | `infra_topology.service_neighborhood` | env-qualified dependencies and blast radius |
-| `recent_changes.timeline` | project-wide PRs, tickets, docs, incidents, deployments; use `potpie timeline recent` |
+| `recent_changes.timeline` | project-wide PRs, tickets, docs, incidents, deployments |
 | `debugging.prior_occurrences` | prior symptoms, fixes, failed attempts |
 | `decisions.active_decisions` | active architectural/product decisions |
 | `code_topology.ownership_by_path` | owners for a scope |
@@ -94,9 +99,18 @@ Two rules carry most of the value:
    environment, service, files, commands, and source refs a future searcher would
    type.
 
-Use semantic operations only: `upsert_entity`, `link_entities`, `assert_claim`,
-`append_event`, `end_relation_validity`, and `retract_claim`. Never hard-delete a
-claim; end its validity or retract it.
+Use semantic operations only and trust `graph catalog` for the current applicable,
+review-required, and deferred operation partitions. Never hard-delete a claim; end
+its validity, retract it, supersede it, or merge duplicates according to catalog
+policy.
+
+Create and review a plan before committing:
+
+```bash
+potpie --json graph propose --file mutation.json
+potpie --json graph commit <plan_id>
+potpie --json graph history --plan <plan_id>
+```
 
 Example infra write:
 
@@ -123,9 +137,9 @@ Example infra write:
 }
 ```
 
-`context_record` is the simpler compatibility write for preferences, bug patterns,
-fixes, verifications, decisions, doc references, workflows, runbooks, and incident
-summaries. It lowers through the same semantic mutation path.
+When only MCP is configured, `context_record` is the compatibility write for
+preferences, bug patterns, fixes, verifications, decisions, doc references,
+workflows, runbooks, and incident summaries.
 
 ## Ingestion Boundary
 
@@ -134,14 +148,22 @@ ticket, PR, issue, or web link, the harness reads the source, decides what durab
 facts exist, and writes graph mutations. Do not infer services, dependencies,
 features, or preferences from directory names or package files alone.
 
+For GitHub, Linear, Jira, and other hosted integrations, pull PRs, issues,
+tickets, comments, labels/status, and linked docs with the agent's integration
+tools/connectors. Do not use pot-level connector ingestion commands such as
+`potpie pot linear-team ingest`, `potpie pot linear-team diff-sync`, or
+Jira/GitHub queue commands as the ingestion path; write the graph updates
+yourself with `graph propose` / `graph commit` or `graph inbox`.
+
 ## Responding To Nudges
 
 A hook may inject context or instructions from `potpie graph nudge`.
 
 - `inject_context` - use the injected facts for the current task.
 - `instruction` - a prompt to decide whether something durable was learned. If it
-  was, resolve identity and write a semantic mutation or `context_record`. If not,
-  do nothing.
+  was, resolve identity, propose a graph plan, commit it when policy allows, then
+  verify with history. If only MCP is configured, use `context_record`. If nothing
+  durable was learned, do nothing.
 
 ## Skills
 
@@ -157,8 +179,8 @@ Use these repo-local skills under `.agents/skills/`:
   setup troubleshooting.
 - `potpie-source-ingestion` - harness-led ingestion from repo links, docs, PRs,
   issues, tickets, runbooks, logs, and web links.
-- `potpie-graph` - graph CLI contract: catalog/read/search-entities/mutate and
-  nudge handling.
+- `potpie-graph` - graph CLI contract: status/catalog/describe/read/search,
+  propose/commit/history, inbox, quality, and nudge handling.
 - `potpie-agent-context` - MCP `context_*` compatibility recipes.
 - `potpie-cli` - CLI setup, pot/source commands, graph commands, and
   troubleshooting.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+import httpx
 import typer
 
 from adapters.inbound.cli.commands._common import (
@@ -28,6 +29,7 @@ from adapters.outbound.http.potpie_context_api_client import (
     PotpieContextApiClient,
     PotpieContextApiError,
 )
+from adapters.inbound.cli.repo_location import resolve_repo_location
 from domain.errors import CapabilityNotImplemented
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
@@ -102,6 +104,18 @@ def pot_info() -> None:
             {"active_pot": {"id": active.pot_id, "name": active.name}},
             human=f"active: {active.name} ({active.pot_id})",
         )
+
+
+def _fail_api_unreachable(*, label: str, exc: httpx.RequestError) -> None:
+    fail(
+        code="api_unreachable",
+        message=f"{label} failed.",
+        detail=str(exc),
+        next_action=(
+            "check POTPIE_API_BASE_URL / POTPIE_API_KEY or run 'potpie login'; "
+            "remote event ingestion is not served by the embedded local graph store"
+        ),
+    )
 
 
 @pot_app.command("create")
@@ -186,6 +200,8 @@ def linear_team_ingest(
                 message="Linear ingest failed.",
                 detail=str(exc.detail),
             )
+        except httpx.RequestError as exc:
+            _fail_api_unreachable(label="Linear ingest", exc=exc)
 
         out = {
             "status": "queued" if status_code == 202 else data.get("status", "applied"),
@@ -255,6 +271,8 @@ def linear_team_diff_sync(
                 message="Linear diff-sync failed.",
                 detail=str(exc.detail),
             )
+        except httpx.RequestError as exc:
+            _fail_api_unreachable(label="Linear diff-sync", exc=exc)
 
         out = {
             "status": "queued" if status_code == 202 else data.get("status", "applied"),
@@ -284,28 +302,6 @@ def pot_archive(ref: str) -> None:
         emit({"id": pot.pot_id, "archived": True}, human=f"archived '{pot.name}'")
 
 
-def _resolve_repo_location(location: str) -> str:
-    """Resolve repo-source shorthand to a durable, matchable location.
-
-    ``.`` / ``current`` (and relative paths) registered verbatim can never be
-    matched back against a working tree during pot inference, so resolve them
-    eagerly: prefer the current repo's normalized git remote (stable across
-    checkouts), else the absolute path.
-    """
-    from pathlib import Path
-
-    from adapters.inbound.cli.commands._common import _current_git_remote
-
-    raw = (location or "").strip()
-    if raw.lower() in (".", "current"):
-        cwd = Path.cwd().resolve()
-        remote = _current_git_remote(cwd)
-        return remote or str(cwd)
-    if raw.startswith((".", "~")):
-        return str(Path(raw).expanduser().resolve(strict=False))
-    return raw
-
-
 @source_app.command("add")
 def source_add(
     kind: str = typer.Argument(..., help="repo | github | document | ..."),
@@ -325,7 +321,7 @@ def source_add(
         # explicit/active pot — never inferred from existing registrations.
         pot_id = resolve_pot_id(host, pot, infer_from_repo=False)
         resolved_location = (
-            _resolve_repo_location(location)
+            resolve_repo_location(location)
             if kind.strip().lower() == "repo"
             else location
         )
@@ -463,6 +459,8 @@ def jira_project_ingest(
                 message="Jira ingest failed.",
                 detail=str(exc.detail),
             )
+        except httpx.RequestError as exc:
+            _fail_api_unreachable(label="Jira ingest", exc=exc)
 
         out = {
             "status": "queued" if status_code == 202 else data.get("status", "applied"),
@@ -532,6 +530,8 @@ def jira_project_diff_sync(
                 message="Jira diff-sync failed.",
                 detail=str(exc.detail),
             )
+        except httpx.RequestError as exc:
+            _fail_api_unreachable(label="Jira diff-sync", exc=exc)
 
         out = {
             "status": "queued" if status_code == 202 else data.get("status", "applied"),

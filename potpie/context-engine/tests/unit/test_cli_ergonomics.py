@@ -15,6 +15,7 @@ import re
 import pytest
 from typer.testing import CliRunner
 
+from adapters.inbound.cli import repo_location
 from adapters.inbound.cli.commands import _common, graph, pots
 from application.services.semantic_mutation_validator import validate_semantic_request
 from domain.semantic_mutations import SemanticMutationRequest
@@ -75,7 +76,7 @@ class _Host:
 
 def test_source_add_repo_dot_resolves_before_storing(monkeypatch) -> None:
     monkeypatch.setattr(
-        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+        repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     pots_service = _Pots([_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True))
     _common.set_host(_Host(pots_service))
@@ -90,7 +91,7 @@ def test_source_add_repo_dot_resolves_before_storing(monkeypatch) -> None:
 
 
 def test_source_add_repo_current_falls_back_to_cwd(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(_common, "_current_git_remote", lambda cwd: None)
+    monkeypatch.setattr(repo_location, "current_git_remote", lambda cwd: None)
     monkeypatch.chdir(tmp_path)
     pots_service = _Pots([_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True))
     _common.set_host(_Host(pots_service))
@@ -239,8 +240,8 @@ def test_mutation_template_command_emits_json() -> None:
     result = CliRunner().invoke(graph.graph_app, ["mutation-template", "--kind", "repo-baseline"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["kind"] == "repo-baseline"
-    ops = payload["template"]["operations"]
+    assert payload["result"]["kind"] == "repo-baseline"
+    ops = payload["result"]["template"]["operations"]
     assert any(op.get("predicate") == "PROVIDES" for op in ops)
 
 
@@ -249,5 +250,5 @@ def test_mutation_template_unknown_kind_fails_with_next_action() -> None:
     result = CliRunner().invoke(graph.graph_app, ["mutation-template", "--kind", "nope"])
     assert result.exit_code != 0
     payload = json.loads(result.output)
-    assert payload["code"] == "unknown_template_kind"
+    assert payload["error"]["code"] == "unknown_template_kind"
     assert "repo-baseline" in payload["recommended_next_action"]

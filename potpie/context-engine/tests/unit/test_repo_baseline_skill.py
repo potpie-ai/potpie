@@ -79,8 +79,10 @@ def test_procedure_covers_plan_steps() -> None:
         "pot info",
         "source add repo",
         "graph catalog",
+        "graph describe",
         "graph search-entities",
-        "--dry-run",
+        "graph propose",
+        "plan_id",
     ):
         assert marker in body, f"procedure missing step marker: {marker!r}"
 

@@ -1,6 +1,6 @@
 # Graph V2 Implementation Plan
 
-Last reviewed: 2026-06-15.
+Last reviewed: 2026-06-16.
 
 This plan turns the current Graph V1.5 surface into the Graph V2 workbench
 described in [`graphv2.md`](./graphv2.md) and
@@ -41,9 +41,9 @@ The catalog also reports these mutation partitions:
 
 | Partition | Operations |
 |---|---|
-| Applicable | `append_event`, `upsert_entity`, `link_entities`, `assert_claim`, `end_relation_validity`, `retract_claim` |
-| Review-required | `supersede_claim`, `merge_duplicate_entities` |
-| Deferred | `patch_entity`, `transition_state` |
+| Applicable | `append_event`, `upsert_entity`, `link_entities`, `assert_claim`, `end_relation_validity`, `retract_claim`, `patch_entity`, `transition_state`, `supersede_claim`, `merge_duplicate_entities` |
+| Review-required | none |
+| Deferred | none |
 
 There are already extra operator commands in the CLI (`graph status`, `inspect`,
 `repair`, `export`, `import`), but they are not advertised by the V1.5 catalog
@@ -566,8 +566,9 @@ Done on 2026-06-15 for the local CLI workbench write path.
   compute a diff, capture expected `_global` subgraph versions, classify risk,
   persist the plan, and return the V2 workbench envelope body.
 - [x] Added `GraphWorkbenchService.commit` to load plans by `plan_id`, reject
-  missing, terminal, expired, stale-version, unapproved, and high-risk local
-  plans, then apply accepted plans through `GraphMutationPort.apply`.
+  missing, terminal, expired, stale-version, unapproved approval-gated plans,
+  and review-required plans, then apply accepted plans through
+  `GraphMutationPort.apply`.
 - [x] Wired `potpie graph propose --file ... --json` and
   `potpie graph commit <plan_id> --json`.
 - [x] Reworked CLI `graph mutate` as a legacy transition wrapper over
@@ -579,9 +580,9 @@ Deliberate first-cut choices:
 - The first conflict guard uses the existing `_global` claim-count version from
   Phase 2. Per-subgraph counters can replace this behind the same plan record
   field later.
-- Low-risk validated plans can commit without approval. Medium-risk plans need
-  `--approved-by`; high-risk/review-required operations persist as plans but are
-  not applied by the local Phase 3 commit path.
+- Low-risk validated plans can commit without approval. Medium- and high-risk
+  applicable plans need `--approved-by`; genuinely review-required operations
+  persist as plans but are not applied by the local commit path.
 - Plan TTL defaults to one hour. The CLI accepts `--ttl` values such as `30m`,
   `1h`, `7d`, or `2w`.
 - Plan history is currently stored in the plan store only. The `graph history`
@@ -595,10 +596,9 @@ Known limitations after Phase 3:
 - The local JSON plan store is suitable for local CLI use but has no
   transactional lease model. Hosted or multi-process installs still need a state
   DB implementation.
-- Review-required operations such as `supersede_claim` and
-  `merge_duplicate_entities` are persisted and visible but intentionally do not
-  commit until the deferred operation vocabulary, history, and approval workflow
-  are implemented.
+- Review-required or deferred operations are persisted and visible but
+  intentionally do not commit until their validation, lowering, history, and
+  approval workflow are implemented.
 
 ### Changes
 
@@ -1034,7 +1034,12 @@ Result: Ruff passed; focused quality/CLI tests passed (`38 passed`).
 
 Goal: implement the V2 operations that were deferred or review-only in V1.5.
 
-### Order
+### Cuts
+
+#### Phase 7A: Safe Entity Corrections
+
+Implement the two previously deferred entity-local operations through the
+plan-store workflow:
 
 1. `patch_entity`
    - restrict to metadata fields allowed by entity contract
@@ -1046,22 +1051,35 @@ Goal: implement the V2 operations that were deferred or review-only in V1.5.
    - require valid state transition contract
    - preserve previous state in history
 
-3. `reconcile_snapshot`
+Catalog promotion for 7A is allowed only after validation, lowering, commit,
+history, and tests exist for both operations.
+
+#### Phase 7B: Snapshot And High-Risk Corrections
+
+Implement the remaining correction workflows after 7A lands:
+
+1. `reconcile_snapshot`
    - only for trusted snapshot sources
    - distinguish complete vs partial snapshot
    - complete trusted snapshots may end disappeared facts
    - partial snapshots must not remove absent facts
    - large production removals require review
 
-4. `supersede_claim`
+2. `supersede_claim`
    - implemented through plan store and history
    - end old claim validity and link to new claim
 
-5. `merge_duplicate_entities`
+3. `merge_duplicate_entities`
    - identity-record merge with external IDs and merge history
    - never hard-delete the losing key in the first cut
    - redirect losing canonical keys only through explicit merge records, not
      open-ended alias lookup
+
+This cut implemented `supersede_claim` and `merge_duplicate_entities`.
+`reconcile_snapshot` remains deferred.
+
+Result: Ruff passed; focused semantic mutation, contract, workbench, and
+Graph Surface Lite tests passed (`160 passed`).
 
 ### Acceptance Criteria
 
@@ -1075,10 +1093,24 @@ Goal: implement the V2 operations that were deferred or review-only in V1.5.
 Goal: agent harnesses learn the canonical V2 workflow and stop advertising old
 view names, subgraph names, or key-prefix aliases.
 
-### Changes
+### Status
 
-1. Update bundled skills under
-   `adapters/inbound/cli/templates/claude_plugin/skills/`:
+Done on 2026-06-15 for bundled skills, harness templates, command shortcuts, and
+template drift tests. This phase did not change graph storage, ontology
+lowering, backend ports, or MCP tool count.
+
+### Implementation Plan
+
+#### Phase 8A: Template Inventory And Drift Guards
+
+1. Treat the bundled harness templates as the implementation surface:
+   - `adapters/inbound/cli/templates/claude_plugin/skills/`
+   - `adapters/inbound/cli/templates/agent_bundle/.agents/skills/`
+   - `adapters/inbound/cli/templates/claude_bundle/.claude/skills/`
+   - root harness docs: `AGENTS.md`, `CLAUDE.md`
+   - Claude command templates: `potpie-feature.md`, `potpie-record.md`
+
+2. Update the seven graph-use-case skills first:
    - `potpie-graph`
    - `potpie-project-preferences`
    - `potpie-infra-architecture`
@@ -1087,40 +1119,240 @@ view names, subgraph names, or key-prefix aliases.
    - `potpie-repo-baseline`
    - `potpie-source-ingestion`
 
-2. V2 skill workflow:
+3. Include adjacent helper skills that still show graph examples:
+   - `potpie-cli`
+   - `potpie-cli-troubleshooting`
+   - `potpie-pot-scope`
+   - `potpie-agent-context`
+
+4. Preserve deliberate bundle invariants:
+   - `potpie-graph` stays byte-identical across `agent_bundle`,
+     `claude_bundle`, and `claude_plugin`.
+   - Skills present in both `agent_bundle` and `claude_plugin` should either be
+     byte-identical or have an explicit test-documented reason for divergence.
+
+#### Phase 8B: Normalize The Canonical Read Workflow
+
+Update every recommended graph workflow to this V2 sequence:
+
+```bash
+potpie --json graph status
+potpie --json graph catalog --task "<task>"
+potpie --json graph describe <subgraph> --view <view> --examples
+potpie --json graph search-entities "<name>" --type <Type> --limit 10
+potpie --json graph read --subgraph <subgraph> --view <view> --scope <scope>
+```
+
+Concrete command migration rules:
+
+- Use `--subgraph decisions --view preferences_for_scope`, not
+  `--view decisions.preferences_for_scope`.
+- Use `--subgraph debugging --view prior_occurrences`, not
+  `--view bugs.prior_occurrences` or `--view debugging.prior_occurrences`.
+- Use `--subgraph features --view feature_context`, not stale feature view names
+  such as `features.provided`.
+- Prefer `graph read --subgraph recent_changes --view timeline` in canonical
+  workflow docs. `potpie timeline recent` can be mentioned only as a legacy or
+  convenience shortcut outside the V2 workbench envelope.
+- Keep canonical entity-key examples on underscore prefixes and current V2
+  subgraph names only.
+
+#### Phase 8C: Normalize The Canonical Write Workflow
+
+Replace every recommended `context_record`, `graph mutate`, and
+`graph mutate --dry-run` write path with:
+
+```bash
+potpie --json graph propose --file mutation.json
+# inspect result.status, risk, diff, warnings, rejected_operations, plan_id
+potpie --json graph commit <plan_id>
+potpie --json graph history --plan <plan_id>
+```
+
+Write guidance rules:
+
+- `graph propose` is the validation/preview step. Skills should not tell agents
+  to use `graph mutate --dry-run`.
+- `graph commit` accepts a server-created `plan_id`, not a resent payload.
+- Medium- and high-risk applicable plans need
+  `graph commit <plan_id> --approved-by <user-ref>` according to the plan result.
+- Use `graph inbox add` when evidence exists but the harness cannot safely pick
+  the canonical ontology update.
+- Keep semantic mutation payload examples batch-shaped and data-plane compatible
+  with current accepted mutation payload versions. The workbench envelope is V2,
+  but the semantic payload parser still accepts the V1.5 data-plane contract.
+- Tell skills to trust `graph catalog` for the current mutation operation
+  partition instead of hard-coding stale deferred/review-required lists.
+- Repairs from `graph quality` must become `propose`/`commit` plans or inbox
+  items. `graph repair` remains operator projection maintenance only.
+
+#### Phase 8D: Rewrite Use-Case Skill Recipes
+
+1. `potpie-graph`
+   - Make it the concise canonical contract for status, catalog, describe,
+     search, read, propose, commit, history, inbox, and quality.
+   - Remove stale statements that `patch_entity`, `transition_state`,
+     `supersede_claim`, or `merge_duplicate_entities` are unavailable if the
+     current catalog advertises them as applicable.
+   - Keep retrieval-grade description, evidence, truth-class, and nudge
+     guidance.
+
+2. `potpie-project-preferences`
+   - Read preferences through `decisions.preferences_for_scope` using
+     `--subgraph decisions --view preferences_for_scope`.
+   - Record new preferences with `graph propose` and `graph commit`.
+   - Mention `context_record` only as an MCP compatibility fallback.
+
+3. `potpie-debug-memory`
+   - Read prior bugs through `--subgraph debugging --view prior_occurrences`.
+   - Correlate recent changes through `recent_changes.timeline` and topology
+     through `infra_topology.service_neighborhood`.
+   - Record bug patterns, fixes, investigations, and verifications through
+     proposals; use inbox for uncertain learnings.
+
+4. `potpie-infra-architecture`
+   - Use `--subgraph infra_topology --view service_neighborhood`.
+   - Replace "run `--dry-run`" with "run `graph propose`, inspect the diff and
+     risk, then commit with approval when required."
+
+5. `potpie-change-timeline`
+   - Make `append_event` proposals the canonical write path.
+   - Keep top-level `timeline recent` only as a convenience shortcut, not the
+     canonical V2 graph workflow.
+
+6. `potpie-repo-baseline`
+   - Replace `graph mutate --dry-run` with `graph propose`.
+   - Query baselines back with canonical `--subgraph features --view
+     feature_context` and `--subgraph infra_topology --view service_neighborhood`.
+   - Preserve the no-scanner, authored-source-first, evidence/truth/description
+     requirements.
+
+7. `potpie-source-ingestion`
+   - Make source ingestion end in `graph propose`/`graph commit` or inbox, not
+     direct mutate.
+   - Keep repository baseline and change-history as separate harness-led passes.
+
+8. `potpie-agent-context`
+   - Clearly label MCP `context_*` tools as compatibility wrappers for
+     environments without shell access.
+   - Point graph writes to `potpie-graph` whenever the shell is available.
+
+#### Phase 8E: Update Static Template Tests
+
+1. Rename or reword `test_agent_templates_v15.py` around the V2 template
+   contract.
+
+2. Add negative drift checks that fail if recommended template text contains:
+   - `graph mutate --dry-run`
+   - `graph mutate --file` outside an explicitly labeled legacy section
+   - `context_record` outside an explicitly labeled MCP/legacy section
+   - `--view <subgraph>.<view>` command examples without `--subgraph`
+   - obsolete public view names such as `bugs.prior_occurrences`,
+     `preferences.active_preferences`, or `features.provided`
+
+3. Add positive checks that recommended skills include:
    - `graph status`
    - `graph catalog --task`
    - `graph describe`
    - `graph search-entities`
-   - `graph read`
+   - `graph read --subgraph`
    - `graph propose`
-   - inspect plan
    - `graph commit`
-   - verify with `history` or `read`
+   - `graph history`
+   - `graph inbox`
 
-3. Document V1 wrappers only as legacy escape hatches, not as the recommended
-   graph workflow:
-   - `context_resolve`
-   - `context_search`
-   - `context_record`
-   - `context_status`
-   - `graph mutate`
-   These wrappers must not introduce compatibility aliases for renamed V2 views
-   or non-canonical key prefixes.
-
-4. Do not add a second graph API in skills. Skills explain when to use the CLI;
-   the CLI/service enforces graph integrity.
+4. Extend existing drift tests:
+   - `test_claude_plugin_manifest.py` keeps `potpie-graph` identical across all
+     bundles.
+   - `test_repo_baseline_skill.py` verifies both bundle copies use the V2
+     propose/commit workflow and canonical read syntax.
+   - Add one shared-skill parity test for all skills shipped in both
+     `agent_bundle` and `claude_plugin`.
+   - Keep `test_agent_surface_contract.py` asserting exactly the four existing
+     MCP tools until a separate MCP V2 decision is made.
 
 ### Acceptance Criteria
 
-- Installed skills do not mention obsolete shortcut workflows as canonical.
-- Tests that check bundled skill drift are updated.
-- MCP still exposes exactly the intended tools until a separate MCP V2 decision
-  is made.
+- Installed skills teach the V2 graph workflow as the recommended path:
+  status, catalog, describe, search, read, propose, commit, verify.
+- No recommended skill presents `graph mutate`, `graph mutate --dry-run`,
+  `context_record`, or `timeline recent` as the canonical V2 workflow.
+- Wrapper docs label `context_resolve`, `context_search`, `context_record`,
+  `context_status`, and `graph mutate` as legacy or MCP compatibility paths only.
+- Template examples use canonical subgraph/view syntax and current public names.
+- Bundled skill copies do not drift silently across harness bundles.
+- MCP still exposes exactly the intended four tools until a separate MCP V2
+  decision is made.
+
+### Tests
+
+Run the focused template and agent-surface suite:
+
+```bash
+uv run pytest -q \
+  potpie/context-engine/tests/unit/test_agent_templates_v15.py \
+  potpie/context-engine/tests/unit/test_claude_plugin_manifest.py \
+  potpie/context-engine/tests/unit/test_repo_baseline_skill.py \
+  potpie/context-engine/tests/unit/test_agent_surface_contract.py \
+  potpie/context-engine/tests/unit/test_agent_installer.py \
+  potpie/context-engine/tests/unit/test_bundle_catalog.py \
+  potpie/context-engine/tests/unit/test_skill_manager_global_targets.py
+```
+
+Implemented coverage on 2026-06-15:
+
+- Updated `potpie-graph` across `agent_bundle`, `claude_bundle`, and
+  `claude_plugin` to teach status, catalog, describe, read, search, propose,
+  commit, history, inbox, and quality as the canonical V2 workflow.
+- Updated use-case skills for preferences, infra, timeline, debug memory,
+  source ingestion, and repo baseline to use `--subgraph --view` read syntax and
+  `graph propose` / `graph commit` writes.
+- Updated helper skills, root harness docs, and Claude command templates to stop
+  advertising `graph mutate --dry-run`, fully-qualified `--view` args, obsolete
+  public view names, and top-level timeline shortcuts as canonical.
+- Kept `context_*` tools as MCP compatibility wrappers only, and kept the MCP
+  surface test pinned to exactly four tools.
+- Added drift tests for V2 write workflow, canonical view syntax,
+  `context_record` compatibility framing, and shared skill bundle parity.
+
+Verification run:
+
+```bash
+uv run pytest -q \
+  potpie/context-engine/tests/unit/test_agent_templates_v15.py \
+  potpie/context-engine/tests/unit/test_claude_plugin_manifest.py \
+  potpie/context-engine/tests/unit/test_repo_baseline_skill.py \
+  potpie/context-engine/tests/unit/test_agent_surface_contract.py \
+  potpie/context-engine/tests/unit/test_agent_installer.py \
+  potpie/context-engine/tests/unit/test_bundle_catalog.py \
+  potpie/context-engine/tests/unit/test_skill_manager_global_targets.py
+```
+
+Result: focused template and skill tests passed (`75 passed`).
 
 ## Phase 9: Observability And Backend Conformance
 
 Goal: V2 behavior is measurable and backend-independent.
+
+### Status
+
+Done on 2026-06-16 for local CLI workbench observability, readiness
+actionability, and runnable-backend workbench conformance.
+
+- [x] Added Graph V2 workbench spans and counters through the existing
+  observability port for `graph.status`, `graph.catalog`, `graph.describe`,
+  `graph.search_entities`, `graph.read`, `graph.propose`, `graph.commit`,
+  `graph.history`, `graph.inbox`, and `graph.quality`.
+- [x] Kept local OSS dark by default through the existing `NoOpObservability`;
+  console/OTLP telemetry still requires explicit environment configuration.
+- [x] Added `graph status` readiness next-action metadata that points operators
+  at `potpie backend doctor` when backend readiness is false.
+- [x] Extended `potpie doctor` JSON output with backend readiness,
+  capability-readiness details, active pot, and an actionable next step.
+- [x] Added workbench conformance coverage for runnable backend profiles
+  (`in_memory`, `embedded`) across propose, commit, history, inbox, and quality.
+  Existing capability-gated tests continue to prove unsupported inspection and
+  snapshot commands fail closed with structured unsupported envelopes.
 
 ### Changes
 
@@ -1155,10 +1387,39 @@ Goal: V2 behavior is measurable and backend-independent.
   test for that capability.
 - Local OSS remains useful without hosted telemetry.
 
+Implemented coverage on 2026-06-16:
+
+- `tests/unit/test_graph_cli_contract.py` verifies V2 graph command telemetry
+  for read, propose, inbox, and quality paths, plus `graph status` readiness
+  next-action metadata.
+- `tests/unit/test_cli_bootstrap_status.py` verifies `potpie doctor --json`
+  includes backend readiness, capability readiness, active pot, and next action.
+- `tests/conformance/test_graph_backend_conformance.py` verifies runnable
+  backend profiles satisfy the workbench propose/commit/history/inbox/quality
+  workflow.
+- Existing observability unit tests continue to verify the no-op default,
+  console adapter, runtime wiring, tracing, cost-metric bridge, readiness
+  probes, and JSON logging.
+
+Verification run:
+
+```bash
+uv run pytest -q \
+  potpie/context-engine/tests/unit/test_graph_cli_contract.py \
+  potpie/context-engine/tests/unit/test_cli_bootstrap_status.py \
+  potpie/context-engine/tests/conformance/test_graph_backend_conformance.py \
+  potpie/context-engine/tests/unit/test_observability.py \
+  potpie/context-engine/tests/unit/test_observability_tracing.py \
+  potpie/context-engine/tests/unit/test_observability_cost_metrics.py \
+  potpie/context-engine/tests/unit/test_observability_operate.py
+```
+
+Result: focused observability/readiness/conformance tests passed (`86 passed`).
+
 ## Suggested Work Packets
 
 These are the smallest useful implementation PRs. Status is as of
-2026-06-15.
+2026-06-16.
 
 | Packet | Status | Scope | Main files |
 |---|---|---|---|
@@ -1171,19 +1432,15 @@ These are the smallest useful implementation PRs. Status is as of
 | V2-06 History | Done | Query plan/mutation/claim history. | plan store, claim query helpers, CLI, tests |
 | V2-07 Inbox | Done | Add inbox storage and CLI workflow. | inbox store, `graph.py`, skills, tests |
 | V2-08 Quality | Done | Add quality command and findings. | `domain/graph_quality.py`, analytics/claim query scanners, CLI, tests |
-| V2-09 Deferred Ops | Planned | Implement patch/transition/reconcile/supersede/merge under plan workflow. | contract, validator, lowerer, plan/commit/history tests |
-| V2-10 Skills | Planned | Update bundled skills and canonical workflow docs. | skill templates, `CLAUDE.md`, tests |
+| V2-09A Entity Correction Ops | Done | Implement `patch_entity` and `transition_state` under plan workflow. | contract, ontology, validator, lowerer, plan/commit/history tests |
+| V2-09B Snapshot And High-Risk Corrections | Done | Implement `supersede_claim` and `merge_duplicate_entities`; defer `reconcile_snapshot`. | contract, validator, lowerer, approval/history tests |
+| V2-10 Skills | Done | Update bundled skills and canonical workflow docs. | skill templates, `CLAUDE.md`, tests |
+| V2-11 Observability And Backend Conformance | Done | Add workbench telemetry and capability conformance coverage. | observability hooks, backend conformance tests, `graph status` |
 
 ## Current Next Cut
 
-Start with V2-09 Deferred Ops.
-
-1. Implement `patch_entity` and `transition_state` as validated plan-store
-   operations, not direct graph edits.
-2. Add audited supersession and duplicate-merge workflows on top of plan,
-   approval, commit, and history.
-3. Keep high-risk operations review-gated until the approval lifecycle is
-   explicit enough for local and hosted profiles.
+No remaining V2 workbench cut is currently planned. Keep `reconcile_snapshot`
+deferred until trusted snapshot source policy is explicit.
 
 ## Resolved Decisions
 
@@ -1208,7 +1465,7 @@ Start with V2-09 Deferred Ops.
    leases/transactions behind `GraphPlanStorePort`.
 
 6. **Approval mechanics**: low-risk validated plans can commit locally without
-   approval. Medium-risk plans require `graph commit <plan_id> --approved-by
-   <user-ref>`. High-risk/review-required operations persist as plans but do not
-   commit through the local Phase 3 path until history, richer approval, and
-   deferred operation support exist.
+   approval. Medium- and high-risk applicable plans require
+   `graph commit <plan_id> --approved-by <user-ref>`. Review-required or
+   deferred operations remain persisted but uncommitted until their validation,
+   lowering, and history support exists.

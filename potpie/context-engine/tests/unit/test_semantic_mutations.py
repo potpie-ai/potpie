@@ -167,3 +167,94 @@ def test_append_event_fields_parse() -> None:
     assert op.actor.key == "person:alice"
     assert op.targets[0].key == "service:payments"
     assert op.mentions[0].key == "bug_pattern:refund-race"
+
+
+def test_patch_and_transition_fields_parse() -> None:
+    payload = {
+        "pot_id": "p",
+        "operations": [
+            {
+                "op": "patch_entity",
+                "subject": {"key": "service:payments", "type": "Service"},
+                "patch": {"summary": "Payments service"},
+                "expected_entity_version": "entity-version:1",
+                "reason": "tighten display metadata",
+            },
+            {
+                "op": "transition_state",
+                "subject": {"key": "decision:adr-1", "type": "Decision"},
+                "from_state": "proposed",
+                "to_state": "accepted",
+                "expected_version": "entity-version:2",
+                "reason": "ADR approved",
+            },
+        ],
+    }
+
+    req = SemanticMutationRequest.parse(payload)
+
+    patch = req.operations[0]
+    assert patch.patch == {"summary": "Payments service"}
+    assert patch.expected_entity_version == "entity-version:1"
+    transition = req.operations[1]
+    assert transition.from_state == "proposed"
+    assert transition.to_state == "accepted"
+    assert transition.expected_entity_version == "entity-version:2"
+
+
+def test_supersede_and_merge_fields_parse() -> None:
+    payload = {
+        "pot_id": "p",
+        "operations": [
+            {
+                "op": "supersede_claim",
+                "subject": {"key": "service:payments", "type": "Service"},
+                "predicate": "DEPENDS_ON",
+                "object": {"key": "service:ledger-old", "type": "Service"},
+                "superseded_by": {"key": "service:ledger-new", "type": "Service"},
+                "reason": "dependency target changed",
+            },
+            {
+                "op": "merge_duplicate_entities",
+                "subject": {"key": "service:payments-api-v1", "type": "Service"},
+                "object": {"key": "service:payments-api", "type": "Service"},
+                "external_ids": {
+                    "losing": {"github_service": "payments-api-v1"},
+                    "winning": {"github_service": "payments-api"},
+                },
+                "reason": "same service in source manifests",
+            },
+        ],
+    }
+
+    req = SemanticMutationRequest.parse(payload)
+
+    supersede = req.operations[0]
+    assert supersede.superseded_by.key == "service:ledger-new"
+    merge = req.operations[1]
+    assert merge.external_ids["losing"]["github_service"] == "payments-api-v1"
+
+
+def test_patch_field_must_be_object() -> None:
+    with pytest.raises(SemanticMutationParseError, match="patch"):
+        SemanticMutationRequest.parse(
+            {
+                "pot_id": "p",
+                "operation": "patch_entity",
+                "subject": {"key": "service:payments", "type": "Service"},
+                "patch": ["summary", "Payments service"],
+            }
+        )
+
+
+def test_external_ids_field_must_be_object() -> None:
+    with pytest.raises(SemanticMutationParseError, match="external_ids"):
+        SemanticMutationRequest.parse(
+            {
+                "pot_id": "p",
+                "operation": "merge_duplicate_entities",
+                "subject": {"key": "service:payments-v1", "type": "Service"},
+                "object": {"key": "service:payments", "type": "Service"},
+                "external_ids": ["service:payments-v1"],
+            }
+        )

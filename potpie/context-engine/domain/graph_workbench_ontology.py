@@ -76,6 +76,9 @@ class EntityTypeContract:
     category: str
     description: str
     identity: IdentityPolicy
+    patchable_properties: tuple[str, ...] = ()
+    lifecycle_states: tuple[str, ...] = ()
+    lifecycle_transitions: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -83,6 +86,12 @@ class EntityTypeContract:
             "category": self.category,
             "description": self.description,
             "identity": self.identity.to_dict(),
+            "patchable_properties": list(self.patchable_properties),
+            "lifecycle_states": list(self.lifecycle_states),
+            "lifecycle_transitions": {
+                key: list(values)
+                for key, values in self.lifecycle_transitions.items()
+            },
         }
 
 
@@ -925,6 +934,12 @@ def _entity_type_contract(label: str) -> EntityTypeContract:
         category=spec.category,
         description=spec.description,
         identity=_identity_policy(label),
+        patchable_properties=tuple(sorted(spec.patchable_properties)),
+        lifecycle_states=tuple(sorted(spec.lifecycle_states)),
+        lifecycle_transitions={
+            key: tuple(sorted(values))
+            for key, values in sorted(spec.lifecycle_transitions.items())
+        },
     )
 
 

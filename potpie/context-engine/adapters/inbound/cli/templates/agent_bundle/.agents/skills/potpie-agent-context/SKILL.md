@@ -1,16 +1,16 @@
 ---
 name: "potpie-context"
-version: "1"
+version: "2"
 recommended: true
-description: "Use when an agent needs project context from the context engine through the MCP context_* tools. Covers context_resolve recipes for feature, debugging, review, operations, docs, and onboarding without adding separate context tools. For the richer graph CLI surface (catalog/read/search-entities/mutate) and writing retrieval-grade descriptions, use potpie-graph."
+description: "Use when an agent needs project context from the context engine through the MCP context_* tools. Covers context_resolve recipes for feature, debugging, review, operations, docs, and onboarding without adding separate context tools. For the richer graph CLI surface (catalog/describe/read/search-entities/propose/commit) and writing retrieval-grade descriptions, use potpie-graph."
 ---
 
 # Potpie Agent Context
 
 Use this skill when the task requires gathering, verifying, or recording project
-context through the Potpie **MCP** tools. If you can run the `potpie` CLI, prefer the
-`potpie-graph` skill (the V1.5 graph surface) — it is the same engine with richer
-reads and direct mutations.
+context through the Potpie **MCP** tools. If you can run the `potpie` CLI, prefer
+the `potpie-graph` skill and the V2 graph workbench — it is the same engine with
+richer reads, proposal validation, and plan commits.
 
 For use-case-specific behavior, load the relevant workflow skill too:
 `potpie-project-preferences`, `potpie-infra-architecture`,
@@ -44,7 +44,9 @@ same graph that `potpie graph` reads and writes.
    - `source_policy="summary"` for compact source-backed summaries.
    - `source_policy="verify"` and `mode="verify"` before production-impacting facts.
    - `source_policy="snippets"` or `mode="deep"` only for bounded source detail.
-7. Use `context_record` when the work discovers reusable project memory.
+7. Use `context_record` only when the work discovers reusable project memory and
+   the CLI is unavailable. With shell access, use `graph propose` and
+   `graph commit`.
 
 ## Valid Include Families
 
@@ -102,7 +104,7 @@ bug_pattern|decision|diagnostic_signal|doc_reference|feature_note|fix|incident_s
 Always write the `summary`/`details` as a **retrieval card**: include the symptoms,
 synonyms, and scope a future searcher would type, not just a display title. Keep
 records compact and source-reference-first. `context_record` lowers through the same
-semantic mutation path as `graph mutate`, so the same metadata rules apply.
+semantic mutation path as graph proposals, so the same metadata rules apply.
 
 Do not use `context_record` as a local code scanner. The harness must decide what
 source material means and record only durable, retrieval-grade memory.

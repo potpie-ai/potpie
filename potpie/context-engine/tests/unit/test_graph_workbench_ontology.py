@@ -61,6 +61,21 @@ def test_mutation_policies_match_graph_contract_partitions() -> None:
         assert policies[op] == "deferred"
 
 
+def test_entity_contract_exposes_patch_and_lifecycle_rules() -> None:
+    payload = describe_contract(subgraph="decisions", include_examples=False)
+    entities = {item["label"]: item for item in payload["subgraph"]["entity_types"]}
+
+    decision = entities["Decision"]
+    assert "summary" in decision["patchable_properties"]
+    assert "description" in decision["patchable_properties"]
+    assert "accepted" in decision["lifecycle_states"]
+    assert decision["lifecycle_transitions"]["proposed"] == ["accepted", "rejected"]
+    assert decision["lifecycle_transitions"]["accepted"] == [
+        "deprecated",
+        "superseded",
+    ]
+
+
 def test_contract_check_rejects_unsupported_view_include() -> None:
     contract = ontology_contract()
     first_subgraph = contract.subgraphs[0]

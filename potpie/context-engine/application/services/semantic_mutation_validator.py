@@ -20,6 +20,7 @@ Two outputs per request:
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Mapping
 
 from domain.graph_contract import (
     DEFERRED_OPS,
@@ -34,6 +35,7 @@ from domain.graph_contract import (
     is_source_authority,
     is_supported_contract_version,
     is_truth_class,
+    normalize_entity_key,
 )
 from domain.ontology import EDGE_TYPES, ENTITY_TYPES, edge_spec
 from domain.semantic_mutations import (
@@ -60,6 +62,7 @@ _RETRACT_OPS = frozenset(
 _PREFIX_TO_ENTITY_TYPE: dict[str, str] = {
     spec.key_prefix: label for label, spec in ENTITY_TYPES.items()
 }
+_STATE_PATCH_FIELDS = frozenset({"lifecycle_state", "status", "state"})
 
 
 def validate_semantic_request(request: SemanticMutationRequest) -> SemanticMutationPlan:
@@ -118,7 +121,7 @@ def validate_semantic_request(request: SemanticMutationRequest) -> SemanticMutat
             SemanticMutationValidationIssue(
                 code="approval_required",
                 message=(
-                    "batch contains medium-risk operations; re-submit with "
+                    "batch contains medium- or high-risk operations; re-submit with "
                     "--allow-review-required --approved-by <user-ref> to apply"
                 ),
                 severity="warning",
@@ -218,6 +221,10 @@ def _validate_op(
         _validate_event_op(op, err=err, warn=warn)
     elif name in _RETRACT_OPS:
         _validate_retract_op(op, err=err, warn=warn)
+    elif name == SemanticMutationOp.patch_entity.value:
+        _validate_patch_entity_op(op, err=err, warn=warn)
+    elif name == SemanticMutationOp.transition_state.value:
+        _validate_transition_state_op(op, err=err, warn=warn)
     elif name == SemanticMutationOp.supersede_claim.value:
         _validate_supersede_claim_op(op, err=err, warn=warn)
     elif name == SemanticMutationOp.merge_duplicate_entities.value:
@@ -381,13 +388,144 @@ def _validate_supersede_claim_op(op, *, err, warn) -> None:
         warn=warn,
     )
     _validate_entity_ref(
-        op.superseded_by, "superseded_by", required=False, err=err, warn=warn
+        op.superseded_by, "superseded_by", required=True, err=err, warn=warn
     )
+    if op.predicate and op.subject is not None and op.superseded_by is not None:
+        _validate_edge_endpoints(
+            op.predicate,
+            op.subject,
+            op.superseded_by,
+            from_role="subject",
+            to_role="superseded_by",
+            from_default=None,
+            to_default=None,
+            err=err,
+        )
+    if not (op.reason and op.reason.strip()):
+        err("missing_reason", "supersede_claim requires a reason for audit history")
+    _check_evidence_or_low_authority(op, err)
+    if not (op.description and op.description.strip()):
+        warn(
+            "missing_description",
+            "supersede_claim writes a replacement claim; retrieval recall improves with a description",
+        )
 
 
 def _validate_merge_duplicate_entities_op(op, *, err, warn) -> None:
     _validate_entity_ref(op.subject, "subject", required=True, err=err, warn=warn)
     _validate_entity_ref(op.object, "object", required=True, err=err, warn=warn)
+    if op.subject is not None and op.object is not None:
+        if normalize_entity_key(op.subject.key) == normalize_entity_key(op.object.key):
+            err("self_merge", "merge_duplicate_entities requires two distinct entity keys")
+        subject_type = _effective_entity_type(op.subject, None)
+        object_type = _effective_entity_type(op.object, None)
+        if subject_type and object_type and subject_type != object_type:
+            err(
+                "merge_type_mismatch",
+                "merge_duplicate_entities requires subject and object to have the same entity type",
+            )
+    if not _merge_external_ids(op):
+        err(
+            "missing_external_ids",
+            "merge_duplicate_entities requires external_ids or extra.external_ids for audit",
+        )
+    if not (op.reason and op.reason.strip()):
+        err("missing_reason", "merge_duplicate_entities requires a reason for audit history")
+    if not (op.description and op.description.strip()):
+        warn(
+            "missing_description",
+            "merge_duplicate_entities writes a merge record; retrieval recall improves with a description",
+        )
+
+
+def _validate_patch_entity_op(op, *, err, warn) -> None:
+    _validate_entity_ref(op.subject, "subject", required=True, err=err, warn=warn)
+    entity_type = _effective_entity_type(op.subject, None)
+    if entity_type not in ENTITY_TYPES:
+        err("missing_entity_type", "patch_entity requires a known subject entity type")
+        return
+
+    if not op.patch:
+        err("missing_patch", "patch_entity requires a non-empty 'patch' object")
+        return
+
+    allowed = ENTITY_TYPES[entity_type].patchable_properties
+    for field, value in op.patch.items():
+        if field not in allowed:
+            err(
+                "patch_field_not_allowed",
+                f"{entity_type} does not allow patching field {field!r}; "
+                f"allowed: {', '.join(sorted(allowed))}",
+            )
+            continue
+        if field in _STATE_PATCH_FIELDS:
+            err(
+                "state_patch_not_allowed",
+                "state fields must use transition_state so lifecycle history is preserved",
+            )
+        if field == "description" and not _retrieval_description_strong(value):
+            err(
+                "weak_description",
+                "patch_entity description must be retrieval-grade and cannot be a weak overwrite",
+            )
+
+    if not op.expected_entity_version:
+        warn(
+            "missing_expected_entity_version",
+            "patch_entity has no expected_entity_version; commit still checks subgraph versions",
+        )
+
+
+def _validate_transition_state_op(op, *, err, warn) -> None:
+    _validate_entity_ref(op.subject, "subject", required=True, err=err, warn=warn)
+    entity_type = _effective_entity_type(op.subject, None)
+    if entity_type not in ENTITY_TYPES:
+        err("missing_entity_type", "transition_state requires a known subject entity type")
+        return
+
+    spec = ENTITY_TYPES[entity_type]
+    if not spec.lifecycle_states:
+        err(
+            "lifecycle_not_declared",
+            f"{entity_type} does not declare lifecycle states",
+        )
+        return
+
+    if not op.from_state:
+        err("missing_from_state", "transition_state requires 'from_state'")
+    elif op.from_state not in spec.lifecycle_states:
+        err(
+            "invalid_from_state",
+            f"{entity_type} state {op.from_state!r} is not declared; "
+            f"allowed: {', '.join(sorted(spec.lifecycle_states))}",
+        )
+
+    if not op.to_state:
+        err("missing_to_state", "transition_state requires 'to_state'")
+    elif op.to_state not in spec.lifecycle_states:
+        err(
+            "invalid_to_state",
+            f"{entity_type} state {op.to_state!r} is not declared; "
+            f"allowed: {', '.join(sorted(spec.lifecycle_states))}",
+        )
+
+    if op.from_state and op.to_state:
+        allowed_targets = spec.lifecycle_transitions.get(op.from_state, frozenset())
+        if op.from_state == op.to_state or op.to_state not in allowed_targets:
+            allowed = ", ".join(sorted(allowed_targets)) or "(none)"
+            err(
+                "invalid_state_transition",
+                f"{entity_type} cannot transition {op.from_state!r} -> "
+                f"{op.to_state!r}; allowed from {op.from_state!r}: {allowed}",
+            )
+
+    if not (op.reason and op.reason.strip()):
+        err("missing_reason", "transition_state requires a reason for audit history")
+    if not op.expected_entity_version:
+        warn(
+            "missing_expected_entity_version",
+            "transition_state has no expected_entity_version; commit still checks subgraph versions",
+        )
 
 
 def _validate_relation_target_op(
@@ -491,6 +629,15 @@ def _check_evidence_or_low_authority(op, err) -> None:
         )
 
 
+def _retrieval_description_strong(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = " ".join(value.strip().split())
+    if len(text) < 40:
+        return False
+    return len([token for token in text.split(" ") if token]) >= 6
+
+
 # ---------------------------------------------------------------------------
 # Risk policy
 # ---------------------------------------------------------------------------
@@ -500,7 +647,17 @@ def _op_risk(op: SemanticMutation) -> MutationRisk:
     name = op.op
     if name in REVIEW_REQUIRED_OPS:
         return MutationRisk.high
+    if name in (
+        SemanticMutationOp.supersede_claim.value,
+        SemanticMutationOp.merge_duplicate_entities.value,
+    ):
+        return MutationRisk.high
     if name in _RETRACT_OPS:
+        return MutationRisk.medium
+    if name in (
+        SemanticMutationOp.patch_entity.value,
+        SemanticMutationOp.transition_state.value,
+    ):
         return MutationRisk.medium
     if name in _CLAIM_OPS:
         if op.truth == "user_decision":
@@ -540,8 +697,11 @@ def _decide(
     if not accepted:
         # Nothing applicable and no errors (e.g. an empty-after-filter batch).
         return "rejected"
-    # Any medium-risk op requires explicit approval; otherwise auto-apply.
-    needs_approval = any(o.risk == MutationRisk.medium.value for o in accepted)
+    # Any medium/high-risk op requires explicit approval; otherwise auto-apply.
+    needs_approval = any(
+        o.risk in {MutationRisk.medium.value, MutationRisk.high.value}
+        for o in accepted
+    )
     if needs_approval and not (allow_review_required and approved_by):
         return "review_required"
     return "apply"
@@ -553,7 +713,24 @@ def _subgraph_for(op: SemanticMutation) -> str:
         return subgraph_for_predicate(op.predicate)
     if op.op == SemanticMutationOp.append_event.value:
         return "recent_changes"
+    if op.op in (
+        SemanticMutationOp.patch_entity.value,
+        SemanticMutationOp.transition_state.value,
+        SemanticMutationOp.merge_duplicate_entities.value,
+    ):
+        entity_type = _effective_entity_type(op.subject, None)
+        if entity_type in _ENTITY_TYPE_SUBGRAPH:
+            return _ENTITY_TYPE_SUBGRAPH[entity_type]
+        if entity_type in ENTITY_TYPES:
+            return _CATEGORY_SUBGRAPH.get(ENTITY_TYPES[entity_type].category, "memory")
     return "memory"
+
+
+def _merge_external_ids(op: SemanticMutation) -> Mapping[str, object]:
+    if op.external_ids:
+        return op.external_ids
+    raw = op.extra.get("external_ids") if isinstance(op.extra, Mapping) else None
+    return raw if isinstance(raw, Mapping) else {}
 
 
 # Predicate → subgraph (the named slice a claim belongs to).
@@ -574,6 +751,14 @@ _CATEGORY_SUBGRAPH = {
     "people": "code_topology",
     "timeline": "recent_changes",
     "generic": "admin",
+}
+_ENTITY_TYPE_SUBGRAPH = {
+    "Preference": "decisions",
+    "Policy": "decisions",
+    "Decision": "decisions",
+    "BugPattern": "debugging",
+    "Fix": "debugging",
+    "Activity": "recent_changes",
 }
 
 

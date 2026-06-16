@@ -232,11 +232,25 @@ def register(root: typer.Typer) -> None:
         with contract():
             host = get_host()
             caps = host.backend.capabilities()
+            pot = host.pots.active_pot()
+            pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
+            readiness = host.backend.mutation.readiness(pot_id)
             emit(
                 {
                     "daemon": host.daemon.status(),
                     "backend_profile": host.backend.profile,
+                    "backend_ready": readiness.ready,
+                    "backend_readiness": {
+                        "profile": readiness.profile,
+                        "ready": readiness.ready,
+                        "capability_ready": dict(readiness.capability_ready),
+                        "detail": readiness.detail,
+                    },
                     "backend_capabilities": list(caps.implemented()),
+                    "active_pot": pot_id or None,
+                    "recommended_next_action": None
+                    if readiness.ready
+                    else "Run `potpie backend doctor` or inspect `potpie graph status --json`.",
                     "ledger": {
                         "available": host.ledger.status().available,
                         "binding": host.ledger.status().binding,
@@ -244,7 +258,8 @@ def register(root: typer.Typer) -> None:
                 },
                 human=(
                     f"daemon: {host.daemon.status()['mode']} (up)\n"
-                    f"backend: {host.backend.profile} caps={', '.join(caps.implemented())}\n"
+                    f"backend: {host.backend.profile} ready={readiness.ready} "
+                    f"caps={', '.join(caps.implemented())}\n"
                     f"ledger: {host.ledger.status().binding} "
                     f"available={host.ledger.status().available}"
                 ),

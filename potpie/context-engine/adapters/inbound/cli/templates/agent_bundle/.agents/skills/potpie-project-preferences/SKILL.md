@@ -1,6 +1,6 @@
 ---
 name: "potpie-project-preferences"
-version: "2"
+version: "3"
 recommended: true
 description: "Use before writing or reviewing code so project preferences surface: error handling, file structure, libraries, frameworks, logging, testing, security, and coding guidelines. Also use after work when a reusable preference should be recorded."
 ---
@@ -11,9 +11,9 @@ Use this skill when the task asks the agent to write, modify, refactor, review,
 or test code. Project preferences should surface before implementation so the
 agent follows local conventions instead of rediscovering them.
 
-Preference capture is harness-led: you decide a preference exists and write it
-through `context_record` / `graph mutate`; Potpie validates and stores. No
-scanner derives preferences from the working tree.
+Preference capture is harness-led: you decide a preference exists, create a
+validated plan with `graph propose`, and commit that plan with `graph commit`.
+Potpie validates and stores; no scanner derives preferences from the working tree.
 
 ## Read First
 
@@ -21,13 +21,14 @@ Prefer the graph CLI when shell is available:
 
 ```bash
 potpie --json graph read \
-  --view preferences.active_preferences \
+  --subgraph decisions \
+  --view preferences_for_scope \
   --scope repo:<owner-repo>,path:<path-or-dir> \
   --query "error handling logging retries framework testing file structure" \
   --limit 12
 ```
 
-MCP equivalent:
+MCP compatibility fallback when shell access is unavailable:
 
 ```json
 {"intent":"feature","include":["coding_preferences","decisions","docs"],"mode":"fast","source_policy":"references_only"}
@@ -49,7 +50,16 @@ against source refs or ask the user before choosing.
 Record only preferences that are reusable, explicit, and likely to matter again.
 Do not turn one-off implementation choices into policy.
 
-Use `context_record` for simple captures:
+With the CLI, write preferences through the V2 plan workflow:
+
+```bash
+potpie --json graph search-entities "payments api" --type Service --limit 10
+potpie --json graph propose --file mutation.json
+potpie --json graph commit <plan_id>
+potpie --json graph history --plan <plan_id>
+```
+
+If only MCP is configured, `context_record` can capture simple preferences:
 
 ```json
 {
@@ -67,16 +77,16 @@ Use `context_record` for simple captures:
 }
 ```
 
-Use `graph mutate` when linking the preference to a resolved scope yourself.
-Resolve the target first:
+When linking the preference to a resolved scope yourself, resolve the target
+first:
 
 ```bash
 potpie --json graph search-entities "payments api" --type Service --limit 10
 ```
 
-Then write a retrieval-grade preference claim with `POLICY_APPLIES_TO`, truth
+Then propose a retrieval-grade preference claim with `POLICY_APPLIES_TO`, truth
 `preference`, and evidence when the preference came from a user, PR, ADR, doc, or
-review comment.
+review comment. Inspect the plan diff and commit only when the policy allows it.
 
 Every durable write carries: a compact `summary` (display/browse), a
 retrieval-grade `description` written for search (the situations, synonyms,

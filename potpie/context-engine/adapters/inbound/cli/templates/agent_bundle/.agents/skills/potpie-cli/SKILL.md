@@ -1,6 +1,6 @@
 ---
 name: "potpie-cli"
-version: "3"
+version: "5"
 recommended: true
 description: "Use when the task involves running, explaining, or troubleshooting the Potpie CLI. Covers doctor, login, pot management, source registration, search, and graph read/write commands."
 ---
@@ -33,13 +33,16 @@ potpie search "query" --node-labels PullRequest,Decision
 potpie search "query" --with-temporal
 
 # Graph memory
-potpie --json graph catalog
-potpie --json graph read --view preferences.active_preferences --scope repo:<owner-repo>
-potpie --json timeline recent --limit 20
-potpie --json graph read --view recent_changes.timeline --time-window 7d --limit 20
+potpie --json graph status
+potpie --json graph catalog --task "<task>"
+potpie --json graph describe decisions --view preferences_for_scope --examples
+potpie --json graph read --subgraph decisions --view preferences_for_scope --scope repo:<owner-repo>
+potpie --json graph read --subgraph recent_changes --view timeline --time-window 7d --limit 20
 potpie --json graph search-entities "payments api" --type Service
 potpie graph mutation-template --kind repo-baseline   # schema-only mutation skeleton
-potpie --json graph mutate --file mutation.json --dry-run
+potpie --json graph propose --file mutation.json
+potpie --json graph commit <plan_id>
+potpie --json graph history --plan <plan_id>
 
 # Machine-readable output
 potpie --json doctor
@@ -65,9 +68,9 @@ For graph, search, source, and pot-scoped commands, the pot is chosen in this or
 
 Pot inference chooses the project pot only. It does not automatically narrow a
 timeline read to the current repo, because a pot can span multiple repositories.
-Use `potpie timeline recent` for project-wide history across repos; pass
-`--service` or `graph read --scope ...` only when the user asks for a narrower
-slice.
+Use `graph read --subgraph recent_changes --view timeline` for project-wide
+history across repos; pass `--scope service:<name>` only when the user asks for a
+narrower slice.
 
 ## Key Flags
 
@@ -81,7 +84,13 @@ slice.
 
 There is no local code scan command and no generic note-ingest command in the
 agent path. Repository links, docs, tickets, and PRs are interpreted by the
-harness, then written with `potpie graph mutate` or `context_record`.
+harness, then written with `potpie graph propose` and `potpie graph commit`. If
+only MCP is configured, `context_record` is the compatibility fallback.
+
+For GitHub/Linear/Jira source history, the CLI may expose legacy or operator
+queueing commands, but agents should not use them as the ingestion path. Pull
+source records with the agent's integration tools/connectors, then write the
+resulting graph updates through `graph propose` / `graph commit` or `graph inbox`.
 
 ## Common Failures
 
@@ -91,4 +100,4 @@ harness, then written with `potpie graph mutate` or `context_record`.
 | `401 Invalid API key` | Key is wrong or expired. Re-run `potpie login`. |
 | `Pot scope required` | Run `potpie pot use <id>` or pass a pot UUID explicitly. |
 | `GET /health` fails | Wrong base URL, wrong port, or server is down. |
-| `invalid_mutation_payload` | Validate the JSON shape with `potpie --json graph catalog` and retry `graph mutate --dry-run`. |
+| `invalid_mutation_payload` | Validate the JSON shape with `potpie --json graph catalog --task "<write>"`, then retry `graph propose --file mutation.json`. |

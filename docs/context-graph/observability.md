@@ -51,7 +51,7 @@ attach to the same seams the Code Map (architecture.md) defines.
 |---|---|---|
 | `daemon.request` | Local daemon request. | `host/shell.py`, `host/daemon.py` |
 | `pot.status`, `pot.create`, `pot.reset`, `pot.export` | Pot Management operations. | `PotManagementService` (`application/services/pot_management.py`) |
-| `graph.status`, `graph.catalog`, `graph.describe`, `graph.search_entities`, `graph.read`, `graph.propose`, `graph.commit`, `graph.history`, `graph.inbox` | Graph V2 workbench operations. | Graph Workbench Port / `GraphService` |
+| `graph.status`, `graph.catalog`, `graph.describe`, `graph.search_entities`, `graph.read`, `graph.propose`, `graph.commit`, `graph.history`, `graph.inbox`, `graph.quality` | Graph V2 workbench operations. | Graph Workbench Port / `GraphService` |
 | `reader.{subgraph}.{view}` | Named read-view execution. | Ontology Catalog + Read View Router |
 | `ledger.query`, `ledger.pull`, `ledger.cursor.update` | Graph consuming an Event Ledger. | `LedgerFacade` (`host/shell.py`), `EventLedgerClientPort`, `LedgerCursorStorePort` |
 | `graph.write`, `graph.query`, `graph.inspect` | Backend capability calls. | `GraphBackend` ports (`domain/ports/graph/`) |
@@ -71,10 +71,14 @@ Minimum counters:
 
 - `ce.graph.status_total{result}`
 - `ce.graph.catalog_total{result}`
+- `ce.graph.describe_total{result}`
+- `ce.graph.search_entities_total{result}`
 - `ce.graph.read_total{result,subgraph,view}`
 - `ce.graph.propose_total{result,risk}`
 - `ce.graph.commit_total{result,risk}`
+- `ce.graph.history_total{result}`
 - `ce.graph.inbox_total{operation,result}`
+- `ce.graph.quality_total{report,result}`
 - `ce.pot.operation_total{operation,result}`
 - `ce.graph.write_total{result}`
 - `ce.graph.query_total{result}`
@@ -93,6 +97,9 @@ Useful latency histograms:
 - `ce.graph.read_ms{subgraph,view}`
 - `ce.graph.propose_ms`
 - `ce.graph.commit_ms`
+- `ce.graph.history_ms`
+- `ce.graph.inbox_ms{operation}`
+- `ce.graph.quality_ms{report}`
 - `ce.reader.latency_ms{subgraph,view}`
 - `ce.graph.write_ms`
 - `ce.graph.query_ms`

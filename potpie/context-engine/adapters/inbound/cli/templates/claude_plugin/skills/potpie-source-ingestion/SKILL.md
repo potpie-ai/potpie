@@ -1,6 +1,6 @@
 ---
 name: "potpie-source-ingestion"
-version: "5"
+version: "7"
 recommended: true
 description: "Use when ingesting a repo link, document, PR, issue, ticket, runbook, or web link into Potpie. The harness reads and interprets the source, then writes semantic graph mutations; no local code scanning or deterministic graph updates."
 ---
@@ -18,6 +18,12 @@ mutations with evidence. Potpie validates and stores the graph update. Do not ru
 a working-tree scan, derive facts from filenames alone, or apply deterministic
 graph updates outside the harness.
 
+For hosted integrations such as GitHub, Linear, Jira, or other issue trackers,
+do not use pot-level connector ingestion commands. Use the agent's integration
+tools/connectors to list and hydrate the relevant PRs, issues, tickets, projects,
+comments, and linked documents, then decide what durable graph facts exist and
+write them with `graph propose` / `graph commit` or an inbox item.
+
 ## Ingestion Loop
 
 1. Identify the source kind: repo history, PR, issue, ticket, doc, runbook,
@@ -25,11 +31,13 @@ graph updates outside the harness.
 2. Gather the source data needed for the ingestion goal. For repository ingest,
    do both the baseline repo-understanding pass and the change-history pass
    below; for narrower sources, read only the directly relevant material.
+   For GitHub/Linear/Jira-style sources, gather that data through the agent's
+   integration tools/connectors, not Potpie connector ingestion commands.
 3. Read existing graph context and resolve identity:
 
 ```bash
 potpie --json graph search-entities "<service or repo name>" --type Service --limit 10
-potpie --json timeline recent --limit 10
+potpie --json graph read --subgraph recent_changes --view timeline --limit 10
 ```
 
 4. Classify each durable fact into the right memory family:
@@ -46,8 +54,10 @@ potpie --json timeline recent --limit 10
 - Bugs/debug: `BugPattern`, `Fix`, `Verification`.
 - Decisions/docs: `Decision`, `Document`, `DECIDED`, `AFFECTS`, or doc records.
 
-5. Write a batch with `potpie --json graph mutate --file mutation.json --dry-run`.
-   Apply only after validation is clean or the remaining warnings are intentional.
+5. Write a batch with `potpie --json graph propose --file mutation.json`.
+   Commit the returned `plan_id` only after validation is clean or the remaining
+   warnings are intentional. If the source is useful but the canonical update is
+   uncertain, create a `graph inbox add` item instead.
 
 ## Source-Specific Rules
 
@@ -75,7 +85,9 @@ the `potpie-repo-baseline` skill — follow it when present.
      `repo:<repo>#route:<path>`, or GitHub URLs.
 
 2. Change-history pass:
-   - Read recent merged PRs and standalone issues.
+   - Use agent integration tools/connectors to read recent merged PRs,
+     standalone issues, Linear/Jira tickets, comments, labels/status, and linked
+     docs relevant to the requested scope.
    - Record timeline activities, clear fixes, explicit decisions, and obvious
      bug patterns.
 
@@ -90,8 +102,10 @@ document id in `source_refs` or mutation evidence.
 
 Tickets/issues:
 Tickets and issues can create timeline activities, bug patterns, docs, and
-decisions. Do not emit `Fix` from an issue/ticket alone; fixes require a merged PR,
-commit, deployment, or explicit shipped-resolution source.
+decisions. Hydrate them through the agent's Linear/Jira/GitHub integration tools,
+including status, comments, links, and related PRs when needed. Do not emit `Fix`
+from an issue/ticket alone; fixes require a merged PR, commit, deployment, or
+explicit shipped-resolution source.
 
 Debug transcript/log:
 Record bug patterns, diagnostic signals, investigations, fixes, and verifications.
@@ -100,6 +114,9 @@ Keep raw logs out of descriptions except for the shortest distinctive error text
 ## Anti-Patterns
 
 - Do not call a local code scan command.
+- Do not use pot-level connector ingestion commands such as
+  `potpie pot linear-team ingest`, `potpie pot linear-team diff-sync`, or
+  Jira/GitHub queue commands as the ingestion path.
 - Do not update the graph from deterministic file/config scanning.
 - Do not create a service because a directory has a service-like name.
 - Do not stop at PR/issue timeline events for a repository ingest; capture the

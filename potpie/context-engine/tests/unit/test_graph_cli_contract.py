@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 
 import pytest
 from typer.testing import CliRunner
 
+from bootstrap import observability_runtime
 from adapters.inbound.cli.commands import _common, graph
 from domain.graph_plans import (
     GraphMutationCommitResult,
@@ -73,9 +75,15 @@ class _Graph:
             ontology_version="2026-06-graph",
             commands=("catalog", "read", "search-entities", "mutate"),
             truth_classes=("agent_claim",),
-            mutation_operations=("link_entities",),
-            review_required_operations=("supersede_claim",),
-            deferred_operations=("patch_entity",),
+            mutation_operations=(
+                "link_entities",
+                "patch_entity",
+                "transition_state",
+                "supersede_claim",
+                "merge_duplicate_entities",
+            ),
+            review_required_operations=(),
+            deferred_operations=(),
             views=tuple(views_for_catalog()),
             entity_types=(),
             predicates=(),
@@ -102,6 +110,73 @@ class _Graph:
         if self.read_result is None:
             raise AssertionError("read should not be called")
         return self.read_result
+
+
+class _NotReadyGraph(_Graph):
+    def data_plane_status(self, pot_id):
+        return DataPlaneStatus(
+            pot_id=pot_id,
+            backend_profile="memory",
+            backend_ready=False,
+            reader_backed_includes=("timeline",),
+            counts={"claims": 0},
+            freshness={},
+            quality={"status": "unavailable"},
+            match_mode="lexical",
+            detail="mutation store is unavailable",
+        )
+
+
+class _RecordedSpan:
+    def __init__(self, attrs: dict) -> None:
+        self.attrs = attrs
+        self.error = None
+
+    def set_attribute(self, key, value):
+        self.attrs[key] = value
+
+    def set_attributes(self, attributes):
+        self.attrs.update(dict(attributes))
+
+    def add_event(self, *_args, **_kwargs):
+        pass
+
+    def record_exception(self, exc):
+        self.attrs["exception"] = repr(exc)
+
+    def set_error(self, message=None):
+        self.error = message or True
+
+
+class _RecordingObservability:
+    def __init__(self) -> None:
+        self.spans: list[tuple[str, dict, _RecordedSpan]] = []
+        self.counters: list[tuple[str, int, dict]] = []
+        self.histograms: list[tuple[str, float, dict]] = []
+
+    @contextmanager
+    def span(self, name, *, kind="internal", attributes=None, links=None):
+        del links
+        attrs = {"kind": kind, **dict(attributes or {})}
+        span = _RecordedSpan(attrs)
+        self.spans.append((name, attrs, span))
+        yield span
+
+    def current_traceparent(self):
+        return None
+
+    @contextmanager
+    def baggage(self, **_items):
+        yield
+
+    def counter(self, name, value=1, *, attributes=None):
+        self.counters.append((name, value, dict(attributes or {})))
+
+    def histogram(self, name, value, *, attributes=None):
+        self.histograms.append((name, value, dict(attributes or {})))
+
+    def gauge(self, name, value, *, attributes=None):
+        del name, value, attributes
 
 
 class _Nudge:
@@ -568,6 +643,63 @@ def test_graph_propose_returns_persisted_plan_envelope(tmp_path) -> None:
     assert body["plan_id"] == "mutation-plan:test"
     assert body["status"] == "validated"
     assert workbench.propose_calls[0][1:] == ("p", 1800)
+
+
+def test_graph_workbench_commands_emit_v2_observability(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    _common.set_json(True)
+    obs = _RecordingObservability()
+    monkeypatch.setattr(observability_runtime, "_OBSERVABILITY", obs)
+    payload_file = tmp_path / "mutation.json"
+    payload_file.write_text(json.dumps(_valid_mutation_payload()), encoding="utf-8")
+
+    _common.set_host(_Host(_Graph(), graph_workbench=_Workbench(proposal=_proposal())))
+    propose = CliRunner().invoke(
+        graph.graph_app,
+        ["propose", "--file", str(payload_file)],
+    )
+    assert propose.exit_code == 0, propose.output
+
+    _common.set_host(
+        _Host(_Graph(), graph_workbench=_Workbench(inbox_result=_inbox_result()))
+    )
+    inbox = CliRunner().invoke(
+        graph.graph_app,
+        ["inbox", "add", "--summary", "Possible graph update"],
+    )
+    assert inbox.exit_code == 0, inbox.output
+
+    _common.set_host(
+        _Host(
+            _Graph(),
+            graph_workbench=_Workbench(
+                quality_result=_quality_result(report="summary")
+            ),
+        )
+    )
+    quality = CliRunner().invoke(graph.graph_app, ["quality", "summary"])
+    assert quality.exit_code == 0, quality.output
+
+    propose_counter = next(
+        item for item in obs.counters if item[0] == "ce.graph.propose_total"
+    )
+    assert propose_counter[2]["risk"] == "low"
+    assert propose_counter[2]["status"] == "validated"
+    inbox_counter = next(
+        item for item in obs.counters if item[0] == "ce.graph.inbox_total"
+    )
+    assert inbox_counter[2]["operation"] == "add"
+    quality_counter = next(
+        item for item in obs.counters if item[0] == "ce.graph.quality_total"
+    )
+    assert quality_counter[2]["report"] == "summary"
+    assert {span[0] for span in obs.spans} >= {
+        "graph.propose",
+        "graph.inbox",
+        "graph.quality",
+    }
 
 
 def test_graph_commit_applies_plan_id_only() -> None:
@@ -1055,6 +1187,31 @@ def test_graph_read_timeline_defaults_to_deduped_event_json() -> None:
     assert body["freshness"]["local_worktree_included"] is False
 
 
+def test_graph_read_emits_v2_observability(monkeypatch: pytest.MonkeyPatch) -> None:
+    _common.set_json(True)
+    obs = _RecordingObservability()
+    monkeypatch.setattr(observability_runtime, "_OBSERVABILITY", obs)
+    graph_service = _Graph(read_result=_timeline_env())
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["read", "--subgraph", "recent_changes", "--view", "timeline"],
+    )
+
+    assert result.exit_code == 0, result.output
+    span = next(item for item in obs.spans if item[0] == "graph.read")
+    assert span[1]["command"] == "graph.read"
+    assert span[1]["subgraph"] == "recent_changes"
+    assert span[1]["view"] == "recent_changes.timeline"
+    counter = next(item for item in obs.counters if item[0] == "ce.graph.read_total")
+    assert counter[1] == 1
+    assert counter[2]["result"] == "ok"
+    assert counter[2]["subgraph"] == "recent_changes"
+    assert counter[2]["view"] == "recent_changes.timeline"
+    assert any(item[0] == "ce.graph.read_ms" for item in obs.histograms)
+
+
 def test_graph_nudge_accepts_dash_event_alias() -> None:
     _common.set_json(True)
     nudge_service = _Nudge()
@@ -1137,6 +1294,21 @@ def test_graph_status_json_uses_workbench_envelope() -> None:
     assert body["backend"]["profile"] == "memory"
 
 
+def test_graph_status_not_ready_recommends_backend_doctor() -> None:
+    _common.set_json(True)
+    _common.set_host(_Host(_NotReadyGraph(), backend=_Backend()))
+
+    result = CliRunner().invoke(graph.graph_app, ["status"])
+
+    assert result.exit_code == 0
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.status")
+    assert body["backend"]["ready"] is False
+    assert body["backend"]["detail"] == "mutation store is unavailable"
+    assert body["backend"]["readiness_command"] == "potpie backend doctor"
+    assert "potpie backend doctor" in emitted["recommended_next_action"]
+
+
 def test_graph_neighborhood_returns_inspection_slice() -> None:
     _common.set_json(True)
     _common.set_host(_Host(_Graph(), backend=_Backend()))
@@ -1183,6 +1355,10 @@ def test_graph_describe_returns_executable_view_contract() -> None:
     assert body["view"]["result_shape"] == "entity_relations"
     assert "REPRODUCES" in body["view"]["inline_relations"]
     assert body["view"]["examples"][0]["command"].startswith("potpie graph read")
+    assert (
+        emitted["recommended_next_action"]
+        == "Use `potpie graph read --subgraph debugging --view prior_occurrences --json` after choosing a scope."
+    )
 
 
 def test_graph_describe_unknown_view_uses_error_envelope() -> None:

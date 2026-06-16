@@ -116,9 +116,10 @@ def test_reject_invalid_endpoints() -> None:
     assert any(i.code == "invalid_endpoints" for i in res.issues if i.is_error)
 
 
-# 7. mutate returns review_required for high-risk operations
-def test_review_required_for_supersede() -> None:
+# 7. mutate gates high-risk operations on explicit approval
+def test_high_risk_supersede_requires_approval() -> None:
     svc = _service()
+    svc.mutate(SemanticMutationRequest.parse(_link_payload()))
     payload = {
         "pot_id": POT,
         "operations": [
@@ -128,12 +129,27 @@ def test_review_required_for_supersede() -> None:
                 "subject": {"key": "service:payments-api", "type": "Service"},
                 "predicate": "DEPENDS_ON",
                 "object": {"key": "service:ledger-api", "type": "Service"},
+                "superseded_by": {"key": "service:ledger-v2", "type": "Service"},
+                "reason": "dependency target changed",
+                "description": "payments depends on ledger-v2 after the service rename",
             }
         ],
     }
     res = svc.mutate(SemanticMutationRequest.parse(payload))
     assert res.status == "review_required"
     assert res.auto_committed is False
+
+    approved = svc.mutate(
+        SemanticMutationRequest.parse(
+            payload,
+            allow_review_required=True,
+            approved_by="user:alice",
+        )
+    )
+    assert approved.status == "applied"
+    rows = svc.backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
+    assert len(rows) == 1
+    assert rows[0].object_key == "service:ledger-v2"
 
 
 # 8. context_record uses the semantic mutation path with the same metadata

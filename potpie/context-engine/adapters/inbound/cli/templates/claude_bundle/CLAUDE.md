@@ -11,7 +11,8 @@ repository or decide what prose means for you.
 ```bash
 potpie doctor
 potpie pot list
-potpie graph catalog
+potpie graph status
+potpie graph catalog --task "<task>"
 ```
 
 ## Graph Surface
@@ -19,11 +20,14 @@ potpie graph catalog
 Use the CLI when available:
 
 ```bash
-potpie --json graph catalog
-potpie --json graph read --view <subgraph.view> [--query "..."] [--scope key:value] [--limit N]
-potpie --json timeline recent [--time-window 7d] [--limit N]
+potpie --json graph status
+potpie --json graph catalog --task "<task>"
+potpie --json graph describe <subgraph> --view <view> --examples
+potpie --json graph read --subgraph <subgraph> --view <view> [--query "..."] [--scope key:value] [--limit N]
 potpie --json graph search-entities "text" [--type Service] [--environment prod]
-potpie --json graph mutate --file mutation.json [--dry-run]
+potpie --json graph propose --file mutation.json
+potpie --json graph commit <plan_id>
+potpie --json graph history --plan <plan_id>
 ```
 
 When only MCP is configured, use `context_status`, `context_resolve`,
@@ -69,21 +73,31 @@ Write retrieval-grade descriptions: include symptoms, synonyms, scope,
 environment, service, source refs, and the words a future searcher would type.
 
 Use semantic operations only: `upsert_entity`, `link_entities`, `assert_claim`,
-`append_event`, `end_relation_validity`, and `retract_claim`. Never hard-delete a
-claim.
+`append_event`, `end_relation_validity`, `retract_claim`, and any audited
+correction operation currently advertised by `graph catalog`. Never hard-delete a
+claim. Create a plan with `graph propose`, commit the returned `plan_id`, and
+verify with `graph history`.
 
 ## Ingestion Boundary
 
 Do not run local code scans or deterministic graph updates from the working tree.
 For a repo link, document, ticket, PR, issue, or web link, the harness reads the
 source, decides what durable facts exist, resolves identity, and writes graph
-mutations or `context_record`.
+plans through `propose`/`commit`. If only MCP is configured, `context_record` is
+the compatibility fallback.
+
+For GitHub, Linear, Jira, and other hosted integrations, pull PRs, issues,
+tickets, comments, labels/status, and linked docs with the agent's integration
+tools/connectors. Do not use pot-level connector ingestion commands such as
+`potpie pot linear-team ingest`, `potpie pot linear-team diff-sync`, or
+Jira/GitHub queue commands as the ingestion path; write the graph updates
+yourself with `graph propose` / `graph commit` or `graph inbox`.
 
 ## Nudges
 
 A Potpie hook may inject context or an instruction. `inject_context` is task
 context. `instruction` is a prompt to decide whether a durable learning should be
-recorded; if not, do nothing.
+recorded through `graph propose` and `graph commit`; if not, do nothing.
 
 ## Slash Commands
 

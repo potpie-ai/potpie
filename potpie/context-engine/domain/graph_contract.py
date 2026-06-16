@@ -132,10 +132,9 @@ class SemanticMutationOp(StrEnum):
     append_event = "append_event"
     end_relation_validity = "end_relation_validity"
     retract_claim = "retract_claim"
-    # Review-required in V1.5 (no plan store / identity resolver yet).
     supersede_claim = "supersede_claim"
     merge_duplicate_entities = "merge_duplicate_entities"
-    # Deferred to V2: V1.5 models state changes as new claims/events.
+    # V2 plan-workflow operations promoted after validation/lowering/history support.
     patch_entity = "patch_entity"
     transition_state = "transition_state"
 
@@ -148,22 +147,20 @@ APPLICABLE_MUTATION_OPS: tuple[str, ...] = (
     SemanticMutationOp.assert_claim.value,
     SemanticMutationOp.end_relation_validity.value,
     SemanticMutationOp.retract_claim.value,
-)
-
-# Always returned as ``review_required``: no V1.5 approval path exists, so
-# advertising them as applicable would lie.
-REVIEW_REQUIRED_OPS: tuple[str, ...] = (
+    SemanticMutationOp.patch_entity.value,
+    SemanticMutationOp.transition_state.value,
     SemanticMutationOp.supersede_claim.value,
     SemanticMutationOp.merge_duplicate_entities.value,
 )
 
-# Part of the V2 vocabulary but not modeled in V1.5 (state changes are new
-# claims/events, not in-place edits). Surfaced in the catalog so the absence
-# is honest, not silent.
-DEFERRED_OPS: tuple[str, ...] = (
-    SemanticMutationOp.patch_entity.value,
-    SemanticMutationOp.transition_state.value,
-)
+# Always returned as ``review_required``. High-risk V2 correction workflows are
+# applicable through the plan store and explicit approval, so this partition is
+# empty until a known-but-not-lowered op is added.
+REVIEW_REQUIRED_OPS: tuple[str, ...] = ()
+
+# Part of the V2 vocabulary but not modeled in this build. Keep the partition
+# explicit so catalog promotion is intentional when future ops land.
+DEFERRED_OPS: tuple[str, ...] = ()
 
 KNOWN_MUTATION_OPS: frozenset[str] = frozenset(
     APPLICABLE_MUTATION_OPS + REVIEW_REQUIRED_OPS + DEFERRED_OPS

@@ -137,16 +137,108 @@ def test_bad_timestamp_rejected() -> None:
     assert any(i.code == "bad_timestamp" for i in plan.errors)
 
 
-def test_deferred_op_rejected_honestly() -> None:
-    plan = validate_semantic_request(
-        _req({"op": "patch_entity", "subject": {"key": "service:x", "type": "Service"}})
+def test_patch_entity_is_medium_risk_and_needs_approval() -> None:
+    op = {
+        "op": "patch_entity",
+        "subject": {"key": "service:payments-api", "type": "Service"},
+        "patch": {"summary": "Payments API service"},
+        "expected_entity_version": "entity-version:1",
+        "reason": "tighten display metadata",
+    }
+
+    plan = validate_semantic_request(_req(op))
+    assert plan.ok
+    assert plan.risk == "medium"
+    assert plan.decision == "review_required"
+    assert plan.accepted_ops[0].op == "patch_entity"
+
+    approved = validate_semantic_request(
+        _req(op, allow_review_required=True, approved_by="user:alice")
     )
+    assert approved.decision == "apply"
+
+
+def test_patch_entity_rejects_non_contract_field_and_weak_description() -> None:
+    plan = validate_semantic_request(
+        _req(
+            {
+                "op": "patch_entity",
+                "subject": {"key": "service:payments-api", "type": "Service"},
+                "patch": {
+                    "identity_key": "service:other",
+                    "description": "payments",
+                },
+                "expected_entity_version": "entity-version:1",
+            }
+        )
+    )
+
     assert not plan.ok
-    assert any(i.code == "op_deferred" for i in plan.errors)
-    assert plan.deferred_ops
+    assert any(i.code == "patch_field_not_allowed" for i in plan.errors)
+    assert any(i.code == "weak_description" for i in plan.errors)
 
 
-def test_review_required_op() -> None:
+def test_transition_state_validates_lifecycle_contract() -> None:
+    op = {
+        "op": "transition_state",
+        "subject": {"key": "decision:adr-1", "type": "Decision"},
+        "from_state": "proposed",
+        "to_state": "accepted",
+        "expected_entity_version": "entity-version:2",
+        "reason": "ADR approved by maintainers",
+    }
+
+    plan = validate_semantic_request(_req(op))
+
+    assert plan.ok
+    assert plan.risk == "medium"
+    assert plan.decision == "review_required"
+    assert plan.accepted_ops[0].subgraph == "decisions"
+
+
+def test_transition_state_rejects_invalid_transition() -> None:
+    plan = validate_semantic_request(
+        _req(
+            {
+                "op": "transition_state",
+                "subject": {"key": "decision:adr-1", "type": "Decision"},
+                "from_state": "rejected",
+                "to_state": "accepted",
+                "expected_entity_version": "entity-version:2",
+                "reason": "try to reopen rejected ADR",
+            }
+        )
+    )
+
+    assert not plan.ok
+    assert any(i.code == "invalid_state_transition" for i in plan.errors)
+
+
+def test_supersede_claim_is_high_risk_and_needs_approval() -> None:
+    op = {
+        "op": "supersede_claim",
+        "subject": {"key": "service:a", "type": "Service"},
+        "predicate": "DEPENDS_ON",
+        "object": {"key": "service:b", "type": "Service"},
+        "superseded_by": {"key": "service:c", "type": "Service"},
+        "reason": "dependency target changed",
+        "description": "service:a now depends on service:c instead of service:b",
+    }
+
+    plan = validate_semantic_request(_req(op))
+    assert plan.ok
+    assert plan.risk == "high"
+    assert plan.decision == "review_required"
+    assert plan.accepted_ops[0].op == "supersede_claim"
+    assert not plan.review_required_ops
+
+    approved = validate_semantic_request(
+        _req(op, allow_review_required=True, approved_by="user:alice")
+    )
+    assert approved.decision == "apply"
+
+
+def test_supersede_claim_requires_replacement_and_reason() -> None:
     plan = validate_semantic_request(
         _req(
             {
@@ -157,8 +249,49 @@ def test_review_required_op() -> None:
             }
         )
     )
+    assert plan.decision == "rejected"
+    assert any(i.code == "missing_entity" for i in plan.errors)
+    assert any(i.code == "missing_reason" for i in plan.errors)
+
+
+def test_merge_duplicate_entities_is_high_risk_and_needs_approval() -> None:
+    op = {
+        "op": "merge_duplicate_entities",
+        "subject": {"key": "service:payments-v1", "type": "Service"},
+        "object": {"key": "service:payments", "type": "Service"},
+        "external_ids": {
+            "losing": {"source": "manifest:payments-v1.yaml"},
+            "winning": {"source": "manifest:payments.yaml"},
+        },
+        "reason": "manifests describe the same deployable service",
+        "description": "service:payments-v1 is a duplicate identity for service:payments",
+    }
+
+    plan = validate_semantic_request(_req(op))
+    assert plan.ok
+    assert plan.risk == "high"
     assert plan.decision == "review_required"
-    assert plan.review_required_ops
+
+    approved = validate_semantic_request(
+        _req(op, allow_review_required=True, approved_by="user:alice")
+    )
+    assert approved.decision == "apply"
+
+
+def test_merge_duplicate_entities_validates_identity_records() -> None:
+    plan = validate_semantic_request(
+        _req(
+            {
+                "op": "merge_duplicate_entities",
+                "subject": {"key": "service:payments-v1", "type": "Service"},
+                "object": {"key": "repo:github.com/potpie-ai/potpie", "type": "Repository"},
+                "reason": "bad merge target",
+            }
+        )
+    )
+    assert not plan.ok
+    assert any(i.code == "merge_type_mismatch" for i in plan.errors)
+    assert any(i.code == "missing_external_ids" for i in plan.errors)
 
 
 def test_append_event_validates_entity_refs_and_endpoints() -> None:
@@ -201,7 +334,7 @@ def test_end_relation_validity_requires_exact_object() -> None:
     assert any(i.code == "missing_object" for i in plan.errors)
 
 
-def test_review_required_supersede_claim_validates_refs_first() -> None:
+def test_supersede_claim_validates_refs_first() -> None:
     plan = validate_semantic_request(
         _req(
             {
@@ -209,13 +342,14 @@ def test_review_required_supersede_claim_validates_refs_first() -> None:
                 "subject": {"key": "repo:not-person", "type": "Person"},
                 "predicate": "DEPENDS_ON",
                 "object": {"key": "service:payments-api", "type": "Service"},
+                "superseded_by": {"key": "service:ledger-api", "type": "Service"},
+                "reason": "dependency target changed",
             }
         )
     )
 
     assert not plan.ok
     assert plan.decision == "rejected"
-    assert not plan.review_required_ops
     assert any(i.code == "key_prefix_mismatch" for i in plan.errors)
     assert any(i.code == "invalid_endpoints" for i in plan.errors)
 
@@ -317,6 +451,61 @@ def test_lowering_derives_subgraph_when_omitted() -> None:
     edge = plan.batch.edge_upserts[0]
     assert edge.properties["subgraph"] == "infra_topology"
     assert ":infra_topology:" in edge.properties["claim_key"]
+
+
+def test_lowering_patch_entity_updates_entity_metadata_only() -> None:
+    req = _req(
+        {
+            "op": "patch_entity",
+            "subject": {"key": "service:payments-api", "type": "Service"},
+            "patch": {"summary": "Payments API service"},
+            "expected_entity_version": "entity-version:1",
+            "reason": "tighten display metadata",
+        },
+        allow_review_required=True,
+        approved_by="user:alice",
+    )
+    plan = validate_semantic_request(req)
+    assert plan.decision == "apply"
+    lower_semantic_request(req, plan)
+
+    assert len(plan.batch.entity_upserts) == 1
+    assert plan.batch.entity_upserts[0].entity_key == "service:payments-api"
+    assert plan.batch.entity_upserts[0].properties["summary"] == "Payments API service"
+    assert plan.batch.entity_upserts[0].properties["last_semantic_op"] == "patch_entity"
+    assert plan.batch.edge_upserts == []
+
+
+def test_lowering_transition_state_updates_entity_and_writes_audit_claim() -> None:
+    req = _req(
+        {
+            "op": "transition_state",
+            "subject": {"key": "decision:adr-1", "type": "Decision"},
+            "from_state": "proposed",
+            "to_state": "accepted",
+            "expected_entity_version": "entity-version:2",
+            "reason": "ADR approved by maintainers",
+            "observed_at": "2026-06-15T10:00:00+00:00",
+        },
+        allow_review_required=True,
+        approved_by="user:alice",
+    )
+    plan = validate_semantic_request(req)
+    assert plan.decision == "apply"
+    lower_semantic_request(req, plan)
+
+    by_key = {entity.entity_key: entity for entity in plan.batch.entity_upserts}
+    decision = by_key["decision:adr-1"]
+    assert decision.properties["lifecycle_state"] == "accepted"
+    assert decision.properties["previous_lifecycle_state"] == "proposed"
+    assert decision.properties["state_transition_reason"] == "ADR approved by maintainers"
+    edge = plan.batch.edge_upserts[0]
+    assert edge.edge_type == "MENTIONS"
+    assert edge.to_entity_key == "decision:adr-1"
+    assert edge.properties["truth"] == "timeline_event"
+    assert edge.properties["state_transition_from"] == "proposed"
+    assert edge.properties["state_transition_to"] == "accepted"
+    assert plan.accepted_ops[0].claim_keys
 
 
 def test_lowering_keeps_canonical_label_for_referenced_entity() -> None:
@@ -447,3 +636,72 @@ def test_lowering_retract_produces_invalidation() -> None:
     lower_semantic_request(req, plan)
     assert len(plan.batch.invalidations) == 1
     assert plan.batch.invalidations[0].target_edge[0] == "DEPENDS_ON"
+
+
+def test_lowering_supersede_claim_replaces_claim_and_invalidates_old_relation() -> None:
+    req = _req(
+        {
+            "op": "supersede_claim",
+            "subgraph": "infra_topology",
+            "subject": {"key": "service:payments-api", "type": "Service"},
+            "predicate": "DEPENDS_ON",
+            "object": {"key": "service:ledger-old", "type": "Service"},
+            "superseded_by": {"key": "service:ledger-new", "type": "Service"},
+            "reason": "ledger dependency moved",
+            "description": "payments now depends on the new ledger service",
+        },
+        allow_review_required=True,
+        approved_by="user:alice",
+    )
+    plan = validate_semantic_request(req)
+    assert plan.decision == "apply"
+    lower_semantic_request(req, plan)
+
+    assert len(plan.batch.edge_upserts) == 1
+    edge = plan.batch.edge_upserts[0]
+    assert edge.edge_type == "DEPENDS_ON"
+    assert edge.to_entity_key == "service:ledger-new"
+    assert edge.properties["last_semantic_op"] == "supersede_claim"
+    assert len(plan.batch.invalidations) == 1
+    invalidation = plan.batch.invalidations[0]
+    assert invalidation.target_edge == (
+        "DEPENDS_ON",
+        "service:payments-api",
+        "service:ledger-old",
+    )
+    assert invalidation.superseded_by_key == "service:ledger-new"
+    assert plan.accepted_ops[0].claim_keys
+
+
+def test_lowering_merge_duplicate_entities_writes_merge_record() -> None:
+    req = _req(
+        {
+            "op": "merge_duplicate_entities",
+            "subject": {"key": "service:payments-v1", "type": "Service"},
+            "object": {"key": "service:payments", "type": "Service"},
+            "external_ids": {
+                "losing": {"source": "manifest:payments-v1.yaml"},
+                "winning": {"source": "manifest:payments.yaml"},
+            },
+            "reason": "same service in source manifests",
+            "description": "payments-v1 is a duplicate identity for payments service",
+        },
+        allow_review_required=True,
+        approved_by="user:alice",
+    )
+    plan = validate_semantic_request(req)
+    assert plan.decision == "apply"
+    lower_semantic_request(req, plan)
+
+    by_key = {entity.entity_key: entity for entity in plan.batch.entity_upserts}
+    losing = by_key["service:payments-v1"]
+    assert losing.properties["merged_into"] == "service:payments"
+    assert losing.properties["merge_status"] == "merged_duplicate"
+    edge = plan.batch.edge_upserts[0]
+    assert edge.edge_type == "RELATED_TO"
+    assert edge.from_entity_key == "service:payments-v1"
+    assert edge.to_entity_key == "service:payments"
+    assert edge.properties["merge_record"] is True
+    assert edge.properties["merge_external_ids"]["losing"]["source"].endswith("v1.yaml")
+    assert plan.batch.invalidations == []
+    assert plan.accepted_ops[0].claim_keys

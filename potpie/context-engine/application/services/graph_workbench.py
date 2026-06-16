@@ -2290,16 +2290,16 @@ def _approval_error(
     *,
     approved_by: str | None,
 ) -> str | None:
-    if record.review_required_ops or record.risk == MutationRisk.high.value:
+    if record.review_required_ops:
         return (
-            "plan contains high-risk or review-required operations that the local "
-            "Phase 3 commit path does not apply yet"
+            "plan contains review-required operations that the local commit path "
+            "does not apply yet"
         )
     if record.status == GraphMutationPlanStatus.review_required.value or (
-        record.risk == MutationRisk.medium.value
+        record.risk in {MutationRisk.medium.value, MutationRisk.high.value}
     ):
         if not (record.approval or (approved_by and approved_by.strip())):
-            return "approval required for medium-risk plan"
+            return "approval required for medium- or high-risk plan"
     return None
 
 

@@ -1,6 +1,6 @@
 ---
 name: "potpie-graph"
-version: "4"
+version: "5"
 description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions and responding to nudges. Prefer this over the MCP context_* tools whenever the shell is available."
 ---
 
@@ -14,24 +14,32 @@ from prose for you.
 
 Always pass `--json` for machine-readable output.
 
-## 1. Discover — `graph catalog`
+## 1. Check Status And Discover The Contract
 
 ```bash
-potpie --json graph catalog
+potpie --json graph status
+potpie --json graph catalog --task "<task>"
 ```
 
 Returns contract + ontology versions, the readable **views**, the **mutation
 operations** you can apply (and which are `review_required` or `deferred`), the
 entity types, and the predicates. Start graph-aware work here instead of reading
-docs. The catalog also reports the active `match_mode` (`vector` vs `lexical`) so you
-know whether semantic recall is on.
+docs. Trust the catalog's current operation partition over any example in a
+skill file. The catalog also reports the active `match_mode` (`vector` vs
+`lexical`) so you know whether semantic recall is on.
+
+Describe the subgraph/view before a non-trivial read or write:
+
+```bash
+potpie --json graph describe debugging --view prior_occurrences --examples
+```
 
 ## 2. Read - `graph read --subgraph --view`
 
 ```bash
 potpie --json graph read --subgraph debugging --view prior_occurrences --query "refund race timeout" --limit 8
 potpie --json graph read --subgraph decisions --view preferences_for_scope --scope repo:acme/x,path:src/payments/client.py
-potpie --json timeline recent --limit 20
+potpie --json graph read --subgraph recent_changes --view timeline --time-window 7d --limit 20
 potpie --json graph read --subgraph infra_topology --view service_neighborhood --scope service:payments-api --depth 2 --direction out --environment prod
 ```
 
@@ -41,7 +49,7 @@ Views and what they answer:
 |---|---|---|
 | `decisions.preferences_for_scope` | `--scope repo:…,path:…` `--query` | which preferences apply to this code |
 | `debugging.prior_occurrences` | `--query` (symptom), optional `--scope service:…` | "seen this before? what fixed it" (bug + fix/PR inline) |
-| `recent_changes.timeline` | optional `--scope`, `--since`, `--until`, `--time-window` | recent PRs/tickets/activity for the project pot; use `potpie timeline recent` for the common project-wide path |
+| `recent_changes.timeline` | optional `--scope`, `--since`, `--until`, `--time-window` | recent PRs/tickets/activity for the project pot |
 | `infra_topology.service_neighborhood` | `--scope service:…` `--depth` `--direction` `--environment` | dependency blast-radius, env-qualified |
 | `features.feature_context` | optional `--scope anchor_entity_key:repo:…` | what a repo/service does (Feature nodes via `PROVIDES` / `IMPLEMENTED_IN`) |
 | `decisions.active_decisions` | `--scope` | active decisions |
@@ -81,6 +89,7 @@ server-held plan with `propose`; then commit exactly that `plan_id`.
 potpie graph mutation-template --kind repo-baseline   # schema-only skeleton to fill
 potpie --json graph propose --file mutation.json
 potpie --json graph commit mutation-plan:01JY8T5C
+potpie --json graph history --plan mutation-plan:01JY8T5C
 ```
 
 `mutation-template` kinds: `repo-baseline`, `feature`, `preference`,
@@ -127,15 +136,11 @@ Payload is always batch-shaped:
 }
 ```
 
-Applicable ops: `upsert_entity`, `link_entities`, `assert_claim`, `append_event`,
-`end_relation_validity`, `retract_claim`.
-
-- `supersede_claim` and `merge_duplicate_entities` are review-required. They can be
-  proposed, but the local commit path will not apply high-risk/review-required
-  plans until the review workflow is implemented.
-- `patch_entity` and `transition_state` are deferred — model a state change as a new
-  claim or `append_event` (e.g. a `VERIFIED` event), never an in-place edit.
-- Never hard-delete a claim: use `end_relation_validity` or `retract_claim`.
+Use only operations advertised by `graph catalog`. Common operations include
+`upsert_entity`, `link_entities`, `assert_claim`, `append_event`,
+`end_relation_validity`, `retract_claim`, and audited correction operations when
+the catalog marks them applicable. Never hard-delete a claim: use validity,
+retraction, supersession, or merge operations according to the catalog policy.
 
 ## 5. Capture uncertainty - `graph inbox`
 
@@ -188,6 +193,12 @@ evidence **or** an explicitly low-authority truth class.
 Do not use the graph as a deterministic code scanner. If a repo, PR, ticket, log,
 or document should become memory, the harness reads that source, decides what is
 worth recording, resolves identity, and writes a semantic mutation.
+
+For GitHub, Linear, Jira, and similar hosted integrations, use the agent's
+integration tools/connectors to pull and hydrate source records first. Do not use
+pot-level connector ingestion commands as the graph update path; after reading
+the integration data, write durable facts with `graph propose` / `graph commit`
+or capture uncertainty with `graph inbox`.
 
 ### Retrieval-grade descriptions (the one rule that matters most)
 

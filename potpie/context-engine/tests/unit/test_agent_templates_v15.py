@@ -1,4 +1,4 @@
-"""Step 12: installed agent templates/skills match the V1.5 responsibility split.
+"""Installed agent templates/skills match the Graph V2 responsibility split.
 
 These pin the *content* contract of the shipped templates so a future edit cannot
 reintroduce a stale include name, drop the graph surface, or forget the
@@ -34,6 +34,14 @@ STALE_INCLUDE_TOKENS = (
     "local_workflows",
     "agent_instructions",
     "diagnostic_signals",
+)
+
+STALE_PUBLIC_VIEW_TOKENS = (
+    "bugs.prior_occurrences",
+    "preferences.active_preferences",
+    "features.provided",
+    "ownership.owner_context",
+    "docs.reference_context",
 )
 # NB: ``recent_changes`` is intentionally absent — it collides with the legitimate
 # view name ``recent_changes.timeline``. The JSON-include allowlist check below
@@ -114,8 +122,74 @@ def _read(name_fragment: str) -> str:
 
 def test_agents_md_advertises_graph_surface() -> None:
     text = _read("agent_bundle/AGENTS.md")
-    for verb in ("graph catalog", "graph read", "graph search-entities", "graph mutate"):
+    for verb in (
+        "graph status",
+        "graph catalog --task",
+        "graph describe",
+        "graph read --subgraph",
+        "graph search-entities",
+        "graph propose",
+        "graph commit",
+        "graph history",
+    ):
         assert verb in text, f"AGENTS.md missing `{verb}`"
+
+
+def test_templates_do_not_advertise_v1_write_workflow() -> None:
+    forbidden = (
+        "graph mutate --file",
+        "graph mutate --dry-run",
+        "--dry-run",
+    )
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        text = path.read_text(encoding="utf-8")
+        hits = [tok for tok in forbidden if tok in text]
+        assert not hits, f"{rel} still advertises V1 write workflow: {hits}"
+
+
+def test_templates_use_canonical_v2_view_syntax() -> None:
+    command_view_arg = re.compile(r"--view\s+[a-z_]+\.[a-z_]+")
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        text = path.read_text(encoding="utf-8")
+        stale_views = [tok for tok in STALE_PUBLIC_VIEW_TOKENS if tok in text]
+        assert not stale_views, f"{rel} still uses obsolete public views: {stale_views}"
+        bad_args = command_view_arg.findall(text)
+        assert not bad_args, f"{rel} uses fully-qualified --view args: {bad_args}"
+
+
+def test_context_record_is_labeled_mcp_compatibility() -> None:
+    allowed_mcp_skill = "potpie-agent-context/SKILL.md"
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES).as_posix()
+        text = path.read_text(encoding="utf-8")
+        if "context_record" not in text or allowed_mcp_skill in rel:
+            continue
+        lowered_lines = text.lower().splitlines()
+        for idx, line in enumerate(lowered_lines):
+            if "context_record" not in line:
+                continue
+            window = " ".join(lowered_lines[max(0, idx - 5) : idx + 2])
+            assert "mcp" in window or "compatib" in window, (
+                f"{rel} mentions context_record without MCP compatibility framing"
+            )
+
+
+def test_recommended_skills_teach_v2_workflow() -> None:
+    text = _read("potpie-graph/SKILL.md")
+    for token in (
+        "graph status",
+        "graph catalog --task",
+        "graph describe",
+        "graph search-entities",
+        "graph read --subgraph",
+        "graph propose",
+        "graph commit",
+        "graph history",
+        "graph inbox",
+    ):
+        assert token in text, f"potpie-graph missing V2 workflow token: {token}"
 
 
 def test_graph_skill_present_in_each_harness_bundle() -> None:
@@ -228,3 +302,44 @@ def test_templates_do_not_advertise_local_ingest_or_scan_commands() -> None:
         text = path.read_text(encoding="utf-8")
         hits = [tok for tok in forbidden if tok in text]
         assert not hits, f"{rel} advertises removed local ingest/scan commands: {hits}"
+
+
+def test_hosted_integration_ingestion_is_agent_led() -> None:
+    for fragment in (
+        "potpie-source-ingestion/SKILL.md",
+        "potpie-change-timeline/SKILL.md",
+        "potpie-graph/SKILL.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+    ):
+        text = " ".join(_read(fragment).lower().split())
+        assert "agent's integration tools/connectors" in text, (
+            f"{fragment} does not direct agents to hydrate hosted sources through integrations"
+        )
+        assert "do not use pot-level connector ingestion commands" in text, (
+            f"{fragment} does not rule out pot-level connector ingestion commands"
+        )
+        assert "graph propose" in text and "graph commit" in text, (
+            f"{fragment} does not route hosted ingestion back through graph plans"
+        )
+
+
+def test_connector_queue_commands_only_appear_as_forbidden_examples() -> None:
+    forbidden_examples = (
+        "potpie pot linear-team ingest",
+        "potpie pot linear-team diff-sync",
+    )
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        lowered = path.read_text(encoding="utf-8").lower()
+        for token in forbidden_examples:
+            start = 0
+            while True:
+                idx = lowered.find(token, start)
+                if idx == -1:
+                    break
+                window = lowered[max(0, idx - 120) : idx + len(token) + 120]
+                assert "do not use" in window, (
+                    f"{rel} mentions connector queue command `{token}` outside a ban"
+                )
+                start = idx + len(token)

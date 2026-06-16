@@ -1,6 +1,6 @@
 ---
 name: "potpie-infra-architecture"
-version: "2"
+version: "3"
 recommended: true
 description: "Use for project infra and architecture context: environments, adapters, deployments, service dependencies, datastores, API contracts, ownership, and dependency blast radius."
 ---
@@ -17,7 +17,8 @@ Start from the service or environment named by the task:
 
 ```bash
 potpie --json graph read \
-  --view infra_topology.service_neighborhood \
+  --subgraph infra_topology \
+  --view service_neighborhood \
   --scope service:<service-name> \
   --depth 2 \
   --direction both \
@@ -25,7 +26,7 @@ potpie --json graph read \
   --limit 20
 ```
 
-MCP equivalent:
+MCP compatibility fallback when shell access is unavailable:
 
 ```json
 {"intent":"operations","include":["infra_topology","timeline","owners"],"mode":"balanced","source_policy":"summary"}
@@ -63,7 +64,7 @@ only when the evidence is an explicit source of truth such as a deployment confi
 infra doc, service manifest, ADR, or user statement. Use `agent_claim` when you are
 making a reasoned but lower-authority inference.
 
-Example mutation shape:
+Example mutation shape for `graph propose --file mutation.json`:
 
 ```json
 {
@@ -88,4 +89,12 @@ Example mutation shape:
 }
 ```
 
-Run `--dry-run` before applying any infra mutation.
+Validate infra writes with `graph propose`, inspect the plan diff, risk,
+warnings, and rejected operations, then commit the returned `plan_id` only when
+the policy allows it:
+
+```bash
+potpie --json graph propose --file mutation.json
+potpie --json graph commit <plan_id>
+potpie --json graph history --plan <plan_id>
+```

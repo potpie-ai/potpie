@@ -1,6 +1,6 @@
 ---
 name: "potpie-repo-baseline"
-version: "1"
+version: "3"
 recommended: true
 description: "Use when establishing or refreshing a repository's baseline memory in Potpie: purpose, application type, features, services, environments, dependencies, API contracts, datastores, and explicit preferences. The harness reads selected authored sources and writes semantic graph mutations; Potpie registers, reads, validates, and stores — it never scans the repo."
 ---
@@ -18,6 +18,11 @@ Baseline understanding is distinct from change-history ingestion (merged PRs
 and issues — see `potpie-change-timeline`). Run them separately; never infer
 the architecture from PR titles.
 
+If the user also asks to ingest GitHub, Linear, Jira, or other hosted source
+history, use the agent's integration tools/connectors to hydrate those records
+and then write graph plans. Do not use pot-level connector ingestion commands as
+the source-history path.
+
 ## Procedure
 
 1. **Resolve the pot.** `potpie --json pot info`. If no pot resolves, create
@@ -27,6 +32,9 @@ the architecture from PR titles.
    `owner/repo`). Registration records metadata only — it does not ingest.
 3. **Read the graph contract.** `potpie --json graph catalog` — entity types,
    predicates, views, mutation ops. Trust the catalog over this document.
+   For a focused contract, use `potpie --json graph catalog --task
+   "repo baseline"` and `potpie --json graph describe features --view
+   feature_context --examples`.
 4. **Search before writing.** For every entity you plan to assert, resolve its
    canonical key first: `potpie --json graph search-entities "<name>"
    --type <Type>`. Reuse existing keys; near-duplicate keys fragment memory.
@@ -35,8 +43,9 @@ the architecture from PR titles.
 6. **Inspect source files only when they are the source of truth** for a
    durable fact (a route table, a service client, a deployment target). Read
    the specific file; do not walk the tree.
-7. **Write one mutation batch** with `potpie --json graph mutate --file
-   mutation.json --dry-run`, fix any issues, then apply without `--dry-run`.
+7. **Write one mutation batch** with `potpie --json graph propose --file
+   mutation.json`, inspect the plan diff, warnings, and rejected operations, then
+   commit the returned `plan_id` if policy allows it.
 
 ## Source priority order
 
@@ -63,9 +72,10 @@ the architecture from PR titles.
 | Datastores / integrations | `DataStore` | `USES` |
 | Explicit preferences | `Preference` | `POLICY_APPLIES_TO` |
 
-Query baselines back with `potpie --json graph read --view features.feature_context
---scope anchor_entity_key:<repo-key>` ("what does this repo do?") and
-`--view infra_topology.service_neighborhood` (dependencies and deploy shape).
+Query baselines back with `potpie --json graph read --subgraph features --view
+feature_context --scope anchor_entity_key:<repo-key>` ("what does this repo do?")
+and `--subgraph infra_topology --view service_neighborhood` (dependencies and
+deploy shape).
 
 ## Mutation requirements
 

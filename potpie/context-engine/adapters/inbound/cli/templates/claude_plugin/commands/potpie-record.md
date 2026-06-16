@@ -10,7 +10,15 @@ First resolve identity so you link to existing nodes, not duplicates:
 potpie --json graph search-entities "<entity name>" --type <Service|BugPattern|...>
 ```
 
-Then write through `graph mutate` (preferred) or `context_record` (MCP). Capture:
+Then write through the V2 graph plan workflow:
+
+```bash
+potpie --json graph propose --file mutation.json
+potpie --json graph commit <plan_id>
+potpie --json graph history --plan <plan_id>
+```
+
+If only MCP is configured, `context_record` is the compatibility fallback. Capture:
 
 - decisions
 - fixes (with the bug they resolve)

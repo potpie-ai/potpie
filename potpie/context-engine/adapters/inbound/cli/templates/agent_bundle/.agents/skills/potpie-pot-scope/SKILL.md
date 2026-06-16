@@ -1,6 +1,6 @@
 ---
 name: "potpie-pot-scope"
-version: "2"
+version: "3"
 recommended: true
 description: "Use when the task is about pot resolution: pot use, current-repo inference, registered repo sources, or graph/source command scope."
 ---
@@ -53,10 +53,11 @@ When inference is ambiguous, pass `--pot` explicitly.
 ```bash
 # Inferred pot (from pot use / env / git)
 potpie search "query"
-potpie --json timeline recent --limit 20
+potpie --json graph read --subgraph recent_changes --view timeline --limit 20
 
 # Explicit pot
 potpie search "query" --pot <pot-uuid>
-potpie --json graph mutate --file mutation.json --pot <pot-uuid>
+potpie --json graph propose --file mutation.json --pot <pot-uuid>
+potpie --json graph commit <plan_id> --pot <pot-uuid>
 potpie source add repo <owner/repo> --pot <pot-uuid>
 ```
