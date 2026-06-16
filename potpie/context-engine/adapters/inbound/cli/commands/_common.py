@@ -24,6 +24,8 @@ from typing import Any, Callable, Final, Iterator, NoReturn
 
 import typer
 
+import click
+
 from domain.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
@@ -227,7 +229,11 @@ def contract() -> Iterator[None]:
         result = "exit"
         error_code = "exit"
         raise
+    except (KeyboardInterrupt, EOFError):
+        raise
     except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, click.Abort) or type(exc).__name__ == "Abort":
+            raise
         result = "unexpected"
         error_code = "unexpected_cli_error"
         from adapters.inbound.cli.telemetry.sentry_runtime import (

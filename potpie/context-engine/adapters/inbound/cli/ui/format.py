@@ -18,6 +18,7 @@ from adapters.inbound.cli.ui.brand import (
     LOGO_SUBTLE_SEPARATOR_STYLE,
     UI_FOCUS_STYLE,
     UI_MUTED_STYLE,
+    UI_WARN_STYLE,
 )
 from adapters.inbound.cli.ui.setup_wizard_ui import rich_ui_enabled
 
@@ -159,6 +160,8 @@ def format_line(message: str, *, tone: str | None = None) -> str:
         return title_markup(message)
     if tone == "warn":
         return f"[yellow]![/yellow] {escape(message)}"
+    if tone == "skipped":
+        return f"[{UI_WARN_STYLE}]{escape(message)}[/{UI_WARN_STYLE}]"
     if tone == "plain_raw":
         return message
     return escape(message)

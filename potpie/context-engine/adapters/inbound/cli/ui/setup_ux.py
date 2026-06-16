@@ -14,9 +14,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+import click
+
 from adapters.inbound.cli.telemetry.onboarding_events import (
     capture_github_prompt_outcome,
     capture_github_prompt_shown,
+    capture_integration_auth_event,
     capture_onboarding_event,
     capture_project_binding_event,
     capture_wizard_event,
@@ -327,6 +330,54 @@ def _try_login(handler) -> None:
         raise
 
 
+def _integration_label(provider: str) -> str:
+    labels = dict(POST_SETUP_INTEGRATION_OPTIONS)
+    key = provider.strip().lower()
+    return labels.get(key, key.replace("_", " ").title())
+
+
+def _print_integration_skipped(provider: str) -> None:
+    from adapters.inbound.cli.ui.format import print_line
+
+    label = _integration_label(provider)
+    message = (
+        f"Skipped {label} — connect later with `potpie {provider} login`."
+    )
+    print_line("", as_json=False, markup=False)
+    print_line(message, as_json=False, tone="skipped")
+    print_line("", as_json=False, markup=False)
+
+
+def _integration_login_aborted(exc: BaseException) -> bool:
+    if isinstance(exc, (KeyboardInterrupt, EOFError, click.Abort)):
+        return True
+    return type(exc).__name__ == "Abort"
+
+
+def _try_integration_login(provider: str) -> None:
+    """Run one post-setup integration login; Ctrl+C skips without aborting setup."""
+    from adapters.inbound.cli.auth.auth_commands import run_integration_login
+
+    import typer
+
+    started_ms = now_ms()
+    try:
+        run_integration_login(provider)
+    except typer.Exit:
+        pass
+    except BaseException as exc:
+        if not _integration_login_aborted(exc):
+            raise
+        capture_integration_auth_event(
+            "cli_onboarding_integration_auth_skipped",
+            provider=provider,
+            entrypoint="post_setup_integration_picker",
+            duration_ms=elapsed_ms(started_ms),
+            failure_kind="user_aborted",
+        )
+        _print_integration_skipped(provider)
+
+
 def _maybe_prompt_agent_skills(*, setup_agent: str) -> None:
     from adapters.inbound.cli.ui.interactive_prompts import prompt_multi_checkbox
 
@@ -397,7 +448,6 @@ def maybe_prompt_github_login(
         capture_github_prompt_outcome("skipped", duration_ms=0)
         return
 
-    from adapters.inbound.cli.auth.auth_commands import run_integration_login
     from adapters.inbound.cli.auth.github_commands import github_login_impl
     from adapters.inbound.cli.ui.interactive_prompts import prompt_multi_checkbox
 
@@ -454,7 +504,7 @@ def maybe_prompt_github_login(
             if provider not in selected_set:
                 continue
             with onboarding_entrypoint("post_setup_integration_picker"):
-                _try_login(lambda p=provider: run_integration_login(p))
+                _try_integration_login(provider)
 
     if repo is not None:
         capture_project_binding_event(

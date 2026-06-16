@@ -13,6 +13,8 @@ from typing import Any, Literal
 import typer
 from rich.markup import escape
 
+import click
+
 from adapters.inbound.cli.auth.atlassian_auth import run_atlassian_api_token_auth
 from adapters.inbound.cli.auth.atlassian_read import (
     AtlassianReadError,
@@ -437,6 +439,8 @@ def _run_tracked_integration_login(
     )
     try:
         runner()
+    except (KeyboardInterrupt, EOFError, click.Abort):
+        raise
     except Exception as exc:  # noqa: BLE001 - auth telemetry must record failures.
         capture_integration_auth_event(
             "cli_onboarding_integration_auth_failed",
