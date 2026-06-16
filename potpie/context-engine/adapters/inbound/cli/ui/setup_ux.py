@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from adapters.inbound.cli.commands._common import get_store
 from adapters.inbound.cli.telemetry.onboarding_events import (
     capture_github_prompt_outcome,
     capture_github_prompt_shown,
@@ -326,8 +327,6 @@ def _try_login(handler) -> None:
 
 
 def _github_status() -> dict[str, Any]:
-    from adapters.inbound.cli.commands._common import get_store
-
     return get_store().get_integration_status("github")
 
 

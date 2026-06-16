@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import sys
 import types
 from typing import Any
 
@@ -482,7 +481,7 @@ def test_wait_for_enter_or_auto_open_uses_msvcrt_on_windows(
         select=lambda *_args, **_kwargs: pytest.fail("Windows path must not use select")
     )
     monkeypatch.setattr(gh_cmds.sys, "platform", "win32")
-    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+    monkeypatch.setattr(gh_cmds, "msvcrt", fake_msvcrt)
     monkeypatch.setattr(gh_cmds, "select", fake_select_module)
 
     gh_cmds._wait_for_enter_or_auto_open(seconds=10)

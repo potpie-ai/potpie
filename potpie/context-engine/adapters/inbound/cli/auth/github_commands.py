@@ -39,6 +39,11 @@ from adapters.inbound.cli.telemetry.usage_events import (
 )
 from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
 
+if sys.platform == "win32":
+    import msvcrt
+else:
+    msvcrt = None
+
 EXIT_CANCELLED = 130
 GITHUB_AUTO_OPEN_SECONDS = 10
 _GITHUB_OPEN_PROMPT_PREFIX = (
@@ -103,8 +108,8 @@ def _finish_inline_prompt() -> None:
 
 
 def _stdin_enter_pressed_windows(*, timeout: float) -> bool:
-    import msvcrt
-
+    if msvcrt is None:
+        return False
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if msvcrt.kbhit():
