@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+import typer
 
 from adapters.inbound.cli.commands import _common
 from adapters.inbound.cli.ui import interactive_prompts, setup_ux
@@ -70,6 +71,34 @@ def test_maybe_prompt_github_login_runs_github_when_confirmed(
     setup_ux.maybe_prompt_github_login(repo=None)
 
     assert calls == ["github"]
+
+
+def test_maybe_prompt_github_login_cancel_exits_setup_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(setup_ux, "is_interactive_tty", lambda: True)
+    _common.set_store(InMemoryCredentialStore())
+
+    monkeypatch.setattr("typer.confirm", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        interactive_prompts,
+        "prompt_multi_checkbox",
+        lambda *_a, **_k: pytest.fail("setup should exit before integration picker"),
+    )
+    monkeypatch.setattr(
+        "adapters.inbound.cli.auth.github_commands.github_login_impl",
+        lambda: (_ for _ in ()).throw(typer.Exit(code=130)),
+    )
+    monkeypatch.setattr(
+        setup_ux,
+        "_maybe_prompt_first_pot",
+        lambda **_k: pytest.fail("setup should exit before first-pot prompt"),
+    )
+
+    with pytest.raises(typer.Exit) as exc:
+        setup_ux.maybe_prompt_github_login(repo=None)
+
+    assert exc.value.exit_code == 130
 
 
 def test_maybe_prompt_github_login_skips_when_already_authenticated(

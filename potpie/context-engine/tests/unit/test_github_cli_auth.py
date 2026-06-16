@@ -690,7 +690,7 @@ def test_git_login_does_not_store_when_account_verification_fails(
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr(gh_cmds.webbrowser, "open", lambda _url: True)
-    monkeypatch.setattr(gh_cmds.typer, "confirm", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(gh_cmds, "_wait_for_enter_or_auto_open", lambda: None)
     monkeypatch.setattr(
         gh_cmds,
         "request_device_code",

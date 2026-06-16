@@ -570,6 +570,43 @@ def test_write_provider_credentials_rolls_back_keyring_token_on_metadata_failure
     assert ("potpie", "github_token") not in fake_keyring
 
 
+def test_write_provider_credentials_restores_existing_token_on_metadata_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(cs.sys, "platform", "darwin")
+    cs.write_provider_credentials(
+        "github",
+        {
+            "provider": "github",
+            "provider_host": "github.com",
+            "access_token": "old-token",
+            "account": {"login": "octocat", "id": 1},
+        },
+    )
+
+    def _fail_metadata(_provider: str, _metadata: dict[str, object]) -> None:
+        raise OSError("metadata write failed")
+
+    monkeypatch.setattr(cs, "write_integration_metadata", _fail_metadata)
+
+    with pytest.raises(OSError, match="metadata write failed"):
+        cs.write_provider_credentials(
+            "github",
+            {
+                "provider": "github",
+                "provider_host": "github.com",
+                "access_token": "new-token",
+                "account": {"login": "octocat", "id": 1},
+            },
+        )
+
+    assert fake_keyring[("potpie", "github_token")] == "old-token"
+    assert cs.get_provider_credentials("github")["access_token"] == "old-token"
+
+
 def test_write_provider_credentials_preserves_metadata_error_when_cleanup_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -317,7 +317,9 @@ def _try_login(handler) -> None:
 
     try:
         handler()
-    except typer.Exit:
+    except typer.Exit as exc:
+        if getattr(exc, "exit_code", None) == 130:
+            raise
         pass
     except (KeyboardInterrupt, EOFError):
         raise
