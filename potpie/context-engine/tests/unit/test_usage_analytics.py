@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import pytest
 
+import adapters.inbound.cli.telemetry.product_analytics as product_analytics
 from adapters.inbound.cli.auth import auth_commands, github_commands
 from adapters.inbound.cli.commands import _common, bootstrap, ingest, query
 from adapters.inbound.cli.telemetry.context import TelemetryContext
-from adapters.inbound.cli.telemetry.product_analytics import (
-    ProductAnalyticsEvent,
-    set_product_analytics_sink,
-)
+from adapters.inbound.cli.telemetry.product_analytics import ProductAnalyticsEvent
 from adapters.inbound.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
@@ -34,12 +34,22 @@ class _FakeGitHubStore:
 @pytest.fixture()
 def fake_sink(monkeypatch: pytest.MonkeyPatch) -> _FakeSink:
     sink = _FakeSink()
-    set_product_analytics_sink(sink)
+    monkeypatch.setattr(product_analytics, "_sink", sink)
     monkeypatch.setattr(
         "adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
         _telemetry_context,
     )
     return sink
+
+
+@contextmanager
+def _cli_json_mode() -> Iterator[None]:
+    previous = _common.is_json()
+    _common.set_json(True)
+    try:
+        yield
+    finally:
+        _common.set_json(previous)
 
 
 def _telemetry_context() -> TelemetryContext:
@@ -122,7 +132,6 @@ def test_github_repos_records_usage_after_success(
     fake_sink: _FakeSink,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _common.set_json(True)
     monkeypatch.setattr(github_commands, "get_store", lambda: _FakeGitHubStore())
     monkeypatch.setattr(github_commands, "load_cli_env", lambda: None)
     monkeypatch.setattr(
@@ -131,7 +140,8 @@ def test_github_repos_records_usage_after_success(
         lambda token: [{"full_name": "potpie/example"}, {"full_name": "potpie/docs"}],
     )
 
-    github_commands.github_repos_impl()
+    with _cli_json_mode():
+        github_commands.github_repos_impl()
 
     assert [event.name for event in fake_sink.events] == ["cli_usage_command_succeeded"]
     assert fake_sink.events[0].properties["command"] == "github repos"
@@ -159,7 +169,6 @@ def test_provider_list_commands_record_usage_after_success(
     runner_name: str,
     fetch_name: str,
 ) -> None:
-    _common.set_json(True)
     monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
     monkeypatch.setattr(
         auth_commands,
@@ -168,7 +177,8 @@ def test_provider_list_commands_record_usage_after_success(
     )
 
     runner = getattr(auth_commands, runner_name)
-    runner(limit=2)
+    with _cli_json_mode():
+        runner(limit=2)
 
     assert [event.name for event in fake_sink.events] == ["cli_usage_command_succeeded"]
     event = fake_sink.events[0]
@@ -188,17 +198,16 @@ def test_provider_select_result_records_usage_after_success(
     product: str,
     provider: str,
 ) -> None:
-    _common.set_json(True)
-
-    auth_commands._run_product_use_result(
-        {
-            "product": product,
-            "workspace_key": "ENG",
-            "workspace_name": "Engineering",
-            "items": [{"id": "one"}, {"id": "two"}],
-        },
-        product_label=provider.title(),
-    )
+    with _cli_json_mode():
+        auth_commands._run_product_use_result(
+            {
+                "product": product,
+                "workspace_key": "ENG",
+                "workspace_name": "Engineering",
+                "items": [{"id": "one"}, {"id": "two"}],
+            },
+            product_label=provider.title(),
+        )
 
     assert [event.name for event in fake_sink.events] == ["cli_usage_command_succeeded"]
     assert fake_sink.events[0].properties["command"] == f"{provider} select"
