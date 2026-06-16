@@ -549,6 +549,7 @@ def test_write_provider_credentials_rolls_back_keyring_token_on_metadata_failure
     fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(cs.sys, "platform", "darwin")
 
     def _fail_metadata(_provider: str, _metadata: dict[str, object]) -> None:
         raise OSError("metadata write failed")
