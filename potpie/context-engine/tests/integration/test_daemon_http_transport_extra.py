@@ -178,7 +178,9 @@ async def test_invalid_json_body_returns_400(short_socket_dir: pathlib.Path, ctx
 
 
 @pytest.mark.anyio
-async def test_handler_exception_returns_500(short_socket_dir: pathlib.Path, ctx):
+async def test_handler_exception_returns_500(
+    short_socket_dir: pathlib.Path, ctx, caplog: pytest.LogCaptureFixture
+):
     sock = short_socket_dir / "d.sock"
     ops = OperationRegistry()
     ops.register(
@@ -205,9 +207,14 @@ async def test_handler_exception_returns_500(short_socket_dir: pathlib.Path, ctx
         async with httpx.AsyncClient(
             transport=httpx.AsyncHTTPTransport(uds=str(sock))
         ) as c:
-            r = await c.post("http://localhost/op/echo.boom", json={"msg": "x"})
+            with caplog.at_level(logging.ERROR, logger="test"):
+                r = await c.post("http://localhost/op/echo.boom", json={"msg": "x"})
             assert r.status_code == 500
-            assert r.json()["error"]["code"] == "internal_error"
+            err = r.json()["error"]
+            assert err["code"] == "internal_error"
+            assert err["message"] == "An internal error occurred"
+            assert "operation handler failed" in caplog.text
+            assert "unexpected failure" in caplog.text
     finally:
         await t.stop()
         task.cancel()

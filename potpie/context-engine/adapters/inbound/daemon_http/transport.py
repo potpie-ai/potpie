@@ -193,10 +193,13 @@ class HttpTransport:
                     status_code=status_for_error(oe.code),
                     content=error_envelope(oe),
                 )
-            except Exception as ex:  # noqa: BLE001 — convert any handler error to a uniform envelope
+            except Exception:  # noqa: BLE001 — convert any handler error to a uniform envelope
+                ctx.logger.exception("operation handler failed for %r", name)
                 return JSONResponse(
                     status_code=500,
-                    content=error_envelope(OperationError("internal_error", str(ex))),
+                    content=error_envelope(
+                        OperationError("internal_error", "An internal error occurred")
+                    ),
                 )
             return JSONResponse(status_code=200, content=out.model_dump())
 
@@ -239,10 +242,13 @@ class HttpTransport:
                     status_code=400,
                     content=error_envelope(OperationError("invalid_input", str(ex))),
                 )
-            except Exception as ex:  # noqa: BLE001 — admin boundary maps startup failures
+            except Exception:  # noqa: BLE001 — admin boundary maps startup failures
+                ctx.logger.exception("service startup failed for %r", name)
                 return JSONResponse(
                     status_code=503,
-                    content=error_envelope(OperationError("unavailable", str(ex))),
+                    content=error_envelope(
+                        OperationError("unavailable", "An internal error occurred")
+                    ),
                 )
 
         @app.post("/admin/services/{name}/down")

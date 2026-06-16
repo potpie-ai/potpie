@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import pathlib
 
 import httpx
@@ -192,6 +193,7 @@ async def test_admin_service_up_start_failure_returns_503(
     short_socket_dir: pathlib.Path,
     ops,
     daemon_ctx: ShellContext,
+    caplog: pytest.LogCaptureFixture,
 ):
     daemon_ctx.config["service_manager"] = _FailingManager(ReadyTimeout("not ready"))
     sock = short_socket_dir / "d.sock"
@@ -210,9 +212,14 @@ async def test_admin_service_up_start_failure_returns_503(
         async with httpx.AsyncClient(
             transport=httpx.AsyncHTTPTransport(uds=str(sock))
         ) as client:
-            response = await client.post("http://localhost/admin/services/graph/up")
+            with caplog.at_level(logging.ERROR, logger="test"):
+                response = await client.post("http://localhost/admin/services/graph/up")
             assert response.status_code == 503
-            assert response.json()["error"]["code"] == "unavailable"
+            err = response.json()["error"]
+            assert err["code"] == "unavailable"
+            assert err["message"] == "An internal error occurred"
+            assert "service startup failed" in caplog.text
+            assert "not ready" in caplog.text
     finally:
         await transport.stop()
         task.cancel()
