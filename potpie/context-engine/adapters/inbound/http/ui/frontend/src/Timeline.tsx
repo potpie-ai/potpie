@@ -111,8 +111,9 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
   if (!acts.length) {
     return (
       <div className="timeline-empty">
-        No timeline activities in view. Activities need an <code>occurred_at</code>;
-        toggle the <b>timeline</b> category on, or pick a pot with PR / ticket history.
+        No timeline activities in view. Activities need an <code>occurred_at</code>
+        — pick a pot with PR / ticket history, or use the other category filters
+        to narrow what branches off each activity.
       </div>
     );
   }

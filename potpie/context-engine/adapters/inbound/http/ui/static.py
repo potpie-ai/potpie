@@ -21,9 +21,9 @@ _PLACEHOLDER = """<!doctype html>
 margin:4rem auto;padding:0 1rem;color:#222}code{background:#f3f3f5;padding:.15em .4em;
 border-radius:4px}</style></head><body>
 <h1>Potpie Graph Explorer</h1>
-<p>The UI bundle has not been built yet. From the repo, run:</p>
-<pre><code>cd potpie/context-engine/adapters/inbound/http/ui/frontend
-npm install &amp;&amp; npm run build
+<p>The UI bundle has not been built yet. From the repo root, run:</p>
+<pre><code>make cli-install
+# or: make ui-build
 potpie daemon restart</code></pre>
 <p>The JSON API is live now at <code>/ui/api/pots</code>,
 <code>/ui/api/graph</code>, <code>/ui/api/catalog</code>.</p>
