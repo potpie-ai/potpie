@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from adapters.inbound.cli import host_cli
 from adapters.inbound.cli.commands import _common, bootstrap
+from adapters.inbound.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
 from domain.lifecycle import PlannedSetupStep, SetupPlan, SetupPreview
 
 
@@ -102,6 +103,9 @@ def test_setup_daemon_dry_run_marks_daemon_host_mode(
 
 class _Setup:
     host_mode: str | None = None
+
+    def set_observer(self, observer: CliSetupAnalyticsObserver) -> None:
+        return None
 
     def preview(self, plan: SetupPlan) -> SetupPreview:
         self.host_mode = plan.host_mode

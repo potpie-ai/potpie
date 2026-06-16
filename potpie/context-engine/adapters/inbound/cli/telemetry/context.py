@@ -9,7 +9,7 @@ from typing import ClassVar
 import typer
 
 from .identity_store import load_or_create_identity
-from .settings import default_cli_release
+from .settings import default_cli_release, telemetry_environment
 
 _DAEMON_SESSION_ID = f"daemon_{uuid.uuid4().hex}"
 _CURRENT: ContextVar["TelemetryContext | None"] = ContextVar(
@@ -26,6 +26,7 @@ class TelemetryContext:
         "cli_version",
         "command",
         "daemon_session_id",
+        "environment",
         "invocation_id",
         "os",
         "output_mode",
@@ -36,6 +37,7 @@ class TelemetryContext:
     anonymous_install_id: str
     invocation_id: str
     daemon_session_id: str
+    environment: str
     command: str | None
     subcommand: str | None
     output_mode: str
@@ -51,6 +53,7 @@ class TelemetryContext:
                 "anonymous_install_id": self.anonymous_install_id,
                 "invocation_id": self.invocation_id,
                 "daemon_session_id": self.daemon_session_id,
+                "environment": self.environment,
                 "command": self.command,
                 "subcommand": self.subcommand,
                 "output_mode": self.output_mode,
@@ -60,6 +63,20 @@ class TelemetryContext:
                 "arch": self.arch,
             }.items()
             if value is not None
+        }
+
+    def analytics_properties(self) -> dict[str, str]:
+        return {
+            "anonymous_install_id": self.anonymous_install_id,
+            "invocation_id": self.invocation_id,
+            "daemon_session_id": self.daemon_session_id,
+            "environment": self.environment,
+            "output_mode": self.output_mode,
+            "cli_version": self.cli_version,
+            "python_version": self.python_version,
+            "platform": self.os,
+            "arch": self.arch,
+            **_optional_command_properties(self),
         }
 
 
@@ -72,6 +89,7 @@ def bind_telemetry_context(
         anonymous_install_id=identity.anonymous_install_id,
         invocation_id=f"invoke_{uuid.uuid4().hex}",
         daemon_session_id=_DAEMON_SESSION_ID,
+        environment=telemetry_environment(),
         command=command,
         subcommand=subcommand,
         output_mode="json" if json_output else "human",
@@ -103,3 +121,12 @@ def _string_parts(value: object) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
     return [str(part) for part in value]
+
+
+def _optional_command_properties(telemetry: TelemetryContext) -> dict[str, str]:
+    properties: dict[str, str] = {}
+    if telemetry.command is not None:
+        properties["command"] = telemetry.command
+    if telemetry.subcommand is not None:
+        properties["subcommand"] = telemetry.subcommand
+    return properties

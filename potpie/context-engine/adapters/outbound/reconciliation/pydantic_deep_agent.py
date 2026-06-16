@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from bootstrap import sentry_metrics_runtime
 from domain.context_events import ContextEvent, EventRef
 from domain.event_playbooks import (
     EventPlaybook,
@@ -929,6 +930,11 @@ class PydanticDeepReconciliationAgent:
                 )
             except Exception:  # noqa: BLE001 — never break failure handling
                 pass
+            sentry_metrics_runtime.count(
+                "ce.agent.timeout_total",
+                1,
+                attributes={"result": "timeout"},
+            )
             logger.error(
                 "agent.run() timed out after %.0fs for batch %s",
                 run_timeout,

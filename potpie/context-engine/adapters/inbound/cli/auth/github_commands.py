@@ -23,6 +23,16 @@ from adapters.outbound.cli_auth.credentials_store import (
     _integration_secret_store_label,
     get_integration_status,
 )
+from adapters.inbound.cli.telemetry.onboarding_events import (
+    capture_github_auth_event,
+    current_entrypoint,
+    elapsed_ms,
+    now_ms,
+    sanitized_failure_kind,
+)
+from adapters.inbound.cli.telemetry.usage_events import (
+    capture_usage_command_succeeded,
+)
 from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
 
 github_app = typer.Typer(help="GitHub integration.")
@@ -43,7 +53,7 @@ def _flags() -> tuple[bool, bool]:
     return is_json(), is_verbose()
 
 
-def _open_github_device_verification(user_code: str, verification_uri: str) -> None:
+def _open_github_device_verification(user_code: str, verification_uri: str) -> bool:
     print_plain_line(
         "GitHub login requires a one-time verification code.",
         as_json=False,
@@ -65,11 +75,12 @@ def _open_github_device_verification(user_code: str, verification_uri: str) -> N
             as_json=False,
         )
         print_plain_line(verification_uri, as_json=False, markup=False)
-        return
+        return False
     print_plain_line(
         "Paste the copied code into GitHub to continue.",
         as_json=False,
     )
+    return True
 
 
 def _capture_unexpected_auth_error(
@@ -98,33 +109,105 @@ def github_login_impl() -> None:
     """Authenticate the CLI with GitHub using device flow."""
     load_cli_env()
     j, v = _flags()
+    entrypoint = current_entrypoint("direct_github_auth")
+    auth_started_ms = now_ms()
+    stage = "started"
+    capture_github_auth_event(
+        "cli_onboarding_github_auth_started",
+        entrypoint=entrypoint,
+    )
     account = None
     payload = None
     try:
         store = get_store()
+        stage = "device_code"
+        stage_started_ms = now_ms()
         device_code = request_device_code()
+        capture_github_auth_event(
+            "cli_onboarding_github_device_code_requested",
+            entrypoint=entrypoint,
+            duration_ms=elapsed_ms(stage_started_ms),
+        )
         if not j:
-            _open_github_device_verification(
+            stage_started_ms = now_ms()
+            opened = _open_github_device_verification(
                 device_code.user_code,
                 device_code.verification_uri,
             )
+            capture_github_auth_event(
+                "cli_onboarding_github_browser_open_attempted",
+                entrypoint=entrypoint,
+                duration_ms=elapsed_ms(stage_started_ms),
+                browser_opened=opened,
+            )
             print_plain_line("Waiting for authorization...", as_json=False)
+        stage = "token_poll"
+        capture_github_auth_event(
+            "cli_onboarding_github_token_poll_started",
+            entrypoint=entrypoint,
+        )
+        stage_started_ms = now_ms()
         token = poll_for_access_token(device_code)
+        capture_github_auth_event(
+            "cli_onboarding_github_token_poll_completed",
+            entrypoint=entrypoint,
+            duration_ms=elapsed_ms(stage_started_ms),
+        )
+        stage = "account_verified"
+        stage_started_ms = now_ms()
         account = verify_account(token.access_token)
+        capture_github_auth_event(
+            "cli_onboarding_github_account_verified",
+            entrypoint=entrypoint,
+            duration_ms=elapsed_ms(stage_started_ms),
+        )
         payload = build_provider_credentials(
             token, account, verification_uri=device_code.verification_uri
         )
+        stage = "credentials_stored"
+        stage_started_ms = now_ms()
         store.write_provider_credentials("github", payload.as_dict())
+        capture_github_auth_event(
+            "cli_onboarding_github_credentials_stored",
+            entrypoint=entrypoint,
+            duration_ms=elapsed_ms(stage_started_ms),
+        )
     except GitHubDeviceFlowError as exc:
+        capture_github_auth_event(
+            "cli_onboarding_github_auth_failed",
+            entrypoint=entrypoint,
+            duration_ms=elapsed_ms(auth_started_ms),
+            failure_stage=stage,
+            failure_kind=sanitized_failure_kind(exc),
+        )
         emit_error("GitHub login failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_AUTH) from exc
     except (ProviderCredentialError, CredentialStoreError) as exc:
+        capture_github_auth_event(
+            "cli_onboarding_github_auth_failed",
+            entrypoint=entrypoint,
+            duration_ms=elapsed_ms(auth_started_ms),
+            failure_stage=stage,
+            failure_kind=sanitized_failure_kind(exc),
+        )
         emit_error("GitHub login failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_AUTH) from exc
     except typer.Exit:
         raise
     except Exception as exc:  # noqa: BLE001
+        capture_github_auth_event(
+            "cli_onboarding_github_auth_failed",
+            entrypoint=entrypoint,
+            duration_ms=elapsed_ms(auth_started_ms),
+            failure_stage=stage,
+            failure_kind=sanitized_failure_kind(exc),
+        )
         _capture_unexpected_auth_error(exc, title="GitHub login failed", verbose=v)
+    capture_github_auth_event(
+        "cli_onboarding_github_auth_completed",
+        entrypoint=entrypoint,
+        duration_ms=elapsed_ms(auth_started_ms),
+    )
 
     if j:
         print_json_blob(
@@ -171,12 +254,12 @@ def github_logout_impl() -> None:
         print_json_blob(payload, as_json=True)
         return
 
-    from adapters.inbound.cli.auth.auth_commands import _print_standard_logout
-
-    _print_standard_logout(
-        was_authenticated=was_authenticated,
-        provider="github",
-        j=False,
+    if was_authenticated:
+        print_plain_line("Logged out successfully.", as_json=False)
+        return
+    print_plain_line(
+        "No active session found. Any stale local credentials were removed.",
+        as_json=False,
     )
 
 
@@ -247,6 +330,12 @@ def github_repos_impl() -> None:
             title="GitHub repository listing failed",
             verbose=v,
         )
+    capture_usage_command_succeeded(
+        command="github repos",
+        result_kind="provider_list",
+        item_count=len(repos),
+        provider="github",
+    )
 
     if j:
         print_json_blob(
@@ -314,6 +403,5 @@ git_app.add_typer(git_test_app, name="test")
 
 def register_github_commands(root_app: typer.Typer) -> None:
     """Deprecated: use ``register_integration_commands``."""
-    from adapters.inbound.cli.auth.auth_commands import register_integration_commands
-
-    register_integration_commands(root_app)
+    root_app.add_typer(github_app, name="github")
+    root_app.add_typer(git_app, name="git")

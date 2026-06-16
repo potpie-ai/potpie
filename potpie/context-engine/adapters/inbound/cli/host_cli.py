@@ -27,6 +27,7 @@ from adapters.inbound.cli.commands import ingest as ingest_cmds
 from adapters.inbound.cli.commands import query as query_cmds
 from adapters.inbound.cli.commands import skills as skills_cmds
 from adapters.inbound.cli.commands._common import set_json, set_verbose
+from adapters.inbound.cli.telemetry.context import bind_telemetry_context
 
 
 def build_app() -> typer.Typer:
@@ -50,18 +51,23 @@ def build_app() -> typer.Typer:
             configure_cli_logging,
             configure_error_output,
         )
+        from adapters.inbound.cli.telemetry import sentry_runtime, settings
+        from adapters.inbound.cli.telemetry.product_analytics import (
+            configure_product_analytics,
+        )
+        from bootstrap import sentry_metrics_runtime
 
         set_json(json_)
         set_verbose(verbose)
         configure_error_output(as_json=json_)
         configure_cli_logging(verbose)
         load_cli_env()
-        from adapters.inbound.cli.telemetry.context import bind_telemetry_context
-        from adapters.inbound.cli.telemetry.sentry_runtime import configure_cli_sentry
-        from adapters.inbound.cli.telemetry.settings import load_sentry_settings
 
         bind_telemetry_context(ctx, json_output=json_)
-        configure_cli_sentry(load_sentry_settings())
+        sentry_settings = settings.load_sentry_settings()
+        sentry_runtime.configure_cli_sentry(sentry_settings)
+        sentry_metrics_runtime.configure_metrics(sentry_settings)
+        configure_product_analytics(settings.load_product_analytics_settings())
 
     # Top-level commands (the four-tool surface + bootstrap + auth/login).
     query_cmds.register(app)

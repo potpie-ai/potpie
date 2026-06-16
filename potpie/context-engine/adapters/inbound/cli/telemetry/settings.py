@@ -2,52 +2,42 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from importlib import metadata
 from typing import ClassVar, Final
+
+from bootstrap.sentry_settings import (
+    SentrySettings,
+    default_cli_release,
+    load_sentry_settings,
+    telemetry_environment,
+)
 
 _FALSE_VALUES: Final[frozenset[str]] = frozenset({"0", "false", "no", "off"})
 
 
 @dataclass(frozen=True)
-class SentrySettings:
+class ProductAnalyticsSettings:
     __slots__: ClassVar[tuple[str, ...]] = (
-        "dist",
-        "dsn",
+        "api_key",
         "enabled",
-        "environment",
-        "release",
+        "host",
     )
 
     enabled: bool
-    dsn: str | None
-    environment: str
-    release: str
-    dist: str | None
+    api_key: str | None
+    host: str
 
 
-def load_sentry_settings() -> SentrySettings:
-    dsn = _env("POTPIE_SENTRY_DSN") or _env("SENTRY_DSN")
+def load_product_analytics_settings() -> ProductAnalyticsSettings:
+    api_key = _env("POTPIE_POSTHOG_API_KEY")
     telemetry_disabled = _is_truthy_flag("POTPIE_TELEMETRY_DISABLED")
-    sentry_disabled = _is_falsey_flag("POTPIE_SENTRY_ENABLED")
-    return SentrySettings(
-        enabled=dsn is not None and not telemetry_disabled and not sentry_disabled,
-        dsn=dsn,
-        environment=(
-            _env("POTPIE_SENTRY_ENVIRONMENT") or _env("SENTRY_ENVIRONMENT") or "dev"
-        ),
-        release=_env("POTPIE_SENTRY_RELEASE")
-        or _env("SENTRY_RELEASE")
-        or default_cli_release(),
-        dist=_env("POTPIE_SENTRY_DIST") or _env("SENTRY_DIST"),
+    product_disabled = _is_falsey_flag("POTPIE_POSTHOG_ENABLED") or _is_falsey_flag(
+        "POTPIE_PRODUCT_ANALYTICS_ENABLED"
     )
-
-
-def default_cli_release() -> str:
-    try:
-        version = metadata.version("potpie-context-engine")
-    except metadata.PackageNotFoundError:
-        version = "0.1.0"
-    return f"potpie-cli@{version}"
+    return ProductAnalyticsSettings(
+        enabled=api_key is not None and not telemetry_disabled and not product_disabled,
+        api_key=api_key,
+        host=_env("POTPIE_POSTHOG_HOST") or "https://us.i.posthog.com",
+    )
 
 
 def _env(name: str) -> str | None:
@@ -65,4 +55,17 @@ def _is_falsey_flag(name: str) -> bool:
 
 def _is_truthy_flag(name: str) -> bool:
     value = os.getenv(name)
-    return value is not None and value.strip().lower() not in _FALSE_VALUES
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    return normalized != "" and normalized not in _FALSE_VALUES
+
+
+__all__ = [
+    "ProductAnalyticsSettings",
+    "SentrySettings",
+    "default_cli_release",
+    "load_product_analytics_settings",
+    "load_sentry_settings",
+    "telemetry_environment",
+]

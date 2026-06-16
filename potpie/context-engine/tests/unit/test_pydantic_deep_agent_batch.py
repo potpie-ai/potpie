@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timezone
+from types import ModuleType
 
+import anyio
 import pytest
 
 from adapters.outbound.reconciliation.pydantic_deep_agent import (
     PydanticDeepReconciliationAgent,
 )
+from bootstrap import sentry_metrics_runtime
 from domain.context_events import ContextEvent
 from domain.reconciliation_batch import BatchAgentContext
 
@@ -125,3 +129,53 @@ def test_run_batch_short_circuits_for_empty_event_list() -> None:
     out = agent.run_batch(ctx)
     assert out.ok is True
     assert out.completed_event_ids == []
+
+
+def test_run_batch_timeout_mirrors_sentry_metric(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    counts: list[tuple[str, int, dict[str, str]]] = []
+    monkeypatch.setattr(
+        sentry_metrics_runtime,
+        "count",
+        lambda name, value=1, *, attributes=None, unit=None: counts.append(
+            (name, value, dict(attributes or {}))
+        ),
+    )
+    monkeypatch.setenv("CONTEXT_ENGINE_AGENT_RUN_TIMEOUT_SECS", "0.001")
+
+    class _SlowAgent:
+        def tool_plain(self, **_kwargs):
+            def _decorator(fn):
+                return fn
+
+            return _decorator
+
+        async def run(self, *_args, **_kwargs):
+            await anyio.sleep(1)
+
+    fake_deep = ModuleType("pydantic_deep")
+    fake_deep.CheckpointMiddleware = lambda **_kwargs: object()
+    fake_deep.create_deep_agent = lambda **_kwargs: _SlowAgent()
+    fake_deep.create_default_deps = lambda: object()
+    monkeypatch.setitem(sys.modules, "pydantic_deep", fake_deep)
+    monkeypatch.setitem(
+        sys.modules, "pydantic_ai.usage", ModuleType("pydantic_ai.usage")
+    )
+
+    agent = PydanticDeepReconciliationAgent()
+    agent.set_context_graph(object())
+    monkeypatch.setattr(agent, "_build_read_tools", lambda _ctx: [])
+    monkeypatch.setattr(agent, "_build_mutation_tools", lambda _state: [])
+    monkeypatch.setattr(agent, "_build_control_tools", lambda _state: [])
+    ctx = BatchAgentContext(
+        batch_id="batch-1",
+        pot_id="pot-1",
+        repo_name="o/r",
+        events=[_event("e1")],
+    )
+
+    out = agent.run_batch(ctx)
+
+    assert out.ok is False
+    assert ("ce.agent.timeout_total", 1, {"result": "timeout"}) in counts

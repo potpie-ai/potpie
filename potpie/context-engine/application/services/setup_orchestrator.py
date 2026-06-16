@@ -16,7 +16,8 @@ and skipped for an in-process host.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Callable
 
 from domain.errors import CapabilityNotImplemented
@@ -39,6 +40,7 @@ from domain.ports.services.config import ConfigService
 from domain.ports.services.pot_management import PotManagementService
 from domain.ports.services.skill_manager import SkillManager
 from domain.ports.services.state_store import MigrationPort, StateStorePort
+from domain.ports.services.setup import NoOpSetupObserver, SetupObserver
 from host.daemon import Daemon
 
 # Dependency-ordered seam plan: (step, owner, action template). Mirrors the
@@ -142,6 +144,10 @@ class DefaultSetupOrchestrator:
     daemon: Daemon
     auth: AuthService
     skills: SkillManager
+    observer: SetupObserver = field(default_factory=NoOpSetupObserver)
+
+    def set_observer(self, observer: SetupObserver) -> None:
+        self.observer = observer
 
     def preview(self, plan: SetupPlan) -> SetupPreview:
         """Dry-run: the ordered steps ``run`` would execute, unexecuted."""
@@ -207,18 +213,42 @@ class DefaultSetupOrchestrator:
 
     # --- step runner --------------------------------------------------------
     def _step(self, name: str, hard: bool, fn: Callable[[], object]) -> StepResult:
+        self._notify_step_started(step=name, hard=hard)
+        started = time.perf_counter()
         try:
             result = fn()
+            if isinstance(result, StepResult):
+                # Preserve the component's own state/detail; enforce this step's name + hard flag.
+                step_result = StepResult(
+                    name,
+                    result.state,
+                    result.detail,
+                    hard=hard,
+                    metadata=result.metadata,
+                )
+            else:
+                step_result = StepResult(name, DONE, _describe(result), hard=hard)
         except CapabilityNotImplemented as exc:
-            return StepResult(name, NOT_IMPLEMENTED, exc.detail or str(exc), hard=hard)
-        except Exception as exc:  # never let one component crash the whole run
-            return StepResult(name, FAILED, str(exc), hard=hard)
-        if isinstance(result, StepResult):
-            # Preserve the component's own state/detail; enforce this step's name + hard flag.
-            return StepResult(
-                name, result.state, result.detail, hard=hard, metadata=result.metadata
+            step_result = StepResult(
+                name, NOT_IMPLEMENTED, exc.detail or str(exc), hard=hard
             )
-        return StepResult(name, DONE, _describe(result), hard=hard)
+        except Exception as exc:  # never let one component crash the whole run
+            step_result = StepResult(name, FAILED, str(exc), hard=hard)
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        self._notify_step_completed(result=step_result, duration_ms=duration_ms)
+        return step_result
+
+    def _notify_step_started(self, *, step: str, hard: bool) -> None:
+        try:
+            self.observer.step_started(step=step, hard=hard)
+        except Exception:  # noqa: BLE001 - setup analytics must not affect setup.
+            return
+
+    def _notify_step_completed(self, *, result: StepResult, duration_ms: int) -> None:
+        try:
+            self.observer.step_completed(result=result, duration_ms=duration_ms)
+        except Exception:  # noqa: BLE001 - setup analytics must not affect setup.
+            return
 
     # --- step bodies --------------------------------------------------------
     def _config(self, plan: SetupPlan) -> str:
