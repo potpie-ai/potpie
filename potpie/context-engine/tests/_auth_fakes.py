@@ -156,6 +156,17 @@ class InMemoryCredentialStore:
         self.integrations.pop(provider, None)
 
     def get_integration_status(self, provider: str) -> dict[str, Any]:
+        if provider == "github":
+            credentials = self.providers.get(provider, {})
+            account = credentials.get("account")
+            account_dict = dict(account) if isinstance(account, dict) else {}
+            return {
+                "provider": provider,
+                "authenticated": bool(credentials.get("access_token")),
+                "login": account_dict.get("login"),
+                "email": account_dict.get("email"),
+                "expires_at": credentials.get("expires_at"),
+            }
         tokens = self.integrations.get(provider, {})
         authenticated = bool(tokens.get("access_token") or tokens.get("api_token"))
         return {

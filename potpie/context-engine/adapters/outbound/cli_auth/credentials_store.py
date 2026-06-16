@@ -1375,12 +1375,32 @@ def write_provider_credentials(provider: str, payload: dict[str, Any]) -> None:
     access_token = str(stored_payload.pop("access_token", "") or "").strip()
     if not access_token:
         raise ProviderCredentialError("GitHub access token is required.")
+    previous_metadata = get_integration_metadata(key)
+    previous_token = (
+        _load_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
+        if previous_metadata
+        else ""
+    )
     stored_payload["token_storage"] = _store_keychain_secret(
         "GitHub token",
         _GITHUB_TOKEN_SECRET,
         access_token,
     )
-    write_integration_metadata(key, stored_payload)
+    try:
+        write_integration_metadata(key, stored_payload)
+    except Exception:
+        try:
+            if previous_metadata and previous_token:
+                _store_keychain_secret(
+                    "GitHub token",
+                    _GITHUB_TOKEN_SECRET,
+                    previous_token,
+                )
+            else:
+                _delete_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
+        except Exception:
+            pass
+        raise
 
 
 def get_provider_credentials(provider: str) -> dict[str, Any]:
