@@ -15,7 +15,7 @@ extension-module = ["pyo3/extension-module"]
 name = "parsing_rs"
 
 [dependencies]
-pyo3 = { version = "0.28.2" }
+pyo3 = { version = "0.29.0" }
 walkdir = "2"
 jwalk = "0.8"
 log = "0.4"
