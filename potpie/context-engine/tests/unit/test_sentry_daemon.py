@@ -11,6 +11,9 @@ from domain.errors import CapabilityNotImplemented
 
 
 class _CrashingDaemon:
+    in_process = False
+    home = None
+
     def status(self) -> dict[str, str]:
         raise RuntimeError("daemon crashed with /Users/dsantra/private/path")
 

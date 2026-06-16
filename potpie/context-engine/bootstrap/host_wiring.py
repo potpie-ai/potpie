@@ -56,6 +56,10 @@ def default_backend_profile() -> str:
     return (os.getenv("CONTEXT_ENGINE_BACKEND") or "embedded").strip().lower()
 
 
+def default_host_mode() -> str:
+    return (os.getenv("CONTEXT_ENGINE_HOST_MODE") or "in_process").strip().lower()
+
+
 def build_host_shell(
     *,
     backend: GraphBackend | None = None,
@@ -100,7 +104,7 @@ def build_host_shell(
     )
 
     # Lifecycle components (each independently ownable; see the setup orchestrator).
-    daemon = Daemon()
+    daemon = Daemon(in_process=(default_host_mode() != "daemon"))
     config = LocalConfigService()
     installer = LocalInstaller()
     auth = LocalAuthService()
@@ -134,4 +138,4 @@ def build_host_shell(
     )
 
 
-__all__ = ["build_host_shell", "default_backend_profile"]
+__all__ = ["build_host_shell", "default_backend_profile", "default_host_mode"]

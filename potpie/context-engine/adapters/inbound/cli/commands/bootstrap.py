@@ -38,6 +38,14 @@ def register(root: typer.Typer) -> None:
             False, "--dry-run", help="Show the steps without executing."
         ),
         yes: bool = typer.Option(False, "--yes", "-y", help="Assume yes for prompts."),
+        daemon: bool = typer.Option(
+            None,
+            "--daemon/--in-process",
+            help=(
+                "Provision a real detached daemon. Defaults to "
+                "$CONTEXT_ENGINE_HOST_MODE or in-process."
+            ),
+        ),
     ) -> None:
         """Idempotent first-run: provision config, storage, daemon, default pot, skills."""
         from pathlib import Path
@@ -57,6 +65,19 @@ def register(root: typer.Typer) -> None:
                 host = build_host_shell(
                     backend=build_backend(backend), profile=host.profile
                 )
+                set_host(host)
+            if daemon is not None and getattr(host.daemon, "in_process", True) != (
+                not daemon
+            ):
+                import os
+
+                from adapters.inbound.cli.commands._common import set_host
+                from bootstrap.host_wiring import build_host_shell
+
+                os.environ["CONTEXT_ENGINE_HOST_MODE"] = (
+                    "daemon" if daemon else "in_process"
+                )
+                host = build_host_shell(backend=host.backend, profile=host.profile)
                 set_host(host)
             use_rich = setup_ux.rich_enabled(as_json=is_json()) and not yes
             plan = SetupPlan(
@@ -132,7 +153,9 @@ def register(root: typer.Typer) -> None:
         ),
     ) -> None:
         """Integration auth status by default; use --host for daemon/pot readiness."""
-        host_status = host or pot is not None or intent != "feature" or harness != "claude"
+        host_status = (
+            host or pot is not None or intent != "feature" or harness != "claude"
+        )
         if not host_status:
             from adapters.inbound.cli.auth.auth_commands import integration_status
 

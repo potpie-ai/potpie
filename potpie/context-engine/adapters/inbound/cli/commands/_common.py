@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Iterator, NoReturn
 
 import typer
 
@@ -104,7 +104,7 @@ def fail(
     detail: str | None = None,
     next_action: str | None = None,
     exit_code: int = EXIT_VALIDATION,
-) -> None:
+) -> NoReturn:
     """Emit the structured error contract and exit with the given code."""
     if is_json():
         typer.echo(

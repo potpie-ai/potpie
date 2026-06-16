@@ -3,8 +3,24 @@
 from __future__ import annotations
 
 import webbrowser
+import shutil
+import tempfile
+from collections.abc import Generator
+from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture()
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture()
+def short_socket_dir() -> Generator[Path, None, None]:
+    path = Path(tempfile.mkdtemp(prefix="potpie-d-", dir="/tmp"))
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)

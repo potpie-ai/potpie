@@ -34,7 +34,7 @@ def test_remove_pid_file_silent_on_missing(tmp_path: pathlib.Path):
     remove_pid_file(tmp_path / "ghost.pid")  # must not raise
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_install_signal_handlers_does_not_raise():
     """install_signal_handlers should succeed or silently ignore NotImplementedError/RuntimeError."""
     shutdown = asyncio.Event()
