@@ -23,6 +23,9 @@ from adapters.inbound.cli.telemetry.onboarding_events import (
     capture_activation_succeeded,
     capture_onboarding_event,
 )
+from adapters.inbound.cli.telemetry.usage_events import (
+    capture_usage_command_succeeded,
+)
 from domain.errors import CapabilityNotImplemented
 
 ingest_app = typer.Typer(help="Scanner ingestion + run history.")
@@ -155,6 +158,10 @@ def _capture_ingest_scan_activation(
         },
     )
     capture_activation_succeeded(
+        command="ingest scan",
+        result_kind="scan_result",
+    )
+    capture_usage_command_succeeded(
         command="ingest scan",
         result_kind="scan_result",
     )

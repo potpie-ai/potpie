@@ -50,6 +50,9 @@ from adapters.inbound.cli.telemetry.onboarding_events import (
     now_ms,
     sanitized_failure_kind,
 )
+from adapters.inbound.cli.telemetry.usage_events import (
+    capture_usage_command_succeeded,
+)
 from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
 from adapters.outbound.cli_auth.pkce import generate_pkce_pair
 from adapters.outbound.cli_auth.provider_config import (
@@ -718,6 +721,12 @@ def linear_ls(
     except LinearReadError as exc:
         emit_error("Linear workspace list failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
+    capture_usage_command_succeeded(
+        command="linear ls",
+        result_kind="provider_list",
+        item_count=len(rows),
+        provider="linear",
+    )
     if j:
         print_json_blob(
             {"ok": True, "provider": "linear", "workspaces": rows}, as_json=True
@@ -896,8 +905,15 @@ def _run_product_use_result(
 ) -> None:
     load_cli_env()
     j, _ = _flags()
+    provider = _canonical_provider_for_json(str(result.get("product") or ""))
+    rows = result.get("items") or []
+    capture_usage_command_succeeded(
+        command=f"{provider} select",
+        result_kind="provider_selection",
+        item_count=len(rows),
+        provider=provider,
+    )
     if j:
-        provider = _canonical_provider_for_json(str(result.get("product") or ""))
         print_json_blob(
             {"ok": True, **result, "provider": provider},
             as_json=True,
@@ -912,7 +928,6 @@ def _run_product_use_result(
             f"{product_label} team: {_esc(result.get('team_key'))} "
             f"({_esc(result.get('team_name'))})",
         )
-    rows = result.get("items") or []
     print_plain_line(f"{len(rows)} item(s):", as_json=False)
     for row in rows:
         if result["product"] == "jira":
@@ -986,6 +1001,12 @@ def jira_ls(
     except AtlassianReadError as exc:
         emit_error("Jira workspace list failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
+    capture_usage_command_succeeded(
+        command="jira ls",
+        result_kind="provider_list",
+        item_count=len(rows),
+        provider="jira",
+    )
     if j:
         print_json_blob(
             {"ok": True, "provider": "jira", "projects": rows}, as_json=True
@@ -1082,6 +1103,12 @@ def confluence_ls(
     except AtlassianReadError as exc:
         emit_error("Confluence workspace list failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
+    capture_usage_command_succeeded(
+        command="confluence ls",
+        result_kind="provider_list",
+        item_count=len(rows),
+        provider="confluence",
+    )
     if j:
         print_json_blob(
             {"ok": True, "provider": "confluence", "spaces": rows}, as_json=True
