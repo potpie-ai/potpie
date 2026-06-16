@@ -5,11 +5,17 @@ import asyncio
 import json
 import pathlib
 import socket
+
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from application.services.managed_service_manager import (
+    DependencyCycle,
+    ServiceNotFound,
+)
+from adapters.inbound.daemon_http.errors import error_envelope, status_for_error
 from domain.ports.daemon.operations import (
     OperationRegistry,
     OperationContext,
@@ -21,29 +27,6 @@ from host.daemon_runtime.context import ShellContext
 from host.daemon_runtime.health import HealthRegistrar
 from host.daemon_runtime.ipc_auth import IpcAuthGate, AuthFailure
 from domain.ports.daemon.shell import HealthStatus
-
-
-_STATUS_MAP = {
-    "invalid_input": 400,
-    "unauthorized": 401,
-    "forbidden": 403,
-    "not_found": 404,
-    "conflict": 409,
-    "unavailable": 503,
-    "degraded": 503,
-    "internal_error": 500,
-}
-
-
-def _error_envelope(e: OperationError) -> dict:
-    return {
-        "error": {
-            "code": e.code,
-            "message": e.message,
-            "detail": e.detail,
-            "recommended_next_action": e.recommended_next_action,
-        }
-    }
 
 
 class HttpTransport:
@@ -103,6 +86,7 @@ class HttpTransport:
             self._server = uvicorn.Server(config)
             watcher = asyncio.create_task(self._mark_ready_when_started())
             try:
+                assert self._server is not None
                 await self._server.serve()
             finally:
                 watcher.cancel()
@@ -114,6 +98,7 @@ class HttpTransport:
             self._server = uvicorn.Server(config)
             watcher = asyncio.create_task(self._mark_ready_when_started())
             try:
+                assert self._server is not None
                 await self._server.serve(sockets=[self._sock])
             finally:
                 watcher.cancel()
@@ -152,6 +137,9 @@ class HttpTransport:
             return None
 
     def _build_app(self, ops: OperationRegistry) -> FastAPI:
+        ctx = self._ctx
+        if ctx is None:
+            raise RuntimeError("bind() before _build_app()")
         app = FastAPI(title="potpied", version="0.1.0")
         transport = self
 
@@ -162,7 +150,7 @@ class HttpTransport:
             except KeyError:
                 return JSONResponse(
                     status_code=404,
-                    content=_error_envelope(
+                    content=error_envelope(
                         OperationError("not_found", f"unknown operation {name!r}")
                     ),
                 )
@@ -170,7 +158,7 @@ class HttpTransport:
             if op.auth == AuthRequirement.REQUIRED and principal is None:
                 return JSONResponse(
                     status_code=401,
-                    content=_error_envelope(
+                    content=error_envelope(
                         OperationError("unauthorized", "authentication required")
                     ),
                 )
@@ -185,7 +173,7 @@ class HttpTransport:
             except ValidationError as ve:
                 return JSONResponse(
                     status_code=400,
-                    content=_error_envelope(
+                    content=error_envelope(
                         OperationError(
                             "invalid_input",
                             "validation failed",
@@ -196,19 +184,19 @@ class HttpTransport:
             octx = OperationContext(
                 principal=principal,
                 request_id=request.headers.get("x-request-id", ""),
-                deps=(transport._ctx.config.get("deps") if transport._ctx else None),
+                deps=ctx.config.get("deps"),
             )
             try:
                 out = await op.handler(inp, octx)
             except OperationError as oe:
                 return JSONResponse(
-                    status_code=_STATUS_MAP.get(oe.code, 500),
-                    content=_error_envelope(oe),
+                    status_code=status_for_error(oe.code),
+                    content=error_envelope(oe),
                 )
             except Exception as ex:  # noqa: BLE001 — convert any handler error to a uniform envelope
                 return JSONResponse(
                     status_code=500,
-                    content=_error_envelope(OperationError("internal_error", str(ex))),
+                    content=error_envelope(OperationError("internal_error", str(ex))),
                 )
             return JSONResponse(status_code=200, content=out.model_dump())
 
@@ -223,7 +211,7 @@ class HttpTransport:
 
         @app.get("/admin/services")
         async def admin_services():
-            mgr = (transport._ctx.config or {}).get("service_manager")
+            mgr = (ctx.config or {}).get("service_manager")
             if mgr is None:
                 return {"services": []}
             return {
@@ -235,30 +223,35 @@ class HttpTransport:
 
         @app.post("/admin/services/{name}/up")
         async def admin_service_up(name: str):
-            mgr = (transport._ctx.config or {}).get("service_manager")
+            mgr = (ctx.config or {}).get("service_manager")
             if mgr is None:
                 return JSONResponse(
                     status_code=503,
-                    content=_error_envelope(
+                    content=error_envelope(
                         OperationError("unavailable", "service manager not available")
                     ),
                 )
             try:
                 ep = await mgr.up(name)
                 return {"endpoint": ep}
-            except Exception as ex:  # noqa: BLE001 — surface any startup error as 400
+            except (DependencyCycle, ServiceNotFound, ValidationError) as ex:
                 return JSONResponse(
                     status_code=400,
-                    content=_error_envelope(OperationError("invalid_input", str(ex))),
+                    content=error_envelope(OperationError("invalid_input", str(ex))),
+                )
+            except Exception as ex:  # noqa: BLE001 — admin boundary maps startup failures
+                return JSONResponse(
+                    status_code=503,
+                    content=error_envelope(OperationError("unavailable", str(ex))),
                 )
 
         @app.post("/admin/services/{name}/down")
         async def admin_service_down(name: str):
-            mgr = (transport._ctx.config or {}).get("service_manager")
+            mgr = (ctx.config or {}).get("service_manager")
             if mgr is None:
                 return JSONResponse(
                     status_code=503,
-                    content=_error_envelope(
+                    content=error_envelope(
                         OperationError("unavailable", "service manager not available")
                     ),
                 )

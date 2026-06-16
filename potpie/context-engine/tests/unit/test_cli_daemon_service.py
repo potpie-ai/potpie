@@ -83,6 +83,24 @@ def test_service_logs_reads_service_log_without_running_daemon(tmp_path: Path) -
     assert json.loads(result.stdout)["lines"] == ["hello"]
 
 
+def test_service_logs_follow_exits_cleanly_on_keyboard_interrupt(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    (log_dir / "service-graph.log").write_text("", encoding="utf-8")
+    _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
+    monkeypatch.setattr(
+        "time.sleep",
+        lambda _interval: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    result = runner.invoke(host_cli.app, ["service", "logs", "graph", "--follow"])
+
+    assert result.exit_code == 0, result.stdout
+
+
 def test_setup_daemon_dry_run_marks_daemon_host_mode(
     monkeypatch,
     tmp_path: Path,

@@ -4,7 +4,11 @@ from __future__ import annotations
 from host.daemon_runtime.context import ShellContext
 from domain.ports.daemon.service import ServiceSpec
 from domain.ports.daemon.shell import HealthStatus
-from adapters.outbound.managed_services.subprocess_backend import _tcp_probe
+from adapters.outbound.managed_services.subprocess_backend import (
+    _cmd_probe,
+    _http_probe,
+    _tcp_probe,
+)
 
 
 class ExternalBackend:
@@ -23,6 +27,18 @@ class ExternalBackend:
             return (
                 HealthStatus.READY
                 if await _tcp_probe(host, int(port), rp.interval_s)
+                else HealthStatus.STARTING
+            )
+        if rp.kind == "http":
+            return (
+                HealthStatus.READY
+                if await _http_probe(rp.target, rp.interval_s)
+                else HealthStatus.STARTING
+            )
+        if rp.kind == "cmd":
+            return (
+                HealthStatus.READY
+                if await _cmd_probe(rp.target, rp.interval_s)
                 else HealthStatus.STARTING
             )
         return HealthStatus.STARTING

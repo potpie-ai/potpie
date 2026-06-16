@@ -1,6 +1,9 @@
 import asyncio
 import logging
 import pathlib
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 import pytest
 import httpx
 from pydantic import BaseModel
@@ -15,6 +18,7 @@ from host.daemon_runtime.context import ShellContext, ServiceEndpoints
 from host.daemon_runtime.health import HealthRegistrar
 from host.daemon_runtime.ipc_auth import IpcAuthGate
 from adapters.inbound.daemon_http.transport import HttpTransport
+from tests.conftest import wait_for_condition
 
 
 class EchoIn(BaseModel):
@@ -71,6 +75,20 @@ def ctx(tmp_path: pathlib.Path) -> ShellContext:
     )
 
 
+@asynccontextmanager
+async def run_transport(
+    transport: HttpTransport, ops: OperationRegistry
+) -> AsyncIterator[None]:
+    task = asyncio.create_task(transport.serve(ops))
+    try:
+        yield
+    finally:
+        await transport.stop()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
 @pytest.mark.anyio
 async def test_uds_dispatch_success(short_socket_dir: pathlib.Path, ops, ctx):
     sock = short_socket_dir / "d.sock"
@@ -78,23 +96,17 @@ async def test_uds_dispatch_success(short_socket_dir: pathlib.Path, ops, ctx):
         bind=f"unix:{sock}", auth=IpcAuthGate(token=None), health=HealthRegistrar()
     )
     t.bind(ctx)
-    task = asyncio.create_task(t.serve(ops))
-    try:
-        for _ in range(50):
-            if sock.exists():
-                break
-            await asyncio.sleep(0.05)
+    async with run_transport(t, ops):
+        await wait_for_condition(
+            lambda: sock.exists(),
+            error_message=f"socket {sock} did not appear",
+        )
         async with httpx.AsyncClient(
             transport=httpx.AsyncHTTPTransport(uds=str(sock))
         ) as c:
             r = await c.post("http://localhost/op/echo.say", json={"msg": "hi"})
             assert r.status_code == 200
             assert r.json() == {"echoed": "hi"}
-    finally:
-        await t.stop()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
 
 
 @pytest.mark.anyio
@@ -104,12 +116,11 @@ async def test_error_maps_to_http_status(short_socket_dir: pathlib.Path, ops, ct
         bind=f"unix:{sock}", auth=IpcAuthGate(token=None), health=HealthRegistrar()
     )
     t.bind(ctx)
-    task = asyncio.create_task(t.serve(ops))
-    try:
-        for _ in range(50):
-            if sock.exists():
-                break
-            await asyncio.sleep(0.05)
+    async with run_transport(t, ops):
+        await wait_for_condition(
+            lambda: sock.exists(),
+            error_message=f"socket {sock} did not appear",
+        )
         async with httpx.AsyncClient(
             transport=httpx.AsyncHTTPTransport(uds=str(sock))
         ) as c:
@@ -119,11 +130,6 @@ async def test_error_maps_to_http_status(short_socket_dir: pathlib.Path, ops, ct
             assert body["error"]["code"] == "not_found"
             assert body["error"]["message"] == "missing"
             assert body["error"]["detail"] == {"k": "x"}
-    finally:
-        await t.stop()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
 
 
 @pytest.mark.anyio
@@ -132,22 +138,16 @@ async def test_tcp_bind_works(ops, ctx):
         bind="tcp:127.0.0.1:0", auth=IpcAuthGate(token=None), health=HealthRegistrar()
     )
     t.bind(ctx)
-    task = asyncio.create_task(t.serve(ops))
-    try:
-        for _ in range(50):
-            if t.bound_port():
-                break
-            await asyncio.sleep(0.05)
+    async with run_transport(t, ops):
+        await wait_for_condition(
+            lambda: t.bound_port() is not None,
+            error_message="tcp transport did not bind to a port",
+        )
         port = t.bound_port()
         assert port is not None and port > 0
         async with httpx.AsyncClient() as c:
             r = await c.post(f"http://127.0.0.1:{port}/op/echo.say", json={"msg": "ok"})
             assert r.status_code == 200
-    finally:
-        await t.stop()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
 
 
 @pytest.mark.anyio
@@ -173,12 +173,11 @@ async def test_tcp_required_auth_rejected_without_token(ctx):
         health=HealthRegistrar(),
     )
     t.bind(ctx)
-    task = asyncio.create_task(t.serve(reg))
-    try:
-        for _ in range(50):
-            if t.bound_port():
-                break
-            await asyncio.sleep(0.05)
+    async with run_transport(t, reg):
+        await wait_for_condition(
+            lambda: t.bound_port() is not None,
+            error_message="tcp auth transport did not bind to a port",
+        )
         port = t.bound_port()
         async with httpx.AsyncClient() as c:
             r = await c.post(
@@ -193,8 +192,3 @@ async def test_tcp_required_auth_rejected_without_token(ctx):
             )
             assert r.status_code == 200
             assert r.json() == {"echoed": "x"}
-    finally:
-        await t.stop()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task

@@ -90,12 +90,15 @@ def service_logs(
 
         with log_path.open() as f:
             f.seek(0, 2)
-            while True:
-                line = f.readline()
-                if not line:
-                    _t.sleep(0.2)
-                    continue
-                typer.echo(line.rstrip("\n"))
+            try:
+                while True:
+                    line = f.readline()
+                    if not line:
+                        _t.sleep(0.2)
+                        continue
+                    typer.echo(line.rstrip("\n"))
+            except KeyboardInterrupt:
+                return
 
 
 __all__ = ["service_app"]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 import asyncio
-import contextlib
 from dataclasses import dataclass
 from host.daemon_runtime.context import ShellContext
 from domain.ports.daemon.service import ServiceSpec
@@ -67,8 +66,14 @@ class ServiceManager:
             if existing is not None:
                 # A previous start left a non-READY backend (e.g. ReadyTimeout). Stop it
                 # before recreating so we don't orphan a process/container.
-                with contextlib.suppress(Exception):
+                try:
                     await existing.stop(spec)
+                except Exception:  # noqa: BLE001
+                    self._ctx.logger.warning(
+                        "failed to stop previous backend for %r; continuing",
+                        name,
+                        exc_info=True,
+                    )
                 self._instances.pop(name, None)
             backend = self._backends.create(spec.backend)
             await backend.start(spec, self._ctx)
@@ -95,15 +100,18 @@ class ServiceManager:
     async def down(self, name: str) -> None:
         # TODO(v2): stop services that depend on `name` first; V1 does not check dependents.
         async with self._lock:
-            backend = self._instances.pop(name, None)
+            backend = self._instances.get(name)
             if backend is None:
                 return
             spec = self._specs[name]
             try:
                 await backend.stop(spec)
-            finally:
-                self._statuses[name] = HealthStatus.STOPPED
-                self._ctx.endpoints.remove(name)
+            except Exception:
+                self._statuses[name] = HealthStatus.DEGRADED
+                raise
+            self._instances.pop(name, None)
+            self._statuses[name] = HealthStatus.STOPPED
+            self._ctx.endpoints.remove(name)
 
     def started_names(self) -> list[str]:
         """Names of services that have a started backend instance (running or degraded)."""

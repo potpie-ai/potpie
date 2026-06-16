@@ -3,7 +3,7 @@ import pathlib
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from adapters.outbound.managed_services.container_backend import ContainerBackend
-from domain.ports.daemon.shell import ServiceSpec, ReadyProbe
+from domain.ports.daemon.shell import HealthStatus, ServiceSpec, ReadyProbe
 from host.daemon_runtime.context import ShellContext, ServiceEndpoints
 
 
@@ -24,6 +24,16 @@ def _spec(name="g") -> ServiceSpec:
         config={"image": "alpine:latest", "ports": {"7687": 7687}, "env": {"X": "1"}},
         ready=ReadyProbe(kind="tcp", target="127.0.0.1:7687"),
         endpoint="bolt://127.0.0.1:7687",
+    )
+
+
+def _http_spec(name="g") -> ServiceSpec:
+    return ServiceSpec(
+        name=name,
+        backend="container",
+        config={"image": "alpine:latest"},
+        ready=ReadyProbe(kind="http", target="http://127.0.0.1:9999/health"),
+        endpoint="http://127.0.0.1:9999",
     )
 
 
@@ -85,3 +95,13 @@ async def test_start_failure_raises(ctx):
         with pytest.raises(RuntimeError) as ei:
             await be.start(_spec(), ctx)
         assert "image not found" in str(ei.value)
+
+
+@pytest.mark.anyio
+async def test_probe_http_kind_returns_ready(ctx):
+    be = ContainerBackend()
+    with patch(
+        "adapters.outbound.managed_services.container_backend._http_probe",
+        new=AsyncMock(return_value=True),
+    ):
+        assert await be.probe(_http_spec()) is HealthStatus.READY

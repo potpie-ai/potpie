@@ -26,7 +26,12 @@ from adapters.outbound.managed_services.container_backend import ContainerBacken
 from adapters.outbound.managed_services.external_backend import ExternalBackend
 from adapters.inbound.daemon_http.transport import HttpTransport
 
-logger = logging.getLogger("potpied.shell")
+DAEMON_LOGGER_NAMESPACE = "potpied"
+logger = logging.getLogger(f"{DAEMON_LOGGER_NAMESPACE}.shell")
+
+
+class TransportReadinessTimeout(RuntimeError):
+    pass
 
 
 @dataclass
@@ -132,7 +137,7 @@ class DaemonRuntime:
         ctx = ShellContext(
             config={},
             data_dir=data_dir,
-            logger=logging.getLogger("potpied"),
+            logger=logging.getLogger(DAEMON_LOGGER_NAMESPACE),
             endpoints=ServiceEndpoints(),
         )
         ctx.config["deps"] = (
@@ -212,7 +217,9 @@ class DaemonRuntime:
             if all(t.health() is HealthStatus.READY for t in self._transports):
                 return
             await asyncio.sleep(0.02)
-        raise RuntimeError("transports did not become ready within timeout")
+        raise TransportReadinessTimeout(
+            f"transports did not become ready within {timeout_s:g}s"
+        )
 
     def request_stop(self) -> None:
         """Synchronous stop trigger, safe to call from a signal handler."""

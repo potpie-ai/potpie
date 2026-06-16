@@ -1,6 +1,8 @@
 import logging
 import pathlib
 import socket
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from adapters.outbound.managed_services.external_backend import ExternalBackend
 from domain.ports.daemon.shell import ServiceSpec, ReadyProbe, HealthStatus
@@ -68,3 +70,21 @@ async def test_external_probe_starting_when_target_down(ctx):
     )
     await be.start(spec, ctx)
     assert await be.probe(spec) is HealthStatus.STARTING
+
+
+@pytest.mark.anyio
+async def test_external_probe_http_ready_when_endpoint_healthy(ctx):
+    be = ExternalBackend()
+    spec = ServiceSpec(
+        name="ext-http",
+        backend="external",
+        config={},
+        ready=ReadyProbe(kind="http", target="http://127.0.0.1:9999/health"),
+        endpoint="http://127.0.0.1:9999",
+    )
+
+    with patch(
+        "adapters.outbound.managed_services.external_backend._http_probe",
+        new=AsyncMock(return_value=True),
+    ):
+        assert await be.probe(spec) is HealthStatus.READY

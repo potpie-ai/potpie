@@ -77,9 +77,7 @@ def register(root: typer.Typer) -> None:
                     backend=build_backend(backend), profile=host.profile
                 )
                 set_host(host)
-            if daemon is not None and getattr(host.daemon, "in_process", True) != (
-                not daemon
-            ):
+            if daemon is not None and host.daemon.in_process != (not daemon):
                 import os
 
                 from adapters.inbound.cli.commands._common import set_host

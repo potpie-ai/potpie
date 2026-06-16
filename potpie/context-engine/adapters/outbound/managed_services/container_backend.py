@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 import asyncio
+import shlex
 from host.daemon_runtime.context import ShellContext
 from domain.ports.daemon.service import ServiceSpec
 from domain.ports.daemon.shell import HealthStatus
+from adapters.outbound.managed_services.subprocess_backend import (
+    _argv_probe,
+    _http_probe,
+    _tcp_probe,
+)
 
 
 class ContainerBackend:
@@ -54,14 +60,28 @@ class ContainerBackend:
             await proc.communicate()  # ignore errors on stop/rm idempotency
 
     async def probe(self, spec: ServiceSpec) -> HealthStatus:
-        from adapters.outbound.managed_services.subprocess_backend import _tcp_probe
-
         rp = spec.ready
         if rp.kind == "tcp":
             host, port = rp.target.split(":")
             return (
                 HealthStatus.READY
                 if await _tcp_probe(host, int(port), rp.interval_s)
+                else HealthStatus.STARTING
+            )
+        if rp.kind == "http":
+            return (
+                HealthStatus.READY
+                if await _http_probe(rp.target, rp.interval_s)
+                else HealthStatus.STARTING
+            )
+        if rp.kind == "cmd":
+            cid = self._containers.get(spec.name)
+            if cid is None:
+                return HealthStatus.STARTING
+            argv = [self._docker, "exec", cid, *shlex.split(rp.target)]
+            return (
+                HealthStatus.READY
+                if await _argv_probe(argv, rp.interval_s)
                 else HealthStatus.STARTING
             )
         return HealthStatus.STARTING

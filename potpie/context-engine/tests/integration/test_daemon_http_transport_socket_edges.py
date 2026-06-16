@@ -113,6 +113,13 @@ async def test_uds_reuses_existing_sock_file(short_socket_dir: pathlib.Path, ops
                 break
             await asyncio.sleep(0.05)
         assert sock.exists()
+        async with httpx.AsyncClient(
+            transport=httpx.AsyncHTTPTransport(uds=str(sock))
+        ) as client:
+            response = await client.post(
+                "http://localhost/op/echo.say", json={"msg": "hi"}
+            )
+            assert response.status_code == 200
     finally:
         await transport.stop()
         task.cancel()

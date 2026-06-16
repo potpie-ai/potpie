@@ -2,38 +2,17 @@
 
 from __future__ import annotations
 import asyncio
-import logging
 import pathlib
-import socket
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from adapters.outbound.managed_services.subprocess_backend import (
-    SubprocessBackend,
-    _tcp_probe,
-)
+from adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
 from domain.ports.daemon.shell import ServiceSpec, ReadyProbe, HealthStatus
-from host.daemon_runtime.context import ShellContext, ServiceEndpoints
-
-
-def _free_port() -> int:
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
-
-
-@pytest.fixture
-def ctx(tmp_path: pathlib.Path) -> ShellContext:
-    return ShellContext(
-        config={},
-        data_dir=tmp_path,
-        logger=logging.getLogger("t"),
-        endpoints=ServiceEndpoints(),
-    )
+from host.daemon_runtime.context import ShellContext
 
 
 @pytest.mark.anyio
-async def test_probe_returns_stopped_when_no_proc(ctx):
+async def test_probe_returns_stopped_when_no_proc():
     be = SubprocessBackend()
     spec = ServiceSpec(
         name="missing",
@@ -46,7 +25,9 @@ async def test_probe_returns_stopped_when_no_proc(ctx):
 
 
 @pytest.mark.anyio
-async def test_probe_returns_degraded_after_exit(ctx, tmp_path: pathlib.Path):
+async def test_probe_returns_degraded_after_exit(
+    daemon_ctx: ShellContext, tmp_path: pathlib.Path
+):
     spec = ServiceSpec(
         name="exit0",
         backend="subprocess",
@@ -55,7 +36,7 @@ async def test_probe_returns_degraded_after_exit(ctx, tmp_path: pathlib.Path):
         endpoint="tcp://127.0.0.1:1",
     )
     be = SubprocessBackend()
-    await be.start(spec, ctx)
+    await be.start(spec, daemon_ctx)
     # Wait for process to exit
     for _ in range(50):
         proc = be._procs.get("exit0")
@@ -68,7 +49,7 @@ async def test_probe_returns_degraded_after_exit(ctx, tmp_path: pathlib.Path):
 
 @pytest.mark.anyio
 async def test_probe_http_kind_returns_starting_on_no_server(
-    ctx, tmp_path: pathlib.Path
+    daemon_ctx: ShellContext, tmp_path: pathlib.Path
 ):
     """http probe kind returns STARTING when endpoint is unreachable."""
     spec = ServiceSpec(
@@ -81,7 +62,7 @@ async def test_probe_http_kind_returns_starting_on_no_server(
         endpoint="tcp://127.0.0.1:1",
     )
     be = SubprocessBackend()
-    await be.start(spec, ctx)
+    await be.start(spec, daemon_ctx)
     try:
         result = await be.probe(spec)
         assert result is HealthStatus.STARTING
@@ -90,17 +71,21 @@ async def test_probe_http_kind_returns_starting_on_no_server(
 
 
 @pytest.mark.anyio
-async def test_probe_cmd_kind_returns_ready_on_success(ctx, tmp_path: pathlib.Path):
+async def test_probe_cmd_kind_returns_ready_on_success(
+    daemon_ctx: ShellContext, tmp_path: pathlib.Path
+):
     """cmd probe kind returns READY when command exits 0."""
     spec = ServiceSpec(
         name="cmdtest",
         backend="subprocess",
         config={"command": ["python", "-c", "import time; time.sleep(60)"]},
-        ready=ReadyProbe(kind="cmd", target="python -c pass", interval_s=2.0),
+        ready=ReadyProbe(
+            kind="cmd", target="python -c 'import sys; sys.exit(0)'", interval_s=2.0
+        ),
         endpoint="tcp://127.0.0.1:1",
     )
     be = SubprocessBackend()
-    await be.start(spec, ctx)
+    await be.start(spec, daemon_ctx)
     try:
         result = await be.probe(spec)
         assert result is HealthStatus.READY
@@ -109,19 +94,21 @@ async def test_probe_cmd_kind_returns_ready_on_success(ctx, tmp_path: pathlib.Pa
 
 
 @pytest.mark.anyio
-async def test_probe_cmd_kind_returns_starting_on_failure(ctx, tmp_path: pathlib.Path):
+async def test_probe_cmd_kind_returns_starting_on_failure(
+    daemon_ctx: ShellContext, tmp_path: pathlib.Path
+):
     """cmd probe kind returns STARTING when command exits non-zero."""
     spec = ServiceSpec(
         name="cmdfail",
         backend="subprocess",
         config={"command": ["python", "-c", "import time; time.sleep(60)"]},
         ready=ReadyProbe(
-            kind="cmd", target="python -c import sys; sys.exit(1)", interval_s=2.0
+            kind="cmd", target="python -c 'import sys; sys.exit(1)'", interval_s=2.0
         ),
         endpoint="tcp://127.0.0.1:1",
     )
     be = SubprocessBackend()
-    await be.start(spec, ctx)
+    await be.start(spec, daemon_ctx)
     try:
         result = await be.probe(spec)
         assert result is HealthStatus.STARTING
@@ -130,7 +117,9 @@ async def test_probe_cmd_kind_returns_starting_on_failure(ctx, tmp_path: pathlib
 
 
 @pytest.mark.anyio
-async def test_probe_unknown_kind_returns_degraded(ctx, tmp_path: pathlib.Path):
+async def test_probe_unknown_kind_returns_degraded(
+    daemon_ctx: ShellContext, tmp_path: pathlib.Path
+):
     """Unknown probe kind returns DEGRADED."""
     spec = ServiceSpec(
         name="unknown",
@@ -140,7 +129,7 @@ async def test_probe_unknown_kind_returns_degraded(ctx, tmp_path: pathlib.Path):
         endpoint="tcp://127.0.0.1:1",
     )
     be = SubprocessBackend()
-    await be.start(spec, ctx)
+    await be.start(spec, daemon_ctx)
     try:
         result = await be.probe(spec)
         assert result is HealthStatus.DEGRADED
@@ -149,14 +138,26 @@ async def test_probe_unknown_kind_returns_degraded(ctx, tmp_path: pathlib.Path):
 
 
 @pytest.mark.anyio
-async def test_tcp_probe_failure_returns_false():
-    """_tcp_probe returns False when connection refused."""
-    result = await _tcp_probe("127.0.0.1", 1, timeout_s=0.1)
-    assert result is False
+async def test_probe_tcp_failure_returns_starting(daemon_ctx: ShellContext):
+    spec = ServiceSpec(
+        name="tcpfail",
+        backend="subprocess",
+        config={"command": ["python", "-c", "import time; time.sleep(60)"]},
+        ready=ReadyProbe(kind="tcp", target="127.0.0.1:1", interval_s=0.1),
+        endpoint="tcp://127.0.0.1:1",
+    )
+    be = SubprocessBackend()
+    await be.start(spec, daemon_ctx)
+    try:
+        assert await be.probe(spec) is HealthStatus.STARTING
+    finally:
+        await be.stop(spec)
 
 
 @pytest.mark.anyio
-async def test_stop_already_exited_proc(ctx, tmp_path: pathlib.Path):
+async def test_stop_already_exited_proc(
+    daemon_ctx: ShellContext, tmp_path: pathlib.Path
+):
     """Stopping an already-exited process must not raise."""
     spec = ServiceSpec(
         name="quickexit",
@@ -166,7 +167,7 @@ async def test_stop_already_exited_proc(ctx, tmp_path: pathlib.Path):
         endpoint="tcp://127.0.0.1:1",
     )
     be = SubprocessBackend()
-    await be.start(spec, ctx)
+    await be.start(spec, daemon_ctx)
     # Let it exit naturally
     for _ in range(50):
         proc = be._procs.get("quickexit")
@@ -175,3 +176,32 @@ async def test_stop_already_exited_proc(ctx, tmp_path: pathlib.Path):
         await asyncio.sleep(0.05)
     # Stop on already-exited process should be safe
     await be.stop(spec)
+
+
+@pytest.mark.anyio
+async def test_start_closes_parent_log_file_after_spawn(
+    daemon_ctx: ShellContext, monkeypatch
+):
+    spec = ServiceSpec(
+        name="fdtest",
+        backend="subprocess",
+        config={"command": ["python", "-c", "pass"]},
+        ready=ReadyProbe(kind="tcp", target="127.0.0.1:1"),
+        endpoint="tcp://127.0.0.1:1",
+    )
+    be = SubprocessBackend()
+    fake_proc = MagicMock(returncode=None)
+    captured = {}
+
+    async def fake_create_subprocess_exec(*args, stdout, **kwargs):
+        captured["stdout"] = stdout
+        return fake_proc
+
+    monkeypatch.setattr(
+        "adapters.outbound.managed_services.subprocess_backend.asyncio.create_subprocess_exec",
+        AsyncMock(side_effect=fake_create_subprocess_exec),
+    )
+
+    await be.start(spec, daemon_ctx)
+
+    assert captured["stdout"].closed

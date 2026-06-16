@@ -1,34 +1,16 @@
 import asyncio
-import logging
 import pathlib
-import socket
+
 import pytest
 from adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
 from domain.ports.daemon.shell import ServiceSpec, ReadyProbe, HealthStatus
-from host.daemon_runtime.context import ShellContext, ServiceEndpoints
-
-
-def _free_port() -> int:
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
-
-
-@pytest.fixture
-def ctx(tmp_path: pathlib.Path) -> ShellContext:
-    return ShellContext(
-        config={},
-        data_dir=tmp_path,
-        logger=logging.getLogger("t"),
-        endpoints=ServiceEndpoints(),
-    )
+from host.daemon_runtime.context import ShellContext
+from tests.conftest import free_port
 
 
 @pytest.mark.anyio
-async def test_start_and_probe_tcp(tmp_path: pathlib.Path, ctx):
-    port = _free_port()
+async def test_start_and_probe_tcp(tmp_path: pathlib.Path, daemon_ctx: ShellContext):
+    port = free_port()
     script = tmp_path / "srv.py"
     script.write_text(
         "import socket, sys\n"
@@ -45,7 +27,7 @@ async def test_start_and_probe_tcp(tmp_path: pathlib.Path, ctx):
     )
     be = SubprocessBackend()
     try:
-        await be.start(spec, ctx)
+        await be.start(spec, daemon_ctx)
         for _ in range(60):
             if await be.probe(spec) is HealthStatus.READY:
                 break
@@ -56,7 +38,9 @@ async def test_start_and_probe_tcp(tmp_path: pathlib.Path, ctx):
 
 
 @pytest.mark.anyio
-async def test_probe_returns_starting_before_ready(ctx, tmp_path: pathlib.Path):
+async def test_probe_returns_starting_before_ready(
+    daemon_ctx: ShellContext, tmp_path: pathlib.Path
+):
     spec = ServiceSpec(
         name="noop",
         backend="subprocess",
@@ -66,14 +50,14 @@ async def test_probe_returns_starting_before_ready(ctx, tmp_path: pathlib.Path):
     )
     be = SubprocessBackend()
     try:
-        await be.start(spec, ctx)
+        await be.start(spec, daemon_ctx)
         assert await be.probe(spec) is HealthStatus.STARTING
     finally:
         await be.stop(spec)
 
 
 @pytest.mark.anyio
-async def test_stop_terminates(ctx, tmp_path: pathlib.Path):
+async def test_stop_terminates(daemon_ctx: ShellContext, tmp_path: pathlib.Path):
     spec = ServiceSpec(
         name="x",
         backend="subprocess",
@@ -82,6 +66,6 @@ async def test_stop_terminates(ctx, tmp_path: pathlib.Path):
         endpoint="tcp://127.0.0.1:1",
     )
     be = SubprocessBackend()
-    await be.start(spec, ctx)
+    await be.start(spec, daemon_ctx)
     await be.stop(spec)
     await be.stop(spec)  # double-stop must be safe

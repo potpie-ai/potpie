@@ -9,9 +9,12 @@ SIGTERM/SIGINT stops it.
 from __future__ import annotations
 import argparse
 import asyncio
+import logging
 import os
 import pathlib
 import signal
+
+logger = logging.getLogger(__name__)
 
 
 def _serve(home: pathlib.Path) -> None:
@@ -58,7 +61,9 @@ def _serve(home: pathlib.Path) -> None:
             try:
                 loop.add_signal_handler(sig, runtime.request_stop)
             except (NotImplementedError, RuntimeError):
-                pass
+                logger.warning(
+                    "failed to register signal handler for %s", sig, exc_info=True
+                )
         await runtime.run()
 
     try:

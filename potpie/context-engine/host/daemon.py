@@ -72,7 +72,7 @@ class Daemon:
             with client_for(self.home) as client:
                 response = client.get("/admin/health")
                 return {
-                    "live": response.status_code < 500,
+                    "live": 200 <= response.status_code < 300,
                     "mode": "detached",
                     **response.json(),
                 }
