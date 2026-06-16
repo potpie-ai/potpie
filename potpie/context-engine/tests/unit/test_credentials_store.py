@@ -578,7 +578,11 @@ def test_write_provider_credentials_preserves_metadata_error_when_cleanup_fails(
     def _fail_metadata(_provider: str, _metadata: dict[str, object]) -> None:
         raise OSError("metadata write failed")
 
+    cleanup_calls = 0
+
     def _fail_cleanup(_label: str, _secret_name: str) -> None:
+        nonlocal cleanup_calls
+        cleanup_calls += 1
         raise cs.ProviderCredentialError("cleanup failed")
 
     monkeypatch.setattr(cs, "write_integration_metadata", _fail_metadata)
@@ -594,6 +598,8 @@ def test_write_provider_credentials_preserves_metadata_error_when_cleanup_fails(
                 "account": {"login": "octocat", "id": 1},
             },
         )
+
+    assert cleanup_calls == 1
 
 
 def test_linux_integration_secrets_stored_in_json_file(
