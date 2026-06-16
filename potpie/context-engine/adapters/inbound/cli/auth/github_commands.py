@@ -30,6 +30,9 @@ from adapters.inbound.cli.telemetry.onboarding_events import (
     now_ms,
     sanitized_failure_kind,
 )
+from adapters.inbound.cli.telemetry.usage_events import (
+    capture_usage_command_succeeded,
+)
 from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
 
 github_app = typer.Typer(help="GitHub integration.")
@@ -327,6 +330,12 @@ def github_repos_impl() -> None:
             title="GitHub repository listing failed",
             verbose=v,
         )
+    capture_usage_command_succeeded(
+        command="github repos",
+        result_kind="provider_list",
+        item_count=len(repos),
+        provider="github",
+    )
 
     if j:
         print_json_blob(

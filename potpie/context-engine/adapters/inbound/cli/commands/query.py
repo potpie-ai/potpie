@@ -18,6 +18,9 @@ from adapters.inbound.cli.commands._common import (
 from adapters.inbound.cli.telemetry.onboarding_events import (
     capture_activation_succeeded,
 )
+from adapters.inbound.cli.telemetry.usage_events import (
+    capture_usage_command_succeeded,
+)
 from domain.ports.agent_context import RecordRequest, ResolveRequest, SearchRequest
 
 
@@ -95,6 +98,11 @@ def register(root: typer.Typer) -> None:
                     scope=_parse_scope(scope),
                 )
             )
+            capture_usage_command_succeeded(
+                command="record",
+                result_kind="record_result",
+                item_count=receipt.mutations_applied,
+            )
             emit(
                 {
                     "status": receipt.status,
@@ -149,6 +157,11 @@ __all__ = ["register"]
 
 def _capture_context_activation(*, command: str, item_count: int) -> None:
     capture_activation_succeeded(
+        command=command,
+        result_kind="context_result",
+        item_count=item_count,
+    )
+    capture_usage_command_succeeded(
         command=command,
         result_kind="context_result",
         item_count=item_count,
