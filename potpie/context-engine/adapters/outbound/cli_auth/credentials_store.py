@@ -1376,7 +1376,11 @@ def write_provider_credentials(provider: str, payload: dict[str, Any]) -> None:
     if not access_token:
         raise ProviderCredentialError("GitHub access token is required.")
     previous_metadata = get_integration_metadata(key)
-    previous_token = _load_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
+    previous_token = (
+        _load_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
+        if previous_metadata
+        else ""
+    )
     stored_payload["token_storage"] = _store_keychain_secret(
         "GitHub token",
         _GITHUB_TOKEN_SECRET,
