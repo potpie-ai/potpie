@@ -1,14 +1,15 @@
 """external ServiceBackend — does not start anything; only probes an already-running endpoint."""
 
 from __future__ import annotations
-from host.daemon_runtime.context import ShellContext
-from domain.ports.daemon.service import ServiceSpec
-from domain.ports.daemon.shell import HealthStatus
+
 from adapters.outbound.managed_services.subprocess_backend import (
     _cmd_probe,
     _http_probe,
     _tcp_probe,
 )
+from domain.ports.daemon.service import ServiceSpec
+from domain.ports.daemon.shell import HealthStatus
+from host.daemon_runtime.context import ShellContext
 
 
 class ExternalBackend:

@@ -4,9 +4,10 @@ import socket
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
 from adapters.outbound.managed_services.external_backend import ExternalBackend
-from domain.ports.daemon.shell import ServiceSpec, ReadyProbe, HealthStatus
-from host.daemon_runtime.context import ShellContext, ServiceEndpoints
+from domain.ports.daemon.shell import HealthStatus, ReadyProbe, ServiceSpec
+from host.daemon_runtime.context import ServiceEndpoints, ShellContext
 
 
 def _free_port_and_listener() -> tuple[int, socket.socket]:

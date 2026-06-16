@@ -7,6 +7,7 @@ SIGTERM/SIGINT stops it.
 """
 
 from __future__ import annotations
+
 import argparse
 import asyncio
 import logging
@@ -22,17 +23,17 @@ def _serve(home: pathlib.Path) -> None:
     # spawn another detached daemon (recursion guard).
     os.environ["CONTEXT_ENGINE_HOST_MODE"] = "in_process"
 
+    from adapters.outbound.daemon_process.pidfile import (
+        remove_pid_file,
+        write_discovery,
+        write_pid_file,
+    )
     from bootstrap.host_wiring import build_host_shell
     from host.daemon_runtime.config import build_daemon_config
     from host.daemon_runtime.shell import (
         DaemonRuntime,
-        default_registries,
         EntryPointPluginsLoader,
-    )
-    from adapters.outbound.daemon_process.pidfile import (
-        write_pid_file,
-        remove_pid_file,
-        write_discovery,
+        default_registries,
     )
 
     host = build_host_shell()

@@ -13,8 +13,8 @@ from adapters.inbound.cli import host_cli as cli_main
 from adapters.inbound.cli.commands import bootstrap
 from adapters.inbound.cli.commands._common import EXIT_DEGRADED
 from bootstrap.host_wiring import default_host_mode
-from domain.ports.agent_context import StatusReport, StatusRequest
 from domain.lifecycle import DONE, FAILED, SetupPlan, SetupReport, StepResult
+from domain.ports.agent_context import StatusReport, StatusRequest
 
 runner = CliRunner()
 

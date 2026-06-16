@@ -1,23 +1,26 @@
 """Additional http transport coverage: edge cases, admin endpoints, error paths."""
 
 from __future__ import annotations
+
 import asyncio
 import logging
 import pathlib
-import pytest
+
 import httpx
+import pytest
 from pydantic import BaseModel
+
+from adapters.inbound.daemon_http.transport import HttpTransport
 from domain.ports.daemon.operations import (
+    AuthRequirement,
+    OperationContext,
     OperationRegistry,
     OperationSpec,
-    OperationContext,
-    AuthRequirement,
 )
-from host.daemon_runtime.context import ShellContext, ServiceEndpoints
+from domain.ports.daemon.shell import HealthStatus
+from host.daemon_runtime.context import ServiceEndpoints, ShellContext
 from host.daemon_runtime.health import HealthRegistrar
 from host.daemon_runtime.ipc_auth import IpcAuthGate
-from adapters.inbound.daemon_http.transport import HttpTransport
-from domain.ports.daemon.shell import HealthStatus
 
 
 class EchoIn(BaseModel):

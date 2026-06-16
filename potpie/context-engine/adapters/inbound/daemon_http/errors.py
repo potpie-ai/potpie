@@ -4,7 +4,6 @@ from typing import Any
 
 from domain.ports.daemon.operations import OperationError
 
-
 _STATUS_MAP = {
     "invalid_input": 400,
     "unauthorized": 401,

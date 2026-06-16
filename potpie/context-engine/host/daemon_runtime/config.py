@@ -7,6 +7,7 @@ avoids a second config file colliding with ``ConfigService``'s ``config.json``.
 """
 
 from __future__ import annotations
+
 import pathlib
 from dataclasses import dataclass, field
 from typing import Any

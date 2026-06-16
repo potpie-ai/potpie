@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pathlib
 
-
 from domain.lifecycle import DONE, SKIPPED
 from host.daemon import Daemon
 

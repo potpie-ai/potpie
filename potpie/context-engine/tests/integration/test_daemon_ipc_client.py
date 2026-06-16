@@ -1,9 +1,12 @@
 """Additional client.py coverage: tcp bind path, missing discovery, unknown bind."""
 
 from __future__ import annotations
+
 import json
 import pathlib
+
 import pytest
+
 from adapters.outbound.daemon_process.ipc_client import client_for, load_discovery
 
 

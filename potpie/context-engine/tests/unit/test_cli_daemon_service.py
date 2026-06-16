@@ -11,7 +11,6 @@ from adapters.inbound.cli.commands import _common, bootstrap
 from adapters.inbound.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
 from domain.lifecycle import PlannedSetupStep, SetupPlan, SetupPreview
 
-
 runner = CliRunner()
 
 

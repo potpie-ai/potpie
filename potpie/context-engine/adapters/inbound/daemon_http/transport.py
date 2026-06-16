@@ -1,6 +1,7 @@
 """HTTP transport: serves OperationRegistry over UDS or TCP. Generic dispatch — knows nothing about specific operations."""
 
 from __future__ import annotations
+
 import asyncio
 import json
 import pathlib
@@ -11,22 +12,22 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from adapters.inbound.daemon_http.errors import error_envelope, status_for_error
 from application.services.managed_service_manager import (
     DependencyCycle,
     ServiceNotFound,
 )
-from adapters.inbound.daemon_http.errors import error_envelope, status_for_error
 from domain.ports.daemon.operations import (
-    OperationRegistry,
+    AuthRequirement,
     OperationContext,
     OperationError,
-    AuthRequirement,
+    OperationRegistry,
     Principal,
 )
+from domain.ports.daemon.shell import HealthStatus
 from host.daemon_runtime.context import ShellContext
 from host.daemon_runtime.health import HealthRegistrar
-from host.daemon_runtime.ipc_auth import IpcAuthGate, AuthFailure
-from domain.ports.daemon.shell import HealthStatus
+from host.daemon_runtime.ipc_auth import AuthFailure, IpcAuthGate
 
 
 class HttpTransport:

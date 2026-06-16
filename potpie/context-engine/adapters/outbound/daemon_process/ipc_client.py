@@ -1,8 +1,10 @@
 """HTTP client for the running daemon (UDS-preferred)."""
 
 from __future__ import annotations
+
 import json
 import pathlib
+
 import httpx
 
 

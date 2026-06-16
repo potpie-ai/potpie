@@ -5,12 +5,12 @@ from __future__ import annotations
 import pathlib
 
 from host.daemon_runtime.config import (
+    ComponentEntry,
     DaemonConfig,
+    ReadyProbeEntry,
+    ServiceEntry,
     ShellSettings,
     TransportEntry,
-    ServiceEntry,
-    ComponentEntry,
-    ReadyProbeEntry,
     build_daemon_config,
 )
 

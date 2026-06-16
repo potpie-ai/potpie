@@ -1,13 +1,15 @@
 """Additional subprocess backend coverage: http probe, cmd probe, degraded path."""
 
 from __future__ import annotations
+
 import asyncio
 import pathlib
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
 from adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
-from domain.ports.daemon.shell import ServiceSpec, ReadyProbe, HealthStatus
+from domain.ports.daemon.shell import HealthStatus, ReadyProbe, ServiceSpec
 from host.daemon_runtime.context import ShellContext
 
 

@@ -1,14 +1,16 @@
 """subprocess ServiceBackend — spawn any local binary, supervise it, probe readiness."""
 
 from __future__ import annotations
+
 import asyncio
 import contextlib
 import shlex
 import signal
 import subprocess
-from host.daemon_runtime.context import ShellContext
+
 from domain.ports.daemon.service import ServiceSpec
 from domain.ports.daemon.shell import HealthStatus
+from host.daemon_runtime.context import ShellContext
 
 
 class SubprocessBackend:

@@ -1,16 +1,18 @@
 """container ServiceBackend — runs services via the local docker CLI (no docker-py dep)."""
 
 from __future__ import annotations
+
 import asyncio
 import shlex
-from host.daemon_runtime.context import ShellContext
-from domain.ports.daemon.service import ServiceSpec
-from domain.ports.daemon.shell import HealthStatus
+
 from adapters.outbound.managed_services.subprocess_backend import (
     _argv_probe,
     _http_probe,
     _tcp_probe,
 )
+from domain.ports.daemon.service import ServiceSpec
+from domain.ports.daemon.shell import HealthStatus
+from host.daemon_runtime.context import ShellContext
 
 
 class ContainerBackend:

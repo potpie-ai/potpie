@@ -7,6 +7,7 @@ never prints, so it is safe to call from inside a rich/live setup UI.
 """
 
 from __future__ import annotations
+
 import json
 import os
 import pathlib

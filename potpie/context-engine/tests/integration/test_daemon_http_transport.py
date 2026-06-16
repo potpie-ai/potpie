@@ -4,20 +4,21 @@ import pathlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-import pytest
 import httpx
+import pytest
 from pydantic import BaseModel
+
+from adapters.inbound.daemon_http.transport import HttpTransport
 from domain.ports.daemon.operations import (
-    OperationRegistry,
-    OperationSpec,
+    AuthRequirement,
     OperationContext,
     OperationError,
-    AuthRequirement,
+    OperationRegistry,
+    OperationSpec,
 )
-from host.daemon_runtime.context import ShellContext, ServiceEndpoints
+from host.daemon_runtime.context import ServiceEndpoints, ShellContext
 from host.daemon_runtime.health import HealthRegistrar
 from host.daemon_runtime.ipc_auth import IpcAuthGate
-from adapters.inbound.daemon_http.transport import HttpTransport
 from tests.conftest import wait_for_condition
 
 

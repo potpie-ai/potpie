@@ -1,17 +1,19 @@
 import pathlib
+
 import pytest
+
+from adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
 from application.services.managed_service_manager import (
+    DependencyCycle,
     ServiceManager,
     ServiceNotFound,
-    DependencyCycle,
     ServiceStatus,
 )
-from adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
 from domain.ports.daemon.shell import (
+    HealthStatus,
+    ReadyProbe,
     ServiceBackend,
     ServiceSpec,
-    ReadyProbe,
-    HealthStatus,
 )
 from host.daemon_runtime.context import ShellContext
 from host.daemon_runtime.registry import Registry

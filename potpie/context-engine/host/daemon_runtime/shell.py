@@ -6,25 +6,26 @@ It is distinct from ``host.shell.HostShell`` (the in-process service facade) —
 """
 
 from __future__ import annotations
+
 import asyncio
 import importlib.metadata
 import logging
 import pathlib
 from dataclasses import dataclass
 
-from host.daemon_runtime.registry import Registry
-from domain.ports.daemon.shell import Transport, Component, ServiceBackend, HealthStatus
-from domain.ports.daemon.service import ServiceSpec, ReadyProbe, RestartPolicy
-from domain.ports.daemon.operations import OperationRegistry, OperationSpec
-from host.daemon_runtime.context import ShellContext, ServiceEndpoints
-from host.daemon_runtime.health import HealthRegistrar
-from host.daemon_runtime.ipc_auth import IpcAuthGate
-from host.daemon_runtime.config import DaemonConfig
-from application.services.managed_service_manager import ServiceManager
-from adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
+from adapters.inbound.daemon_http.transport import HttpTransport
 from adapters.outbound.managed_services.container_backend import ContainerBackend
 from adapters.outbound.managed_services.external_backend import ExternalBackend
-from adapters.inbound.daemon_http.transport import HttpTransport
+from adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
+from application.services.managed_service_manager import ServiceManager
+from domain.ports.daemon.operations import OperationRegistry, OperationSpec
+from domain.ports.daemon.service import ReadyProbe, RestartPolicy, ServiceSpec
+from domain.ports.daemon.shell import Component, HealthStatus, ServiceBackend, Transport
+from host.daemon_runtime.config import DaemonConfig
+from host.daemon_runtime.context import ServiceEndpoints, ShellContext
+from host.daemon_runtime.health import HealthRegistrar
+from host.daemon_runtime.ipc_auth import IpcAuthGate
+from host.daemon_runtime.registry import Registry
 
 DAEMON_LOGGER_NAMESPACE = "potpied"
 logger = logging.getLogger(f"{DAEMON_LOGGER_NAMESPACE}.shell")

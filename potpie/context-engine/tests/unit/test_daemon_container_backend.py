@@ -1,10 +1,12 @@
 import logging
 import pathlib
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from adapters.outbound.managed_services.container_backend import ContainerBackend
-from domain.ports.daemon.shell import HealthStatus, ServiceSpec, ReadyProbe
-from host.daemon_runtime.context import ShellContext, ServiceEndpoints
+from domain.ports.daemon.shell import HealthStatus, ReadyProbe, ServiceSpec
+from host.daemon_runtime.context import ServiceEndpoints, ShellContext
 
 
 @pytest.fixture
