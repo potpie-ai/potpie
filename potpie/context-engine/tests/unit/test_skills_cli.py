@@ -36,7 +36,7 @@ class _Skills:
         return SkillOperationResult(
             agent=agent,
             operation="remove",
-            changed=("potpie-agent-context", "potpie-cli"),
+            changed=("potpie-graph", "potpie-cli"),
             metadata={"scope": scope},
         )
 
@@ -82,4 +82,4 @@ def test_skills_remove_all_json_output() -> None:
     emitted = json.loads(result.output)
     assert emitted["agent"] == "codex"
     assert emitted["scope"] == "global"
-    assert emitted["removed"] == ["potpie-agent-context", "potpie-cli"]
+    assert emitted["removed"] == ["potpie-graph", "potpie-cli"]

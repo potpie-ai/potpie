@@ -1119,11 +1119,8 @@ lowering, backend ports, or MCP tool count.
    - `potpie-repo-baseline`
    - `potpie-source-ingestion`
 
-3. Include adjacent helper skills that still show graph examples:
+3. Keep the adjacent CLI helper aligned with graph examples:
    - `potpie-cli`
-   - `potpie-cli-troubleshooting`
-   - `potpie-pot-scope`
-   - `potpie-agent-context`
 
 4. Preserve deliberate bundle invariants:
    - `potpie-graph` stays byte-identical across `agent_bundle`,
@@ -1232,10 +1229,10 @@ Write guidance rules:
      direct mutate.
    - Keep repository baseline and change-history as separate harness-led passes.
 
-8. `potpie-agent-context`
-   - Clearly label MCP `context_*` tools as compatibility wrappers for
-     environments without shell access.
-   - Point graph writes to `potpie-graph` whenever the shell is available.
+8. `potpie-cli`
+   - Keep setup, search, source, pot scope, and graph workbench commands compact.
+   - Fold CLI troubleshooting into this skill instead of pointing to helper
+     skills.
 
 #### Phase 8E: Update Static Template Tests
 

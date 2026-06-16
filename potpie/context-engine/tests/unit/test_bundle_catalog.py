@@ -26,12 +26,12 @@ def test_catalog_fields_are_populated_from_skill_front_matter() -> None:
     catalog = catalog_by_id()
     cli = catalog["potpie-cli"]
     assert cli.title == "Potpie CLI"
-    assert cli.version == "3"
+    assert cli.version == "1"
     assert "Potpie CLI" in cli.description or "potpie" in cli.description.lower()
 
-    agent_context = catalog["potpie-agent-context"]
-    assert agent_context.id == "potpie-agent-context"
-    assert agent_context.title == "Potpie Agent Context"
+    graph = catalog["potpie-graph"]
+    assert graph.id == "potpie-graph"
+    assert graph.title == "Potpie Graph Workbench"
 
 
 def test_recommended_skill_ids_matches_loaded_catalog() -> None:

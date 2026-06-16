@@ -1,4 +1,4 @@
 interface:
   display_name: "Potpie Graph Surface"
-  short_description: "Read and write the project-memory graph via the potpie CLI (catalog/read/search-entities/mutate)"
-  default_prompt: "Use $potpie-graph to discover the contract, read named views, resolve entity identity before writing, and apply validated semantic mutations with retrieval-grade descriptions."
+  short_description: "Read and write project memory with graph views, semantic mutations, and chunked bulk apply."
+  default_prompt: "Use $potpie-graph to discover the graph contract, read named views, resolve entity identity before writing, and apply validated semantic mutations or bulk chunks with retrieval-grade descriptions."

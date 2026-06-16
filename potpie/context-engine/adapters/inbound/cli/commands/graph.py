@@ -53,11 +53,13 @@ from domain.nudge import NUDGE_EVENT_HELP
 graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
 inbox_app = typer.Typer(help="Pending graph-work inbox.")
 quality_app = typer.Typer(help="Read-only graph quality reports.")
+bulk_app = typer.Typer(help="Chunked semantic graph mutation application.")
 backend_app = typer.Typer(help="GraphBackend profile selection + health.")
 timeline_app = typer.Typer(help="Timeline reads over the active project pot.")
 
 graph_app.add_typer(inbox_app, name="inbox")
 graph_app.add_typer(quality_app, name="quality")
+graph_app.add_typer(bulk_app, name="bulk")
 
 
 class _GraphCliCommandContext:
@@ -309,7 +311,7 @@ def _emit_graph_result(
             unsupported=merged_unsupported,
             recommended_next_action=recommended_next_action
             or payload.get("recommended_next_action"),
-    )
+        )
     emit(env.to_dict(), human=human)
 
 
@@ -495,9 +497,11 @@ def graph_read(
                 depth=depth,
                 direction=direction,
                 limit=read_limit,
-                freshness_preference="fresh"
-                if _is_timeline_view(f"{subgraph}.{view}") and not query
-                else "balanced",
+                freshness_preference=(
+                    "fresh"
+                    if _is_timeline_view(f"{subgraph}.{view}") and not query
+                    else "balanced"
+                ),
             )
         )
         _emit_graph_read(
@@ -568,7 +572,9 @@ def timeline_recent(
 @graph_app.command("search-entities")
 def graph_search_entities(
     query_arg: str = typer.Argument(None, help="text to match entities/claims against"),
-    query: str = typer.Option(None, "--query", help="text to match entities/claims against"),
+    query: str = typer.Option(
+        None, "--query", help="text to match entities/claims against"
+    ),
     type_: str = typer.Option(None, "--type", help="entity label filter, e.g. Service"),
     predicate: str = typer.Option(None, "--predicate"),
     subgraph: str = typer.Option(None, "--subgraph"),
@@ -591,9 +597,7 @@ def graph_search_entities(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        since_dt, until_dt = _resolve_time_bounds(
-            since=since, until=until, window=None
-        )
+        since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
         result = host.graph.search_entities(
             GraphEntitySearchRequest(
                 pot_id=pot_id,
@@ -1301,6 +1305,195 @@ def graph_commit(
             raise typer.Exit(code=EXIT_VALIDATION)
 
 
+@bulk_app.command("apply")
+def graph_bulk_apply(
+    file: str = typer.Option(
+        None,
+        "--file",
+        help="mutation JSON/NDJSON path; omit to read stdin",
+    ),
+    chunk_size: int = typer.Option(
+        100,
+        "--chunk-size",
+        help="semantic operations per proposed chunk",
+    ),
+    start_chunk: int = typer.Option(
+        1,
+        "--start-chunk",
+        help="1-based chunk index to start from when resuming",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="propose chunks but do not commit them",
+    ),
+    continue_on_error: bool = typer.Option(
+        False,
+        "--continue-on-error",
+        help="attempt remaining chunks after a failed proposal or commit",
+    ),
+    verify: bool = typer.Option(
+        False,
+        "--verify",
+        help="include graph data-plane status after the run",
+    ),
+    manifest: str = typer.Option(
+        None,
+        "--manifest",
+        help="write a JSON run manifest after each attempted chunk",
+    ),
+    idempotency_key: str = typer.Option(
+        None,
+        "--idempotency-key",
+        help="base idempotency key; chunk suffixes are added when needed",
+    ),
+    ttl: str = typer.Option("1h", "--ttl", help="plan expiry such as 30m, 1h, 2d"),
+    approved_by: str = typer.Option(
+        None, "--approved-by", help="user-ref for review-required chunks"
+    ),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    """Apply many semantic mutations through propose/commit chunks.
+
+    This is an orchestration helper for agent-authored semantic mutations. It
+    does not scan sources or infer facts; it keeps high-volume writes on the
+    same validated workbench path as ordinary graph updates.
+    """
+    with _graph_command("graph.bulk.apply") as ctx:
+        if chunk_size < 1:
+            raise ValueError("--chunk-size must be >= 1")
+        if start_chunk < 1:
+            raise ValueError("--start-chunk must be >= 1")
+
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        ttl_seconds = _parse_ttl_seconds(ttl)
+        source_payloads = _load_bulk_mutation_payloads(file)
+        chunks = _build_bulk_chunks(
+            source_payloads,
+            chunk_size=chunk_size,
+            idempotency_key=idempotency_key,
+        )
+        if start_chunk > len(chunks):
+            raise ValueError(
+                f"--start-chunk {start_chunk} is beyond {len(chunks)} chunks"
+            )
+
+        run = _new_bulk_run_payload(
+            pot_id=pot_id,
+            chunks_total=len(chunks),
+            operations_total=sum(len(chunk["operations"]) for chunk in chunks),
+            chunk_size=chunk_size,
+            dry_run=dry_run,
+            start_chunk=start_chunk,
+            manifest=manifest,
+        )
+        ok = True
+
+        for chunk in chunks:
+            index = int(chunk["index"])
+            if index < start_chunk:
+                run["chunks"].append(_bulk_skipped_chunk(chunk))
+                continue
+
+            entry = _bulk_chunk_entry(chunk)
+            run["chunks_attempted"] += 1
+            run["operations_attempted"] += entry["operation_count"]
+            proposal = host.graph_workbench.propose(
+                chunk["payload"],
+                pot_id=pot_id,
+                ttl_seconds=ttl_seconds,
+            )
+            entry["proposal"] = _bulk_proposal_summary(proposal)
+            entry["plan_id"] = proposal.plan_id
+
+            if not proposal.ok:
+                ok = False
+                entry["ok"] = False
+                entry["status"] = "proposal_failed"
+                run["issues"].extend(_bulk_issues_from_proposal(proposal, index))
+                run["chunks"].append(entry)
+                _write_bulk_manifest(manifest, run)
+                if not continue_on_error:
+                    break
+                continue
+
+            if dry_run:
+                entry["ok"] = True
+                entry["status"] = proposal.status
+                run["chunks_validated"] += 1
+                run["operations_validated"] += entry["operation_count"]
+                run["chunks"].append(entry)
+                _write_bulk_manifest(manifest, run)
+                continue
+
+            if proposal.status == "review_required" and not approved_by:
+                ok = False
+                entry["ok"] = False
+                entry["status"] = "review_required"
+                run["issues"].append(
+                    {
+                        "code": "approval_required",
+                        "message": (
+                            f"chunk {index} requires approval; rerun with "
+                            "--approved-by <user-ref> or inspect the plan"
+                        ),
+                        "severity": "error",
+                        "chunk": index,
+                    }
+                )
+                run["chunks"].append(entry)
+                _write_bulk_manifest(manifest, run)
+                if not continue_on_error:
+                    break
+                continue
+
+            commit = host.graph_workbench.commit(
+                proposal.plan_id,
+                pot_id=pot_id,
+                approved_by=approved_by,
+            )
+            entry["commit"] = _bulk_commit_summary(commit)
+            entry["ok"] = bool(commit.ok)
+            entry["status"] = commit.status
+            if commit.ok:
+                run["chunks_committed"] += 1
+                run["operations_committed"] += entry["operation_count"]
+                if commit.mutation_id:
+                    entry["mutation_id"] = commit.mutation_id
+            else:
+                ok = False
+                run["issues"].append(
+                    {
+                        "code": str(commit.status or "commit_failed"),
+                        "message": commit.detail or "chunk commit failed",
+                        "severity": "error",
+                        "chunk": index,
+                    }
+                )
+            run["chunks"].append(entry)
+            _write_bulk_manifest(manifest, run)
+            if not commit.ok and not continue_on_error:
+                break
+
+        run["ok"] = ok
+        run["status"] = _bulk_run_status(run, dry_run=dry_run, ok=ok)
+        if verify:
+            status = host.graph.data_plane_status(pot_id)
+            run["verification"] = _data_plane_status_payload(status)
+
+        _write_bulk_manifest(manifest, run)
+        _emit_graph_result(
+            ctx,
+            run,
+            human=_bulk_human(run),
+            recommended_next_action=_bulk_next_action(run),
+        )
+        if not ok:
+            raise typer.Exit(code=EXIT_VALIDATION)
+
+
 @graph_app.command("history")
 def graph_history(
     entity: str = typer.Option(None, "--entity"),
@@ -1317,9 +1510,7 @@ def graph_history(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        since_dt, until_dt = _resolve_time_bounds(
-            since=since, until=until, window=None
-        )
+        since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
         result = host.graph_workbench.history(
             pot_id=pot_id,
             entity_key=entity,
@@ -1379,9 +1570,7 @@ def graph_inbox_list(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        since_dt, until_dt = _resolve_time_bounds(
-            since=since, until=until, window=None
-        )
+        since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
         result = host.graph_workbench.inbox_list(
             pot_id=pot_id,
             status=tuple(status or ()),
@@ -1826,11 +2015,13 @@ def _graph_status_payload(host: Any, pot_id: str, dp) -> dict[str, Any]:
             "detail": dp.detail,
             "readiness_command": "potpie backend doctor",
             "recommended_next_action": (
-                "Run `potpie backend doctor` to inspect graph backend readiness "
-                "and capability-specific failures."
-            )
-            if not dp.backend_ready
-            else None,
+                (
+                    "Run `potpie backend doctor` to inspect graph backend readiness "
+                    "and capability-specific failures."
+                )
+                if not dp.backend_ready
+                else None
+            ),
             "implemented_capabilities": implemented,
             "counts": dict(dp.counts),
             "freshness": dict(dp.freshness),
@@ -1954,6 +2145,14 @@ def _parse_predicates(predicate: str | None) -> tuple[str, ...]:
 
 def _load_json(file: str | None) -> dict:
     """Load a mutation payload from a file or stdin."""
+    raw = _read_payload_text(file)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON in mutation payload: {exc}") from exc
+
+
+def _read_payload_text(file: str | None) -> str:
     if file:
         try:
             with open(file, encoding="utf-8") as fh:
@@ -1966,10 +2165,302 @@ def _load_json(file: str | None) -> dict:
         raise ValueError(
             "empty mutation payload (provide --file or pipe JSON on stdin)"
         )
+    return raw
+
+
+def _load_bulk_mutation_payloads(file: str | None) -> list[dict[str, Any]]:
+    raw = _read_payload_text(file)
+    stripped = raw.strip()
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid JSON in mutation payload: {exc}") from exc
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return _load_bulk_ndjson(stripped)
+    return [_normalize_bulk_payload(parsed, context="mutation payload")]
+
+
+def _load_bulk_ndjson(raw: str) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    pending_ops: list[Mapping[str, Any]] = []
+    for line_no, line in enumerate(raw.splitlines(), start=1):
+        clean = line.strip()
+        if not clean or clean.startswith("#"):
+            continue
+        try:
+            parsed = json.loads(clean)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON on NDJSON line {line_no}: {exc}") from exc
+        if _is_batch_payload(parsed):
+            if pending_ops:
+                payloads.append({"operations": list(pending_ops)})
+                pending_ops = []
+            payloads.append(
+                _normalize_bulk_payload(parsed, context=f"NDJSON line {line_no}")
+            )
+            continue
+        if not isinstance(parsed, Mapping):
+            raise ValueError(f"NDJSON line {line_no} must be a JSON object")
+        pending_ops.append(dict(parsed))
+    if pending_ops:
+        payloads.append({"operations": list(pending_ops)})
+    if not payloads:
+        raise ValueError("bulk mutation input did not contain any operations")
+    return payloads
+
+
+def _normalize_bulk_payload(value: Any, *, context: str) -> dict[str, Any]:
+    if isinstance(value, list):
+        operations = value
+        metadata: dict[str, Any] = {}
+    elif isinstance(value, Mapping):
+        if "operations" not in value:
+            operations = [dict(value)]
+            metadata = {}
+        else:
+            raw_ops = value.get("operations")
+            if not isinstance(raw_ops, list):
+                raise ValueError(f"{context} field 'operations' must be a list")
+            operations = raw_ops
+            metadata = {str(k): v for k, v in value.items() if k != "operations"}
+    else:
+        raise ValueError(f"{context} must be a JSON object or array")
+
+    if not operations:
+        raise ValueError(f"{context} contains no operations")
+    clean_ops: list[dict[str, Any]] = []
+    for index, op in enumerate(operations, start=1):
+        if not isinstance(op, Mapping):
+            raise ValueError(f"{context} operation {index} must be a JSON object")
+        clean_ops.append(dict(op))
+    metadata["operations"] = clean_ops
+    return metadata
+
+
+def _is_batch_payload(value: Any) -> bool:
+    return isinstance(value, Mapping) and isinstance(value.get("operations"), list)
+
+
+def _build_bulk_chunks(
+    payloads: list[dict[str, Any]],
+    *,
+    chunk_size: int,
+    idempotency_key: str | None,
+) -> list[dict[str, Any]]:
+    chunks: list[dict[str, Any]] = []
+    chunk_index = 1
+    for payload_index, payload in enumerate(payloads, start=1):
+        metadata = {k: v for k, v in payload.items() if k != "operations"}
+        operations = list(payload["operations"])
+        chunk_count = (len(operations) + chunk_size - 1) // chunk_size
+        base_idempotency = (
+            idempotency_key
+            or str(metadata.get("idempotency_key") or "").strip()
+            or None
+        )
+        for offset in range(0, len(operations), chunk_size):
+            ops = operations[offset : offset + chunk_size]
+            chunk_payload = dict(metadata)
+            if base_idempotency:
+                if chunk_count > 1 or len(payloads) > 1:
+                    chunk_payload["idempotency_key"] = (
+                        f"{base_idempotency}:chunk-{chunk_index:04d}"
+                    )
+                else:
+                    chunk_payload["idempotency_key"] = base_idempotency
+            chunk_payload["operations"] = ops
+            chunks.append(
+                {
+                    "index": chunk_index,
+                    "source_payload_index": payload_index,
+                    "operation_count": len(ops),
+                    "operations": ops,
+                    "idempotency_key": chunk_payload.get("idempotency_key"),
+                    "payload": chunk_payload,
+                }
+            )
+            chunk_index += 1
+    if not chunks:
+        raise ValueError("bulk mutation input did not contain any operations")
+    return chunks
+
+
+def _new_bulk_run_payload(
+    *,
+    pot_id: str,
+    chunks_total: int,
+    operations_total: int,
+    chunk_size: int,
+    dry_run: bool,
+    start_chunk: int,
+    manifest: str | None,
+) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "status": "running",
+        "pot_id": pot_id,
+        "chunks_total": chunks_total,
+        "chunks_attempted": 0,
+        "chunks_validated": 0,
+        "chunks_committed": 0,
+        "operations_total": operations_total,
+        "operations_attempted": 0,
+        "operations_validated": 0,
+        "operations_committed": 0,
+        "chunk_size": chunk_size,
+        "dry_run": dry_run,
+        "start_chunk": start_chunk,
+        "manifest": manifest,
+        "chunks": [],
+        "issues": [],
+    }
+
+
+def _bulk_skipped_chunk(chunk: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "index": chunk["index"],
+        "source_payload_index": chunk["source_payload_index"],
+        "operation_count": chunk["operation_count"],
+        "idempotency_key": chunk.get("idempotency_key"),
+        "ok": True,
+        "status": "skipped",
+    }
+
+
+def _bulk_chunk_entry(chunk: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "index": chunk["index"],
+        "source_payload_index": chunk["source_payload_index"],
+        "operation_count": chunk["operation_count"],
+        "idempotency_key": chunk.get("idempotency_key"),
+        "ok": False,
+        "status": "pending",
+    }
+
+
+def _bulk_proposal_summary(result) -> dict[str, Any]:
+    out = {
+        "ok": result.ok,
+        "plan_id": result.plan_id,
+        "status": result.status,
+        "risk": result.risk,
+        "auto_applicable": result.auto_applicable,
+        "issues": list(result.issues),
+        "rejected_operations": list(result.rejected_operations),
+        "review_required_operations": list(result.review_required_operations),
+        "claim_keys": list(result.claim_keys),
+    }
+    if result.diff:
+        out["diff"] = result.diff.to_dict()
+    return out
+
+
+def _bulk_commit_summary(result) -> dict[str, Any]:
+    out = {
+        "ok": result.ok,
+        "plan_id": result.plan_id,
+        "status": result.status,
+        "risk": result.risk,
+        "mutation_id": result.mutation_id,
+        "detail": result.detail,
+        "claim_keys": list(result.claim_keys),
+    }
+    if result.diff:
+        out["diff"] = result.diff.to_dict()
+    return out
+
+
+def _bulk_issues_from_proposal(result, chunk_index: int) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    for issue in result.issues or ():
+        if isinstance(issue, Mapping):
+            item = dict(issue)
+        else:
+            item = {"code": "proposal_issue", "message": str(issue)}
+        item.setdefault("severity", "error")
+        item["chunk"] = chunk_index
+        issues.append(item)
+    if not issues:
+        issues.append(
+            {
+                "code": str(result.status or "proposal_failed"),
+                "message": "chunk proposal failed",
+                "severity": "error",
+                "chunk": chunk_index,
+            }
+        )
+    return issues
+
+
+def _bulk_run_status(
+    run: Mapping[str, Any],
+    *,
+    dry_run: bool,
+    ok: bool,
+) -> str:
+    if not ok:
+        if run.get("chunks_committed") or run.get("chunks_validated"):
+            return "partial"
+        return "failed"
+    return "validated" if dry_run else "committed"
+
+
+def _bulk_next_action(run: Mapping[str, Any]) -> str | None:
+    if run.get("ok"):
+        if run.get("dry_run"):
+            return "Rerun without --dry-run to commit the proposed chunks."
+        return None
+    for issue in run.get("issues") or ():
+        if isinstance(issue, Mapping) and issue.get("code") == "approval_required":
+            return "Review the chunk plan, then rerun with --approved-by when policy allows."
+    return "Inspect the failed chunk, fix the mutation input, and rerun with --start-chunk if earlier chunks succeeded."
+
+
+def _bulk_human(run: Mapping[str, Any]) -> str:
+    status = run.get("status")
+    attempted = run.get("chunks_attempted", 0)
+    total = run.get("chunks_total", 0)
+    committed = run.get("chunks_committed", 0)
+    validated = run.get("chunks_validated", 0)
+    ops_committed = run.get("operations_committed", 0)
+    ops_validated = run.get("operations_validated", 0)
+    lines = [
+        (
+            f"{status}: chunks={attempted}/{total} committed={committed} "
+            f"validated={validated} ops_committed={ops_committed} "
+            f"ops_validated={ops_validated}"
+        )
+    ]
+    for issue in list(run.get("issues") or ())[:5]:
+        if isinstance(issue, Mapping):
+            lines.append(
+                f"  [issue chunk={issue.get('chunk')}] "
+                f"{issue.get('code')}: {issue.get('message')}"
+            )
+    return "\n".join(lines)
+
+
+def _write_bulk_manifest(path: str | None, payload: Mapping[str, Any]) -> None:
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+    except OSError as exc:
+        raise ValueError(f"cannot write bulk manifest {path!r}: {exc}") from exc
+
+
+def _data_plane_status_payload(status) -> dict[str, Any]:
+    return {
+        "pot_id": status.pot_id,
+        "backend_profile": status.backend_profile,
+        "backend_ready": status.backend_ready,
+        "reader_backed_includes": list(status.reader_backed_includes),
+        "counts": dict(status.counts),
+        "freshness": dict(status.freshness),
+        "quality": dict(status.quality),
+        "match_mode": status.match_mode,
+        "detail": status.detail,
+    }
 
 
 def _emit_graph_read(
@@ -2080,7 +2571,9 @@ def _read_human(
     event_limit: int | None = None,
 ) -> str:
     if format_ in ("events", "table"):
-        return _timeline_human(result, sort=sort, dedupe=dedupe, event_limit=event_limit)
+        return _timeline_human(
+            result, sort=sort, dedupe=dedupe, event_limit=event_limit
+        )
     payload = result.to_dict()
     items = payload.get("items", [])
     lines = [

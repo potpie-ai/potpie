@@ -1,128 +1,97 @@
 ---
-name: "potpie-source-ingestion"
-version: "7"
-recommended: true
-description: "Use when ingesting a repo link, document, PR, issue, ticket, runbook, or web link into Potpie. The harness reads and interprets the source, then writes semantic graph mutations; no local code scanning or deterministic graph updates."
+name: potpie-source-ingestion
+description: "Use when the user explicitly asks to ingest a repository, PR, issue, ticket, runbook, incident report, document, or web link into Potpie. The harness reads source material, classifies durable facts, and writes semantic graph workbench mutations; no deterministic scanning or connector queue ingestion."
 ---
 
 # Potpie Source Ingestion
 
-Use this skill when the user asks to ingest a repository, link, document,
-ticket, PR, issue, runbook, incident report, or external source into Potpie.
-
-## Principle
-
-The harness is the intelligence. It decides what data it has, reads the relevant
-source, extracts durable facts, resolves graph identity, and writes semantic
-mutations with evidence. Potpie validates and stores the graph update. Do not run
-a working-tree scan, derive facts from filenames alone, or apply deterministic
-graph updates outside the harness.
-
-For hosted integrations such as GitHub, Linear, Jira, or other issue trackers,
-do not use pot-level connector ingestion commands. Use the agent's integration
-tools/connectors to list and hydrate the relevant PRs, issues, tickets, projects,
-comments, and linked documents, then decide what durable graph facts exist and
-write them with `graph propose` / `graph commit` or an inbox item.
+Use this skill for explicit ingestion requests. The agent is the harness: gather
+source data, read it, decide what is durable, resolve identity, and write semantic
+graph mutations with evidence. Do not use pot-level connector ingestion commands.
 
 ## Ingestion Loop
 
-1. Identify the source kind: repo history, PR, issue, ticket, doc, runbook,
-   incident, deployment note, or arbitrary link.
-2. Gather the source data needed for the ingestion goal. For repository ingest,
-   do both the baseline repo-understanding pass and the change-history pass
-   below; for narrower sources, read only the directly relevant material.
-   For GitHub/Linear/Jira-style sources, gather that data through the agent's
-   integration tools/connectors, not Potpie connector ingestion commands.
-3. Read existing graph context and resolve identity:
+1. Define scope: source kind, pot/project, source URL/path, time window, and
+   desired memory shape: baseline, history, docs, infra, debug memory, or all.
+2. Parallelize independent discovery when available: local `rg`/`rg --files`,
+   GitHub CLI/app/MCP, Linear/Jira/Confluence/Slack/MCP, linked docs, web, and
+   long-running background processors. Use sub-agents only for read-only
+   discovery slices; the main agent owns source selection, identity resolution,
+   mutation proposals, and commits.
+3. Hydrate hosted context through the agent's integration tools/connectors and
+   whatever other agent tools are available: repo metadata, README/docs, PRs,
+   issues, releases, linked tickets/docs, CI/deploy records, runbooks, and
+   product websites linked from the source. Potpie integrations are one evidence
+   path, not the exclusive source path.
+4. Read existing graph context and resolve identity:
 
 ```bash
-potpie --json graph search-entities "<service or repo name>" --type Service --limit 10
-potpie --json graph read --subgraph recent_changes --view timeline --limit 10
+potpie --json graph catalog --task "ingest source"
+potpie --json graph search-entities "<repo service feature>" --limit 10
 ```
 
-4. Classify each durable fact into the right memory family:
+5. Classify durable facts:
+   - Preferences: `Preference` and `POLICY_APPLIES_TO`.
+   - Infra: services, environments, dependencies, datastores, adapters, deploys.
+   - Features: `Feature` entities, repo/service `PROVIDES`, and feature
+     `IMPLEMENTED_IN`.
+   - Timeline: source-time activity events.
+   - Debugging: bug patterns, fixes, verifications, failed attempts.
+   - Decisions/docs: decisions, document references, runbook notes.
+6. Write with the workbench:
 
-- Preferences: `Preference` + `POLICY_APPLIES_TO`.
-- Infra architecture: `Service`, `Environment`, `DataStore`, `Dependency`, and
-  topology predicates such as `DEPENDS_ON`, `DEPLOYED_TO`, `USES`, `EXPOSES`.
-- Repository purpose, features, and functionality: `Repository`, `Service`,
-  `Feature`, `CodeAsset`, `APIContract`, and topology predicates such as
-  `DEFINED_IN`, `USES`, `EXPOSES`, `PROVIDES` (repo/service → feature), and
-  `IMPLEMENTED_IN` (feature → repo/service/code). Give every `Feature` a
-  compact `summary` and a retrieval-grade `description`.
-- Timeline: `Activity` via `append_event`.
-- Bugs/debug: `BugPattern`, `Fix`, `Verification`.
-- Decisions/docs: `Decision`, `Document`, `DECIDED`, `AFFECTS`, or doc records.
+```bash
+potpie graph mutation-template --kind <kind>
+potpie --json graph propose --file mutation.json
+potpie --json graph commit <plan_id>
+potpie --json graph history --plan <plan_id>
+```
 
-5. Write a batch with `potpie --json graph propose --file mutation.json`.
-   Commit the returned `plan_id` only after validation is clean or the remaining
-   warnings are intentional. If the source is useful but the canonical update is
-   uncertain, create a `graph inbox add` item instead.
+For many source-backed operations, write JSON/NDJSON semantic mutations and use
+chunked apply:
 
-## Source-Specific Rules
+```bash
+potpie --json graph bulk apply --file mutations.ndjson --chunk-size 100 --manifest graph-bulk-manifest.json --verify
+```
 
-Repository link:
-Run two harness-led passes. The baseline pass has a dedicated procedure in
-the `potpie-repo-baseline` skill — follow it when present.
+Use dry-run mode before committing large writes and `--start-chunk <n>` to resume
+after fixing a failed chunk. The bulk command applies agent-authored mutations;
+it does not gather evidence or decide what belongs in memory.
 
-1. Baseline repo-understanding pass:
-   - Register the repo source in the current pot.
-   - Read authored docs and metadata first: README, docs, ADRs, deployment docs,
-     env templates, package/app manifests, CI/deploy workflows, route/API specs,
-     framework config, and visible entrypoints.
-   - Read code only when it is the source of truth for a durable fact, such as
-     routes, exported feature modules, service clients, adapters, deployment
-     targets, or API contracts. The harness should inspect and summarize the
-     relevant files; it must not run a deterministic scanner that directly
-     mutates the graph.
-   - Record repository purpose, application type, primary user-facing
-     functionality, feature areas, runtime/deploy shape, environments,
-     service/API dependencies, datastores, and important integrations when
-     supported by the read source.
-   - Use `source_observation` or `authoritative_fact` for explicit repository
-     evidence, `agent_claim` for reasoned lower-authority interpretation, and
-     include evidence refs such as `repo:<repo>#README`, `repo:<repo>#package`,
-     `repo:<repo>#route:<path>`, or GitHub URLs.
+Use `graph inbox add` when evidence may matter but the canonical graph update is
+uncertain.
 
-2. Change-history pass:
-   - Use agent integration tools/connectors to read recent merged PRs,
-     standalone issues, Linear/Jira tickets, comments, labels/status, and linked
-     docs relevant to the requested scope.
-   - Record timeline activities, clear fixes, explicit decisions, and obvious
-     bug patterns.
+## Repository Baseline
 
-Do not walk the file tree to invent modules, features, services, or dependencies.
-Do read selected source files when the harness needs them to understand and
-record actual topology, features, and functionality.
+For repository ingestion, run baseline before change history. Use
+`potpie-repo-baseline`, but drive it with a baseline-quality discovery pass:
 
-Document or web link:
-Record `doc_reference`, `decision`, `preference`, `runbook_note`, `service_note`,
-or infra claims only when the document explicitly says them. Preserve the URL or
-document id in `source_refs` or mutation evidence.
+- Product/context: README, docs, ADRs, package metadata, linked websites, public
+  docs, and repo-mentioned product pages.
+- Repo map: manifests, top-level apps/packages, major modules, route/API
+  entrypoints, models, clients, adapters, and framework config.
+- Runtime/deploy: Dockerfiles, compose, Kubernetes, Terraform, CI workflows,
+  deploy scripts, environment templates, and feature flags.
+- Integrations/history: GitHub repo metadata, topics, releases, recent
+  PRs/issues, linked tickets, and external docs.
 
-Tickets/issues:
-Tickets and issues can create timeline activities, bug patterns, docs, and
-decisions. Hydrate them through the agent's Linear/Jira/GitHub integration tools,
-including status, comments, links, and related PRs when needed. Do not emit `Fix`
-from an issue/ticket alone; fixes require a merged PR, commit, deployment, or
-explicit shipped-resolution source.
+Record source-backed purpose, application type, features, service/module map,
+API contracts, datastores, integrations, environments, deploy shape, ownership,
+and explicit project preferences. Then use `potpie-change-timeline` for recent
+or historical activity. Do not infer baseline architecture from PR titles or
+issue status.
 
-Debug transcript/log:
-Record bug patterns, diagnostic signals, investigations, fixes, and verifications.
-Keep raw logs out of descriptions except for the shortest distinctive error text.
+## Source Rules
 
-## Anti-Patterns
+- Tickets and issues can record timeline events, bug patterns, decisions, and
+  docs. They do not prove a fix unless tied to a merged PR, commit, deployment,
+  or explicit shipped-resolution source.
+- Documents can record preferences, decisions, runbook notes, service notes, and
+  infra facts only when they explicitly say them.
+- Logs and transcripts can record diagnostic signals, investigations, fixes, and
+  verifications. Keep raw logs out of descriptions except for short distinctive
+  error text.
 
-- Do not call a local code scan command.
-- Do not use pot-level connector ingestion commands such as
-  `potpie pot linear-team ingest`, `potpie pot linear-team diff-sync`, or
-  Jira/GitHub queue commands as the ingestion path.
-- Do not update the graph from deterministic file/config scanning.
-- Do not create a service because a directory has a service-like name.
-- Do not stop at PR/issue timeline events for a repository ingest; capture the
-  repo's durable purpose, topology, feature areas, and user-facing
-  functionality when source evidence is available.
-- Do not create dependencies because a package file mentions them unless the task
-  is explicitly about dependency inventory and the harness has read that source.
-- Do not hard-delete or silently overwrite claims; retract or end validity.
-- Do not omit retrieval-grade descriptions.
+Every write needs source refs, truth class, and a retrieval-grade description.
+Ingestion is harness-led; do not use scanner-driven graph updates or connector
+queues to decide what belongs in memory.

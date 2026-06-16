@@ -59,7 +59,7 @@ def test_install_skill_bundle_writes_to_global_root(tmp_path: Path) -> None:
 
     assert "potpie-cli/SKILL.md" in result.created
     assert (root / "potpie-cli" / "SKILL.md").exists()
-    assert not (root / "potpie-agent-context" / "SKILL.md").exists()
+    assert {path.name for path in root.iterdir()} == {"potpie-cli"}
 
 
 def test_install_agent_bundle_skips_conflicting_files_without_force(
@@ -216,7 +216,7 @@ def test_install_agent_bundle_opencode_writes_opencode_skills(tmp_path: Path) ->
     result = install_agent_bundle(repo, agent="opencode")
 
     assert "AGENTS.md" not in result.created
-    skill = repo / ".opencode" / "skills" / "potpie-agent-context" / "SKILL.md"
+    skill = repo / ".opencode" / "skills" / "potpie-graph" / "SKILL.md"
     assert skill.exists()
 
 

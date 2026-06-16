@@ -339,7 +339,9 @@ class _Inspection:
         return GraphSlice(
             pot_id=pot_id,
             nodes=(
-                GraphNode(key=entity_key, labels=("Service",), properties={"name": "web"}),
+                GraphNode(
+                    key=entity_key, labels=("Service",), properties={"name": "web"}
+                ),
                 GraphNode(key="service:api", labels=("Service",)),
             ),
             edges=(
@@ -389,6 +391,22 @@ def _valid_mutation_payload() -> dict:
                 "description": "payments depends on ledger",
             }
         ]
+    }
+
+
+def _bulk_mutation_payload(count: int = 3) -> dict:
+    base = _valid_mutation_payload()["operations"][0]
+    return {
+        "idempotency_key": "bulk:test",
+        "created_by": {"surface": "cli", "harness": "test"},
+        "operations": [
+            {
+                **base,
+                "object": {"key": f"service:ledger-api-{index}", "type": "Service"},
+                "description": f"payments depends on ledger {index}",
+            }
+            for index in range(count)
+        ],
     }
 
 
@@ -509,7 +527,9 @@ def _quality_result(
         report=report,
         status=status,
         findings=() if report == "summary" else (finding,),
-        metrics={"counts": {"claims": 3}} if report == "summary" else {"scanned_claims": 3},
+        metrics=(
+            {"counts": {"claims": 3}} if report == "summary" else {"scanned_claims": 3}
+        ),
         filters={"report": report, "limit": 50},
         subgraph_versions={"_global": 3},
     )
@@ -731,6 +751,121 @@ def test_graph_commit_rejects_raw_payload_option() -> None:
     )
 
     assert result.exit_code != 0
+    assert workbench.commit_calls == []
+
+
+def test_graph_bulk_apply_chunks_and_commits(tmp_path) -> None:
+    _common.set_json(True)
+    workbench = _Workbench(proposal=_proposal(), commit_result=_commit_result())
+    graph_service = _Graph()
+    _common.set_host(_Host(graph_service, graph_workbench=workbench))
+    payload_file = tmp_path / "bulk.json"
+    manifest_file = tmp_path / "manifest.json"
+    payload_file.write_text(json.dumps(_bulk_mutation_payload(3)), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "bulk",
+            "apply",
+            "--file",
+            str(payload_file),
+            "--chunk-size",
+            "2",
+            "--manifest",
+            str(manifest_file),
+            "--verify",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.bulk.apply")
+    assert body["status"] == "committed"
+    assert body["chunks_total"] == 2
+    assert body["chunks_attempted"] == 2
+    assert body["chunks_committed"] == 2
+    assert body["operations_committed"] == 3
+    assert body["verification"]["counts"] == {"claims": 3}
+    assert len(workbench.propose_calls) == 2
+    assert len(workbench.commit_calls) == 2
+    assert len(workbench.propose_calls[0][0]["operations"]) == 2
+    assert len(workbench.propose_calls[1][0]["operations"]) == 1
+    assert workbench.propose_calls[0][0]["idempotency_key"] == "bulk:test:chunk-0001"
+    assert workbench.propose_calls[1][0]["idempotency_key"] == "bulk:test:chunk-0002"
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    assert manifest["status"] == "committed"
+    assert manifest["chunks_committed"] == 2
+
+
+def test_graph_bulk_apply_dry_run_does_not_commit(tmp_path) -> None:
+    _common.set_json(True)
+    workbench = _Workbench(proposal=_proposal(), commit_result=_commit_result())
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    payload_file = tmp_path / "bulk.ndjson"
+    lines = [json.dumps(op) for op in _bulk_mutation_payload(2)["operations"]]
+    payload_file.write_text("\n".join(lines), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "bulk",
+            "apply",
+            "--file",
+            str(payload_file),
+            "--chunk-size",
+            "1",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.bulk.apply")
+    assert body["status"] == "validated"
+    assert body["chunks_validated"] == 2
+    assert body["operations_validated"] == 2
+    assert workbench.commit_calls == []
+
+
+def test_graph_bulk_apply_stops_on_failed_proposal(tmp_path) -> None:
+    _common.set_json(True)
+    proposal = _proposal(
+        ok=False,
+        status="invalid",
+        issues=(
+            {
+                "code": "invalid_endpoints",
+                "message": "invalid endpoint pair",
+                "severity": "error",
+                "op_index": 0,
+            },
+        ),
+    )
+    workbench = _Workbench(proposal=proposal, commit_result=_commit_result())
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    payload_file = tmp_path / "bulk.json"
+    payload_file.write_text(json.dumps(_bulk_mutation_payload(3)), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "bulk",
+            "apply",
+            "--file",
+            str(payload_file),
+            "--chunk-size",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 1
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.bulk.apply", ok=False)
+    assert body == {}
+    assert emitted["error"]["code"] == "invalid_endpoints"
+    assert emitted["error"]["detail"]["status"] == "failed"
+    assert emitted["error"]["detail"]["chunks_attempted"] == 1
     assert workbench.commit_calls == []
 
 

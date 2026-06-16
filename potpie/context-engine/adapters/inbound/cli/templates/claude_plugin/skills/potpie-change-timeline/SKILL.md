@@ -1,111 +1,83 @@
 ---
-name: "potpie-change-timeline"
-version: "5"
-recommended: true
-description: "Use when the agent needs recent or historical change context: merged PRs, tickets, docs, incidents, deployments, regressions, and source-history ingestion."
+name: potpie-change-timeline
+description: "Use when an agent needs recent or historical change context: what changed recently, regressions, merged PRs, tickets, docs, incidents, deployments, releases, and source-history ingestion."
 ---
 
 # Potpie Change Timeline
 
-Use this skill when debugging a regression, explaining what changed recently,
-reviewing a risky change, or ingesting source history from GitHub, tickets,
-docs, or links.
+Use this skill when the user asks what changed, when debugging a possible
+regression, or when ingesting source history from GitHub, Linear, Jira, docs, or
+deployment records.
 
-## Read First
+## Fast Path
 
-For "what changed recently in this project?", do not pass a repo. A pot is the
-project boundary and can contain multiple repositories; the CLI infers the pot
-from the current repo source when possible, then reads the whole project timeline
-across registered repo sources:
+Read the project timeline first. A pot is the project boundary and can contain
+multiple repos, so do not narrow to the current repo unless the user asks.
 
 ```bash
-potpie --json graph read --subgraph recent_changes --view timeline --limit 20
-potpie --json graph read --subgraph recent_changes --view timeline --time-window 7d --limit 20
+potpie --json graph read \
+  --subgraph recent_changes \
+  --view timeline \
+  --time-window 7d \
+  --limit 20
 ```
 
-Only narrow the timeline when the user asks for a service-specific slice:
+Use the user's exact dates when provided:
 
 ```bash
-potpie --json graph read --subgraph recent_changes --view timeline --scope service:payments-api --query "timeout retry deployment" --limit 20
+potpie --json graph read \
+  --subgraph recent_changes \
+  --view timeline \
+  --since 2026-06-01 \
+  --until 2026-06-15 \
+  --limit 50
 ```
 
-Timeline reads default to event-shaped output, deduplicated by source ref and
-sorted by occurrence time:
+Only narrow when the user gives a service, environment, or topic:
 
 ```bash
-potpie --json graph read --subgraph recent_changes --view timeline --limit 20
-potpie --json graph read --subgraph recent_changes --view timeline --format raw --limit 20
+potpie --json graph read \
+  --subgraph recent_changes \
+  --view timeline \
+  --scope service:<service-name> \
+  --query "<symptom feature deployment>" \
+  --time-window 14d \
+  --limit 20
 ```
 
-MCP compatibility fallback when shell access is unavailable:
+## Apply Results
 
-```json
-{"intent":"debugging","include":["timeline","prior_bugs","infra_topology"],"mode":"fast","source_policy":"references_only"}
-```
+Timeline context is correlation, not proof. Use it to choose files, PRs, tickets,
+or deploys to inspect, then verify the source ref before blaming a change.
+Timeline reads do not include uncommitted local work unless it was recorded.
 
-Use time windows when the user gives one, and include exact dates in your own
-reasoning. Timeline context is recorded/source-backed project history; it does
-not include uncommitted local worktree changes unless those have been recorded.
-Timeline context is for correlation, not proof: verify source refs before
-blaming a change.
+## Record History
 
-## Ingest Source History
+For GitHub, Linear, Jira, docs, and similar sources, hydrate records with the
+agent's integration tools/connectors first. Do not use pot-level connector
+ingestion commands as the source-history path.
 
-Timeline ingestion is harness-led. The harness enumerates source records, reads
-the authored content, decides what happened, and writes `append_event` or related
-semantic mutations. Potpie should not scan the working tree and deterministically
-update the graph.
-
-For GitHub PRs/issues, Linear/Jira tickets, and similar hosted source history,
-pull the source records with the agent's integration tools/connectors. Do not use
-pot-level connector ingestion commands such as `potpie pot linear-team ingest`,
-`potpie pot linear-team diff-sync`, or Jira/GitHub queue commands as the
-timeline ingestion path.
-
-Change-history ingestion is timeline scope only. Do not use PR/issue history to
-infer a repo's baseline architecture — that is the separate `potpie-repo-baseline`
-procedure.
-
-When the harness has already hydrated a repo link, PR, issue, ticket, document,
-or web page through those integration tools, write timeline updates with
-`graph propose` and `graph commit`.
-
-## Record An Event
-
-Use `append_event` for "something happened" records:
-
-```json
-{
-  "graph_contract_version": "v1.5",
-  "pot_id": "local/default",
-  "idempotency_key": "mutation:timeline:github-pr-412",
-  "created_by": {"surface": "cli", "harness": "codex"},
-  "operations": [
-    {
-      "op": "append_event",
-      "subgraph": "recent_changes",
-      "truth": "timeline_event",
-      "subject": {"key": "activity:github:pr:acme/payments:412", "type": "Activity"},
-      "verb": "github_pr_merged",
-      "occurred_at": "2026-06-08T16:20:00Z",
-      "actor": {"key": "person:alice", "type": "Person"},
-      "targets": [{"key": "repo:acme-payments", "type": "Repository"}],
-      "description": "PR 412 merged bounded retry and timeout logging for payments outbound calls; relevant to refund timeout, settlement retry, and HTTP client flakiness investigations.",
-      "evidence": [{"source_ref": "github:pr:412", "authority": "external_system"}]
-    }
-  ]
-}
-```
-
-Create and verify the plan:
+Use the workbench write flow after reading the source:
 
 ```bash
+potpie --json graph catalog --task "record timeline change"
+potpie graph mutation-template --kind timeline-change
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id>
 potpie --json graph history --plan <plan_id>
 ```
 
-For PRs, also add `Fix`, `BugPattern`, `Decision`, or infra links only when the
-source explicitly supports them. For issues and tickets, do not emit a `Fix` just
-because the issue is closed or done; fixes come from merged code changes or an
-explicit shipped-resolution source.
+Use the source event time for `occurred_at`, not ingestion time. Add fixes,
+decisions, bug patterns, or infra links only when the source explicitly supports
+them.
+
+Timeline capture is harness-led. Do not use scanner-driven graph updates or turn
+source titles into facts without reading the source.
+
+## MCP Fallback
+
+Use this only when the `potpie` CLI is unavailable:
+
+```json
+{"intent":"debugging","include":["timeline","prior_bugs","infra_topology"],"mode":"fast","source_policy":"references_only"}
+```

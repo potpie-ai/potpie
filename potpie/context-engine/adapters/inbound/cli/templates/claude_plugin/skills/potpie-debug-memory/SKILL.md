@@ -1,106 +1,86 @@
 ---
-name: "potpie-debug-memory"
-version: "4"
-recommended: true
-description: "Use while debugging or troubleshooting so prior bugs, failed attempts, fixes, verifications, incidents, and dev setup gotchas surface before investigation."
+name: potpie-debug-memory
+description: "Use while debugging or troubleshooting failures, flaky tests, incidents, production alerts, CI failures, local dev setup issues, repeated bugs, prior fixes, failed attempts, and verification history."
 ---
 
 # Potpie Debug Memory
 
-Use this skill when investigating failures, flaky tests, incidents, production
-alerts, local dev setup problems, CI failures, or recurring support issues.
+Use this skill before digging into a failure so prior symptoms, known fixes, and
+failed attempts can guide the investigation.
 
-Debug memory is harness-led: you decide what was learned, create a validated
-plan with `graph propose`, and commit that plan with `graph commit`. Potpie
-validates and stores. Nothing scans logs or the working tree into the graph
-deterministically.
+## Fast Path
 
-## Read First
-
-Search by symptom, not just by component name:
+Search by symptom first, not just component name. Include exact error text,
+commands, failing tests, environment, service, dependency, and synonyms.
 
 ```bash
 potpie --json graph read \
   --subgraph debugging \
   --view prior_occurrences \
-  --query "refund timeout deadlock concurrent settle retry flaky test" \
+  --query "<expanded symptom query>" \
   --scope service:<service-name> \
   --limit 12
 ```
 
-Then correlate recent changes and topology:
+If no service is known, omit `--scope`. If the failure smells like a regression,
+correlate with the timeline:
 
 ```bash
-potpie --json graph read --subgraph recent_changes --view timeline --time-window 7d --limit 20
-potpie --json graph read --subgraph recent_changes --view timeline --scope service:<service-name> --time-window 7d --limit 20
-potpie --json graph read --subgraph infra_topology --view service_neighborhood --scope service:<service-name> --depth 2 --direction both
+potpie --json graph read \
+  --subgraph recent_changes \
+  --view timeline \
+  --time-window 7d \
+  --query "<symptom feature dependency>" \
+  --limit 20
 ```
 
-MCP compatibility fallback when shell access is unavailable:
+If dependencies, adapters, environments, or deploys matter, read infra too:
 
-```json
-{"intent":"debugging","include":["prior_bugs","infra_topology","timeline"],"mode":"fast","source_policy":"references_only"}
+```bash
+potpie --json graph read \
+  --subgraph infra_topology \
+  --view service_neighborhood \
+  --scope service:<service-name> \
+  --depth 2 \
+  --direction both
 ```
 
-## Use The Result
+## Apply Results
 
-Treat prior fixes as leads. Check whether the same symptom, environment, version,
-dependency, data shape, or test path matches this incident. Failed prior attempts
-are as valuable as successful fixes because they prevent repeat work.
+Treat prior fixes as leads. Check whether the same symptom, environment,
+version, dependency, data shape, command, or test path matches this incident.
+Failed prior attempts are useful because they prevent repeated work.
 
 ## Record Debug Memory
 
-Record after the investigation when the learning is reusable:
+Record after the investigation when the learning is reusable: bug pattern, fix,
+verification, failed attempt, incident summary, runbook note, or setup gotcha.
 
-- `bug_pattern`: symptom, scope, reproduction, and aliases.
-- `fix`: exact steps that resolved it, root cause, verification status.
-- `verification`: confirmation that a fix worked or did not work.
-- `investigation` / `incident_summary`: useful narrative when no structured fix
-  exists yet.
-- `runbook_note` / `workflow`: repeatable troubleshooting steps.
-
-Write reusable debug memory through the V2 plan workflow:
+Use the workbench write flow:
 
 ```bash
-potpie --json graph search-entities "<service or symptom>" --type Service --limit 10
+potpie --json graph catalog --task "record bug fix"
+potpie --json graph search-entities "<service or symptom>" --limit 10
+potpie graph mutation-template --kind bug-fix
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id>
 potpie --json graph history --plan <plan_id>
 ```
 
-If only MCP is configured, `context_record` can capture compact debug records:
+Good debug memory includes the distinctive error text, repro signal, root cause
+or uncertainty, fix steps, verification status, scope, truth class, evidence, and
+a retrieval-grade description with symptom synonyms.
+
+If the source may matter but the canonical update is uncertain, use
+`potpie --json graph inbox add` instead of committing a weak fact.
+
+Debug memory is harness-led: investigate and verify before writing. Do not use
+scanner-driven graph updates or record a bug/fix from filenames or logs alone.
+
+## MCP Fallback
+
+Use this only when the `potpie` CLI is unavailable:
 
 ```json
-{
-  "record_type": "bug_pattern",
-  "summary": "Payments settlement deadlocks when refund and settle run concurrently.",
-  "details": {
-    "kind": "runtime",
-    "symptom_signature": "refund race timeout, payment deadlock on concurrent settle, postgres lock timeout",
-    "scope_kind": "service",
-    "reproduction_steps": ["Run refund and settle for the same order concurrently under load"]
-  },
-  "source_refs": ["github:issue:881"]
-}
+{"intent":"debugging","include":["prior_bugs","infra_topology","timeline"],"mode":"fast","source_policy":"references_only"}
 ```
-
-```json
-{
-  "record_type": "fix",
-  "summary": "Order payment locks by account id before settle/refund writes.",
-  "details": {
-    "symptom_signature": "refund race timeout, payment deadlock on concurrent settle, postgres lock timeout",
-    "fix_steps": ["Acquire account lock before order lock", "Keep retry budget below request timeout", "Verify with concurrent refund load test"],
-    "root_cause": "Inconsistent lock acquisition order between refund and settle paths",
-    "verification_status": "verified",
-    "scope_kind": "service"
-  },
-  "source_refs": ["github:pr:912", "ci:run:4471"]
-}
-```
-
-Write retrieval-grade summaries: include the error text, symptom synonyms,
-environment, failing command/test, service, and the fix terms a future agent would
-search for. Pick the truth class honestly (`agent_claim` for your own inference,
-`source_observation` for what a source showed) and keep evidence refs
-(`github:pr:…`, `ci:run:…`) on every fix and verification.

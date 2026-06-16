@@ -24,6 +24,7 @@ GRAPH_WORKBENCH_COMMANDS: tuple[str, ...] = (
     "neighborhood",
     "propose",
     "commit",
+    "bulk",
     "history",
     "inbox",
     "quality",

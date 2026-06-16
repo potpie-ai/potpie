@@ -160,11 +160,10 @@ def test_templates_use_canonical_v2_view_syntax() -> None:
 
 
 def test_context_record_is_labeled_mcp_compatibility() -> None:
-    allowed_mcp_skill = "potpie-agent-context/SKILL.md"
     for path in MD_FILES:
         rel = path.relative_to(TEMPLATES).as_posix()
         text = path.read_text(encoding="utf-8")
-        if "context_record" not in text or allowed_mcp_skill in rel:
+        if "context_record" not in text:
             continue
         lowered_lines = text.lower().splitlines()
         for idx, line in enumerate(lowered_lines):

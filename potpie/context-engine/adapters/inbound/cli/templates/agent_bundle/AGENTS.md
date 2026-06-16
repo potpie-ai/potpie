@@ -141,6 +141,8 @@ When only MCP is configured, `context_record` is the compatibility write for
 preferences, bug patterns, fixes, verifications, decisions, doc references,
 workflows, runbooks, and incident summaries.
 
+preference|policy|bug_pattern|fix|verification|decision|doc_reference|workflow|runbook_note|incident_summary|investigation|diagnostic_signal|service_note|feature_note|integration_note
+
 ## Ingestion Boundary
 
 There is no local code scan path in the agent instructions. For a repo link, doc,
@@ -177,11 +179,11 @@ Use these repo-local skills under `.agents/skills/`:
   deployments, and regression correlation.
 - `potpie-debug-memory` - prior bugs, fixes, failed attempts, verification, and dev
   setup troubleshooting.
+- `potpie-repo-baseline` - repository purpose, services, environments, APIs,
+  datastores, integrations, and durable project facts.
 - `potpie-source-ingestion` - harness-led ingestion from repo links, docs, PRs,
   issues, tickets, runbooks, logs, and web links.
 - `potpie-graph` - graph CLI contract: status/catalog/describe/read/search,
   propose/commit/history, inbox, quality, and nudge handling.
-- `potpie-agent-context` - MCP `context_*` compatibility recipes.
 - `potpie-cli` - CLI setup, pot/source commands, graph commands, and
-  troubleshooting.
-- `potpie-pot-scope` - resolving active pot and repo-to-pot mapping.
+  troubleshooting, including pot scope and setup failures.
