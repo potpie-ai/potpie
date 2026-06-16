@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import select
+import sys
+import time
 import webbrowser
 from typing import NoReturn
 
 import typer
+from click.exceptions import Abort
 
 from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
 from adapters.outbound.cli_auth.github import (
@@ -32,6 +36,17 @@ from adapters.inbound.cli.telemetry.onboarding_events import (
 )
 from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
 
+if sys.platform == "win32":
+    import msvcrt
+else:
+    msvcrt = None
+
+EXIT_CANCELLED = 130
+GITHUB_AUTO_OPEN_SECONDS = 10
+_GITHUB_OPEN_PROMPT_PREFIX = (
+    "Copy the code. Press Enter to open now, or GitHub opens in "
+)
+
 github_app = typer.Typer(help="GitHub integration.")
 github_test_app = typer.Typer(
     help="Deprecated: use `potpie github repos`.",
@@ -56,13 +71,12 @@ def _open_github_device_verification(user_code: str, verification_uri: str) -> b
         as_json=False,
     )
     print_plain_line(f"Copy this code: {user_code}", as_json=False)
-    print_plain_line(
-        "Copy the code, then press Enter to open GitHub.",
-        as_json=False,
-    )
-    typer.confirm(
-        "Press Enter after copying the code", default=True, show_default=False
-    )
+    try:
+        _wait_for_enter_or_auto_open()
+    except BaseException as exc:
+        if _is_github_login_cancel(exc):
+            _cancel_github_login()
+        raise
     print_plain_line("Opening GitHub now...", as_json=False)
 
     opened = webbrowser.open(verification_uri)
@@ -80,26 +94,53 @@ def _open_github_device_verification(user_code: str, verification_uri: str) -> b
     return True
 
 
-def _capture_unexpected_auth_error(
-    exc: BaseException,
-    *,
-    title: str,
-    verbose: bool,
-) -> NoReturn:
-    from adapters.inbound.cli.sentry_runtime import capture_unexpected_cli_error
+def _write_inline_prompt(message: str) -> None:
+    sys.stdout.write(f"\r\033[K{message}")
+    sys.stdout.flush()
 
-    capture_unexpected_cli_error(
-        exc,
-        error_code="unexpected_cli_error",
-        error_kind="unexpected",
-    )
-    emit_error(
-        title,
-        "Unexpected internal error.",
-        code="unexpected_cli_error",
-        verbose=verbose,
-    )
-    raise typer.Exit(code=EXIT_AUTH) from exc
+
+def _finish_inline_prompt() -> None:
+    sys.stdout.write("\r\033[K\n")
+    sys.stdout.flush()
+
+
+def _stdin_enter_pressed_windows(*, timeout: float) -> bool:
+    if msvcrt is None:
+        return False
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if msvcrt.kbhit():
+            char = msvcrt.getwch()
+            if char in ("\r", "\n"):
+                return True
+        time.sleep(0.05)
+    return False
+
+
+def _wait_for_enter_or_auto_open(
+    *,
+    seconds: int = GITHUB_AUTO_OPEN_SECONDS,
+    input_stream=None,
+) -> None:
+    input_stream = input_stream or sys.stdin
+    use_windows_stdin = input_stream is sys.stdin and sys.platform == "win32"
+    for remaining in range(seconds, 0, -1):
+        _write_inline_prompt(f"{_GITHUB_OPEN_PROMPT_PREFIX}{remaining}s")
+        if use_windows_stdin:
+            if _stdin_enter_pressed_windows(timeout=1.0):
+                _finish_inline_prompt()
+                return
+            continue
+        try:
+            ready, _, _ = select.select([input_stream], [], [], 1)
+        except (OSError, TypeError, ValueError):
+            time.sleep(1)
+            ready = []
+        if ready:
+            input_stream.readline()
+            _finish_inline_prompt()
+            return
+    _finish_inline_prompt()
 
 
 def github_login_impl() -> None:
@@ -191,7 +232,13 @@ def github_login_impl() -> None:
         raise typer.Exit(code=EXIT_AUTH) from exc
     except typer.Exit:
         raise
+    except (Abort, KeyboardInterrupt, EOFError) as exc:
+        if _is_github_login_cancel(exc):
+            _cancel_github_login()
+        raise
     except Exception as exc:  # noqa: BLE001
+        if _is_github_login_cancel(exc):
+            _cancel_github_login()
         capture_github_auth_event(
             "cli_onboarding_github_auth_failed",
             entrypoint=entrypoint,
@@ -225,6 +272,18 @@ def github_login_impl() -> None:
     print_plain_line(
         f"Logged in to GitHub as {login}" + (f" ({email})" if email else ""),
         as_json=False,
+    )
+
+
+def _cancel_github_login() -> NoReturn:
+    typer.echo()
+    print_plain_line("GitHub login cancelled.", as_json=False)
+    raise typer.Exit(code=EXIT_CANCELLED) from None
+
+
+def _is_github_login_cancel(exc: BaseException) -> bool:
+    return isinstance(exc, (Abort, KeyboardInterrupt, EOFError)) or (
+        exc.__class__.__name__ == "Abort"
     )
 
 
