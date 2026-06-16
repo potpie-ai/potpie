@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import click
+
 from adapters.inbound.cli.telemetry.onboarding_events import (
     capture_github_prompt_outcome,
     capture_github_prompt_shown,
@@ -347,8 +349,6 @@ def _print_integration_skipped(provider: str) -> None:
 
 
 def _integration_login_aborted(exc: BaseException) -> bool:
-    import click
-
     if isinstance(exc, (KeyboardInterrupt, EOFError, click.Abort)):
         return True
     return type(exc).__name__ == "Abort"

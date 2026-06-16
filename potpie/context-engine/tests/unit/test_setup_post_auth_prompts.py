@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import click
 import pytest
 
 from adapters.inbound.cli.ui import interactive_prompts, setup_ux
@@ -100,8 +101,6 @@ def test_maybe_prompt_github_login_skips_integration_on_click_abort(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    import click
-
     monkeypatch.setattr(setup_ux, "is_interactive_tty", lambda: True)
     calls: list[str] = []
 
@@ -135,8 +134,6 @@ def test_try_integration_login_skips_when_atlassian_confirm_aborts(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    import click
-
     from adapters.inbound.cli.commands._common import contract
 
     def _confirm_abort(*_args: object, **_kwargs: object) -> bool:

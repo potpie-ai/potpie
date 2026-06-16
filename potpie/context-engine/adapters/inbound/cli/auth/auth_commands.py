@@ -13,6 +13,8 @@ from typing import Any, Literal
 import typer
 from rich.markup import escape
 
+import click
+
 from adapters.inbound.cli.auth.atlassian_auth import run_atlassian_api_token_auth
 from adapters.inbound.cli.auth.atlassian_read import (
     AtlassianReadError,
@@ -429,8 +431,6 @@ def _run_tracked_integration_login(
     entrypoint: str,
     runner: Callable[[], None],
 ) -> None:
-    import click
-
     started_ms = now_ms()
     capture_integration_auth_event(
         "cli_onboarding_integration_auth_started",

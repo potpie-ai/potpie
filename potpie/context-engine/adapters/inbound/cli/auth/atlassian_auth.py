@@ -16,6 +16,8 @@ from typing import Any
 
 import typer
 
+import click
+
 from adapters.outbound.cli_auth.atlassian_client import (  # noqa: F401  (re-export)
     AtlassianAuthErrorKind,
     AtlassianAuthScheme,
@@ -63,8 +65,6 @@ from adapters.outbound.cli_auth.provider_config import (
 
 def _guard_typer_prompt[T](callback: Callable[[], T]) -> T:
     """Map Click/Typer Ctrl+C aborts to ``KeyboardInterrupt`` for callers."""
-    import click
-
     try:
         return callback()
     except click.Abort:

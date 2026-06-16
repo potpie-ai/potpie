@@ -24,6 +24,8 @@ from typing import Any, Callable, Final, Iterator, NoReturn
 
 import typer
 
+import click
+
 from domain.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
@@ -230,8 +232,6 @@ def contract() -> Iterator[None]:
     except (KeyboardInterrupt, EOFError):
         raise
     except Exception as exc:  # noqa: BLE001
-        import click
-
         if isinstance(exc, click.Abort) or type(exc).__name__ == "Abort":
             raise
         result = "unexpected"
