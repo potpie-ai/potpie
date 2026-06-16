@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import time
 import webbrowser
+from collections.abc import Callable
 from typing import Any
 
 import typer
@@ -60,11 +61,23 @@ from adapters.outbound.cli_auth.provider_config import (
 )
 
 
+def _guard_typer_prompt[T](callback: Callable[[], T]) -> T:
+    """Map Click/Typer Ctrl+C aborts to ``KeyboardInterrupt`` for callers."""
+    import click
+
+    try:
+        return callback()
+    except click.Abort:
+        raise KeyboardInterrupt from None
+
+
 def _prompt_site_subdomain() -> str:
-    return typer.prompt(
-        "Enter your Atlassian site subdomain "
-        "(e.g. 'potpie-team' for potpie-team.atlassian.net)"
-    ).strip()
+    return _guard_typer_prompt(
+        lambda: typer.prompt(
+            "Enter your Atlassian site subdomain "
+            "(e.g. 'potpie-team' for potpie-team.atlassian.net)"
+        ).strip()
+    )
 
 
 def _prompt_and_resolve_site() -> tuple[
@@ -87,10 +100,14 @@ def _cli_credentials_supplied(
 
 
 def _prompt_credentials() -> tuple[str, str]:
-    api_token = typer.prompt("Enter your API token", hide_input=True).strip()
+    api_token = _guard_typer_prompt(
+        lambda: typer.prompt("Enter your API token", hide_input=True).strip()
+    )
     if not api_token:
         raise typer.Exit(code=1)
-    email = typer.prompt("Enter your Atlassian email").strip()
+    email = _guard_typer_prompt(
+        lambda: typer.prompt("Enter your Atlassian email").strip()
+    )
     if not email:
         raise typer.Exit(code=1)
     return email, api_token
@@ -109,10 +126,12 @@ def _open_atlassian_api_token_page(product: AtlassianProduct) -> None:
         "  • Press Enter to open the page, then paste the token with your email and site",
     ):
         print_plain_line(line, as_json=False)
-    confirmed = typer.confirm(
-        "Press Enter to continue",
-        default=True,
-        show_default=False,
+    confirmed = _guard_typer_prompt(
+        lambda: typer.confirm(
+            "Press Enter to continue",
+            default=True,
+            show_default=False,
+        )
     )
     if not confirmed:
         return

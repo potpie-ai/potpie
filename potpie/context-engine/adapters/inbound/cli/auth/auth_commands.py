@@ -429,6 +429,8 @@ def _run_tracked_integration_login(
     entrypoint: str,
     runner: Callable[[], None],
 ) -> None:
+    import click
+
     started_ms = now_ms()
     capture_integration_auth_event(
         "cli_onboarding_integration_auth_started",
@@ -437,6 +439,8 @@ def _run_tracked_integration_login(
     )
     try:
         runner()
+    except (KeyboardInterrupt, EOFError, click.Abort):
+        raise
     except Exception as exc:  # noqa: BLE001 - auth telemetry must record failures.
         capture_integration_auth_event(
             "cli_onboarding_integration_auth_failed",
