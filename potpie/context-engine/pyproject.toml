@@ -135,7 +135,7 @@ dev = [
 
 [tool.uv]
 constraint-dependencies = [
-    "cryptography>=46.0.7",
+    "cryptography>=48.0.1",
     "idna>=3.15",
     "python-multipart>=0.0.28",
     "urllib3>=2.7.0",
