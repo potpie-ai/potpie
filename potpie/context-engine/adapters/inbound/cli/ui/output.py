@@ -15,14 +15,12 @@ from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 from rich.syntax import Syntax
-from rich.table import Table
 
 from adapters.inbound.cli.ui.brand import LOGO_COLOR, UI_MUTED_STYLE
 from adapters.inbound.cli.ui.format import (
     PANEL_BORDER,
     format_line,
     key_value_panel,
-    print_human_block,
     print_line,
     print_structured_error,
     success_markup,
@@ -173,9 +171,7 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
         ctx_rows.append(
             (
                 "GET /api/v2/context/pots",
-                "ok"
-                if data.potpie_auth_ok
-                else (data.potpie_auth_message or "failed"),
+                "ok" if data.potpie_auth_ok else (data.potpie_auth_message or "failed"),
             )
         )
     _out.print(
@@ -207,7 +203,9 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
         ),
     ]
     _out.print(
-        key_value_panel("Other (sync / ledger)", other_rows, border_style=UI_MUTED_STYLE)
+        key_value_panel(
+            "Other (sync / ledger)", other_rows, border_style=UI_MUTED_STYLE
+        )
     )
 
     for line in data.summary_lines:

@@ -13,10 +13,11 @@ from typer.testing import CliRunner
 from adapters.inbound.cli import host_cli as cli_main
 from adapters.inbound.cli.commands import bootstrap
 from adapters.inbound.cli.commands._common import EXIT_DEGRADED
+from bootstrap.host_wiring import default_host_mode
+from domain.lifecycle import DONE, FAILED, SetupPlan, SetupReport, StepResult
 from domain.ports.agent_context import StatusReport, StatusRequest
 from domain.ports.graph.backend import BackendCapabilities
 from domain.ports.graph.mutation import BackendReadiness
-from domain.lifecycle import DONE, FAILED, SetupPlan, SetupReport, StepResult
 
 runner = CliRunner()
 
@@ -163,6 +164,13 @@ def test_doctor_json_includes_backend_readiness(
     assert payload["backend_readiness"]["capability_ready"] == {"mutation": False}
     assert payload["active_pot"] == "foo-pot"
     assert "graph status" in payload["recommended_next_action"]
+
+
+def test_default_host_mode_rejects_invalid_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "deamon")
+
+    with pytest.raises(ValueError, match="CONTEXT_ENGINE_HOST_MODE"):
+        default_host_mode()
 
 
 def test_setup_dry_run_preview(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -331,6 +339,12 @@ def test_doctor_emits_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_host = MagicMock()
     mock_host.backend.profile = "falkordb"
     mock_host.backend.capabilities.return_value = mock_caps
+    mock_host.backend.mutation.readiness.return_value = BackendReadiness(
+        profile="falkordb",
+        ready=True,
+        capability_ready={"mutation": True},
+    )
+    mock_host.pots.active_pot.return_value = None
     mock_host.daemon.status.return_value = {"mode": "in_process", "up": True}
     mock_host.ledger.status.return_value = MagicMock(available=True, binding="local")
 

@@ -16,6 +16,7 @@ from typing import Any
 
 import click
 
+from adapters.inbound.cli.commands._common import get_store
 from adapters.inbound.cli.telemetry.onboarding_events import (
     capture_github_prompt_outcome,
     capture_github_prompt_shown,
@@ -49,11 +50,12 @@ STEP_LABELS: dict[str, tuple[str, str]] = {
     "auth": ("Initializing local auth…", "Local auth ready"),
     "source": ("Registering repo…", "Repo registered"),
     "skills": ("Installing agent skills…", "Skills installed"),
+    "scan": ("Scanning repository…", "Repository scanned"),
 }
 
 # Rows that get the animated "chomp" glyph while running.
 CHOMP_STEPS = frozenset(
-    {"backend.provision", "state_store.provision", "daemon"}
+    {"backend.provision", "state_store.provision", "daemon", "scan"}
 )
 
 # Lifecycle StepResult.state -> wizard ChecklistStep status. A soft
@@ -324,7 +326,9 @@ def _try_login(handler) -> None:
 
     try:
         handler()
-    except typer.Exit:
+    except typer.Exit as exc:
+        if getattr(exc, "exit_code", None) == 130:
+            raise
         pass
     except (KeyboardInterrupt, EOFError):
         raise
@@ -376,6 +380,29 @@ def _try_integration_login(provider: str) -> None:
             failure_kind="user_aborted",
         )
         _print_integration_skipped(provider)
+
+
+def _github_status() -> dict[str, Any]:
+    return get_store().get_integration_status("github")
+
+
+def _github_already_authenticated() -> bool:
+    try:
+        status = _github_status()
+    except Exception:  # noqa: BLE001
+        return False
+    if not bool(status.get("authenticated")):
+        return False
+    login = str(status.get("login") or "").strip()
+    suffix = f" as {login}" if login else ""
+    from adapters.inbound.cli.ui.output import print_plain_line
+
+    print_plain_line(
+        f"GitHub already connected{suffix}; skipping login.",
+        as_json=False,
+        markup=False,
+    )
+    return True
 
 
 def _maybe_prompt_agent_skills(*, setup_agent: str) -> None:
@@ -453,27 +480,30 @@ def maybe_prompt_github_login(
 
     import typer
 
-    prompt_started_ms = now_ms()
-    capture_github_prompt_shown(default_answer=True)
-    try:
-        confirmed = typer.confirm(
-            "Would you like to log in to GitHub now?",
-            default=True,
-        )
-    except (KeyboardInterrupt, EOFError):
-        capture_github_prompt_outcome(
-            "aborted",
-            duration_ms=elapsed_ms(prompt_started_ms),
-        )
-        confirmed = False
+    if not _github_already_authenticated():
+        prompt_started_ms = now_ms()
+        capture_github_prompt_shown(default_answer=True)
+        try:
+            confirmed = typer.confirm(
+                "Would you like to log in to GitHub now?",
+                default=True,
+            )
+        except (KeyboardInterrupt, EOFError):
+            capture_github_prompt_outcome(
+                "aborted",
+                duration_ms=elapsed_ms(prompt_started_ms),
+            )
+            confirmed = False
+        else:
+            capture_github_prompt_outcome(
+                "accepted" if confirmed else "declined",
+                duration_ms=elapsed_ms(prompt_started_ms),
+            )
+        if confirmed:
+            with onboarding_entrypoint("post_setup_github_prompt"):
+                _try_login(github_login_impl)
     else:
-        capture_github_prompt_outcome(
-            "accepted" if confirmed else "declined",
-            duration_ms=elapsed_ms(prompt_started_ms),
-        )
-    if confirmed:
-        with onboarding_entrypoint("post_setup_github_prompt"):
-            _try_login(github_login_impl)
+        capture_github_prompt_outcome("skipped", duration_ms=0)
 
     capture_onboarding_event(
         "cli_onboarding_integration_picker_shown",

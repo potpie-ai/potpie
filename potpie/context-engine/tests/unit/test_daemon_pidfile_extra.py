@@ -1,14 +1,17 @@
 """Additional lifecycle coverage: install_signal_handlers and ValueError edge cases."""
 
 from __future__ import annotations
+
 import asyncio
 import pathlib
+
 import pytest
+
 from adapters.outbound.daemon_process.pidfile import (
-    write_pid_file,
+    install_signal_handlers,
     read_pid_file,
     remove_pid_file,
-    install_signal_handlers,
+    write_pid_file,
 )
 
 
@@ -34,7 +37,7 @@ def test_remove_pid_file_silent_on_missing(tmp_path: pathlib.Path):
     remove_pid_file(tmp_path / "ghost.pid")  # must not raise
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_install_signal_handlers_does_not_raise():
     """install_signal_handlers should succeed or silently ignore NotImplementedError/RuntimeError."""
     shutdown = asyncio.Event()

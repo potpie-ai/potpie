@@ -14,7 +14,15 @@ from __future__ import annotations
 import typer
 
 from adapters.inbound.cli.commands import auth as auth_cmds
-from adapters.inbound.cli.commands import bootstrap, cloud, daemon, graph, ledger, pots
+from adapters.inbound.cli.commands import (
+    bootstrap,
+    cloud,
+    daemon,
+    graph,
+    ledger,
+    pots,
+    service,
+)
 from adapters.inbound.cli.commands import query as query_cmds
 from adapters.inbound.cli.commands import skills as skills_cmds
 from adapters.inbound.cli.commands import ui as ui_cmds
@@ -38,15 +46,15 @@ def build_app() -> typer.Typer:
             False, "--verbose", "-v", help="Verbose tracebacks on errors."
         ),
     ) -> None:
-        from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
-        from adapters.inbound.cli.ui.output import (
-            configure_cli_logging,
-            configure_error_output,
-        )
         from adapters.inbound.cli.telemetry import sentry_runtime, settings
         from adapters.inbound.cli.telemetry.product_analytics import (
             configure_product_analytics,
         )
+        from adapters.inbound.cli.ui.output import (
+            configure_cli_logging,
+            configure_error_output,
+        )
+        from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
         from bootstrap import sentry_metrics_runtime
 
         set_json(json_)
@@ -71,6 +79,7 @@ def build_app() -> typer.Typer:
     app.add_typer(pots.pot_app, name="pot")
     app.add_typer(pots.source_app, name="source")
     app.add_typer(daemon.daemon_app, name="daemon")
+    app.add_typer(service.service_app, name="service")
     app.add_typer(ledger.ledger_app, name="ledger")
     app.add_typer(graph.graph_app, name="graph")
     app.add_typer(graph.timeline_app, name="timeline")

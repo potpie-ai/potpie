@@ -12,6 +12,9 @@ from host import daemon_main
 
 
 class _CrashingDaemon:
+    in_process = False
+    home = None
+
     def status(self) -> dict[str, str]:
         raise RuntimeError("daemon crashed with /Users/dsantra/private/path")
 
