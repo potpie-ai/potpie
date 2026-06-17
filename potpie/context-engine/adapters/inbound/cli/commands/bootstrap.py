@@ -58,7 +58,7 @@ def register(root: typer.Typer) -> None:
             "--daemon/--in-process",
             help=(
                 "Provision a real detached daemon. Defaults to "
-                "$CONTEXT_ENGINE_HOST_MODE or in-process."
+                "$CONTEXT_ENGINE_HOST_MODE or daemon."
             ),
         ),
     ) -> None:
@@ -68,8 +68,10 @@ def register(root: typer.Typer) -> None:
             in_process = getattr(host.daemon, "in_process", False)
             from bootstrap.host_wiring import default_backend_profile
 
-            selected_backend = backend or getattr(
-                host.backend, "profile", default_backend_profile()
+            selected_backend = backend or (
+                getattr(host.backend, "profile", default_backend_profile())
+                if in_process
+                else default_backend_profile()
             )
             # --backend selects the storage profile for this run. Backend
             # selection happens at wiring time, so rebuild the host on the chosen

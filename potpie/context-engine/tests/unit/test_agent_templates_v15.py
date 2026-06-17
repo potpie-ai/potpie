@@ -289,6 +289,51 @@ def test_feature_ontology_reaches_skills() -> None:
         )
 
 
+def test_source_ingestion_requires_deep_harness_workflow() -> None:
+    text = _read("potpie-source-ingestion/SKILL.md")
+    lowered = text.lower()
+    for token in (
+        "todo/checklist",
+        "phase 0: scope and preflight",
+        "phase 1: todo plan",
+        "phase 2: parallel discovery",
+        "phase 3: local repo inspection targets",
+        "phase 4: hosted/github hydration",
+        "phase 5: evidence matrix",
+        "phase 6: identity resolution",
+        "phase 7: write",
+        "phase 8: verify and quality gate",
+    ):
+        assert token in lowered, f"source ingestion missing deep workflow token: {token}"
+
+
+def test_source_ingestion_ships_subagent_handoffs_and_github_checklist() -> None:
+    text = _read("potpie-source-ingestion/SKILL.md")
+    lowered = text.lower()
+    for token in (
+        "subagent prompts",
+        "docs/product",
+        "local architecture",
+        "runtime/deploy",
+        "api/data/integrations",
+        "github history",
+        "repository metadata",
+        "recent merged prs",
+        "open/high-signal issues",
+        "ci/workflows",
+    ):
+        assert token in lowered, f"source ingestion missing subagent/GitHub token: {token}"
+
+
+def test_source_ingestion_clarifies_local_inspection_not_scanner_writes() -> None:
+    text = _read("potpie-source-ingestion/SKILL.md").lower()
+    collapsed = " ".join(text.split())
+    assert "local inspection is required" in collapsed
+    assert "scanner-driven graph updates are forbidden" in collapsed
+    assert "rg --files" in text
+    assert "do not infer durable facts from filenames alone" in text
+
+
 def test_templates_do_not_advertise_local_ingest_or_scan_commands() -> None:
     forbidden = (
         "potpie ingest",

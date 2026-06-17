@@ -21,11 +21,7 @@ class DaemonRpcClient:
     timeout_s: float = 30.0
 
     def call(self, surface: str, method: str, *args: Any, **kwargs: Any) -> Any:
-        discovery = self.daemon.discovery()
-        if discovery is None:
-            raise ContextEngineDisabled(
-                "Potpie daemon is not running. Run 'potpie setup' to start it."
-            )
+        discovery = self._rpc_discovery()
         url = f"{discovery['base_url'].rstrip('/')}/rpc"
         payload = {
             "surface": surface,
@@ -50,11 +46,7 @@ class DaemonRpcClient:
         return decode(data.get("result"))
 
     def attr(self, surface: str, name: str) -> Any:
-        discovery = self.daemon.discovery()
-        if discovery is None:
-            raise ContextEngineDisabled(
-                "Potpie daemon is not running. Run 'potpie setup' to start it."
-            )
+        discovery = self._rpc_discovery()
         url = f"{discovery['base_url'].rstrip('/')}/attr"
         try:
             response = httpx.post(
@@ -71,6 +63,19 @@ class DaemonRpcClient:
         if response.status_code >= 400 or not data.get("ok", False):
             _raise_remote_error(data)
         return decode(data.get("result"))
+
+    def _rpc_discovery(self) -> dict[str, str]:
+        discovery = self.daemon.discovery()
+        if discovery is None:
+            raise ContextEngineDisabled(
+                "Potpie daemon is not running. Run 'potpie setup' to start it."
+            )
+        if not discovery.get("base_url") or not discovery.get("token"):
+            raise ContextEngineDisabled(
+                "Potpie daemon is running but does not expose the CLI RPC surface. "
+                "Run 'potpie daemon restart'."
+            )
+        return discovery
 
 
 class RemoteSurface:

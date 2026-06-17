@@ -36,25 +36,28 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
     host = build_host_shell()
     home = default_home()
     pid_file = home / "daemon.pid"
-    discovery_file = home / "daemon.json"
+    discovery_file = home / "discovery.json"
+    legacy_discovery_file = home / "daemon.json"
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         home.mkdir(parents=True, exist_ok=True)
         write_pid_file(pid_file, pid)
-        write_discovery(
-            discovery_file,
+        discovery = dict(
             transport="http",
             base_url=base_url,
             token=token,
             pid=pid,
             log_file=log_file,
         )
+        write_discovery(discovery_file, **discovery)
+        write_discovery(legacy_discovery_file, **discovery)
         try:
             yield
         finally:
             remove_pid_file(pid_file)
             remove_pid_file(discovery_file)
+            remove_pid_file(legacy_discovery_file)
 
     app = FastAPI(title="potpie-daemon", lifespan=lifespan)
 

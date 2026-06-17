@@ -61,7 +61,7 @@ Use the workbench write flow:
 ```bash
 potpie --json graph catalog --task "record bug fix"
 potpie --json graph search-entities "<service or symptom>" --limit 10
-potpie graph mutation-template --kind bug-fix
+potpie --json graph describe debugging --view prior_occurrences --examples
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id>
 potpie --json graph history --plan <plan_id>

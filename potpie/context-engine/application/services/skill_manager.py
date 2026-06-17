@@ -55,6 +55,14 @@ class DefaultSkillManager:
             metadata["target_root"] = str(root)
         return metadata
 
+    @staticmethod
+    def _install_support_files(
+        target: AgentTargetPort, *, path: str | None = None
+    ) -> None:
+        installer = getattr(target, "install_support_files", None)
+        if callable(installer):
+            installer(path=path)
+
     def list(
         self, *, agent: str = "claude", scope: str = "global", path: str | None = None
     ) -> list[SkillInfo]:
@@ -98,6 +106,7 @@ class DefaultSkillManager:
                 continue
             target.install(skill_id=sid, version=info.version, path=path)
             changed.append(sid)
+        self._install_support_files(target, path=path)
         return SkillOperationResult(
             agent=agent,
             operation="install",
@@ -124,6 +133,7 @@ class DefaultSkillManager:
             if info and installed.get(sid) != info.version:
                 target.install(skill_id=sid, version=info.version)
                 changed.append(sid)
+        self._install_support_files(target, path=path)
         return SkillOperationResult(
             agent=agent,
             operation="update",

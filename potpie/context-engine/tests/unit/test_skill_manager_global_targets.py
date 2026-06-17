@@ -31,6 +31,10 @@ def test_skill_manager_installs_global_harness_targets(
         "codex": home / ".agents" / "skills" / "potpie-cli" / "SKILL.md",
         "cursor": home / ".cursor" / "skills" / "potpie-cli" / "SKILL.md",
     }
+    expected_support = {
+        "claude": home / ".claude" / "CLAUDE.md",
+        "codex": home / ".codex" / "AGENTS.md",
+    }
 
     for agent, skill_file in expected.items():
         try:
@@ -42,6 +46,12 @@ def test_skill_manager_installs_global_harness_targets(
 
         assert result.metadata["scope"] == "global"
         assert skill_file.exists()
+        support_file = expected_support.get(agent)
+        if support_file is not None:
+            assert support_file.exists()
+            assert "Potpie is durable project memory" in support_file.read_text(
+                encoding="utf-8"
+            )
         status = host.skills.status(agent=agent)
         assert [s.id for s in status.installed] == ["potpie-cli"]
 

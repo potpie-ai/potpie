@@ -51,7 +51,7 @@ Use the workbench write flow:
 ```bash
 potpie --json graph catalog --task "record coding preference"
 potpie --json graph search-entities "<scope>" --type Service --limit 10
-potpie graph mutation-template --kind preference-policy
+potpie --json graph describe decisions --view preferences_for_scope --examples
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id>
 potpie --json graph history --plan <plan_id>

@@ -145,10 +145,29 @@ preference|policy|bug_pattern|fix|verification|decision|doc_reference|workflow|r
 
 ## Ingestion Boundary
 
-There is no local code scan path in the agent instructions. For a repo link, doc,
-ticket, PR, issue, or web link, the harness reads the source, decides what durable
-facts exist, and writes graph mutations. Do not infer services, dependencies,
-features, or preferences from directory names or package files alone.
+There is no scanner-driven graph write path in the agent instructions. For a
+repo link, doc, ticket, PR, issue, or web link, the harness reads the source,
+decides what durable facts exist, and writes graph mutations. Local repo
+inspection with `rg`, `rg --files`, `git`, manifests, docs, routes, configs,
+tests, and CI files is expected for repo understanding; the forbidden part is
+blindly turning a tree walk into graph facts. Do not infer services,
+dependencies, features, or preferences from directory names or package files
+alone.
+
+For explicit repository ingestion, use a todo-driven workflow:
+
+1. Run pot/source/graph preflight (`pot info`, `source list`, `graph status`,
+   `graph catalog --task`, and relevant `graph describe ... --examples`).
+2. Create discovery todos for docs/product, local repo map, runtime/deploy,
+   API/data/integrations, GitHub history, preferences/workflows, synthesis,
+   write, and verification.
+3. Use read-only subagents for independent discovery slices when available.
+   Subagents return candidate facts, evidence, confidence, and uncertainty; they
+   do not write graph mutations.
+4. Build an evidence matrix, resolve identities, then write through
+   `graph propose` / `graph commit` / `graph history`.
+5. Read back the affected views and run quality checks such as duplicate,
+   low-confidence, and conflicting-claim reports.
 
 For GitHub, Linear, Jira, and other hosted integrations, pull PRs, issues,
 tickets, comments, labels/status, and linked docs with the agent's integration

@@ -61,7 +61,7 @@ Use the workbench write flow after reading the source:
 
 ```bash
 potpie --json graph catalog --task "record timeline change"
-potpie graph mutation-template --kind timeline-change
+potpie --json graph describe recent_changes --view timeline --examples
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id>
 potpie --json graph history --plan <plan_id>

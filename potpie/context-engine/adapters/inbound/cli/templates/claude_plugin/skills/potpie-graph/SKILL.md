@@ -1,20 +1,20 @@
 ---
 name: potpie-graph
-description: "Use for explicit Potpie graph workbench operations or when another Potpie skill needs advanced graph usage: catalog, describe, read named views, search-entities, mutation-template, propose, commit, bulk apply, history, inbox, quality, corrections, and graph nudges. Prefer use-case skills for ordinary code, debug, infra, timeline, or ingestion context."
+description: "Use for explicit Potpie graph workbench operations or when another Potpie skill needs graph status, catalog, describe, read, search-entities, propose, commit, bulk apply, history, inbox, quality reports, corrections, graph nudges, identity resolution, proposal status handling, or post-ingestion verification."
 ---
 
 # Potpie Graph Workbench
 
-The graph workbench is the CLI surface for project memory. You read named views,
-resolve identity, propose validated semantic mutations, commit accepted plans,
-and inspect quality. Potpie validates and stores; the agent is the harness that
-decides what source material means.
+The graph workbench is the CLI surface for project memory. The harness reads
+named views, resolves identity, proposes semantic mutations, commits accepted
+plans, and verifies results. Potpie validates and stores; the harness decides
+what source material means.
 
 Always pass `--json` for machine-readable workbench commands.
 
-## Start Here
+## Preflight
 
-For non-trivial graph work, discover the live contract instead of relying on old
+For non-trivial graph work, discover the live contract before relying on skill
 examples:
 
 ```bash
@@ -24,58 +24,90 @@ potpie --json graph describe <subgraph> --view <view> --examples
 ```
 
 Trust `graph catalog` over skill examples for available views, operations,
-predicates, truth classes, and review requirements.
+predicates, truth classes, source authorities, and review requirements. If the
+CLI is unavailable, gather evidence but stop before committing graph writes.
 
 ## Read Views
 
 Common reads:
 
 ```bash
-potpie --json graph read --subgraph decisions --view preferences_for_scope --scope repo:<repo>,path:<path> --query "<preferences>"
+potpie --json graph read --subgraph decisions --view preferences_for_scope --scope repo:<repo>,path:<path> --query "<preferences>" --limit 12
 potpie --json graph read --subgraph debugging --view prior_occurrences --query "<symptom>" --limit 12
 potpie --json graph read --subgraph recent_changes --view timeline --time-window 7d --limit 20
 potpie --json graph read --subgraph infra_topology --view service_neighborhood --scope service:<service> --depth 2 --direction both
 potpie --json graph read --subgraph features --view feature_context --scope anchor_entity_key:<repo-or-service-key>
 ```
 
-Reads return entities with useful immediate relations inline when supported. Check
-coverage, freshness, quality, and source refs before relying on results.
-
-Query expansion is the agent's job. Include symptoms, synonyms, commands, files,
-services, frameworks, dependencies, and environment terms a future searcher would
-type.
-
-Represent capabilities as `Feature` entities. Link repos or services with
-`PROVIDES`; link a feature back to implementation with `IMPLEMENTED_IN` when the
-source supports it.
+Reads return entities with useful immediate relations inline when supported.
+Check coverage, freshness, quality, and source refs before relying on results.
+Expand queries with symptoms, aliases, commands, files, services, frameworks,
+dependencies, environments, and source IDs a future searcher would type.
 
 ## Resolve Identity
 
-Before linking to an existing entity, find the canonical key:
+Resolve identity before linking to an existing entity:
 
 ```bash
-potpie --json graph search-entities "<name>" --type Service --limit 10
+potpie --json graph search-entities "<name>" --limit 10
+potpie --json graph search-entities "<service>" --type Service --environment prod --limit 10
+potpie --json graph search-entities "<feature or repo>" --subgraph features --limit 10
+potpie --json graph search-entities "<ticket-or-pr-id>" --external-id "<external-id>" --limit 10
 ```
 
-Reuse returned keys. Near-duplicate keys fragment recall.
+Reuse returned canonical keys. Use type, subgraph, predicate, scope, truth,
+environment, and external-id filters when known. Near-duplicate keys fragment
+recall; if resolution is uncertain, use `graph inbox add` or a reviewed
+correction flow instead of creating another entity.
 
 ## Write Flow
 
 Use semantic mutation operations only. Never write raw graph CRUD.
 
 ```bash
-potpie graph mutation-template --kind <preference-policy|infra-snapshot|timeline-change|bug-fix|repo-baseline|feature|decision>
 potpie --json graph propose --file mutation.json
+```
+
+Inspect the proposal before commit:
+
+- `invalid` or rejected operations: fix the mutation or skip the weak fact.
+- `conflict`: resolve identity, narrow scope, or use inbox.
+- `review_required`: ask for approval or commit only with the required
+  `--approved-by` value when policy allows.
+- `validated` / low-risk: commit and verify.
+
+```bash
 potpie --json graph commit <plan_id>
 potpie --json graph history --plan <plan_id>
 ```
 
-Inspect the proposed diff, warnings, rejected operations, and review flags before
-commit. If the update is plausible but not safe to assert, use the inbox:
+`graph mutation-template --kind <kind>` is an optional skeleton helper. Prefer
+`graph describe ... --examples` and the live `graph catalog` when authoring
+mutations.
 
-```bash
-potpie --json graph inbox add --summary "<uncertain learning>" --evidence <source-ref> --subgraph <subgraph>
-```
+## Writing Standards
+
+Every durable write needs:
+
+- Compact display summary.
+- Retrieval-grade description with search terms, symptoms, aliases, scope,
+  environment, files, commands, source refs, and consequences.
+- Honest truth class: `authoritative_fact`, `source_observation`,
+  `user_decision`, `preference`, `agent_claim`, `timeline_event`, or
+  `quality_finding`.
+- Source authority such as `authoritative_code`, `repository_metadata`,
+  `external_system`, `user_statement`, or `agent_observation`.
+- Evidence/source refs for source-backed or high-authority claims.
+
+Represent capabilities as `Feature` entities. Link repos or services with
+`PROVIDES`; link a feature back to implementation with `IMPLEMENTED_IN` when
+the source supports it.
+
+Do not use the graph as a deterministic code scanner. The harness reads selected
+source material, interprets it, resolves identity, then writes semantic facts.
+For GitHub, Linear, Jira, and similar systems, hydrate records through the
+agent's integration tools/connectors before writing graph updates. Do not use
+pot-level connector ingestion commands as the graph write path.
 
 ## Bulk Writes
 
@@ -88,37 +120,33 @@ potpie --json graph bulk apply --file mutations.ndjson --chunk-size 100 --manife
 
 Use dry-run mode to validate chunks without committing, `--start-chunk <n>` to
 resume after fixing a failed chunk, and stable idempotency keys per source or
-profile. `graph bulk apply` only applies mutations the harness already authored;
-it does not inspect sources, infer facts, or replace agent judgment.
+profile. Bulk apply only applies mutations the harness already authored; it does
+not inspect sources, infer facts, or replace agent judgment.
 
-## Writing Standards
+## Inbox
 
-Every durable write needs:
+Use inbox when evidence may matter but the canonical update is uncertain:
 
-- A compact display summary.
-- A retrieval-grade description with search terms, symptoms, scope, aliases, and
-  consequences.
-- An honest truth class: `authoritative_fact`, `source_observation`,
-  `user_decision`, `preference`, `agent_claim`, `timeline_event`, or
-  `quality_finding`.
-- Evidence for source-backed or high-authority claims.
+```bash
+potpie --json graph inbox add --summary "<uncertain learning>" --evidence <source-ref> --subgraph <subgraph>
+potpie --json graph inbox list --status pending
+potpie --json graph inbox show <item_id>
+```
 
-Do not use the graph as a deterministic code scanner. The harness reads selected
-source material, interprets it, resolves identity, then writes semantic facts.
-For GitHub, Linear, Jira, and similar systems, hydrate records through the
-agent's integration tools/connectors before writing graph updates. Do not use
-pot-level connector ingestion commands as the graph write path; write semantic
-updates through `graph propose` and `graph commit`.
+Inbox items are pending work, not canonical graph facts.
 
-## Quality And Corrections
+## Quality Gates
 
-Use quality reports as read-only maintenance signals:
+Run quality reports after broad ingestion or corrections:
 
 ```bash
 potpie --json graph quality summary
 potpie --json graph quality duplicate-candidates --limit 20
 potpie --json graph quality stale-facts --subgraph infra_topology --limit 20
 potpie --json graph quality conflicting-claims --limit 20
+potpie --json graph quality orphan-entities --limit 20
+potpie --json graph quality low-confidence --limit 20
+potpie --json graph quality projection-drift --limit 20
 ```
 
 Repair meaning through `graph propose` and `graph commit`; do not hard-delete
@@ -126,6 +154,6 @@ claims unless the live catalog exposes and permits that operation.
 
 ## Nudges
 
-If a Potpie nudge injects context, use it as ranked graph context for the current
-task. If it asks you to record a learning, decide whether the learning is durable,
-then use the write flow or inbox. A nudge is not an automatic write.
+If a Potpie nudge injects context, use it as ranked graph context for the
+current task. If it asks you to record a learning, decide whether the learning
+is durable, then use the write flow or inbox. A nudge is not an automatic write.

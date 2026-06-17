@@ -83,11 +83,19 @@ verify with `graph history`.
 
 ## Ingestion Boundary
 
-Do not run local code scans or deterministic graph updates from the working tree.
-For a repo link, document, ticket, PR, issue, or web link, the harness reads the
-source, decides what durable facts exist, resolves identity, and writes graph
-plans through `propose`/`commit`. If only MCP is configured, `context_record` is
-the compatibility fallback.
+Do not run scanner-driven graph updates from the working tree. For a repo link,
+document, ticket, PR, issue, or web link, the harness reads the source, decides
+what durable facts exist, resolves identity, and writes graph plans through
+`propose`/`commit`. Local repo inspection with `rg`, `rg --files`, `git`,
+manifests, docs, routes, configs, tests, and CI files is expected for repo
+understanding; the forbidden part is blindly turning a tree walk into graph
+facts. If only MCP is configured, `context_record` is the compatibility fallback.
+
+For explicit repository ingestion, use a todo-driven workflow: preflight
+pot/source/graph state, create discovery todos, use read-only subagents for
+independent docs/code/runtime/GitHub/preferences slices when available, build an
+evidence matrix, resolve identities, propose/commit graph mutations, then read
+back affected views and run quality checks.
 
 For GitHub, Linear, Jira, and other hosted integrations, pull PRs, issues,
 tickets, comments, labels/status, and linked docs with the agent's integration

@@ -73,7 +73,7 @@ def default_backend_profile() -> str:
 
 
 def default_host_mode() -> str:
-    mode = (os.getenv("CONTEXT_ENGINE_HOST_MODE") or "in_process").strip().lower()
+    mode = (os.getenv("CONTEXT_ENGINE_HOST_MODE") or "daemon").strip().lower()
     if mode not in {"daemon", "in_process"}:
         raise ValueError(
             "invalid CONTEXT_ENGINE_HOST_MODE="

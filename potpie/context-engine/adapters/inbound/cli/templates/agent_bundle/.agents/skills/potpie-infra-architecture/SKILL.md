@@ -56,7 +56,7 @@ Use the workbench write flow:
 ```bash
 potpie --json graph catalog --task "record infra architecture"
 potpie --json graph search-entities "<service>" --type Service --limit 10
-potpie graph mutation-template --kind infra-snapshot
+potpie --json graph describe infra_topology --view service_neighborhood --examples
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id>
 potpie --json graph history --plan <plan_id>

@@ -50,10 +50,10 @@ potpie --json graph catalog --task "<task>"
 potpie --json graph describe <subgraph> --view <view> --examples
 potpie --json graph read --subgraph <subgraph> --view <view> --limit 20
 potpie --json graph search-entities "<name>" --type Service --limit 10
-potpie graph mutation-template --kind <kind>
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id>
 potpie --json graph history --plan <plan_id>
+potpie --json graph quality summary
 ```
 
 Use `potpie-graph` for advanced graph workbench details.

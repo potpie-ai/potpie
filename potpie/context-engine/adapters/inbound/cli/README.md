@@ -53,6 +53,10 @@ harness's user-level skills directory:
 | OpenCode | `~/.config/opencode/skills/<skill>/SKILL.md` |
 | Codex | `$HOME/.agents/skills/<skill>/SKILL.md` |
 
+For harnesses with documented file-backed global instructions, install/update
+also refreshes a compact Potpie managed block in `~/.claude/CLAUDE.md` and
+`~/.codex/AGENTS.md`.
+
 Remove one global skill with `potpie skills remove <id> --agent claude`, or
 delete every globally installed Potpie skill for a harness with
 `potpie skills remove --all --agent claude`. Use `--scope project --path .` for
