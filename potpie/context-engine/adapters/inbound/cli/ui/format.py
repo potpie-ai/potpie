@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Sequence
+from typing import Sequence
 
 from rich.console import Console
 from rich.markup import escape
@@ -14,7 +14,6 @@ from rich.text import Text
 from adapters.inbound.cli.ui.brand import (
     LOGO_COLOR,
     LOGO_DIM_STYLE,
-    LOGO_STYLE,
     LOGO_SUBTLE_SEPARATOR_STYLE,
     UI_FOCUS_STYLE,
     UI_MUTED_STYLE,
@@ -328,9 +327,7 @@ def print_structured_error(
     if hint:
         c.print(f"[{UI_MUTED_STYLE}]  {escape(hint)}[/{UI_MUTED_STYLE}]")
     if next_action:
-        c.print(
-            f"[{LOGO_DIM_STYLE}]  → {escape(next_action)}[/{LOGO_DIM_STYLE}]"
-        )
+        c.print(f"[{LOGO_DIM_STYLE}]  → {escape(next_action)}[/{LOGO_DIM_STYLE}]")
 
 
 __all__ = [

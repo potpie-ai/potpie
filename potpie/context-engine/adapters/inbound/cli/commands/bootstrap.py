@@ -53,6 +53,14 @@ def register(root: typer.Typer) -> None:
             False, "--dry-run", help="Show the steps without executing."
         ),
         yes: bool = typer.Option(False, "--yes", "-y", help="Assume yes for prompts."),
+        daemon: bool = typer.Option(
+            None,
+            "--daemon/--in-process",
+            help=(
+                "Provision a real detached daemon. Defaults to "
+                "$CONTEXT_ENGINE_HOST_MODE or in-process."
+            ),
+        ),
     ) -> None:
         """Idempotent first-run: provision config, storage, daemon, default pot, skills."""
         with contract():
@@ -68,6 +76,17 @@ def register(root: typer.Typer) -> None:
                 host = build_host_shell(
                     backend=build_backend(backend), profile=host.profile
                 )
+                set_host(host)
+            if daemon is not None and host.daemon.in_process != (not daemon):
+                import os
+
+                from adapters.inbound.cli.commands._common import set_host
+                from bootstrap.host_wiring import build_host_shell
+
+                os.environ["CONTEXT_ENGINE_HOST_MODE"] = (
+                    "daemon" if daemon else "in_process"
+                )
+                host = build_host_shell(backend=host.backend, profile=host.profile)
                 set_host(host)
             json_output = is_json()
             use_rich = setup_ux.rich_enabled(as_json=json_output) and not yes

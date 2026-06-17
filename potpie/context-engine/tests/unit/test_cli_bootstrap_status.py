@@ -12,8 +12,9 @@ from typer.testing import CliRunner
 from adapters.inbound.cli import host_cli as cli_main
 from adapters.inbound.cli.commands import bootstrap
 from adapters.inbound.cli.commands._common import EXIT_DEGRADED
-from domain.ports.agent_context import StatusReport, StatusRequest
+from bootstrap.host_wiring import default_host_mode
 from domain.lifecycle import DONE, FAILED, SetupPlan, SetupReport, StepResult
+from domain.ports.agent_context import StatusReport, StatusRequest
 
 runner = CliRunner()
 
@@ -121,6 +122,13 @@ def test_status_host_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0, result.stdout
     assert '"profile": "managed"' in result.stdout
     assert '"daemon_up": true' in result.stdout
+
+
+def test_default_host_mode_rejects_invalid_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "deamon")
+
+    with pytest.raises(ValueError, match="CONTEXT_ENGINE_HOST_MODE"):
+        default_host_mode()
 
 
 def test_setup_dry_run_preview(monkeypatch: pytest.MonkeyPatch) -> None:
