@@ -28,6 +28,7 @@ from domain.graph_inbox import (
 )
 from domain.graph_mutations import ProvenanceContext
 from domain.graph_plans import (
+    GraphIngestionVerificationResult,
     GraphMutationApproval,
     GraphMutationCommitResult,
     GraphMutationDiff,
@@ -69,6 +70,14 @@ from domain.singleton_predicates import is_singleton_predicate
 _DEFAULT_PLAN_TTL_SECONDS = 3600
 _QUALITY_SCAN_MAX = 5000
 _DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.5
+_QUALITY_SUMMARY_REPORTS = (
+    "duplicate-candidates",
+    "stale-facts",
+    "conflicting-claims",
+    "orphan-entities",
+    "low-confidence",
+    "projection-drift",
+)
 
 _CROSS_CUTTING_RESULT_KEYS = frozenset(
     {
@@ -178,9 +187,7 @@ class GraphWorkbenchService:
             detail = "; ".join(i.message for i in semantic_plan.errors) or None
             recommended = "Fix the validation errors and run graph propose again."
         elif status == GraphMutationPlanStatus.review_required.value:
-            recommended = (
-                "Review the persisted plan, then commit with --approved-by when policy allows."
-            )
+            recommended = "Review the persisted plan, then commit with --approved-by when policy allows."
         elif status == GraphMutationPlanStatus.validated.value:
             recommended = f"Commit with `potpie graph commit {plan_id} --json`."
 
@@ -226,6 +233,7 @@ class GraphWorkbenchService:
         *,
         pot_id: str,
         approved_by: str | None = None,
+        verify: bool = False,
     ) -> GraphMutationCommitResult:
         """Apply an unexpired server-created plan by id."""
         now = datetime.now(timezone.utc)
@@ -279,7 +287,9 @@ class GraphWorkbenchService:
             )
 
         current_versions = _subgraph_versions(self.backend, pot_id)
-        conflict = _version_conflict(record.expected_subgraph_versions, current_versions)
+        conflict = _version_conflict(
+            record.expected_subgraph_versions, current_versions
+        )
         if conflict:
             conflicted = replace(
                 record,
@@ -334,6 +344,12 @@ class GraphWorkbenchService:
             )
             self.plan_store.save(record)
 
+        quality_before = (
+            _verification_quality_snapshot(self.backend, pot_id=pot_id)
+            if verify
+            else None
+        )
+
         if record.lowered_batch is None or not _batch_has_work(record.lowered_batch):
             committed = replace(
                 record,
@@ -343,6 +359,16 @@ class GraphWorkbenchService:
                 approval=approval,
             )
             self.plan_store.save(committed)
+            verification = (
+                _verify_ingestion_commit(
+                    self.backend,
+                    pot_id=pot_id,
+                    record=committed,
+                    before_quality=quality_before,
+                )
+                if verify
+                else None
+            )
             return GraphMutationCommitResult(
                 ok=True,
                 plan_id=committed.plan_id,
@@ -356,7 +382,9 @@ class GraphWorkbenchService:
                 diff=committed.diff,
                 claim_keys=_claim_keys_from_record(committed),
                 approval=approval,
+                verification=verification,
                 detail="plan had no structural mutations to apply",
+                recommended_next_action=_verification_next_action(verification),
             )
 
         result = self.backend.mutation.apply(
@@ -401,6 +429,16 @@ class GraphWorkbenchService:
             approval=approval,
         )
         self.plan_store.save(committed)
+        verification = (
+            _verify_ingestion_commit(
+                self.backend,
+                pot_id=pot_id,
+                record=committed,
+                before_quality=quality_before,
+            )
+            if verify
+            else None
+        )
         return GraphMutationCommitResult(
             ok=True,
             plan_id=committed.plan_id,
@@ -415,6 +453,8 @@ class GraphWorkbenchService:
             diff=committed.diff,
             claim_keys=_claim_keys_from_record(committed),
             approval=approval,
+            verification=verification,
+            recommended_next_action=_verification_next_action(verification),
         )
 
     def history(
@@ -508,51 +548,14 @@ class GraphWorkbenchService:
                 filters=filters,
             )
 
-        if clean_report == "duplicate-candidates":
-            findings, metrics, unsupported = _quality_duplicate_candidates(
-                self.backend,
-                pot_id=pot_id,
-                subgraph=subgraph,
-                limit=clean_limit,
-            )
-        elif clean_report == "stale-facts":
-            findings, metrics, unsupported = _quality_stale_facts(
-                self.backend,
-                pot_id=pot_id,
-                subgraph=subgraph,
-                limit=clean_limit,
-            )
-        elif clean_report == "conflicting-claims":
-            findings, metrics, unsupported = _quality_conflicting_claims(
-                self.backend,
-                pot_id=pot_id,
-                subgraph=subgraph,
-                limit=clean_limit,
-            )
-        elif clean_report == "orphan-entities":
-            findings, metrics, unsupported = _quality_orphan_entities(
-                self.backend,
-                pot_id=pot_id,
-                subgraph=subgraph,
-                limit=clean_limit,
-            )
-        elif clean_report == "low-confidence":
-            findings, metrics, unsupported = _quality_low_confidence(
-                self.backend,
-                pot_id=pot_id,
-                subgraph=subgraph,
-                limit=clean_limit,
-                confidence_threshold=confidence_threshold,
-            )
-        elif clean_report == "projection-drift":
-            findings, metrics, unsupported = _quality_projection_drift(
-                self.backend,
-                pot_id=pot_id,
-                subgraph=subgraph,
-                limit=clean_limit,
-            )
-        else:
-            raise ValueError(f"unknown quality report {clean_report!r}")
+        findings, metrics, unsupported = _quality_deep_report(
+            self.backend,
+            pot_id=pot_id,
+            report=clean_report,
+            subgraph=subgraph,
+            limit=clean_limit,
+            confidence_threshold=confidence_threshold,
+        )
 
         status = _quality_status(findings, unsupported)
         detail = None
@@ -1143,6 +1146,251 @@ def _claim_keys_from_record(record: GraphMutationPlanRecord) -> tuple[str, ...]:
     return tuple(dict.fromkeys(keys))
 
 
+def _verify_ingestion_commit(
+    backend: GraphBackend,
+    *,
+    pot_id: str,
+    record: GraphMutationPlanRecord,
+    before_quality: Mapping[str, Any] | None,
+) -> GraphIngestionVerificationResult:
+    claim_keys = _claim_keys_from_record(record)
+    readback = _verification_readback(backend, pot_id=pot_id, claim_keys=claim_keys)
+    after_quality = _verification_quality_snapshot(backend, pot_id=pot_id)
+    before_counts = _quality_count_map(before_quality)
+    after_counts = _quality_count_map(after_quality)
+    deltas = _quality_count_delta(before_counts, after_counts)
+    regressions = _quality_regressions(
+        before_quality=before_quality,
+        after_quality=after_quality,
+        deltas=deltas,
+    )
+    unsupported = tuple(readback["unsupported"]) + tuple(after_quality["unsupported"])
+    warnings: list[str] = []
+    status = "ok"
+    ok = True
+    detail = None
+    recommended = None
+
+    if readback["missing_claim_keys"]:
+        ok = False
+        status = "degraded"
+        detail = "committed plan did not read back all expected claim keys"
+        recommended = (
+            "Inspect graph history for the plan and rerun graph commit verification "
+            "after backend repair if the mutation was applied."
+        )
+    elif readback["unsupported"]:
+        ok = False
+        status = "partial"
+        detail = "claim readback is unavailable for the active backend"
+        recommended = "Use graph status to inspect backend claim-query support."
+    elif regressions:
+        ok = False
+        status = "degraded"
+        detail = "quality findings increased after commit"
+        recommended = (
+            "Run the affected graph quality reports, then correct facts with "
+            "graph propose/commit or add a graph inbox item for uncertain work."
+        )
+    elif unsupported:
+        status = "partial"
+        warnings.append("some verification checks are unavailable for this backend")
+        recommended = "Use graph status to inspect backend capabilities."
+    elif after_quality["status"] not in {"ok", "empty"}:
+        status = "watch"
+        warnings.append(f"graph quality status is {after_quality['status']}")
+        recommended = (
+            "Review graph quality summary before relying on newly committed memory."
+        )
+
+    return GraphIngestionVerificationResult(
+        ok=ok,
+        status=status,
+        plan_id=record.plan_id,
+        pot_id=pot_id,
+        claim_keys=claim_keys,
+        readback_claim_keys=tuple(readback["readback_claim_keys"]),
+        missing_claim_keys=tuple(readback["missing_claim_keys"]),
+        readback_count=int(readback["readback_count"]),
+        quality_status=str(after_quality["status"]),
+        quality_counts=after_counts,
+        quality_delta=deltas,
+        quality_regressions=regressions,
+        checked_reports=tuple(after_quality["checked_reports"]),
+        warnings=tuple(warnings),
+        unsupported=unsupported,
+        detail=detail,
+        recommended_next_action=recommended,
+        subgraph_versions=_subgraph_versions(backend, pot_id),
+    )
+
+
+def _verification_readback(
+    backend: GraphBackend,
+    *,
+    pot_id: str,
+    claim_keys: tuple[str, ...],
+) -> dict[str, Any]:
+    if not claim_keys:
+        return {
+            "readback_claim_keys": (),
+            "missing_claim_keys": (),
+            "readback_count": 0,
+            "unsupported": (),
+        }
+    try:
+        rows = backend.claim_query.find_claims(
+            ClaimQueryFilter(
+                pot_id=pot_id,
+                claim_key_in=claim_keys,
+                include_invalidated=False,
+                limit=max(len(claim_keys) * 2, 20),
+            )
+        )
+    except CapabilityNotImplemented as exc:
+        return {
+            "readback_claim_keys": (),
+            "missing_claim_keys": (),
+            "readback_count": 0,
+            "unsupported": (
+                _unsupported_from_exception(exc, fallback="claim_query.find_claims"),
+            ),
+        }
+    readback_keys = tuple(
+        dict.fromkeys(_row_claim_key(row) for row in _dedupe_claim_rows(list(rows)))
+    )
+    readback_set = set(readback_keys)
+    return {
+        "readback_claim_keys": readback_keys,
+        "missing_claim_keys": tuple(
+            key for key in claim_keys if key not in readback_set
+        ),
+        "readback_count": len(readback_keys),
+        "unsupported": (),
+    }
+
+
+def _verification_quality_snapshot(
+    backend: GraphBackend,
+    *,
+    pot_id: str,
+) -> dict[str, Any]:
+    try:
+        result = _quality_summary_result(
+            backend,
+            pot_id=pot_id,
+            filters={
+                "report": "summary",
+                "limit": 50,
+                "confidence_threshold": _DEFAULT_LOW_CONFIDENCE_THRESHOLD,
+            },
+        )
+    except CapabilityNotImplemented as exc:
+        return {
+            "status": "unavailable",
+            "quality_counts": {},
+            "total_findings": 0,
+            "checked_reports": (),
+            "unsupported": (
+                _unsupported_from_exception(exc, fallback="graph.quality.summary"),
+            ),
+        }
+    metrics = dict(result.metrics)
+    reports = metrics.get("quality_reports")
+    checked_reports = (
+        tuple(str(key) for key in reports.keys())
+        if isinstance(reports, Mapping)
+        else _QUALITY_SUMMARY_REPORTS
+    )
+    return {
+        "status": str(result.status or "unknown"),
+        "quality_counts": _int_map(metrics.get("quality_counts")),
+        "total_findings": _safe_int(metrics.get("total_findings")),
+        "checked_reports": checked_reports,
+        "unsupported": tuple(result.unsupported),
+    }
+
+
+def _quality_count_map(snapshot: Mapping[str, Any] | None) -> dict[str, int]:
+    if not snapshot:
+        return {}
+    counts = _int_map(snapshot.get("quality_counts"))
+    if "total_findings" not in counts:
+        counts["total_findings"] = _safe_int(snapshot.get("total_findings"))
+    return counts
+
+
+def _quality_count_delta(
+    before: Mapping[str, int],
+    after: Mapping[str, int],
+) -> dict[str, int]:
+    keys = sorted(set(before) | set(after))
+    return {key: int(after.get(key, 0)) - int(before.get(key, 0)) for key in keys}
+
+
+def _quality_regressions(
+    *,
+    before_quality: Mapping[str, Any] | None,
+    after_quality: Mapping[str, Any],
+    deltas: Mapping[str, int],
+) -> dict[str, Mapping[str, int]]:
+    if not before_quality:
+        return {}
+    regressions = {
+        key: {
+            "before": _safe_int(_quality_count_map(before_quality).get(key)),
+            "after": _safe_int(_quality_count_map(after_quality).get(key)),
+            "delta": int(delta),
+        }
+        for key, delta in deltas.items()
+        if delta > 0
+    }
+    before_rank = _quality_status_rank(str(before_quality.get("status") or "unknown"))
+    after_rank = _quality_status_rank(str(after_quality.get("status") or "unknown"))
+    if after_rank > before_rank:
+        regressions["health_status"] = {
+            "before": before_rank,
+            "after": after_rank,
+            "delta": after_rank - before_rank,
+        }
+    return regressions
+
+
+def _quality_status_rank(status: str) -> int:
+    return {
+        "ok": 0,
+        "empty": 0,
+        "watch": 1,
+        "partial": 1,
+        "unavailable": 1,
+        "unknown": 1,
+        "degraded": 2,
+    }.get(status, 1)
+
+
+def _verification_next_action(
+    verification: GraphIngestionVerificationResult | None,
+) -> str | None:
+    if verification is None:
+        return None
+    if not verification.ok or verification.status != "ok":
+        return verification.recommended_next_action
+    return None
+
+
+def _int_map(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): _safe_int(raw) for key, raw in value.items()}
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _record_matches_history_filter(
     record: GraphMutationPlanRecord,
     request: GraphHistoryRequest,
@@ -1164,9 +1412,7 @@ def _history_entry_from_plan(record: GraphMutationPlanRecord) -> GraphHistoryEnt
         "expires_at": record.expires_at.isoformat(),
         "validation_issues": [dict(i) for i in record.validation_issues],
         "accepted_operations": [dict(op) for op in record.accepted_ops],
-        "review_required_operations": [
-            dict(op) for op in record.review_required_ops
-        ],
+        "review_required_operations": [dict(op) for op in record.review_required_ops],
         "rejected_operations": [dict(op) for op in record.rejected_ops],
         "approval": record.approval.to_dict() if record.approval else None,
         "committed_at": record.committed_at.isoformat()
@@ -1204,7 +1450,10 @@ def _history_claim_rows(
 ) -> tuple[tuple[ClaimRow, ...], tuple[Mapping[str, Any], ...]]:
     mutation_ids = {
         item
-        for item in (request.mutation_id, *tuple(record.mutation_id for record in records))
+        for item in (
+            request.mutation_id,
+            *tuple(record.mutation_id for record in records),
+        )
         if item
     }
     claim_keys = set()
@@ -1290,9 +1539,7 @@ def _history_entry_from_claim(row: ClaimRow) -> GraphHistoryEntry:
         occurred_at=row.invalid_at or row.valid_at or row.observed_at,
         mutation_id=row.mutation_id,
         claim_key=row.claim_key,
-        entity_keys=tuple(
-            key for key in (row.subject_key, row.object_key) if key
-        ),
+        entity_keys=tuple(key for key in (row.subject_key, row.object_key) if key),
         subgraph=row.subgraph,
         truth=row.truth,
         source_refs=source_refs,
@@ -1348,6 +1595,65 @@ def _quality_filters(
     return out
 
 
+def _quality_deep_report(
+    backend: GraphBackend,
+    *,
+    pot_id: str,
+    report: str,
+    subgraph: str | None,
+    limit: int,
+    confidence_threshold: float,
+) -> tuple[
+    tuple[GraphQualityFinding, ...],
+    dict[str, Any],
+    tuple[Mapping[str, Any], ...],
+]:
+    if report == "duplicate-candidates":
+        return _quality_duplicate_candidates(
+            backend,
+            pot_id=pot_id,
+            subgraph=subgraph,
+            limit=limit,
+        )
+    if report == "stale-facts":
+        return _quality_stale_facts(
+            backend,
+            pot_id=pot_id,
+            subgraph=subgraph,
+            limit=limit,
+        )
+    if report == "conflicting-claims":
+        return _quality_conflicting_claims(
+            backend,
+            pot_id=pot_id,
+            subgraph=subgraph,
+            limit=limit,
+        )
+    if report == "orphan-entities":
+        return _quality_orphan_entities(
+            backend,
+            pot_id=pot_id,
+            subgraph=subgraph,
+            limit=limit,
+        )
+    if report == "low-confidence":
+        return _quality_low_confidence(
+            backend,
+            pot_id=pot_id,
+            subgraph=subgraph,
+            limit=limit,
+            confidence_threshold=confidence_threshold,
+        )
+    if report == "projection-drift":
+        return _quality_projection_drift(
+            backend,
+            pot_id=pot_id,
+            subgraph=subgraph,
+            limit=limit,
+        )
+    raise ValueError(f"unknown quality report {report!r}")
+
+
 def _quality_summary_result(
     backend: GraphBackend,
     *,
@@ -1373,18 +1679,61 @@ def _quality_summary_result(
         method="quality",
         unsupported=unsupported,
     )
+    report_summaries: dict[str, dict[str, Any]] = {}
+    quality_counts: dict[str, int] = {}
+    summary_findings: list[GraphQualityFinding] = []
+    summary_unsupported: list[Mapping[str, Any]] = []
+    subgraph = _clean_str(filters.get("subgraph"))
+    limit = max(1, min(int(filters.get("limit") or 50), 500))
+    confidence_threshold = float(
+        filters.get("confidence_threshold") or _DEFAULT_LOW_CONFIDENCE_THRESHOLD
+    )
+    for report in _QUALITY_SUMMARY_REPORTS:
+        findings, report_metrics, report_unsupported = _quality_deep_report(
+            backend,
+            pot_id=pot_id,
+            report=report,
+            subgraph=subgraph,
+            limit=limit,
+            confidence_threshold=confidence_threshold,
+        )
+        report_status = _quality_status(findings, report_unsupported)
+        finding_count = len(findings)
+        quality_counts[report.replace("-", "_")] = finding_count
+        report_summaries[report] = {
+            "status": report_status,
+            "finding_count": finding_count,
+            "severity_counts": _quality_severity_counts(findings),
+            "unsupported_count": len(report_unsupported),
+            "metrics": report_metrics,
+        }
+        summary_findings.extend(findings)
+        summary_unsupported.extend(report_unsupported)
+
+    unsupported.extend(summary_unsupported)
     metrics: dict[str, Any] = {
         "counts": counts,
         "freshness": freshness,
         "backend_quality": quality,
+        "quality_counts": quality_counts,
+        "quality_reports": report_summaries,
+        "total_findings": sum(quality_counts.values()),
     }
-    status = str(quality.get("status") or ("unavailable" if unsupported else "ok"))
+    status = _quality_status(tuple(summary_findings), tuple(unsupported))
+    if status == "ok" and quality.get("status"):
+        status = str(quality.get("status"))
     detail = None
     recommended = None
     if unsupported and not counts and not freshness and not quality:
         status = "unavailable"
         detail = "graph analytics are unavailable for the active backend"
         recommended = "Use graph status to inspect backend capabilities."
+    elif status in {"degraded", "watch", "partial"}:
+        recommended = (
+            "Run the affected `graph quality <report>` command for details, then "
+            "use graph propose/commit for semantic corrections or graph inbox add "
+            "for uncertain work."
+        )
     return GraphQualityResult(
         ok=True,
         pot_id=pot_id,
@@ -1399,6 +1748,15 @@ def _quality_summary_result(
     )
 
 
+def _quality_severity_counts(
+    findings: tuple[GraphQualityFinding, ...],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for finding in findings:
+        counts[finding.severity] = counts.get(finding.severity, 0) + 1
+    return counts
+
+
 def _quality_analytics_call(
     backend: GraphBackend,
     *,
@@ -1410,7 +1768,9 @@ def _quality_analytics_call(
         fn = getattr(backend.analytics, method)
         return dict(fn(pot_id))
     except CapabilityNotImplemented as exc:
-        unsupported.append(_unsupported_from_exception(exc, fallback=f"analytics.{method}"))
+        unsupported.append(
+            _unsupported_from_exception(exc, fallback=f"analytics.{method}")
+        )
         return {}
 
 
@@ -1420,13 +1780,17 @@ def _quality_duplicate_candidates(
     pot_id: str,
     subgraph: str | None,
     limit: int,
-) -> tuple[tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]]:
+) -> tuple[
+    tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]
+]:
     rows, unsupported = _quality_claim_rows(
         backend, pot_id=pot_id, subgraph=subgraph, limit=limit
     )
     if unsupported:
         return (), {"scanned_claims": 0}, unsupported
-    entity_keys = sorted({key for row in rows for key in (row.subject_key, row.object_key)})
+    entity_keys = sorted(
+        {key for row in rows for key in (row.subject_key, row.object_key)}
+    )
     labels, props, prop_unsupported = _quality_entity_metadata(
         backend, pot_id=pot_id, entity_keys=entity_keys
     )
@@ -1481,7 +1845,9 @@ def _quality_stale_facts(
     pot_id: str,
     subgraph: str | None,
     limit: int,
-) -> tuple[tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]]:
+) -> tuple[
+    tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]
+]:
     rows, unsupported = _quality_claim_rows(
         backend, pot_id=pot_id, subgraph=subgraph, limit=limit
     )
@@ -1524,7 +1890,9 @@ def _quality_conflicting_claims(
     pot_id: str,
     subgraph: str | None,
     limit: int,
-) -> tuple[tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]]:
+) -> tuple[
+    tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]
+]:
     rows, unsupported = _quality_claim_rows(
         backend, pot_id=pot_id, subgraph=subgraph, limit=limit
     )
@@ -1554,7 +1922,9 @@ def _quality_orphan_entities(
     pot_id: str,
     subgraph: str | None,
     limit: int,
-) -> tuple[tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]]:
+) -> tuple[
+    tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]
+]:
     rows, unsupported = _quality_claim_rows(
         backend,
         pot_id=pot_id,
@@ -1571,7 +1941,9 @@ def _quality_orphan_entities(
             continue
         live_degree[row.subject_key] += 1
         live_degree[row.object_key] += 1
-    orphan_keys = tuple(sorted(key for key in all_entities if live_degree.get(key, 0) == 0))
+    orphan_keys = tuple(
+        sorted(key for key in all_entities if live_degree.get(key, 0) == 0)
+    )
     findings: list[GraphQualityFinding] = []
     for key in orphan_keys[:limit]:
         source_refs = _source_refs_for_entities(rows, (key,))
@@ -1603,7 +1975,9 @@ def _quality_low_confidence(
     subgraph: str | None,
     limit: int,
     confidence_threshold: float,
-) -> tuple[tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]]:
+) -> tuple[
+    tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]
+]:
     rows, unsupported = _quality_claim_rows(
         backend, pot_id=pot_id, subgraph=subgraph, limit=limit
     )
@@ -1646,13 +2020,17 @@ def _quality_projection_drift(
     pot_id: str,
     subgraph: str | None,
     limit: int,
-) -> tuple[tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]]:
+) -> tuple[
+    tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]
+]:
     rows, unsupported = _quality_claim_rows(
         backend, pot_id=pot_id, subgraph=subgraph, limit=limit
     )
     if unsupported:
         return (), {"scanned_claims": 0}, unsupported
-    findings = list(_invalid_endpoint_findings(backend, pot_id=pot_id, rows=rows, limit=limit))
+    findings = list(
+        _invalid_endpoint_findings(backend, pot_id=pot_id, rows=rows, limit=limit)
+    )
     inspection_unsupported: tuple[Mapping[str, Any], ...] = ()
     try:
         sl = backend.inspection.slice(
@@ -1729,7 +2107,9 @@ def _quality_claim_rows(
             )
         )
     except CapabilityNotImplemented as exc:
-        return (), (_unsupported_from_exception(exc, fallback="claim_query.find_claims"),)
+        return (), (
+            _unsupported_from_exception(exc, fallback="claim_query.find_claims"),
+        )
     return _dedupe_claim_rows(list(rows)), ()
 
 
@@ -1748,10 +2128,14 @@ def _quality_entity_metadata(
         return {}, {}, ()
     unsupported: list[Mapping[str, Any]] = []
     try:
-        labels = dict(backend.claim_query.entity_labels(pot_id=pot_id, entity_keys=entity_keys))
+        labels = dict(
+            backend.claim_query.entity_labels(pot_id=pot_id, entity_keys=entity_keys)
+        )
     except CapabilityNotImplemented as exc:
         labels = {}
-        unsupported.append(_unsupported_from_exception(exc, fallback="claim_query.entity_labels"))
+        unsupported.append(
+            _unsupported_from_exception(exc, fallback="claim_query.entity_labels")
+        )
     props: dict[str, Mapping[str, Any]] = {}
     if properties:
         for key in entity_keys:
@@ -1761,7 +2145,9 @@ def _quality_entity_metadata(
                 )
             except CapabilityNotImplemented as exc:
                 unsupported.append(
-                    _unsupported_from_exception(exc, fallback="claim_query.entity_properties")
+                    _unsupported_from_exception(
+                        exc, fallback="claim_query.entity_properties"
+                    )
                 )
                 break
     return labels, props, tuple(unsupported)
@@ -1840,7 +2226,9 @@ def _quality_finding(
 
 
 def _quality_finding_id(kind: str, *parts: str) -> str:
-    digest = hashlib.sha1("|".join(str(part) for part in parts).encode("utf-8")).hexdigest()
+    digest = hashlib.sha1(
+        "|".join(str(part) for part in parts).encode("utf-8")
+    ).hexdigest()
     return f"quality:{kind}:{digest[:16]}"
 
 
@@ -1888,7 +2276,9 @@ def _singleton_conflict_findings(
                 entity_keys=tuple(dict.fromkeys([subject, *sorted(objects)])),
                 claim_keys=claim_keys,
                 predicates=(predicate,),
-                subgraph=_single_or_none(tuple(dict.fromkeys(row.subgraph for row in group if row.subgraph))),
+                subgraph=_single_or_none(
+                    tuple(dict.fromkeys(row.subgraph for row in group if row.subgraph))
+                ),
                 source_refs=_source_refs_from_rows(group),
                 evidence=tuple(item for row in group for item in row.evidence),
                 suggested_action={
@@ -1975,7 +2365,9 @@ def _invalid_endpoint_findings(
     rows: tuple[ClaimRow, ...],
     limit: int,
 ) -> tuple[GraphQualityFinding, ...]:
-    entity_keys = sorted({key for row in rows for key in (row.subject_key, row.object_key)})
+    entity_keys = sorted(
+        {key for row in rows for key in (row.subject_key, row.object_key)}
+    )
     labels, _props, unsupported = _quality_entity_metadata(
         backend, pot_id=pot_id, entity_keys=entity_keys, properties=False
     )
@@ -1990,9 +2382,9 @@ def _invalid_endpoint_findings(
         object_labels = labels.get(row.object_key, ())
         if not subject_labels or not object_labels:
             continue
-        allowed = set(spec.allowed_pairs)
-        if any((s, o) in allowed for s in subject_labels for o in object_labels):
+        if spec.allows(subject_labels, object_labels):
             continue
+        allowed = set(spec.allowed_pairs)
         findings.append(
             _quality_finding(
                 kind="invalid-endpoint-pair",
@@ -2037,7 +2429,9 @@ def _row_source_refs(row: ClaimRow) -> tuple[str, ...]:
     return tuple(dict.fromkeys(refs))
 
 
-def _source_refs_from_rows(rows: tuple[ClaimRow, ...] | list[ClaimRow]) -> tuple[str, ...]:
+def _source_refs_from_rows(
+    rows: tuple[ClaimRow, ...] | list[ClaimRow],
+) -> tuple[str, ...]:
     refs: list[str] = []
     for row in rows:
         refs.extend(_row_source_refs(row))

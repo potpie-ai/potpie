@@ -28,6 +28,7 @@ class ClaimQuerySemanticSearch:
                 predicate_in=base.predicate_in,
                 subject_key_in=base.subject_key_in,
                 object_key_in=base.object_key_in,
+                source_ref_in=base.source_ref_in,
                 subject_label=base.subject_label,
                 object_label=base.object_label,
                 valid_at_after=base.valid_at_after,

@@ -280,6 +280,7 @@ class DefaultSetupOrchestrator:
             )
         location = _resolve_setup_repo_location(plan.repo)
         self.pots.add_source(pot_id=active.pot_id, kind="repo", location=location)
+        self.pots.set_repo_default(repo=location, pot_id=active.pot_id)
         return StepResult("source", DONE, f"registered repo '{location}'")
 
     def _skills(self, plan: SetupPlan) -> str | StepResult:
@@ -289,6 +290,7 @@ class DefaultSetupOrchestrator:
             )
         result = self.skills.install(agent=plan.agent)
         return f"installed {list(result.changed)} for {plan.agent}"
+
 
 def _describe(result: object) -> str | None:
     return None if result is None else str(result)

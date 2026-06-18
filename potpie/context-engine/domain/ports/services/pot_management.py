@@ -98,6 +98,23 @@ class PotManagementService(Protocol):
 
     def remove_source(self, *, pot_id: str, source_id: str) -> None: ...
 
+    # --- repo-local routing defaults ----------------------------------------
+    def repo_default(self, *, repo: str) -> str | None:
+        """Return the locally preferred pot id for a repo identity, if set."""
+        ...
+
+    def set_repo_default(self, *, repo: str, pot_id: str) -> None:
+        """Persist the locally preferred pot id for a repo identity."""
+        ...
+
+    def clear_repo_default(self, *, repo: str) -> bool:
+        """Clear the locally preferred pot id for a repo identity."""
+        ...
+
+    def list_repo_defaults(self) -> dict[str, str]:
+        """Return all locally persisted repo identity -> pot id defaults."""
+        ...
+
     # --- rollup -------------------------------------------------------------
     def aggregate_status(self, *, pot_id: str | None = None) -> PotAggregateStatus:
         """Control-plane status for ``context_status`` (active pot, sources,

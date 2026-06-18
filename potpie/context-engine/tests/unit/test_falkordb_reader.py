@@ -160,7 +160,9 @@ def test_fact_query_stamps_similarity_and_orders() -> None:
     )
 
 
-def test_fact_query_uses_native_relationship_vector_index_when_embedder_present() -> None:
+def test_fact_query_uses_native_relationship_vector_index_when_embedder_present() -> (
+    None
+):
     graph = _FakeGraph(
         header=[[1, "props"], [1, "score"]],
         result_set=[

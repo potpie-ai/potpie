@@ -90,7 +90,9 @@ class _Mutation:
         for edge in plan.edge_upserts:
             self.store.add(
                 self._build_claim_row(
-                    edge, pot_id=expected_pot_id, mutation_id=mutation_id,
+                    edge,
+                    pot_id=expected_pot_id,
+                    mutation_id=mutation_id,
                     fallback_fact=plan.summary,
                 )
             )
@@ -136,7 +138,9 @@ class _Mutation:
             observed_at=_coerce_dt(props.get("observed_at")),
             valid_until=_coerce_dt(props.get("valid_until")),
             mutation_id=mutation_id,
-            source_refs=tuple(source_refs) if isinstance(source_refs, (list, tuple)) else (),
+            source_refs=tuple(source_refs)
+            if isinstance(source_refs, (list, tuple))
+            else (),
             evidence=_evidence_tuple(props.get("evidence")),
             graph_contract_version=_coerce_str(props.get("graph_contract_version")),
             ontology_version=_coerce_str(props.get("ontology_version")),
@@ -591,11 +595,30 @@ class InMemoryGraphBackend:
 
 
 def _edge(row: ClaimRow) -> GraphEdge:
+    properties = {
+        **dict(row.properties),
+        "claim_key": row.claim_key,
+        "subgraph": row.subgraph,
+        "truth": row.truth,
+        "confidence": row.confidence,
+        "description": row.description,
+        "environment": row.environment,
+        "fact": row.fact,
+        "source_system": row.source_system,
+        "source_ref": row.source_ref,
+        "source_refs": list(row.source_refs),
+        "valid_at": _dt_iso(row.valid_at),
+        "valid_until": _dt_iso(row.valid_until),
+        "observed_at": _dt_iso(row.observed_at),
+        "mutation_id": row.mutation_id,
+    }
     return GraphEdge(
         predicate=row.predicate,
         from_key=row.subject_key,
         to_key=row.object_key,
-        properties=dict(row.properties),
+        properties={
+            key: value for key, value in properties.items() if value is not None
+        },
     )
 
 

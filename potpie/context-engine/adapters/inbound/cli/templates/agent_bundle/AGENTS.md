@@ -22,15 +22,19 @@ potpie graph catalog --task "<task>"
 Prefer the graph CLI when shell is available:
 
 ```bash
-potpie --json graph status
-potpie --json graph catalog --task "<task>"
-potpie --json graph describe <subgraph> --view <view> --examples
-potpie --json graph read --subgraph <subgraph> --view <view> [--query "..."] [--scope key:value] [--limit N]
-potpie --json graph search-entities "text" [--type Service] [--predicate DEPENDS_ON] [--environment prod] [--limit N]
+potpie graph status
+potpie graph catalog --task "<task>" --profile read
+potpie graph describe <subgraph> --view <view> --examples
+potpie graph read --subgraph <subgraph> --view <view> [--query "..."] [--scope key:value] [--limit N]
+potpie graph search-entities "text" [--type Service] [--predicate DEPENDS_ON] [--environment prod] [--limit N]
 potpie --json graph propose --file mutation.json
-potpie --json graph commit <plan_id>
+potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>
 ```
+
+Use text output for routine orientation and context reads. Add `--json` when a
+workflow needs exact machine parsing, mutation plans, commits, history
+verification, or full evidence/debug payloads.
 
 When only MCP is configured, use the compatibility tools:
 
@@ -108,7 +112,7 @@ Create and review a plan before committing:
 
 ```bash
 potpie --json graph propose --file mutation.json
-potpie --json graph commit <plan_id>
+potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>
 ```
 
@@ -165,16 +169,17 @@ For explicit repository ingestion, use a todo-driven workflow:
    Subagents return candidate facts, evidence, confidence, and uncertainty; they
    do not write graph mutations.
 4. Build an evidence matrix, resolve identities, then write through
-   `graph propose` / `graph commit` / `graph history`.
-5. Read back the affected views and run quality checks such as duplicate,
-   low-confidence, and conflicting-claim reports.
+   `graph propose` / `graph commit --verify` / `graph history`.
+5. Treat `graph commit --verify` as the post-write gate. If it warns or fails,
+   drill down with affected reads and quality reports such as duplicate,
+   low-confidence, and conflicting-claim checks.
 
 For GitHub, Linear, Jira, and other hosted integrations, pull PRs, issues,
 tickets, comments, labels/status, and linked docs with the agent's integration
 tools/connectors. Do not use pot-level connector ingestion commands such as
 `potpie pot linear-team ingest`, `potpie pot linear-team diff-sync`, or
 Jira/GitHub queue commands as the ingestion path; write the graph updates
-yourself with `graph propose` / `graph commit` or `graph inbox`.
+yourself with `graph propose` / `graph commit --verify` or `graph inbox`.
 
 ## Responding To Nudges
 
@@ -182,9 +187,9 @@ A hook may inject context or instructions from `potpie graph nudge`.
 
 - `inject_context` - use the injected facts for the current task.
 - `instruction` - a prompt to decide whether something durable was learned. If it
-  was, resolve identity, propose a graph plan, commit it when policy allows, then
-  verify with history. If only MCP is configured, use `context_record`. If nothing
-  durable was learned, do nothing.
+  was, resolve identity, propose a graph plan, commit it with `--verify` when
+  policy allows, then inspect history. If only MCP is configured, use
+  `context_record`. If nothing durable was learned, do nothing.
 
 ## Skills
 

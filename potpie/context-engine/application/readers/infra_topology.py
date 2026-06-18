@@ -134,6 +134,7 @@ class InfraTopologyReader:
                     predicate_in=_INFRA_PREDICATES,
                     include_invalidated=req.include_invalidated,
                     as_of=req.as_of,
+                    source_ref_in=req.source_refs,
                     limit=max(req.max_items * 4, 16),
                 )
             )
@@ -176,6 +177,7 @@ class InfraTopologyReader:
                             subject_key_in=current,
                             include_invalidated=req.include_invalidated,
                             as_of=req.as_of,
+                            source_ref_in=req.source_refs,
                             limit=limit_per_hop,
                         )
                     )
@@ -189,6 +191,7 @@ class InfraTopologyReader:
                             object_key_in=current,
                             include_invalidated=req.include_invalidated,
                             as_of=req.as_of,
+                            source_ref_in=req.source_refs,
                             limit=limit_per_hop,
                         )
                     )

@@ -1,7 +1,7 @@
 ---
 name: "potpie-graph"
 version: "5"
-description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions and responding to nudges. Prefer this over the MCP context_* tools whenever the shell is available."
+description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions and responding to nudges. Prefer this over the MCP context_* tools whenever the shell is available."
 ---
 
 # Potpie Graph Surface (V2)
@@ -12,35 +12,38 @@ it before acting and writes durable learnings after. Potpie validates, lowers,
 commits, audits, and ranks. It does **not** scan a repository or infer rich facts
 from prose for you.
 
-Always pass `--json` for machine-readable output.
+Use text output for routine context reads. Add `--json` when a workflow needs
+exact machine parsing, mutation plans, commits, history verification, or full
+evidence/debug payloads.
 
 ## 1. Check Status And Discover The Contract
 
 ```bash
-potpie --json graph status
-potpie --json graph catalog --task "<task>"
+potpie graph status
+potpie graph catalog --task "<task>" --profile read
 ```
 
-Returns contract + ontology versions, the readable **views**, the **mutation
-operations** you can apply (and which are `review_required` or `deferred`), the
-entity types, and the predicates. Start graph-aware work here instead of reading
-docs. Trust the catalog's current operation partition over any example in a
-skill file. The catalog also reports the active `match_mode` (`vector` vs
-`lexical`) so you know whether semantic recall is on.
+Returns contract + ontology versions, the readable **views**, and active
+`match_mode` (`vector` vs `lexical`). Start graph-aware work here instead of
+reading docs. Use full JSON catalog output when you need mutation operation
+partitions, entity types, predicates, or exact machine parsing. Trust the
+catalog's current operation partition over any example in a skill file.
 
 Describe the subgraph/view before a non-trivial read or write:
 
 ```bash
-potpie --json graph describe debugging --view prior_occurrences --examples
+potpie graph describe debugging --view prior_occurrences --examples
 ```
 
 ## 2. Read - `graph read --subgraph --view`
 
 ```bash
-potpie --json graph read --subgraph debugging --view prior_occurrences --query "refund race timeout" --limit 8
-potpie --json graph read --subgraph decisions --view preferences_for_scope --scope repo:acme/x,path:src/payments/client.py
-potpie --json graph read --subgraph recent_changes --view timeline --time-window 7d --limit 20
-potpie --json graph read --subgraph infra_topology --view service_neighborhood --scope service:payments-api --depth 2 --direction out --environment prod
+potpie graph read --subgraph debugging --view prior_occurrences --query "refund race timeout" --limit 8
+potpie graph read --subgraph decisions --view preferences_for_scope --scope repo:acme/x,path:src/payments/client.py
+potpie graph read --subgraph recent_changes --view timeline --time-window 7d --limit 20 --format table
+potpie graph read --subgraph recent_changes --view timeline --source-ref <github-pr-or-issue-ref> --format table
+potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:payments-api --depth 2 --direction out --environment prod
+potpie graph neighborhood --entity service:payments-api --predicate USES --detail summary --limit 20
 ```
 
 Views and what they answer:
@@ -56,11 +59,11 @@ Views and what they answer:
 | `code_topology.ownership_by_path` | `--scope` | who owns a scope |
 | `knowledge.document_context` | `--scope` | reference docs |
 
-Reads return entities **with their immediate relations inline**, so a bug comes back
-with its `RESOLVED_BY` fix, and a service with its `DEPENDS_ON` edges — no second
-call. Timeline reads default to deduped event rows sorted by occurrence time; use
-`--format raw` when you need the underlying relation payloads. Inspect `coverage`,
-`freshness`, and `quality` before relying on results.
+Text reads return compact summaries for fast orientation. Timeline reads should
+use `--format table` or `--format jsonl` for bounded event rows. Use
+`--json --detail full --relations full --format raw` only when you need the
+underlying relation payloads for debugging or exact machine processing. Inspect
+`coverage`, `freshness`, and `quality` before relying on results.
 
 ### Query expansion is your job
 
@@ -74,13 +77,14 @@ something the daemon does.
 **Before** linking or asserting against an existing entity, find its canonical key:
 
 ```bash
-potpie --json graph search-entities "payments api" --type Service --limit 10
+potpie graph search-entities "payments api" --type Service --limit 10
+potpie graph search-entities "github issue 881" --source-ref <github-pr-or-issue-ref> --limit 10
 ```
 
 Reuse the returned `key`. Inventing a near-duplicate key (`service:payments` vs
 `service:local:payments-api`) fragments the graph and breaks future reads.
 
-## 4. Write - `graph propose` then `graph commit`
+## 4. Write - `graph propose` then verified `graph commit`
 
 Writes are **semantic** operations (never raw graph CRUD). First create a
 server-held plan with `propose`; then commit exactly that `plan_id`.
@@ -88,7 +92,7 @@ server-held plan with `propose`; then commit exactly that `plan_id`.
 ```bash
 potpie graph mutation-template --kind repo-baseline   # schema-only skeleton to fill
 potpie --json graph propose --file mutation.json
-potpie --json graph commit mutation-plan:01JY8T5C
+potpie --json graph commit mutation-plan:01JY8T5C --verify
 potpie --json graph history --plan mutation-plan:01JY8T5C
 ```
 
@@ -176,9 +180,9 @@ potpie --json graph quality projection-drift --limit 20
 ```
 
 If a finding changes canonical meaning, repair it through `graph propose` and
-`graph commit`. If the evidence is uncertain, create a `graph inbox add` item
-instead. Reserve `graph repair` for operator projection maintenance such as
-index or summary rebuilds.
+`graph commit --verify`. If the evidence is uncertain, create a
+`graph inbox add` item instead. Reserve `graph repair` for operator projection
+maintenance such as index or summary rebuilds.
 
 ### Truth classes
 
@@ -197,7 +201,7 @@ worth recording, resolves identity, and writes a semantic mutation.
 For GitHub, Linear, Jira, and similar hosted integrations, use the agent's
 integration tools/connectors to pull and hydrate source records first. Do not use
 pot-level connector ingestion commands as the graph update path; after reading
-the integration data, write durable facts with `graph propose` / `graph commit`
+the integration data, write durable facts with `graph propose` / `graph commit --verify`
 or capture uncertainty with `graph inbox`.
 
 ### Retrieval-grade descriptions (the one rule that matters most)
@@ -222,7 +226,7 @@ hook never reasons — you do.
   the bug+fix if non-obvious", or "capture durable learnings") → a *prompt to
   decide*, not an auto-write. Decide the truth class, resolve identity with
   `graph search-entities`, write a retrieval-grade `description`, then
-  `graph propose` and `graph commit`. If the learning is useful but uncertain,
+  `graph propose` and `graph commit --verify`. If the learning is useful but uncertain,
   create a `graph inbox add` item instead.
   If nothing durable was learned, do nothing.
 

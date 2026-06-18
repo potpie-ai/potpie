@@ -89,8 +89,7 @@ class EntityTypeContract:
             "patchable_properties": list(self.patchable_properties),
             "lifecycle_states": list(self.lifecycle_states),
             "lifecycle_transitions": {
-                key: list(values)
-                for key, values in self.lifecycle_transitions.items()
+                key: list(values) for key, values in self.lifecycle_transitions.items()
             },
         }
 
@@ -540,10 +539,11 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
             "Use before writing or reviewing code so local project preferences are visible.",
         ),
         "result_shape": "entity_relations",
-        "required_any_scope": ("repo", "scope", "path", "query", "language"),
+        "required_any_scope": ("repo", "scope", "service", "path", "query", "language"),
         "optional_scope": (
             "repo",
             "scope",
+            "service",
             "path",
             "file_path",
             "language",
@@ -553,6 +553,7 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
         "supported_filters": (
             "repo",
             "scope",
+            "service",
             "path",
             "file_path",
             "language",
@@ -627,13 +628,20 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
         ),
         "result_shape": "entity_relations",
         "required_any_scope": ("service", "anchor_entity_key"),
-        "optional_scope": ("service", "depth", "direction", "environment"),
+        "optional_scope": (
+            "service",
+            "depth",
+            "direction",
+            "environment",
+            "include_unqualified_environment",
+        ),
         "supported_filters": (
             "service",
             "anchor_entity_key",
             "depth",
             "direction",
             "environment",
+            "include_unqualified_environment",
         ),
         "keywords": (
             "service",
@@ -656,7 +664,13 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
             "Use to learn what a repo/service does or to locate feature implementation anchors.",
         ),
         "result_shape": "entity_relations",
-        "required_any_scope": ("scope", "service", "repo", "anchor_entity_key", "query"),
+        "required_any_scope": (
+            "scope",
+            "service",
+            "repo",
+            "anchor_entity_key",
+            "query",
+        ),
         "optional_scope": ("scope", "service", "query"),
         "supported_filters": (
             "scope",
@@ -892,6 +906,12 @@ def _build_contract() -> WorkbenchOntologyContract:
 
 def _view_contract(spec: GraphViewSpec) -> ViewContract:
     override = _VIEW_OVERRIDES.get(spec.name, {})
+    optional_scope = tuple(override.get("optional_scope") or spec.inputs)
+    supported_filters = tuple(override.get("supported_filters") or spec.inputs)
+    if spec.backed and "source_ref" not in supported_filters:
+        supported_filters = (*supported_filters, "source_ref")
+    if spec.backed and "source_ref" not in optional_scope:
+        optional_scope = (*optional_scope, "source_ref")
     return ViewContract(
         name=spec.name,
         subgraph=spec.subgraph,
@@ -902,10 +922,10 @@ def _view_contract(spec: GraphViewSpec) -> ViewContract:
         backed=spec.backed,
         required_scope=tuple(override.get("required_scope") or ()),
         required_any_scope=tuple(override.get("required_any_scope") or ()),
-        optional_scope=tuple(override.get("optional_scope") or spec.inputs),
+        optional_scope=optional_scope,
         result_shape=str(override.get("result_shape") or "flat_claims"),
         ranking_inputs=tuple(spec.ranking_inputs),
-        supported_filters=tuple(override.get("supported_filters") or spec.inputs),
+        supported_filters=supported_filters,
         inline_relations=tuple(spec.inline_relations),
         traversal=spec.traversal,
         examples=tuple(override.get("examples") or ()),

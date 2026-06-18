@@ -102,6 +102,21 @@ class LocalPotManagementService:
     def remove_source(self, *, pot_id: str, source_id: str) -> None:
         self.store.remove_source(pot_id=pot_id, source_id=source_id)
 
+    # --- repo-local routing defaults ----------------------------------------
+    def repo_default(self, *, repo: str) -> str | None:
+        return self.store.repo_default(repo=repo)
+
+    def set_repo_default(self, *, repo: str, pot_id: str) -> None:
+        if not any(p.pot_id == pot_id for p in self.list_pots()):
+            raise PotNotFound(f"No pot matching '{pot_id}'.")
+        self.store.set_repo_default(repo=repo, pot_id=pot_id)
+
+    def clear_repo_default(self, *, repo: str) -> bool:
+        return self.store.clear_repo_default(repo=repo)
+
+    def list_repo_defaults(self) -> dict[str, str]:
+        return self.store.list_repo_defaults()
+
     # --- rollup -------------------------------------------------------------
     def aggregate_status(self, *, pot_id: str | None = None) -> PotAggregateStatus:
         active = self.active_pot()

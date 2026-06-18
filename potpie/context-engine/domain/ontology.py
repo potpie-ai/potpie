@@ -186,7 +186,15 @@ class EdgeTypeSpec:
     """Edge carries ``lifecycle_status`` (proposed/in_progress/completed/...)."""
 
     predicate_family: str | None = None
-    """Membership in a predicate family for auto-supersession and conflict detection."""
+    """Recall/maintenance grouping for related predicates.
+
+    Predicate families group facts for readers, quality reporting, and
+    maintenance. Family membership alone does not mean two live objects are
+    mutually exclusive.
+    """
+
+    exclusive_family: str | None = None
+    """Optional conflict/supersession family for mutually exclusive bindings."""
 
     # --- Edge cardinality --------------------------------------------------
     singleton: bool = False
@@ -664,6 +672,7 @@ def _x(
     public: bool = True,
     lifecycle_carrier: bool = False,
     predicate_family: str | None = None,
+    exclusive_family: str | None = None,
     singleton: bool = False,
     source_inferred: Iterable[str] = (),
     target_inferred: Iterable[str] = (),
@@ -677,6 +686,7 @@ def _x(
         category=category,
         lifecycle_carrier=lifecycle_carrier,
         predicate_family=predicate_family,
+        exclusive_family=exclusive_family,
         singleton=singleton,
         source_inferred_labels=tuple(source_inferred),
         target_inferred_labels=tuple(target_inferred),
@@ -789,6 +799,7 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         ],
         category="ownership",
         predicate_family="owner_binding",
+        exclusive_family="owner_binding",
         singleton=True,
     ),
     "MEMBER_OF": _x(
@@ -1072,17 +1083,23 @@ EDGE_ENDPOINT_INFERRED_LABELS: dict[tuple[str, str], tuple[str, ...]] = (
 )
 
 
-# Predicate families — built from spec predicate_family field.
-def _build_predicate_family_edge_names() -> dict[str, frozenset[str]]:
+# Predicate families — built from spec metadata fields.
+def _build_predicate_family_edge_names(
+    attr: str,
+) -> dict[str, frozenset[str]]:
     out: dict[str, set[str]] = {}
     for edge_type, spec in EDGE_TYPES.items():
-        if spec.predicate_family:
-            out.setdefault(spec.predicate_family, set()).add(edge_type)
+        family = getattr(spec, attr)
+        if family:
+            out.setdefault(family, set()).add(edge_type)
     return {fam: frozenset(names) for fam, names in out.items()}
 
 
 PREDICATE_FAMILY_EDGE_NAMES: dict[str, frozenset[str]] = (
-    _build_predicate_family_edge_names()
+    _build_predicate_family_edge_names("predicate_family")
+)
+EXCLUSIVE_PREDICATE_FAMILY_EDGE_NAMES: dict[str, frozenset[str]] = (
+    _build_predicate_family_edge_names("exclusive_family")
 )
 
 
@@ -1127,6 +1144,15 @@ def predicate_family_for_edge_name(name: str) -> str | None:
     return None
 
 
+def exclusive_predicate_family_for_edge_name(name: str) -> str | None:
+    """Return mutually-exclusive family id for a predicate, if any."""
+    n = normalize_edge_name(name)
+    for fam, members in EXCLUSIVE_PREDICATE_FAMILY_EDGE_NAMES.items():
+        if n in members:
+            return fam
+    return None
+
+
 def predicate_family_for_episodic_supersede(
     edge_name: str,
     target_labels: Iterable[str] | None = None,
@@ -1138,7 +1164,7 @@ def predicate_family_for_episodic_supersede(
     that all canonical predicates have known endpoint shapes.
     """
     del target_labels
-    return predicate_family_for_edge_name(edge_name)
+    return exclusive_predicate_family_for_edge_name(edge_name)
 
 
 def object_counterparty_uuid_for_edge(
@@ -1163,7 +1189,7 @@ def object_counterparty_uuid_for_edge(
         if predicate_family is not None
         else predicate_family_for_edge_name(edge_name)
     )
-    if fam is None or fam not in PREDICATE_FAMILY_EDGE_NAMES:
+    if fam is None or fam not in EXCLUSIVE_PREDICATE_FAMILY_EDGE_NAMES:
         return None
     return target_uuid
 
@@ -1189,7 +1215,7 @@ def temporal_subject_key_for_edge(
         if predicate_family is not None
         else predicate_family_for_edge_name(edge_name)
     )
-    if fam is None or fam not in PREDICATE_FAMILY_EDGE_NAMES:
+    if fam is None or fam not in EXCLUSIVE_PREDICATE_FAMILY_EDGE_NAMES:
         return None
     return source_uuid
 

@@ -41,7 +41,7 @@ _EDGES_CYPHER = """
 MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
 WHERE ($include_invalid OR r.invalid_at IS NULL)
   AND ($preds IS NULL OR r.name IN $preds)
-RETURN a.entity_key AS source, b.entity_key AS target, r.name AS predicate
+RETURN a.entity_key AS source, b.entity_key AS target, r.name AS predicate, properties(r) AS props
 LIMIT $limit
 """
 
@@ -50,7 +50,7 @@ _INCIDENT_CYPHER = """
 MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
 WHERE (a.entity_key IN $frontier OR b.entity_key IN $frontier)
   AND ($include_invalid OR r.invalid_at IS NULL)
-RETURN a.entity_key AS source, b.entity_key AS target, r.name AS predicate
+RETURN a.entity_key AS source, b.entity_key AS target, r.name AS predicate, properties(r) AS props
 """
 
 _HYDRATE_CYPHER = """
@@ -64,8 +64,10 @@ def _is_embedding(key: str, value: Any) -> bool:
     """Heuristic: drop large float vectors / embedding props from explorer payloads."""
     if "embedding" in key.lower() or "vector" in key.lower():
         return True
-    if isinstance(value, (list, tuple)) and len(value) > 32 and all(
-        isinstance(x, (int, float)) for x in value
+    if (
+        isinstance(value, (list, tuple))
+        and len(value) > 32
+        and all(isinstance(x, (int, float)) for x in value)
     ):
         return True
     return False
@@ -107,7 +109,9 @@ class FalkorDBInspection:
         return self._graph
 
     def _query(self, cypher: str, params: Mapping[str, Any]) -> list[dict[str, Any]]:
-        return _records_from_result(self._get_graph().query(cypher, params=dict(params)))
+        return _records_from_result(
+            self._get_graph().query(cypher, params=dict(params))
+        )
 
     def _hydrate_nodes(self, pot_id: str, keys: list[str]) -> tuple[GraphNode, ...]:
         if not keys:
@@ -133,7 +137,9 @@ class FalkorDBInspection:
         limit: int | None = None,
     ) -> GraphSlice:
         depth = max(1, min(int(depth), _MAX_DEPTH))
-        max_edges = min(max(0, int(limit)), _MAX_EDGES) if limit is not None else _MAX_EDGES
+        max_edges = (
+            min(max(0, int(limit)), _MAX_EDGES) if limit is not None else _MAX_EDGES
+        )
         predicate_set = {p.upper() for p in predicates if p}
         walk_out = direction in ("out", "both")
         walk_in = direction in ("in", "both")
@@ -158,7 +164,10 @@ class FalkorDBInspection:
                 if not (follows_out or follows_in):
                     continue
                 edges[(src, pred, tgt)] = GraphEdge(
-                    predicate=pred, from_key=src, to_key=tgt
+                    predicate=pred,
+                    from_key=src,
+                    to_key=tgt,
+                    properties=_clean_props(rec.get("props")),
                 )
                 if follows_out and tgt not in visited:
                     new.add(tgt)
@@ -204,6 +213,7 @@ class FalkorDBInspection:
                 predicate=rec["predicate"],
                 from_key=rec["source"],
                 to_key=rec["target"],
+                properties=_clean_props(rec.get("props")),
             )
             for rec in edge_recs
         )

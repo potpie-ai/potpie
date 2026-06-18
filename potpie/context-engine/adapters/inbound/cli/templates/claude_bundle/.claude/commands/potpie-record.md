@@ -7,14 +7,14 @@ Choose the workflow skill first: `potpie-project-preferences`,
 First resolve identity so you link to existing nodes, not duplicates:
 
 ```bash
-potpie --json graph search-entities "<entity name>" --type <Service|BugPattern|...>
+potpie graph search-entities "<entity name>" --type <Service|BugPattern|...>
 ```
 
 Then write through the V2 graph plan workflow:
 
 ```bash
 potpie --json graph propose --file mutation.json
-potpie --json graph commit <plan_id>
+potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>
 ```
 

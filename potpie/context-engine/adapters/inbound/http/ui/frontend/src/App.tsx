@@ -35,6 +35,10 @@ const TIMELINE_TYPES = typesInCategory("timeline");
 const SIDEBAR_W_KEY = "potpie-ui:sidebar-w";
 const SIDEBAR_W_DEFAULT = 320;
 const clampSidebarW = (w: number) => Math.min(640, Math.max(240, w));
+const requestedPot = () =>
+  typeof location === "undefined"
+    ? null
+    : new URLSearchParams(location.search).get("pot");
 
 function endId(v: string | GraphNode): string {
   return typeof v === "string" ? v : v.id;
@@ -148,7 +152,12 @@ export default function App() {
       try {
         const p = await api.pots();
         setPots(p.pots);
-        const active = p.active?.id || p.pots.find((x) => x.active)?.id || null;
+        const requested = requestedPot();
+        const requestedRef = requested
+          ? p.pots.find((x) => x.id === requested || x.name === requested)
+          : null;
+        const active =
+          requestedRef?.id || p.active?.id || p.pots.find((x) => x.active)?.id || null;
         setActiveId(active);
         if (active) await loadPot(active);
       } catch (e: any) {
@@ -280,7 +289,7 @@ export default function App() {
           >
             {pots.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name}
+                {p.name} - {p.counts?.claims ?? 0} claims
               </option>
             ))}
           </select>

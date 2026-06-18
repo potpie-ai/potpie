@@ -64,7 +64,9 @@ def _service() -> tuple[GraphWorkbenchService, InMemoryGraphBackend, _MemoryPlan
     return GraphWorkbenchService(backend=backend, plan_store=store), backend, store
 
 
-def _link_payload(subject: str = "service:payments-api", object_: str = "service:ledger-api") -> dict:
+def _link_payload(
+    subject: str = "service:payments-api", object_: str = "service:ledger-api"
+) -> dict:
     return {
         "operations": [
             {
@@ -76,6 +78,23 @@ def _link_payload(subject: str = "service:payments-api", object_: str = "service
                 "truth": "source_observation",
                 "evidence": [{"source_ref": "repo:manifest"}],
                 "description": f"{subject} depends on {object_}",
+            }
+        ]
+    }
+
+
+def _owner_payload(team: str) -> dict:
+    return {
+        "operations": [
+            {
+                "op": "link_entities",
+                "subgraph": "owners",
+                "subject": {"key": "service:payments-api", "type": "Service"},
+                "predicate": "OWNED_BY",
+                "object": {"key": team, "type": "Team"},
+                "truth": "source_observation",
+                "evidence": [{"source_ref": "repo:owners"}],
+                "description": f"payments-api is owned by {team}",
             }
         ]
     }
@@ -184,6 +203,41 @@ def test_commit_applies_exact_stored_plan_by_id() -> None:
     rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
     assert len(rows) == 1
     assert rows[0].predicate == "DEPENDS_ON"
+
+
+def test_commit_verify_reads_back_claim_and_quality_summary() -> None:
+    workbench, _backend, _store = _service()
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+
+    result = workbench.commit(proposal.plan_id, pot_id=POT, verify=True)
+
+    assert result.ok is True
+    assert result.verification is not None
+    assert result.verification.ok is True
+    assert result.verification.status == "ok"
+    assert result.verification.readback_count == 1
+    assert result.verification.readback_claim_keys == proposal.claim_keys
+    assert result.verification.missing_claim_keys == ()
+    assert result.verification.quality_status == "ok"
+    assert result.to_dict()["verification"]["readback_count"] == 1
+
+
+def test_commit_verify_flags_quality_regression() -> None:
+    workbench, _backend, _store = _service()
+    first = workbench.propose(_owner_payload("team:platform"), pot_id=POT)
+    committed_first = workbench.commit(first.plan_id, pot_id=POT, verify=True)
+    assert committed_first.verification is not None
+    assert committed_first.verification.ok is True
+
+    second = workbench.propose(_owner_payload("team:product"), pot_id=POT)
+    committed_second = workbench.commit(second.plan_id, pot_id=POT, verify=True)
+
+    assert committed_second.ok is True
+    assert committed_second.verification is not None
+    assert committed_second.verification.ok is False
+    assert committed_second.verification.status == "degraded"
+    assert "conflicting_claims" in committed_second.verification.quality_regressions
+    assert committed_second.recommended_next_action
 
 
 def test_commit_rejects_stale_plan_after_graph_version_changes() -> None:
@@ -313,7 +367,9 @@ def test_supersede_claim_requires_approval_then_replaces_live_claim() -> None:
         ClaimQueryFilter(pot_id=POT, include_invalidated=True)
     )
     assert len(all_rows) == 2
-    assert any(row.object_key == "service:ledger-api" and row.invalid_at for row in all_rows)
+    assert any(
+        row.object_key == "service:ledger-api" and row.invalid_at for row in all_rows
+    )
     history = workbench.history(pot_id=POT, entity_key="service:ledger-api")
     assert any(entry.plan_id == proposal.plan_id for entry in history.entries)
 
@@ -422,9 +478,7 @@ def test_history_by_entity_includes_invalidated_claims() -> None:
     assert before == after
     claim_entries = [entry for entry in history.entries if entry.kind == "claim"]
     assert any(entry.status == "invalidated" for entry in claim_entries)
-    assert any(
-        "service:payments-api" in entry.entity_keys for entry in history.entries
-    )
+    assert any("service:payments-api" in entry.entity_keys for entry in history.entries)
 
 
 def test_local_json_plan_store_lists_history_records(tmp_path) -> None:

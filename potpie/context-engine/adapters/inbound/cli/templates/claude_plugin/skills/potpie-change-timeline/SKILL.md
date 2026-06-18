@@ -15,9 +15,10 @@ Read the project timeline first. A pot is the project boundary and can contain
 multiple repos, so do not narrow to the current repo unless the user asks.
 
 ```bash
-potpie --json graph read \
+potpie graph read \
   --subgraph recent_changes \
   --view timeline \
+  --format table \
   --time-window 7d \
   --limit 20
 ```
@@ -25,9 +26,10 @@ potpie --json graph read \
 Use the user's exact dates when provided:
 
 ```bash
-potpie --json graph read \
+potpie graph read \
   --subgraph recent_changes \
   --view timeline \
+  --format table \
   --since 2026-06-01 \
   --until 2026-06-15 \
   --limit 50
@@ -36,9 +38,10 @@ potpie --json graph read \
 Only narrow when the user gives a service, environment, or topic:
 
 ```bash
-potpie --json graph read \
+potpie graph read \
   --subgraph recent_changes \
   --view timeline \
+  --format table \
   --scope service:<service-name> \
   --query "<symptom feature deployment>" \
   --time-window 14d \
@@ -63,7 +66,7 @@ Use the workbench write flow after reading the source:
 potpie --json graph catalog --task "record timeline change"
 potpie --json graph describe recent_changes --view timeline --examples
 potpie --json graph propose --file mutation.json
-potpie --json graph commit <plan_id>
+potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>
 ```
 

@@ -28,6 +28,8 @@ export interface PotRef {
   id: string;
   name: string;
   active?: boolean;
+  source_count?: number;
+  counts?: Record<string, number>;
 }
 
 export interface PotsResponse {

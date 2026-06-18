@@ -10,7 +10,9 @@ named views, resolves identity, proposes semantic mutations, commits accepted
 plans, and verifies results. Potpie validates and stores; the harness decides
 what source material means.
 
-Always pass `--json` for machine-readable workbench commands.
+Use text output for routine context reads. Add `--json` when a workflow needs
+exact machine parsing, mutation plans, commits, history verification, or full
+evidence/debug payloads.
 
 ## Preflight
 
@@ -18,9 +20,9 @@ For non-trivial graph work, discover the live contract before relying on skill
 examples:
 
 ```bash
-potpie --json graph status
-potpie --json graph catalog --task "<task>"
-potpie --json graph describe <subgraph> --view <view> --examples
+potpie graph status
+potpie graph catalog --task "<task>" --profile read
+potpie graph describe <subgraph> --view <view> --examples
 ```
 
 Trust `graph catalog` over skill examples for available views, operations,
@@ -32,15 +34,19 @@ CLI is unavailable, gather evidence but stop before committing graph writes.
 Common reads:
 
 ```bash
-potpie --json graph read --subgraph decisions --view preferences_for_scope --scope repo:<repo>,path:<path> --query "<preferences>" --limit 12
-potpie --json graph read --subgraph debugging --view prior_occurrences --query "<symptom>" --limit 12
-potpie --json graph read --subgraph recent_changes --view timeline --time-window 7d --limit 20
-potpie --json graph read --subgraph infra_topology --view service_neighborhood --scope service:<service> --depth 2 --direction both
-potpie --json graph read --subgraph features --view feature_context --scope anchor_entity_key:<repo-or-service-key>
+potpie graph read --subgraph decisions --view preferences_for_scope --scope repo:<repo>,path:<path> --query "<preferences>" --limit 12
+potpie graph read --subgraph debugging --view prior_occurrences --query "<symptom>" --limit 12
+potpie graph read --subgraph recent_changes --view timeline --time-window 7d --limit 20 --format table
+potpie graph read --subgraph recent_changes --view timeline --source-ref <github-pr-or-issue-ref> --format table
+potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:<service> --depth 2 --direction both
+potpie graph read --subgraph features --view feature_context --scope anchor_entity_key:<repo-or-service-key>
+potpie graph neighborhood --entity service:<service> --predicate USES --detail summary --limit 20
 ```
 
-Reads return entities with useful immediate relations inline when supported.
-Check coverage, freshness, quality, and source refs before relying on results.
+Text reads return compact summaries for fast orientation. Use
+`--json --detail full --relations full` only when you need full inline relation
+payloads for debugging or exact machine processing. Check coverage, freshness,
+quality, and source refs before relying on results.
 Expand queries with symptoms, aliases, commands, files, services, frameworks,
 dependencies, environments, and source IDs a future searcher would type.
 
@@ -49,16 +55,19 @@ dependencies, environments, and source IDs a future searcher would type.
 Resolve identity before linking to an existing entity:
 
 ```bash
-potpie --json graph search-entities "<name>" --limit 10
-potpie --json graph search-entities "<service>" --type Service --environment prod --limit 10
-potpie --json graph search-entities "<feature or repo>" --subgraph features --limit 10
-potpie --json graph search-entities "<ticket-or-pr-id>" --external-id "<external-id>" --limit 10
+potpie graph search-entities "<name>" --limit 10
+potpie graph search-entities "<service>" --type Service --environment prod --limit 10
+potpie graph search-entities "<feature or repo>" --subgraph features --limit 10
+potpie graph search-entities "<ticket-or-pr-id>" --external-id "<external-id>" --limit 10
+potpie graph search-entities "<ticket-or-pr-id>" --source-ref <github-pr-or-issue-ref> --limit 10
 ```
 
 Reuse returned canonical keys. Use type, subgraph, predicate, scope, truth,
-environment, and external-id filters when known. Near-duplicate keys fragment
-recall; if resolution is uncertain, use `graph inbox add` or a reviewed
-correction flow instead of creating another entity.
+environment, external-id, and source-ref filters when known. Prefer
+`--source-ref` for exact PR, issue, ticket, doc, and deploy handles.
+Near-duplicate keys fragment recall; if resolution is uncertain, use
+`graph inbox add` or a reviewed correction flow instead of creating another
+entity.
 
 ## Write Flow
 
@@ -74,10 +83,10 @@ Inspect the proposal before commit:
 - `conflict`: resolve identity, narrow scope, or use inbox.
 - `review_required`: ask for approval or commit only with the required
   `--approved-by` value when policy allows.
-- `validated` / low-risk: commit and verify.
+- `validated` / low-risk: commit with `--verify`.
 
 ```bash
-potpie --json graph commit <plan_id>
+potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>
 ```
 
@@ -149,7 +158,7 @@ potpie --json graph quality low-confidence --limit 20
 potpie --json graph quality projection-drift --limit 20
 ```
 
-Repair meaning through `graph propose` and `graph commit`; do not hard-delete
+Repair meaning through `graph propose` and `graph commit --verify`; do not hard-delete
 claims unless the live catalog exposes and permits that operation.
 
 ## Nudges

@@ -10,9 +10,12 @@ import typer
 
 from adapters.inbound.cli.commands._common import (
     contract,
+    current_repo_identity_for_cli,
     emit,
     fail,
     get_host,
+    pot_scope_info,
+    repo_pot_candidates,
     resolve_pot_id,
 )
 from adapters.inbound.cli.telemetry.onboarding_events import (
@@ -29,15 +32,17 @@ from adapters.outbound.http.potpie_context_api_client import (
     PotpieContextApiClient,
     PotpieContextApiError,
 )
-from adapters.inbound.cli.repo_location import resolve_repo_location
+from adapters.inbound.cli.repo_location import repo_identity_key, resolve_repo_location
 from domain.errors import CapabilityNotImplemented
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
+default_app = typer.Typer(help="Repo-local default pot routing.")
 source_app = typer.Typer(
     help="Source registry for a pot; registration does not ingest or scan."
 )
 linear_team_app = typer.Typer(help="Linear teams attached to a context pot.")
 jira_project_app = typer.Typer(help="Jira projects reachable from a context pot.")
+pot_app.add_typer(default_app, name="default")
 
 
 def _potpie_api_client() -> PotpieContextApiClient:
@@ -45,9 +50,9 @@ def _potpie_api_client() -> PotpieContextApiClient:
         return PotpieContextApiClient(
             resolve_potpie_api_base_url(),
             auth_headers_provider=lambda: resolve_potpie_auth_config().headers,
-            reauth_provider=lambda: resolve_potpie_auth_config(
-                force_refresh=True
-            ).headers,
+            reauth_provider=lambda: (
+                resolve_potpie_auth_config(force_refresh=True).headers
+            ),
             client_surface="cli",
             client_name="potpie-cli",
         )
@@ -118,6 +123,17 @@ def _fail_api_unreachable(*, label: str, exc: httpx.RequestError) -> None:
     )
 
 
+def _repo_key_from_option(repo: str) -> str:
+    value = (repo or "").strip()
+    if value in ("", ".", "current"):
+        repo_key = current_repo_identity_for_cli()
+    else:
+        repo_key = repo_identity_key(value)
+    if not repo_key:
+        raise ValueError("--repo must resolve to a git remote or path")
+    return repo_key
+
+
 @pot_app.command("create")
 def pot_create(
     name: str,
@@ -137,6 +153,102 @@ def pot_use(ref: str) -> None:
     with contract():
         pot = get_host().pots.use_pot(ref=ref)
         emit({"id": pot.pot_id, "name": pot.name}, human=f"active pot → {pot.name}")
+
+
+@pot_app.command("linked")
+def pot_linked(repo: str = typer.Option("current", "--repo")) -> None:
+    """Show pots linked to a repo source and the local default, if any."""
+    with contract():
+        host = get_host()
+        linked = repo_pot_candidates(host, repo)
+        candidates = list(linked.get("candidates", ()))
+        repo_key = linked.get("repo")
+        lines = [f"repo {repo_key or '(unknown)'}"]
+        default_id = linked.get("default_pot_id")
+        if default_id:
+            default = next(
+                (row for row in candidates if row.get("pot_id") == default_id),
+                None,
+            )
+            default_name = default.get("name") if default else default_id
+            lines.append(f"default: {default_name} ({default_id})")
+        else:
+            lines.append("default: (unset)")
+        if candidates:
+            for row in candidates:
+                counts = row.get("counts") or {}
+                markers = [
+                    label
+                    for label, enabled in (
+                        ("default", row.get("default")),
+                        ("active", row.get("active")),
+                    )
+                    if enabled
+                ]
+                suffix = f"  {', '.join(markers)}" if markers else ""
+                lines.append(
+                    f"  {row.get('name')} ({row.get('pot_id')}) "
+                    f"sources={row.get('source_count', 0)} "
+                    f"claims={counts.get('claims', 0)} entities={counts.get('entities', 0)}"
+                    f"{suffix}"
+                )
+        else:
+            lines.append("  (no linked pots)")
+        emit(linked, human="\n".join(lines))
+
+
+@default_app.command("show")
+def pot_default_show(repo: str = typer.Option("current", "--repo")) -> None:
+    with contract():
+        host = get_host()
+        linked = repo_pot_candidates(host, repo)
+        default_id = linked.get("default_pot_id")
+        payload = {
+            "repo": linked.get("repo"),
+            "default_pot_id": default_id,
+            "candidates": linked.get("candidates", ()),
+        }
+        if not default_id:
+            emit(
+                payload,
+                human=f"repo {linked.get('repo') or '(unknown)'} default: (unset)",
+            )
+            return
+        info = pot_scope_info(host, default_id)
+        emit(
+            {**payload, "default_pot": info},
+            human=f"repo {linked.get('repo')} default: {info['name']} ({default_id})",
+        )
+
+
+@default_app.command("set")
+def pot_default_set(ref: str, repo: str = typer.Option("current", "--repo")) -> None:
+    with contract():
+        host = get_host()
+        pot_id = resolve_pot_id(host, ref, infer_from_repo=False)
+        repo_key = _repo_key_from_option(repo)
+        host.pots.set_repo_default(repo=repo_key, pot_id=pot_id)
+        info = pot_scope_info(host, pot_id)
+        emit(
+            {"repo": repo_key, "default_pot": info},
+            human=f"repo {repo_key} default → {info['name']} ({pot_id})",
+        )
+
+
+@default_app.command("clear")
+def pot_default_clear(repo: str = typer.Option("current", "--repo")) -> None:
+    with contract():
+        host = get_host()
+        repo_key = _repo_key_from_option(repo)
+        cleared = host.pots.clear_repo_default(repo=repo_key)
+        emit(
+            {"repo": repo_key, "cleared": cleared},
+            human=(
+                f"repo {repo_key} default cleared"
+                if cleared
+                else f"repo {repo_key} default was not set"
+            ),
+        )
 
 
 @pot_app.command("rename")
@@ -313,6 +425,11 @@ def source_add(
     ),
     name: str = typer.Option(None, "--name", help="Optional display/source name."),
     pot: str = typer.Option(None, "--pot", help="Pot id/name (default: resolved pot)."),
+    make_default: bool = typer.Option(
+        True,
+        "--default/--no-default",
+        help="For repo sources, set this pot as the local default for this repo.",
+    ),
 ) -> None:
     """Register source metadata only; no ingestion or repository scan is started."""
     with contract():
@@ -335,6 +452,10 @@ def source_add(
             src = host.pots.add_source(
                 pot_id=pot_id, kind=kind, location=resolved_location, name=name
             )
+            repo_default_set = False
+            if kind.strip().lower() == "repo" and make_default:
+                host.pots.set_repo_default(repo=resolved_location, pot_id=pot_id)
+                repo_default_set = True
         except Exception as exc:  # noqa: BLE001
             capture_project_binding_event(
                 "cli_onboarding_repo_source_add_failed",
@@ -362,12 +483,14 @@ def source_add(
                 "name": src.name,
                 "location": resolved_location,
                 "pot_id": pot_id,
+                "repo_default_set": repo_default_set,
                 "registration_only": True,
             },
             human=(
                 f"registered source {src.kind}:{src.name} ({src.source_id}) "
-                f"at {resolved_location}\n"
-                "no ingestion or scan started"
+                f"at {resolved_location} in pot {pot_id}\n"
+                + (f"set repo default -> {pot_id}\n" if repo_default_set else "")
+                + "no ingestion or scan started"
             ),
         )
 
@@ -378,9 +501,12 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         sources = host.pots.list_sources(pot_id=pot_id)
+        pot_info = pot_scope_info(host, pot_id)
         emit(
             {
                 "pot_id": pot_id,
+                "pot": pot_info,
+                "source_count": len(sources),
                 "sources": [
                     {
                         "id": s.source_id,
@@ -391,8 +517,21 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
                     for s in sources
                 ],
             },
-            human="\n".join(f"  {s.kind}: {s.name} ({s.source_id})" for s in sources)
-            or "(no sources)",
+            human="\n".join(
+                [
+                    (
+                        f"pot={pot_info['name']} ({pot_id}) "
+                        f"sources={len(sources)} claims={(pot_info.get('counts') or {}).get('claims', 0)}"
+                    ),
+                    *(f"  {s.kind}: {s.name} ({s.source_id})" for s in sources),
+                ]
+            )
+            if sources
+            else (
+                f"pot={pot_info['name']} ({pot_id}) "
+                f"sources=0 claims={(pot_info.get('counts') or {}).get('claims', 0)}\n"
+                "(no sources)"
+            ),
         )
 
 

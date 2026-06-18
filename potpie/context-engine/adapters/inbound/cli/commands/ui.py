@@ -9,15 +9,27 @@ up, then points you (and your browser) at the right URL.
 from __future__ import annotations
 
 import webbrowser
+from urllib.parse import urlencode
 
 import typer
 
-from adapters.inbound.cli.commands._common import contract, emit, fail, get_host
+from adapters.inbound.cli.commands._common import (
+    contract,
+    emit,
+    fail,
+    get_host,
+    resolve_pot_id,
+)
 
 
 def ui_command(
     open_browser: bool = typer.Option(
         True, "--open/--no-open", help="Open the explorer in your browser."
+    ),
+    pot: str = typer.Option(
+        None,
+        "--pot",
+        help="Open the explorer against a specific pot id/name.",
     ),
 ) -> None:
     """Launch the local graph-explorer UI (served by the daemon)."""
@@ -37,7 +49,9 @@ def ui_command(
             )
             return
         base = str(disc["base_url"]).rstrip("/")
-        url = f"{base}/ui"
+        pot_id = resolve_pot_id(host, pot) if pot else None
+        query = f"?{urlencode({'pot': pot_id})}" if pot_id else ""
+        url = f"{base}/ui{query}"
         warning = _probe_ui(base)
         if open_browser and warning is None:
             try:
@@ -49,7 +63,7 @@ def ui_command(
             lines.append(f"  ! {warning}")
         elif open_browser:
             lines.append("  (opening in your browser…)")
-        emit({"url": url, "warning": warning}, human="\n".join(lines))
+        emit({"url": url, "pot_id": pot_id, "warning": warning}, human="\n".join(lines))
 
 
 def _probe_ui(base: str) -> str | None:
@@ -61,9 +75,7 @@ def _probe_ui(base: str) -> str | None:
     except Exception:  # noqa: BLE001 — daemon may still be booting
         return None
     if resp.status_code == 404:
-        return (
-            "this daemon predates the UI — run 'potpie daemon restart' to enable it."
-        )
+        return "this daemon predates the UI — run 'potpie daemon restart' to enable it."
     return None
 
 

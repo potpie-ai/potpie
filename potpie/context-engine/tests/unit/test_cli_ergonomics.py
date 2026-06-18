@@ -13,10 +13,11 @@ import json
 import re
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from adapters.inbound.cli import repo_location
-from adapters.inbound.cli.commands import _common, graph, pots
+from adapters.inbound.cli.commands import _common, graph, pots, ui
 from application.services.semantic_mutation_validator import validate_semantic_request
 from domain.semantic_mutations import SemanticMutationRequest
 
@@ -51,6 +52,7 @@ class _Pots:
         self._sources = sources_by_pot
         self._active = active
         self.added = []
+        self.repo_defaults = {}
 
     def list_pots(self):
         return self._pots
@@ -65,10 +67,31 @@ class _Pots:
         self.added.append({"pot_id": pot_id, "kind": kind, "location": location})
         return _Source(kind, name or location, location)
 
+    def repo_default(self, *, repo):
+        return self.repo_defaults.get(repo)
+
+    def set_repo_default(self, *, repo, pot_id):
+        self.repo_defaults[repo] = pot_id
+
+    def clear_repo_default(self, *, repo):
+        return self.repo_defaults.pop(repo, None) is not None
+
+    def list_repo_defaults(self):
+        return dict(self.repo_defaults)
+
 
 class _Host:
-    def __init__(self, pots_service) -> None:
+    def __init__(self, pots_service, daemon=None) -> None:
         self.pots = pots_service
+        self.daemon = daemon
+
+
+class _Daemon:
+    def ensure(self):
+        return None
+
+    def discovery(self):
+        return {"base_url": "http://127.0.0.1:8765"}
 
 
 # --- source add repo . / current --------------------------------------------
@@ -78,7 +101,9 @@ def test_source_add_repo_dot_resolves_before_storing(monkeypatch) -> None:
     monkeypatch.setattr(
         repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
     )
-    pots_service = _Pots([_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True))
+    pots_service = _Pots(
+        [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
+    )
     _common.set_host(_Host(pots_service))
     _common.set_json(True)
 
@@ -87,27 +112,53 @@ def test_source_add_repo_dot_resolves_before_storing(monkeypatch) -> None:
     assert pots_service.added[0]["location"] == "github.com/acme/shop"
     payload = json.loads(result.output)
     assert payload["location"] == "github.com/acme/shop"
+    assert payload["repo_default_set"] is True
     assert payload["registration_only"] is True
+    assert pots_service.repo_defaults == {"github.com/acme/shop": "p1"}
 
 
 def test_source_add_repo_current_falls_back_to_cwd(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(repo_location, "current_git_remote", lambda cwd: None)
     monkeypatch.chdir(tmp_path)
-    pots_service = _Pots([_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True))
+    pots_service = _Pots(
+        [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
+    )
     _common.set_host(_Host(pots_service))
 
     result = CliRunner().invoke(pots.source_app, ["add", "repo", "current"])
     assert result.exit_code == 0, result.output
     assert pots_service.added[0]["location"] == str(tmp_path.resolve())
+    assert pots_service.repo_defaults == {str(tmp_path.resolve()): "p1"}
 
 
 def test_source_add_non_repo_kind_keeps_location_verbatim() -> None:
-    pots_service = _Pots([_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True))
+    pots_service = _Pots(
+        [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
+    )
     _common.set_host(_Host(pots_service))
 
     result = CliRunner().invoke(pots.source_app, ["add", "linear", "ENG"])
     assert result.exit_code == 0, result.output
     assert pots_service.added[0]["location"] == "ENG"
+    assert pots_service.repo_defaults == {}
+
+
+def test_source_add_repo_no_default_skips_repo_default(monkeypatch) -> None:
+    monkeypatch.setattr(
+        repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    pots_service = _Pots(
+        [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
+    )
+    _common.set_host(_Host(pots_service))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(pots.source_app, ["add", "repo", ".", "--no-default"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["repo_default_set"] is False
+    assert pots_service.repo_defaults == {}
 
 
 def test_source_list_includes_location() -> None:
@@ -172,6 +223,88 @@ def test_resolve_pot_fails_structured_when_repo_matches_multiple_pots(
     assert "--pot" in payload["recommended_next_action"]
 
 
+def test_resolve_pot_uses_repo_default_before_ambiguous_matches(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    match = _Source("repo", "github.com/acme/shop")
+    pots_service = _Pots(
+        [_Pot("p1", "shop"), _Pot("p2", "shop-fork")],
+        {"p1": [match], "p2": [match]},
+        active=None,
+    )
+    pots_service.repo_defaults["github.com/acme/shop"] = "p2"
+    host = _Host(pots_service)
+
+    assert _common.resolve_pot_id(host) == "p2"
+
+
+def test_pot_default_set_and_clear_current_repo(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    pots_service = _Pots([_Pot("p1", "shop")], {}, active=None)
+    _common.set_host(_Host(pots_service))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(pots.pot_app, ["default", "set", "p1"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["repo"] == "github.com/acme/shop"
+    assert payload["default_pot"]["id"] == "p1"
+    assert pots_service.repo_defaults == {"github.com/acme/shop": "p1"}
+
+    result = CliRunner().invoke(pots.pot_app, ["default", "clear"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["cleared"] is True
+    assert pots_service.repo_defaults == {}
+
+
+def test_pot_linked_lists_candidates_and_default(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    match = _Source("repo", "github.com/acme/shop")
+    pots_service = _Pots(
+        [_Pot("p1", "shop"), _Pot("p2", "shop-fork")],
+        {"p1": [match], "p2": [match]},
+        active=None,
+    )
+    pots_service.repo_defaults["github.com/acme/shop"] = "p2"
+    _common.set_host(_Host(pots_service))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(pots.pot_app, ["linked"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["repo"] == "github.com/acme/shop"
+    assert payload["default_pot_id"] == "p2"
+    assert [row["pot_id"] for row in payload["candidates"]] == ["p1", "p2"]
+    assert payload["candidates"][1]["default"] is True
+
+
+def test_ui_pot_option_opens_selected_pot_url(monkeypatch) -> None:
+    monkeypatch.setattr(ui, "_probe_ui", lambda base: None)
+    pots_service = _Pots(
+        [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
+    )
+    _common.set_host(_Host(pots_service, daemon=_Daemon()))
+    _common.set_json(True)
+
+    app = typer.Typer()
+    ui.register(app)
+    result = CliRunner().invoke(app, ["--pot", "p1", "--no-open"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["pot_id"] == "p1"
+    assert payload["url"] == "http://127.0.0.1:8765/ui?pot=p1"
+
+
 def test_resolve_pot_prefers_active_when_among_multiple_matches(monkeypatch) -> None:
     monkeypatch.setattr(
         _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
@@ -228,7 +361,9 @@ def test_mutation_template_validates_against_contract(kind: str) -> None:
     template = _fill_placeholders(graph._MUTATION_TEMPLATES[kind])
     request = SemanticMutationRequest.parse(template, pot_id="pot-test")
     plan = validate_semantic_request(request)
-    assert plan.ok, f"{kind} template fails validation: {[i.message for i in plan.errors]}"
+    assert plan.ok, (
+        f"{kind} template fails validation: {[i.message for i in plan.errors]}"
+    )
     # user_decision claims are medium-risk by contract, so the decision
     # template honestly lands in review_required; everything else auto-applies.
     expected = "review_required" if kind == "decision" else "apply"
@@ -237,7 +372,9 @@ def test_mutation_template_validates_against_contract(kind: str) -> None:
 
 def test_mutation_template_command_emits_json() -> None:
     _common.set_json(True)
-    result = CliRunner().invoke(graph.graph_app, ["mutation-template", "--kind", "repo-baseline"])
+    result = CliRunner().invoke(
+        graph.graph_app, ["mutation-template", "--kind", "repo-baseline"]
+    )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["result"]["kind"] == "repo-baseline"
@@ -247,7 +384,9 @@ def test_mutation_template_command_emits_json() -> None:
 
 def test_mutation_template_unknown_kind_fails_with_next_action() -> None:
     _common.set_json(True)
-    result = CliRunner().invoke(graph.graph_app, ["mutation-template", "--kind", "nope"])
+    result = CliRunner().invoke(
+        graph.graph_app, ["mutation-template", "--kind", "nope"]
+    )
     assert result.exit_code != 0
     payload = json.loads(result.output)
     assert payload["error"]["code"] == "unknown_template_kind"

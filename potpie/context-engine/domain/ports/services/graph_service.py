@@ -121,6 +121,9 @@ class GraphReadRequest:
     depth: int | None = None
     direction: str | None = None
     environment: str | None = None
+    source_refs: tuple[str, ...] = ()
+    detail: str = "compact"
+    relations: str = "summary"
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,8 +152,12 @@ class GraphReadResult:
     unsupported: tuple[Mapping[str, Any], ...] = ()
     warnings: tuple[str, ...] = ()
     as_of: datetime | None = None
+    detail: str = "compact"
+    relations: str = "summary"
 
     def to_dict(self) -> dict[str, Any]:
+        detail = _normalize_read_detail(self.detail)
+        relations = _normalize_read_relations(self.relations)
         return {
             "ok": True,
             "graph_contract_version": self.graph_contract_version,
@@ -162,7 +169,12 @@ class GraphReadResult:
             "read_shape": self.read_shape,
             "inline_relations": list(self.inline_relations),
             "inline_relation_count": self.inline_relation_count,
-            "items": [dict(item) for item in self.items],
+            "detail": detail,
+            "relations_detail": relations,
+            "items": [
+                _read_item_for_detail(item, detail=detail, relations=relations)
+                for item in self.items
+            ],
             "coverage": [dict(report) for report in self.coverage],
             "freshness": dict(self.freshness),
             "quality": dict(self.quality),
@@ -198,11 +210,15 @@ class GraphEntitySearchRequest:
     subgraph: str | None = None
     scope: Mapping[str, Any] = field(default_factory=dict)
     truth: str | None = None
+    source_system: str | None = None
+    source_family: str | None = None
     since: datetime | None = None
     until: datetime | None = None
     environment: str | None = None
     external_id: str | None = None
+    source_refs: tuple[str, ...] = ()
     limit: int = 10
+    supporting_claims: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +289,96 @@ class GraphService(Protocol):
     def mutate(self, request: SemanticMutationRequest) -> SemanticMutationResult:
         """Validate, risk-classify, lower, and dry-run or apply semantic mutations."""
         ...
+
+
+def _normalize_read_detail(value: str | None) -> str:
+    detail = (value or "compact").strip().lower()
+    if detail not in {"compact", "full"}:
+        raise ValueError("detail must be one of: compact, full")
+    return detail
+
+
+def _normalize_read_relations(value: str | None) -> str:
+    relations = (value or "summary").strip().lower()
+    if relations not in {"summary", "full"}:
+        raise ValueError("relations must be one of: summary, full")
+    return relations
+
+
+def _read_item_for_detail(
+    item: Mapping[str, Any], *, detail: str, relations: str
+) -> dict[str, Any]:
+    payload = dict(item)
+    relation_items = _relation_items(payload.get("relations"))
+
+    if detail == "full":
+        out = dict(payload)
+    else:
+        out = {
+            key: payload[key]
+            for key in (
+                "entity_key",
+                "entity_type",
+                "score",
+                "summary",
+                "status",
+                "source_refs",
+                "truth",
+                "coverage_status",
+            )
+            if key in payload
+        }
+        claim = payload.get("claim")
+        if isinstance(claim, Mapping):
+            compact_claim = {
+                key: claim.get(key)
+                for key in (
+                    "claim_key",
+                    "predicate",
+                    "subject_key",
+                    "object_key",
+                )
+                if claim.get(key) is not None
+            }
+            if compact_claim:
+                out["claim"] = compact_claim
+
+    if relations == "full":
+        out["relations"] = relation_items
+        return out
+
+    out.pop("relations", None)
+    out["relation_count"] = len(relation_items)
+    if relation_items:
+        out["relation_predicates"] = sorted(
+            {
+                str(rel.get("predicate") or rel.get("type"))
+                for rel in relation_items
+                if rel.get("predicate") or rel.get("type")
+            }
+        )
+        out["related_keys"] = _first_relation_keys(relation_items)
+    return out
+
+
+def _relation_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, Mapping)]
+
+
+def _first_relation_keys(relations: list[Mapping[str, Any]]) -> list[str]:
+    keys: list[str] = []
+    seen: set[str] = set()
+    for rel in relations:
+        key = rel.get("related_key") or rel.get("to_key") or rel.get("from_key")
+        if not isinstance(key, str) or not key or key in seen:
+            continue
+        keys.append(key)
+        seen.add(key)
+        if len(keys) >= 10:
+            break
+    return keys
 
 
 __all__ = [

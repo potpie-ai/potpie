@@ -17,6 +17,8 @@ potpie login <api-key> --url <host>
 potpie pot list
 potpie pot use <pot-id-or-alias>
 potpie --json pot info
+potpie pot linked --repo current
+potpie pot default set --repo current <pot-id-or-alias>
 potpie --json source list
 potpie source add repo .
 potpie source add repo <owner/repo> --pot <pot>
@@ -25,13 +27,20 @@ potpie source add repo <owner/repo> --pot <pot>
 Pot scope resolves in this order:
 
 1. Explicit `--pot`.
-2. Registered repo source matching the current working tree path or
+2. Repo-local default set by `source add repo` or `pot default set`.
+3. Registered repo source matching the current working tree path or
    `remote.origin.url`.
-3. Active pot from `potpie pot use`.
-4. Clear failure asking for setup, source registration, or explicit `--pot`.
+4. Active pot from `potpie pot use`.
+5. Clear failure asking for setup, source registration, default selection, or
+   explicit `--pot`.
 
 A pot is a project boundary and may span multiple repos. Do not automatically
 narrow timeline reads to the current repo.
+
+`source add repo` sets the repo-local default by default. Use `--no-default`
+only when deliberately registering a repo to a non-default pot. If graph output
+warns that the selected pot is empty but another linked pot has claims, run the
+suggested `pot default set --repo current <pot>` command before continuing.
 
 ## Search
 
@@ -48,10 +57,10 @@ potpie search "query" --with-temporal
 potpie --json graph status
 potpie --json graph catalog --task "<task>"
 potpie --json graph describe <subgraph> --view <view> --examples
-potpie --json graph read --subgraph <subgraph> --view <view> --limit 20
-potpie --json graph search-entities "<name>" --type Service --limit 10
+potpie graph read --subgraph <subgraph> --view <view> --limit 20
+potpie graph search-entities "<name>" --type Service --limit 10
 potpie --json graph propose --file mutation.json
-potpie --json graph commit <plan_id>
+potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>
 potpie --json graph quality summary
 ```

@@ -30,7 +30,7 @@ def test_maybe_prompt_github_login_runs_selected_integrations(
     monkeypatch.setattr(
         interactive_prompts,
         "prompt_multi_checkbox",
-        lambda *_a, **_k: ["linear", "jira"],
+        lambda *_a, **_k: ["linear", "atlassian"],
     )
     monkeypatch.setattr(
         "adapters.inbound.cli.auth.github_commands.github_login_impl",
@@ -44,7 +44,14 @@ def test_maybe_prompt_github_login_runs_selected_integrations(
     monkeypatch.setattr(setup_ux, "_maybe_prompt_first_pot", lambda **_k: None)
     setup_ux.maybe_prompt_github_login(repo=None, default_pot_name="default")
 
-    assert calls == ["linear", "jira"]
+    assert calls == ["linear", "atlassian"]
+
+
+def test_post_setup_integrations_use_single_atlassian_option() -> None:
+    assert setup_ux.POST_SETUP_INTEGRATION_OPTIONS == (
+        ("linear", "Linear"),
+        ("atlassian", "Atlassian"),
+    )
 
 
 def test_maybe_prompt_github_login_runs_github_when_confirmed(
@@ -88,7 +95,7 @@ def test_maybe_prompt_github_login_skips_integration_on_ctrl_c_and_continues(
     monkeypatch.setattr(
         interactive_prompts,
         "prompt_multi_checkbox",
-        lambda *_a, **_k: ["linear", "jira", "confluence"],
+        lambda *_a, **_k: ["linear", "atlassian"],
     )
 
     def _login(provider: str, *, force: bool = False) -> None:
@@ -103,7 +110,7 @@ def test_maybe_prompt_github_login_skips_integration_on_ctrl_c_and_continues(
     monkeypatch.setattr(setup_ux, "_maybe_prompt_first_pot", lambda **_k: None)
     setup_ux.maybe_prompt_github_login(repo=None, default_pot_name="default")
 
-    assert calls == ["jira", "confluence"]
+    assert calls == ["atlassian"]
     assert "Skipped Linear" in capsys.readouterr().out
 
 
@@ -218,11 +225,11 @@ def test_maybe_prompt_github_login_skips_integration_on_click_abort(
     monkeypatch.setattr(
         interactive_prompts,
         "prompt_multi_checkbox",
-        lambda *_a, **_k: ["jira", "confluence"],
+        lambda *_a, **_k: ["linear", "atlassian"],
     )
 
     def _login(provider: str, *, force: bool = False) -> None:
-        if provider == "jira":
+        if provider == "linear":
             raise click.Abort()
         calls.append(provider)
 
@@ -233,8 +240,8 @@ def test_maybe_prompt_github_login_skips_integration_on_click_abort(
     monkeypatch.setattr(setup_ux, "_maybe_prompt_first_pot", lambda **_k: None)
     setup_ux.maybe_prompt_github_login(repo=None, default_pot_name="default")
 
-    assert calls == ["confluence"]
-    assert "Skipped Jira" in capsys.readouterr().out
+    assert calls == ["atlassian"]
+    assert "Skipped Linear" in capsys.readouterr().out
 
 
 def test_try_integration_login_skips_when_atlassian_confirm_aborts(
@@ -257,10 +264,11 @@ def test_try_integration_login_skips_when_atlassian_confirm_aborts(
     )
 
     with contract():
-        setup_ux._try_integration_login("jira")
+        setup_ux._try_integration_login("atlassian")
 
     output = capsys.readouterr().out
-    assert "Skipped Jira" in output
+    assert "Skipped Atlassian" in output
+    assert "potpie jira login" in output
     assert "Unexpected internal error" not in output
 
 

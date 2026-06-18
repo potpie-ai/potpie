@@ -25,6 +25,7 @@ class ReadRequest:
     max_items: int = 12
     freshness_preference: str = "balanced"
     include_invalidated: bool = False
+    source_refs: tuple[str, ...] = ()
     # Traverse-axis controls (Query Surface). Only the neighborhood reader uses
     # these; other readers ignore them.
     depth: int | None = None
@@ -145,7 +146,9 @@ def claim_payload(
         "environment": (
             environment if environment is not None else claim_environment(row)
         ),
-        "source_refs": list(row.source_refs),
+        "source_refs": list(
+            row.source_refs or ((row.source_ref,) if row.source_ref else ())
+        ),
         "source_system": row.source_system,
         "valid_at": row.valid_at.isoformat() if row.valid_at else None,
         "valid_until": row.valid_until.isoformat() if row.valid_until else None,

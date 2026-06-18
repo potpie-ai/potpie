@@ -50,6 +50,7 @@ WHERE id(rel) = id(r)
   AND ($claim_keys IS NULL OR rel.claim_key IN $claim_keys)
   AND ($subgraphs IS NULL OR rel.subgraph IN $subgraphs)
   AND ($mutation_ids IS NULL OR rel.mutation_id IN $mutation_ids)
+  AND ($source_refs IS NULL OR rel.source_ref IN $source_refs OR any(ref IN coalesce(rel.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR rel.source_system IN $sources)
   AND ($include_invalid OR rel.invalid_at IS NULL)
   AND ($as_of IS NULL OR rel.valid_at IS NULL OR rel.valid_at <= $as_of)
@@ -116,6 +117,7 @@ class FalkorDBClaimQueryStore:
             "claim_keys": list(filter_.claim_key_in) or None,
             "subgraphs": list(filter_.subgraph_in) or None,
             "mutation_ids": list(filter_.mutation_id_in) or None,
+            "source_refs": list(filter_.source_ref_in) or None,
             "sources": list(filter_.source_system_in) or None,
             "include_invalid": bool(filter_.include_invalidated),
             "as_of": iso(filter_.as_of),
@@ -161,7 +163,10 @@ class FalkorDBClaimQueryStore:
         except Exception:
             return []
         scored = [
-            (_distance_to_similarity(float(rec.get("score", 1.0))), row_from_record(rec))
+            (
+                _distance_to_similarity(float(rec.get("score", 1.0))),
+                row_from_record(rec),
+            )
             for rec in _records_from_result(result)
         ]
         return stamp_scored_rows(scored)

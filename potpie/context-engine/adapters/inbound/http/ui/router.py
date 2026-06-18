@@ -86,6 +86,27 @@ def _caption(key: str, props: dict[str, Any]) -> str:
     return tail or key
 
 
+def _counts(host: Any, pot_id: str) -> dict[str, int]:
+    try:
+        dp = host.graph.data_plane_status(pot_id)
+    except Exception:  # noqa: BLE001
+        return {}
+    out: dict[str, int] = {}
+    for key, value in dict(getattr(dp, "counts", {}) or {}).items():
+        try:
+            out[str(key)] = int(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _source_count(host: Any, pot_id: str) -> int:
+    try:
+        return len(host.pots.list_sources(pot_id=pot_id))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def _slice_to_graph(sl: Any) -> dict[str, Any]:
     nodes = []
     for n in sl.nodes:
@@ -143,7 +164,13 @@ def build_ui_api_router(host: Any) -> APIRouter:
             active = host.pots.active_pot()
             return {
                 "pots": [
-                    {"id": p.pot_id, "name": p.name, "active": bool(p.active)}
+                    {
+                        "id": p.pot_id,
+                        "name": p.name,
+                        "active": bool(p.active),
+                        "source_count": _source_count(host, p.pot_id),
+                        "counts": _counts(host, p.pot_id),
+                    }
                     for p in pots
                 ],
                 "active": (
@@ -210,6 +237,7 @@ def build_ui_api_router(host: Any) -> APIRouter:
                     environment=environment,
                     external_id=external_id,
                     limit=limit,
+                    supporting_claims=5,
                 )
             )
             return result.to_dict()
@@ -273,6 +301,8 @@ def build_ui_api_router(host: Any) -> APIRouter:
                     depth=depth,
                     direction=direction,
                     limit=limit,
+                    detail="full",
+                    relations="full",
                 )
             )
             return env.to_dict()

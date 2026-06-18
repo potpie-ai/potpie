@@ -17,7 +17,7 @@ work instead of being rediscovered from code.
 3. Read preferences with the graph workbench:
 
 ```bash
-potpie --json graph read \
+potpie graph read \
   --subgraph decisions \
   --view preferences_for_scope \
   --scope repo:<owner-repo>,path:<path-or-dir> \
@@ -29,7 +29,7 @@ If the scope is unclear, first use `potpie --json pot info` and
 `potpie --json source list`, or search entities:
 
 ```bash
-potpie --json graph search-entities "<repo service package>" --type Service --limit 10
+potpie graph search-entities "<repo service package>" --type Service --limit 10
 ```
 
 ## Apply Results
@@ -50,10 +50,10 @@ Use the workbench write flow:
 
 ```bash
 potpie --json graph catalog --task "record coding preference"
-potpie --json graph search-entities "<scope>" --type Service --limit 10
+potpie graph search-entities "<scope>" --type Service --limit 10
 potpie --json graph describe decisions --view preferences_for_scope --examples
 potpie --json graph propose --file mutation.json
-potpie --json graph commit <plan_id>
+potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>
 ```
 

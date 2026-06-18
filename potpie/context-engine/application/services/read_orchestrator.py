@@ -91,6 +91,7 @@ class ReadOrchestrator:
         max_items: int = 12,
         freshness_preference: str = "balanced",
         include_invalidated: bool = False,
+        source_refs: tuple[str, ...] = (),
         depth: int | None = None,
         direction: str | None = None,
         metadata: Mapping[str, Any] | None = None,
@@ -108,6 +109,7 @@ class ReadOrchestrator:
             max_items=max_items,
             freshness_preference=freshness_preference,
             include_invalidated=include_invalidated,
+            source_refs=tuple(source_refs),
             depth=depth,
             direction=direction,
         )

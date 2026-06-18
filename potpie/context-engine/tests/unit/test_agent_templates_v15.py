@@ -48,6 +48,7 @@ STALE_PUBLIC_VIEW_TOKENS = (
 # still rejects ``recent_changes`` if it ever reappears as an include value.
 
 _JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
+_BASH_BLOCK_RE = re.compile(r"```bash\s*\n(.*?)\n```", re.DOTALL)
 _RECORD_ENUM_RE = re.compile(r"^[a-z_]+(?:\|[a-z_]+){3,}$", re.MULTILINE)
 
 
@@ -82,7 +83,9 @@ def test_no_stale_include_names_anywhere() -> None:
     for path in MD_FILES:
         text = path.read_text(encoding="utf-8")
         hits = [tok for tok in STALE_INCLUDE_TOKENS if tok in text]
-        assert not hits, f"{path.relative_to(TEMPLATES)} still advertises stale includes: {hits}"
+        assert not hits, (
+            f"{path.relative_to(TEMPLATES)} still advertises stale includes: {hits}"
+        )
 
 
 def test_every_json_recipe_include_is_supported() -> None:
@@ -148,6 +151,51 @@ def test_templates_do_not_advertise_v1_write_workflow() -> None:
         assert not hits, f"{rel} still advertises V1 write workflow: {hits}"
 
 
+def test_graph_commit_examples_use_verified_gate() -> None:
+    checked = 0
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "potpie --json graph commit" not in line:
+                continue
+            checked += 1
+            assert "--verify" in line, (
+                f"{rel} has graph commit example without --verify: {line}"
+            )
+    assert checked >= 8, "expected verified commit examples across templates"
+
+
+def test_source_ingestion_uses_hard_verification_gate() -> None:
+    text = _read("potpie-source-ingestion/SKILL.md")
+    assert "graph commit --verify" in text
+    assert "reads back committed claims and checks quality" in text
+    assert "Read back the graph and run quality checks" not in text
+
+
+def test_templates_are_text_first_for_agent_reads() -> None:
+    forbidden = (
+        "potpie --json graph read",
+        "potpie --json graph search-entities",
+    )
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        text = path.read_text(encoding="utf-8")
+        hits = [tok for tok in forbidden if tok in text]
+        assert not hits, f"{rel} uses JSON for routine agent reads: {hits}"
+
+
+def test_timeline_read_examples_are_bounded() -> None:
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        text = path.read_text(encoding="utf-8")
+        for block in _BASH_BLOCK_RE.findall(text):
+            if "graph read" not in block or "--view timeline" not in block:
+                continue
+            assert "--format table" in block or "--format jsonl" in block, (
+                f"{rel} timeline read lacks table/jsonl format"
+            )
+
+
 def test_templates_use_canonical_v2_view_syntax() -> None:
     command_view_arg = re.compile(r"--view\s+[a-z_]+\.[a-z_]+")
     for path in MD_FILES:
@@ -180,11 +228,13 @@ def test_recommended_skills_teach_v2_workflow() -> None:
     for token in (
         "graph status",
         "graph catalog --task",
+        "--profile read",
         "graph describe",
         "graph search-entities",
         "graph read --subgraph",
         "graph propose",
         "graph commit",
+        "--verify",
         "graph history",
         "graph inbox",
     ):
@@ -192,7 +242,9 @@ def test_recommended_skills_teach_v2_workflow() -> None:
 
 
 def test_graph_skill_present_in_each_harness_bundle() -> None:
-    graph_skills = [p for p in MD_FILES if p.name == "SKILL.md" and "potpie-graph" in p.as_posix()]
+    graph_skills = [
+        p for p in MD_FILES if p.name == "SKILL.md" and "potpie-graph" in p.as_posix()
+    ]
     bundles = {p.relative_to(TEMPLATES).parts[0] for p in graph_skills}
     assert {"agent_bundle", "claude_bundle", "claude_plugin"} <= bundles
 
@@ -281,8 +333,11 @@ def test_writing_skills_require_descriptions_evidence_and_truth(skill_id: str) -
 
 
 def test_feature_ontology_reaches_skills() -> None:
-    for fragment in ("potpie-repo-baseline/SKILL.md", "potpie-source-ingestion/SKILL.md",
-                     "potpie-graph/SKILL.md"):
+    for fragment in (
+        "potpie-repo-baseline/SKILL.md",
+        "potpie-source-ingestion/SKILL.md",
+        "potpie-graph/SKILL.md",
+    ):
         text = _read(fragment)
         assert "PROVIDES" in text and "Feature" in text, (
             f"{fragment} does not teach the Feature/PROVIDES ontology"
@@ -304,7 +359,9 @@ def test_source_ingestion_requires_deep_harness_workflow() -> None:
         "phase 7: write",
         "phase 8: verify and quality gate",
     ):
-        assert token in lowered, f"source ingestion missing deep workflow token: {token}"
+        assert token in lowered, (
+            f"source ingestion missing deep workflow token: {token}"
+        )
 
 
 def test_source_ingestion_ships_subagent_handoffs_and_github_checklist() -> None:
@@ -322,7 +379,9 @@ def test_source_ingestion_ships_subagent_handoffs_and_github_checklist() -> None
         "open/high-signal issues",
         "ci/workflows",
     ):
-        assert token in lowered, f"source ingestion missing subagent/GitHub token: {token}"
+        assert token in lowered, (
+            f"source ingestion missing subagent/GitHub token: {token}"
+        )
 
 
 def test_source_ingestion_clarifies_local_inspection_not_scanner_writes() -> None:

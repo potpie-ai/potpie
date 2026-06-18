@@ -39,15 +39,15 @@ potpie --json graph describe decisions --view preferences_for_scope --examples
 5. Resolve identity before writing:
 
 ```bash
-potpie --json graph search-entities "<repo service feature>" --limit 10
-potpie --json graph search-entities "<service>" --type Service --environment prod --limit 10
+potpie graph search-entities "<repo service feature>" --limit 10
+potpie graph search-entities "<service>" --type Service --environment prod --limit 10
 ```
 
 6. Write one or more semantic mutation batches:
 
 ```bash
 potpie --json graph propose --file mutation.json
-potpie --json graph commit <plan_id>
+potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>
 ```
 
@@ -135,8 +135,8 @@ Before proposing:
 After committing:
 
 ```bash
-potpie --json graph read --subgraph features --view feature_context --scope anchor_entity_key:<repo-key> --limit 50
-potpie --json graph read --subgraph infra_topology --view service_neighborhood --scope service:<service> --depth 2 --direction both --limit 50
+potpie graph read --subgraph features --view feature_context --scope anchor_entity_key:<repo-key> --limit 50
+potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:<service> --depth 2 --direction both --limit 50
 potpie --json graph quality duplicate-candidates --limit 20
 potpie --json graph quality low-confidence --limit 20
 potpie --json graph quality conflicting-claims --limit 20

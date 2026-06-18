@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from adapters.inbound.http.ui.router import (
     _caption,
     _node_type,
     _parse_scope,
     _slice_to_graph,
+    build_ui_api_router,
 )
 from domain.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
 
@@ -38,7 +42,9 @@ def test_caption_prefers_summary_then_title_name_then_key_tail() -> None:
 
 def test_caption_uses_description_for_old_nodes_without_summary() -> None:
     assert (
-        _caption("service:web", {"description": "Web frontend service for browser clients."})
+        _caption(
+            "service:web", {"description": "Web frontend service for browser clients."}
+        )
         == "Web frontend service for browser clients."
     )
 
@@ -47,7 +53,9 @@ def test_slice_to_graph_shape() -> None:
     sl = GraphSlice(
         pot_id="p",
         nodes=(
-            GraphNode(key="repo:x", labels=("Entity", "Repository"), properties={"name": "x"}),
+            GraphNode(
+                key="repo:x", labels=("Entity", "Repository"), properties={"name": "x"}
+            ),
             GraphNode(key="person:y", labels=("Entity", "Person"), properties={}),
         ),
         edges=(GraphEdge(predicate="PERFORMED", from_key="person:y", to_key="repo:x"),),
@@ -70,3 +78,50 @@ def test_parse_scope() -> None:
     assert _parse_scope("repo:o/r,path:src/a.py") == {"repo": "o/r", "path": "src/a.py"}
     assert _parse_scope(None) == {}
     assert _parse_scope("bad,key:val") == {"key": "val"}
+
+
+def test_pots_api_includes_counts_for_selector() -> None:
+    class Pot:
+        def __init__(self, pot_id, name, active=False):
+            self.pot_id = pot_id
+            self.name = name
+            self.active = active
+
+    class Pots:
+        def __init__(self):
+            self.p1 = Pot("p1", "empty", True)
+            self.p2 = Pot("p2", "review")
+
+        def list_pots(self):
+            return [self.p1, self.p2]
+
+        def active_pot(self):
+            return self.p1
+
+        def list_sources(self, *, pot_id):
+            return [object()] if pot_id == "p2" else []
+
+    class Status:
+        def __init__(self, counts):
+            self.counts = counts
+
+    class Graph:
+        def data_plane_status(self, pot_id):
+            return Status(
+                {"claims": 82, "entities": 46} if pot_id == "p2" else {"claims": 0}
+            )
+
+    class Host:
+        pots = Pots()
+        graph = Graph()
+
+    app = FastAPI()
+    app.include_router(build_ui_api_router(Host()))
+
+    response = TestClient(app).get("/api/pots")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pots"][0]["counts"]["claims"] == 0
+    assert body["pots"][1]["source_count"] == 1
+    assert body["pots"][1]["counts"] == {"claims": 82, "entities": 46}

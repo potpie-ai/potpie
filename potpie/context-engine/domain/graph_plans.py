@@ -162,9 +162,7 @@ class GraphMutationPlanRecord:
             "original_payload": _json_safe(self.original_payload),
             "validation_issues": [_json_safe(i) for i in self.validation_issues],
             "accepted_ops": [_json_safe(op) for op in self.accepted_ops],
-            "review_required_ops": [
-                _json_safe(op) for op in self.review_required_ops
-            ],
+            "review_required_ops": [_json_safe(op) for op in self.review_required_ops],
             "rejected_ops": [_json_safe(op) for op in self.rejected_ops],
             "lowered_batch": mutation_batch_to_dict(self.lowered_batch)
             if self.lowered_batch is not None
@@ -271,9 +269,7 @@ class GraphMutationProposal:
             "diff": self.diff.to_dict(),
             "warnings": list(self.warnings),
             "issues": [_json_safe(i) for i in self.issues],
-            "rejected_operations": [
-                _json_safe(op) for op in self.rejected_operations
-            ],
+            "rejected_operations": [_json_safe(op) for op in self.rejected_operations],
             "review_required_operations": [
                 _json_safe(op) for op in self.review_required_operations
             ],
@@ -285,6 +281,57 @@ class GraphMutationProposal:
             out["recommended_next_action"] = self.recommended_next_action
         if self.detail:
             out["detail"] = self.detail
+        return out
+
+
+@dataclass(frozen=True, slots=True)
+class GraphIngestionVerificationResult:
+    """Post-commit verification for source-backed graph ingestion."""
+
+    ok: bool
+    status: str
+    plan_id: str
+    pot_id: str
+    claim_keys: tuple[str, ...] = ()
+    readback_claim_keys: tuple[str, ...] = ()
+    missing_claim_keys: tuple[str, ...] = ()
+    readback_count: int = 0
+    quality_status: str | None = None
+    quality_counts: Mapping[str, int] = field(default_factory=dict)
+    quality_delta: Mapping[str, int] = field(default_factory=dict)
+    quality_regressions: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
+    checked_reports: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    unsupported: tuple[Mapping[str, Any], ...] = ()
+    detail: str | None = None
+    recommended_next_action: str | None = None
+    subgraph_versions: Mapping[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "ok": self.ok,
+            "status": self.status,
+            "plan_id": self.plan_id,
+            "pot_id": self.pot_id,
+            "claim_keys": list(self.claim_keys),
+            "readback_claim_keys": list(self.readback_claim_keys),
+            "missing_claim_keys": list(self.missing_claim_keys),
+            "readback_count": self.readback_count,
+            "quality_status": self.quality_status,
+            "quality_counts": dict(self.quality_counts),
+            "quality_delta": dict(self.quality_delta),
+            "quality_regressions": {
+                key: dict(value) for key, value in self.quality_regressions.items()
+            },
+            "checked_reports": list(self.checked_reports),
+            "warnings": list(self.warnings),
+            "unsupported": [dict(item) for item in self.unsupported],
+            "subgraph_versions": dict(self.subgraph_versions),
+        }
+        if self.detail:
+            out["detail"] = self.detail
+        if self.recommended_next_action:
+            out["recommended_next_action"] = self.recommended_next_action
         return out
 
 
@@ -303,6 +350,7 @@ class GraphMutationCommitResult:
     diff: GraphMutationDiff = field(default_factory=GraphMutationDiff)
     claim_keys: tuple[str, ...] = ()
     approval: GraphMutationApproval | None = None
+    verification: GraphIngestionVerificationResult | None = None
     detail: str | None = None
     recommended_next_action: str | None = None
     graph_contract_version: str = GRAPH_CONTRACT_VERSION
@@ -328,6 +376,9 @@ class GraphMutationCommitResult:
             "diff": self.diff.to_dict(),
             "claim_keys": list(self.claim_keys),
             "approval": self.approval.to_dict() if self.approval else None,
+            "verification": self.verification.to_dict()
+            if self.verification is not None
+            else None,
             "graph_contract_version": self.graph_contract_version,
             "ontology_version": self.ontology_version,
         }
@@ -477,7 +528,9 @@ def provenance_context_to_dict(ctx: ProvenanceContext) -> dict[str, Any]:
     }
 
 
-def provenance_context_from_dict(raw: Mapping[str, Any] | None) -> ProvenanceContext | None:
+def provenance_context_from_dict(
+    raw: Mapping[str, Any] | None,
+) -> ProvenanceContext | None:
     if not raw:
         return None
     return ProvenanceContext(
@@ -577,6 +630,7 @@ def _float_or_none(value: Any) -> float | None:
 
 
 __all__ = [
+    "GraphIngestionVerificationResult",
     "GraphMutationApproval",
     "GraphMutationCommitResult",
     "GraphMutationDiff",

@@ -57,6 +57,7 @@ class PriorBugsReader:
                     predicate_in=_BUG_PREDICATES,
                     include_invalidated=req.include_invalidated,
                     as_of=req.as_of,
+                    source_ref_in=req.source_refs,
                     fact_query=req.query,
                     limit=max(req.max_items * 4, 24),
                 )
@@ -145,6 +146,7 @@ class PriorBugsReader:
                         subject_key_in=tuple(sorted(bug_keys)),
                         include_invalidated=req.include_invalidated,
                         as_of=req.as_of,
+                        source_ref_in=req.source_refs,
                         limit=max(len(bug_keys) * 8, 32),
                     )
                 )
@@ -170,6 +172,7 @@ class PriorBugsReader:
                     object_key_in=tuple(sorted(scoped_bug_keys)),
                     include_invalidated=req.include_invalidated,
                     as_of=req.as_of,
+                    source_ref_in=req.source_refs,
                     limit=max(len(scoped_bug_keys) * 8, 32),
                 )
             )
@@ -187,6 +190,7 @@ class PriorBugsReader:
                         object_key_in=tuple(sorted(fix_keys)),
                         include_invalidated=req.include_invalidated,
                         as_of=req.as_of,
+                        source_ref_in=req.source_refs,
                         limit=max(len(fix_keys) * 8, 32),
                     )
                 )
@@ -199,6 +203,7 @@ class PriorBugsReader:
                         subject_key_in=tuple(sorted(fix_keys)),
                         include_invalidated=req.include_invalidated,
                         as_of=req.as_of,
+                        source_ref_in=req.source_refs,
                         limit=max(len(fix_keys) * 8, 32),
                     )
                 )

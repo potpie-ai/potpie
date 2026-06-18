@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 
@@ -12,6 +13,7 @@ from typer.testing import CliRunner
 from bootstrap import observability_runtime
 from adapters.inbound.cli.commands import _common, graph
 from domain.graph_plans import (
+    GraphIngestionVerificationResult,
     GraphMutationCommitResult,
     GraphMutationDiff,
     GraphMutationProposal,
@@ -44,6 +46,7 @@ def _reset_json_mode():
 class _Pot:
     pot_id = "p"
     name = "default"
+    active = True
 
 
 class _Pots:
@@ -52,6 +55,9 @@ class _Pots:
 
     def list_pots(self):
         return [_Pot()]
+
+    def list_sources(self, *, pot_id):
+        return []
 
 
 class _Graph:
@@ -66,6 +72,7 @@ class _Graph:
         self.catalog_error = catalog_error
         self.read_called = False
         self.read_request = None
+        self.search_request = None
 
     def catalog(self, _request):
         if self.catalog_error is not None:
@@ -109,7 +116,38 @@ class _Graph:
             raise self.read_error
         if self.read_result is None:
             raise AssertionError("read should not be called")
-        return self.read_result
+        return replace(
+            self.read_result,
+            detail=_request.detail,
+            relations=_request.relations,
+        )
+
+    def search_entities(self, request):
+        self.search_request = request
+        supporting_claims = (
+            (
+                {
+                    "claim_key": "claim:widgets-payments",
+                    "predicate": "PROVIDES",
+                },
+            )
+            if request.supporting_claims
+            else ()
+        )
+        return GraphEntitySearchResult(
+            entities=(
+                GraphEntityCandidate(
+                    key="feature:payments",
+                    labels=("Feature",),
+                    summary="Payments capability",
+                    score=0.9,
+                    supporting_claims=supporting_claims,
+                ),
+            ),
+            match_mode="lexical",
+            graph_contract_version="v1.5",
+            ontology_version="2026-06-graph",
+        )
 
 
 class _NotReadyGraph(_Graph):
@@ -124,6 +162,24 @@ class _NotReadyGraph(_Graph):
             quality={"status": "unavailable"},
             match_mode="lexical",
             detail="mutation store is unavailable",
+        )
+
+
+class _GraphByPot(_Graph):
+    def __init__(self, counts_by_pot):
+        super().__init__()
+        self.counts_by_pot = counts_by_pot
+
+    def data_plane_status(self, pot_id):
+        return DataPlaneStatus(
+            pot_id=pot_id,
+            backend_profile="memory",
+            backend_ready=True,
+            reader_backed_includes=("timeline",),
+            counts=self.counts_by_pot.get(pot_id, {"claims": 0, "entities": 0}),
+            freshness={},
+            quality={},
+            match_mode="lexical",
         )
 
 
@@ -221,8 +277,8 @@ class _Workbench:
             raise AssertionError("propose should not be called")
         return self.proposal
 
-    def commit(self, plan_id, *, pot_id, approved_by=None):
-        self.commit_calls.append((plan_id, pot_id, approved_by))
+    def commit(self, plan_id, *, pot_id, approved_by=None, verify=False):
+        self.commit_calls.append((plan_id, pot_id, approved_by, verify))
         if self.commit_result is None:
             raise AssertionError("commit should not be called")
         return self.commit_result
@@ -349,7 +405,12 @@ class _Inspection:
                     predicate="DEPENDS_ON",
                     from_key=entity_key,
                     to_key="service:api",
-                    properties={"environment": "staging"},
+                    properties={
+                        "fact": "web depends on api",
+                        "source_refs": ["repo:manifest"],
+                        "truth": "source_observation",
+                        "environment": "staging",
+                    },
                 ),
             ),
         )
@@ -440,6 +501,7 @@ def _commit_result(
     ok: bool = True,
     status: str = "committed",
     plan_id: str = "mutation-plan:test",
+    verification: GraphIngestionVerificationResult | None = None,
 ) -> GraphMutationCommitResult:
     return GraphMutationCommitResult(
         ok=ok,
@@ -454,6 +516,7 @@ def _commit_result(
         new_subgraph_versions={"_global": 1} if ok else {"_global": 0},
         diff=GraphMutationDiff(edge_upserts=1, claim_keys=("claim:test",)),
         claim_keys=("claim:test",),
+        verification=verification,
     )
 
 
@@ -528,18 +591,45 @@ def _quality_result(
         status=status,
         findings=() if report == "summary" else (finding,),
         metrics=(
-            {"counts": {"claims": 3}} if report == "summary" else {"scanned_claims": 3}
+            {
+                "counts": {"claims": 3},
+                "quality_counts": {
+                    "duplicate_candidates": 0,
+                    "stale_facts": 0,
+                    "conflicting_claims": 1,
+                    "orphan_entities": 0,
+                    "low_confidence": 0,
+                    "projection_drift": 2,
+                },
+                "quality_reports": {
+                    "conflicting-claims": {
+                        "status": status,
+                        "finding_count": 1,
+                        "severity_counts": {"warning": 1},
+                    },
+                    "projection-drift": {
+                        "status": status,
+                        "finding_count": 2,
+                        "severity_counts": {"error": 2},
+                    },
+                },
+                "total_findings": 3,
+            }
+            if report == "summary"
+            else {"scanned_claims": 3}
         ),
         filters={"report": report, "limit": 50},
         subgraph_versions={"_global": 3},
     )
 
 
-def _assert_graph_envelope(payload: dict, command: str, *, ok: bool = True) -> dict:
+def _assert_graph_envelope(
+    payload: dict, command: str, *, ok: bool = True, pot_id: str | None = "p"
+) -> dict:
     assert payload["ok"] is ok
     assert payload["command"] == command
     assert payload["request_id"].startswith("req:")
-    assert payload["pot_id"] in {"p", None}
+    assert payload["pot_id"] in {pot_id, None}
     assert payload["graph_contract_version"] == "v2"
     assert payload["ontology_version"] == "2026-06-graph"
     assert "subgraph_versions" in payload
@@ -737,7 +827,53 @@ def test_graph_commit_applies_plan_id_only() -> None:
     body = _assert_graph_envelope(emitted, "graph.commit")
     assert body["status"] == "committed"
     assert body["mutation_id"] == "mutation-1"
-    assert workbench.commit_calls == [("mutation-plan:test", "p", None)]
+    assert workbench.commit_calls == [("mutation-plan:test", "p", None, False)]
+
+
+def test_graph_commit_verify_passes_hard_gate_flag() -> None:
+    _common.set_json(True)
+    workbench = _Workbench(commit_result=_commit_result())
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["commit", "mutation-plan:test", "--verify"],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.commit")
+    assert body["status"] == "committed"
+    assert workbench.commit_calls == [("mutation-plan:test", "p", None, True)]
+
+
+def test_graph_commit_verify_exits_nonzero_when_gate_fails() -> None:
+    _common.set_json(True)
+    verification = GraphIngestionVerificationResult(
+        ok=False,
+        status="degraded",
+        plan_id="mutation-plan:test",
+        pot_id="p",
+        claim_keys=("claim:test",),
+        missing_claim_keys=("claim:test",),
+        quality_status="ok",
+        detail="committed plan did not read back all expected claim keys",
+        recommended_next_action="Inspect graph history for the plan.",
+    )
+    workbench = _Workbench(commit_result=_commit_result(verification=verification))
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["commit", "mutation-plan:test", "--verify"],
+    )
+
+    assert result.exit_code == 1
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.commit")
+    assert body["status"] == "committed"
+    assert body["verification"]["ok"] is False
+    assert body["verification"]["missing_claim_keys"] == ["claim:test"]
 
 
 def test_graph_commit_rejects_raw_payload_option() -> None:
@@ -1320,6 +1456,161 @@ def test_graph_read_timeline_defaults_to_deduped_event_json() -> None:
     assert body["event_count"] == 1
     assert body["events"][0]["source_refs"] == ["github:pr:2"]
     assert body["freshness"]["local_worktree_included"] is False
+    assert "items" not in body
+
+
+def test_graph_read_threads_source_ref_filter() -> None:
+    _common.set_json(True)
+    graph_service = _Graph(read_result=_timeline_env())
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "recent_changes",
+            "--view",
+            "timeline",
+            "--source-ref",
+            "github:pr:2",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert graph_service.read_request.source_refs == ("github:pr:2",)
+
+
+def test_graph_read_raw_json_defaults_to_compact_relations() -> None:
+    _common.set_json(True)
+    graph_service = _Graph(read_result=_timeline_env())
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "recent_changes",
+            "--view",
+            "timeline",
+            "--format",
+            "raw",
+            "--limit",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert graph_service.read_request.detail == "compact"
+    assert graph_service.read_request.relations == "summary"
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.read")
+    assert body["detail"] == "compact"
+    assert body["relations_detail"] == "summary"
+    assert "relations" not in body["items"][0]
+    assert body["items"][0]["relation_count"] == 2
+
+
+def test_graph_read_full_detail_preserves_relation_payload() -> None:
+    _common.set_json(True)
+    graph_service = _Graph(read_result=_timeline_env())
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "recent_changes",
+            "--view",
+            "timeline",
+            "--format",
+            "raw",
+            "--detail",
+            "full",
+            "--relations",
+            "full",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert graph_service.read_request.detail == "full"
+    assert graph_service.read_request.relations == "full"
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.read")
+    assert body["detail"] == "full"
+    assert body["items"][0]["relations"][0]["predicate"] == "TOUCHED"
+
+
+def test_graph_search_entities_omits_supporting_claims_by_default() -> None:
+    _common.set_json(True)
+    graph_service = _Graph()
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["search-entities", "payments"],
+    )
+
+    assert result.exit_code == 0
+    assert graph_service.search_request.supporting_claims == 0
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.search-entities")
+    assert body["entities"][0]["supporting_claims"] == []
+
+
+def test_graph_search_entities_supporting_claims_is_opt_in() -> None:
+    _common.set_json(True)
+    graph_service = _Graph()
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["search-entities", "payments", "--supporting-claims", "1"],
+    )
+
+    assert result.exit_code == 0
+    assert graph_service.search_request.supporting_claims == 1
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.search-entities")
+    assert body["entities"][0]["supporting_claims"][0]["predicate"] == "PROVIDES"
+
+
+def test_graph_search_entities_threads_source_ref_filter() -> None:
+    _common.set_json(True)
+    graph_service = _Graph()
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["search-entities", "payments", "--source-ref", "github:pr:955"],
+    )
+
+    assert result.exit_code == 0
+    assert graph_service.search_request.source_refs == ("github:pr:955",)
+
+
+def test_graph_search_entities_threads_source_facets() -> None:
+    _common.set_json(True)
+    graph_service = _Graph()
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "search-entities",
+            "payments",
+            "--source-system",
+            "github",
+            "--source-family",
+            "github",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert graph_service.search_request.source_system == "github"
+    assert graph_service.search_request.source_family == "github"
 
 
 def test_graph_read_emits_v2_observability(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1400,6 +1691,78 @@ def test_graph_catalog_task_ranks_relevant_views() -> None:
     assert ranked_subgraphs.index("infra_topology") < ranked_subgraphs.index("features")
     assert ranked_subgraphs.index("decisions") < ranked_subgraphs.index("features")
     assert body["views"][0]["name"] == ranking[0]["view"]
+    assert "reason" in ranking[0]
+
+
+def test_graph_catalog_read_profile_returns_compact_contract() -> None:
+    _common.set_json(True)
+    _common.set_host(_Host(_Graph()))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["catalog", "--task", "debug staging timeout", "--profile", "read"],
+    )
+
+    assert result.exit_code == 0
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.catalog")
+    assert body["profile"] == "read"
+    assert "read" in body["commands"]
+    assert "commit" not in body["commands"]
+    assert "mutation_operations" not in body
+    assert "entity_types" not in body
+    assert body["views"]
+    assert set(body["views"][0]) <= {
+        "name",
+        "subgraph",
+        "view",
+        "backed",
+        "description",
+        "result_shape",
+        "required_scope",
+        "required_any_scope",
+        "supported_filters",
+        "next_read",
+    }
+    assert body["task_ranking"][0]["rank"] == 1
+    assert "reason" in body["task_ranking"][0]
+    assert "matched_terms" in body["task_ranking"][0]
+
+
+def test_graph_catalog_table_format_uses_compact_human_output() -> None:
+    _common.set_json(False)
+    _common.set_host(_Host(_Graph()))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["catalog", "--profile", "read", "--format", "table"],
+    )
+
+    assert result.exit_code == 0
+    assert "graph catalog profile=read" in result.output
+    assert "view | backed | filters" in result.output
+
+
+def test_graph_catalog_table_format_shows_task_ranking_context() -> None:
+    _common.set_json(False)
+    _common.set_host(_Host(_Graph()))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "catalog",
+            "--task",
+            "debug staging timeout",
+            "--profile",
+            "read",
+            "--format",
+            "table",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "rank | score | view | reason" in result.output
+    assert "Matched" in result.output
 
 
 def test_graph_catalog_unknown_subgraph_uses_error_envelope() -> None:
@@ -1417,7 +1780,10 @@ def test_graph_catalog_unknown_subgraph_uses_error_envelope() -> None:
 
 def test_graph_status_json_uses_workbench_envelope() -> None:
     _common.set_json(True)
-    _common.set_host(_Host(_Graph(), backend=_Backend()))
+    workbench = _Workbench(
+        quality_result=_quality_result(report="summary", status="watch")
+    )
+    _common.set_host(_Host(_Graph(), backend=_Backend(), graph_workbench=workbench))
 
     result = CliRunner().invoke(graph.graph_app, ["status"])
 
@@ -1425,8 +1791,22 @@ def test_graph_status_json_uses_workbench_envelope() -> None:
     emitted = json.loads(result.output)
     body = _assert_graph_envelope(emitted, "graph.status")
     assert emitted["subgraph_versions"] == {"_global": 3}
+    assert body["pot"]["name"] == "default"
+    assert body["pot"]["source_count"] == 0
     assert body["graph_service"]["supported_commands"][0] == "status"
     assert body["backend"]["profile"] == "memory"
+    assert body["health_status"] == "watch"
+    assert body["quality"]["source"] == "quality_summary"
+    assert body["quality"]["quality_counts"]["projection_drift"] == 2
+    assert workbench.quality_calls == [
+        {
+            "pot_id": "p",
+            "report": "summary",
+            "subgraph": None,
+            "limit": 20,
+            "confidence_threshold": 0.5,
+        }
+    ]
 
 
 def test_graph_status_not_ready_recommends_backend_doctor() -> None:
@@ -1442,6 +1822,56 @@ def test_graph_status_not_ready_recommends_backend_doctor() -> None:
     assert body["backend"]["detail"] == "mutation store is unavailable"
     assert body["backend"]["readiness_command"] == "potpie backend doctor"
     assert "potpie backend doctor" in emitted["recommended_next_action"]
+
+
+def test_graph_status_warns_when_active_repo_pot_is_empty(monkeypatch) -> None:
+    class Pot:
+        def __init__(self, pot_id, name, active=False):
+            self.pot_id = pot_id
+            self.name = name
+            self.active = active
+
+    class Source:
+        kind = "repo"
+        name = "github.com/acme/shop"
+        location = "github.com/acme/shop"
+
+    class Pots:
+        def __init__(self):
+            self.p1 = Pot("p1", "empty", True)
+            self.p2 = Pot("p2", "populated")
+
+        def active_pot(self):
+            return self.p1
+
+        def list_pots(self):
+            return [self.p1, self.p2]
+
+        def list_sources(self, *, pot_id):
+            return [Source()]
+
+    monkeypatch.setattr(
+        graph, "_current_git_remote", lambda cwd: "github.com/acme/shop", raising=False
+    )
+    from adapters.inbound.cli.commands import _common
+
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    _common.set_json(True)
+    host = _Host(_GraphByPot({"p1": {"claims": 0}, "p2": {"claims": 82}}))
+    host.pots = Pots()
+    _common.set_host(host)
+
+    result = CliRunner().invoke(graph.graph_app, ["status"])
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.status", pot_id="p1")
+    assert body["pot"]["id"] == "p1"
+    assert emitted["warnings"]
+    assert "p2" in emitted["warnings"][0]
+    assert "82 claims" in emitted["warnings"][0]
 
 
 def test_graph_neighborhood_returns_inspection_slice() -> None:
@@ -1462,6 +1892,8 @@ def test_graph_neighborhood_returns_inspection_slice() -> None:
             "2",
             "--limit",
             "5",
+            "--detail",
+            "full",
         ],
     )
 
@@ -1470,7 +1902,29 @@ def test_graph_neighborhood_returns_inspection_slice() -> None:
     body = _assert_graph_envelope(emitted, "graph.neighborhood")
     assert body["entity_key"] == "service:web"
     assert body["predicates"] == ["DEPENDS_ON"]
+    assert body["detail"] == "full"
     assert body["edges"][0]["from"] == "service:web"
+
+
+def test_graph_neighborhood_defaults_to_relation_summary() -> None:
+    _common.set_json(True)
+    _common.set_host(_Host(_Graph(), backend=_Backend()))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["neighborhood", "--entity", "service:web", "--predicate", "DEPENDS_ON"],
+    )
+
+    assert result.exit_code == 0
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.neighborhood")
+    assert body["detail"] == "summary"
+    assert body["relation_count"] == 1
+    assert "edges" not in body
+    assert body["relations"][0]["from_key"] == "service:web"
+    assert body["relations"][0]["to_key"] == "service:api"
+    assert body["relations"][0]["source_refs"] == ["repo:manifest"]
+    assert body["relations"][0]["truth"] == "source_observation"
 
 
 def test_graph_describe_returns_executable_view_contract() -> None:

@@ -66,6 +66,8 @@ from domain.ports.services.graph_service import (
     GraphEntitySearchResult,
     GraphReadRequest,
     GraphReadResult,
+    _normalize_read_detail,
+    _normalize_read_relations,
 )
 from domain.semantic_mutations import (
     SemanticMutationRequest,
@@ -203,6 +205,8 @@ class DefaultGraphService:
         )
 
     def read(self, request: GraphReadRequest) -> GraphReadResult:
+        detail = _normalize_read_detail(request.detail)
+        relations = _normalize_read_relations(request.relations)
         view_name = _qualified_view_name(request.subgraph, request.view)
         contract = ontology_contract().view(view_name)
         if contract is None:
@@ -245,7 +249,9 @@ class DefaultGraphService:
                 freshness=_read_freshness(None, backend_freshness={}),
                 quality={
                     "status": "unsupported" if unsupported else "empty",
-                    "reason": "unsupported_filter" if unsupported else "missing_required_scope",
+                    "reason": "unsupported_filter"
+                    if unsupported
+                    else "missing_required_scope",
                 },
                 source_refs=(),
                 match_mode=self._match_mode(),
@@ -256,6 +262,8 @@ class DefaultGraphService:
                 ontology_version=ONTOLOGY_VERSION,
                 subgraph_versions=self._subgraph_versions(request.pot_id),
                 unsupported=unsupported_items,
+                detail=detail,
+                relations=relations,
             )
 
         scope = dict(request.scope)
@@ -273,6 +281,7 @@ class DefaultGraphService:
             max_items=request.limit,
             freshness_preference=request.freshness_preference,
             include_invalidated=request.include_invalidated,
+            source_refs=request.source_refs,
             depth=request.depth,
             direction=request.direction,
         )
@@ -301,8 +310,14 @@ class DefaultGraphService:
             contract=contract,
             match_mode=self._match_mode(),
             subgraph_versions=self._subgraph_versions(request.pot_id),
-            backend_freshness=_safe(lambda: dict(self.backend.analytics.freshness(request.pot_id)), {}),
-            backend_quality=_safe(lambda: dict(self.backend.analytics.quality(request.pot_id)), {}),
+            backend_freshness=_safe(
+                lambda: dict(self.backend.analytics.freshness(request.pot_id)), {}
+            ),
+            backend_quality=_safe(
+                lambda: dict(self.backend.analytics.quality(request.pot_id)), {}
+            ),
+            detail=detail,
+            relations=relations,
         )
 
     def search_entities(
@@ -314,17 +329,17 @@ class DefaultGraphService:
             ClaimQueryFilter(
                 pot_id=request.pot_id,
                 predicate_in=predicate_in,
+                source_ref_in=request.source_refs,
+                source_system_in=(request.source_system,)
+                if request.source_system
+                else (),
                 fact_query=request.query or None,
                 valid_at_after=request.since,
                 valid_at_before=request.until,
                 limit=max(request.limit * 10, 100),
             )
         )
-        rows = [
-            row
-            for row in rows
-            if _matches_search_filters(row, request)
-        ]
+        rows = [row for row in rows if _matches_search_filters(row, request)]
         if request.environment:
             rows = [r for r in rows if _row_env(r) == request.environment.lower()]
 
@@ -352,10 +367,12 @@ class DefaultGraphService:
                 else {}
             )
             props = normalize_entity_properties(props, entity_key=key)
-            if request.external_id and not _matches_external_id(
-                key,
-                props,
-                request.external_id,
+            if request.external_id and not (
+                _matches_external_id(key, props, request.external_id)
+                or any(
+                    _row_matches_source_ref(row, request.external_id)
+                    for row in bucket["claims"]
+                )
             ):
                 continue
             candidates.append(
@@ -367,7 +384,10 @@ class DefaultGraphService:
                     description=props.get("description"),
                     score=bucket["score"],
                     supporting_claims=tuple(
-                        _claim_brief(c) for c in bucket["claims"][:5]
+                        _claim_brief(c)
+                        for c in bucket["claims"][
+                            : max(int(request.supporting_claims or 0), 0)
+                        ]
                     ),
                 )
             )
@@ -600,6 +620,8 @@ def _requested_read_filters(request: GraphReadRequest) -> set[str]:
         requested.add("direction")
     if request.environment:
         requested.add("environment")
+    if request.source_refs:
+        requested.add("source_ref")
     return requested
 
 
@@ -610,14 +632,20 @@ def _missing_required_read_scope(
         not _read_scope_has(request, key) for key in contract.required_scope
     ) or (
         bool(contract.required_any_scope)
-        and not any(_read_scope_has(request, key) for key in contract.required_any_scope)
+        and not any(
+            _read_scope_has(request, key) for key in contract.required_any_scope
+        )
     )
 
 
 def _read_scope_has(request: GraphReadRequest, key: str) -> bool:
     if key == "query":
         return bool(request.query and request.query.strip())
+    if key == "environment" and request.environment:
+        return True
     scope = dict(request.scope)
+    if key == "source_ref" and request.source_refs:
+        return True
     if key == "scope":
         return any(value not in (None, "", [], ()) for value in scope.values())
     aliases = {
@@ -625,6 +653,10 @@ def _read_scope_has(request: GraphReadRequest, key: str) -> bool:
         "file_path": ("file_path", "path"),
         "service": ("service", "services"),
         "repo": ("repo", "repo_name"),
+        "feature": ("feature", "features"),
+        "anchor_entity_key": ("anchor_entity_key", "entity", "entity_key"),
+        "environment": ("environment", "env"),
+        "source_ref": ("source_ref", "source_refs"),
     }.get(key, (key,))
     return any(scope.get(alias) not in (None, "", [], ()) for alias in aliases)
 
@@ -637,6 +669,8 @@ def _read_result_from_envelope(
     subgraph_versions: Mapping[str, int],
     backend_freshness: Mapping[str, Any],
     backend_quality: Mapping[str, Any],
+    detail: str,
+    relations: str,
 ) -> GraphReadResult:
     meta = dict(env.metadata)
     items = tuple(_normalize_read_item(item) for item in env.items)
@@ -652,7 +686,9 @@ def _read_result_from_envelope(
         match_mode=match_mode,
         backed=bool(meta.get("backed", contract.backed)),
         read_shape=str(meta.get("read_shape") or contract.result_shape),
-        inline_relations=tuple(meta.get("inline_relations") or contract.inline_relations),
+        inline_relations=tuple(
+            meta.get("inline_relations") or contract.inline_relations
+        ),
         inline_relation_count=int(meta.get("inline_relation_count") or 0),
         graph_contract_version=GRAPH_CONTRACT_VERSION,
         ontology_version=ONTOLOGY_VERSION,
@@ -662,6 +698,8 @@ def _read_result_from_envelope(
             for item in env.unsupported_includes
         ),
         as_of=env.as_of,
+        detail=detail,
+        relations=relations,
     )
 
 
@@ -676,7 +714,9 @@ def _coverage_dict(report) -> dict[str, Any]:
 def _normalize_read_item(item: EvidenceItem) -> dict[str, Any]:
     payload = dict(item.payload)
     entity = payload.get("entity") if isinstance(payload.get("entity"), Mapping) else {}
-    relations_raw = payload.get("relations") if isinstance(payload.get("relations"), list) else []
+    relations_raw = (
+        payload.get("relations") if isinstance(payload.get("relations"), list) else []
+    )
     relations = tuple(
         _normalize_read_relation(rel)
         for rel in relations_raw
@@ -809,7 +849,7 @@ def _source_refs_from_items(items: tuple[Mapping[str, Any], ...]) -> tuple[str, 
 
 
 def _source_refs_from_relations(
-    relations: tuple[Mapping[str, Any], ...]
+    relations: tuple[Mapping[str, Any], ...],
 ) -> tuple[str, ...]:
     refs: list[str] = []
     seen: set[str] = set()
@@ -885,12 +925,16 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
     return (str(value),)
 
 
-def _matches_search_filters(
-    row: ClaimRow, request: GraphEntitySearchRequest
-) -> bool:
+def _matches_search_filters(row: ClaimRow, request: GraphEntitySearchRequest) -> bool:
     if request.subgraph and row.subgraph != request.subgraph:
         return False
     if request.truth and row.truth != request.truth:
+        return False
+    if request.source_family and _row_source_family(row) != request.source_family:
+        return False
+    if request.source_refs and not any(
+        _row_matches_source_ref(row, ref) for ref in request.source_refs
+    ):
         return False
     if request.scope and not _row_matches_scope(row, request.scope):
         return False
@@ -910,6 +954,7 @@ def _row_matches_scope(row: ClaimRow, scope: Mapping[str, Any]) -> bool:
             row.description,
             row.subgraph,
             row.source_ref,
+            " ".join(row.source_refs),
             row.source_system,
             row.environment,
         )
@@ -958,12 +1003,28 @@ def _matches_external_id(
     for key in ("external_ids", "alternate_external_ids", "source_ids"):
         value = properties.get(key)
         if isinstance(value, (list, tuple)) and any(
-            isinstance(item, str) and item.strip().lower() == wanted
-            for item in value
+            isinstance(item, str) and item.strip().lower() == wanted for item in value
         ):
             return True
     # External-id identities keep the provider id in the canonical key body.
     return entity_key.lower().endswith(f":{wanted}")
+
+
+def _row_matches_source_ref(row: ClaimRow, source_ref: str) -> bool:
+    wanted = source_ref.strip().lower()
+    if not wanted:
+        return True
+    refs = []
+    if row.source_ref:
+        refs.append(row.source_ref)
+    refs.extend(row.source_refs)
+    for item in row.evidence:
+        if not isinstance(item, Mapping):
+            continue
+        ref = item.get("source_ref")
+        if isinstance(ref, str):
+            refs.append(ref)
+    return any(ref.strip().lower() == wanted for ref in refs if ref)
 
 
 def _batch_counts(plan) -> dict[str, int]:
@@ -986,6 +1047,16 @@ def _row_env(row: ClaimRow) -> str | None:
     return env.lower() if isinstance(env, str) else None
 
 
+def _row_source_family(row: ClaimRow) -> str | None:
+    if row.source_system:
+        return row.source_system.strip().split(":", 1)[0].lower()
+    refs = row.source_refs or ((row.source_ref,) if row.source_ref else ())
+    for ref in refs:
+        if isinstance(ref, str) and ref.strip():
+            return ref.strip().split(":", 1)[0].lower()
+    return None
+
+
 def _claim_brief(row: ClaimRow) -> dict:
     return {
         "predicate": row.predicate,
@@ -996,7 +1067,9 @@ def _claim_brief(row: ClaimRow) -> dict:
         "truth": row.truth,
         "fact": row.fact,
         "environment": _row_env(row),
-        "source_refs": list(row.source_refs),
+        "source_refs": list(
+            row.source_refs or ((row.source_ref,) if row.source_ref else ())
+        ),
     }
 
 

@@ -15,13 +15,13 @@ Start from the service, environment, adapter, or dependency named by the task.
 Resolve identity before assuming keys:
 
 ```bash
-potpie --json graph search-entities "<service env adapter dependency>" --limit 10
+potpie graph search-entities "<service env adapter dependency>" --limit 10
 ```
 
 Read the service neighborhood with the graph workbench:
 
 ```bash
-potpie --json graph read \
+potpie graph read \
   --subgraph infra_topology \
   --view service_neighborhood \
   --scope service:<service-name> \
@@ -55,10 +55,10 @@ Use the workbench write flow:
 
 ```bash
 potpie --json graph catalog --task "record infra architecture"
-potpie --json graph search-entities "<service>" --type Service --limit 10
+potpie graph search-entities "<service>" --type Service --limit 10
 potpie --json graph describe infra_topology --view service_neighborhood --examples
 potpie --json graph propose --file mutation.json
-potpie --json graph commit <plan_id>
+potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>
 ```
 

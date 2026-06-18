@@ -158,8 +158,7 @@ def render_setup_report(
 # Post-setup integration picker (order used for sequential login).
 POST_SETUP_INTEGRATION_OPTIONS: tuple[tuple[str, str], ...] = (
     ("linear", "Linear"),
-    ("jira", "Jira"),
-    ("confluence", "Confluence"),
+    ("atlassian", "Atlassian"),
 )
 POST_SETUP_INTEGRATION_ORDER: tuple[str, ...] = tuple(
     option_id for option_id, _ in POST_SETUP_INTEGRATION_OPTIONS
@@ -340,13 +339,19 @@ def _integration_label(provider: str) -> str:
     return labels.get(key, key.replace("_", " ").title())
 
 
+def _integration_login_command(provider: str) -> str:
+    key = provider.strip().lower()
+    if key == "atlassian":
+        key = "jira"
+    return f"potpie {key} login"
+
+
 def _print_integration_skipped(provider: str) -> None:
     from adapters.inbound.cli.ui.format import print_line
 
     label = _integration_label(provider)
-    message = (
-        f"Skipped {label} — connect later with `potpie {provider} login`."
-    )
+    command = _integration_login_command(provider)
+    message = f"Skipped {label} — connect later with `{command}`."
     print_line("", as_json=False, markup=False)
     print_line(message, as_json=False, tone="skipped")
     print_line("", as_json=False, markup=False)
@@ -577,6 +582,7 @@ def _register_repo_source(*, repo: str) -> str:
     resolved_repo = resolve_repo_location(repo)
     try:
         host.pots.add_source(pot_id=active.pot_id, kind="repo", location=resolved_repo)
+        host.pots.set_repo_default(repo=resolved_repo, pot_id=active.pot_id)
     except Exception as exc:  # noqa: BLE001
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_failed",

@@ -117,6 +117,7 @@ class TimelineReader:
             predicate_in=_TIMELINE_PREDICATES,
             include_invalidated=req.include_invalidated,
             as_of=req.as_of,
+            source_ref_in=req.source_refs,
             # Timeline windows are source-event windows. Older rows may have
             # occurred_at only in properties with valid_at set to ingestion time,
             # so filter after hydration with _event_datetime().
@@ -138,6 +139,7 @@ class TimelineReader:
                 object_key_in=anchors,
                 include_invalidated=base.include_invalidated,
                 as_of=base.as_of,
+                source_ref_in=base.source_ref_in,
                 limit=base.limit,
                 fact_query=req.query,
             )
@@ -149,6 +151,7 @@ class TimelineReader:
                 subject_key_in=anchors,
                 include_invalidated=base.include_invalidated,
                 as_of=base.as_of,
+                source_ref_in=base.source_ref_in,
                 limit=base.limit,
                 fact_query=req.query,
             )
@@ -206,6 +209,7 @@ def _with_freshness(req: ReadRequest, preference: str) -> ReadRequest:
         max_items=req.max_items,
         freshness_preference=preference,
         include_invalidated=req.include_invalidated,
+        source_refs=req.source_refs,
     )
 
 

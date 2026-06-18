@@ -49,6 +49,7 @@ class CodingPreferencesReader:
                     predicate_in=(self.predicate,),
                     include_invalidated=req.include_invalidated,
                     as_of=req.as_of,
+                    source_ref_in=req.source_refs,
                     fact_query=req.query,
                     limit=max(req.max_items * 4, 16),
                 )

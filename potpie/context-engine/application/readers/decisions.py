@@ -80,6 +80,7 @@ class DecisionsReader:
             "predicate_in": _DECISION_PREDICATES,
             "include_invalidated": req.include_invalidated,
             "as_of": req.as_of,
+            "source_ref_in": req.source_refs,
             "limit": max(req.max_items * 8, 64),
             "fact_query": req.query,
         }
@@ -101,6 +102,7 @@ class DecisionsReader:
                         subject_key_in=tuple(decision_keys),
                         include_invalidated=req.include_invalidated,
                         as_of=req.as_of,
+                        source_ref_in=req.source_refs,
                         limit=max(req.max_items * 8, 64),
                     )
                 )

@@ -79,6 +79,7 @@ class FeaturesReader:
             "pot_id": req.pot_id,
             "include_invalidated": req.include_invalidated,
             "as_of": req.as_of,
+            "source_ref_in": req.source_refs,
             "limit": max(req.max_items * 6, 48),
         }
         if not anchors:

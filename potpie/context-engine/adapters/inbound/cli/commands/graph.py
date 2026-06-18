@@ -31,11 +31,14 @@ from adapters.inbound.cli.commands._common import (
     EXIT_UNAVAILABLE,
     EXIT_VALIDATION,
     contract,
+    empty_pot_warnings,
     emit,
     fail,
     get_host,
     is_json,
     json_error_formatter,
+    pot_scope_human,
+    pot_scope_info,
     resolve_pot_id,
 )
 from domain.errors import CapabilityNotImplemented
@@ -312,7 +315,13 @@ def _emit_graph_result(
             recommended_next_action=recommended_next_action
             or payload.get("recommended_next_action"),
         )
-    emit(env.to_dict(), human=human)
+    emit(env.to_dict(), human=_with_graph_warnings(human, merged_warnings))
+
+
+def _with_graph_warnings(human: str, warnings: tuple[str, ...]) -> str:
+    if not warnings:
+        return human
+    return "\n".join([human, *(f"! {warning}" for warning in warnings)])
 
 
 def _emit_inbox_result(ctx: _GraphCliCommandContext, result) -> None:
@@ -378,6 +387,16 @@ def _legacy_warning(command: str, replacement: str) -> tuple[str, ...]:
 def graph_catalog(
     task: str = typer.Option(None, "--task", help="(accepted, ignored in V1.5)"),
     subgraph: str = typer.Option(None, "--subgraph"),
+    profile: str = typer.Option(
+        "full",
+        "--profile",
+        help="full | read",
+    ),
+    format_: str = typer.Option(
+        "auto",
+        "--format",
+        help="auto | table",
+    ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Discover the graph contract: versions, views, mutation ops, ontology."""
@@ -391,15 +410,8 @@ def graph_catalog(
             GraphCatalogRequest(pot_id=pot_id, task=task, subgraph=subgraph)
         )
         payload = normalize_catalog_result(result.to_dict(), task=task)
-        human = (
-            f"graph contract v2 / ontology {ONTOLOGY_VERSION} "
-            f"(data-plane={payload['data_plane_graph_contract_version']}, match={payload['match_mode']})\n"
-            f"commands: {', '.join(payload['commands'])}\n"
-            f"views: {', '.join(v['name'] for v in payload['views'])}\n"
-            f"mutation ops: {', '.join(payload['mutation_operations'])}\n"
-            f"review-required: {', '.join(payload['review_required_operations'])}\n"
-            f"deferred: {', '.join(payload['deferred_operations'])}"
-        )
+        payload = _catalog_payload_for_profile(payload, profile=profile)
+        human = _catalog_human(payload, format_=format_)
         _emit_graph_result(ctx, payload, human=human)
 
 
@@ -432,6 +444,11 @@ def graph_read(
         help="Relative lookback such as 24h, 7d, 2w. Ignored when --since is set.",
     ),
     environment: str = typer.Option(None, "--environment"),
+    source_ref: list[str] | None = typer.Option(
+        None,
+        "--source-ref",
+        help="Exact claim source ref such as github:owner/repo#issue/123.",
+    ),
     depth: int = typer.Option(
         None, "--depth", help="traversal depth (neighborhood views)"
     ),
@@ -449,6 +466,16 @@ def graph_read(
         "auto",
         "--format",
         help="auto | raw | events | table | jsonl (timeline defaults to events)",
+    ),
+    detail: str = typer.Option(
+        "compact",
+        "--detail",
+        help="compact | full",
+    ),
+    relations: str = typer.Option(
+        "summary",
+        "--relations",
+        help="summary | full",
     ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
@@ -492,11 +519,14 @@ def graph_read(
                 query=query,
                 scope=parsed_scope,
                 environment=environment,
+                source_refs=tuple(source_ref or ()),
                 since=since_dt,
                 until=until_dt,
                 depth=depth,
                 direction=direction,
                 limit=read_limit,
+                detail=detail,
+                relations=relations,
                 freshness_preference=(
                     "fresh"
                     if _is_timeline_view(f"{subgraph}.{view}") and not query
@@ -505,7 +535,14 @@ def graph_read(
             )
         )
         _emit_graph_read(
-            ctx, result, format_=format_, sort=sort, dedupe=dedupe, event_limit=limit
+            ctx,
+            result,
+            format_=format_,
+            sort=sort,
+            dedupe=dedupe,
+            event_limit=limit,
+            human_prefix=pot_scope_human(host, pot_id),
+            warnings=empty_pot_warnings(host, pot_id),
         )
 
 
@@ -528,6 +565,16 @@ def timeline_recent(
     limit: int = typer.Option(12, "--limit"),
     format_: str = typer.Option(
         "auto", "--format", help="auto | events | table | raw | jsonl"
+    ),
+    detail: str = typer.Option(
+        "compact",
+        "--detail",
+        help="compact | full",
+    ),
+    relations: str = typer.Option(
+        "summary",
+        "--relations",
+        help="summary | full",
     ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
@@ -557,6 +604,8 @@ def timeline_recent(
                 since=since_dt,
                 until=until_dt,
                 limit=read_limit,
+                detail=detail,
+                relations=relations,
                 freshness_preference="fresh" if not query else "balanced",
             )
         )
@@ -566,6 +615,8 @@ def timeline_recent(
             sort="occurred_at",
             dedupe="source_ref",
             event_limit=limit,
+            human_prefix=pot_scope_human(host, pot_id),
+            warnings=empty_pot_warnings(host, pot_id),
         )
 
 
@@ -580,11 +631,23 @@ def graph_search_entities(
     subgraph: str = typer.Option(None, "--subgraph"),
     scope: str = typer.Option(None, "--scope", help="key:value[,key:value]"),
     truth: str = typer.Option(None, "--truth"),
+    source_system: str = typer.Option(None, "--source-system"),
+    source_family: str = typer.Option(None, "--source-family"),
     since: str = typer.Option(None, "--since", help="ISO instant lower bound."),
     until: str = typer.Option(None, "--until", help="ISO instant upper bound."),
     environment: str = typer.Option(None, "--environment"),
     external_id: str = typer.Option(None, "--external-id"),
+    source_ref: list[str] | None = typer.Option(
+        None,
+        "--source-ref",
+        help="Exact claim source ref such as github:owner/repo#issue/123.",
+    ),
     limit: int = typer.Option(10, "--limit"),
+    supporting_claims: int = typer.Option(
+        0,
+        "--supporting-claims",
+        help="number of supporting claims per entity to include in JSON",
+    ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Narrow entity/claim lookup for identity resolution before a write."""
@@ -594,6 +657,8 @@ def graph_search_entities(
         effective_query = query or query_arg
         if not effective_query:
             raise ValueError("query is required")
+        if supporting_claims < 0:
+            raise ValueError("--supporting-claims must be >= 0")
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
@@ -607,11 +672,15 @@ def graph_search_entities(
                 subgraph=subgraph,
                 scope=_parse_scope(scope),
                 truth=truth,
+                source_system=source_system,
+                source_family=source_family,
                 since=since_dt,
                 until=until_dt,
                 environment=environment,
                 external_id=external_id,
+                source_refs=tuple(source_ref or ()),
                 limit=limit,
+                supporting_claims=supporting_claims,
             )
         )
         payload = result.to_dict()
@@ -622,7 +691,18 @@ def graph_search_entities(
             )
             or "(no matching entities)"
         )
-        _emit_graph_result(ctx, payload, human=human)
+        warnings = empty_pot_warnings(host, pot_id)
+        _emit_graph_result(
+            ctx,
+            payload,
+            human=_with_read_context(
+                human,
+                human_prefix=pot_scope_human(host, pot_id),
+                warnings=(),
+            ),
+            warnings=warnings,
+            recommended_next_action=warnings[0] if warnings else None,
+        )
 
 
 @graph_app.command("mutate")
@@ -1139,16 +1219,29 @@ def graph_status(pot: str = typer.Option(None, "--pot")) -> None:
         versions = {"_global": int(dict(dp.counts).get("claims", 0))}
         ctx.set_subgraph_versions(versions)
         payload = _graph_status_payload(host, pot_id, dp)
+        warnings = empty_pot_warnings(host, pot_id)
         recommended = None
         if not dp.backend_ready:
             recommended = (
                 "Run `potpie backend doctor` to inspect graph backend readiness "
                 "and capability-specific failures."
             )
+        elif warnings:
+            recommended = warnings[0]
+        elif payload.get("health_status") not in {None, "ok"}:
+            recommended = (
+                payload.get("quality", {}).get("recommended_next_action")
+                or "Run `potpie graph quality summary --json` to inspect graph health."
+            )
         _emit_graph_result(
             ctx,
             payload,
-            human=f"backend={dp.backend_profile} ready={dp.backend_ready} counts={dict(dp.counts)}",
+            human=(
+                f"{pot_scope_human(host, pot_id)}\n"
+                f"backend={dp.backend_profile} ready={dp.backend_ready} "
+                f"counts={dict(dp.counts)} health={payload.get('health_status')}"
+            ),
+            warnings=warnings,
             recommended_next_action=recommended,
         )
 
@@ -1189,6 +1282,7 @@ def graph_neighborhood(
     depth: int = typer.Option(2, "--depth"),
     direction: str = typer.Option("both", "--direction"),
     limit: int = typer.Option(50, "--limit"),
+    detail: str = typer.Option("summary", "--detail", help="summary | full"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.neighborhood") as ctx:
@@ -1201,6 +1295,9 @@ def graph_neighborhood(
             raise ValueError("--depth must be >= 1")
         if limit < 1:
             raise ValueError("--limit must be >= 1")
+        detail_mode = (detail or "summary").strip().lower()
+        if detail_mode not in {"summary", "full"}:
+            raise ValueError("--detail must be one of: summary, full")
         host = get_host()
         _require_backend_capability(
             host,
@@ -1219,20 +1316,28 @@ def graph_neighborhood(
             predicates=predicates,
             limit=limit,
         )
+        relations = [_neighborhood_relation(edge) for edge in sl.edges]
         payload = {
             "entity_key": entity,
             "depth": depth,
             "direction": normalized_direction,
             "predicates": list(predicates),
-            "nodes": [
+            "detail": detail_mode,
+            "node_count": len(sl.nodes),
+            "relation_count": len(relations),
+            "relations": relations,
+            "truncated": sl.truncated,
+        }
+        if detail_mode == "full":
+            payload["nodes"] = [
                 {
                     "key": n.key,
                     "labels": list(n.labels),
                     "properties": dict(n.properties),
                 }
                 for n in sl.nodes
-            ],
-            "edges": [
+            ]
+            payload["edges"] = [
                 {
                     "predicate": e.predicate,
                     "from": e.from_key,
@@ -1240,13 +1345,11 @@ def graph_neighborhood(
                     "properties": dict(e.properties),
                 }
                 for e in sl.edges
-            ],
-            "truncated": sl.truncated,
-        }
+            ]
         _emit_graph_result(
             ctx,
             payload,
-            human=f"{len(sl.nodes)} nodes, {len(sl.edges)} edges around {entity}",
+            human=_neighborhood_human(payload),
         )
 
 
@@ -1283,6 +1386,11 @@ def graph_commit(
     approved_by: str = typer.Option(
         None, "--approved-by", help="user-ref for medium-risk approval"
     ),
+    verify: bool = typer.Option(
+        False,
+        "--verify",
+        help="read back committed claim keys and run post-commit quality checks",
+    ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.commit") as ctx:
@@ -1295,6 +1403,7 @@ def graph_commit(
             plan_id,
             pot_id=pot_id,
             approved_by=approved_by,
+            verify=verify,
         )
         _emit_graph_result(
             ctx,
@@ -1302,6 +1411,8 @@ def graph_commit(
             human=_commit_human(result),
         )
         if not result.ok:
+            raise typer.Exit(code=EXIT_VALIDATION)
+        if verify and result.verification is not None and not result.verification.ok:
             raise typer.Exit(code=EXIT_VALIDATION)
 
 
@@ -1991,6 +2102,9 @@ def _set_optional_pot(ctx: _GraphCliCommandContext, pot: str | None) -> None:
 def _graph_status_payload(host: Any, pot_id: str, dp) -> dict[str, Any]:
     caps = _safe(lambda: host.backend.capabilities(), None)
     implemented = list(caps.implemented()) if caps is not None else []
+    pot_info = pot_scope_info(host, pot_id)
+    quality_summary = _graph_status_quality_summary(host, pot_id, dp)
+    health_status = str(quality_summary.get("health_status") or "unknown")
     status = GraphWorkbenchStatus(
         host={
             "kind": getattr(host, "profile", "local"),
@@ -1998,6 +2112,8 @@ def _graph_status_payload(host: Any, pot_id: str, dp) -> dict[str, Any]:
         },
         pot={
             "id": pot_id,
+            "name": pot_info.get("name"),
+            "source_count": pot_info.get("source_count", 0),
             "selected_backend": dp.backend_profile,
         },
         graph_service={
@@ -2028,9 +2144,80 @@ def _graph_status_payload(host: Any, pot_id: str, dp) -> dict[str, Any]:
         },
         ledger={"status": "not_inspected"},
         skills={"status": "not_inspected"},
-        quality=dict(dp.quality),
+        quality=quality_summary,
     )
-    return status.to_dict()
+    payload = status.to_dict()
+    payload["health_status"] = health_status
+    return payload
+
+
+def _graph_status_quality_summary(host: Any, pot_id: str, dp) -> dict[str, Any]:
+    fallback = _data_plane_quality_summary(dp)
+    workbench = getattr(host, "graph_workbench", None)
+    if workbench is None or not getattr(workbench, "quality", None):
+        return fallback
+    try:
+        result = workbench.quality(
+            pot_id=pot_id,
+            report="summary",
+            subgraph=None,
+            limit=20,
+            confidence_threshold=0.5,
+        )
+    except CapabilityNotImplemented as exc:
+        fallback["health_status"] = "unavailable"
+        fallback["status"] = "unavailable"
+        fallback["detail"] = str(exc)
+        return fallback
+    except Exception as exc:
+        fallback["health_status"] = "unavailable"
+        fallback["status"] = "unavailable"
+        fallback["detail"] = f"quality summary unavailable: {exc}"
+        return fallback
+
+    body = result.to_dict()
+    metrics = dict(body.get("metrics") or {})
+    reports = dict(metrics.get("quality_reports") or {})
+    compact_reports = {
+        name: {
+            "status": report.get("status"),
+            "finding_count": report.get("finding_count", 0),
+            "severity_counts": dict(report.get("severity_counts") or {}),
+        }
+        for name, report in reports.items()
+        if isinstance(report, Mapping)
+    }
+    counts = metrics.get("counts") if isinstance(metrics.get("counts"), Mapping) else {}
+    out = {
+        "status": body.get("status"),
+        "health_status": body.get("status"),
+        "source": "quality_summary",
+        "claim_count": counts.get("claims", dict(dp.counts).get("claims")),
+        "quality_counts": dict(metrics.get("quality_counts") or {}),
+        "total_findings": metrics.get("total_findings", body.get("finding_count", 0)),
+        "reports": compact_reports,
+    }
+    if body.get("recommended_next_action"):
+        out["recommended_next_action"] = body["recommended_next_action"]
+    return out
+
+
+def _data_plane_quality_summary(dp) -> dict[str, Any]:
+    quality = dict(getattr(dp, "quality", {}) or {})
+    status = str(quality.get("status") or "unknown")
+    claim_count = quality.get(
+        "claim_count", dict(getattr(dp, "counts", {}) or {}).get("claims")
+    )
+    return {
+        **quality,
+        "status": status,
+        "health_status": status,
+        "source": "data_plane",
+        "claim_count": claim_count,
+        "quality_counts": {},
+        "reports": {},
+        "total_findings": quality.get("open_conflicts", 0),
+    }
 
 
 def _describe_human(payload: Mapping[str, Any]) -> str:
@@ -2463,6 +2650,170 @@ def _data_plane_status_payload(status) -> dict[str, Any]:
     }
 
 
+def _neighborhood_relation(edge) -> dict[str, Any]:
+    props = dict(edge.properties or {})
+    source_refs = _string_list(props.get("source_refs"))
+    if not source_refs and props.get("source_ref"):
+        source_refs = [_str(props.get("source_ref"))]
+    score = props.get("semantic_similarity")
+    if score is None:
+        score = props.get("score")
+    return {
+        "predicate": edge.predicate,
+        "from": edge.from_key,
+        "to": edge.to_key,
+        "from_key": edge.from_key,
+        "to_key": edge.to_key,
+        "fact": _str(
+            props.get("fact") or props.get("description") or props.get("summary")
+        ),
+        "source_refs": source_refs,
+        "truth": _str(props.get("truth")),
+        "environment": _str(props.get("environment")),
+        "score": float(score) if isinstance(score, (int, float)) else None,
+        "claim_key": _str(props.get("claim_key")),
+        "source_system": _str(props.get("source_system")),
+    }
+
+
+def _neighborhood_human(payload: Mapping[str, Any]) -> str:
+    relations = payload.get("relations") or ()
+    lines = [
+        (
+            f"entity={payload.get('entity_key')} relations={len(relations)} "
+            f"nodes={payload.get('node_count')} detail={payload.get('detail')}"
+        )
+    ]
+    for rel in list(relations)[:20]:
+        if not isinstance(rel, Mapping):
+            continue
+        refs = ", ".join(_string_list(rel.get("source_refs"))) or "no-source-ref"
+        fact = rel.get("fact") or f"{rel.get('from')} -> {rel.get('to')}"
+        lines.append(f"  • {rel.get('predicate')} [{refs}] {fact}")
+    return "\n".join(lines)
+
+
+def _catalog_payload_for_profile(
+    payload: Mapping[str, Any], *, profile: str
+) -> dict[str, Any]:
+    mode = (profile or "full").strip().lower()
+    if mode not in {"full", "read"}:
+        raise ValueError("--profile must be one of: full, read")
+    result = dict(payload)
+    result["profile"] = mode
+    if mode == "full":
+        return result
+
+    read_commands = [
+        command
+        for command in result.get("commands", ())
+        if command
+        in {
+            "status",
+            "catalog",
+            "describe",
+            "search-entities",
+            "read",
+            "neighborhood",
+        }
+    ]
+    result["commands"] = read_commands
+    result["views"] = [_compact_catalog_view(view) for view in result.get("views", ())]
+    if "task_ranking" in result:
+        result["task_ranking"] = [
+            _compact_catalog_ranking(entry, rank=index + 1)
+            for index, entry in enumerate(result.get("task_ranking", ()))
+        ]
+    for key in (
+        "admin_commands",
+        "legacy_commands",
+        "mutation_operations",
+        "review_required_operations",
+        "deferred_operations",
+        "entity_types",
+        "predicates",
+        "transition",
+    ):
+        result.pop(key, None)
+    return result
+
+
+def _compact_catalog_view(view: Mapping[str, Any]) -> dict[str, Any]:
+    out = {
+        key: view[key]
+        for key in (
+            "name",
+            "subgraph",
+            "view",
+            "backed",
+            "description",
+            "result_shape",
+            "required_scope",
+            "required_any_scope",
+            "supported_filters",
+        )
+        if key in view
+    }
+    if "subgraph" in out and "view" in out:
+        out["next_read"] = (
+            f"potpie graph read --subgraph {out['subgraph']} --view {out['view']}"
+        )
+    return out
+
+
+def _compact_catalog_ranking(entry: Mapping[str, Any], *, rank: int) -> dict[str, Any]:
+    out: dict[str, Any] = {"rank": rank}
+    for key in ("view", "subgraph", "score", "matched_terms"):
+        if key in entry:
+            out[key] = entry[key]
+    reason = entry.get("reason") or entry.get("why")
+    if reason:
+        out["reason"] = reason
+    return out
+
+
+def _catalog_human(payload: Mapping[str, Any], *, format_: str) -> str:
+    mode = (format_ or "auto").strip().lower()
+    if mode not in {"auto", "table"}:
+        raise ValueError("--format must be one of: auto, table")
+    if mode == "table" or payload.get("profile") == "read":
+        lines = [
+            f"graph catalog profile={payload.get('profile', 'full')} "
+            f"match={payload.get('match_mode')}"
+        ]
+        task = payload.get("task")
+        if task:
+            lines.append(f"task={task}")
+        rankings = payload.get("task_ranking") or ()
+        if rankings:
+            lines.append("rank | score | view | reason")
+            lines.append("--- | --- | --- | ---")
+            for entry in rankings[:8]:
+                reason = str(entry.get("reason") or "")
+                lines.append(
+                    f"{entry.get('rank')} | {entry.get('score')} | "
+                    f"{entry.get('view')} | {reason}"
+                )
+        lines.append("view | backed | filters")
+        lines.append("--- | --- | ---")
+        for view in payload.get("views", ()):
+            filters = ", ".join(view.get("supported_filters") or ()) or "-"
+            lines.append(
+                f"{view.get('name')} | {str(bool(view.get('backed'))).lower()} | {filters}"
+            )
+        return "\n".join(lines)
+
+    return (
+        f"graph contract v2 / ontology {ONTOLOGY_VERSION} "
+        f"(data-plane={payload['data_plane_graph_contract_version']}, match={payload['match_mode']})\n"
+        f"commands: {', '.join(payload['commands'])}\n"
+        f"views: {', '.join(v['name'] for v in payload['views'])}\n"
+        f"mutation ops: {', '.join(payload['mutation_operations'])}\n"
+        f"review-required: {', '.join(payload['review_required_operations'])}\n"
+        f"deferred: {', '.join(payload['deferred_operations'])}"
+    )
+
+
 def _emit_graph_read(
     ctx: _GraphCliCommandContext,
     result,
@@ -2471,10 +2822,18 @@ def _emit_graph_read(
     sort: str,
     dedupe: str,
     event_limit: int | None = None,
+    human_prefix: str | None = None,
+    warnings: tuple[str, ...] = (),
 ) -> None:
     if not is_json():
         _emit_read(
-            result, format_=format_, sort=sort, dedupe=dedupe, event_limit=event_limit
+            result,
+            format_=format_,
+            sort=sort,
+            dedupe=dedupe,
+            event_limit=event_limit,
+            human_prefix=human_prefix,
+            warnings=warnings,
         )
         return
 
@@ -2490,6 +2849,8 @@ def _emit_graph_read(
             dedupe=dedupe,
             event_limit=event_limit,
         )
+        if payload.get("detail") != "full":
+            payload.pop("items", None)
         payload["read_shape"] = "jsonl"
         payload["rows"] = rows
         payload["row_count"] = len(rows)
@@ -2504,18 +2865,30 @@ def _emit_graph_read(
     _emit_graph_result(
         ctx,
         payload,
-        human=_read_human(
-            result,
-            format_=normalized_format,
-            sort=sort,
-            dedupe=dedupe,
-            event_limit=event_limit,
+        human=_with_read_context(
+            _read_human(
+                result,
+                format_=normalized_format,
+                sort=sort,
+                dedupe=dedupe,
+                event_limit=event_limit,
+            ),
+            human_prefix=human_prefix,
+            warnings=warnings,
         ),
+        warnings=warnings,
     )
 
 
 def _emit_read(
-    result, *, format_: str, sort: str, dedupe: str, event_limit: int | None = None
+    result,
+    *,
+    format_: str,
+    sort: str,
+    dedupe: str,
+    event_limit: int | None = None,
+    human_prefix: str | None = None,
+    warnings: tuple[str, ...] = (),
 ) -> None:
     normalized_format = _effective_read_format(result, format_)
     if normalized_format == "jsonl":
@@ -2534,14 +2907,29 @@ def _emit_read(
     )
     emit(
         payload,
-        human=_read_human(
-            result,
-            format_=normalized_format,
-            sort=sort,
-            dedupe=dedupe,
-            event_limit=event_limit,
+        human=_with_read_context(
+            _read_human(
+                result,
+                format_=normalized_format,
+                sort=sort,
+                dedupe=dedupe,
+                event_limit=event_limit,
+            ),
+            human_prefix=human_prefix,
+            warnings=warnings,
         ),
     )
+
+
+def _with_read_context(
+    human: str, *, human_prefix: str | None, warnings: tuple[str, ...]
+) -> str:
+    lines: list[str] = []
+    if human_prefix:
+        lines.append(human_prefix)
+    lines.append(human)
+    lines.extend(f"! {warning}" for warning in warnings)
+    return "\n".join(lines)
 
 
 def _read_payload(
@@ -2555,6 +2943,8 @@ def _read_payload(
     payload = result.to_dict()
     if format_ in ("events", "table"):
         events = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
+        if payload.get("detail") != "full":
+            payload.pop("items", None)
         payload["read_shape"] = "events"
         payload["events"] = events
         payload["event_count"] = len(events)
@@ -2635,7 +3025,10 @@ def _timeline_events(
     dedupe_mode = _normalize_dedupe(dedupe)
     by_key: dict[str, dict[str, Any]] = {}
     ordered: list[dict[str, Any]] = []
-    for item in payload.get("items", []):
+    items = getattr(result, "items", None)
+    if items is None:
+        items = payload.get("items", [])
+    for item in items:
         for event in _events_from_item(item):
             key = _event_dedupe_key(event, mode=dedupe_mode)
             if key is not None and key in by_key:
@@ -3021,6 +3414,20 @@ def _commit_human(result) -> str:
     if result.mutation_id:
         head += f" mutation_id={result.mutation_id}"
     lines = [head]
+    verification = getattr(result, "verification", None)
+    if verification is not None:
+        lines.append(
+            "verification: "
+            f"status={verification.status} "
+            f"readback={verification.readback_count}/{len(verification.claim_keys)} "
+            f"quality={verification.quality_status}"
+        )
+        if verification.quality_regressions:
+            lines.append(
+                f"quality_regressions={dict(verification.quality_regressions)}"
+            )
+        if verification.missing_claim_keys:
+            lines.append(f"missing_claim_keys={list(verification.missing_claim_keys)}")
     if result.detail:
         lines.append(result.detail)
     return "\n".join(lines)

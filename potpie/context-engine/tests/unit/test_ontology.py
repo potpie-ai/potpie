@@ -223,3 +223,11 @@ def test_owner_binding_predicate_family() -> None:
         temporal_subject_key_for_edge("OWNED_BY", "service:auth", "team:x")
         == "service:auth"
     )
+
+
+def test_multi_binding_predicate_families_are_not_exclusive() -> None:
+    assert predicate_family_for_episodic_supersede("USES") is None
+    assert (
+        temporal_subject_key_for_edge("USES", "service:auth", "datastore:redis")
+        is None
+    )

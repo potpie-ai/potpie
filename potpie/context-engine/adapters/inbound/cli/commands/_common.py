@@ -26,6 +26,7 @@ import typer
 
 import click
 
+from adapters.inbound.cli.repo_location import repo_identity_key
 from domain.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
@@ -329,6 +330,10 @@ def resolve_pot_id(
             message=f"No pot matching '{explicit}'.",
             next_action="run 'potpie pot list'",
         )
+    repo_identity = _current_repo_identity() if infer_from_repo else None
+    default_pot = _repo_default_pot_id(host, repo_identity)
+    if default_pot:
+        return default_pot
     matches = _pots_matching_current_repo(host) if infer_from_repo else []
     active = pots.active_pot()
     if len(matches) == 1:
@@ -349,6 +354,117 @@ def resolve_pot_id(
             next_action="run 'potpie setup', or create a pot with 'potpie pot create <name> --use' and register this repo with 'potpie source add repo .'",
         )
     return active.pot_id
+
+
+def current_repo_identity_for_cli() -> str | None:
+    return _current_repo_identity()
+
+
+def repo_pot_candidates(host: Any, repo: str | None = None) -> dict[str, Any]:
+    repo_identity = (
+        _current_repo_identity()
+        if repo in (None, "", ".", "current")
+        else repo_identity_key(repo or "")
+    )
+    matches = (
+        _pots_matching_current_repo(host)
+        if repo in (None, "", ".", "current")
+        else _pots_matching_repo_identity(host, repo_identity)
+    )
+    default_pot_id = _repo_default_pot_id(host, repo_identity)
+    active = _safe_call(lambda: host.pots.active_pot(), None)
+    rows: list[dict[str, Any]] = []
+    for pot_id, name in matches:
+        counts = pot_graph_counts(host, pot_id)
+        rows.append(
+            {
+                "pot_id": pot_id,
+                "name": name,
+                "active": bool(
+                    active is not None and getattr(active, "pot_id", None) == pot_id
+                ),
+                "default": bool(default_pot_id == pot_id),
+                "source_count": pot_source_count(host, pot_id),
+                "counts": counts,
+            }
+        )
+    return {
+        "repo": repo_identity,
+        "default_pot_id": default_pot_id,
+        "candidates": rows,
+    }
+
+
+def pot_scope_info(host: Any, pot_id: str) -> dict[str, Any]:
+    pot = _pot_for_id(host, pot_id)
+    return {
+        "id": pot_id,
+        "name": getattr(pot, "name", pot_id) if pot is not None else pot_id,
+        "active": bool(getattr(pot, "active", False)) if pot is not None else False,
+        "source_count": pot_source_count(host, pot_id),
+        "counts": pot_graph_counts(host, pot_id),
+    }
+
+
+def pot_scope_human(host: Any, pot_id: str) -> str:
+    info = pot_scope_info(host, pot_id)
+    counts = info.get("counts") or {}
+    claims = counts.get("claims", 0)
+    entities = counts.get("entities", 0)
+    return (
+        f"pot={info.get('name')} ({pot_id}) "
+        f"sources={info.get('source_count', 0)} claims={claims} entities={entities}"
+    )
+
+
+def empty_pot_warnings(host: Any, pot_id: str) -> tuple[str, ...]:
+    counts = pot_graph_counts(host, pot_id)
+    if int(counts.get("claims", 0) or 0) != 0:
+        return ()
+    linked = repo_pot_candidates(host)
+    alternatives = [
+        row
+        for row in linked.get("candidates", ())
+        if row.get("pot_id") != pot_id
+        and int((row.get("counts") or {}).get("claims", 0) or 0) > 0
+    ]
+    if not alternatives:
+        return ()
+    best = sorted(
+        alternatives,
+        key=lambda row: int((row.get("counts") or {}).get("claims", 0) or 0),
+        reverse=True,
+    )[0]
+    claims = int((best.get("counts") or {}).get("claims", 0) or 0)
+    return (
+        (
+            f"current pot has 0 claims; repo {linked.get('repo')} also links to "
+            f"{best.get('name')} ({best.get('pot_id')}) with {claims} claims. "
+            f"Retry with --pot {best.get('pot_id')} or run "
+            f"`potpie pot default set --repo current {best.get('pot_id')}`."
+        ),
+    )
+
+
+def pot_graph_counts(host: Any, pot_id: str) -> dict[str, int]:
+    graph = getattr(host, "graph", None)
+    if graph is None:
+        return {}
+    status = _safe_call(lambda: graph.data_plane_status(pot_id), None)
+    if status is None:
+        return {}
+    counts = getattr(status, "counts", {}) or {}
+    out: dict[str, int] = {}
+    for key, value in dict(counts).items():
+        try:
+            out[str(key)] = int(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def pot_source_count(host: Any, pot_id: str) -> int:
+    return len(_safe_call(lambda: host.pots.list_sources(pot_id=pot_id), []) or [])
 
 
 def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
@@ -392,6 +508,69 @@ def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
                 matches.append((pot.pot_id, pot.name))
                 break
     return matches
+
+
+def _pots_matching_repo_identity(
+    host: Any, repo_identity: str | None
+) -> list[tuple[str, str]]:
+    if not repo_identity:
+        return []
+    matches: list[tuple[str, str]] = []
+    try:
+        pots = list(host.pots.list_pots())
+    except Exception:  # noqa: BLE001
+        return []
+    for pot in pots:
+        try:
+            sources = host.pots.list_sources(pot_id=pot.pot_id)
+        except Exception:  # noqa: BLE001
+            continue
+        for source in sources:
+            if getattr(source, "kind", None) != "repo":
+                continue
+            refs = (
+                str(getattr(source, "name", "") or "").strip(),
+                str(getattr(source, "location", "") or "").strip(),
+            )
+            if any(repo_identity_key(ref) == repo_identity for ref in refs if ref):
+                matches.append((pot.pot_id, pot.name))
+                break
+    return matches
+
+
+def _current_repo_identity() -> str | None:
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        return None
+    return _current_git_remote(cwd) or str(cwd)
+
+
+def _repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
+    if not repo_identity:
+        return None
+    getter = getattr(host.pots, "repo_default", None)
+    if not callable(getter):
+        return None
+    pot_id = _safe_call(lambda: getter(repo=repo_identity), None)
+    if not pot_id:
+        return None
+    pot_id = str(pot_id)
+    return pot_id if _pot_for_id(host, pot_id) is not None else None
+
+
+def _pot_for_id(host: Any, pot_id: str):
+    for pot in _safe_call(lambda: host.pots.list_pots(), []) or []:
+        if getattr(pot, "pot_id", None) == pot_id:
+            return pot
+    return None
+
+
+def _safe_call(fn, default):
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001
+        return default
 
 
 def _repo_source_matches_cwd(
@@ -463,8 +642,15 @@ __all__ = [
     "fail",
     "get_host",
     "get_store",
+    "current_repo_identity_for_cli",
+    "empty_pot_warnings",
     "is_json",
     "is_verbose",
+    "pot_graph_counts",
+    "pot_scope_human",
+    "pot_scope_info",
+    "pot_source_count",
+    "repo_pot_candidates",
     "resolve_pot_id",
     "set_host",
     "set_store",

@@ -83,7 +83,12 @@ def test_row_parsing_maps_reserved_and_extras() -> None:
             mutation_id="mut-1",
             source_refs=["repo:x:CODEOWNERS", "repo:x:owners.yaml"],
             evidence=json.dumps(
-                [{"source_ref": "repo:x:CODEOWNERS", "authority": "repository_metadata"}]
+                [
+                    {
+                        "source_ref": "repo:x:CODEOWNERS",
+                        "authority": "repository_metadata",
+                    }
+                ]
             ),
             graph_contract_version="1.5",
             ontology_version="2026-06-01",
@@ -211,7 +216,9 @@ def test_fact_query_stamps_similarity_and_orders() -> None:
     )
 
 
-def test_fact_query_uses_native_relationship_vector_index_when_embedder_present() -> None:
+def test_fact_query_uses_native_relationship_vector_index_when_embedder_present() -> (
+    None
+):
     driver = _FakeDriver(
         [
             {

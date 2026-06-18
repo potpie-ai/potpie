@@ -1,6 +1,6 @@
 ---
 name: potpie-source-ingestion
-description: "Use when the user explicitly asks to ingest, refresh, or deeply understand a repository, PR, issue, ticket, runbook, incident report, document, or web link into Potpie. The harness performs todo-driven discovery, uses local/GitHub/integration tools and read-only subagents when available, builds evidence-backed semantic mutations, and writes through graph propose/commit."
+description: "Use when the user explicitly asks to ingest, refresh, or deeply understand a repository, PR, issue, ticket, runbook, incident report, document, or web link into Potpie. The harness performs todo-driven discovery, uses local/GitHub/integration tools and read-only subagents when available, builds evidence-backed semantic mutations, and writes through graph propose/verified commit."
 ---
 
 # Potpie Source Ingestion
@@ -77,7 +77,7 @@ Create and maintain todos with at least these lanes for repository ingestion:
 - Preferences/workflows: explicit coding style, test commands, local dev setup,
   release/deploy/runbook workflows.
 - Synthesis: evidence matrix, candidate graph facts, identity resolution,
-  proposal/commit, read-back verification, quality checks.
+  proposal, verified commit, and gate-driven follow-up checks.
 
 Update todos as lanes finish. Preserve uncertain findings for the inbox instead
 of forcing them into canonical graph claims.
@@ -170,9 +170,9 @@ Guidelines:
 Resolve before linking. Use specific filters when known:
 
 ```bash
-potpie --json graph search-entities "<repo service feature dependency>" --limit 10
-potpie --json graph search-entities "<service>" --type Service --environment prod --limit 10
-potpie --json graph search-entities "<github-or-ticket-id>" --external-id "<external-id>" --limit 10
+potpie graph search-entities "<repo service feature dependency>" --limit 10
+potpie graph search-entities "<service>" --type Service --environment prod --limit 10
+potpie graph search-entities "<github-or-ticket-id>" --source-ref <github-or-ticket-ref> --limit 10
 ```
 
 Reuse canonical keys. If duplicate candidates appear, stop and use inbox or a
@@ -195,10 +195,10 @@ review flags:
 - `conflict` or duplicate risk: resolve identity or use inbox.
 - `review_required`: ask for approval or commit only with the required
   `--approved-by` value when policy allows.
-- `validated` / low-risk: commit and verify.
+- `validated` / low-risk: commit with `--verify`.
 
 ```bash
-potpie --json graph commit <plan_id>
+potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>
 ```
 
@@ -208,19 +208,20 @@ harness already selected.
 
 ## Phase 8: Verify And Quality Gate
 
-Read back the graph and run quality checks:
+`graph commit --verify` reads back committed claims and checks quality. When it
+warns or fails, drill down with affected reads and quality reports:
 
 ```bash
-potpie --json graph read --subgraph features --view feature_context --scope anchor_entity_key:<repo-key> --limit 50
-potpie --json graph read --subgraph infra_topology --view service_neighborhood --scope service:<service> --depth 2 --direction both --limit 50
-potpie --json graph read --subgraph recent_changes --view timeline --scope repo:<repo> --limit 50
+potpie graph read --subgraph features --view feature_context --scope anchor_entity_key:<repo-key> --limit 50
+potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:<service> --depth 2 --direction both --limit 50
+potpie graph read --subgraph recent_changes --view timeline --scope repo:<repo> --limit 50 --format table
 potpie --json graph quality duplicate-candidates --limit 20
 potpie --json graph quality low-confidence --limit 20
 potpie --json graph quality conflicting-claims --limit 20
 potpie --json graph quality orphan-entities --limit 20
 ```
 
-If verification misses expected facts, fix the mutation or record an inbox item.
+If the verified commit misses expected facts, fix the mutation or record an inbox item.
 Report what was ingested, what was skipped, and what remains uncertain.
 
 ## Repository Baseline

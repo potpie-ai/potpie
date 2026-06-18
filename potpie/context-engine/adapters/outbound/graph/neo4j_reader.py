@@ -45,6 +45,7 @@ WHERE r.group_id = $gid
   AND ($claim_keys IS NULL OR r.claim_key IN $claim_keys)
   AND ($subgraphs IS NULL OR r.subgraph IN $subgraphs)
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
+  AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
   AND ($include_invalid OR r.invalid_at IS NULL)
   AND ($as_of IS NULL OR r.valid_at IS NULL OR r.valid_at <= $as_of)
@@ -123,6 +124,7 @@ class Neo4jClaimQueryStore:
             "claim_keys": list(filter_.claim_key_in) or None,
             "subgraphs": list(filter_.subgraph_in) or None,
             "mutation_ids": list(filter_.mutation_id_in) or None,
+            "source_refs": list(filter_.source_ref_in) or None,
             "sources": list(filter_.source_system_in) or None,
             "include_invalid": bool(filter_.include_invalidated),
             "as_of": _iso(filter_.as_of),
@@ -173,8 +175,7 @@ class Neo4jClaimQueryStore:
         except Exception:
             return []
         rows = [
-            (float(rec.get("score", 0.0)), _row_from_record(rec))
-            for rec in records
+            (float(rec.get("score", 0.0)), _row_from_record(rec)) for rec in records
         ]
         return stamp_scored_rows(rows)
 

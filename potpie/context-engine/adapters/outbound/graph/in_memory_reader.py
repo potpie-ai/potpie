@@ -151,6 +151,10 @@ def _matches_filter(
         return False
     if filter_.mutation_id_in and row.mutation_id not in filter_.mutation_id_in:
         return False
+    if filter_.source_ref_in and not _row_matches_source_refs(
+        row, filter_.source_ref_in
+    ):
+        return False
     if filter_.source_system_in and row.source_system not in filter_.source_system_in:
         return False
     if not filter_.include_invalidated and row.invalid_at is not None:
@@ -174,6 +178,21 @@ def _matches_filter(
         if filter_.object_label not in labels:
             return False
     return True
+
+
+def _row_matches_source_refs(row: ClaimRow, wanted: Iterable[str]) -> bool:
+    wanted_set = {str(ref).strip().lower() for ref in wanted if str(ref).strip()}
+    if not wanted_set:
+        return True
+    refs = []
+    if row.source_ref:
+        refs.append(row.source_ref)
+    refs.extend(row.source_refs)
+    for item in row.evidence:
+        ref = item.get("source_ref") if isinstance(item, Mapping) else None
+        if isinstance(ref, str):
+            refs.append(ref)
+    return any(ref.strip().lower() in wanted_set for ref in refs if ref)
 
 
 __all__ = ["InMemoryClaimQueryStore", "card_for_row"]

@@ -78,7 +78,9 @@ def test_catalog_shows_backed_and_planned_views(service) -> None:
 
 
 def test_catalog_filters_by_subgraph(service) -> None:
-    cat = service.catalog(GraphCatalogRequest(pot_id="p", subgraph="debugging")).to_dict()
+    cat = service.catalog(
+        GraphCatalogRequest(pot_id="p", subgraph="debugging")
+    ).to_dict()
     assert {v["subgraph"] for v in cat["views"]} == {"debugging"}
     assert [v["name"] for v in cat["views"]] == ["debugging.prior_occurrences"]
 
@@ -92,9 +94,13 @@ def test_catalog_includes_ranking_inputs(service) -> None:
     cat = service.catalog(GraphCatalogRequest(pot_id="p")).to_dict()
     by_name = {v["name"]: v for v in cat["views"]}
     assert "ranking_inputs" in by_name["debugging.prior_occurrences"]
-    assert "semantic_similarity" in by_name["debugging.prior_occurrences"]["ranking_inputs"]
     assert (
-        "resolution_status" not in by_name["debugging.prior_occurrences"]["ranking_inputs"]
+        "semantic_similarity"
+        in by_name["debugging.prior_occurrences"]["ranking_inputs"]
+    )
+    assert (
+        "resolution_status"
+        not in by_name["debugging.prior_occurrences"]["ranking_inputs"]
     )
 
 
@@ -176,6 +182,92 @@ def test_read_assembles_inline_relations_for_view(service) -> None:
     )
 
 
+def test_read_to_dict_defaults_to_compact_relation_summaries(service) -> None:
+    request = SemanticMutationRequest.parse(
+        {
+            "pot_id": "p",
+            "operations": [
+                {
+                    "op": "link_entities",
+                    "subgraph": "infra_topology",
+                    "subject": {"key": "service:payments-api", "type": "Service"},
+                    "predicate": "DEPENDS_ON",
+                    "object": {"key": "service:ledger-api", "type": "Service"},
+                    "truth": "source_observation",
+                    "evidence": [{"source_ref": "repo:manifest"}],
+                    "description": "payments depends on ledger",
+                }
+            ],
+        }
+    )
+    service.mutate(request)
+
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="infra_topology",
+            view="service_neighborhood",
+            scope={"service": "payments-api"},
+            depth=1,
+        )
+    )
+    payload = env.to_dict()
+
+    assert payload["detail"] == "compact"
+    assert payload["relations_detail"] == "summary"
+    item = next(
+        item
+        for item in payload["items"]
+        if item["entity_key"] == "service:payments-api"
+    )
+    assert "relations" not in item
+    assert item["relation_count"] >= 1
+    assert "DEPENDS_ON" in item["relation_predicates"]
+
+
+def test_read_to_dict_full_detail_preserves_relation_payload(service) -> None:
+    request = SemanticMutationRequest.parse(
+        {
+            "pot_id": "p",
+            "operations": [
+                {
+                    "op": "link_entities",
+                    "subgraph": "infra_topology",
+                    "subject": {"key": "service:payments-api", "type": "Service"},
+                    "predicate": "DEPENDS_ON",
+                    "object": {"key": "service:ledger-api", "type": "Service"},
+                    "truth": "source_observation",
+                    "evidence": [{"source_ref": "repo:manifest"}],
+                    "description": "payments depends on ledger",
+                }
+            ],
+        }
+    )
+    service.mutate(request)
+
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="infra_topology",
+            view="service_neighborhood",
+            scope={"service": "payments-api"},
+            depth=1,
+            detail="full",
+            relations="full",
+        )
+    )
+    payload = env.to_dict()
+
+    assert payload["detail"] == "full"
+    item = next(
+        item
+        for item in payload["items"]
+        if item["entity_key"] == "service:payments-api"
+    )
+    assert item["relations"][0]["predicate"] == "DEPENDS_ON"
+    assert "breakdown" in item
+
+
 def test_preferences_view_assembles_structured_policy_relation(service) -> None:
     request = SemanticMutationRequest.parse(
         {
@@ -229,6 +321,232 @@ def test_preferences_view_assembles_structured_policy_relation(service) -> None:
     policy_rel = next(rel for rel in rels if rel["predicate"] == "POLICY_APPLIES_TO")
     assert policy_rel["properties"]["prescription"].startswith("Emit structured CLI")
     assert policy_rel["properties"]["policy_kind"] == "error_handling"
+
+
+def test_preferences_view_accepts_direct_service_scope(service) -> None:
+    store = service.backend.claim_query
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="POLICY_APPLIES_TO",
+            subject_key="preference:service-errors",
+            object_key="service:context-engine",
+            claim_key="claim:service-errors",
+            truth="preference",
+            evidence_strength="attested",
+            source_refs=("repo:prefs",),
+            fact="Context engine service code should emit structured errors.",
+            properties={
+                "policy_kind": "error_handling",
+                "prescription": "Emit structured errors from service boundaries.",
+            },
+        )
+    )
+
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="decisions",
+            view="preferences_for_scope",
+            scope={"service": "context-engine"},
+            limit=5,
+        )
+    )
+
+    assert env.unsupported == ()
+    assert env.items
+    assert env.items[0]["entity_key"] == "preference:service-errors"
+
+
+def test_infra_read_accepts_include_unqualified_environment_filter(service) -> None:
+    service.backend.claim_query.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="DEPENDS_ON",
+            subject_key="service:payments-api",
+            object_key="service:ledger-api",
+            claim_key="claim:payments-ledger",
+            truth="source_observation",
+            source_refs=("repo:manifest",),
+            fact="payments depends on ledger",
+        )
+    )
+
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="infra_topology",
+            view="service_neighborhood",
+            scope={
+                "service": "payments-api",
+                "include_unqualified_environment": "true",
+            },
+            environment="prod",
+            depth=1,
+        )
+    )
+
+    assert env.unsupported == ()
+    assert env.items
+    assert env.source_refs == ("repo:manifest",)
+
+
+def test_timeline_read_filters_by_exact_source_ref(service) -> None:
+    store = service.backend.claim_query
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="TOUCHED",
+            subject_key="activity:github:issue-881",
+            object_key="repo:github.com/potpie-ai/potpie",
+            claim_key="claim:issue-881",
+            truth="timeline_event",
+            source_refs=("github:potpie-ai/potpie#issue/881",),
+            fact="Issue 881 reported graph source-ref lookup gaps.",
+        )
+    )
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="TOUCHED",
+            subject_key="activity:github:issue-882",
+            object_key="repo:github.com/potpie-ai/potpie",
+            claim_key="claim:issue-882",
+            truth="timeline_event",
+            source_refs=("github:potpie-ai/potpie#issue/882",),
+            fact="Issue 882 is unrelated.",
+        )
+    )
+
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="recent_changes",
+            view="timeline",
+            source_refs=("github:potpie-ai/potpie#issue/881",),
+            limit=10,
+        )
+    )
+
+    assert env.source_refs == ("github:potpie-ai/potpie#issue/881",)
+    assert "activity:github:issue-881" in {item["entity_key"] for item in env.items}
+    assert all(
+        item["source_refs"] == ["github:potpie-ai/potpie#issue/881"]
+        for item in env.items
+    )
+
+
+def test_entity_search_filters_by_exact_source_ref(service) -> None:
+    service.backend.claim_query.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="PROVIDES",
+            subject_key="repo:github.com/potpie-ai/potpie",
+            object_key="feature:context-graph",
+            claim_key="claim:context-graph",
+            truth="source_observation",
+            source_refs=("github:potpie-ai/potpie#pull/955",),
+            fact="The repo provides context graph commands.",
+        )
+    )
+    service.backend.claim_query.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="PROVIDES",
+            subject_key="repo:github.com/potpie-ai/potpie",
+            object_key="feature:other",
+            claim_key="claim:other",
+            truth="source_observation",
+            source_refs=("github:potpie-ai/potpie#pull/956",),
+            fact="The repo provides another feature.",
+        )
+    )
+
+    result = service.search_entities(
+        GraphEntitySearchRequest(
+            pot_id="p",
+            query="context graph",
+            source_refs=("github:potpie-ai/potpie#pull/955",),
+            limit=10,
+        )
+    )
+
+    assert {entity.key for entity in result.entities} == {
+        "repo:github.com/potpie-ai/potpie",
+        "feature:context-graph",
+    }
+
+
+def test_entity_search_external_id_matches_claim_source_ref(service) -> None:
+    service.backend.claim_query.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="TOUCHED",
+            subject_key="activity:github:issue-881",
+            object_key="repo:github.com/potpie-ai/potpie",
+            claim_key="claim:issue-881",
+            truth="timeline_event",
+            source_refs=("github:potpie-ai/potpie#issue/881",),
+            fact="Issue 881 reported graph source-ref lookup gaps.",
+        )
+    )
+
+    result = service.search_entities(
+        GraphEntitySearchRequest(
+            pot_id="p",
+            query="source ref lookup",
+            external_id="github:potpie-ai/potpie#issue/881",
+            limit=10,
+        )
+    )
+
+    assert {entity.key for entity in result.entities} == {
+        "activity:github:issue-881",
+        "repo:github.com/potpie-ai/potpie",
+    }
+
+
+def test_entity_search_filters_by_source_system_and_family(service) -> None:
+    store = service.backend.claim_query
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="TOUCHED",
+            subject_key="activity:github:issue-881",
+            object_key="repo:github.com/potpie-ai/potpie",
+            claim_key="claim:github-issue",
+            truth="timeline_event",
+            source_system="github",
+            source_refs=("github:potpie-ai/potpie#issue/881",),
+            fact="GitHub issue 881 tracks source-ref lookup.",
+        )
+    )
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="TOUCHED",
+            subject_key="activity:linear:eng-881",
+            object_key="repo:github.com/potpie-ai/potpie",
+            claim_key="claim:linear-issue",
+            truth="timeline_event",
+            source_system="linear",
+            source_refs=("linear:ENG-881",),
+            fact="Linear issue 881 tracks a different item.",
+        )
+    )
+
+    result = service.search_entities(
+        GraphEntitySearchRequest(
+            pot_id="p",
+            query="issue 881",
+            source_system="github",
+            source_family="github",
+            limit=10,
+        )
+    )
+
+    assert "activity:github:issue-881" in {entity.key for entity in result.entities}
+    assert "activity:linear:eng-881" not in {entity.key for entity in result.entities}
 
 
 def test_read_dedupes_duplicate_inline_relation_rows(service) -> None:
@@ -485,6 +803,53 @@ def test_search_entities_filters_by_subgraph_truth_and_scope(service) -> None:
     ).to_dict()
 
     assert [entity["key"] for entity in result["entities"]] == ["feature:payments"]
+
+
+def test_search_entities_omits_supporting_claims_by_default(service) -> None:
+    store = service.backend.claim_query
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="PROVIDES",
+            subject_key="repo:github.com/acme/widgets",
+            object_key="feature:payments",
+            fact="widgets provides payments",
+            subgraph="features",
+            properties={"semantic_similarity": 0.9},
+        )
+    )
+
+    result = service.search_entities(
+        GraphEntitySearchRequest(pot_id="p", query="payments")
+    ).to_dict()
+
+    assert result["entities"]
+    assert result["entities"][0]["supporting_claims"] == []
+
+
+def test_search_entities_can_include_bounded_supporting_claims(service) -> None:
+    store = service.backend.claim_query
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="PROVIDES",
+            subject_key="repo:github.com/acme/widgets",
+            object_key="feature:payments",
+            fact="widgets provides payments",
+            subgraph="features",
+            properties={"semantic_similarity": 0.9},
+        )
+    )
+
+    result = service.search_entities(
+        GraphEntitySearchRequest(
+            pot_id="p",
+            query="payments",
+            supporting_claims=1,
+        )
+    ).to_dict()
+
+    assert len(result["entities"][0]["supporting_claims"]) == 1
 
 
 def test_read_projects_canonical_labels_from_key_prefix(service) -> None:

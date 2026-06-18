@@ -14,7 +14,7 @@ Search by symptom first, not just component name. Include exact error text,
 commands, failing tests, environment, service, dependency, and synonyms.
 
 ```bash
-potpie --json graph read \
+potpie graph read \
   --subgraph debugging \
   --view prior_occurrences \
   --query "<expanded symptom query>" \
@@ -26,9 +26,10 @@ If no service is known, omit `--scope`. If the failure smells like a regression,
 correlate with the timeline:
 
 ```bash
-potpie --json graph read \
+potpie graph read \
   --subgraph recent_changes \
   --view timeline \
+  --format table \
   --time-window 7d \
   --query "<symptom feature dependency>" \
   --limit 20
@@ -37,7 +38,7 @@ potpie --json graph read \
 If dependencies, adapters, environments, or deploys matter, read infra too:
 
 ```bash
-potpie --json graph read \
+potpie graph read \
   --subgraph infra_topology \
   --view service_neighborhood \
   --scope service:<service-name> \
@@ -60,10 +61,10 @@ Use the workbench write flow:
 
 ```bash
 potpie --json graph catalog --task "record bug fix"
-potpie --json graph search-entities "<service or symptom>" --limit 10
+potpie graph search-entities "<service or symptom>" --limit 10
 potpie --json graph describe debugging --view prior_occurrences --examples
 potpie --json graph propose --file mutation.json
-potpie --json graph commit <plan_id>
+potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>
 ```
 
