@@ -122,36 +122,6 @@ To stop all services:
 ./legacy/scripts/stop.sh
 ```
 
-### Troubleshooting
-
-#### Port already in use
-If you see errors like `address already in use` for ports `5432` (Postgres) or `6379` (Redis), you likely already have services bound to those ports. Edit `legacy/compose.yaml` to map to different host ports, for example:
-
-```yaml
-# In legacy/compose.yaml
-services:
-  postgres:
-    ports:
-      - "5433:5432"   # change the host side
-  redis:
-    ports:
-      - "6380:6379"   # change the host side
-```
-
-Then update your `legacy/.env` accordingly:
-
-```bash
-POSTGRES_SERVER=postgresql://postgres:mysecretpassword@localhost:5433/momentum
-REDISPORT=6380
-BROKER_URL=redis://127.0.0.1:6380/0
-```
-
-#### `alembic: command not found`
-The `legacy` folder is not part of the uv workspace (`members = ["potpie/*"]`), so running `uv sync --all-packages` from the repo root does not install legacy dependencies (gunicorn, celery, alembic). Ensure you run `uv sync --project legacy/` before starting, or use the `legacy/scripts/start.sh` script which handles this for you.
-
-#### `.env: line N: yourGithubUsername: No such file or directory`
-The `.env.template` contains `PRIVATE_TEST_REPO_NAME=<yourGithubUsername>/potpie-private-test-repo`. Because `.env` is sourced by bash, the `<>` characters are interpreted as redirection operators. Edit your `.env` to comment out or remove that line, or escape the value in quotes.
-
 #### Now set up Potpie Frontend
 
 Clone the UI repo separately (it is no longer a submodule of this repository):
