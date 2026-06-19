@@ -153,6 +153,34 @@ NUDGE_POLICIES: dict[str, NudgePolicy] = {
 }
 
 
+def _check_nudge_policies_coherent() -> None:
+    """Import-time guard: the hand-maintained policy table must cover every
+    nudge event exactly once, with each key matching its policy's ``event``.
+
+    Mirrors :func:`domain.graph_views._check_views_coherent` — a missing or
+    mismatched key silently disables the nudge for that event.
+    """
+    errors: list[str] = []
+    expected = set(NUDGE_EVENTS)
+    actual = set(NUDGE_POLICIES)
+    missing = expected - actual
+    extra = actual - expected
+    if missing:
+        errors.append(f"missing nudge policy for events: {sorted(missing)!r}")
+    if extra:
+        errors.append(f"unknown nudge policy events: {sorted(extra)!r}")
+    for key, policy in NUDGE_POLICIES.items():
+        if policy.event != key:
+            errors.append(
+                f"nudge policy key {key!r} does not match policy.event {policy.event!r}"
+            )
+    if errors:
+        raise RuntimeError("nudge policies incoherent:\n  - " + "\n  - ".join(errors))
+
+
+_check_nudge_policies_coherent()
+
+
 @dataclass(frozen=True, slots=True)
 class GraphNudgeRequest:
     """Input to the nudge brain (one harness event)."""

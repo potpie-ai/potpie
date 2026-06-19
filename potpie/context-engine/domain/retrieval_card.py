@@ -57,7 +57,9 @@ def build_retrieval_card(
     add(humanize_entity_key(object_key))
     add(object_value)
     if scope:
-        for value in scope.values():
+        # Sort by key so equivalent scopes with different insertion order
+        # produce identical card text (and therefore identical embeddings).
+        for _, value in sorted(scope.items(), key=lambda item: str(item[0])):
             if isinstance(value, str):
                 add(value)
     for term in extra_terms:

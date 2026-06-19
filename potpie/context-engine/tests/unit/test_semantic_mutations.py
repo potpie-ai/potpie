@@ -93,8 +93,9 @@ def test_single_op_alias_normalizes_to_batch() -> None:
     assert len(req.operations) == 1
     assert req.operations[0].op == "assert_claim"
     assert req.operations[0].subject.key == "preference:wrap-retries"
-    # Request-level keys must not leak into the op.
-    assert "pot_id" not in req.operations[0].raw or req.operations[0].raw.get("op")
+    # Request-level keys must not leak into the op, and 'op' must be present.
+    assert "pot_id" not in req.operations[0].raw
+    assert "op" in req.operations[0].raw
 
 
 def test_pot_id_override_wins() -> None:

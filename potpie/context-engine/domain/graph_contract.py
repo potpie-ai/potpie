@@ -319,7 +319,8 @@ def make_claim_key(
     env = (environment or "").strip().lower()
     if env:
         obj = f"{obj}@{env}"
-    looks_like_key = ":" in obj and " " not in obj and len(obj) <= 200
+    has_whitespace = any(ch.isspace() for ch in obj)
+    looks_like_key = ":" in obj and not has_whitespace and len(obj) <= 200
     obj_token = normalize_entity_key(obj) if looks_like_key else _short_hash(obj)
     disc = (discriminator or "").strip()
     disc_token = _short_hash(disc) if disc else "_"
