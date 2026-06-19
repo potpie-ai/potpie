@@ -80,8 +80,65 @@ def test_fact_family_policies_are_source_type_aware() -> None:
 
 
 def test_detect_family_conflicts_same_valid_at_is_contradiction() -> None:
-    # Two USES edges from one service to different datastores, same valid_at
-    # → datastore_binding contradiction.
+    # Two OWNED_BY edges from one service to different teams, same valid_at
+    # → owner_binding contradiction. owner_binding is the only mutually
+    # exclusive family (a service has exactly one owner); multi-binding
+    # families like USES accumulate and are not contradictions
+    # (see test_detect_family_conflicts_ignores_non_exclusive_families).
+    t = datetime(2025, 1, 15, tzinfo=timezone.utc)
+    edges = [
+        EpisodicEdgeConflictInput(
+            uuid="e1",
+            name="OWNED_BY",
+            source_uuid="svc",
+            target_uuid="team_a",
+            valid_at=t,
+        ),
+        EpisodicEdgeConflictInput(
+            uuid="e2",
+            name="OWNED_BY",
+            source_uuid="svc",
+            target_uuid="team_b",
+            valid_at=t,
+        ),
+    ]
+    out = detect_family_conflicts(edges)
+    assert len(out) == 1
+    assert out[0]["conflict_type"] == "contradiction"
+    assert out[0]["auto_resolvable"] is False
+    assert {out[0]["edge_a_uuid"], out[0]["edge_b_uuid"]} == {"e1", "e2"}
+
+
+def test_detect_family_conflicts_distinct_valid_at_supersession_pending() -> None:
+    t_old = datetime(2025, 1, 15, tzinfo=timezone.utc)
+    t_new = datetime(2025, 8, 15, tzinfo=timezone.utc)
+    edges = [
+        EpisodicEdgeConflictInput(
+            uuid="e1",
+            name="OWNED_BY",
+            source_uuid="svc",
+            target_uuid="team_a",
+            valid_at=t_old,
+        ),
+        EpisodicEdgeConflictInput(
+            uuid="e2",
+            name="OWNED_BY",
+            source_uuid="svc",
+            target_uuid="team_b",
+            valid_at=t_new,
+        ),
+    ]
+    out = detect_family_conflicts(edges)
+    assert len(out) == 1
+    assert out[0]["conflict_type"] == "supersession_pending"
+    assert out[0]["auto_resolvable"] is True
+    assert out[0]["suggested_action"] == "supersede_older"
+
+
+def test_detect_family_conflicts_ignores_non_exclusive_families() -> None:
+    # USES (datastore_binding) is a multi-binding family — a service may use
+    # several datastores at once, so two concurrent USES edges are NOT a
+    # contradiction. Only mutually exclusive families (owner_binding) conflict.
     t = datetime(2025, 1, 15, tzinfo=timezone.utc)
     edges = [
         EpisodicEdgeConflictInput(
@@ -99,34 +156,4 @@ def test_detect_family_conflicts_same_valid_at_is_contradiction() -> None:
             valid_at=t,
         ),
     ]
-    out = detect_family_conflicts(edges)
-    assert len(out) == 1
-    assert out[0]["conflict_type"] == "contradiction"
-    assert out[0]["auto_resolvable"] is False
-    assert {out[0]["edge_a_uuid"], out[0]["edge_b_uuid"]} == {"e1", "e2"}
-
-
-def test_detect_family_conflicts_distinct_valid_at_supersession_pending() -> None:
-    t_old = datetime(2025, 1, 15, tzinfo=timezone.utc)
-    t_new = datetime(2025, 8, 15, tzinfo=timezone.utc)
-    edges = [
-        EpisodicEdgeConflictInput(
-            uuid="e1",
-            name="USES",
-            source_uuid="svc",
-            target_uuid="mongo",
-            valid_at=t_old,
-        ),
-        EpisodicEdgeConflictInput(
-            uuid="e2",
-            name="USES",
-            source_uuid="svc",
-            target_uuid="pg",
-            valid_at=t_new,
-        ),
-    ]
-    out = detect_family_conflicts(edges)
-    assert len(out) == 1
-    assert out[0]["conflict_type"] == "supersession_pending"
-    assert out[0]["auto_resolvable"] is True
-    assert out[0]["suggested_action"] == "supersede_older"
+    assert detect_family_conflicts(edges) == []
