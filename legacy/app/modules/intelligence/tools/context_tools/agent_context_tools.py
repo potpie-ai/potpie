@@ -11,7 +11,6 @@ from app.modules.context_graph.wiring import build_container_for_user_session
 from domain.actor import Actor
 from domain.agent_context_port import (
     build_context_record_source_id,
-    bundle_to_agent_envelope,
     context_port_manifest,
     context_recipe_for_intent,
     normalize_record_type,
@@ -24,11 +23,6 @@ from domain.graph_query import (
 )
 from domain.ingestion_event_models import IngestionSubmissionRequest
 from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
-from domain.intelligence_models import (
-    ContextBudget,
-    ContextResolutionRequest,
-    ContextScope,
-)
 
 
 def _split_csv(value: Optional[str]) -> list[str]:
@@ -183,42 +177,7 @@ class AgentContextTools:
         self._assert_pot_access(pot_id)
         if not self._container.settings.is_enabled():
             return {"ok": False, "error": "context_graph_disabled"}
-        if self._container.resolution_service is None:
-            return {"ok": False, "error": "resolver_unavailable"}
-
-        req = ContextResolutionRequest(
-            pot_id=pot_id,
-            query=query,
-            consumer_hint=consumer_hint,
-            intent=intent,
-            scope=ContextScope(
-                repo_name=repo_name,
-                branch=branch,
-                file_path=file_path,
-                function_name=function_name,
-                symbol=symbol,
-                pr_number=pr_number,
-                services=_split_csv(services),
-                features=_split_csv(features),
-                environment=environment,
-                ticket_ids=_split_csv(ticket_ids),
-                user=user,
-                source_refs=_split_csv(source_refs),
-            ),
-            include=_split_csv(include),
-            exclude=_split_csv(exclude),
-            mode=mode,
-            source_policy=source_policy,
-            budget=ContextBudget(
-                max_items=max_items,
-                max_tokens=max_tokens,
-                timeout_ms=timeout_ms,
-                freshness=freshness,
-            ),
-            as_of=_parse_as_of(as_of),
-        )
-        bundle = await self._container.resolution_service.resolve(req)
-        return bundle_to_agent_envelope(bundle)
+        return {"ok": False, "error": "resolver_unavailable"}
 
     async def context_search(
         self,
@@ -408,13 +367,12 @@ class AgentContextTools:
                     "message": "Context graph is disabled for this server.",
                 }
             )
-        if self._container.resolution_service is None:
-            gaps.append(
-                {
-                    "code": "resolver_unavailable",
-                    "message": "Context resolution service is not configured.",
-                }
-            )
+        gaps.append(
+            {
+                "code": "resolver_unavailable",
+                "message": "Context resolution service is not configured.",
+            }
+        )
         if not resolved.repos:
             gaps.append(
                 {

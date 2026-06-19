@@ -103,7 +103,7 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'{}'::jsonb"),
         ),
-        sa.Column("graphiti_episode_uuid", sa.String(length=255), nullable=True),
+        sa.Column("episode_uuid", sa.String(length=255), nullable=True),
         sa.Column("entity_key", sa.String(length=512), nullable=True),
         sa.Column("bridge_written", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("bridge_status", sa.String(length=32), nullable=False, server_default="pending"),

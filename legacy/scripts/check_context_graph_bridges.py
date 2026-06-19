@@ -161,7 +161,7 @@ def run(project_id: str, repo_name: str | None, pr_number: int | None) -> int:
             print("5. DIAGNOSIS")
             issues: list[str] = []
             if entity_cnt == 0:
-                issues.append("No Entity nodes — Graphiti ingestion has not run.")
+                issues.append("No Entity nodes — ingestion has not run.")
             if stamped == 0 and entity_cnt > 0:
                 issues.append(
                     "No entity_key stamped — stamper did not run after ingestion. "
