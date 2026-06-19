@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import sys
+from unittest.mock import MagicMock
 
 import pytest
 
 from adapters.outbound.graph.backends import KNOWN_PROFILES, build_backend
 from adapters.outbound.graph.backends.falkordb_backend import FalkorDBGraphBackend
 from bootstrap.host_wiring import build_host_shell, default_backend_profile
+from bootstrap.ingestion_server import build_ingestion_server
 from domain.context_events import EventRef
 from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
 from domain.lifecycle import SetupPlan
@@ -151,6 +153,27 @@ async def test_falkordb_backend_apply_uses_writer() -> None:
     assert result.ok
     assert len(writer.entities) == 1
     assert len(writer.edges) == 1
+
+
+def test_ingestion_server_accepts_falkordb_backend() -> None:
+    container = build_ingestion_server(settings=_Settings(), pots=MagicMock())
+
+    assert container.backend is not None
+    assert container.backend.profile == "falkordb"
+    assert container.context_graph is not None
+    assert container.graph_writer is not None
+
+
+def test_ingestion_server_accepts_falkordb_lite_backend() -> None:
+    container = build_ingestion_server(
+        settings=_Settings(backend="falkordb_lite", mode="server"),
+        pots=MagicMock(),
+    )
+
+    assert container.backend is not None
+    assert container.backend.profile == "falkordb_lite"
+    assert container.context_graph is not None
+    assert container.graph_writer is not None
 
 
 def test_host_shell_accepts_falkordb_env(tmp_path, monkeypatch) -> None:

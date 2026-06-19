@@ -42,7 +42,7 @@ class LocalPotStore:
             with open(self._path, encoding="utf-8") as fh:
                 return json.load(fh)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {"pots": {}, "active": None, "sources": {}}
+            return {"pots": {}, "active": None, "sources": {}, "repo_defaults": {}}
 
     def _save(self, state: dict[str, Any]) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
@@ -157,6 +157,60 @@ class LocalPotStore:
             r for r in rows if r.get("source_id") != source_id
         ]
         self._save(state)
+
+    # --- repo defaults ------------------------------------------------------
+    def repo_default(self, *, repo: str) -> str | None:
+        key = _repo_identity_key(repo)
+        if not key:
+            return None
+        value = self._load().get("repo_defaults", {}).get(key)
+        return str(value) if value else None
+
+    def set_repo_default(self, *, repo: str, pot_id: str) -> None:
+        key = _repo_identity_key(repo)
+        if not key:
+            return
+        state = self._load()
+        state.setdefault("repo_defaults", {})[key] = pot_id
+        self._save(state)
+
+    def clear_repo_default(self, *, repo: str) -> bool:
+        key = _repo_identity_key(repo)
+        if not key:
+            return False
+        state = self._load()
+        defaults = state.setdefault("repo_defaults", {})
+        existed = key in defaults
+        defaults.pop(key, None)
+        if existed:
+            self._save(state)
+        return existed
+
+    def list_repo_defaults(self) -> dict[str, str]:
+        return {
+            str(repo): str(pot_id)
+            for repo, pot_id in self._load().get("repo_defaults", {}).items()
+        }
+
+
+def _repo_identity_key(value: str) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    if raw.startswith((".", "~")) or Path(raw).is_absolute():
+        return str(Path(raw).expanduser().resolve(strict=False))
+    if raw.endswith(".git"):
+        raw = raw[:-4]
+    if raw.startswith("git@") and ":" in raw:
+        host, path = raw[4:].split(":", 1)
+        return f"{host}/{path}".strip("/").lower()
+    if "://" in raw:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(raw)
+        if parsed.netloc and parsed.path:
+            return f"{parsed.netloc}/{parsed.path.strip('/')}".lower()
+    return raw.strip("/").lower()
 
 
 __all__ = ["LocalPotStore", "default_home"]

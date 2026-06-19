@@ -13,11 +13,12 @@ from domain.hatchet_events import (
 
 class HatchetContextGraphJobQueue:
     """
-    Push events to Hatchet; workers must register ``on_events`` for the same keys.
+    Push events to Hatchet; an externally run worker must register ``on_events``
+    for the same keys (no in-repo worker exists).
 
     Configure the Hatchet client via ``HATCHET_CLIENT_TOKEN`` (JWT) and optional
     ``HATCHET_CLIENT_HOST_PORT`` / ``HATCHET_CLIENT_SERVER_URL`` for self-hosting
-    (see https://docs.hatchet.run/self-hosting and ``docs/hatchet-local.md`` in this repo).
+    (see https://docs.hatchet.run/self-hosting).
     """
 
     def __init__(self, hatchet: Any) -> None:

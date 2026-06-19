@@ -107,8 +107,8 @@ def context_graph_apply_episode(
     queue="context-graph-etl",
 )
 def context_graph_sync_linear_project_source(self, project_source_id: str) -> dict:
-    from integrations.adapters.outbound.linear.linear_sync import (
-        sync_linear_project_source,
-    )
-
-    return sync_linear_project_source(self.db, project_source_id)
+    return {
+        "status": "skipped",
+        "reason": "linear_sync_removed",
+        "project_source_id": project_source_id,
+    }
