@@ -6,9 +6,10 @@ import pytest
 
 from adapters.outbound.graph.backends import KNOWN_PROFILES, build_backend
 from adapters.outbound.graph.backends.falkordb_backend import FalkorDBGraphBackend
-from bootstrap.host_wiring import build_host_shell
+from bootstrap.host_wiring import build_host_shell, default_backend_profile
 from domain.context_events import EventRef
 from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
+from domain.lifecycle import SetupPlan
 from domain.ports.graph.backend import GraphBackend
 from domain.reconciliation import ReconciliationPlan
 
@@ -157,6 +158,31 @@ def test_host_shell_accepts_falkordb_env(tmp_path, monkeypatch) -> None:
     host = build_host_shell()
 
     assert host.backend.profile == "falkordb"
+
+
+def test_host_shell_defaults_to_falkordb_lite(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    monkeypatch.delenv("CONTEXT_ENGINE_BACKEND", raising=False)
+    monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)
+
+    host = build_host_shell()
+
+    assert default_backend_profile() == "falkordb_lite"
+    assert host.backend.profile == "falkordb_lite"
+    assert SetupPlan().backend == "falkordb_lite"
+
+
+def test_default_backend_falls_back_below_falkordb_lite_python(monkeypatch) -> None:
+    import bootstrap.host_wiring as host_wiring
+    import domain.lifecycle as lifecycle
+
+    monkeypatch.delenv("CONTEXT_ENGINE_BACKEND", raising=False)
+    monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)
+    monkeypatch.setattr(host_wiring.sys, "version_info", (3, 11, 0))
+    monkeypatch.setattr(lifecycle.sys, "version_info", (3, 11, 0))
+
+    assert default_backend_profile() == "embedded"
+    assert SetupPlan().backend == "embedded"
 
 
 def test_host_shell_accepts_falkordb_lite_env(tmp_path, monkeypatch) -> None:

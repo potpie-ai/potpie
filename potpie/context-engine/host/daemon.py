@@ -3,8 +3,8 @@
 The daemon shell is the local background process for lifecycle, IPC, health,
 and logs. It is not the business layer. When ``in_process`` is true, the host
 runs in the CLI process and reports synthetic liveness. When detached, the
-daemon process runs ``host.daemon_runtime`` and serves HostShell operations over
-a Unix socket.
+daemon process runs ``host.daemon_main`` and serves HostShell RPC over loopback
+HTTP.
 
 Liveness and readiness are separate: the daemon can be live while a backend or
 semantic index is not ready.
@@ -12,6 +12,7 @@ semantic index is not ready.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +36,25 @@ class Daemon:
 
     home: Path = field(default_factory=default_home)
     in_process: bool = True
+    startup_timeout_s: float = 60.0
+
+    def discovery(self) -> dict[str, str] | None:
+        """Return daemon discovery metadata for either supported local daemon."""
+        from adapters.outbound.daemon_process.ipc_client import load_discovery
+
+        discovery = load_discovery(self.home)
+        if discovery is not None:
+            return discovery
+        legacy_path = self.home / "daemon.json"
+        if not legacy_path.exists():
+            return None
+        try:
+            raw = json.loads(legacy_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return None
+        if not isinstance(raw, dict):
+            return None
+        return {str(key): str(value) for key, value in raw.items()}
 
     def status(self) -> dict[str, Any]:
         if self.in_process:
@@ -44,28 +64,51 @@ class Daemon:
                 "home": str(self.home),
                 "detail": "in-process host; no detached daemon",
             }
-        from adapters.outbound.daemon_process.ipc_client import load_discovery
         from adapters.outbound.daemon_process.pidfile import read_pid_file
 
         pid = read_pid_file(self.home / "daemon.pid")
         up = bool(pid and _pid_alive(pid))
-        discovery = load_discovery(self.home) or {}
+        discovery = self.discovery() or {}
         bind = discovery.get("bind", "")
         socket = bind.removeprefix("unix:") if bind.startswith("unix:") else bind
-        return {
+        base_url = discovery.get("base_url", "")
+        status = {
             "up": up,
             "mode": "detached",
             "home": str(self.home),
             "pid": pid,
-            "socket": socket,
             "detail": "detached daemon running"
             if up
             else "detached daemon not running",
         }
+        if socket:
+            status["socket"] = socket
+        if base_url:
+            status["url"] = base_url
+        if up:
+            health = self.health()
+            if "backend" in health:
+                status["backend"] = health["backend"]
+        return status
 
     def health(self) -> dict[str, Any]:
         if self.in_process:
             return {"live": True, "mode": "in_process"}
+        discovery = self.discovery() or {}
+        base_url = discovery.get("base_url")
+        if base_url:
+            try:
+                import httpx
+
+                response = httpx.get(f"{base_url.rstrip('/')}/health", timeout=3.0)
+                data = response.json()
+                return {
+                    "live": 200 <= response.status_code < 300,
+                    "mode": "detached",
+                    **data,
+                }
+            except Exception:  # noqa: BLE001 - daemon health must be best-effort.
+                return {"live": False, "mode": "detached"}
         from adapters.outbound.daemon_process.ipc_client import client_for
 
         try:
@@ -76,7 +119,7 @@ class Daemon:
                     "mode": "detached",
                     **response.json(),
                 }
-        except RuntimeError:
+        except Exception:  # noqa: BLE001 - daemon health must be best-effort.
             return {"live": False, "mode": "detached"}
 
     def logs(self, *, follow: bool = False) -> list[str]:
@@ -100,15 +143,16 @@ class Daemon:
         if status["up"]:
             return StepResult(
                 "daemon.ensure",
-                DONE,
+                SKIPPED,
                 f"daemon already running (pid={status.get('pid')})",
                 metadata={
                     "mode": "detached",
                     "pid": status.get("pid"),
                     "socket": status.get("socket"),
+                    "url": status.get("url"),
                 },
             )
-        info = self.start()
+        info = self.start(backend=plan.backend if plan is not None else None)
         return StepResult(
             "daemon.ensure",
             DONE,
@@ -122,10 +166,14 @@ class Daemon:
             "detail": "no service unit for the local OSS daemon",
         }
 
-    def start(self) -> dict[str, Any]:
+    def start(self, *, backend: str | None = None) -> dict[str, Any]:
         from adapters.outbound.daemon_process.launcher import start_detached
 
-        return start_detached(self.home)
+        return start_detached(
+            self.home,
+            ready_timeout_s=self.startup_timeout_s,
+            backend=backend,
+        )
 
     def stop(self) -> dict[str, Any]:
         from adapters.outbound.daemon_process.launcher import stop_daemon
@@ -133,8 +181,15 @@ class Daemon:
         return {"detail": stop_daemon(self.home)}
 
     def restart(self) -> dict[str, Any]:
+        current_backend = self.status().get("backend")
         self.stop()
-        return self.start()
+        info = self.start(
+            backend=current_backend if isinstance(current_backend, str) else None
+        )
+        status = self.status()
+        if "backend" in status:
+            info = {**info, "backend": status["backend"]}
+        return {**info, "started": info}
 
 
 __all__ = ["Daemon"]

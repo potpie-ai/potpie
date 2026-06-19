@@ -1,6 +1,7 @@
 """ShellContext: cross-cutting services handed to every plugin instance."""
 
 from __future__ import annotations
+
 import asyncio
 import logging
 import pathlib
@@ -9,7 +10,7 @@ from typing import Any
 
 
 class ServiceEndpoints:
-    """Registry of resolved managed-service endpoints (e.g. graph-db -> bolt://...)."""
+    """Registry of resolved managed-service endpoints."""
 
     def __init__(self) -> None:
         self._eps: dict[str, str] = {}
@@ -24,7 +25,7 @@ class ServiceEndpoints:
         self._eps.pop(name, None)
 
     def resolve(self, value: str) -> str:
-        """``service:<name>`` -> resolved endpoint; any other value passes through."""
+        """``service:<name>`` resolves to the endpoint; other values pass through."""
         if value.startswith("service:"):
             name = value.split(":", 1)[1]
             try:

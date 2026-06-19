@@ -8,6 +8,7 @@ from adapters.inbound.cli import host_cli
 from adapters.inbound.cli.commands import _common
 from adapters.inbound.cli.telemetry.context import current_telemetry_context
 from domain.errors import CapabilityNotImplemented
+from host import daemon_main
 
 
 class _CrashingDaemon:
@@ -75,4 +76,36 @@ def test_daemon_expected_not_implemented_is_not_captured(
     payload = json.loads(result.stdout)
     assert result.exit_code == _common.EXIT_UNAVAILABLE
     assert payload["code"] == "not_implemented"
+    assert captured == []
+
+
+def test_daemon_rpc_unexpected_failure_is_captured(monkeypatch) -> None:
+    captured: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "adapters.inbound.cli.sentry_runtime.capture_unexpected_daemon_error",
+        lambda exc, *, error_code, error_kind: captured.append(
+            (error_code, error_kind)
+        ),
+    )
+
+    payload = daemon_main._error_payload(RuntimeError("daemon exploded"))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "daemon_error"
+    assert captured == [("daemon_error", "unexpected")]
+
+
+def test_daemon_rpc_expected_error_is_not_captured(monkeypatch) -> None:
+    captured: list[BaseException] = []
+    monkeypatch.setattr(
+        "adapters.inbound.cli.sentry_runtime.capture_unexpected_daemon_error",
+        lambda exc, *, error_code, error_kind: captured.append(exc),
+    )
+
+    payload = daemon_main._error_payload(
+        CapabilityNotImplemented("graph.neo4j.snapshot.export")
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "not_implemented"
     assert captured == []
