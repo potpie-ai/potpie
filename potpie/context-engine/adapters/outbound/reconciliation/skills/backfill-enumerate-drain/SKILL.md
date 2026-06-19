@@ -23,10 +23,10 @@ enumerators and WHAT to extract per artifact.
 2. **Write one todo per returned ref**, across all enumerated kinds. If the
    playbook says some kinds frame the others (e.g. projects/documents frame
    issues), drain those first.
-3. **Drain newest-first.** For each todo: hydrate the ref with its detail tool
-   (`github_get_pull_request` / `github_get_issue` / `linear_get_*`), apply the
-   extraction the relevant per-kind playbook prescribes via
-   `apply_graph_mutations`, then mark the todo done and move on.
+3. **Drain newest-first.** For each todo: hydrate the ref with the detail tool
+   named by the playbook (for example `github_get_pull_request` or
+   `github_get_issue`), apply the extraction the relevant per-kind playbook
+   prescribes via `apply_graph_mutations`, then mark the todo done and move on.
 
 ## Resume discipline (critical)
 

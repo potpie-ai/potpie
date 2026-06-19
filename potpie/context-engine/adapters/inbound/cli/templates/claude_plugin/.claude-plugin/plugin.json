@@ -1,0 +1,16 @@
+{
+  "name": "potpie",
+  "description": "Project-memory context engine for Claude Code: surfaces preferences, prior bugs/fixes, infra topology, timeline context, and durable-capture prompts. Hooks are model-free; the in-session harness decides what is true and writes semantic graph mutations.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Potpie"
+  },
+  "keywords": [
+    "context",
+    "memory",
+    "knowledge-graph",
+    "potpie",
+    "hooks"
+  ],
+  "hooks": "./hooks/hooks.json"
+}

@@ -1,76 +1,79 @@
 ---
-name: "potpie-cli"
-version: "1"
-recommended: true
-description: "Use when the task involves running, explaining, or troubleshooting the Potpie CLI. Covers doctor, login, pot management, search, and ingest commands."
+name: potpie-cli
+description: "Use when the task is centered on running, explaining, configuring, or troubleshooting the `potpie` command: doctor, login, pot management, source registration, search, graph workbench reads/writes, and pot scope behavior."
 ---
 
 # Potpie CLI
 
-Use this skill when the task is centered on the `potpie` command.
+Use this skill when the user is asking about the `potpie` command itself. For
+ordinary project-memory context, prefer the relevant use-case skill first.
 
-## Common Commands
+## Setup And Scope
 
 ```bash
-# Setup and auth
-potpie login <api-key> --url http://your-potpie-host
 potpie doctor
-
-# Pot management
-potpie pot pots                   # list all pots
-potpie pot use <uuid-or-alias>    # set active pot
-potpie pot alias <name> <uuid>    # create local alias
-potpie pot list                   # show env maps + active pot
-
-# Search
-potpie search "your query"
-potpie search "query" -n 15
-potpie search "query" --node-labels PullRequest,Decision
-potpie search "query" --with-temporal
-
-# Ingest
-potpie ingest "Your note here"
-potpie ingest --name "Title" --episode-body "Body" --source "meeting"
-potpie ingest "Note" --sync
-potpie ingest --file notes.txt
-
-# Machine-readable output
 potpie --json doctor
-potpie --json search "query"
-potpie --json ingest "note"
+potpie login <api-key> --url <host>
+potpie pot list
+potpie pot use <pot-id-or-alias>
+potpie --json pot info
+potpie pot linked --repo current
+potpie pot default set --repo current <pot-id-or-alias>
+potpie --json source list
+potpie source add repo .
+potpie source add repo <owner/repo> --pot <pot>
 ```
 
-## Setup Flow
+Pot scope resolves in this order:
 
-1. `potpie login <key> --url <host>` — save credentials.
-2. `potpie doctor` — verify health + auth.
-3. `potpie pot pots` — list available pots.
-4. `potpie pot use <id>` — set active pot.
+1. Explicit `--pot`.
+2. Repo-local default set by `source add repo` or `pot default set`.
+3. Registered repo source matching the current working tree path or
+   `remote.origin.url`.
+4. Active pot from `potpie pot use`.
+5. Clear failure asking for setup, source registration, default selection, or
+   explicit `--pot`.
 
-## How Pot Scope Is Resolved
+A pot is a project boundary and may span multiple repos. Do not automatically
+narrow timeline reads to the current repo.
 
-For `search` and `ingest`, the pot is chosen in this order:
-1. Explicit UUID passed as first argument.
-2. Active pot from `pot use`.
-3. `CONTEXT_ENGINE_REPO_TO_POT` env map matched on `owner/repo`.
-4. `CONTEXT_ENGINE_POTS` env map (inverse lookup).
-5. Git `origin` remote parsed from `--cwd`.
-6. Fail with a clear error.
+`source add repo` sets the repo-local default by default. Use `--no-default`
+only when deliberately registering a repo to a non-default pot. If graph output
+warns that the selected pot is empty but another linked pot has claims, run the
+suggested `pot default set --repo current <pot>` command before continuing.
 
-## Key Flags
+## Search
 
-- `--json` — machine-readable JSON on stdout (global, before subcommand).
-- `--verbose` / `-v` — full tracebacks on errors.
-- `--source` — default source label for ingest (global) or search filter.
-- `--sync` — synchronous ingest (wait for apply, not just queue).
-- `--cwd` — git working tree for pot inference.
+```bash
+potpie search "query"
+potpie --json search "query" -n 15
+potpie search "query" --node-labels PullRequest,Decision
+potpie search "query" --with-temporal
+```
 
-## Common Failures
+## Graph Workbench
 
-| Symptom | Fix |
-|---------|-----|
-| `Potpie API not configured` | Set `POTPIE_API_URL` + `POTPIE_API_KEY`, or run `potpie login`. |
-| `401 Invalid API key` | Key is wrong or expired. Re-run `potpie login`. |
-| `Pot scope required` | Run `potpie pot use <id>` or pass a pot UUID explicitly. |
-| `GET /health` fails | Wrong base URL, wrong port, or server is down. |
-| `409 duplicate_ingest` | Same idempotency key already ingested. Safe to ignore or use `--idempotency-key`. |
+```bash
+potpie --json graph status
+potpie --json graph catalog --task "<task>"
+potpie --json graph describe <subgraph> --view <view> --examples
+potpie graph read --subgraph <subgraph> --view <view> --limit 20
+potpie graph search-entities "<name>" --type Service --limit 10
+potpie --json graph propose --file mutation.json
+potpie --json graph commit <plan_id> --verify
+potpie --json graph history --plan <plan_id>
+potpie --json graph quality summary
+```
+
+Use `potpie-graph` for advanced graph workbench details.
+
+## Boundaries
+
+Repository links, docs, tickets, PRs, and logs are interpreted by the harness and
+written with graph workbench mutations. Do not use pot-level connector queueing or
+deterministic local code scans as the agent ingestion path.
+Do not use scanner-driven graph updates.
+
+For CLI failures, stay in this skill: run `potpie doctor`, inspect JSON output
+when useful, check API URL/key config, confirm pot scope, and verify source
+registration before changing project code.
