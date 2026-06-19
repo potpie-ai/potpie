@@ -43,8 +43,10 @@ from application.services.ingest_service import IngestService
 from application.services.pot_management import LocalPotManagementService
 from application.services.setup_orchestrator import DefaultSetupOrchestrator
 from application.services.skill_manager import DefaultSkillManager
+from bootstrap.observability_runtime import set_observability
 from domain.ports.graph.backend import GraphBackend
 from domain.ports.ledger.client import EventLedgerClientPort
+from domain.ports.observability import ObservabilityPort
 from host.daemon import Daemon
 from host.shell import HostShell, LedgerFacade
 
@@ -71,6 +73,7 @@ def build_host_shell(
     backend: GraphBackend | None = None,
     profile: str = "local",
     ledger_client: EventLedgerClientPort | None = None,
+    observability: ObservabilityPort | None = None,
     settings: Any = None,
 ) -> HostShell:
     """Compose a ``HostShell`` from the default local services + adapters.
@@ -79,6 +82,9 @@ def build_host_shell(
     ``InMemoryGraphBackend``); otherwise one is built from the configured
     profile. Pass ``ledger_client`` to inject a fixture ledger.
     """
+    if observability is not None:
+        set_observability(observability)
+
     backend = backend or build_backend(default_backend_profile(), settings=settings)
     pot_store = LocalPotStore()
 
