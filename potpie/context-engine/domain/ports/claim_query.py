@@ -1,22 +1,15 @@
-"""Claim-query port for the P9 use-case readers.
+"""Claim-query port for the graph read-surface readers.
 
-Each P9 reader (CodingPreferences, InfraTopology, Timeline, PriorBugs)
-needs a small, well-defined query surface against the Position B
-:RELATES_TO claim store. Rather than coupling every reader to Neo4j /
-Neo4j directly, we expose a port:
+Each reader needs a small, well-defined query surface against the canonical
+:RELATES_TO claim store. Rather than coupling every reader to Neo4j/FalkorDB
+directly, we expose a port:
 
     ClaimQueryPort.find_claims(...) -> list[ClaimRow]
 
-Implementations:
-
-- Production: a Neo4j adapter that runs Cypher over :RELATES_TO edges.
-- Tests: an in-memory dict-backed fake.
-
 The port deliberately speaks in canonical claim properties (the same
-ones the canonical writer emits): ``predicate``, ``subject_key``,
-``object_key``, ``valid_at``, ``invalid_at``, ``evidence_strength``,
-``source_system``, ``fact``, ``properties``. Readers translate from
-this row shape into :class:`domain.ranking.Candidate` objects.
+ones the canonical writer emits). Contract metadata is exposed as typed
+``ClaimRow`` fields; ``properties`` is only for non-contract extras and
+computed read annotations.
 """
 
 from __future__ import annotations
@@ -28,7 +21,11 @@ from typing import Any, Iterable, Mapping, Protocol
 
 @dataclass(frozen=True, slots=True)
 class ClaimRow:
-    """One canonical :RELATES_TO edge as the readers see it."""
+    """One canonical :RELATES_TO edge as the readers see it.
+
+    V1.5 claim metadata is first-class. Backends should hydrate these fields
+    directly rather than requiring callers to spelunk in ``properties``.
+    """
 
     pot_id: str
     predicate: str
@@ -42,6 +39,20 @@ class ClaimRow:
     fact: str | None = None
     properties: Mapping[str, Any] = field(default_factory=dict)
     fact_embedding: tuple[float, ...] | None = None
+    # --- V1.5 first-class claim metadata -------------------------------------
+    claim_key: str | None = None
+    subgraph: str | None = None
+    truth: str | None = None
+    confidence: float | None = None
+    description: str | None = None
+    environment: str | None = None
+    observed_at: datetime | None = None
+    valid_until: datetime | None = None
+    mutation_id: str | None = None
+    source_refs: tuple[str, ...] = ()
+    evidence: tuple[Mapping[str, Any], ...] = ()
+    graph_contract_version: str | None = None
+    ontology_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +69,10 @@ class ClaimQueryFilter:
     predicate_in: tuple[str, ...] = ()
     subject_key_in: tuple[str, ...] = ()
     object_key_in: tuple[str, ...] = ()
+    claim_key_in: tuple[str, ...] = ()
+    subgraph_in: tuple[str, ...] = ()
+    mutation_id_in: tuple[str, ...] = ()
+    source_ref_in: tuple[str, ...] = ()
     subject_label: str | None = None  # filter by Entity label
     object_label: str | None = None
     valid_at_after: datetime | None = None
@@ -86,6 +101,10 @@ class ClaimQueryPort(Protocol):
         (``Service`` / ``Person`` / ``Decision`` / …) without making
         per-row round-trips.
         """
+        ...
+
+    def entity_properties(self, *, pot_id: str, entity_key: str) -> Mapping[str, Any]:
+        """Lookup stored entity metadata such as name, summary, and description."""
         ...
 
 

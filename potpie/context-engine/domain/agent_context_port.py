@@ -53,9 +53,13 @@ CONTEXT_RECORD_TYPES: frozenset[str] = PUBLIC_RECORD_TYPES
 READER_BACKED_INCLUDES: frozenset[str] = frozenset(
     {
         "coding_preferences",
+        "features",
         "infra_topology",
         "timeline",
         "prior_bugs",
+        "decisions",
+        "owners",
+        "docs",
         # Visualization read: the full canonical subgraph (all RELATES_TO,
         # incl. generic RELATED_TO). Backed by RawGraphReader; used by the
         # graph explorer, not an agent use-case family.

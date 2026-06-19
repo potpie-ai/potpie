@@ -29,7 +29,9 @@ pytestmark = pytest.mark.unit
 
 
 def test_version_is_the_unified_version() -> None:
-    assert ONTOLOGY_VERSION == "2026-05-unified-v1"
+    # Owned by domain.graph_contract (the V1.5 contract home) and mirrored on
+    # the ontology module; the graph catalog reports the same string.
+    assert ONTOLOGY_VERSION == "2026-06-graph"
 
 
 def test_catalog_contains_the_seven_topology_entities() -> None:
@@ -84,6 +86,68 @@ def test_catalog_contains_memory_predicates() -> None:
 def test_catalog_contains_timeline_predicates() -> None:
     for edge in ("TOUCHED", "PERFORMED", "AUTHORED", "MENTIONS", "IN_PERIOD"):
         assert edge in CANONICAL_EDGE_TYPES
+
+
+def test_catalog_contains_feature_entity() -> None:
+    assert "Feature" in CANONICAL_LABELS
+
+
+def test_catalog_contains_code_asset_entity() -> None:
+    assert "CodeAsset" in CANONICAL_LABELS
+
+
+def test_feature_key_prefix_convention() -> None:
+    from domain.ontology import entity_spec
+
+    spec = entity_spec("Feature")
+    assert spec is not None
+    assert spec.key_prefix == "feature"
+    assert spec.project_map_family == "features"
+
+
+def test_catalog_contains_feature_predicates() -> None:
+    for edge in ("PROVIDES", "IMPLEMENTED_IN"):
+        assert edge in CANONICAL_EDGE_TYPES
+
+
+def test_provides_allows_repo_and_service_to_feature() -> None:
+    assert "PROVIDES" in allowed_edge_types_between(("Repository",), ("Feature",))
+    assert "PROVIDES" in allowed_edge_types_between(("Service",), ("Feature",))
+    assert "PROVIDES" not in allowed_edge_types_between(("Feature",), ("Service",))
+
+
+def test_implemented_in_allows_feature_to_repo_service_codeasset() -> None:
+    assert "IMPLEMENTED_IN" in allowed_edge_types_between(("Feature",), ("Repository",))
+    assert "IMPLEMENTED_IN" in allowed_edge_types_between(("Feature",), ("Service",))
+    assert "IMPLEMENTED_IN" in allowed_edge_types_between(("Feature",), ("CodeAsset",))
+    assert "IMPLEMENTED_IN" in allowed_edge_types_between(("Feature",), ("FILE",))
+    assert "IMPLEMENTED_IN" not in allowed_edge_types_between(
+        ("Repository",), ("Feature",)
+    )
+
+
+def test_catalog_contains_infra_adapter_config_entities() -> None:
+    for label in ("Adapter", "ConfigVariable", "DeploymentTarget"):
+        assert label in CANONICAL_LABELS
+
+
+def test_catalog_contains_infra_adapter_config_predicates() -> None:
+    for edge in ("USES_ADAPTER", "CONFIGURES", "DEPLOYED_WITH"):
+        assert edge in CANONICAL_EDGE_TYPES
+
+
+def test_validates_feature_provides_plan() -> None:
+    entities = [
+        EntityUpsert("repo:github.com/acme/shop", ("Entity", "Repository"), {}),
+        EntityUpsert("feature:checkout", ("Entity", "Feature"), {}),
+    ]
+    edges = [
+        EdgeUpsert("PROVIDES", "repo:github.com/acme/shop", "feature:checkout", {}),
+        EdgeUpsert(
+            "IMPLEMENTED_IN", "feature:checkout", "repo:github.com/acme/shop", {}
+        ),
+    ]
+    assert validate_structural_mutations(entities, edges, []) == []
 
 
 def test_related_to_is_the_generic_fallback_edge() -> None:
@@ -158,4 +222,12 @@ def test_owner_binding_predicate_family() -> None:
     assert (
         temporal_subject_key_for_edge("OWNED_BY", "service:auth", "team:x")
         == "service:auth"
+    )
+
+
+def test_multi_binding_predicate_families_are_not_exclusive() -> None:
+    assert predicate_family_for_episodic_supersede("USES") is None
+    assert (
+        temporal_subject_key_for_edge("USES", "service:auth", "datastore:redis")
+        is None
     )

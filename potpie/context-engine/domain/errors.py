@@ -25,8 +25,8 @@ class PotNotFound(ContextEngineError):
     """Host could not resolve pot_id."""
 
 
-class ReconciliationPlanValidationError(ContextEngineError):
-    """Reconciliation plan failed validation.
+class MutationBatchValidationError(ContextEngineError):
+    """A :class:`~domain.reconciliation.MutationBatch` failed structural validation.
 
     When validation is driven by ontology checks, ``structured_issues`` carries
     ``{"entity", "issue"}`` rows aligned with :func:`domain.reconciliation_issues.validation_lines_to_issues`.
@@ -40,6 +40,10 @@ class ReconciliationPlanValidationError(ContextEngineError):
     ) -> None:
         super().__init__(message)
         self.structured_issues = structured_issues or ()
+
+
+# Back-compat alias (Step 5a rename).
+ReconciliationPlanValidationError = MutationBatchValidationError
 
 
 class ReconciliationApplyError(ContextEngineError):
