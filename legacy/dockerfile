@@ -32,9 +32,6 @@ RUN uv sync --frozen --all-packages --no-install-project
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
-# Download required NLTK data inside the managed environment
-RUN uv run python -c "import nltk; nltk.download('punkt')"
-
 # Install gVisor (runsc) via official APT repository for command isolation
 RUN curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" > /etc/apt/sources.list.d/gvisor.list && \
