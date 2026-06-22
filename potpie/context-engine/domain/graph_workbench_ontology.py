@@ -800,7 +800,7 @@ def rank_views_for_task(
     task_tokens = _tokens(task or "")
     if not task_tokens:
         return []
-    selected_views = list(views or _catalog_view_entries())
+    selected_views = list(_catalog_view_entries() if views is None else views)
     by_name = {
         view.name: view
         for subgraph in _ONTOLOGY_CONTRACT.subgraphs
@@ -906,8 +906,8 @@ def _build_contract() -> WorkbenchOntologyContract:
 
 def _view_contract(spec: GraphViewSpec) -> ViewContract:
     override = _VIEW_OVERRIDES.get(spec.name, {})
-    optional_scope = tuple(override.get("optional_scope") or spec.inputs)
-    supported_filters = tuple(override.get("supported_filters") or spec.inputs)
+    optional_scope = tuple(override.get("optional_scope", spec.inputs))
+    supported_filters = tuple(override.get("supported_filters", spec.inputs))
     if spec.backed and "source_ref" not in supported_filters:
         supported_filters = (*supported_filters, "source_ref")
     if spec.backed and "source_ref" not in optional_scope:

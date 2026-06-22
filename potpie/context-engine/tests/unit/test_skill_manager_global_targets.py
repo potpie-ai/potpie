@@ -127,6 +127,19 @@ def test_skill_manager_removes_all_global_harness_skills(
     assert host.skills.status(agent="codex").installed == ()
 
 
+def test_remove_uninstalled_skill_reports_no_change(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # Regression: remove() previously appended the requested id to ``changed`` even
+    # when it was never installed, reporting false removals in CLI/API output.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
+    host = build_host_shell(backend=InMemoryGraphBackend())
+
+    result = host.skills.remove(agent="codex", skill_id="potpie-cli")
+    assert result.changed == ()
+
+
 def test_skill_manager_rejects_ambiguous_remove(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))

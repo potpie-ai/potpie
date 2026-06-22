@@ -152,7 +152,11 @@ class GraphCommandEnvelope:
             "result": dict(self.result) if self.result is not None else None,
             "warnings": list(self.warnings),
             "unsupported": [u.to_dict() for u in self.unsupported],
-            "recommended_next_action": self.recommended_next_action,
+            "recommended_next_action": (
+                dict(self.recommended_next_action)
+                if isinstance(self.recommended_next_action, Mapping)
+                else self.recommended_next_action
+            ),
         }
         if self.error is not None:
             out["error"] = self.error.to_dict()

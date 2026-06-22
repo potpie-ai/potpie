@@ -5,10 +5,19 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+import pytest
 from typer.testing import CliRunner
 
 from adapters.inbound.cli.commands import _common, skills
 from domain.ports.services.skill_manager import SkillOperationResult
+
+
+@pytest.fixture(autouse=True)
+def _reset_cli_output_mode():
+    """Keep global CLI JSON mode from leaking across tests (order-independence)."""
+    _common.set_json(False)
+    yield
+    _common.set_json(False)
 
 
 @dataclass

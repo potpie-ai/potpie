@@ -47,6 +47,14 @@ def test_task_ranking_prioritizes_debugging_workflow_context() -> None:
     assert ranked_subgraphs.index("decisions") < ranked_subgraphs.index("features")
 
 
+def test_rank_views_with_explicit_empty_views_ranks_nothing() -> None:
+    # Regression: an explicit empty ``views=[]`` must mean "rank no views", not be
+    # treated as ``None`` and silently replaced with the full catalog.
+    assert rank_views_for_task("debug staging timeout", views=[]) == []
+    # ``None`` still falls back to the full catalog.
+    assert rank_views_for_task("debug staging timeout") != []
+
+
 def test_mutation_policies_match_graph_contract_partitions() -> None:
     policies = {
         policy.operation: policy.availability
