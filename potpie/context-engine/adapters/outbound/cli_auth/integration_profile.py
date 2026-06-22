@@ -195,6 +195,36 @@ def build_product_integration_record(
     return record
 
 
+def build_bitbucket_integration_record(credentials: dict[str, Any]) -> dict[str, Any]:
+    now = utc_now_iso()
+    email = str(credentials.get("email") or "").strip()
+    account_name = str(credentials.get("account_name") or "").strip()
+    workspaces = credentials.get("workspaces")
+    record: dict[str, Any] = {
+        "provider": "bitbucket",
+        "provider_host": "bitbucket.org",
+        "site_url": "https://bitbucket.org",
+        "auth_type": "api_token",
+        "token_storage": "keychain",
+        "stored_at": _stored_at_from_credentials(credentials),
+        "created_at": credentials.get("created_at") or now,
+        "updated_at": now,
+        "metadata": {"auth_flow": "api_token"},
+    }
+    if email or account_name:
+        account: dict[str, Any] = {}
+        if email:
+            account["email"] = email
+            record["email"] = email
+        if account_name:
+            account["name"] = account_name
+            record["account_name"] = account_name
+        record["account"] = account
+    if isinstance(workspaces, dict):
+        record["workspaces"] = dict(workspaces)
+    return record
+
+
 def _stored_at_from_credentials(credentials: dict[str, Any]) -> Any:
     stored_at = credentials.get("stored_at")
     return time.time() if stored_at is None else stored_at

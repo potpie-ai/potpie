@@ -26,6 +26,7 @@ from adapters.inbound.cli.auth.atlassian_auth import (
 )
 from adapters.outbound.cli_auth.integration_verify import (
     _verify_atlassian_product,
+    _verify_bitbucket,
     _verify_message_for_kind,
     verify_integration_access,
 )
@@ -1160,6 +1161,58 @@ def test_verify_integration_access_unknown_provider() -> None:
     ok, message = verify_integration_access("slack", {})  # type: ignore[arg-type]
     assert ok is False
     assert "unknown provider" in message
+
+
+def test_verify_bitbucket_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "adapters.outbound.cli_auth.integration_verify.verify_bitbucket_api_token",
+        lambda email, api_token, http=None: type(
+            "Result",
+            (),
+            {
+                "ok": True,
+                "email": email,
+                "display_name": "Bitbucket User",
+                "error_kind": None,
+            },
+        )(),
+    )
+
+    ok, message = _verify_bitbucket(
+        {
+            "email": "user@example.com",
+            "api_token": "bitbucket-token",
+        }
+    )
+
+    assert ok is True
+    assert message == "ok (Bitbucket User <user@example.com>)"
+
+
+def test_verify_integration_access_bitbucket_insufficient_scopes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "adapters.outbound.cli_auth.integration_verify.verify_bitbucket_api_token",
+        lambda email, api_token, http=None: type(
+            "Result",
+            (),
+            {
+                "ok": False,
+                "email": email,
+                "display_name": "",
+                "error_kind": "insufficient_scopes",
+            },
+        )(),
+    )
+
+    ok, message = verify_integration_access(
+        "bitbucket",  # type: ignore[arg-type]
+        {"email": "user@example.com", "api_token": "bitbucket-token"},
+    )
+
+    assert ok is False
+    assert "missing required read scopes" in message
 
 
 def test_verify_atlassian_product_success(monkeypatch) -> None:

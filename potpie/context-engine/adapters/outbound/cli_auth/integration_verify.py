@@ -12,6 +12,7 @@ from adapters.outbound.cli_auth.atlassian_client import (
     normalize_site_url,
     verify_gateway_product,
 )
+from adapters.outbound.cli_auth.bitbucket_client import verify_bitbucket_api_token
 from adapters.outbound.cli_auth.provider_config import Provider
 
 
@@ -49,6 +50,8 @@ def verify_integration_access(
         return False, f"jira: {jira_message}; confluence: {confluence_message}"
     if provider in ("jira", "confluence"):
         return _verify_atlassian_product(provider, credentials)
+    if provider == "bitbucket":
+        return _verify_bitbucket(credentials, http=http)
     return False, f"unknown provider {provider!r}"
 
 
@@ -151,3 +154,23 @@ def _verify_atlassian_product(
     site_name = credentials.get("site_name") or site_url
     name = result.display_name or "user"
     return True, f"ok ({name} @ {site_name})"
+
+
+def _verify_bitbucket(
+    credentials: dict[str, Any],
+    *,
+    http: HttpClient | None = None,
+) -> tuple[bool, str]:
+    email = str(credentials.get("email") or "").strip()
+    api_token = str(credentials.get("api_token") or "").strip()
+    if not email or not api_token:
+        return False, "not authenticated"
+    result = verify_bitbucket_api_token(email, api_token, http=http)
+    if not result.ok:
+        if result.error_kind == "invalid_credentials":
+            return False, "invalid Bitbucket email or API token"
+        if result.error_kind == "insufficient_scopes":
+            return False, "Bitbucket API token missing required read scopes"
+        return False, "Bitbucket API verification failed"
+    name = result.display_name or "Bitbucket user"
+    return True, f"ok ({name} <{email}>)"

@@ -31,9 +31,11 @@ _LINEAR_CREDENTIALS_KEY = "linear"
 _ATLASSIAN_LEGACY_TOKEN_SECRET = "atlassian_api_token"
 _JIRA_TOKEN_SECRET = "jira_api_token"
 _CONFLUENCE_TOKEN_SECRET = "confluence_api_token"
+_BITBUCKET_TOKEN_SECRET = "bitbucket_api_token"
 _ATLASSIAN_CREDENTIALS_KEY = "atlassian"
 _JIRA_CREDENTIALS_KEY = "jira"
 _CONFLUENCE_CREDENTIALS_KEY = "confluence"
+_BITBUCKET_CREDENTIALS_KEY = "bitbucket"
 
 
 class CredentialStoreError(CliAuthError):
@@ -128,7 +130,7 @@ def _norm_secret_name(name: str) -> str:
 
 
 def _is_integration_secret_name(name: str) -> bool:
-    """Secret keys used by GitHub, Linear, Jira, and Confluence CLI integrations."""
+    """Secret keys used by GitHub, Linear, Jira, Confluence, and Bitbucket CLI integrations."""
     key = _norm_secret_name(name)
     if key in {
         _GITHUB_TOKEN_SECRET,
@@ -136,6 +138,7 @@ def _is_integration_secret_name(name: str) -> bool:
         _LINEAR_REFRESH_TOKEN_SECRET,
         _JIRA_TOKEN_SECRET,
         _CONFLUENCE_TOKEN_SECRET,
+        _BITBUCKET_TOKEN_SECRET,
         _ATLASSIAN_LEGACY_TOKEN_SECRET,
     }:
         return True
@@ -980,6 +983,40 @@ def clear_confluence_credentials() -> None:
     _clear_atlassian_product_credentials("confluence")
 
 
+def save_bitbucket_credentials(credentials: dict[str, Any]) -> None:
+    from adapters.outbound.cli_auth.integration_profile import (
+        build_bitbucket_integration_record,
+    )
+
+    api_token = str(credentials.get("api_token") or "").strip()
+    if not api_token:
+        raise ProviderCredentialError("Bitbucket API token is required.")
+    token_storage = _store_keychain_secret(
+        "Bitbucket API token",
+        _BITBUCKET_TOKEN_SECRET,
+        api_token,
+    )
+    prior = _read_metadata_entry(_BITBUCKET_CREDENTIALS_KEY)
+    record = build_bitbucket_integration_record({**prior, **credentials})
+    record["token_storage"] = token_storage
+    _write_metadata_entry(_BITBUCKET_CREDENTIALS_KEY, record)
+
+
+def get_bitbucket_credentials() -> dict[str, Any]:
+    metadata = _read_metadata_entry(_BITBUCKET_CREDENTIALS_KEY)
+    if not metadata:
+        return {}
+    api_token = _load_keychain_secret("Bitbucket API token", _BITBUCKET_TOKEN_SECRET)
+    if not api_token:
+        return {}
+    return {**metadata, "api_token": api_token}
+
+
+def clear_bitbucket_credentials() -> None:
+    _delete_keychain_secret("Bitbucket API token", _BITBUCKET_TOKEN_SECRET)
+    _clear_metadata_entries(_BITBUCKET_CREDENTIALS_KEY)
+
+
 def _save_atlassian_product_credentials(
     product: str, credentials: dict[str, Any]
 ) -> None:
@@ -1095,6 +1132,11 @@ def clear_atlassian_credentials() -> None:
     )
 
 
+def clear_atlassian_suite_credentials() -> None:
+    clear_atlassian_credentials()
+    clear_bitbucket_credentials()
+
+
 def save_jira_workspace_prefs(*, project_key: str) -> None:
     prior = get_jira_credentials()
     if not prior.get("api_token"):
@@ -1115,6 +1157,18 @@ def save_confluence_workspace_prefs(*, space_key: str) -> None:
     workspaces = dict(prior.get("workspaces") or {})
     workspaces["confluence_space"] = space_key.strip().upper()
     save_confluence_credentials({**prior, "workspaces": workspaces})
+
+
+def save_bitbucket_workspace_prefs(*, workspace_key: str, repo_slug: str) -> None:
+    prior = get_bitbucket_credentials()
+    if not prior.get("api_token"):
+        raise ProviderCredentialError(
+            "Bitbucket is not connected. Run: potpie atlassian login"
+        )
+    workspaces = dict(prior.get("workspaces") or {})
+    workspaces["bitbucket_workspace"] = workspace_key.strip()
+    workspaces["bitbucket_repository"] = repo_slug.strip()
+    save_bitbucket_credentials({**prior, "workspaces": workspaces})
 
 
 def save_linear_workspace_prefs(
@@ -1164,11 +1218,14 @@ def get_integration_tokens(provider: str) -> dict[str, Any]:
         _ATLASSIAN_CREDENTIALS_KEY,
         _JIRA_CREDENTIALS_KEY,
         _CONFLUENCE_CREDENTIALS_KEY,
+        _BITBUCKET_CREDENTIALS_KEY,
     }:
         if key == _ATLASSIAN_CREDENTIALS_KEY:
             creds = get_atlassian_credentials()
         elif key == _JIRA_CREDENTIALS_KEY:
             creds = get_jira_credentials()
+        elif key == _BITBUCKET_CREDENTIALS_KEY:
+            creds = get_bitbucket_credentials()
         else:
             creds = get_confluence_credentials()
         return {"auth_type": "api_token", **creds} if creds else {}
@@ -1205,6 +1262,9 @@ def clear_integration_tokens(provider: str) -> None:
     if key == _ATLASSIAN_CREDENTIALS_KEY:
         clear_atlassian_credentials()
         return
+    if key == _BITBUCKET_CREDENTIALS_KEY:
+        clear_bitbucket_credentials()
+        return
     raise ValueError(f"Unknown integration provider {provider!r}.")
 
 
@@ -1216,6 +1276,7 @@ def list_integration_providers() -> list[str]:
         _JIRA_CREDENTIALS_KEY,
         _CONFLUENCE_CREDENTIALS_KEY,
         _ATLASSIAN_CREDENTIALS_KEY,
+        _BITBUCKET_CREDENTIALS_KEY,
     ):
         if isinstance(integrations.get(key), dict):
             found.append(key)
@@ -1299,6 +1360,7 @@ def get_integration_status(provider: str) -> dict[str, Any]:
         _ATLASSIAN_CREDENTIALS_KEY,
         _JIRA_CREDENTIALS_KEY,
         _CONFLUENCE_CREDENTIALS_KEY,
+        _BITBUCKET_CREDENTIALS_KEY,
     }:
         if key == _ATLASSIAN_CREDENTIALS_KEY:
             creds = get_atlassian_credentials()
@@ -1310,6 +1372,27 @@ def get_integration_status(provider: str) -> dict[str, Any]:
                 or _legacy_atlassian_metadata()
             )
         else:
+            if key == _BITBUCKET_CREDENTIALS_KEY:
+                creds = get_bitbucket_credentials()
+                entry = _read_metadata_entry(_BITBUCKET_CREDENTIALS_KEY)
+                if not creds:
+                    return {
+                        "provider": key,
+                        "authenticated": False,
+                        "auth_type": "api_token",
+                    }
+                account = entry.get("account")
+                account_dict = dict(account) if isinstance(account, dict) else {}
+                return {
+                    "provider": key,
+                    "authenticated": True,
+                    "auth_type": "api_token",
+                    "email": account_dict.get("email") or entry.get("email"),
+                    "login": account_dict.get("name") or entry.get("account_name"),
+                    "site_url": entry.get("site_url"),
+                    "stored_at": entry.get("stored_at"),
+                    "token_storage": entry.get("token_storage"),
+                }
             creds = get_confluence_credentials()
             entry = (
                 _read_metadata_entry(_CONFLUENCE_CREDENTIALS_KEY)
