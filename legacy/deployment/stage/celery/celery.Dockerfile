@@ -32,9 +32,6 @@ RUN uv sync --frozen --all-packages --no-install-project
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
-# Download required NLTK data inside the managed environment
-RUN uv run python -c "import nltk; nltk.download('punkt')"
-
 # Copy the entire project directory into the container
 COPY . .
 
