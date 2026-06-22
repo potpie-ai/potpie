@@ -19,7 +19,7 @@ def test_exact_match_returns_specific_playbook() -> None:
     assert pb.source_system == "github"
     assert pb.event_type == "repository"
     assert pb.action == "added"
-    assert pb.max_tool_calls >= 60  # bootstrap is the heavy one
+    assert pb.max_tool_calls >= 60  # source-history seed is a bounded backfill
 
 
 def test_unregistered_action_falls_through_to_default() -> None:
@@ -52,7 +52,7 @@ def test_render_empty_list_returns_empty_string() -> None:
     assert render_playbooks_section([]) == ""
 
 
-def test_all_registered_playbooks_includes_repo_bootstrap() -> None:
+def test_all_registered_playbooks_includes_repo_source_seed() -> None:
     keys = {
         (pb.source_system, pb.event_type, pb.action)
         for pb in all_registered_playbooks()

@@ -52,7 +52,7 @@ class TestExternalIdIdentity:
 
     Activity is the canonical EXTERNAL_ID entity in the unified ontology;
     PR/Issue/Commit/Deployment are now ``verb`` sub-kinds of Activity rather
-    than separate labels (see ``timeline_plan.build_timeline_mutations``).
+    than separate labels.
     """
 
     def test_activity_with_extra_segment(self) -> None:

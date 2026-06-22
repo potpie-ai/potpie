@@ -138,8 +138,10 @@ class TestCoverageQualityDownweight:
             _ctx(),
         )
         assert ranked[0].candidate.candidate_key == "full"
-        # Score gap should be material (we expect at least 0.1 difference).
-        assert ranked[0].score - ranked[1].score >= 0.1
+        # Score gap should be material. Under the R3 weighted-sum rule a single
+        # factor's contribution is its weight share, so the gap is smaller than
+        # under the old geometric mean but still clearly separates the two.
+        assert ranked[0].score - ranked[1].score >= 0.05
 
 
 class TestSemanticSimilarity:
@@ -153,6 +155,39 @@ class TestSemanticSimilarity:
             _ctx(),
         )
         assert ranked[0].candidate.candidate_key == "near"
+
+
+class TestNoVeto:
+    def test_zero_soft_signal_does_not_collapse_strong_candidate(self) -> None:
+        """R3: a zero semantic score must re-rank, never veto.
+
+        A strong, recent, scope-matched, well-corroborated claim with a zero
+        semantic-overlap score must still outrank a weak claim that merely has a
+        neutral semantic score — the old geometric mean buried the strong one.
+        """
+        service = RankingService()
+        ranked = service.rank(
+            [
+                _make_candidate(
+                    key="strong_zero_semantic",
+                    strength="deterministic",
+                    scope_overlap=1.0,
+                    corroboration=3,
+                    semantic_similarity=0.0,
+                ),
+                _make_candidate(
+                    key="weak_neutral",
+                    strength="speculative",
+                    scope_overlap=0.1,
+                    corroboration=1,
+                    semantic_similarity=0.5,
+                ),
+            ],
+            _ctx(),
+        )
+        assert ranked[0].candidate.candidate_key == "strong_zero_semantic"
+        # And it is not collapsed to ~0 by the zero factor.
+        assert ranked[0].score > 0.4
 
 
 class TestDeterministicOrdering:

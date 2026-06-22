@@ -1,17 +1,29 @@
-"""Reconciliation requests, plans, and results.
+"""The internal, backend-bound structural write tier: :class:`MutationBatch`.
 
-Post-refactor the graph layer has a single writer; the agent emits a
-constrained mutation plan and ``apply_reconciliation_plan`` applies it
-directly. There is no episodic narrative tier — plans are
-entity/edge upserts, deletes, and invalidations.
+A ``MutationBatch`` is a typed, atomic bundle of graph mutations
+(entity/edge upserts, deletes, invalidations) applied through the one write
+door (``GraphMutationPort.apply`` → ``apply_mutation_batch``). It is *not* the
+agent contract — the public, agent-facing tier is
+:mod:`domain.semantic_mutations`, which lowers into a ``MutationBatch``.
+
+Naming (Graph V1.5 Step 5a): the batch reconciles nothing — it is a mutation
+batch, so the canonical name is ``MutationBatch`` (``ReconciliationPlan`` is
+kept as a thin back-compat alias for existing importers). "Reconciliation" is
+reserved for genuine source-state convergence (the ledger ``reconcile()`` path
+and V2's ``reconcile_snapshot``).
+
+``event_ref`` and ``summary`` are **optional**: they force an event frame onto
+non-event writes (a recorded preference is not an event), so the lowerer no
+longer fabricates an ``EventRef`` to record one. Write provenance flows through
+:class:`~domain.graph_mutations.ProvenanceContext`, not through required batch
+fields.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
-from domain.context_events import ContextEvent, EventRef
+from domain.context_events import EventRef
 from domain.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
@@ -19,38 +31,30 @@ from domain.graph_mutations import (
     InvalidationOp,
 )
 
-
-@dataclass(frozen=True, slots=True)
-class EvidenceRef:
-    """Pointer to evidence used by the planner."""
-
-    kind: str
-    ref: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class ReconciliationRequest:
-    """Input to ``ReconciliationAgentPort``."""
-
-    event: ContextEvent
-    pot_id: str
-    repo_name: str
-    prior_attempts: list[dict[str, Any]] = field(default_factory=list)
+# Step 11 parked the agentic-only types into ``domain.llm_reconciliation`` so
+# this module holds only the live structural write tier. Re-exported here as a
+# thin back-compat shim for one iteration; ``MutationBatch.evidence`` keeps its
+# ``EvidenceRef`` element type through this import.
+from domain.llm_reconciliation import (  # noqa: F401  (re-export shim)
+    EvidenceRef,
+    ReconciliationRequest,
+)
 
 
 @dataclass(slots=True)
-class ReconciliationPlan:
-    """Constrained mutation plan produced by an agent or deterministic planner.
+class MutationBatch:
+    """A typed, atomic batch of graph mutations applied via the one write door.
 
-    A plan is a typed bundle of graph mutations targeting specific entities
-    and edges. The agent inspects the event, decides which parts of the
-    graph to touch, and emits this plan; ``apply_reconciliation_plan``
-    executes the four mutation kinds in order against the single writer.
+    The semantic mutation lowerer decides which entities/edges to touch and
+    emits this batch; ``apply_mutation_batch`` executes the mutation kinds in
+    order against the single writer.
+
+    ``event_ref`` / ``summary`` are optional — non-event writes leave them
+    unset rather than fabricating an event frame.
     """
 
-    event_ref: EventRef
-    summary: str
+    event_ref: EventRef | None = None
+    summary: str = ""
     entity_upserts: list[EntityUpsert] = field(default_factory=list)
     edge_upserts: list[EdgeUpsert] = field(default_factory=list)
     edge_deletes: list[EdgeDelete] = field(default_factory=list)
@@ -62,9 +66,15 @@ class ReconciliationPlan:
     """Populated when soft ontology downgrade runs (API surface); not persisted on plan slices."""
 
 
+# Back-compat alias — the public ``SemanticMutationPlan`` keeps its name;
+# ``MutationBatch`` is the internal tier it lowers into. Existing importers of
+# ``ReconciliationPlan`` keep working; new code uses ``MutationBatch``.
+ReconciliationPlan = MutationBatch
+
+
 @dataclass(slots=True)
 class MutationSummary:
-    """Counts applied in one reconciliation run."""
+    """Counts applied in one mutation-batch apply."""
 
     entity_upserts_applied: int = 0
     edge_upserts_applied: int = 0
@@ -74,12 +84,12 @@ class MutationSummary:
 
 
 @dataclass(slots=True)
-class ReconciliationResult:
-    """Outcome of ``apply_reconciliation_plan`` or full ``reconcile_event``.
+class MutationResult:
+    """Outcome of ``apply_mutation_batch`` or full ``reconcile_event``.
 
-    ``mutation_id`` is a per-apply UUID stamped onto every mutation as
-    write provenance — it lets readers trace any edge/entity back to the
-    single apply that produced it.
+    ``mutation_id`` is a per-apply UUID stamped onto every mutation as write
+    provenance — it lets readers trace any edge/entity back to the single apply
+    that produced it.
     """
 
     ok: bool
@@ -92,5 +102,16 @@ class ReconciliationResult:
     """Ontology soft-fail rewrites applied (sync reconcile / apply)."""
 
 
-# Phase A alias (INGESTION_ASYNC_PLAN — Ingestion Agent terminology)
-IngestionPlan = ReconciliationPlan
+# Back-compat alias.
+ReconciliationResult = MutationResult
+
+
+__all__ = [
+    "EvidenceRef",
+    "MutationBatch",
+    "MutationResult",
+    "MutationSummary",
+    "ReconciliationPlan",
+    "ReconciliationRequest",
+    "ReconciliationResult",
+]

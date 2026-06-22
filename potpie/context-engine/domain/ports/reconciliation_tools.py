@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from domain.reconciliation import ReconciliationRequest
+from domain.llm_reconciliation import ReconciliationRequest
 
 
 class ToolDescriptor:
