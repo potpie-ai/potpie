@@ -11,6 +11,8 @@ from __future__ import annotations
 import sys
 import time
 import webbrowser
+import select
+from dataclasses import dataclass
 from typing import Any
 
 import typer
@@ -60,6 +62,16 @@ from adapters.outbound.cli_auth.provider_config import (
 )
 
 
+@dataclass(frozen=True)
+class ProductConnectResult:
+    product: str
+    status: str
+    site_url: str | None = None
+    cloud_id: str | None = None
+    reason: str | None = None
+    token_style: str | None = None
+
+
 def _prompt_site_subdomain() -> str:
     return typer.prompt(
         "Enter your Atlassian site subdomain "
@@ -104,30 +116,52 @@ def _open_atlassian_api_token_page(product: AtlassianProduct) -> None:
         as_json=False,
     )
     for line in (
-        "  • Create a token at id.atlassian.com (without scopes)",
+        "  • Create a token at id.atlassian.com using API tokens without scopes",
         "  • One token works for both Jira and Confluence",
-        "  • Press Enter to open the page, then paste the token with your email and site",
     ):
         print_plain_line(line, as_json=False)
-    confirmed = typer.confirm(
-        "Press Enter to continue",
-        default=True,
-        show_default=False,
+    open_url_with_countdown(
+        ATLASSIAN_API_TOKEN_PAGE,
+        label="id.atlassian.com",
+        timeout_seconds=10,
+        open_message="Paste the token below when you are ready.",
     )
-    if not confirmed:
-        return
 
-    print_plain_line("Opening id.atlassian.com ...", as_json=False)
 
-    opened = webbrowser.open(ATLASSIAN_API_TOKEN_PAGE, new=1)
-    if not opened:
-        print_plain_line(
-            "Could not open a browser. Open this URL:",
-            as_json=False,
-        )
-        print_plain_line(ATLASSIAN_API_TOKEN_PAGE, as_json=False, markup=False)
-        return
-    print_plain_line("Paste the token below when you are ready.", as_json=False)
+def open_url_with_countdown(
+    url: str,
+    *,
+    label: str,
+    timeout_seconds: int = 10,
+    open_message: str | None = None,
+) -> None:
+    """Wait briefly so the user can read guidance, then open a browser or let Enter do it now."""
+    print_plain_line(
+        f"Press Enter to open {label} now, or wait {timeout_seconds}s for auto-open.",
+        as_json=False,
+    )
+    try:
+        if sys.stdin.isatty():
+            for remaining in range(timeout_seconds, 0, -1):
+                sys.stdout.write(f"\r  opening in {remaining}s ...")
+                sys.stdout.flush()
+                ready, _, _ = select.select([sys.stdin], [], [], 1.0)
+                if ready:
+                    try:
+                        sys.stdin.readline()
+                    except Exception:
+                        pass
+                    break
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+    except Exception:
+        pass
+    opened_ok = webbrowser.open(url, new=1)
+    if not opened_ok:
+        print_plain_line("Could not open a browser. Open this URL:", as_json=False)
+        print_plain_line(url, as_json=False, markup=False)
+    elif open_message:
+        print_plain_line(open_message, as_json=False)
 
 
 def _auth_failure_message(
@@ -192,6 +226,72 @@ def _save_product_credentials(
         store.save_jira_credentials(payload)
     else:
         store.save_confluence_credentials(payload)
+
+
+def _result_reason(error_kind: AtlassianAuthErrorKind | None) -> str:
+    if error_kind == AtlassianAuthErrorKind.INVALID_CREDENTIALS:
+        return "invalid_credentials"
+    if error_kind == AtlassianAuthErrorKind.INSUFFICIENT_SCOPES:
+        return "insufficient_scopes"
+    if error_kind == AtlassianAuthErrorKind.PRODUCT_ACCESS_DENIED:
+        return "product_access_denied"
+    return "unknown"
+
+
+def connect_atlassian_product(
+    product: AtlassianProduct,
+    *,
+    email: str,
+    api_token: str,
+    site_subdomain: str,
+    force: bool = False,
+    resolved_site: dict[str, Any] | None = None,
+) -> ProductConnectResult:
+    existing = _get_product_credentials(product)
+    if existing.get("api_token") and existing.get("site_url") and not force:
+        return ProductConnectResult(
+            product=product,
+            status="already_connected",
+            site_url=existing.get("site_url"),
+            cloud_id=existing.get("cloud_id"),
+        )
+
+    site = dict(resolved_site or {})
+    last_error: AtlassianAuthErrorKind | None = None
+    if not site:
+        site, last_error = _resolve_site_from_subdomain(site_subdomain or "")
+    if not site:
+        return ProductConnectResult(
+            product=product,
+            status="not_connected",
+            reason=_result_reason(last_error),
+        )
+    site, last_error = _finalize_selected_site(email, api_token, site, product)
+    if not site:
+        return ProductConnectResult(
+            product=product,
+            status="not_connected",
+            reason=_result_reason(last_error),
+        )
+    token_style = str(site.get("token_style") or "").strip() or "classic"
+    payload = {
+        "auth_type": "api_token",
+        "token_style": token_style,
+        "email": email,
+        "api_token": api_token,
+        "cloud_id": str(site.get("cloud_id") or "").strip(),
+        "site_url": site["site_url"],
+        "site_name": site.get("site_name") or site["site_url"],
+        "stored_at": time.time(),
+    }
+    _save_product_credentials(product, payload)
+    return ProductConnectResult(
+        product=product,
+        status="connected",
+        site_url=payload["site_url"],
+        cloud_id=payload["cloud_id"],
+        token_style=token_style,
+    )
 
 
 def run_atlassian_api_token_auth(
@@ -259,45 +359,48 @@ def run_atlassian_api_token_auth(
         )
         raise typer.Exit(code=EXIT_AUTH)
 
-    site, last_error = _finalize_selected_site(email, api_token, site, product)
-    if not site:
-        emit_error(
-            f"{product_label} authentication failed",
-            _auth_failure_message(product, last_error),
-            verbose=verbose,
-        )
-        raise typer.Exit(code=EXIT_AUTH)
-
-    token_style = str(site.get("token_style") or "").strip() or "classic"
-    payload = {
-        "auth_type": "api_token",
-        "token_style": token_style,
-        "email": email,
-        "api_token": api_token,
-        "cloud_id": str(site.get("cloud_id") or "").strip(),
-        "site_url": site["site_url"],
-        "site_name": site["site_name"],
-        "stored_at": time.time(),
-    }
     try:
-        _save_product_credentials(product, payload)
+        result = connect_atlassian_product(
+            product,
+            email=email,
+            api_token=api_token,
+            site_subdomain=(
+                (site_subdomain or "").strip()
+                or str(site.get("site_url") or "")
+                .removeprefix("https://")
+                .split(".", 1)[0]
+            ),
+            force=True,
+            resolved_site=site,
+        )
     except ProviderCredentialError as exc:
         emit_error(
             f"{product_label} credential storage failed", str(exc), verbose=verbose
         )
         raise typer.Exit(code=EXIT_AUTH) from exc
+    if result.status != "connected":
+        emit_error(
+            f"{product_label} authentication failed",
+            _auth_failure_message(
+                product,
+                {
+                    "invalid_credentials": AtlassianAuthErrorKind.INVALID_CREDENTIALS,
+                    "insufficient_scopes": AtlassianAuthErrorKind.INSUFFICIENT_SCOPES,
+                    "product_access_denied": AtlassianAuthErrorKind.PRODUCT_ACCESS_DENIED,
+                }.get(result.reason or "", last_error),
+            ),
+            verbose=verbose,
+        )
+        raise typer.Exit(code=EXIT_AUTH)
 
     token_storage = integration_token_storage()
-    stored = get_integration_status(product)
-    if stored.get("token_storage"):
-        token_storage = str(stored["token_storage"])
     storage_label = (
         "system keychain"
         if token_storage == "keychain"
         else "local credentials file"
     )
     summary = (
-        f"Connected {product_label} to {site['site_url']}. "
+        f"Connected {product_label} to {result.site_url}. "
         f"Stored tokens in {storage_label}; metadata saved to {credentials_path()}."
     )
     print_plain_line(
@@ -306,10 +409,10 @@ def run_atlassian_api_token_auth(
         json_payload={
             "ok": True,
             "provider": product,
-            "token_style": token_style,
-            "site_url": site["site_url"],
-            "site_name": site["site_name"],
-            "cloud_id": payload["cloud_id"],
+            "token_style": result.token_style or "classic",
+            "site_url": result.site_url,
+            "site_name": result.site_url,
+            "cloud_id": result.cloud_id,
             "path": str(credentials_path()),
             "token_storage": token_storage,
             "product_verified": product,

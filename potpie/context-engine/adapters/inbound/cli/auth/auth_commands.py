@@ -14,6 +14,7 @@ import typer
 from rich.markup import escape
 
 from adapters.inbound.cli.auth.atlassian_auth import run_atlassian_api_token_auth
+from adapters.inbound.cli.auth.atlassian_commands import atlassian_app
 from adapters.inbound.cli.auth.bitbucket_auth import run_bitbucket_login as run_bitbucket_auth_flow
 from adapters.inbound.cli.auth.atlassian_read import (
     AtlassianReadError,
@@ -878,6 +879,7 @@ def register_integration_commands(root: typer.Typer) -> None:
     root.add_typer(jira_app, name="jira")
     root.add_typer(confluence_app, name="confluence")
     root.add_typer(bitbucket_app, name="bitbucket")
+    root.add_typer(atlassian_app, name="atlassian")
     root.add_typer(auth_app, name="auth")
 
 
