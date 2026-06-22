@@ -17,7 +17,13 @@ dependencies = [
     "typer>=0.15.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.0",
+    "potpie-observability[sentry]>=0.1.0,<0.2.0",
     "sentry-sdk>=2.61.1",
+    # Default CLI backend is FalkorDBLite on Python 3.12+.
+    "falkordblite>=0.10.0; python_version >= '3.12'",
+    # redis 8 enables maintenance notifications that break FalkorDBLite's
+    # hostless embedded connection; keep the bound wherever falkordblite ships.
+    "redis>=7.1,<8; python_version >= '3.12'",
 ]
 
 [project.optional-dependencies]
@@ -33,10 +39,14 @@ graph = [
     "neo4j>=5.28.0",
 ]
 falkordb = [
+    "falkordb>=1.6.1",
     # FalkorDBLite (embedded) requires Python >= 3.12; marker keeps resolution
     # valid across the project's wider requires-python range.
     "falkordblite>=0.10.0; python_version >= '3.12'",
     "redis>=7.1,<8",
+]
+embeddings = [
+    "sentence-transformers>=5.1.2",
 ]
 github = [
     "pygithub>=2.8.0",
@@ -56,6 +66,10 @@ all = [
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
     "neo4j>=5.28.0",
+    "falkordb>=1.6.1",
+    "falkordblite>=0.10.0; python_version >= '3.12'",
+    "redis>=7.1,<8",
+    "sentence-transformers>=5.1.2",
     "pygithub>=2.8.0",
     "pydantic-deep>=0.3.0",
     "hatchet-sdk>=1.29.0",
@@ -72,6 +86,7 @@ dev = [
 [project.scripts]
 potpie = "adapters.inbound.cli.host_cli:main"
 potpie-mcp = "adapters.inbound.mcp.server:main"
+potpie-daemon = "host.daemon_main:main"
 
 [tool.hatch.build.force-include]
 "adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "adapters/inbound/cli/ui/assets/potpie-logo-static.json"

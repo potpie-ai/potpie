@@ -1,18 +1,16 @@
-"""The graph layer.
+"""The graph adapter layer.
 
-One layer, two contracts: the writer side mutates the graph through
-``GraphWriterPort`` (Neo4j + FalkorDB implementations), the reader side
-queries canonical ``:RELATES_TO`` claims through ``ClaimQueryPort`` (Neo4j +
-FalkorDB + in-memory implementations). ``ContextGraphService`` is the
-application façade that composes both with the read orchestrator + optional
-LLM answer / investigate paths. The active backend is selected in
-``build_container`` via ``GRAPH_DB_BACKEND`` (default ``neo4j``).
+Backends expose ``ClaimQueryPort`` for reads and ``GraphMutationPort`` /
+``GraphWriterPort`` for writes. ``DefaultGraphService`` is the canonical
+application data plane; ``ContextGraphService`` is only a legacy DTO shim over
+that service for managed callers that have not migrated yet.
 """
 
 from adapters.outbound.graph.context_graph_service import ContextGraphService
 from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
 from adapters.outbound.graph.neo4j_reader import Neo4jClaimQueryStore
-from adapters.outbound.graph.neo4j_writer import GraphWriterPort, Neo4jGraphWriter
+from adapters.outbound.graph.neo4j_writer import Neo4jGraphWriter
+from adapters.outbound.graph.writer_port import GraphWriterPort
 
 __all__ = [
     "ContextGraphService",
@@ -25,5 +23,5 @@ __all__ = [
 # FalkorDB adapters are imported lazily (optional ``falkordb`` extra); they are
 # intentionally NOT imported at module load so the default Neo4j install does
 # not require the FalkorDB client. Import them directly from their modules
-# (``adapters.outbound.graph.falkordb_writer`` / ``...falkordb_reader``) or let
-# ``build_container`` select them via ``GRAPH_DB_BACKEND=falkordb``.
+# (``adapters.outbound.graph.falkordb_writer`` / ``...falkordb_reader``), or
+# through the ``falkordb`` / ``falkordb_lite`` GraphBackend profiles.

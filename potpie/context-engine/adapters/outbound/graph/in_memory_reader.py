@@ -1,18 +1,28 @@
 """In-memory :class:`ClaimQueryPort` for tests + offline benches.
 
-Production uses the Neo4j adapter against the canonical edge store.
-This implementation is *not* a substitute for that — it covers the
-filter semantics defined on :class:`ClaimQueryFilter` so reader tests
-can drive every code path without a live graph.
+Production uses the Neo4j adapter against the canonical edge store. This
+implementation is *not* a substitute for that — it covers the filter semantics
+defined on :class:`ClaimQueryFilter` so reader tests can drive every code path
+without a live graph.
+
+Semantic match (R1): when an :class:`EmbedderPort` is wired, ``fact_query`` runs
+a real cosine-similarity ranking over the persisted ``fact_embedding`` (embedding
+the retrieval card on the fly for rows that lack one). With no embedder it falls
+back to the canonical lexical token-overlap scorer
+(``match_mode == "lexical"``), so an empty result is debuggable rather than a
+silent stub.
 """
 
 from __future__ import annotations
 
-import math
+import dataclasses
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
+from adapters.outbound.graph.canonical_claim_query import embedding_score
 from domain.ports.claim_query import ClaimQueryFilter, ClaimRow
+from domain.ports.embedder import EmbedderPort
+from domain.retrieval_card import build_retrieval_card, cosine_similarity
 
 
 @dataclass(slots=True)
@@ -21,6 +31,15 @@ class InMemoryClaimQueryStore:
     entity_label_index: dict[tuple[str, str], tuple[str, ...]] = field(
         default_factory=dict
     )
+    entity_property_index: dict[tuple[str, str], dict[str, Any]] = field(
+        default_factory=dict
+    )
+    embedder: EmbedderPort | None = None
+
+    @property
+    def match_mode(self) -> str:
+        """Active semantic-match mode: ``vector`` (embedder) or ``lexical``."""
+        return "vector" if self.embedder is not None else "lexical"
 
     # ------------------------------------------------------------------
     # Loading helpers (used by tests + benches to populate the store)
@@ -36,6 +55,18 @@ class InMemoryClaimQueryStore:
     ) -> None:
         self.entity_label_index[(pot_id, entity_key)] = tuple(labels)
 
+    def set_entity_properties(
+        self, *, pot_id: str, entity_key: str, properties: Mapping[str, Any]
+    ) -> None:
+        """Merge entity properties (name / description / …) for richer reads."""
+        if not properties:
+            return
+        bucket = self.entity_property_index.setdefault((pot_id, entity_key), {})
+        bucket.update({k: v for k, v in properties.items()})
+
+    def entity_properties(self, *, pot_id: str, entity_key: str) -> dict[str, Any]:
+        return dict(self.entity_property_index.get((pot_id, entity_key), {}))
+
     # ------------------------------------------------------------------
     # ClaimQueryPort
     # ------------------------------------------------------------------
@@ -44,31 +75,7 @@ class InMemoryClaimQueryStore:
         candidates = [row for row in candidates if _matches_filter(row, filter_, self)]
 
         if filter_.fact_query:
-            scored = [
-                (row, _embedding_score(row, filter_.fact_query)) for row in candidates
-            ]
-            scored.sort(key=lambda pair: pair[1], reverse=True)
-            stamped: list[ClaimRow] = []
-            for row, score in scored:
-                props = dict(row.properties)
-                props["semantic_similarity"] = score
-                stamped.append(
-                    ClaimRow(
-                        pot_id=row.pot_id,
-                        predicate=row.predicate,
-                        subject_key=row.subject_key,
-                        object_key=row.object_key,
-                        valid_at=row.valid_at,
-                        invalid_at=row.invalid_at,
-                        evidence_strength=row.evidence_strength,
-                        source_system=row.source_system,
-                        source_ref=row.source_ref,
-                        fact=row.fact,
-                        properties=props,
-                        fact_embedding=row.fact_embedding,
-                    )
-                )
-            candidates = stamped
+            candidates = self._semantic_rank(candidates, filter_.fact_query)
 
         if filter_.limit is not None and filter_.limit >= 0:
             candidates = candidates[: filter_.limit]
@@ -84,6 +91,50 @@ class InMemoryClaimQueryStore:
                 out[key] = labels
         return out
 
+    # ------------------------------------------------------------------
+    # Semantic ranking
+    # ------------------------------------------------------------------
+    def _semantic_rank(self, candidates: list[ClaimRow], query: str) -> list[ClaimRow]:
+        if self.embedder is not None:
+            qvec = self.embedder.embed(query)
+            scored = [
+                (row, cosine_similarity(qvec, self._row_vector(row)))
+                for row in candidates
+            ]
+        else:
+            scored = [(row, embedding_score(row.fact, query)) for row in candidates]
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        return [_stamp_similarity(row, score) for row, score in scored]
+
+    def _row_vector(self, row: ClaimRow) -> tuple[float, ...]:
+        if row.fact_embedding:
+            return row.fact_embedding
+        # No persisted embedding (old data / hand-built test row): embed the
+        # card on the fly so the row still participates in vector ranking.
+        assert self.embedder is not None
+        return self.embedder.embed(card_for_row(row))
+
+
+def card_for_row(row: ClaimRow) -> str:
+    """Build the retrieval card for a stored claim row (read-side / on-the-fly embed)."""
+    props = row.properties or {}
+    return build_retrieval_card(
+        description=row.description or props.get("description"),
+        fact=row.fact,
+        subject_key=row.subject_key,
+        predicate=row.predicate,
+        object_key=row.object_key,
+        scope=props.get("code_scope")
+        if isinstance(props.get("code_scope"), Mapping)
+        else None,
+    )
+
+
+def _stamp_similarity(row: ClaimRow, score: float) -> ClaimRow:
+    props = dict(row.properties)
+    props["semantic_similarity"] = score
+    return dataclasses.replace(row, properties=props)
+
 
 def _matches_filter(
     row: ClaimRow, filter_: ClaimQueryFilter, store: InMemoryClaimQueryStore
@@ -93,6 +144,16 @@ def _matches_filter(
     if filter_.subject_key_in and row.subject_key not in filter_.subject_key_in:
         return False
     if filter_.object_key_in and row.object_key not in filter_.object_key_in:
+        return False
+    if filter_.claim_key_in and row.claim_key not in filter_.claim_key_in:
+        return False
+    if filter_.subgraph_in and row.subgraph not in filter_.subgraph_in:
+        return False
+    if filter_.mutation_id_in and row.mutation_id not in filter_.mutation_id_in:
+        return False
+    if filter_.source_ref_in and not _row_matches_source_refs(
+        row, filter_.source_ref_in
+    ):
         return False
     if filter_.source_system_in and row.source_system not in filter_.source_system_in:
         return False
@@ -119,21 +180,19 @@ def _matches_filter(
     return True
 
 
-def _embedding_score(row: ClaimRow, query: str) -> float:
-    """Stand-in similarity: token-overlap Jaccard on lowercased fact + query."""
-    if not row.fact:
-        return 0.0
-    a = set(query.lower().split())
-    b = set(row.fact.lower().split())
-    if not a or not b:
-        return 0.0
-    intersection = a & b
-    union = a | b
-    base = len(intersection) / len(union)
-    # Slight boost so close-but-not-identical phrases still score above 0
-    if intersection:
-        base = math.sqrt(base)
-    return max(0.0, min(1.0, base))
+def _row_matches_source_refs(row: ClaimRow, wanted: Iterable[str]) -> bool:
+    wanted_set = {str(ref).strip().lower() for ref in wanted if str(ref).strip()}
+    if not wanted_set:
+        return True
+    refs = []
+    if row.source_ref:
+        refs.append(row.source_ref)
+    refs.extend(row.source_refs)
+    for item in row.evidence:
+        ref = item.get("source_ref") if isinstance(item, Mapping) else None
+        if isinstance(ref, str):
+            refs.append(ref)
+    return any(ref.strip().lower() in wanted_set for ref in refs if ref)
 
 
-__all__ = ["InMemoryClaimQueryStore"]
+__all__ = ["InMemoryClaimQueryStore", "card_for_row"]
