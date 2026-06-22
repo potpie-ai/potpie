@@ -1,9 +1,11 @@
-"""Operation contract — neutral, transport-agnostic ops served identically over any protocol."""
+"""Operation contract: neutral, transport-agnostic ops served identically over any protocol."""
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Awaitable, Callable
+
 from pydantic import BaseModel
 
 
@@ -19,7 +21,7 @@ class OpKind(Enum):
 
 
 class OperationError(Exception):
-    """Uniform error for any operation handler. Transport adapters map ``code`` onto protocol-native error shapes."""
+    """Uniform error for operation handlers; transports map ``code`` to native errors."""
 
     def __init__(
         self,
@@ -48,7 +50,7 @@ class OperationContext:
     principal: Principal
     request_id: str
     deadline: float | None = None
-    deps: Any = None  # opaque; component-supplied wired deps
+    deps: Any = None
 
 
 @dataclass(frozen=True)

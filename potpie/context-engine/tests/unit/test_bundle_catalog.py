@@ -18,7 +18,8 @@ def test_load_bundle_skills_matches_template_directories() -> None:
     }
     loaded = load_bundle_skills()
     assert {skill.id for skill in loaded} == skill_dirs
-    assert len(loaded) == 4
+    assert "potpie-graph" in skill_dirs
+    assert len(loaded) == len(skill_dirs)
 
 
 def test_catalog_fields_are_populated_from_skill_front_matter() -> None:
@@ -28,9 +29,9 @@ def test_catalog_fields_are_populated_from_skill_front_matter() -> None:
     assert cli.version == "1"
     assert "Potpie CLI" in cli.description or "potpie" in cli.description.lower()
 
-    agent_context = catalog["potpie-agent-context"]
-    assert agent_context.id == "potpie-agent-context"
-    assert agent_context.title == "Potpie Agent Context"
+    graph = catalog["potpie-graph"]
+    assert graph.id == "potpie-graph"
+    assert graph.title == "Potpie Graph Workbench"
 
 
 def test_recommended_skill_ids_matches_loaded_catalog() -> None:

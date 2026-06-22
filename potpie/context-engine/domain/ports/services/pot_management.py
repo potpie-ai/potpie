@@ -35,6 +35,9 @@ class SourceInfo:
     source_id: str
     kind: str  # repo | github | linear | ...
     name: str
+    location: str | None = None
+    """Registered path / remote / owner-repo ref, so harnesses can verify a
+    path-or-remote mismatch against the current working tree."""
     last_sync_at: datetime | None = None
     sync_mode: str | None = None
     status: str = "unknown"  # ok | stale | error | unknown
@@ -94,6 +97,23 @@ class PotManagementService(Protocol):
     def source_status(self, *, pot_id: str, source_id: str) -> SourceInfo: ...
 
     def remove_source(self, *, pot_id: str, source_id: str) -> None: ...
+
+    # --- repo-local routing defaults ----------------------------------------
+    def repo_default(self, *, repo: str) -> str | None:
+        """Return the locally preferred pot id for a repo identity, if set."""
+        ...
+
+    def set_repo_default(self, *, repo: str, pot_id: str) -> None:
+        """Persist the locally preferred pot id for a repo identity."""
+        ...
+
+    def clear_repo_default(self, *, repo: str) -> bool:
+        """Clear the locally preferred pot id for a repo identity."""
+        ...
+
+    def list_repo_defaults(self) -> dict[str, str]:
+        """Return all locally persisted repo identity -> pot id defaults."""
+        ...
 
     # --- rollup -------------------------------------------------------------
     def aggregate_status(self, *, pot_id: str | None = None) -> PotAggregateStatus:

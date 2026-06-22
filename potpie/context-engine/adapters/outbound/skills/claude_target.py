@@ -10,6 +10,7 @@ from typing import Mapping
 
 from adapters.outbound.pots.local_pot_store import default_home
 from adapters.outbound.skills.agent_installer import (
+    install_global_agent_instructions,
     install_agent_bundle,
     install_skill_bundle,
     project_skill_path,
@@ -23,6 +24,8 @@ class FileBackedAgentTarget:
 
     agent: str
     skills_root: Path
+    instructions_root: Path | None = None
+    instructions_agent: str | None = None
     home: Path = field(default_factory=default_home)
     scope: str = "global"
 
@@ -56,11 +59,21 @@ class FileBackedAgentTarget:
 
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         root = Path(path).expanduser() if path else self.skills_root
-        install_skill_bundle(root, skill_ids=(skill_id,))
+        install_skill_bundle(root, skill_ids=(skill_id,), force=True)
         data = self._load()
         if (root / skill_id / "SKILL.md").exists():
             data[skill_id] = version
         self._save(data)
+
+    def install_support_files(self, *, path: str | None = None) -> None:
+        del path
+        if self.instructions_root is None:
+            return
+        install_global_agent_instructions(
+            self.instructions_root,
+            agent=self.instructions_agent or self.agent,
+            force=True,
+        )
 
     def remove(self, *, skill_id: str) -> None:
         shutil.rmtree(self.skills_root.expanduser() / skill_id, ignore_errors=True)
@@ -104,11 +117,15 @@ class ProjectAgentTarget:
 
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         root = Path(path) if path else self.path
-        install_agent_bundle(root, agent=self.agent, skill_ids=(skill_id,))
+        install_agent_bundle(root, agent=self.agent, skill_ids=(skill_id,), force=True)
         data = self._load()
         if project_skill_path(root, agent=self.agent, skill_id=skill_id).exists():
             data[skill_id] = version
         self._save(data)
+
+    def install_support_files(self, *, path: str | None = None) -> None:
+        root = Path(path) if path else self.path
+        install_agent_bundle(root, agent=self.agent, skill_ids=(), force=True)
 
     def remove(self, *, skill_id: str) -> None:
         shutil.rmtree(
@@ -136,6 +153,8 @@ class ClaudeAgentTarget(FileBackedAgentTarget):
         super().__init__(
             agent="claude",
             skills_root=Path.home() / ".claude" / "skills",
+            instructions_root=Path.home() / ".claude",
+            instructions_agent="claude",
             **kwargs,
         )
 
@@ -156,6 +175,8 @@ class CodexAgentTarget(FileBackedAgentTarget):
         super().__init__(
             agent="codex",
             skills_root=Path.home() / ".agents" / "skills",
+            instructions_root=Path.home() / ".codex",
+            instructions_agent="codex",
             **kwargs,
         )
 
