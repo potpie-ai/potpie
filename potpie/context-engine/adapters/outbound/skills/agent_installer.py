@@ -9,13 +9,17 @@ from importlib import resources
 from pathlib import Path
 from typing import Iterable
 
-_CLAUDE_MARKER_RE = re.compile(
+_MANAGED_MARKER_RE = re.compile(
     r"<!-- (?:context-engine|potpie)-start -->.*?<!-- (?:context-engine|potpie)-end -->",
     re.DOTALL,
 )
+_DEFAULT_MERGE_FILES = frozenset({"CLAUDE.md"})
 
-AGENT_TYPES = ("default", "codex", "claude", "cursor", "opencode")
+AGENT_TYPES = ("default", "codex", "claude", "claude-plugin", "cursor", "opencode")
 _SOURCE_SKILLS_PREFIX = ".agents/skills/"
+# The Claude Code plugin installs as a self-contained directory so its
+# ``.claude-plugin/plugin.json`` stays the plugin root for ``/plugin marketplace add``.
+_CLAUDE_PLUGIN_PREFIX = ".claude/potpie-plugin"
 
 
 @dataclass
@@ -53,7 +57,13 @@ def _iter_bundle_files(bundle_name: str) -> list[tuple[Path, str]]:
         for child in current.iterdir():
             child_rel = rel / child.name
             if child.is_dir():
+                # Never install compiled-bytecode caches that may sit beside the
+                # template sources (e.g. a stray ``__pycache__`` from a test run).
+                if child.name == "__pycache__":
+                    continue
                 stack.append((child, child_rel))
+                continue
+            if child.name.endswith((".pyc", ".pyo")):
                 continue
             out.append((child_rel, child.read_text(encoding="utf-8")))
     return sorted(out, key=lambda item: item[0].as_posix())
@@ -64,10 +74,12 @@ def iter_template_files() -> list[tuple[Path, str]]:
     return _iter_bundle_files("agent_bundle")
 
 
-def _merge_claude_md(existing: str, section: str, *, force: bool) -> tuple[str, str]:
+def _merge_managed_markdown(
+    existing: str, section: str, *, force: bool
+) -> tuple[str, str]:
     """Return (merged_content, action) where action is 'unchanged'|'updated'|'created'."""
-    if _CLAUDE_MARKER_RE.search(existing):
-        merged = _CLAUDE_MARKER_RE.sub(section.strip(), existing)
+    if _MANAGED_MARKER_RE.search(existing):
+        merged = _MANAGED_MARKER_RE.sub(section.strip(), existing)
         if merged == existing:
             return existing, "unchanged"
         if not force:
@@ -142,6 +154,7 @@ def _install_bundle(
     force: bool,
     include: Callable[[Path], bool] | None = None,
     remap: Callable[[Path], Path | None] | None = None,
+    merge_files: frozenset[str] = _DEFAULT_MERGE_FILES,
 ) -> None:
     for rel_path, content in _iter_bundle_files(bundle_name):
         if include is not None and not include(rel_path):
@@ -151,11 +164,12 @@ def _install_bundle(
             continue
         target = install_root / out_path
 
-        # Special handling: merge CLAUDE.md section instead of overwriting
-        if out_path.name == "CLAUDE.md":
+        # Special handling: merge managed markdown sections instead of overwriting
+        # the whole user-authored file.
+        if out_path.name in merge_files:
             section = content
             existing = target.read_text(encoding="utf-8") if target.exists() else ""
-            merged, action = _merge_claude_md(existing, section, force=force)
+            merged, action = _merge_managed_markdown(existing, section, force=force)
             if action == "skipped":
                 result.skipped.append(out_path.as_posix())
                 continue
@@ -195,6 +209,11 @@ def _claude_skills_bundle_remap(rel_path: Path) -> Path | None:
     return _remap_skills_path(rel_path, ".claude/skills")
 
 
+def _claude_plugin_remap(rel_path: Path) -> Path | None:
+    # Install the whole plugin under one directory, preserving its internal layout.
+    return Path(_CLAUDE_PLUGIN_PREFIX) / rel_path
+
+
 def install_skill_bundle(
     skills_root: str | Path,
     *,
@@ -220,6 +239,38 @@ def install_skill_bundle(
     return result
 
 
+def install_global_agent_instructions(
+    root: str | Path,
+    *,
+    agent: str = "default",
+    force: bool = True,
+) -> InstallResult:
+    """Install compact global instructions for harnesses with file-based rules.
+
+    The project bundle is intentionally detailed. This global bundle stays tiny
+    because it can be loaded into every prompt across repositories.
+    """
+    install_root = Path(root).expanduser().resolve()
+    result = InstallResult(root=str(install_root))
+    normalized = agent.strip().lower() if agent else "default"
+    if normalized == "claude":
+        filename = "CLAUDE.md"
+    elif normalized in {"default", "codex"}:
+        filename = "AGENTS.md"
+    else:
+        return result
+
+    _install_bundle(
+        install_root,
+        "global_agent_bundle",
+        result,
+        force=force,
+        include=lambda rel: rel.as_posix() == filename,
+        merge_files=frozenset({filename}),
+    )
+    return result
+
+
 def install_agent_bundle(
     path: str | Path = ".",
     *,
@@ -231,6 +282,7 @@ def install_agent_bundle(
 
     - ``default`` / ``codex``: ``AGENTS.md`` + ``.agents/skills/``
     - ``claude``: ``CLAUDE.md`` (+ ``.claude/`` when present in bundle)
+    - ``claude-plugin``: the Claude Code plugin under ``.claude/potpie-plugin/``
     - ``cursor``: ``AGENTS.md`` + ``.cursor/skills/``
     - ``opencode``: ``.opencode/skills/``
     """
@@ -253,6 +305,20 @@ def install_agent_bundle(
             force=force,
             include=lambda rel: _include_selected_skills(rel, selected),
             remap=_claude_skills_bundle_remap,
+        )
+    elif normalized == "claude-plugin":
+        # Works from a source checkout. NB for wheel distribution: the monorepo
+        # .gitignore ignores ``*.json``, and Hatchling's VCS-aware selector then
+        # omits the plugin's plugin.json/marketplace.json/hooks.json from the wheel
+        # even with an ``include`` glob. Shipping those in a wheel needs a
+        # ``[tool.hatch.build] artifacts`` override or a .gitignore exception
+        # (deliberately deferred: plugin install is dev/source only for now).
+        _install_bundle(
+            root,
+            "claude_plugin",
+            result,
+            force=force,
+            remap=_claude_plugin_remap,
         )
     elif normalized == "cursor":
         _install_bundle(

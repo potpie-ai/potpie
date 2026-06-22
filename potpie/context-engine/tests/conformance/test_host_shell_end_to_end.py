@@ -77,7 +77,7 @@ def test_setup_orchestrator_provisions_and_creates_default_pot(host):
     assert states["daemon"] == SKIPPED  # in-process host: nothing to start
     assert states["auth"] == NOT_IMPLEMENTED  # soft gap; does not fail setup
     active = host.pots.active_pot()
-    assert active is not None and active.name == "foo-pot"
+    assert active is not None and active.name == "default"
 
 
 def test_setup_is_idempotent(host):

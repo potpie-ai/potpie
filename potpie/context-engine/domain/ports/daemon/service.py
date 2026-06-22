@@ -1,6 +1,7 @@
 """Managed-service value objects: how the daemon describes a service it supervises."""
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -23,10 +24,10 @@ class RestartPolicy(Enum):
 @dataclass
 class ServiceSpec:
     name: str
-    backend: str  # registry key
-    config: dict[str, Any]  # backend-specific
+    backend: str
+    config: dict[str, Any]
     ready: ReadyProbe
-    endpoint: str  # connection string consumers receive
+    endpoint: str
     restart: RestartPolicy = RestartPolicy.ON_FAILURE
     depends_on: list[str] = field(default_factory=list)
-    data_dir: str | None = None  # optional per-service writable dir
+    data_dir: str | None = None

@@ -125,10 +125,13 @@ class TestEnvelopeBuilder:
             as_of=_NOW,
         )
         out = envelope_to_dict(envelope)
+        assert envelope.to_dict() == out
         assert out["pot_id"] == "pot-1"
         assert out["intent"] == "feature"
         assert out["items"][0]["include"] == "preferences"
+        assert out["items"][0]["candidate_key"] == "p"
         assert out["coverage"][0]["status"] == "complete"
+        assert out["coverage"][0]["candidate_pool"] == 3
         assert out["overall_confidence"] == "high"
         assert out["as_of"] == _NOW.isoformat()
 

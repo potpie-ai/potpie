@@ -55,6 +55,14 @@ class DefaultSkillManager:
             metadata["target_root"] = str(root)
         return metadata
 
+    @staticmethod
+    def _install_support_files(
+        target: AgentTargetPort, *, path: str | None = None
+    ) -> None:
+        installer = getattr(target, "install_support_files", None)
+        if callable(installer):
+            installer(path=path)
+
     def list(
         self, *, agent: str = "claude", scope: str = "global", path: str | None = None
     ) -> list[SkillInfo]:
@@ -98,6 +106,7 @@ class DefaultSkillManager:
                 continue
             target.install(skill_id=sid, version=info.version, path=path)
             changed.append(sid)
+        self._install_support_files(target, path=path)
         return SkillOperationResult(
             agent=agent,
             operation="install",
@@ -124,6 +133,7 @@ class DefaultSkillManager:
             if info and installed.get(sid) != info.version:
                 target.install(skill_id=sid, version=info.version)
                 changed.append(sid)
+        self._install_support_files(target, path=path)
         return SkillOperationResult(
             agent=agent,
             operation="update",
@@ -135,16 +145,27 @@ class DefaultSkillManager:
         self,
         *,
         agent: str,
-        skill_id: str,
+        skill_id: str | None = None,
+        all_: bool = False,
         path: str | None = None,
         scope: str = "global",
     ) -> SkillOperationResult:
+        if all_ and skill_id:
+            raise ValueError("pass either a skill id or --all, not both")
+        if not all_ and not skill_id:
+            raise ValueError("pass a skill id or --all")
         target = self._target_for_scope(agent=agent, scope=scope, path=path)
-        target.remove(skill_id=skill_id)
+        ids = list(target.installed()) if all_ else [skill_id]
+        changed: list[str] = []
+        for sid in ids:
+            if sid is None:
+                continue
+            target.remove(skill_id=sid)
+            changed.append(sid)
         return SkillOperationResult(
             agent=agent,
             operation="remove",
-            changed=(skill_id,),
+            changed=tuple(changed),
             metadata=self._metadata(target, scope=scope),
         )
 
