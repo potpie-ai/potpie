@@ -95,5 +95,5 @@ groups:
         annotations:
           summary: "LLM token rate 3x the trailing-day baseline"
           description: >
-            Includes Graphiti's previously-invisible extraction/embedding
+            Includes the previously-invisible extraction/embedding
             calls. Check for a backfill storm or a prompt regression.
