@@ -10,6 +10,17 @@ from adapters.outbound.cli_auth.bitbucket_read_client import BitbucketReadError
 from tests._auth_fakes import InMemoryCredentialStore
 
 
+def _patch_load_bitbucket_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    store: InMemoryCredentialStore,
+) -> None:
+    """`load_bitbucket_read_credentials` reads the real store; use the test fake."""
+    monkeypatch.setattr(
+        "adapters.inbound.cli.auth.bitbucket_read.load_bitbucket_read_credentials",
+        lambda: dict(store.get_bitbucket_credentials()),
+    )
+
+
 @pytest.fixture(autouse=True)
 def _reset_store() -> None:
     set_store(InMemoryCredentialStore())
@@ -31,6 +42,7 @@ def test_run_bitbucket_use_flow_non_tty_with_workspace_and_repo(
         {"email": "user@example.com", "api_token": "bb-token"}
     )
     set_store(store)
+    _patch_load_bitbucket_credentials(monkeypatch, store)
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     monkeypatch.setattr(
         "adapters.inbound.cli.auth.bitbucket_read.fetch_bitbucket_workspaces",
@@ -70,6 +82,7 @@ def test_run_bitbucket_use_flow_single_workspace_and_repo_auto_picks(
         {"email": "user@example.com", "api_token": "bb-token"}
     )
     set_store(store)
+    _patch_load_bitbucket_credentials(monkeypatch, store)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr(
         "adapters.inbound.cli.auth.bitbucket_read.fetch_bitbucket_workspaces",
@@ -102,6 +115,7 @@ def test_run_bitbucket_use_flow_prompts_when_multiple_choices(
         {"email": "user@example.com", "api_token": "bb-token"}
     )
     set_store(store)
+    _patch_load_bitbucket_credentials(monkeypatch, store)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr(
         "adapters.inbound.cli.auth.bitbucket_read.fetch_bitbucket_workspaces",
