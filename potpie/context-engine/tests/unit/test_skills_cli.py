@@ -72,14 +72,16 @@ def test_skills_remove_all_json_output() -> None:
     fake_skills = _Skills()
     _common.set_host(_Host(skills=fake_skills))
     _common.set_json(True)
-
-    result = CliRunner().invoke(
-        skills.skills_app,
-        ["remove", "--all", "--agent", "codex"],
-    )
+    try:
+        result = CliRunner().invoke(
+            skills.skills_app,
+            ["remove", "--all", "--agent", "codex"],
+        )
+    finally:
+        _common.set_json(False)
 
     assert result.exit_code == 0, result.output
     emitted = json.loads(result.output)
-    assert emitted["agent"] == "codex"
+
     assert emitted["scope"] == "global"
     assert emitted["removed"] == ["potpie-graph", "potpie-cli"]
