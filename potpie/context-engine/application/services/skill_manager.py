@@ -155,7 +155,7 @@ class DefaultSkillManager:
         if not all_ and not skill_id:
             raise ValueError("pass a skill id or --all")
         target = self._target_for_scope(agent=agent, scope=scope, path=path)
-        installed = set(target.installed())
+        installed = target.installed()
         ids = list(installed) if all_ else [skill_id]
         changed: list[str] = []
         for sid in ids:
