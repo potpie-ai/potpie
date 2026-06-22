@@ -104,6 +104,10 @@ class Neo4jClaimQueryStore:
 
     # -- ClaimQueryPort ----------------------------------------------------
     def find_claims(self, filter_: ClaimQueryFilter) -> list[ClaimRow]:
+        # An explicit zero-row request must win before the vector path (which
+        # coerces limit=0 → 10) or the lexical slice can return anything.
+        if filter_.limit == 0:
+            return []
         # Short-circuit the one hopeless filter the port documents.
         if (
             not filter_.predicate_in

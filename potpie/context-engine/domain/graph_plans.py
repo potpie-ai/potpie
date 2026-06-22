@@ -214,6 +214,9 @@ class GraphMutationPlanRecord:
             ),
             current_subgraph_versions=_int_mapping(
                 raw.get("current_subgraph_versions")
+                # ``to_dict`` also emits the ``subgraph_versions`` alias; honor it
+                # so alias-only persisted payloads don't deserialize to empty.
+                or raw.get("subgraph_versions")
             ),
             diff=GraphMutationDiff.from_dict(raw.get("diff")),
             warnings=tuple(str(w) for w in raw.get("warnings") or ()),

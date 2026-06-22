@@ -189,7 +189,11 @@ def _row_matches_source_refs(row: ClaimRow, wanted: Iterable[str]) -> bool:
         refs.append(row.source_ref)
     refs.extend(row.source_refs)
     for item in row.evidence:
-        ref = item.get("source_ref") if isinstance(item, Mapping) else None
+        if not isinstance(item, Mapping):
+            continue
+        # The evidence DTO serializes the pointer as ``ref``; accept both that
+        # and the canonical ``source_ref`` so DTO-shaped evidence still matches.
+        ref = item.get("source_ref") or item.get("ref")
         if isinstance(ref, str):
             refs.append(ref)
     return any(ref.strip().lower() in wanted_set for ref in refs if ref)

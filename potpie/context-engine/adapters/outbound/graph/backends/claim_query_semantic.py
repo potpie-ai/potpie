@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 
@@ -22,23 +22,10 @@ class ClaimQuerySemanticSearch:
         filter_: ClaimQueryFilter | None = None,
     ) -> list[ClaimRow]:
         base = filter_ or ClaimQueryFilter(pot_id=pot_id)
+        # Preserve every incoming filter axis (claim_key_in / subgraph_in /
+        # mutation_id_in included); only override pot_id + the semantic anchor.
         return self.claim_query.find_claims(
-            ClaimQueryFilter(
-                pot_id=pot_id,
-                predicate_in=base.predicate_in,
-                subject_key_in=base.subject_key_in,
-                object_key_in=base.object_key_in,
-                source_ref_in=base.source_ref_in,
-                subject_label=base.subject_label,
-                object_label=base.object_label,
-                valid_at_after=base.valid_at_after,
-                valid_at_before=base.valid_at_before,
-                include_invalidated=base.include_invalidated,
-                as_of=base.as_of,
-                source_system_in=base.source_system_in,
-                fact_query=query,
-                limit=k,
-            )
+            replace(base, pot_id=pot_id, fact_query=query, limit=k)
         )
 
 

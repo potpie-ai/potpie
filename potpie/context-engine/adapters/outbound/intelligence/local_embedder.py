@@ -48,6 +48,13 @@ class HashingEmbedder:
     dimensions: int = _DEFAULT_DIMENSIONS
     name: str = "local-hashing-v1"
 
+    def __post_init__(self) -> None:
+        # A non-positive dimension would crash at runtime (modulo-by-zero in
+        # ``_bucket`` for 0, negative indexing for <0); reject it up front.
+        self.dimensions = int(self.dimensions)
+        if self.dimensions <= 0:
+            raise ValueError("HashingEmbedder.dimensions must be a positive integer")
+
     def embed(self, text: str) -> tuple[float, ...]:
         vec = [0.0] * self.dimensions
         for token, weight in _features(text):

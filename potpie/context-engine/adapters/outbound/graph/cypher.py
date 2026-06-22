@@ -183,7 +183,13 @@ def _embedding_props(
     )
     if not card:
         return {}
-    embedding = embedder.embed(card)
+    # Embeddings are best-effort enrichment: a model/runtime error must not abort
+    # the structural edge write. Degrade to no embedding props and persist anyway.
+    try:
+        embedding = embedder.embed(card)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("claim embedding skipped: %s", exc)
+        return {}
     return {
         "fact_embedding": [float(x) for x in embedding],
         "embedding_model": getattr(embedder, "name", "unknown"),
@@ -213,9 +219,10 @@ def _neo4j_safe_value(value: Any) -> Any:
     if isinstance(value, _NEO4J_TEMPORAL_TYPES):
         return value
     if isinstance(value, (list, tuple)):
-        if all(
-            v is None or isinstance(v, (bool, int, float, str)) for v in value
-        ):
+        # Neo4j 5.x property arrays cannot contain null elements; only a list of
+        # pure primitives survives as a native array. A list carrying ``None``
+        # (or maps) must be JSON-encoded so the write does not fail.
+        if all(isinstance(v, (bool, int, float, str)) for v in value):
             return list(value)
         return json.dumps(list(value), default=str, sort_keys=True)
     if isinstance(value, dict):

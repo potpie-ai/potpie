@@ -270,9 +270,16 @@ def _validate_entity_ref(ref, role, *, required, err, warn) -> None:
 def _validate_claim_op(op, *, err, warn) -> None:
     _validate_entity_ref(op.subject, "subject", required=True, err=err, warn=warn)
 
-    # Object is either an entity ref or a literal value.
+    # Object is either an entity ref or a literal value — never both. A value is
+    # silently ignored by the lowerer when an object is also present, so reject
+    # the ambiguity instead of accepting a misleading op.
     if op.object is None and op.value is None:
         err("missing_object", "claim op requires an 'object' entity or a 'value'")
+    elif op.object is not None and op.value is not None:
+        err(
+            "ambiguous_object",
+            "claim op accepts either an 'object' entity or a 'value', not both",
+        )
     elif op.object is not None:
         _validate_entity_ref(op.object, "object", required=False, err=err, warn=warn)
 
@@ -291,6 +298,11 @@ def _validate_claim_op(op, *, err, warn) -> None:
                 "invalid_endpoints",
                 f"{op.predicate} does not allow {s_type} -> {o_type}; allowed: {allowed}",
             )
+    # NOTE (CodeRabbit value-only endpoint suggestion, intentionally skipped):
+    # a ``value`` claim lowers to a synthetic Observation object on purpose and
+    # is exempt from endpoint-type rules (e.g. BugPattern -REPRODUCES-> value).
+    # Enforcing subject -> Observation here would reject those valid claims, so
+    # endpoint validation stays scoped to explicit ``object`` entities.
 
     # Durable writes need evidence OR an explicit low-authority truth class.
     _check_evidence_or_low_authority(op, err)
@@ -372,6 +384,19 @@ def _validate_retract_op(op, *, err, warn) -> None:
         err(
             "missing_object",
             "end_relation_validity requires an 'object' entity to target an exact relation",
+        )
+    if (
+        op.op == SemanticMutationOp.retract_claim.value
+        and op.predicate
+        and op.object is None
+    ):
+        # The lowerer has no predicate-scoped invalidation shape: subject +
+        # predicate without an object would silently fall through to whole-entity
+        # invalidation. Require an object until predicate-scoped retraction exists.
+        err(
+            "missing_object",
+            "retract_claim with a predicate requires an 'object' entity until "
+            "predicate-scoped invalidation is supported",
         )
     if op.predicate:
         _validate_predicate_and_endpoints(op, err=err)

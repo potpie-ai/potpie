@@ -8,6 +8,7 @@ runs the four mutation verbs in order against the single
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -24,6 +25,31 @@ from domain.reconciliation import (
 )
 
 
+def _stable_batch_source_id(plan: MutationBatch) -> str:
+    """Deterministic provenance source id for an event-ref-less, context-less batch.
+
+    The per-apply ``mutation_id`` is a fresh ``uuid4`` every call, so using it as
+    the provenance ``source_event_id`` makes a retried batch look like a brand-new
+    event — and the edge writer (which derives its default ``source_ref`` from
+    ``source_event_id``) mints duplicate claims instead of MERGE-updating the same
+    edge. Fingerprint the batch content instead: a genuine retry of the same batch
+    carries the same source id and stays idempotent.
+    """
+    parts: list[str] = [plan.summary or ""]
+    for e in plan.entity_upserts:
+        parts.append(f"E:{e.entity_key}:{','.join(e.labels)}")
+    for d in plan.edge_upserts:
+        parts.append(f"U:{d.edge_type}:{d.from_entity_key}->{d.to_entity_key}")
+    for d in plan.edge_deletes:
+        parts.append(f"D:{d.edge_type}:{d.from_entity_key}->{d.to_entity_key}")
+    for inv in plan.invalidations:
+        parts.append(f"I:{inv.target_entity_key}:{inv.target_edge}")
+    digest = hashlib.blake2b(
+        "\n".join(parts).encode("utf-8"), digest_size=16
+    ).hexdigest()
+    return f"mutation:{digest}"
+
+
 def _build_provenance(
     plan: MutationBatch,
     *,
@@ -35,11 +61,13 @@ def _build_provenance(
     ctx = context or ProvenanceContext()
     # ``event_ref`` is optional now. Non-event writes can still provide a
     # deterministic source id through ProvenanceContext without fabricating an
-    # EventRef; otherwise the per-apply mutation id is the fallback source.
+    # EventRef; otherwise fall back to a *stable* content fingerprint so a
+    # retried batch reuses the same source id and stays idempotent (never the
+    # per-apply uuid, which would fabricate a fresh event on every retry).
     source_event_id = (
         plan.event_ref.event_id
         if plan.event_ref
-        else ctx.source_event_id or f"mutation:{mutation_id}"
+        else ctx.source_event_id or _stable_batch_source_id(plan)
     )
     source_system = plan.event_ref.source_system if plan.event_ref else ctx.source_system
     return ProvenanceRef(

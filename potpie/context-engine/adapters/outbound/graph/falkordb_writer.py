@@ -377,8 +377,10 @@ class FalkorDBGraphWriter(GraphWriterPort):
             )
             if not card:
                 continue
-            embedding = [float(x) for x in self._embedder.embed(card)]
             try:
+                # Keep embedding inside the try: a model error must degrade to
+                # "no vector enrichment", not abort the already-written edge.
+                embedding = [float(x) for x in self._embedder.embed(card)]
                 graph.query(
                     """
                     MATCH (:Entity {group_id: $gid, entity_key: $from_key})

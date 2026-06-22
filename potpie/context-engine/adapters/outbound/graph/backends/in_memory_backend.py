@@ -28,6 +28,9 @@ from adapters.outbound.graph.entity_summary_repair import (
     repaired_entity_properties,
     wants_entity_summary_repair,
 )
+from application.services.reconciliation_validation import (
+    validate_reconciliation_plan,
+)
 from domain.graph_contract import evidence_strength_for_truth
 from domain.graph_entity_summary import (
     merge_entity_display_properties,
@@ -69,6 +72,10 @@ class _Mutation:
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
     ) -> MutationResult:
+        # Validate before mutating, exactly like the Neo4j/FalkorDB writers do
+        # (both route apply through apply_mutation_batch → this validator). Keeps
+        # the substrate from silently accepting malformed or cross-pot batches.
+        validate_reconciliation_plan(plan, expected_pot_id)
         summary = MutationSummary()
         mutation_id = uuid.uuid4().hex
         for ent in plan.entity_upserts:
@@ -88,7 +95,7 @@ class _Mutation:
             )
             summary.entity_upserts_applied += 1
         for edge in plan.edge_upserts:
-            self.store.add(
+            self._upsert_claim_row(
                 self._build_claim_row(
                     edge,
                     pot_id=expected_pot_id,
@@ -97,6 +104,9 @@ class _Mutation:
                 )
             )
             summary.edge_upserts_applied += 1
+        summary.edge_deletes_applied = self._apply_edge_deletes(
+            plan, pot_id=expected_pot_id
+        )
         summary.invalidations_applied = self._apply_invalidations(
             plan, pot_id=expected_pot_id
         )
@@ -150,27 +160,81 @@ class _Mutation:
             row = _with_embedding(row, self.embedder.embed(card_for_row(row)))
         return row
 
+    def _upsert_claim_row(self, row: ClaimRow) -> None:
+        """MERGE the claim by identity instead of blindly appending.
+
+        The canonical Neo4j/FalkorDB writers ``MERGE`` on claim identity, so
+        re-applying the same batch updates the same edge. Mirror that here: an
+        existing live row with the same ``claim_key`` (or the same
+        source_ref + predicate + endpoints) is replaced, not duplicated.
+        """
+        for i, existing in enumerate(self.store.rows):
+            if existing.pot_id != row.pot_id or existing.invalid_at is not None:
+                continue
+            same_claim = bool(row.claim_key and existing.claim_key == row.claim_key)
+            same_source_edge = bool(
+                row.source_ref
+                and existing.source_ref == row.source_ref
+                and existing.predicate == row.predicate
+                and existing.subject_key == row.subject_key
+                and existing.object_key == row.object_key
+            )
+            if same_claim or same_source_edge:
+                self.store.rows[i] = row
+                return
+        self.store.add(row)
+
+    def _apply_edge_deletes(self, plan: MutationBatch, *, pot_id: str) -> int:
+        """Drop claims targeted by ``plan.edge_deletes``.
+
+        The shared application path records ``summary.edge_deletes_applied``
+        after the writer deletes edges; the substrate must actually remove the
+        rows so it does not keep stale claims the canonical backends would drop.
+        """
+        if not plan.edge_deletes:
+            return 0
+        targets = {
+            (edge.edge_type.upper(), edge.from_entity_key, edge.to_entity_key)
+            for edge in plan.edge_deletes
+        }
+        before = len(self.store.rows)
+        self.store.rows = [
+            row
+            for row in self.store.rows
+            if not (
+                row.pot_id == pot_id
+                and (row.predicate.upper(), row.subject_key, row.object_key) in targets
+            )
+        ]
+        return before - len(self.store.rows)
+
     def _apply_invalidations(self, plan: MutationBatch, *, pot_id: str) -> int:
         if not plan.invalidations:
             return 0
         now = datetime.now(timezone.utc)
-        edge_targets: set[tuple[str, str, str]] = set()
-        entity_targets: set[str] = set()
+        # Preserve each op's own ``valid_to`` (the canonical writers stamp it when
+        # present); fall back to apply-time ``now`` only when it is missing.
+        edge_targets: dict[tuple[str, str, str], datetime] = {}
+        entity_targets: dict[str, datetime] = {}
         for inv in plan.invalidations:
+            invalid_at = _coerce_dt(inv.valid_to) or now
             if inv.target_edge:
                 pred, subj, obj = inv.target_edge
-                edge_targets.add((pred.upper(), subj, obj))
+                edge_targets[(pred.upper(), subj, obj)] = invalid_at
             if inv.target_entity_key:
-                entity_targets.add(inv.target_entity_key)
+                entity_targets[inv.target_entity_key] = invalid_at
         count = 0
         for i, row in enumerate(self.store.rows):
             if row.pot_id != pot_id or row.invalid_at is not None:
                 continue
             triple = (row.predicate.upper(), row.subject_key, row.object_key)
-            if triple in edge_targets or (
-                entity_targets & {row.subject_key, row.object_key}
-            ):
-                self.store.rows[i] = _with_invalid_at(row, now)
+            invalid_at = edge_targets.get(triple)
+            if invalid_at is None:
+                invalid_at = entity_targets.get(row.subject_key) or entity_targets.get(
+                    row.object_key
+                )
+            if invalid_at is not None:
+                self.store.rows[i] = _with_invalid_at(row, invalid_at)
                 count += 1
         return count
 
@@ -297,6 +361,10 @@ class _Inspection:
             visited_frontier.update(current)
             for row in self.store.rows:
                 if row.pot_id != pot_id:
+                    continue
+                if row.invalid_at is not None:
+                    # Invalidated claims are history, not current structure; the
+                    # FalkorDB inspection path excludes them too.
                     continue
                 if predicate_set and row.predicate.upper() not in predicate_set:
                     continue

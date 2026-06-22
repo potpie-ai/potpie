@@ -97,6 +97,10 @@ class FalkorDBInspection:
         self._settings = settings
         self._graph = graph  # injectable for unit tests
         self._graph_provider = graph_provider  # shared handle from the container
+        # Accepted for construction parity with the other FalkorDB capability
+        # adapters (the backend hands the same embedder to all of them).
+        # Structural inspection reads embeddings already written by the writer,
+        # so it never embeds at read time — kept for that uniform wiring.
         self._embedder = embedder
 
     def _get_graph(self) -> Any:
