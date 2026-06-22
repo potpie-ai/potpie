@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import click
 import pytest
 import typer
 
@@ -29,7 +30,7 @@ def test_maybe_prompt_github_login_runs_selected_integrations(
     monkeypatch.setattr(
         interactive_prompts,
         "prompt_multi_checkbox",
-        lambda *_a, **_k: ["linear", "jira"],
+        lambda *_a, **_k: ["linear", "atlassian"],
     )
     monkeypatch.setattr(
         "adapters.inbound.cli.auth.github_commands.github_login_impl",
@@ -43,7 +44,14 @@ def test_maybe_prompt_github_login_runs_selected_integrations(
     monkeypatch.setattr(setup_ux, "_maybe_prompt_first_pot", lambda **_k: None)
     setup_ux.maybe_prompt_github_login(repo=None, default_pot_name="default")
 
-    assert calls == ["linear", "jira"]
+    assert calls == ["linear", "atlassian"]
+
+
+def test_post_setup_integrations_use_single_atlassian_option() -> None:
+    assert setup_ux.POST_SETUP_INTEGRATION_OPTIONS == (
+        ("linear", "Linear"),
+        ("atlassian", "Atlassian"),
+    )
 
 
 def test_maybe_prompt_github_login_runs_github_when_confirmed(
@@ -71,6 +79,39 @@ def test_maybe_prompt_github_login_runs_github_when_confirmed(
     setup_ux.maybe_prompt_github_login(repo=None)
 
     assert calls == ["github"]
+
+
+def test_maybe_prompt_github_login_skips_integration_on_ctrl_c_and_continues(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(setup_ux, "is_interactive_tty", lambda: True)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "typer.confirm",
+        lambda *_a, **_k: False,
+    )
+    monkeypatch.setattr(
+        interactive_prompts,
+        "prompt_multi_checkbox",
+        lambda *_a, **_k: ["linear", "atlassian"],
+    )
+
+    def _login(provider: str, *, force: bool = False) -> None:
+        if provider == "linear":
+            raise KeyboardInterrupt
+        calls.append(provider)
+
+    monkeypatch.setattr(
+        "adapters.inbound.cli.auth.auth_commands.run_integration_login",
+        _login,
+    )
+    monkeypatch.setattr(setup_ux, "_maybe_prompt_first_pot", lambda **_k: None)
+    setup_ux.maybe_prompt_github_login(repo=None, default_pot_name="default")
+
+    assert calls == ["atlassian"]
+    assert "Skipped Linear" in capsys.readouterr().out
 
 
 def test_maybe_prompt_github_login_cancel_exits_setup_flow(
@@ -168,6 +209,67 @@ def test_maybe_prompt_github_login_prompts_when_status_check_fails(
     setup_ux.maybe_prompt_github_login(repo=None)
 
     assert calls == ["github"]
+
+
+def test_maybe_prompt_github_login_skips_integration_on_click_abort(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(setup_ux, "is_interactive_tty", lambda: True)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "typer.confirm",
+        lambda *_a, **_k: False,
+    )
+    monkeypatch.setattr(
+        interactive_prompts,
+        "prompt_multi_checkbox",
+        lambda *_a, **_k: ["linear", "atlassian"],
+    )
+
+    def _login(provider: str, *, force: bool = False) -> None:
+        if provider == "linear":
+            raise click.Abort()
+        calls.append(provider)
+
+    monkeypatch.setattr(
+        "adapters.inbound.cli.auth.auth_commands.run_integration_login",
+        _login,
+    )
+    monkeypatch.setattr(setup_ux, "_maybe_prompt_first_pot", lambda **_k: None)
+    setup_ux.maybe_prompt_github_login(repo=None, default_pot_name="default")
+
+    assert calls == ["atlassian"]
+    assert "Skipped Linear" in capsys.readouterr().out
+
+
+def test_try_integration_login_skips_when_atlassian_confirm_aborts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from adapters.inbound.cli.commands._common import contract
+
+    def _confirm_abort(*_args: object, **_kwargs: object) -> bool:
+        raise click.Abort()
+
+    monkeypatch.setattr("typer.confirm", _confirm_abort)
+    monkeypatch.setattr(
+        "adapters.inbound.cli.auth.atlassian_auth._get_product_credentials",
+        lambda _product: {},
+    )
+    monkeypatch.setattr(
+        "adapters.inbound.cli.auth.atlassian_auth.sys.stdin.isatty",
+        lambda: True,
+    )
+
+    with contract():
+        setup_ux._try_integration_login("atlassian")
+
+    output = capsys.readouterr().out
+    assert "Skipped Atlassian" in output
+    assert "potpie jira login" in output
+    assert "Unexpected internal error" not in output
 
 
 def test_maybe_prompt_github_login_skips_when_not_tty(
