@@ -10,14 +10,14 @@ from unittest.mock import MagicMock
 import pytest
 from typer.testing import CliRunner
 
-from potpie.context_engine.adapters.inbound.cli import host_cli as cli_main
-from potpie.context_engine.adapters.inbound.cli.commands import bootstrap
-from potpie.context_engine.adapters.inbound.cli.commands._common import EXIT_DEGRADED
-from potpie.context_engine.bootstrap.host_wiring import default_host_mode
-from potpie.context_engine.domain.lifecycle import DONE, FAILED, SetupPlan, SetupReport, StepResult
-from potpie.context_engine.domain.ports.agent_context import StatusReport, StatusRequest
-from potpie.context_engine.domain.ports.graph.backend import BackendCapabilities
-from potpie.context_engine.domain.ports.graph.mutation import BackendReadiness
+from context_engine.adapters.inbound.cli import host_cli as cli_main
+from context_engine.adapters.inbound.cli.commands import bootstrap
+from context_engine.adapters.inbound.cli.commands._common import EXIT_DEGRADED
+from context_engine.bootstrap.host_wiring import default_host_mode
+from context_engine.domain.lifecycle import DONE, FAILED, SetupPlan, SetupReport, StepResult
+from context_engine.domain.ports.agent_context import StatusReport, StatusRequest
+from context_engine.domain.ports.graph.backend import BackendCapabilities
+from context_engine.domain.ports.graph.mutation import BackendReadiness
 
 runner = CliRunner()
 
@@ -81,7 +81,7 @@ def test_status_non_default_pot_triggers_host_path(
         called.append(True)
 
     monkeypatch.setattr(
-        "potpie.context_engine.adapters.inbound.cli.auth.auth_commands.integration_status",
+        "context_engine.adapters.inbound.cli.auth.auth_commands.integration_status",
         _integration_status,
     )
     report = StatusReport(
@@ -186,7 +186,7 @@ def test_setup_dry_run_preview(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
-        "potpie.context_engine.adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        "context_engine.adapters.inbound.cli.ui.setup_ux.rich_enabled",
         lambda **_k: False,
     )
     monkeypatch.setattr(bootstrap, "sentry_metrics_runtime", metrics, raising=False)
@@ -239,7 +239,7 @@ def test_setup_success_emits_run_and_step_metrics(
 
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
-        "potpie.context_engine.adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        "context_engine.adapters.inbound.cli.ui.setup_ux.rich_enabled",
         lambda **_k: False,
     )
     monkeypatch.setattr(bootstrap, "sentry_metrics_runtime", metrics, raising=False)
@@ -307,7 +307,7 @@ def test_setup_degraded_report_preserves_exit_code_and_emits_metrics(
 
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
-        "potpie.context_engine.adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        "context_engine.adapters.inbound.cli.ui.setup_ux.rich_enabled",
         lambda **_k: False,
     )
     monkeypatch.setattr(bootstrap, "sentry_metrics_runtime", metrics, raising=False)

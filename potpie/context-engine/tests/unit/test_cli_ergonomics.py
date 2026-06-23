@@ -16,10 +16,10 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from potpie.context_engine.adapters.inbound.cli import repo_location
-from potpie.context_engine.adapters.inbound.cli.commands import _common, graph, pots, ui
-from potpie.context_engine.application.services.semantic_mutation_validator import validate_semantic_request
-from potpie.context_engine.domain.semantic_mutations import SemanticMutationRequest
+from context_engine.adapters.inbound.cli import repo_location
+from context_engine.adapters.inbound.cli.commands import _common, graph, pots, ui
+from context_engine.application.services.semantic_mutation_validator import validate_semantic_request
+from context_engine.domain.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
 

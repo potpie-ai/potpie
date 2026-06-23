@@ -6,19 +6,19 @@ from datetime import datetime, timezone
 from typing import Any
 import pytest
 
-from potpie.context_engine.adapters.outbound.reconciliation.context_graph_tools import (
+from context_engine.adapters.outbound.reconciliation.context_graph_tools import (
     ContextGraphReconciliationTools,
     build_initial_context_snapshot,
 )
-from potpie.context_engine.application.services.reconciliation_validation import (
+from context_engine.application.services.reconciliation_validation import (
     validate_reconciliation_plan,
 )
-from potpie.context_engine.domain.agent_envelope import AgentEnvelope
-from potpie.context_engine.domain.context_events import ContextEvent, EventRef
-from potpie.context_engine.domain.graph_mutations import EntityUpsert
-from potpie.context_engine.domain.llm_reconciliation import ReconciliationRequest
-from potpie.context_engine.domain.ports.agent_context import ResolveRequest
-from potpie.context_engine.domain.reconciliation import ReconciliationPlan
+from context_engine.domain.agent_envelope import AgentEnvelope
+from context_engine.domain.context_events import ContextEvent, EventRef
+from context_engine.domain.graph_mutations import EntityUpsert
+from context_engine.domain.llm_reconciliation import ReconciliationRequest
+from context_engine.domain.ports.agent_context import ResolveRequest
+from context_engine.domain.reconciliation import ReconciliationPlan
 
 
 def _make_request(
@@ -105,9 +105,9 @@ def test_tools_adapter_lists_expected_tool_catalog() -> None:
 def test_read_tool_includes_are_orchestrator_backed() -> None:
     """Every targeted read tool must name an include the orchestrator backs;
     this guard stops the tool surface from drifting from the readers again."""
-    from potpie.context_engine.adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
-    from potpie.context_engine.adapters.outbound.reconciliation.context_graph_tools import READ_TOOL_INCLUDE
-    from potpie.context_engine.application.services.read_orchestrator import ReadOrchestrator
+    from context_engine.adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
+    from context_engine.adapters.outbound.reconciliation.context_graph_tools import READ_TOOL_INCLUDE
+    from context_engine.application.services.read_orchestrator import ReadOrchestrator
 
     backed = ReadOrchestrator(claim_query=InMemoryClaimQueryStore()).backed_includes
     targeted = {inc for inc in READ_TOOL_INCLUDE.values() if inc is not None}
@@ -201,7 +201,7 @@ def test_validation_no_warning_when_confidence_set() -> None:
 
 def test_pydantic_deep_agent_exposes_tools_setter() -> None:
     pytest.importorskip("pydantic_deep")
-    from potpie.context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
+    from context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
         PydanticDeepReconciliationAgent,
     )
 

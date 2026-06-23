@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from potpie.context_engine.domain.context_records import (
+from context_engine.domain.context_records import (
     BugPatternRecord,
     ContextRecordValidationError,
     DecisionRecord,

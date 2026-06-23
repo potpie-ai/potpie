@@ -9,18 +9,18 @@ from __future__ import annotations
 
 import pytest
 
-from potpie.context_engine.domain.context_events import EventRef
-from potpie.context_engine.domain.entity_canonicalization import (
+from context_engine.domain.context_events import EventRef
+from context_engine.domain.entity_canonicalization import (
     canonicalize_reconciliation_plan,
     normalize_entity_key,
 )
-from potpie.context_engine.domain.graph_mutations import (
+from context_engine.domain.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
     EntityUpsert,
     InvalidationOp,
 )
-from potpie.context_engine.domain.reconciliation import ReconciliationPlan
+from context_engine.domain.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.unit
 

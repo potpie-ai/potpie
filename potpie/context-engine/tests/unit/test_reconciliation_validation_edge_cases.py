@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from potpie.context_engine.application.services.reconciliation_validation import (
+from context_engine.application.services.reconciliation_validation import (
     MAX_GENERIC_EDGES,
     MAX_GENERIC_ENTITY_UPSERTS,
     MAX_INVALIDATIONS,
     validate_reconciliation_plan,
 )
-from potpie.context_engine.domain.context_events import EventRef
-from potpie.context_engine.domain.errors import ReconciliationPlanValidationError
-from potpie.context_engine.domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp
-from potpie.context_engine.domain.reconciliation import ReconciliationPlan
+from context_engine.domain.context_events import EventRef
+from context_engine.domain.errors import ReconciliationPlanValidationError
+from context_engine.domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp
+from context_engine.domain.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.unit
 

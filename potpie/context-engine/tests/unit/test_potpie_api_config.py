@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from potpie.context_engine.adapters.outbound.cli_auth import potpie_api_config as config
-from potpie.context_engine.adapters.outbound.cli_auth.firebase_session import FirebaseSession
+from context_engine.adapters.outbound.cli_auth import potpie_api_config as config
+from context_engine.adapters.outbound.cli_auth.firebase_session import FirebaseSession
 
 
 def test_resolve_api_base_url_uses_cli_default_env(monkeypatch) -> None:

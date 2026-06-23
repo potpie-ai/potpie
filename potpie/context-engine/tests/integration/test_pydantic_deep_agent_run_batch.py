@@ -22,11 +22,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from potpie.context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
+from context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
     PydanticDeepReconciliationAgent,
 )
-from potpie.context_engine.domain.context_events import ContextEvent
-from potpie.context_engine.domain.reconciliation_batch import BatchAgentContext
+from context_engine.domain.context_events import ContextEvent
+from context_engine.domain.reconciliation_batch import BatchAgentContext
 
 pytestmark = pytest.mark.integration
 

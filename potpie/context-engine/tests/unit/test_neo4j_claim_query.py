@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from potpie.context_engine.adapters.outbound.graph.neo4j_reader import Neo4jClaimQueryStore, _row_from_record
-from potpie.context_engine.domain.ports.claim_query import ClaimQueryFilter
+from context_engine.adapters.outbound.graph.neo4j_reader import Neo4jClaimQueryStore, _row_from_record
+from context_engine.domain.ports.claim_query import ClaimQueryFilter
 
 pytestmark = pytest.mark.unit
 

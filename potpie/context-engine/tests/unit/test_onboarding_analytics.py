@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from potpie.context_engine.adapters.inbound.cli.auth import auth_commands
-from potpie.context_engine.adapters.inbound.cli.telemetry.onboarding_events import (
+from context_engine.adapters.inbound.cli.auth import auth_commands
+from context_engine.adapters.inbound.cli.telemetry.onboarding_events import (
     CliSetupAnalyticsObserver,
     begin_setup_run,
     capture_activation_succeeded,
@@ -17,13 +17,13 @@ from potpie.context_engine.adapters.inbound.cli.telemetry.onboarding_events impo
     onboarding_entrypoint,
     repo_location_kind,
 )
-from potpie.context_engine.adapters.inbound.cli.telemetry.product_analytics import (
+from context_engine.adapters.inbound.cli.telemetry.product_analytics import (
     ProductAnalyticsEvent,
     set_product_analytics_sink,
 )
-from potpie.context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from potpie.context_engine.bootstrap.host_wiring import build_host_shell
-from potpie.context_engine.domain.lifecycle import SetupPlan
+from context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from context_engine.bootstrap.host_wiring import build_host_shell
+from context_engine.domain.lifecycle import SetupPlan
 
 
 @dataclass
@@ -39,14 +39,14 @@ def fake_sink(monkeypatch: pytest.MonkeyPatch) -> _FakeSink:
     sink = _FakeSink()
     set_product_analytics_sink(sink)
     monkeypatch.setattr(
-        "potpie.context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        "context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
         lambda: _telemetry_context(),
     )
     return sink
 
 
 def _telemetry_context():
-    from potpie.context_engine.adapters.inbound.cli.telemetry.context import TelemetryContext
+    from context_engine.adapters.inbound.cli.telemetry.context import TelemetryContext
 
     return TelemetryContext(
         anonymous_install_id="install_123",

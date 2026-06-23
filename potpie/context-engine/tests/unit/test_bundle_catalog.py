@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from potpie.context_engine.adapters.outbound.skills.agent_installer import iter_template_files
-from potpie.context_engine.adapters.outbound.skills.bundle_catalog import (
+from context_engine.adapters.outbound.skills.agent_installer import iter_template_files
+from context_engine.adapters.outbound.skills.bundle_catalog import (
     catalog_by_id,
     load_bundle_skills,
     recommended_skill_ids,

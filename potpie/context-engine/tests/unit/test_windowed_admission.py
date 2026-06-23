@@ -17,13 +17,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from potpie.context_engine.application.services.event_admission import admit_event
-from potpie.context_engine.application.use_cases.flush_windowed_batches import (
+from context_engine.application.services.event_admission import admit_event
+from context_engine.application.use_cases.flush_windowed_batches import (
     flush_ready_windowed_pots,
     force_flush_pot,
 )
-from potpie.context_engine.domain.context_events import ContextEvent, EventScope
-from potpie.context_engine.domain.ports.ingestion_config import (
+from context_engine.domain.context_events import ContextEvent, EventScope
+from context_engine.domain.ports.ingestion_config import (
     IngestionConfig,
     InMemoryIngestionConfig,
 )

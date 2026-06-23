@@ -12,14 +12,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from potpie.context_engine.adapters.outbound.event_stream.inmemory_publisher import (
+from context_engine.adapters.outbound.event_stream.inmemory_publisher import (
     InMemoryEventStreamPublisher,
 )
-from potpie.context_engine.adapters.outbound.reconciliation.noop_agent import NoOpReconciliationAgent
-from potpie.context_engine.application.use_cases.process_batch import process_batch
-from potpie.context_engine.domain.ports.reconciliation_ledger import ContextEventRow
-from potpie.context_engine.domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
-from potpie.context_engine.domain.reconciliation_batch import (
+from context_engine.adapters.outbound.reconciliation.noop_agent import NoOpReconciliationAgent
+from context_engine.application.use_cases.process_batch import process_batch
+from context_engine.domain.ports.reconciliation_ledger import ContextEventRow
+from context_engine.domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
+from context_engine.domain.reconciliation_batch import (
     BATCH_STATUS_PENDING,
     BatchEventRef,
     ReconciliationBatch,

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from potpie.context_engine.adapters.inbound.cli.telemetry import product_analytics
-from potpie.context_engine.adapters.inbound.cli.telemetry.context import TelemetryContext
-from potpie.context_engine.adapters.inbound.cli.telemetry.product_analytics import (
+from context_engine.adapters.inbound.cli.telemetry import product_analytics
+from context_engine.adapters.inbound.cli.telemetry.context import TelemetryContext
+from context_engine.adapters.inbound.cli.telemetry.product_analytics import (
     ProductAnalyticsEvent,
     ProductAnalyticsSettings,
     PostHogSink,
@@ -12,7 +12,7 @@ from potpie.context_engine.adapters.inbound.cli.telemetry.product_analytics impo
     configure_product_analytics,
     set_product_analytics_sink,
 )
-from potpie.context_engine.adapters.inbound.cli.telemetry.settings import load_product_analytics_settings
+from context_engine.adapters.inbound.cli.telemetry.settings import load_product_analytics_settings
 
 
 @dataclass
@@ -63,7 +63,7 @@ def test_capture_event_uses_existing_telemetry_identity(monkeypatch) -> None:
     sink = _FakeSink()
     set_product_analytics_sink(sink)
     monkeypatch.setattr(
-        "potpie.context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        "context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
         _telemetry_context,
     )
 
@@ -92,7 +92,7 @@ def test_capture_event_is_noop_without_telemetry_context(monkeypatch) -> None:
     sink = _FakeSink()
     set_product_analytics_sink(sink)
     monkeypatch.setattr(
-        "potpie.context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        "context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
         lambda: None,
     )
 
@@ -105,7 +105,7 @@ def test_configure_product_analytics_uses_noop_when_disabled(monkeypatch) -> Non
     sink = _FakeSink()
     set_product_analytics_sink(sink)
     monkeypatch.setattr(
-        "potpie.context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        "context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
         _telemetry_context,
     )
 

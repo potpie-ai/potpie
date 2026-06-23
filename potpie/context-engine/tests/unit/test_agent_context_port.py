@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from potpie.context_engine.domain.agent_context_port import (
+from context_engine.domain.agent_context_port import (
     CONTEXT_INTENTS,
     CONTEXT_RESOLVE_RECIPES,
     context_recipe_for_intent,

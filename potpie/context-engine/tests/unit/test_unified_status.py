@@ -2,7 +2,7 @@
 
 import json
 
-from potpie.context_engine.adapters.inbound.cli.ui.output import DoctorSnapshot, print_unified_status_report
+from context_engine.adapters.inbound.cli.ui.output import DoctorSnapshot, print_unified_status_report
 
 
 def test_unified_status_json(capsys) -> None:

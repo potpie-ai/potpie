@@ -8,12 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from potpie.context_engine.benchmarks.core.replay import (
+from context_engine.benchmarks.core.replay import (
     assemble_timeline,
     expand_distractor,
     to_replay_event,
 )
-from potpie.context_engine.benchmarks.core.scenario import DistractorStep, IngestStep, SeedStep
+from context_engine.benchmarks.core.scenario import DistractorStep, IngestStep, SeedStep
 
 
 def _envelope(source_id: str, data_id: str) -> dict:

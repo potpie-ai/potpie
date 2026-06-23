@@ -68,7 +68,7 @@ def _atlassian_site_subdomain() -> str:
 
 
 def _reset_cli_env_loader() -> None:
-    import potpie.context_engine.adapters.outbound.cli_auth.env_bootstrap as env_bootstrap
+    import context_engine.adapters.outbound.cli_auth.env_bootstrap as env_bootstrap
 
     env_bootstrap._loaded = False
 
@@ -98,7 +98,7 @@ def isolated_cli_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[st
     xdg.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
     _reset_cli_env_loader()
-    from potpie.context_engine.adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+    from context_engine.adapters.outbound.cli_auth.env_bootstrap import load_cli_env
 
     load_cli_env()
     merged = os.environ.copy()

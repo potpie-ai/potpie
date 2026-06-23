@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from potpie.context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from potpie.context_engine.application.services import setup_orchestrator
-from potpie.context_engine.bootstrap.host_wiring import build_host_shell
-from potpie.context_engine.domain.lifecycle import SKIPPED, SetupPlan
+from context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from context_engine.application.services import setup_orchestrator
+from context_engine.bootstrap.host_wiring import build_host_shell
+from context_engine.domain.lifecycle import SKIPPED, SetupPlan
 
 
 @pytest.fixture()

@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from potpie.context_engine.application.services.reconciliation_validation import validate_reconciliation_plan
-from potpie.context_engine.domain.canonical_label_inference import enrich_reconciliation_plan_entity_labels
-from potpie.context_engine.domain.context_events import EventRef
-from potpie.context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert
-from potpie.context_engine.domain.ontology import (
+from context_engine.application.services.reconciliation_validation import validate_reconciliation_plan
+from context_engine.domain.canonical_label_inference import enrich_reconciliation_plan_entity_labels
+from context_engine.domain.context_events import EventRef
+from context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert
+from context_engine.domain.ontology import (
     EDGE_ENDPOINT_INFERRED_LABELS,
     inferred_labels_for_episodic_edge_endpoint,
     is_canonical_entity_label,
 )
-from potpie.context_engine.domain.reconciliation import ReconciliationPlan
+from context_engine.domain.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.unit
 
@@ -109,13 +109,13 @@ def test_safe_label_guard() -> None:
 
 def test_infer_labels_explicit_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "0")
-    from potpie.context_engine.domain.reconciliation_flags import infer_canonical_labels_enabled
+    from context_engine.domain.reconciliation_flags import infer_canonical_labels_enabled
 
     assert infer_canonical_labels_enabled() is False
 
 
 def test_infer_labels_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CONTEXT_ENGINE_INFER_LABELS", raising=False)
-    from potpie.context_engine.domain.reconciliation_flags import infer_canonical_labels_enabled
+    from context_engine.domain.reconciliation_flags import infer_canonical_labels_enabled
 
     assert infer_canonical_labels_enabled() is True

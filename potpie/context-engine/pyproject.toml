@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "potpie-context-engine"
 version = "0.1.0"
-description = "Context graph API, webhooks, CLI, and MCP."
+description = "Context graph API, webhooks, CLI implementation, and MCP implementation."
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "fastapi>=0.115.0",
@@ -83,60 +83,55 @@ dev = [
     "ruff>=0.8.0",
 ]
 
-[project.scripts]
-potpie = "potpie.context_engine.adapters.inbound.cli.host_cli:main"
-potpie-mcp = "potpie.context_engine.adapters.inbound.mcp.server:main"
-potpie-daemon = "potpie.context_engine.host.daemon_main:main"
-
 [tool.hatch.build.force-include]
-"src/potpie/context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "potpie/context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json"
-"src/potpie/context_engine/adapters/inbound/cli/ui/assets/potpie.png" = "potpie/context_engine/adapters/inbound/cli/ui/assets/potpie.png"
+"src/context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json"
+"src/context_engine/adapters/inbound/cli/ui/assets/potpie.png" = "context_engine/adapters/inbound/cli/ui/assets/potpie.png"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/potpie"]
+packages = ["src/context_engine"]
 include = [
-    "src/potpie/context_engine/domain/playbooks/**/*.md",
-    "src/potpie/context_engine/adapters/inbound/cli/templates/**/*.md",
-    "src/potpie/context_engine/adapters/inbound/cli/templates/**/*.yaml",
-    "src/potpie/context_engine/adapters/inbound/cli/ui/assets/**/*.json",
-    "src/potpie/context_engine/adapters/inbound/cli/ui/assets/**/*.png",
-    "src/potpie/context_engine/adapters/inbound/cli/ui/assets/**/*.svg",
-    "src/potpie/context_engine/adapters/inbound/http/ui/frontend/dist/**",
+    "src/context_engine/domain/playbooks/**/*.md",
+    "src/context_engine/adapters/inbound/cli/templates/**/*.md",
+    "src/context_engine/adapters/inbound/cli/templates/**/*.yaml",
+    "src/context_engine/adapters/inbound/cli/ui/assets/**/*.json",
+    "src/context_engine/adapters/inbound/cli/ui/assets/**/*.png",
+    "src/context_engine/adapters/inbound/cli/ui/assets/**/*.svg",
+    "src/context_engine/adapters/inbound/http/ui/frontend/dist/**",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
-    "src/potpie/context_engine/benchmarks/use_cases/**/*.yaml",
-    "src/potpie/context_engine/benchmarks/fixtures/raw_events/**/*.json",
-    "src/potpie/context_engine/benchmarks/_legacy/data/**/*.json",
+    "src/context_engine/benchmarks/use_cases/**/*.yaml",
+    "src/context_engine/benchmarks/fixtures/raw_events/**/*.json",
+    "src/context_engine/benchmarks/_legacy/data/**/*.json",
 ]
 exclude = [
-    "src/potpie/context_engine/adapters/inbound/http/ui/frontend/node_modules/**",
-    "src/potpie/context_engine/adapters/inbound/http/ui/frontend/src/**",
-    "src/potpie/context_engine/adapters/inbound/http/ui/frontend/index.html",
-    "src/potpie/context_engine/adapters/inbound/http/ui/frontend/package*.json",
-    "src/potpie/context_engine/adapters/inbound/http/ui/frontend/tsconfig*",
-    "src/potpie/context_engine/adapters/inbound/http/ui/frontend/vite.config.ts",
-    "src/potpie/context_engine/adapters/inbound/http/ui/frontend/.gitignore",
+    "src/context_engine/adapters/inbound/http/ui/frontend/node_modules/**",
+    "src/context_engine/adapters/inbound/http/ui/frontend/src/**",
+    "src/context_engine/adapters/inbound/http/ui/frontend/index.html",
+    "src/context_engine/adapters/inbound/http/ui/frontend/package*.json",
+    "src/context_engine/adapters/inbound/http/ui/frontend/tsconfig*",
+    "src/context_engine/adapters/inbound/http/ui/frontend/vite.config.ts",
+    "src/context_engine/adapters/inbound/http/ui/frontend/.gitignore",
 ]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/potpie",
-    "src/potpie/context_engine/domain/playbooks/**/*.md",
-    "src/potpie/context_engine/adapters/inbound/cli/templates/**/*.md",
-    "src/potpie/context_engine/adapters/inbound/cli/templates/**/*.yaml",
-    "src/potpie/context_engine/adapters/inbound/cli/ui/assets/**/*.json",
-    "src/potpie/context_engine/adapters/inbound/cli/ui/assets/**/*.png",
-    "src/potpie/context_engine/adapters/inbound/cli/ui/assets/**/*.svg",
-    "src/potpie/context_engine/adapters/inbound/http/ui/frontend/dist/**",
+    "src/context_engine",
+    "src/context_engine/domain/playbooks/**/*.md",
+    "src/context_engine/adapters/inbound/cli/templates/**/*.md",
+    "src/context_engine/adapters/inbound/cli/templates/**/*.yaml",
+    "src/context_engine/adapters/inbound/cli/ui/assets/**/*.json",
+    "src/context_engine/adapters/inbound/cli/ui/assets/**/*.png",
+    "src/context_engine/adapters/inbound/cli/ui/assets/**/*.svg",
+    "src/context_engine/adapters/inbound/http/ui/frontend/dist/**",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
 ]
 exclude = [
-    "src/potpie/context_engine/adapters/inbound/http/ui/frontend/node_modules/**",
-    "src/potpie/context_engine/adapters/inbound/http/ui/frontend/src/**",
-    "src/potpie/context_engine/adapters/inbound/http/ui/frontend/index.html",
+    "src/context_engine/adapters/inbound/http/ui/frontend/node_modules/**",
+    "src/context_engine/adapters/inbound/http/ui/frontend/src/**",
+    "src/context_engine/adapters/inbound/http/ui/frontend/index.html",
 ]
 
 [tool.ruff]

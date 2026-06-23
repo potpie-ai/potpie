@@ -15,9 +15,9 @@ import asyncio
 
 import pytest
 
-from potpie.context_engine.domain.context_events import EventRef
-from potpie.context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert
-from potpie.context_engine.domain.reconciliation import ReconciliationPlan
+from context_engine.domain.context_events import EventRef
+from context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert
+from context_engine.domain.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.integration
 
@@ -86,8 +86,8 @@ def make_client(container, monkeypatch):
     """
     from fastapi.testclient import TestClient
 
-    from potpie.context_engine.adapters.inbound.http import deps
-    from potpie.context_engine.adapters.inbound.http.app import create_app
+    from context_engine.adapters.inbound.http import deps
+    from context_engine.adapters.inbound.http.app import create_app
 
     def _make(*, allow_no_auth: bool = True, api_key: str | None = None) -> TestClient:
         if allow_no_auth:

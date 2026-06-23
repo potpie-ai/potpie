@@ -20,17 +20,17 @@ import asyncio
 
 import pytest
 
-from potpie.context_engine.application.use_cases.process_batch import process_batch
-from potpie.context_engine.domain.context_events import EventRef
-from potpie.context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert
-from potpie.context_engine.domain.graph_query import (
+from context_engine.application.use_cases.process_batch import process_batch
+from context_engine.domain.context_events import EventRef
+from context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert
+from context_engine.domain.graph_query import (
     ContextGraphGoal,
     ContextGraphQuery,
     ContextGraphScope,
 )
-from potpie.context_engine.domain.ingestion_event_models import IngestionSubmissionRequest
-from potpie.context_engine.domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
-from potpie.context_engine.domain.reconciliation import ReconciliationPlan
+from context_engine.domain.ingestion_event_models import IngestionSubmissionRequest
+from context_engine.domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
+from context_engine.domain.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.integration
 

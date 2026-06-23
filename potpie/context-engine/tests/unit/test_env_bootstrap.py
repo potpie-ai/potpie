@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from potpie.context_engine.adapters.outbound.cli_auth import env_bootstrap as eb
+from context_engine.adapters.outbound.cli_auth import env_bootstrap as eb
 
 
 def test_parse_env_line() -> None:

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "potpie"
 version = "1.1.1"
-description = "Potpie core packages workspace (context-engine, parsing, sandbox, integrations)"
+description = "Potpie CLI and core package bundle."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = "Apache-2.0"
@@ -32,6 +32,11 @@ dependencies = [
     "potpie-sandbox>=0.1.0,<0.2.0",
     "potpie-observability>=0.1.0,<0.2.0",
 ]
+
+[project.scripts]
+potpie = "context_engine.adapters.inbound.cli.host_cli:main"
+potpie-mcp = "context_engine.adapters.inbound.mcp.server:main"
+potpie-daemon = "context_engine.host.daemon_main:main"
 
 [project.urls]
 Homepage = "https://potpie.ai"

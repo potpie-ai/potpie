@@ -7,13 +7,13 @@ import logging
 
 import pytest
 
-from potpie.context_engine.adapters.inbound.http.api.router import (
+from context_engine.adapters.inbound.http.api.router import (
     _check_postgres,
     _check_redis,
     health,
 )
-from potpie.context_engine.bootstrap.logging_setup import CorrelationFilter, JsonFormatter
-from potpie.context_engine.bootstrap.observability_context import correlation_scope
+from context_engine.bootstrap.logging_setup import CorrelationFilter, JsonFormatter
+from context_engine.bootstrap.observability_context import correlation_scope
 
 
 @pytest.mark.unit

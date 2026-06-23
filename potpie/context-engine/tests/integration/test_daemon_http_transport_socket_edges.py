@@ -8,16 +8,16 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
-from potpie.context_engine.adapters.inbound.daemon_http.transport import HttpTransport
-from potpie.context_engine.domain.ports.daemon.operations import (
+from context_engine.adapters.inbound.daemon_http.transport import HttpTransport
+from context_engine.domain.ports.daemon.operations import (
     AuthRequirement,
     OperationContext,
     OperationRegistry,
     OperationSpec,
 )
-from potpie.context_engine.host.daemon_runtime.context import ServiceEndpoints, ShellContext
-from potpie.context_engine.host.daemon_runtime.health import HealthRegistrar
-from potpie.context_engine.host.daemon_runtime.ipc_auth import IpcAuthGate
+from context_engine.host.daemon_runtime.context import ServiceEndpoints, ShellContext
+from context_engine.host.daemon_runtime.health import HealthRegistrar
+from context_engine.host.daemon_runtime.ipc_auth import IpcAuthGate
 
 
 class EchoIn(BaseModel):

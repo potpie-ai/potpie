@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from potpie.context_engine.benchmarks.core.scenario import DEFAULT_PASS_SCORE_BY_DIFFICULTY, load_scenario
+from context_engine.benchmarks.core.scenario import DEFAULT_PASS_SCORE_BY_DIFFICULTY, load_scenario
 
 
 _MINIMAL = """\

@@ -5,14 +5,14 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from potpie.context_engine.adapters.inbound.http.ui.router import (
+from context_engine.adapters.inbound.http.ui.router import (
     _caption,
     _node_type,
     _parse_scope,
     _slice_to_graph,
     build_ui_api_router,
 )
-from potpie.context_engine.domain.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
+from context_engine.domain.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
 
 
 def test_node_type_prefers_canonical_key_prefix_over_stray_label() -> None:
@@ -129,7 +129,7 @@ def test_pots_api_includes_counts_for_selector() -> None:
 
 
 def test_daemon_app_mounts_ui_api_and_static(monkeypatch) -> None:
-    from potpie.context_engine.host import daemon_main
+    from context_engine.host import daemon_main
 
     class Pot:
         pot_id = "p1"

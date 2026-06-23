@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from potpie.context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert
-from potpie.context_engine.domain.ontology import (
+from context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert
+from context_engine.domain.ontology import (
     ALLOWED_LIFECYCLE_STATUSES,
     CANONICAL_EDGE_TYPES,
     CANONICAL_LABELS,
@@ -97,7 +97,7 @@ def test_catalog_contains_code_asset_entity() -> None:
 
 
 def test_feature_key_prefix_convention() -> None:
-    from potpie.context_engine.domain.ontology import entity_spec
+    from context_engine.domain.ontology import entity_spec
 
     spec = entity_spec("Feature")
     assert spec is not None

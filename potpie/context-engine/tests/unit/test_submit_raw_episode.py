@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from potpie.context_engine.application.use_cases.submit_raw_episode import submit_raw_episode
-from potpie.context_engine.bootstrap.ingestion_server import IngestionServerContainer
-from potpie.context_engine.domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
+from context_engine.application.use_cases.submit_raw_episode import submit_raw_episode
+from context_engine.bootstrap.ingestion_server import IngestionServerContainer
+from context_engine.domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
 
 
 def _container(
@@ -75,10 +75,10 @@ def test_sync_without_database_requires_database():
 @pytest.mark.parametrize("sync", [True, False])
 def test_with_database_delegates_to_submission(monkeypatch, sync: bool):
     """Patch IngestionSubmissionService.submit to avoid DB setup."""
-    from potpie.context_engine.application.services.ingestion_submission_service import (
+    from context_engine.application.services.ingestion_submission_service import (
         DefaultIngestionSubmissionService,
     )
-    from potpie.context_engine.domain.ingestion_event_models import EventReceipt
+    from context_engine.domain.ingestion_event_models import EventReceipt
 
     want_sync = sync
     queued = not sync

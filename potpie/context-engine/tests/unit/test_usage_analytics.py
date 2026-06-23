@@ -6,12 +6,12 @@ from dataclasses import dataclass, field
 
 import pytest
 
-import potpie.context_engine.adapters.inbound.cli.telemetry.product_analytics as product_analytics
-from potpie.context_engine.adapters.inbound.cli.auth import auth_commands, github_commands
-from potpie.context_engine.adapters.inbound.cli.commands import _common, bootstrap, query
-from potpie.context_engine.adapters.inbound.cli.telemetry.context import TelemetryContext
-from potpie.context_engine.adapters.inbound.cli.telemetry.product_analytics import ProductAnalyticsEvent
-from potpie.context_engine.adapters.inbound.cli.telemetry.usage_events import (
+import context_engine.adapters.inbound.cli.telemetry.product_analytics as product_analytics
+from context_engine.adapters.inbound.cli.auth import auth_commands, github_commands
+from context_engine.adapters.inbound.cli.commands import _common, bootstrap, query
+from context_engine.adapters.inbound.cli.telemetry.context import TelemetryContext
+from context_engine.adapters.inbound.cli.telemetry.product_analytics import ProductAnalyticsEvent
+from context_engine.adapters.inbound.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
 
@@ -36,7 +36,7 @@ def fake_sink(monkeypatch: pytest.MonkeyPatch) -> _FakeSink:
     sink = _FakeSink()
     monkeypatch.setattr(product_analytics, "_sink", sink)
     monkeypatch.setattr(
-        "potpie.context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        "context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
         _telemetry_context,
     )
     return sink

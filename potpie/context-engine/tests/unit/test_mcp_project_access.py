@@ -2,7 +2,7 @@
 
 import pytest
 
-from potpie.context_engine.adapters.inbound.mcp import project_access as pa
+from context_engine.adapters.inbound.mcp import project_access as pa
 
 
 @pytest.fixture(autouse=True)

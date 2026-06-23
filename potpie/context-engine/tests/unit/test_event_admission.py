@@ -7,16 +7,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from potpie.context_engine.application.services.event_admission import admit_event
-from potpie.context_engine.application.services.ingestion_submission_service import (
+from context_engine.application.services.event_admission import admit_event
+from context_engine.application.services.ingestion_submission_service import (
     DefaultIngestionSubmissionService,
 )
-from potpie.context_engine.bootstrap import sentry_metrics_runtime
-from potpie.context_engine.domain.actor import Actor
-from potpie.context_engine.domain.context_events import ContextEvent, EventScope
-from potpie.context_engine.domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
-from potpie.context_engine.domain.ingestion_event_models import IngestionEvent, IngestionSubmissionRequest
-from potpie.context_engine.domain.ports.pot_resolution import single_github_repo_pot
+from context_engine.bootstrap import sentry_metrics_runtime
+from context_engine.domain.actor import Actor
+from context_engine.domain.context_events import ContextEvent, EventScope
+from context_engine.domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
+from context_engine.domain.ingestion_event_models import IngestionEvent, IngestionSubmissionRequest
+from context_engine.domain.ports.pot_resolution import single_github_repo_pot
 
 pytestmark = pytest.mark.unit
 

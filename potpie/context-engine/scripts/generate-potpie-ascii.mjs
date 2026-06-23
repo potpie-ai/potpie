@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * Generates ASCII art from src/potpie/context_engine/adapters/inbound/cli/ui/assets/potpie.svg (sharp).
+ * Generates ASCII art from src/context_engine/adapters/inbound/cli/ui/assets/potpie.svg (sharp).
  * Run from context-engine root:
  *   node scripts/generate-potpie-ascii.mjs
  *
  * Same algorithm as potpie-vscode-extension/scripts/generate-potpie-ascii.mjs
- * Writes src/potpie/context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json
+ * Writes src/context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json
  */
 
 import fs from "fs";
@@ -16,11 +16,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const svgPath = path.join(
   projectRoot,
-  "src/potpie/context_engine/adapters/inbound/cli/ui/assets/potpie.svg",
+  "src/context_engine/adapters/inbound/cli/ui/assets/potpie.svg",
 );
 const outputPath = path.join(
   projectRoot,
-  "src/potpie/context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json",
+  "src/context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json",
 );
 
 // Extension default is 56×28; scaled to fit intro viewport (96×20) without clipping

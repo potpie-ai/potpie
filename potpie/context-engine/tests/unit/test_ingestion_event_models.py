@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from potpie.context_engine.domain.ingestion_event_models import (
+from context_engine.domain.ingestion_event_models import (
     CreateIngestionEventParams,
     EventListFilters,
     EventListPage,
@@ -13,10 +13,10 @@ from potpie.context_engine.domain.ingestion_event_models import (
     IngestionEvent,
     IngestionSubmissionRequest,
 )
-from potpie.context_engine.domain.ports.context_graph import ContextGraphPort
-from potpie.context_engine.domain.ports.event_query_service import EventQueryService
-from potpie.context_engine.domain.ports.ingestion_event_store import IngestionEventStore
-from potpie.context_engine.domain.ports.ingestion_submission import IngestionSubmissionService
+from context_engine.domain.ports.context_graph import ContextGraphPort
+from context_engine.domain.ports.event_query_service import EventQueryService
+from context_engine.domain.ports.ingestion_event_store import IngestionEventStore
+from context_engine.domain.ports.ingestion_submission import IngestionSubmissionService
 
 
 def test_ingestion_event_and_receipt_construct() -> None:

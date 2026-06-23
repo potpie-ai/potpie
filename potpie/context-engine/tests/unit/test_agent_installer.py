@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from potpie.context_engine.adapters.outbound.skills.agent_installer import (
+from context_engine.adapters.outbound.skills.agent_installer import (
     install_global_agent_instructions,
     install_agent_bundle,
     install_skill_bundle,
     iter_template_files,
     resolve_install_root,
 )
-from potpie.context_engine.adapters.outbound.skills.claude_target import FileBackedAgentTarget
-from potpie.context_engine.application.services.skill_manager import DefaultSkillManager
-from potpie.context_engine.adapters.outbound.skills.bundle_catalog import catalog_by_id
+from context_engine.adapters.outbound.skills.claude_target import FileBackedAgentTarget
+from context_engine.application.services.skill_manager import DefaultSkillManager
+from context_engine.adapters.outbound.skills.bundle_catalog import catalog_by_id
 
 
 def test_resolve_install_root_prefers_git_repo(tmp_path: Path) -> None:

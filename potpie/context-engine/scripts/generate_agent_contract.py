@@ -17,11 +17,11 @@ from __future__ import annotations
 import sys
 from typing import TextIO
 
-from potpie.context_engine.domain.agent_context_port import (
+from context_engine.domain.agent_context_port import (
     CONTEXT_RESOLVE_RECIPES,
     context_port_manifest,
 )
-from potpie.context_engine.domain.context_records import (
+from context_engine.domain.context_records import (
     PREFERENCE_AUDIENCES,
     PREFERENCE_STRENGTHS,
     SCOPE_KINDS,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from potpie.context_engine.adapters.inbound.cli.repo_location import normalize_repo_ref
+from context_engine.adapters.inbound.cli.repo_location import normalize_repo_ref
 
 
 def test_normalize_repo_ref_strips_url_credentials() -> None:

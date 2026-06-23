@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from potpie.context_engine.domain.lifecycle import SetupPlan
-from potpie.context_engine.host.daemon_rpc import TYPE_KEY, decode, encode
+from context_engine.domain.lifecycle import SetupPlan
+from context_engine.host.daemon_rpc import TYPE_KEY, decode, encode
 
 
 def test_daemon_rpc_roundtrips_domain_dataclasses() -> None:

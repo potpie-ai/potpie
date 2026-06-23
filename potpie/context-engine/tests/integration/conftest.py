@@ -79,7 +79,7 @@ def live_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 
 @pytest.fixture()
 def settings(live_env):
-    from potpie.context_engine.adapters.outbound.settings_env import EnvContextEngineSettings
+    from context_engine.adapters.outbound.settings_env import EnvContextEngineSettings
 
     return EnvContextEngineSettings()
 
@@ -102,8 +102,8 @@ def container(settings, pot_id, repo_name):
     The pot resolves to a single GitHub repo via ``ExplicitPotResolution``.
     The pot's graph partition is reset on teardown.
     """
-    from potpie.context_engine.bootstrap.ingestion_server import build_ingestion_server
-    from potpie.context_engine.bootstrap.http_projects import ExplicitPotResolution
+    from context_engine.bootstrap.ingestion_server import build_ingestion_server
+    from context_engine.bootstrap.http_projects import ExplicitPotResolution
 
     c = build_ingestion_server(
         settings=settings,
@@ -210,7 +210,7 @@ def pg_test_db():
         conn.execute(text(f'CREATE DATABASE "{test_db}"'))
 
     engine = create_engine(test_url, pool_pre_ping=True)
-    from potpie.context_engine.adapters.outbound.postgres.models import Base
+    from context_engine.adapters.outbound.postgres.models import Base
 
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -284,10 +284,10 @@ def pipeline_container(
     """
     monkeypatch.setenv("DATABASE_URL", pg_test_db.url)
 
-    from potpie.context_engine.bootstrap.ingestion_server import build_ingestion_server
-    from potpie.context_engine.bootstrap.http_projects import ExplicitPotResolution
-    from potpie.context_engine.domain.ports.context_graph_job_queue import NoOpContextGraphJobQueue
-    from potpie.context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
+    from context_engine.bootstrap.ingestion_server import build_ingestion_server
+    from context_engine.bootstrap.http_projects import ExplicitPotResolution
+    from context_engine.domain.ports.context_graph_job_queue import NoOpContextGraphJobQueue
+    from context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
         PydanticDeepReconciliationAgent,
     )
 
@@ -313,10 +313,10 @@ def db_container(settings, pg_test_db, pot_id, repo_name):
     (which require an agent to be *present*) without making any LLM calls, so
     they run even when no API key is configured.
     """
-    from potpie.context_engine.bootstrap.ingestion_server import build_ingestion_server
-    from potpie.context_engine.bootstrap.http_projects import ExplicitPotResolution
-    from potpie.context_engine.domain.ports.context_graph_job_queue import NoOpContextGraphJobQueue
-    from potpie.context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
+    from context_engine.bootstrap.ingestion_server import build_ingestion_server
+    from context_engine.bootstrap.http_projects import ExplicitPotResolution
+    from context_engine.domain.ports.context_graph_job_queue import NoOpContextGraphJobQueue
+    from context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
         PydanticDeepReconciliationAgent,
     )
 

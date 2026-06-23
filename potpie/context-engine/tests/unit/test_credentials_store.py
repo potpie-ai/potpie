@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from keyring.errors import KeyringError
 
-from potpie.context_engine.adapters.outbound.cli_auth import credentials_store as cs
+from context_engine.adapters.outbound.cli_auth import credentials_store as cs
 
 
 @pytest.fixture(autouse=True)

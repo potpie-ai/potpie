@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from potpie.context_engine.domain.error_redaction import redact_secrets, safe_error
+from context_engine.domain.error_redaction import redact_secrets, safe_error
 
 pytestmark = pytest.mark.unit
 
@@ -33,7 +33,7 @@ def test_safe_error_is_bounded_and_redacted():
 
 
 def test_canonical_writer_rejects_bad_pot_id():
-    from potpie.context_engine.adapters.outbound.graph.cypher import (
+    from context_engine.adapters.outbound.graph.cypher import (
         _require_valid_pot_id,
     )
 
@@ -51,7 +51,7 @@ def test_predicate_allowlist_blocks_injected_relations():
     the only injected value is the predicate ``name``, which the writer
     requires to be a canonical-vocab entry.
     """
-    from potpie.context_engine.adapters.outbound.graph.cypher import (
+    from context_engine.adapters.outbound.graph.cypher import (
         _is_valid_predicate,
     )
 

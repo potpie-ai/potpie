@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from potpie.context_engine.domain.ports.telemetry import (
+from context_engine.domain.ports.telemetry import (
     CostEvent,
     DriftSnapshot,
     NoOpTelemetry,

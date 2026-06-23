@@ -13,10 +13,10 @@ from datetime import datetime
 
 import pytest
 
-from potpie.context_engine.domain.context_events import EventRef
-from potpie.context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
-from potpie.context_engine.domain.ports.pot_resolution import RepoRef
-from potpie.context_engine.domain.reconciliation import ReconciliationPlan
+from context_engine.domain.context_events import EventRef
+from context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
+from context_engine.domain.ports.pot_resolution import RepoRef
+from context_engine.domain.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.integration
 

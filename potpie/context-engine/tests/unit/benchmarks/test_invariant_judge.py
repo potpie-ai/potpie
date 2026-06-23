@@ -20,9 +20,9 @@ from typing import Any
 
 import pytest
 
-from potpie.context_engine.benchmarks.core.replay import ReplayEvent
-from potpie.context_engine.benchmarks.core.scenario import QuerySpec
-from potpie.context_engine.benchmarks.evaluators.llm_judge_invariant import (
+from context_engine.benchmarks.core.replay import ReplayEvent
+from context_engine.benchmarks.core.scenario import QuerySpec
+from context_engine.benchmarks.evaluators.llm_judge_invariant import (
     DEFAULT_INVARIANT_PASS_SCORE,
     DEFAULT_INVARIANT_WEIGHTS,
     InvariantGrade,

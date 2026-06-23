@@ -17,13 +17,13 @@ A comprehensive benchmark harness for the Potpie context graph, implemented as t
 cd potpie/context-engine
 
 # Mock mode (fastest, no server)
-uv run python -m benchmarks.cli mock
+uv run python -m context_engine.benchmarks.cli mock
 
 # HTTP-E2E mode (in-process router)
-uv run python -m benchmarks.cli http-e2e
+uv run python -m context_engine.benchmarks.cli http-e2e
 
 # API mode (live server; needs POTPIE_API_KEY)
-uv run python -m benchmarks.cli api
+uv run python -m context_engine.benchmarks.cli api
 
 # Or via the convenience wrapper
 uv run python scripts/benchmark_context_engine.py mock
@@ -104,8 +104,8 @@ These extend the benchmark to evaluate ontology utilization, evidence trust, con
 ## Example: Compare API vs Mock
 
 ```bash
-uv run python -m benchmarks.cli api  --iterations 5 --report .tmp/bench-api.json
-uv run python -m benchmarks.cli mock --iterations 5 --report .tmp/bench-mock.json
+uv run python -m context_engine.benchmarks.cli api  --iterations 5 --report .tmp/bench-api.json
+uv run python -m context_engine.benchmarks.cli mock --iterations 5 --report .tmp/bench-mock.json
 
 # Diff key metrics
 uv run python -c "

@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 import pytest
 from typer.testing import CliRunner
 
-from potpie.context_engine.adapters.inbound.cli.commands import _common, skills
-from potpie.context_engine.domain.ports.services.skill_manager import SkillOperationResult
+from context_engine.adapters.inbound.cli.commands import _common, skills
+from context_engine.domain.ports.services.skill_manager import SkillOperationResult
 
 
 @pytest.fixture(autouse=True)

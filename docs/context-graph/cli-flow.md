@@ -153,11 +153,11 @@ group:
 | `skills` | `commands/skills.py` | `HostShell.skills` (`SkillManager`) |
 | `cloud` | `commands/cloud.py` | explicit snapshot sync and managed skill sync |
 
-`adapters/inbound/cli/host_cli.py` is the `potpie` console entrypoint (see
-`[project.scripts]`). The MCP server (`adapters/inbound/mcp/server.py`) binds to
-the same in-process `HostShell`. The async ingestion pipeline behind the HTTP
-API keeps its own composition root (`bootstrap/ingestion_server.py`) until it is
-migrated onto `HostShell`.
+`adapters/inbound/cli/host_cli.py` is the `potpie` console entrypoint registered
+by the root `potpie` package. The MCP server (`adapters/inbound/mcp/server.py`)
+binds to the same in-process `HostShell`. The async ingestion pipeline behind
+the HTTP API keeps its own composition root (`bootstrap/ingestion_server.py`)
+until it is migrated onto `HostShell`.
 
 ### Bootstrap And Profile
 
