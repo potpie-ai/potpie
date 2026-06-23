@@ -9,7 +9,7 @@ The script has two modes:
 
 Run from repo root with:
 
-    uv run python app/src/context-engine/scripts/context_engine_lab.py mock-e2e
+    uv run python potpie/context-engine/scripts/context_engine_lab.py mock-e2e
 """
 
 from __future__ import annotations

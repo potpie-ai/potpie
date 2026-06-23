@@ -9,7 +9,7 @@ a disposable file keyring so your real Potpie credentials and system keychain ar
 Enable:
   export RUN_CLI_AUTH_E2E=1
 
-From ``potpie/app/src/context-engine``:
+From ``potpie/context-engine``:
 
   uv run pytest tests/integration/test_cli_auth_linear_e2e.py -v
 

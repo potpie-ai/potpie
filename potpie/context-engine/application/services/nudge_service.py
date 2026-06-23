@@ -193,6 +193,9 @@ def _injection_key(item: Mapping[str, Any]) -> str:
         for rel in relations:
             if not isinstance(rel, dict):
                 continue
+            rel_key = rel.get("claim_key")
+            if isinstance(rel_key, str) and rel_key:
+                return rel_key
             claim = rel.get("claim")
             if not isinstance(claim, dict):
                 continue
