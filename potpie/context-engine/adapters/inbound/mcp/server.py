@@ -68,20 +68,9 @@ def _error(exc: Exception) -> dict[str, Any]:
 
 
 def _envelope_dict(env: Any) -> dict[str, Any]:
-    return {
-        "ok": True,
-        "pot_id": env.pot_id,
-        "intent": env.intent,
-        "overall_confidence": env.overall_confidence,
-        "items": [
-            {"include": i.include, "score": i.score, "payload": dict(i.payload)}
-            for i in env.items
-        ],
-        "coverage": [{"include": c.include, "status": c.status} for c in env.coverage],
-        "unsupported_includes": [
-            {"name": u.name, "reason": u.reason} for u in env.unsupported_includes
-        ],
-    }
+    payload = env.to_dict()
+    payload["ok"] = True
+    return payload
 
 
 def _nudge_dict(nudge: Any) -> dict[str, Any] | None:
