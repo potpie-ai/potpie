@@ -9,6 +9,7 @@ runs the four mutation verbs in order against the single
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from application.services.reconciliation_validation import (
 )
 from domain.errors import ReconciliationApplyError
 from domain.graph_mutations import ProvenanceContext, ProvenanceRef
+from domain.graph_plans import mutation_batch_to_dict
 from domain.reconciliation import (
     MutationBatch,
     MutationResult,
@@ -32,21 +34,20 @@ def _stable_batch_source_id(plan: MutationBatch) -> str:
     the provenance ``source_event_id`` makes a retried batch look like a brand-new
     event — and the edge writer (which derives its default ``source_ref`` from
     ``source_event_id``) mints duplicate claims instead of MERGE-updating the same
-    edge. Fingerprint the batch content instead: a genuine retry of the same batch
-    carries the same source id and stays idempotent.
+    edge. Fingerprint the *full* batch payload instead: a genuine retry of the same
+    batch carries the same source id and stays idempotent, while two batches that
+    share graph shape but differ in claim properties / evidence / confidence /
+    invalidation timestamps get distinct ids (no provenance conflation). Reuse the
+    canonical ``mutation_batch_to_dict`` serializer so the digest never drifts from
+    the batch schema.
     """
-    parts: list[str] = [plan.summary or ""]
-    for e in plan.entity_upserts:
-        parts.append(f"E:{e.entity_key}:{','.join(e.labels)}")
-    for d in plan.edge_upserts:
-        parts.append(f"U:{d.edge_type}:{d.from_entity_key}->{d.to_entity_key}")
-    for d in plan.edge_deletes:
-        parts.append(f"D:{d.edge_type}:{d.from_entity_key}->{d.to_entity_key}")
-    for inv in plan.invalidations:
-        parts.append(f"I:{inv.target_entity_key}:{inv.target_edge}")
-    digest = hashlib.blake2b(
-        "\n".join(parts).encode("utf-8"), digest_size=16
-    ).hexdigest()
+    encoded = json.dumps(
+        mutation_batch_to_dict(plan),
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    digest = hashlib.blake2b(encoded.encode("utf-8"), digest_size=16).hexdigest()
     return f"mutation:{digest}"
 
 

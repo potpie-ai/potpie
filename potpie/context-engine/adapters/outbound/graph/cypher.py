@@ -219,11 +219,15 @@ def _neo4j_safe_value(value: Any) -> Any:
     if isinstance(value, _NEO4J_TEMPORAL_TYPES):
         return value
     if isinstance(value, (list, tuple)):
-        # Neo4j 5.x property arrays cannot contain null elements; only a list of
-        # pure primitives survives as a native array. A list carrying ``None``
-        # (or maps) must be JSON-encoded so the write does not fail.
+        # Neo4j 5.x property arrays must be *homogeneous* arrays of primitives —
+        # no nulls, no maps, and no mixed element types ([1, "x"] / [True, 1] are
+        # rejected at write time). Only a single-primitive-type list survives as a
+        # native array; anything else is JSON-encoded so the write does not fail.
+        # (bool is a subclass of int, so classify it separately.)
         if all(isinstance(v, (bool, int, float, str)) for v in value):
-            return list(value)
+            kinds = {bool if isinstance(v, bool) else type(v) for v in value}
+            if len(kinds) <= 1:  # empty or single-type
+                return list(value)
         return json.dumps(list(value), default=str, sort_keys=True)
     if isinstance(value, dict):
         return json.dumps(value, default=str, sort_keys=True)
