@@ -25,6 +25,7 @@ from adapters.inbound.cli.commands import (
 )
 from adapters.inbound.cli.commands import ingest as ingest_cmds
 from adapters.inbound.cli.commands import query as query_cmds
+from adapters.inbound.cli.commands import ui as ui_cmds
 from adapters.inbound.cli.commands import skills as skills_cmds
 from adapters.inbound.cli.commands._common import set_json, set_verbose
 from adapters.inbound.cli.telemetry.context import bind_telemetry_context
@@ -73,6 +74,7 @@ def build_app() -> typer.Typer:
     query_cmds.register(app)
     bootstrap.register(app)
     auth_cmds.register(app)
+    ui_cmds.register(app)
 
     # Command groups (one per cli-flow.md section).
     app.add_typer(pots.pot_app, name="pot")

@@ -7,11 +7,14 @@ from datetime import datetime, timezone
 
 import typer
 
+from adapters.inbound.cli import repo_location
 from adapters.inbound.cli.commands._common import (
     contract,
+    current_repo_identity_for_cli,
     emit,
     fail,
     get_host,
+    repo_pot_candidates,
     resolve_pot_id,
 )
 from adapters.inbound.cli.telemetry.onboarding_events import (
@@ -31,9 +34,24 @@ from adapters.outbound.http.potpie_context_api_client import (
 from domain.errors import CapabilityNotImplemented
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
+pot_default_app = typer.Typer(help="Current-repo default pot.")
 source_app = typer.Typer(help="Sources registered to a pot.")
 linear_team_app = typer.Typer(help="Linear teams attached to a context pot.")
 jira_project_app = typer.Typer(help="Jira projects reachable from a context pot.")
+
+
+def _repo_identity_for_cli(repo: str | None) -> str | None:
+    raw = (repo or "").strip()
+    if raw in ("", ".", "current"):
+        return current_repo_identity_for_cli()
+    return repo_location.repo_identity_key(raw)
+
+
+def _pot_name(host, pot_id: str) -> str:
+    for pot in host.pots.list_pots():
+        if getattr(pot, "pot_id", None) == pot_id:
+            return getattr(pot, "name", pot_id)
+    return pot_id
 
 
 def _potpie_api_client() -> PotpieContextApiClient:
@@ -282,26 +300,129 @@ def pot_archive(ref: str) -> None:
         emit({"id": pot.pot_id, "archived": True}, human=f"archived '{pot.name}'")
 
 
+@pot_app.command("linked")
+def pot_linked(
+    repo: str = typer.Option(
+        "current", "--repo", help="Repo ref to match, or 'current'."
+    ),
+) -> None:
+    with contract():
+        host = get_host()
+        payload = repo_pot_candidates(host, repo)
+        rows = payload.get("candidates", ())
+        human = "\n".join(
+            (
+                f"{'*' if row.get('default') else ' '} "
+                f"{row.get('name')} ({row.get('pot_id')})"
+            )
+            for row in rows
+        )
+        emit(payload, human=human or "(no linked pots)")
+
+
+@pot_default_app.command("set")
+def pot_default_set(
+    ref: str,
+    repo: str = typer.Option(
+        "current", "--repo", help="Repo ref to bind, or 'current'."
+    ),
+) -> None:
+    with contract():
+        host = get_host()
+        repo_identity = _repo_identity_for_cli(repo)
+        if not repo_identity:
+            fail(
+                code="repo_unresolved",
+                message="Could not resolve the repository identity.",
+                next_action="run from a git checkout or pass '--repo <owner/repo>'",
+            )
+        pot_id = resolve_pot_id(host, ref, infer_from_repo=False)
+        setter = getattr(host.pots, "set_repo_default", None)
+        if not callable(setter):
+            fail(
+                code="repo_default_unavailable",
+                message="This host does not support repo default bindings.",
+                next_action="upgrade the local context-engine host",
+            )
+        setter(repo=repo_identity, pot_id=pot_id)
+        name = _pot_name(host, pot_id)
+        emit(
+            {"repo": repo_identity, "default_pot": {"id": pot_id, "name": name}},
+            human=f"default pot for {repo_identity} → {name} ({pot_id})",
+        )
+
+
+@pot_default_app.command("clear")
+def pot_default_clear(
+    repo: str = typer.Option(
+        "current", "--repo", help="Repo ref to unbind, or 'current'."
+    ),
+) -> None:
+    with contract():
+        host = get_host()
+        repo_identity = _repo_identity_for_cli(repo)
+        if not repo_identity:
+            fail(
+                code="repo_unresolved",
+                message="Could not resolve the repository identity.",
+                next_action="run from a git checkout or pass '--repo <owner/repo>'",
+            )
+        clearer = getattr(host.pots, "clear_repo_default", None)
+        if not callable(clearer):
+            fail(
+                code="repo_default_unavailable",
+                message="This host does not support repo default bindings.",
+                next_action="upgrade the local context-engine host",
+            )
+        cleared = bool(clearer(repo=repo_identity))
+        emit(
+            {"repo": repo_identity, "cleared": cleared},
+            human=f"cleared default pot for {repo_identity}"
+            if cleared
+            else f"no default pot set for {repo_identity}",
+        )
+
+
 @source_app.command("add")
 def source_add(
     kind: str = typer.Argument(..., help="repo | github | linear | …"),
     location: str = typer.Argument(...),
     name: str = typer.Option(None, "--name"),
     pot: str = typer.Option(None, "--pot"),
+    set_default: bool = typer.Option(
+        True,
+        "--default/--no-default",
+        help="For repo sources, bind this repo to the target pot.",
+    ),
 ) -> None:
     with contract():
         host = get_host()
-        pot_id = resolve_pot_id(host, pot)
+        source_kind = kind.strip()
+        is_repo = source_kind.lower() == "repo"
+        source_location = (
+            repo_location.resolve_repo_location(location) if is_repo else location
+        )
+        pot_id = resolve_pot_id(host, pot, infer_from_repo=not is_repo)
         started_ms = now_ms()
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_started",
             entrypoint="direct_command",
-            properties={"source_kind": kind},
+            properties={"source_kind": source_kind},
         )
+        repo_default_set: bool | None = None
         try:
             src = host.pots.add_source(
-                pot_id=pot_id, kind=kind, location=location, name=name
+                pot_id=pot_id, kind=source_kind, location=source_location, name=name
             )
+            if is_repo and set_default:
+                setter = getattr(host.pots, "set_repo_default", None)
+                if callable(setter):
+                    repo_identity = repo_location.repo_identity_key(source_location)
+                    if repo_identity:
+                        setter(repo=repo_identity, pot_id=pot_id)
+                        repo_default_set = True
+            elif is_repo:
+                repo_default_set = False
         except Exception as exc:  # noqa: BLE001
             capture_project_binding_event(
                 "cli_onboarding_repo_source_add_failed",
@@ -322,9 +443,22 @@ def source_add(
                 "duration_ms": elapsed_ms(started_ms),
             },
         )
+        payload: dict[str, object] = {
+            "source_id": src.source_id,
+            "kind": src.kind,
+            "name": src.name,
+            "location": source_location,
+            "pot_id": pot_id,
+            "registration_only": True,
+        }
+        if repo_default_set is not None:
+            payload["repo_default_set"] = repo_default_set
         emit(
-            {"source_id": src.source_id, "kind": src.kind, "name": src.name},
-            human=f"added source {src.kind}:{src.name} ({src.source_id})",
+            payload,
+            human=(
+                f"registered source {src.kind}:{src.name} ({src.source_id})\n"
+                "  no ingestion or scan started"
+            ),
         )
 
 
@@ -337,7 +471,13 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
         emit(
             {
                 "sources": [
-                    {"id": s.source_id, "kind": s.kind, "name": s.name} for s in sources
+                    {
+                        "id": s.source_id,
+                        "kind": s.kind,
+                        "name": s.name,
+                        "location": getattr(s, "location", s.name),
+                    }
+                    for s in sources
                 ]
             },
             human="\n".join(f"  {s.kind}: {s.name} ({s.source_id})" for s in sources)
@@ -366,6 +506,7 @@ def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> Non
         emit({"removed": source_id}, human=f"removed source {source_id}")
 
 
+pot_app.add_typer(pot_default_app, name="default")
 pot_app.add_typer(linear_team_app, name="linear-team")
 
 

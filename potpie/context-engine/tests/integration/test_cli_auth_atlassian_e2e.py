@@ -9,7 +9,7 @@ your real Potpie credentials are not modified.
 Enable:
   export RUN_CLI_AUTH_E2E=1
 
-From ``potpie/app/src/context-engine``:
+From ``potpie/context-engine``:
 
   uv run pytest tests/integration/test_cli_auth_atlassian_e2e.py -v
 
