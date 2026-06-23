@@ -29,6 +29,9 @@ def atlassian_login(
     confluence_site_subdomain: str | None = typer.Option(
         None, "--confluence-site-subdomain"
     ),
+    jira_site_subdomain: str | None = typer.Option(
+        None, "--jira-site-subdomain"
+    ),
     bitbucket_api_token: str | None = typer.Option(None, "--bitbucket-api-token"),
 ) -> None:
     j, v = _flags()
@@ -41,6 +44,7 @@ def atlassian_login(
         api_token=api_token,
         site_subdomain=site_subdomain,
         confluence_site_subdomain=confluence_site_subdomain,
+        jira_site_subdomain=jira_site_subdomain,
         bitbucket_api_token=bitbucket_api_token,
     )
 

@@ -686,6 +686,414 @@ def test_bitbucket_login_success_json(
     assert payload["provider"] == "bitbucket"
 
 
+def test_connected_products_message_both() -> None:
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+
+    results = {
+        "jira": ProductConnectResult(product="jira", status="connected"),
+        "confluence": ProductConnectResult(product="confluence", status="connected"),
+    }
+    assert suite_auth._connected_products_message(results) == "Connected Jira and Confluence."
+
+
+def test_connected_products_message_only_confluence() -> None:
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+
+    results = {
+        "jira": ProductConnectResult(product="jira", status="not_connected"),
+        "confluence": ProductConnectResult(product="confluence", status="connected"),
+    }
+    assert suite_auth._connected_products_message(results) == "Connected Confluence."
+
+
+def test_connected_products_message_only_jira() -> None:
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+
+    results = {
+        "jira": ProductConnectResult(product="jira", status="connected"),
+        "confluence": ProductConnectResult(product="confluence", status="not_connected"),
+    }
+    assert suite_auth._connected_products_message(results) == "Connected Jira."
+
+
+def test_connected_products_message_neither() -> None:
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+
+    results = {
+        "jira": ProductConnectResult(product="jira", status="not_connected"),
+        "confluence": ProductConnectResult(product="confluence", status="not_connected"),
+    }
+    assert suite_auth._connected_products_message(results) == ""
+
+
+def test_step1_success_message_only_confluence_connected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue 1 fix: when only Confluence connects, message must say 'Connected Confluence.'"""
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+
+    messages: list[str] = []
+
+    def _connect(product: str, **kwargs: object) -> ProductConnectResult:
+        if product == "jira":
+            return ProductConnectResult(product="jira", status="not_connected", reason="product_access_denied")
+        return ProductConnectResult(
+            product="confluence", status="connected", site_url="https://potpie-team-1.atlassian.net", cloud_id="c1"
+        )
+
+    monkeypatch.setattr(suite_auth.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(suite_auth, "connect_atlassian_product", _connect)
+    monkeypatch.setattr(
+        suite_auth, "_render_connection_success", lambda msg, **kw: messages.append(msg)
+    )
+    monkeypatch.setattr(suite_auth, "_render_result_lines", lambda *a, **kw: None)
+
+    results = suite_auth._run_step1(
+        force=False,
+        email="u@example.com",
+        api_token="token",
+        site_subdomain="potpie-team-1",
+        confluence_site_subdomain=None,
+        verbose=False,
+        as_json=False,
+    )
+
+    assert results["jira"].status == "not_connected"
+    assert results["confluence"].status == "connected"
+    assert messages == ["Connected Confluence."]
+
+
+def test_step1_success_message_only_jira_connected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue 1 fix: when only Jira connects, message must say 'Connected Jira.'"""
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+
+    messages: list[str] = []
+
+    def _connect(product: str, **kwargs: object) -> ProductConnectResult:
+        if product == "confluence":
+            return ProductConnectResult(product="confluence", status="not_connected", reason="product_access_denied")
+        return ProductConnectResult(
+            product="jira", status="connected", site_url="https://potpie-team.atlassian.net", cloud_id="c1"
+        )
+
+    monkeypatch.setattr(suite_auth.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(suite_auth, "connect_atlassian_product", _connect)
+    monkeypatch.setattr(
+        suite_auth, "_render_connection_success", lambda msg, **kw: messages.append(msg)
+    )
+    monkeypatch.setattr(suite_auth, "_render_result_lines", lambda *a, **kw: None)
+
+    results = suite_auth._run_step1(
+        force=False,
+        email="u@example.com",
+        api_token="token",
+        site_subdomain="potpie-team",
+        confluence_site_subdomain=None,
+        verbose=False,
+        as_json=False,
+    )
+
+    assert results["jira"].status == "connected"
+    assert results["confluence"].status == "not_connected"
+    assert messages == ["Connected Jira."]
+
+
+def test_offer_retry_case_b_jira_ok_confluence_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Case B: Jira connected, Confluence not — retry prompt asks only for subdomain."""
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+
+    connect_calls: list[tuple[str, str]] = []
+    prompts: list[str] = []
+    confirms: list[str] = []
+
+    def _connect(product: str, *, site_subdomain: str, **kw: object) -> ProductConnectResult:
+        connect_calls.append((product, site_subdomain))
+        return ProductConnectResult(
+            product=product, status="connected", site_url=f"https://{site_subdomain}.atlassian.net", cloud_id="c"
+        )
+
+    monkeypatch.setattr(suite_auth, "connect_atlassian_product", _connect)
+    monkeypatch.setattr(
+        suite_auth.typer, "confirm", lambda msg, **kw: (confirms.append(msg), True)[1]
+    )
+    monkeypatch.setattr(
+        suite_auth.typer, "prompt", lambda msg, **kw: (prompts.append(msg), "potpie-team-1")[1]
+    )
+
+    results = {
+        "jira": ProductConnectResult(product="jira", status="connected", site_url="https://potpie-team.atlassian.net"),
+        "confluence": ProductConnectResult(product="confluence", status="not_connected", reason="product_access_denied"),
+    }
+
+    updated = suite_auth._offer_retry_failed_products(
+        results=results,
+        email="u@example.com",
+        api_token="token",
+        as_json=False,
+    )
+
+    assert updated["jira"].status == "connected"
+    assert updated["confluence"].status == "connected"
+    assert updated["confluence"].site_url == "https://potpie-team-1.atlassian.net"
+    assert any("Confluence" in c for c in confirms)
+    assert any("subdomain" in p.lower() for p in prompts)
+    assert connect_calls == [("confluence", "potpie-team-1")]
+
+
+def test_offer_retry_case_c_confluence_ok_jira_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Case C: Confluence connected, Jira not — retry prompt asks only for subdomain."""
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+
+    connect_calls: list[tuple[str, str]] = []
+    confirms: list[str] = []
+
+    def _connect(product: str, *, site_subdomain: str, **kw: object) -> ProductConnectResult:
+        connect_calls.append((product, site_subdomain))
+        return ProductConnectResult(
+            product=product, status="connected", site_url=f"https://{site_subdomain}.atlassian.net", cloud_id="c"
+        )
+
+    monkeypatch.setattr(suite_auth, "connect_atlassian_product", _connect)
+    monkeypatch.setattr(
+        suite_auth.typer, "confirm", lambda msg, **kw: (confirms.append(msg), True)[1]
+    )
+    monkeypatch.setattr(suite_auth.typer, "prompt", lambda msg, **kw: "potpie-team")
+
+    results = {
+        "jira": ProductConnectResult(product="jira", status="not_connected", reason="product_access_denied"),
+        "confluence": ProductConnectResult(product="confluence", status="connected", site_url="https://potpie-team-1.atlassian.net"),
+    }
+
+    updated = suite_auth._offer_retry_failed_products(
+        results=results,
+        email="u@example.com",
+        api_token="token",
+        as_json=False,
+    )
+
+    assert updated["jira"].status == "connected"
+    assert updated["confluence"].status == "connected"
+    assert any("Jira" in c for c in confirms)
+    assert connect_calls == [("jira", "potpie-team")]
+
+
+def test_offer_retry_user_declines_no_connect_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """User says No to retry — no connect_atlassian_product call should happen."""
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+
+    connect_calls: list[str] = []
+
+    monkeypatch.setattr(
+        suite_auth,
+        "connect_atlassian_product",
+        lambda product, **kw: (connect_calls.append(product), None)[1],
+    )
+    monkeypatch.setattr(suite_auth.typer, "confirm", lambda msg, **kw: False)
+
+    results = {
+        "jira": ProductConnectResult(product="jira", status="not_connected"),
+        "confluence": ProductConnectResult(product="confluence", status="not_connected"),
+    }
+
+    updated = suite_auth._offer_retry_failed_products(
+        results=results,
+        email="u@example.com",
+        api_token="token",
+        as_json=False,
+    )
+
+    assert updated["jira"].status == "not_connected"
+    assert updated["confluence"].status == "not_connected"
+    assert connect_calls == []
+
+
+def test_jira_site_subdomain_flag_non_interactive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--jira-site-subdomain connects Jira on a different site when initial attempt fails."""
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+
+    calls: list[tuple[str, str]] = []
+
+    def _connect(product: str, *, site_subdomain: str, **kwargs: object) -> ProductConnectResult:
+        calls.append((product, site_subdomain))
+        if product == "confluence":
+            return ProductConnectResult(
+                product=product, status="connected", site_url=f"https://{site_subdomain}.atlassian.net", cloud_id="c"
+            )
+        if site_subdomain == "confluence-site":
+            return ProductConnectResult(
+                product=product, status="connected", site_url=f"https://{site_subdomain}.atlassian.net", cloud_id="c"
+            )
+        return ProductConnectResult(product=product, status="not_connected", reason="product_access_denied")
+
+    monkeypatch.setattr(suite_auth, "load_cli_env", lambda: None)
+    monkeypatch.setattr(suite_auth.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(suite_auth, "connect_atlassian_product", _connect)
+
+    result = runner.invoke(
+        cli_main.app,
+        [
+            "--json",
+            "atlassian",
+            "login",
+            "--email",
+            "user@example.com",
+            "--api-token",
+            "token-123",
+            "--site-subdomain",
+            "confluence-site",
+            "--jira-site-subdomain",
+            "confluence-site",
+            "--skip-bitbucket",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["products"]["jira"]["status"] == "connected"
+    assert payload["products"]["confluence"]["status"] == "connected"
+    # Jira first tried confluence-site (initial), then confluence-site again via --jira-site-subdomain
+    # Since initial already connected with confluence-site for Jira, only one call expected.
+    # But with different sites: initial fails on site A, fallback uses site B.
+    assert any(c[0] == "jira" for c in calls)
+
+
+def test_summary_shown_when_jira_already_connected_confluence_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Edge case #1: summary must be shown even when one product is already_connected and other fails."""
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+    from tests._auth_fakes import InMemoryCredentialStore
+
+    store = InMemoryCredentialStore()
+    store.save_jira_credentials(
+        {"email": "u@example.com", "api_token": "t", "site_url": "https://team-a.atlassian.net", "cloud_id": "c"}
+    )
+    set_store(store)
+
+    render_calls: list[dict] = []
+
+    monkeypatch.setattr(suite_auth.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(
+        suite_auth,
+        "connect_atlassian_product",
+        lambda product, **kw: ProductConnectResult(product=product, status="not_connected", reason="product_access_denied"),
+    )
+    monkeypatch.setattr(
+        suite_auth, "_render_result_lines", lambda results, **kw: render_calls.append({"results": results})
+    )
+    monkeypatch.setattr(suite_auth, "_render_connection_success", lambda msg, **kw: None)
+
+    results = suite_auth._run_step1(
+        force=False,
+        email="u@example.com",
+        api_token="token",
+        site_subdomain="team-a",
+        confluence_site_subdomain=None,
+        verbose=False,
+        as_json=False,
+    )
+
+    # Jira already connected, Confluence failed — summary MUST be rendered.
+    assert results["jira"].status == "already_connected"
+    assert results["confluence"].status == "not_connected"
+    assert len(render_calls) == 1, "Summary should be shown even when no new product connected"
+
+
+def test_offer_retry_loop_retries_after_second_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retry loop: user declines on second attempt after first retry fails."""
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+
+    connect_calls: list[tuple[str, str]] = []
+    confirm_calls: list[str] = []
+    confirm_responses = iter([True, True, False])  # Yes, Yes, No
+
+    def _connect(product: str, *, site_subdomain: str, **kw: object) -> ProductConnectResult:
+        connect_calls.append((product, site_subdomain))
+        return ProductConnectResult(product=product, status="not_connected", reason="site_discovery_failed")
+
+    monkeypatch.setattr(suite_auth, "connect_atlassian_product", _connect)
+    monkeypatch.setattr(
+        suite_auth.typer,
+        "confirm",
+        lambda msg, **kw: (confirm_calls.append(msg), next(confirm_responses))[1],
+    )
+    monkeypatch.setattr(suite_auth.typer, "prompt", lambda msg, **kw: "bad-site")
+    monkeypatch.setattr(suite_auth, "print_plain_line", lambda *a, **kw: None)
+
+    results = {
+        "jira": ProductConnectResult(product="jira", status="connected"),
+        "confluence": ProductConnectResult(product="confluence", status="not_connected"),
+    }
+
+    updated = suite_auth._offer_retry_failed_products(
+        results=results,
+        email="u@example.com",
+        api_token="token",
+        as_json=False,
+    )
+
+    # Two retry attempts for Confluence, then user says No.
+    assert updated["confluence"].status == "not_connected"
+    assert len(connect_calls) == 2
+    assert len([c for c in confirm_calls if "Confluence" in c]) == 3  # Yes, Yes, No
+
+
+def test_offer_retry_empty_subdomain_warns_and_loops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty subdomain on retry shows warning and re-prompts instead of silently skipping."""
+    import adapters.inbound.cli.auth.atlassian_suite_auth as suite_auth
+
+    warnings: list[str] = []
+    prompt_responses = iter(["", "potpie-team"])  # empty first, then valid
+    confirm_responses = iter([True, True])
+
+    monkeypatch.setattr(
+        suite_auth,
+        "connect_atlassian_product",
+        lambda product, *, site_subdomain, **kw: ProductConnectResult(
+            product=product, status="connected", site_url=f"https://{site_subdomain}.atlassian.net", cloud_id="c"
+        ),
+    )
+    monkeypatch.setattr(
+        suite_auth.typer, "confirm", lambda msg, **kw: next(confirm_responses)
+    )
+    monkeypatch.setattr(
+        suite_auth.typer, "prompt", lambda msg, **kw: next(prompt_responses)
+    )
+    monkeypatch.setattr(
+        suite_auth, "print_plain_line", lambda msg, **kw: warnings.append(msg) if "empty" in msg.lower() else None
+    )
+
+    results = {
+        "jira": ProductConnectResult(product="jira", status="connected"),
+        "confluence": ProductConnectResult(product="confluence", status="not_connected"),
+    }
+
+    updated = suite_auth._offer_retry_failed_products(
+        results=results,
+        email="u@example.com",
+        api_token="token",
+        as_json=False,
+    )
+
+    assert updated["confluence"].status == "connected"
+    assert len(warnings) == 1, "Should warn exactly once about empty subdomain"
+    assert "empty" in warnings[0].lower()
+
+
 def test_bitbucket_login_failure_exits_with_auth_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

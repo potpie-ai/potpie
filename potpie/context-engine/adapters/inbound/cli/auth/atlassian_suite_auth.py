@@ -170,6 +170,18 @@ def _render_connection_success(message: str, *, as_json: bool) -> None:
     print_plain_line(message, as_json=False)
 
 
+def _connected_products_message(results: dict[str, ProductConnectResult]) -> str:
+    """Build a success message based on which Jira/Confluence products actually connected."""
+    connected = [
+        p.capitalize()
+        for p in ("jira", "confluence")
+        if results.get(p) and results[p].status == "connected"
+    ]
+    if not connected:
+        return ""
+    return f"Connected {' and '.join(connected)}."
+
+
 def _print_snapshot() -> None:
     _render_status_card({}, as_json=False)
 
@@ -192,7 +204,7 @@ def _render_jira_confluence_panel(*, as_json: bool) -> None:
         [
             "• One unscoped API token from id.atlassian.com works for both.",
             "• Choose Create API token (without scopes).",
-            "• Use the same email and Atlassian site subdomain for both.",
+            "• Jira and Confluence may be on different site subdomains — you can update either after the initial attempt.",
         ],
         as_json=as_json,
     )
@@ -215,39 +227,81 @@ def _prompt_step1_credentials(
     return email_value, api_token_value, site_value
 
 
-def _maybe_connect_confluence_fallback(
+def _maybe_connect_product_fallback(
+    product: str,
     *,
-    force: bool,
     email: str,
     api_token: str,
-    confluence_status: dict[str, Any],
-    initial_subdomain: str,
     requested_subdomain: str | None,
-    verbose: bool,
 ) -> ProductConnectResult | None:
-    if force or not confluence_status.get("authenticated"):
-        if requested_subdomain:
-            return connect_atlassian_product(
-                "confluence",
+    """Try a product on a different subdomain when the caller-supplied flag provides one.
+
+    Used for non-interactive ``--jira-site-subdomain`` / ``--confluence-site-subdomain``.
+    """
+    if not requested_subdomain:
+        return None
+    return connect_atlassian_product(
+        product,
+        email=email,
+        api_token=api_token,
+        site_subdomain=requested_subdomain,
+        force=True,
+    )
+
+
+# Backward-compatible alias kept for any external callers / tests.
+def _maybe_connect_confluence_fallback(
+    *,
+    email: str,
+    api_token: str,
+    requested_subdomain: str | None,
+) -> ProductConnectResult | None:
+    return _maybe_connect_product_fallback(
+        "confluence", email=email, api_token=api_token, requested_subdomain=requested_subdomain
+    )
+
+
+def _offer_retry_failed_products(
+    *,
+    results: dict[str, ProductConnectResult],
+    email: str,
+    api_token: str,
+    as_json: bool,
+) -> dict[str, ProductConnectResult]:
+    """Interactively offer to retry any Jira/Confluence product that failed initial connection.
+
+    Covers Cases B (Jira ok, Confluence not), C (Confluence ok, Jira not), and D (neither ok).
+    Reuses the same email and API token — only asks for the missing site subdomain.
+    Loops until the user connects successfully or explicitly declines.
+    """
+    for product in ("jira", "confluence"):
+        result = results.get(product)
+        if result is None or result.status in {"connected", "already_connected", "skipped"}:
+            continue
+        name = product.capitalize()
+        while True:
+            if not typer.confirm(
+                f"{name} is not connected. Would you like to connect {name} now?",
+                default=True,
+            ):
+                break
+            subdomain = typer.prompt(
+                f"{name} site subdomain (e.g. myteam for myteam.atlassian.net)"
+            ).strip()
+            if not subdomain:
+                print_plain_line("Subdomain cannot be empty, please try again.", as_json=False)
+                continue
+            results[product] = connect_atlassian_product(
+                product,
                 email=email,
                 api_token=api_token,
-                site_subdomain=requested_subdomain,
+                site_subdomain=subdomain,
                 force=True,
             )
-        if sys.stdin.isatty() and typer.confirm(
-            f"Confluence not available on {initial_subdomain}.atlassian.net. Use a different Confluence site subdomain?",
-            default=True,
-        ):
-            subdomain = typer.prompt("Confluence site subdomain").strip()
-            if subdomain:
-                return connect_atlassian_product(
-                    "confluence",
-                    email=email,
-                    api_token=api_token,
-                    site_subdomain=subdomain,
-                    force=True,
-                )
-    return None
+            if results[product].status in {"connected", "already_connected"}:
+                break
+            # Connection failed again — loop to offer another attempt.
+    return results
 
 
 def _run_step1(
@@ -257,6 +311,7 @@ def _run_step1(
     api_token: str | None,
     site_subdomain: str | None,
     confluence_site_subdomain: str | None,
+    jira_site_subdomain: str | None = None,
     verbose: bool,
     as_json: bool,
 ) -> dict[str, ProductConnectResult]:
@@ -330,13 +385,24 @@ def _run_step1(
             cloud_id=jira_status.get("cloud_id"),
         )
     else:
-        results["jira"] = connect_atlassian_product(
+        jira_result = connect_atlassian_product(
             "jira",
             email=email_value,
             api_token=api_token_value,
             site_subdomain=site_value,
             force=force,
         )
+        # Non-interactive: if --jira-site-subdomain was provided, try it now.
+        if jira_result.status != "connected":
+            fallback = _maybe_connect_product_fallback(
+                "jira",
+                email=email_value,
+                api_token=api_token_value,
+                requested_subdomain=jira_site_subdomain,
+            )
+            if fallback is not None:
+                jira_result = fallback
+        results["jira"] = jira_result
 
     if confluence_status.get("authenticated") and not force:
         results["confluence"] = ProductConnectResult(
@@ -353,27 +419,37 @@ def _run_step1(
             site_subdomain=site_value,
             force=force,
         )
+        # Non-interactive: if --confluence-site-subdomain was provided, try it now.
         if confluence_result.status != "connected":
-            fallback = _maybe_connect_confluence_fallback(
-                force=force,
+            fallback = _maybe_connect_product_fallback(
+                "confluence",
                 email=email_value,
                 api_token=api_token_value,
-                confluence_status=confluence_status,
-                initial_subdomain=site_value,
                 requested_subdomain=confluence_site_subdomain,
-                verbose=verbose,
             )
             if fallback is not None:
                 confluence_result = fallback
         results["confluence"] = confluence_result
-    if any(result.status == "connected" for result in results.values()):
-        _render_result_lines(results, as_json=as_json)
-        _render_connection_success(
-            "Connected Jira and Confluence.",
+
+    # Interactive: offer to retry any product that still failed (Cases B / C / D).
+    if sys.stdin.isatty():
+        results = _offer_retry_failed_products(
+            results=results,
+            email=email_value,
+            api_token=api_token_value,
             as_json=as_json,
         )
-        if _human():
-            time.sleep(1)
+
+    # Show summary whenever at least one product was attempted (not skipped),
+    # so partial failures are never silent.
+    attempted = any(r.status != "skipped" for r in results.values())
+    if attempted:
+        _render_result_lines(results, as_json=as_json)
+        msg = _connected_products_message(results)
+        if msg:
+            _render_connection_success(msg, as_json=as_json)
+            if _human():
+                time.sleep(1)
     return results
 
 
@@ -387,6 +463,7 @@ def run_atlassian_suite_login(
     api_token: str | None = None,
     site_subdomain: str | None = None,
     confluence_site_subdomain: str | None = None,
+    jira_site_subdomain: str | None = None,
     bitbucket_api_token: str | None = None,
 ) -> None:
     load_cli_env()
@@ -399,6 +476,7 @@ def run_atlassian_suite_login(
         api_token=api_token,
         site_subdomain=site_subdomain,
         confluence_site_subdomain=confluence_site_subdomain,
+        jira_site_subdomain=jira_site_subdomain,
         verbose=verbose,
         as_json=as_json,
     )
