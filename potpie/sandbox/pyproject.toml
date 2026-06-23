@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "potpie-sandbox"
 version = "0.1.0"
 description = "Potpie sandbox core with hexagonal workspace and runtime providers."
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"
 dependencies = []
 
 [project.optional-dependencies]
@@ -28,7 +28,7 @@ packages = ["sandbox"]
 include = ["sandbox", "tests"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 src = [".", "tests"]
 
 [tool.pytest.ini_options]

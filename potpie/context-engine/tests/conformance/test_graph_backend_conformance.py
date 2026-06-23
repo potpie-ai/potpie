@@ -13,8 +13,6 @@ hook points at; new backends drop into ``FULL_PROFILES`` / ``PARTIAL_PROFILES``.
 
 from __future__ import annotations
 
-import sys
-
 import pytest
 
 from adapters.outbound.graph.backends import build_backend
@@ -228,10 +226,6 @@ def test_embedded_unbuilt_profile_fails_closed():
 
 @pytest.mark.parametrize("profile", PARTIAL_PROFILES)
 def test_partial_backend_profiles_fail_closed_for_unbuilt_projections(profile, tmp_path):
-    if profile in ("falkordb", "falkordb_lite") and sys.version_info < (3, 12):
-        # FalkorDBLite (embedded, via redislite) ships only on Python >= 3.12
-        # (see the pyproject marker); on 3.11 the backend can't be built.
-        pytest.skip("FalkorDBLite (redislite) requires Python >= 3.12")
     backend = _build(profile, tmp_path)
     assert isinstance(backend, GraphBackend)
     expected = {
