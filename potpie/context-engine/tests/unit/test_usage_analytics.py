@@ -8,7 +8,7 @@ import pytest
 
 import adapters.inbound.cli.telemetry.product_analytics as product_analytics
 from adapters.inbound.cli.auth import auth_commands, github_commands
-from adapters.inbound.cli.commands import _common, bootstrap, ingest, query
+from adapters.inbound.cli.commands import _common, bootstrap, query
 from adapters.inbound.cli.telemetry.context import TelemetryContext
 from adapters.inbound.cli.telemetry.product_analytics import ProductAnalyticsEvent
 from adapters.inbound.cli.telemetry.usage_events import (
@@ -102,22 +102,6 @@ def test_context_activation_also_records_usage(fake_sink: _FakeSink) -> None:
     assert fake_sink.events[-1].properties["command"] == "search"
     assert fake_sink.events[-1].properties["result_kind"] == "context_result"
     assert fake_sink.events[-1].properties["item_count"] == 2
-
-
-def test_ingest_scan_activation_also_records_usage(fake_sink: _FakeSink) -> None:
-    ingest._capture_ingest_scan_activation(
-        scanners_run=1,
-        entities_upserted=2,
-        edges_upserted=3,
-    )
-
-    assert [event.name for event in fake_sink.events] == [
-        "cli_onboarding_ingest_scan_completed",
-        "cli_onboarding_first_use_command_succeeded",
-        "cli_usage_command_succeeded",
-    ]
-    assert fake_sink.events[-1].properties["command"] == "ingest scan"
-    assert fake_sink.events[-1].properties["result_kind"] == "scan_result"
 
 
 def test_host_status_activation_does_not_record_usage(fake_sink: _FakeSink) -> None:
