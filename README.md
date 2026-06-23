@@ -35,7 +35,7 @@
 
 - [Docker](https://docker.com) installed and running
 - [Git](https://git-scm.com) installed
-- [Python 3.11+](https://python.org) with [uv](https://docs.astral.sh/uv/)
+- [Python 3.12+](https://python.org) with [uv](https://docs.astral.sh/uv/)
 
 ### Installation
 
