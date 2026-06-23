@@ -89,8 +89,9 @@ class StructuredLogger:
         }
         if redact_enabled:
             fields = _redact_value(fields)
-            msg, args = _render_message(msg, args)
             msg = _redact_value(msg)
+            args = _redact_value(args)
+        msg, args = _render_message(msg, args)
         passthrough["extra"] = {**extra, "obs_fields": fields}
         self._logger.log(level, msg, *args, **passthrough)
 
@@ -141,7 +142,10 @@ def _render_message(msg: Any, args: tuple[Any, ...]) -> tuple[Any, tuple[Any, ..
     try:
         return msg % args, ()
     except Exception:
-        return msg, args
+        try:
+            return msg.format(*args), ()
+        except Exception:
+            return msg, ()
 
 
 def _redact_value(value: Any) -> Any:

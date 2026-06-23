@@ -55,6 +55,23 @@ def test_configure_formatter_allows_plain_stdlib_logs():
         root.handlers[:] = old_handlers
 
 
+def test_structured_logger_supports_brace_style_positional_args(monkeypatch):
+    root = logging.getLogger()
+    old_handlers = root.handlers[:]
+    root.handlers.clear()
+    stream = StringIO()
+    monkeypatch.setattr("sys.stderr", stream)
+    try:
+        configure(ObservabilityConfig(redact=True))
+        get_logger("test.observability").warning("emit failed for workspace_id={}", "wid-1")
+        record = stream.getvalue()
+    finally:
+        root.handlers[:] = old_handlers
+
+    if "workspace_id=wid-1" not in record:
+        raise AssertionError(f"brace-style logging args were not rendered: {record}")
+
+
 def test_standalone_preserves_service_name(monkeypatch):
     monkeypatch.setenv("SERVICE_NAME", "standalone-worker")
 
