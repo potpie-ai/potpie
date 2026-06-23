@@ -2,16 +2,15 @@
 
 What the live, end-to-end integration suite (`test_e2e_topology.py`) exercises
 against a **live Neo4j** (`.env` → `NEO4J_URI/NEO4J_USERNAME/NEO4J_PASSWORD`),
-post minimal-topology-ontology + Graphiti removal.
+post minimal-topology-ontology + legacy episodic-stack removal.
 
-The suite is **deterministic** — no LLM calls. Every test creates a uniquely
-keyed pot, writes through a real adapter, asserts via direct Cypher reads of the
-canonical store, and resets the pot on teardown. If Neo4j is unreachable the
-whole module skips.
+Every test creates a uniquely keyed pot, writes through a real adapter, asserts
+via direct Cypher reads of the canonical store, and resets the pot on teardown.
+If Neo4j is unreachable the whole module skips.
 
 ## Environment & wiring
 - **Settings:** `EnvContextEngineSettings` reads `NEO4J_*` + `CONTEXT_GRAPH_ENABLED`. `conftest.py` loads them from the repo `.env` (without overriding already-set vars) and skips the module if bolt isn't reachable.
-- **Container:** `build_container(settings=…, pots=ExplicitPotResolution({pot: repo}))` wires `episodic` (`Neo4jCanonicalGraphAdapter` — the canonical writer/reader, no Graphiti) and `context_graph` (`ContextGraphService`) over the single `ReadOrchestrator` (the 4 P9 readers — `coding_preferences`/`infra_topology`/`timeline`/`prior_bugs` — over `Neo4jClaimQueryStore`). The legacy structural adapter + 6 structural readers were removed with Graphiti.
+- **Container:** `build_container(settings=…, pots=ExplicitPotResolution({pot: repo}))` wires one `GraphBackend`, the canonical `DefaultGraphService`, and a legacy `context_graph` DTO shim. The shim delegates reads to the canonical service and no longer applies reconciliation plans directly.
 - **Capability:** `container.episodic.enabled` / `context_graph` reflect live Neo4j availability.
 
 ## Pot lifecycle (host-managed; engine resolves)
@@ -19,12 +18,9 @@ There is no engine-side pot *create* use case — pots are host-managed. The eng
 - `resolve_pot(pot_id) -> ResolvedPot | None`, `known_pot_ids()`, `find_pots_for_repo(RepoRef)`, `list_pot_repos(pot_id)`, `get_repo_in_pot(...)`.
 - Tested via `ExplicitPotResolution` (a `pot_id -> repo` map) — resolve, list repos, reverse-lookup by repo, unknown-pot → `None`.
 
-## Ingestion — deterministic paths (covered)
-1. **Config/topology scanner path** — `ScanWorkingTreeUseCase(scanner_registry, canonical_writer=container.episodic)` over a synthetic working tree:
-   - `KubernetesManifestScanner` → `Service DEPLOYED_TO Environment` (env stamped on edge).
-   - `CodeownersScanner` → `OWNED_BY` (Service/Repository → Person/Team).
-2. **Validated reconciliation-plan path** — `context_graph.apply_plan_async(ReconciliationPlan)` writes the structured topology (`DEFINED_IN`, `DEPENDS_ON`, `USES`, `HOSTED_ON`, `MEMBER_OF`). This is the apply side of the agent pipeline, tested without the agent.
-3. **Writer invariants** — off-catalog predicates are rejected; `OWNED_BY` (singleton) supersedes a prior owner on a new deterministic claim.
+## Graph writes (covered)
+1. **Backend mutation path** — tests that need seed topology write directly through `container.backend.mutation.apply_async(...)`; legacy `context_graph.apply_plan_async(...)` is disabled so plan writes cannot bypass semantic mutation validation.
+2. **Writer invariants** — off-catalog predicates are rejected; `OWNED_BY` (singleton) supersedes a prior owner on a new claim.
 
 ## Ingestion — real Postgres + real LLM (`test_e2e_pipeline.py`)
 - **Real Postgres** — `conftest.pg_test_db` creates a throwaway database *inside the configured Postgres instance* (`POSTGRES_SERVER`/`DATABASE_URL`), builds the schema via `Base.metadata.create_all`, and drops it on teardown. Event submission + batching round-trips through it (`ingestion_submission.submit` → `context_events`/batch rows → `batch_repository`).
@@ -32,7 +28,7 @@ There is no engine-side pot *create* use case — pots are host-managed. The eng
 - These run only when Neo4j **and** Postgres **and** an LLM key are available; otherwise they skip.
 
 ## Query — deterministic paths (covered)
-The structural read stack was removed with Graphiti, so topology is asserted by
+The structural read stack was removed with the legacy episodic stack, so topology is asserted by
 reading the canonical store directly (no reader indirection):
 - `_count_entities(pot_id)` — direct Cypher count of `:Entity` nodes in the pot partition (replaces the old `structural.get_graph_overview(...)["totals"]`).
 - `_label_counts(pot_id)` — direct Cypher per-label counts (services, environments, teams, …).
@@ -50,14 +46,14 @@ Each test resets its pot via `context_graph.reset_pot(pot_id)` (DETACH DELETE of
 The other suites call the use-case/adapter layer directly; this one drives the
 **real FastAPI app** (`create_app()`) bound to the live container via
 `app.dependency_overrides[get_container_or_503]`, so requests traverse the real
-entrypoint — auth dependency, hardening middleware, request validation, the
-policy tenant boundary, deps wiring, and `ContextGraphResult` → JSON.
+entrypoint — auth dependency, hardening middleware, the policy tenant boundary,
+deps wiring, and the unsupported legacy graph-query contract.
 - `TestHttpAuth` — the gate fails **closed**: 503 (no key, no escape hatch),
   401 (wrong key), 403 (valid key but the resolver isn't actor-scoped and
   `CONTEXT_ENGINE_ALLOW_NO_AUTH` is off — the policy tenant boundary), 200
   (dev no-auth mode).
-- `TestHttpQuery` — `POST /query/context-graph` round-trips seeded topology
-  (asserts the seeded node survives serialization); malformed body → 422.
+- `TestHttpQuery` — `POST /query/context-graph` returns 501; remote
+  `ContextGraphQuery` clients are no longer supported.
 - `TestHttpReset` — `POST /reset` clears the pot through the operator route.
 - `TestHttpHardening` — security headers (`X-Content-Type-Options`) are present
   on a live response, proving the hardening middleware is installed.
@@ -79,7 +75,6 @@ driver-adaptive `pg_test_db` fixture (psycopg v3 when psycopg2 is absent).
 `test_e2e_topology.py` (deterministic, live Neo4j):
 - `TestEnvironmentAndContainer` — Neo4j reachable, settings, container wiring.
 - `TestPotLifecycle` — resolve / list / reverse-lookup / unknown.
-- `TestScannerIngestion` — k8s + CODEOWNERS working-tree → graph.
 - `TestApplyPlanIngestion` — reconciliation plan → graph; off-catalog rejection; singleton supersession.
 - `TestCanonicalReadback` — canonical `:Entity` count + per-label counts + `:RELATES_TO` topology edges, read via direct Cypher.
 - `TestPotReset` — reset clears the partition.
@@ -102,13 +97,13 @@ driver-adaptive `pg_test_db` fixture (psycopg v3 when psycopg2 is absent).
 ## Removed
 - The `/conflicts/list` and `/conflicts/resolve` operator endpoints (and their
   CLI commands + client methods) were deleted: predicate-family conflict
-  detection/resolution was a Graphiti maintenance pass that no longer runs
+  detection/resolution was a legacy episodic maintenance pass that no longer runs
   (`detect_family_conflicts` has no callers). Only deterministic singleton
   supersession remains, covered by `TestApplyPlanIngestion` /
   `TestBitemporalContract`.
 
 ## Fixtures (conftest.py)
-- `live_env` / `settings` / `container` / `pot_id` / `repo_name` / `scanner_registry` — Neo4j-backed, deterministic.
+- `live_env` / `settings` / `container` / `pot_id` / `repo_name` — Neo4j-backed.
 - `pg_test_db` (session) — create/schema/drop a throwaway Postgres database in the configured instance.
 - `db_container` — container with a constructed (not-invoked) agent for Postgres round-trips (no LLM key needed).
 - `llm_env` — loads LLM keys + selects the model for all three LLM surfaces; bounds agent/query timeouts; skips without a key.
