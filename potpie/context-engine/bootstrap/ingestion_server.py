@@ -2,7 +2,7 @@
 
 Distinct from ``bootstrap.host_wiring.build_host_shell`` (the in-process agent
 spine behind the CLI + MCP). This root wires the async ingestion pipeline —
-Neo4j writer/reader, the Postgres batch/ledger/execution-log stores, source
+graph backend, the Postgres batch/ledger/execution-log stores, source
 connectors, and the reconciliation agent — that backs the FastAPI surface in
 ``adapters/inbound/http``. It is intentionally kept separate while the pipeline
 is migrated onto ``HostShell``; nothing on the CLI path imports it.
@@ -20,19 +20,18 @@ from adapters.outbound.connectors.github import (
     GitHubReadPort,
     PyGithubSourceControl,
 )
-from adapters.outbound.connectors._bench_stubs import (
-    AlertingStubConnector,
-    DeployStubConnector,
-    RepoDocsStubConnector,
-    SlackStubConnector,
-)
+from adapters.outbound.connectors._bench_stubs import register_bench_stubs
 from adapters.outbound.connectors.notion import NotionConnector
+from adapters.outbound.graph import GraphWriterPort
+from adapters.outbound.graph import Neo4jGraphWriter as _Neo4jGraphWriter
+from adapters.outbound.graph.backends.neo4j_backend import (
+    Neo4jGraphBackend as _Neo4jGraphBackend,
+)
+from adapters.outbound.graph.backends import build_backend
 from adapters.outbound.graph.context_graph_service import ContextGraphService
 from adapters.outbound.reconciliation.context_graph_tools import (
     ContextGraphReconciliationTools,
 )
-from adapters.outbound.graph import GraphWriterPort, Neo4jGraphWriter
-from adapters.outbound.graph.backends.neo4j_backend import Neo4jGraphBackend
 from adapters.outbound.policy import DefaultPolicyAdapter
 from adapters.outbound.postgres.agent_checkpoint_store import (
     SqlAlchemyAgentCheckpointStore,
@@ -53,6 +52,7 @@ from adapters.outbound.postgres.reconciliation_ledger import (
     SqlAlchemyReconciliationLedger,
 )
 from adapters.outbound.settings_env import EnvContextEngineSettings
+from application.services.graph_service import DefaultGraphService
 from application.services.source_connector_registry import SourceConnectorRegistry
 from bootstrap.sentry_metrics_runtime import configure_metrics
 from bootstrap.sentry_settings import load_sentry_settings
@@ -63,6 +63,7 @@ from domain.ports.event_stream import (
 )
 from domain.ports.ingestion_config import IngestionConfigPort
 from domain.ports.context_graph import ContextGraphPort
+from domain.ports.graph.backend import GraphBackend
 from domain.ports.ingestion_submission import IngestionSubmissionService
 from domain.ports.context_graph_job_queue import (
     ContextGraphJobQueuePort,
@@ -72,10 +73,18 @@ from domain.ports.policy import PolicyPort
 from domain.ports.pot_resolution import PotResolutionPort
 from domain.ports.pot_source_listing import PotSourceListingPort
 from domain.ports.observability import NoOpObservability, ObservabilityPort
+from bootstrap.observability_wiring import (
+    default_observability as _shared_default_observability,
+    observability_enabled as _shared_observability_enabled,
+)
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.settings import ContextEngineSettingsPort
+from domain.ports.services.graph_service import GraphService
 from domain.ports.telemetry import TelemetryPort
 from domain.source_references import SourceReferenceRecord
+
+Neo4jGraphWriter = _Neo4jGraphWriter
+Neo4jGraphBackend = _Neo4jGraphBackend
 
 
 @dataclass
@@ -90,8 +99,10 @@ class IngestionServerContainer:
     """
 
     settings: ContextEngineSettingsPort
-    graph_writer: GraphWriterPort
     pots: PotResolutionPort
+    graph_writer: GraphWriterPort | None = None
+    backend: GraphBackend | None = None
+    graph: GraphService | None = None
     connectors: SourceConnectorRegistry = field(default_factory=SourceConnectorRegistry)
     reconciliation_agent: ReconciliationAgentPort | None = None
     jobs: ContextGraphJobQueuePort | None = None
@@ -126,8 +137,15 @@ class IngestionServerContainer:
             pots=self.pots,
             reconciliation_agent_available=self.reconciliation_agent is not None,
             context_graph_available=self.context_graph is not None,
-            episodic_available=getattr(self.graph_writer, "enabled", True),
+            episodic_available=self._graph_available(),
         )
+
+    def _graph_available(self) -> bool:
+        if self.backend is not None:
+            return bool(getattr(self.backend, "enabled", True))
+        if self.graph_writer is not None:
+            return bool(getattr(self.graph_writer, "enabled", True))
+        return self.context_graph is not None
 
     def ledger(self, session: Session) -> SqlAlchemyIngestionLedger:
         return SqlAlchemyIngestionLedger(session)
@@ -168,6 +186,7 @@ class IngestionServerContainer:
         return DefaultIngestionSubmissionService(
             settings=self.settings,
             pots=self.pots,
+            graph=self.graph,
             reconciliation_agent=self.reconciliation_agent,
             reco_ledger=self.reconciliation_ledger(session),
             events=self.ingestion_event_store(session),
@@ -179,15 +198,16 @@ class IngestionServerContainer:
 
 def _attach_reconciliation_context(
     agent: ReconciliationAgentPort | None,
+    graph: GraphService | None,
     context_graph: ContextGraphPort | None,
 ) -> None:
-    if agent is None or context_graph is None:
+    if agent is None:
         return
     ctx_setter = getattr(agent, "set_context_tools", None)
-    if ctx_setter is not None:
-        ctx_setter(ContextGraphReconciliationTools(context_graph))
+    if ctx_setter is not None and graph is not None:
+        ctx_setter(ContextGraphReconciliationTools(graph))
     graph_setter = getattr(agent, "set_context_graph", None)
-    if graph_setter is not None:
+    if graph_setter is not None and context_graph is not None:
         graph_setter(context_graph)
 
 
@@ -223,37 +243,29 @@ def build_ingestion_server(
             telemetry_sink, observability_sink
         )
     stream_publisher = event_stream_publisher or _default_event_stream_publisher()
-    # FalkorDB (#819) ships as code-in-tree but is not yet wrapped behind the
-    # GraphBackend port — follow-up. Until that adapter exists, only Neo4j can
-    # be assembled into a ContextGraphService here.
-    backend_kind = (s.graph_db_backend() or "neo4j").strip().lower()
-    if backend_kind == "falkordb":
-        raise NotImplementedError(
-            "FalkorDB GraphBackend adapter is not wired yet; the FalkorDB "
-            "reader/writer modules (#819) remain importable at "
-            "adapters.outbound.graph.falkordb_* but need a GraphBackend port "
-            "wrapper before they can plug into ContextGraphService. Use "
-            "GRAPH_DB_BACKEND=neo4j until the adapter lands."
-        )
-    graph_writer = Neo4jGraphWriter(s)
+    backend_kind = (s.graph_db_backend() or "neo4j").strip().lower().replace("-", "_")
     registry = connectors or SourceConnectorRegistry()
-    # One graph substrate: the Neo4j GraphBackend (claim_query read trunk +
-    # mutation write door). Share the one writer so the ingestion scan path
-    # (container.graph_writer) and ContextGraphService don't open two pools.
-    backend = Neo4jGraphBackend(s, writer=graph_writer)
-    context_graph = ContextGraphService(backend=backend)
+    # One graph substrate selected through the GraphBackend registry. Backends
+    # that still support old direct seeding expose ``graph_writer`` as a
+    # compatibility alias; application paths use ``backend.mutation``.
+    backend = build_backend(backend_kind, settings=s)
+    graph_writer = getattr(backend, "graph_writer", None)
+    graph = DefaultGraphService(backend=backend)
+    context_graph = _build_context_graph_service(graph=graph, backend=backend)
     # Fail fast if the read trunk's reader set has drifted from the advertised
     # ``READER_BACKED_INCLUDES`` (see domain.coherence).
     from domain.coherence import assert_runtime_coherence
 
     assert_runtime_coherence(reader_backed_includes=context_graph.backed_includes)
-    _attach_reconciliation_context(reconciliation_agent, context_graph)
+    _attach_reconciliation_context(reconciliation_agent, graph, context_graph)
     _attach_reconciliation_telemetry(reconciliation_agent, telemetry_sink)
     _attach_reconciliation_observability(reconciliation_agent, observability_sink)
     _attach_reconciliation_event_stream(reconciliation_agent, stream_publisher)
     return IngestionServerContainer(
         settings=s,
         graph_writer=graph_writer,
+        backend=backend,
+        graph=graph,
         context_graph=context_graph,
         pots=pots,
         connectors=registry,
@@ -263,6 +275,17 @@ def build_ingestion_server(
         observability=observability_sink,
         event_stream_publisher=stream_publisher,
     )
+
+
+def _build_context_graph_service(
+    *,
+    graph: GraphService,
+    backend: GraphBackend,
+) -> ContextGraphPort:
+    try:
+        return ContextGraphService(graph=graph)
+    except TypeError:
+        return ContextGraphService(backend)
 
 
 def _default_telemetry() -> TelemetryPort:
@@ -284,10 +307,7 @@ def _default_telemetry() -> TelemetryPort:
 
 
 def _observability_enabled() -> bool:
-    import os
-
-    raw = os.getenv("CONTEXT_ENGINE_OBSERVABILITY", "").strip().lower()
-    return raw not in ("", "0", "false", "no", "off")
+    return _shared_observability_enabled()
 
 
 def _default_observability() -> ObservabilityPort:
@@ -298,29 +318,7 @@ def _default_observability() -> ObservabilityPort:
     adapter, but only when an OTLP endpoint is actually configured — so the
     feature ships dark and never tries to export into the void.
     """
-    import os
-
-    if not _observability_enabled():
-        return NoOpObservability()
-    mode = os.getenv("CONTEXT_ENGINE_OBSERVABILITY", "").strip().lower()
-    if mode == "console":
-        try:
-            from adapters.outbound.observability.console import ConsoleObservability
-
-            return ConsoleObservability()
-        except Exception:  # noqa: BLE001
-            return NoOpObservability()
-    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or os.getenv(
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
-    )
-    if not endpoint:
-        return NoOpObservability()
-    try:
-        from adapters.outbound.observability.otel import OtelObservability
-
-        return OtelObservability()
-    except Exception:  # noqa: BLE001 — missing extra / setup failure → dark
-        return NoOpObservability()
+    return _shared_default_observability()
 
 
 def _attach_reconciliation_telemetry(
@@ -451,10 +449,7 @@ def build_ingestion_server_with_github_token(
     # envelopes through reconciliation but advertise no fetch capability,
     # so production traffic that lacks a real reader will still fail
     # closed instead of silently grading against a stub.
-    registry.register(SlackStubConnector())
-    registry.register(RepoDocsStubConnector())
-    registry.register(AlertingStubConnector())
-    registry.register(DeployStubConnector())
+    register_bench_stubs(registry)
 
     return build_ingestion_server(
         settings=settings,

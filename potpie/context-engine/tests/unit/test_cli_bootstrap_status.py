@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Union
 from unittest.mock import MagicMock
 
@@ -15,6 +16,8 @@ from adapters.inbound.cli.commands._common import EXIT_DEGRADED
 from bootstrap.host_wiring import default_host_mode
 from domain.lifecycle import DONE, FAILED, SetupPlan, SetupReport, StepResult
 from domain.ports.agent_context import StatusReport, StatusRequest
+from domain.ports.graph.backend import BackendCapabilities
+from domain.ports.graph.mutation import BackendReadiness
 
 runner = CliRunner()
 
@@ -122,6 +125,45 @@ def test_status_host_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0, result.stdout
     assert '"profile": "managed"' in result.stdout
     assert '"daemon_up": true' in result.stdout
+
+
+def test_doctor_json_includes_backend_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Pot:
+        pot_id = "foo-pot"
+
+    class _LedgerStatus:
+        available = True
+        binding = "none"
+
+    mock_host = MagicMock()
+    mock_host.daemon.status.return_value = {"mode": "in_process"}
+    mock_host.backend.profile = "memory"
+    mock_host.backend.capabilities.return_value = BackendCapabilities(
+        profile="memory",
+        mutation=True,
+        claim_query=True,
+    )
+    mock_host.backend.mutation.readiness.return_value = BackendReadiness(
+        profile="memory",
+        ready=False,
+        detail="mutation store is unavailable",
+        capability_ready={"mutation": False},
+    )
+    mock_host.pots.active_pot.return_value = _Pot()
+    mock_host.ledger.status.return_value = _LedgerStatus()
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+
+    result = runner.invoke(cli_main.app, ["--json", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["backend_ready"] is False
+    assert payload["backend_readiness"]["detail"] == "mutation store is unavailable"
+    assert payload["backend_readiness"]["capability_ready"] == {"mutation": False}
+    assert payload["active_pot"] == "foo-pot"
+    assert "graph status" in payload["recommended_next_action"]
 
 
 def test_default_host_mode_rejects_invalid_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -297,6 +339,12 @@ def test_doctor_emits_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_host = MagicMock()
     mock_host.backend.profile = "falkordb"
     mock_host.backend.capabilities.return_value = mock_caps
+    mock_host.backend.mutation.readiness.return_value = BackendReadiness(
+        profile="falkordb",
+        ready=True,
+        capability_ready={"mutation": True},
+    )
+    mock_host.pots.active_pot.return_value = None
     mock_host.daemon.status.return_value = {"mode": "in_process", "up": True}
     mock_host.ledger.status.return_value = MagicMock(available=True, binding="local")
 

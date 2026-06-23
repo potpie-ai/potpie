@@ -26,13 +26,11 @@ from adapters.outbound.graph.plan_stores import LocalJsonGraphPlanStore
 from adapters.outbound.install.local_installer import LocalInstaller
 from adapters.outbound.ledger.cursor_store import LocalLedgerCursorStore
 from adapters.outbound.ledger.managed_client import ManagedEventLedgerClient
-from adapters.outbound.ledger.reconciler import DeterministicEventReconciler
 from adapters.outbound.pots.flat_file_state_store import (
     FlatFileMigrator,
     FlatFileStateStore,
 )
 from adapters.outbound.pots.local_pot_store import LocalPotStore
-from adapters.outbound.scanners.default_registry import build_default_scanner_registry
 from adapters.outbound.session.injection_ledger import LocalInjectionLedger
 from adapters.outbound.skills.claude_target import (
     ClaudeAgentTarget,
@@ -45,7 +43,6 @@ from application.services.auth_service import LocalAuthService
 from application.services.config_service import LocalConfigService
 from application.services.graph_service import DefaultGraphService
 from application.services.graph_workbench import GraphWorkbenchService
-from application.services.ingest_service import IngestService
 from application.services.nudge_service import NudgeService
 from application.services.pot_management import LocalPotManagementService
 from application.services.setup_orchestrator import DefaultSetupOrchestrator
@@ -129,14 +126,6 @@ def build_host_shell(
         ledger = LedgerFacade(
             client=ledger_client or ManagedEventLedgerClient(),
             cursors=LocalLedgerCursorStore(),
-            # The reconciler is the parked LLM-vs-deterministic seam (see its TODO).
-            reconciler=DeterministicEventReconciler(mutation=backend.mutation),
-        )
-
-        # Local working-tree config scanners write through the same mutation port.
-        ingest = IngestService(
-            mutation=backend.mutation,
-            scanner_registry=build_default_scanner_registry(),
         )
 
         # The nudge brain reads through the graph service and dedups via a local
@@ -169,7 +158,6 @@ def build_host_shell(
             skills=skills,
             backend=backend,
             ledger=ledger,
-            ingest=ingest,
             nudge=nudge,
             daemon=daemon,
             config=config,
