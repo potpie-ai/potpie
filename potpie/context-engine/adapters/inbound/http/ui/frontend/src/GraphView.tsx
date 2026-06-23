@@ -80,6 +80,11 @@ export default function GraphView({
     fgRef.current?.zoom(Z100, 300);
   };
   const fitZoom = () => fgRef.current?.zoomToFit?.(300, 60);
+  const zoomBy = (factor: number) => {
+    const fg = fgRef.current;
+    if (!fg?.zoom) return;
+    fg.zoom(Math.max(0.05, Math.min(12, fg.zoom() * factor)), 200);
+  };
 
   // The selected node is skipped in the normal per-node pass and repainted in
   // onRenderFramePost (emphasized), so it and its label sit above everything.
@@ -175,6 +180,34 @@ export default function GraphView({
     ctx.fill();
   };
 
+  // Geometry hit-test, used as a fallback for browsers that defeat the
+  // library's canvas-readback picking. Brave's fingerprinting protection
+  // ("farbling") randomizes getImageData(), so the colored shadow-canvas the
+  // library reads to map cursor→node never matches — every click registers as
+  // empty background. We recover the node from the click position + node
+  // radius instead, which needs no pixel readback and works everywhere.
+  const nodeAtEvent = (e: MouseEvent): GraphNode | null => {
+    const fg = fgRef.current;
+    const canvas = wrapRef.current?.querySelector("canvas");
+    if (!fg?.screen2GraphCoords || !canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const p = fg.screen2GraphCoords(e.clientX - rect.left, e.clientY - rect.top);
+    let best: GraphNode | null = null;
+    let bestD = Infinity;
+    for (const n of graphData.nodes as GraphNode[]) {
+      if (n.x == null || n.y == null) continue;
+      const rr = radius(n) + 4;
+      const dx = n.x - p.x;
+      const dy = n.y - p.y;
+      const d = dx * dx + dy * dy;
+      if (d <= rr * rr && d < bestD) {
+        bestD = d;
+        best = n;
+      }
+    }
+    return best;
+  };
+
   return (
     <div ref={wrapRef} className="graph-canvas">
       <ForceGraph2D
@@ -212,23 +245,39 @@ export default function GraphView({
         }}
         onNodeClick={(n: any) => onSelect(n as GraphNode)}
         onNodeRightClick={(n: any) => onExpand(n as GraphNode)}
-        onBackgroundClick={() => onSelect(null)}
+        onBackgroundClick={(e: MouseEvent) => {
+          // Fires for genuine empty clicks everywhere, and for *every* click in
+          // browsers whose canvas readback is farbled (Brave). Recover the node
+          // geometrically; fall back to deselect when the click was truly empty.
+          const n = nodeAtEvent(e);
+          onSelect(n || null);
+        }}
+        onBackgroundRightClick={(e: MouseEvent) => {
+          const n = nodeAtEvent(e);
+          if (n) onExpand(n);
+        }}
         onNodeDragEnd={(n: any) => {
           n.fx = n.x;
           n.fy = n.y;
         }}
       />
       <div className="zoom-ctl">
-        <button onClick={resetZoom} title="Reset to 100%">
+        <button onClick={() => zoomBy(1.25)} title="Zoom in">
+          +
+        </button>
+        <button
+          className="zoom-val"
+          onClick={resetZoom}
+          title="Reset to 100%"
+        >
           {zoomPct}%
+        </button>
+        <button onClick={() => zoomBy(0.8)} title="Zoom out">
+          −
         </button>
         <button onClick={fitZoom} title="Fit graph to view">
           fit
         </button>
-      </div>
-      <div className="graph-hint">
-        click a node for details · right-click to expand · scroll to zoom · drag
-        to pin
       </div>
     </div>
   );

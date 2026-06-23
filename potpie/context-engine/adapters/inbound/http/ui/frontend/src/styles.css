@@ -1,18 +1,32 @@
-/* Potpie brand (potpie.ai), terminal-styled: a near-black neutral chassis
-   around a dark neutral "screen" (the graph/timeline canvas) matching the side
-   panels, cream text, lime primary + coral secondary accents.
-   Canvas-side counterparts: theme.ts (UI). */
+/* Potpie Graph Explorer — visual system mirrors the Figma "Fancy Potpie
+   Designs" / CG screens. A near-black neutral chassis (#0a0b0b) wraps darker
+   "screen" inner panels (#131313) with #1a1a1a controls; lime (#b6e343) is the
+   single accent, coral (#f15b5b) the alert. Labels are sans (Uncut Sans in the
+   source file → system sans fallback here); counts/keys stay monospace.
+   Canvas-side counterparts live in theme.ts (UI). */
 :root {
-  --bg: #0a0c0b;
-  --screen: #151916;
-  --panel: #0a0c0b;
-  --panel-2: #151916;
-  --border: #262c27;
-  --text: #efe6df;
-  --muted: #94a49a;
+  --bg: #0a0b0b;
+  --screen: #131313;
+  --panel: #0a0b0b;
+  --panel-2: #131313;
+  --control: #1a1a1a;
+  --border: #252c27;
+  --border-soft: #1e231f;
+  --text: #e8e8e8;
+  --muted: #696d6d;
+  --muted-2: #a6a6af;
   --accent: #b6e343;
+  --accent-soft: rgba(182, 227, 67, 0.12);
   --accent-ink: #022d2c;
+  --badge-bg: rgba(105, 109, 109, 0.2);
+  --toggle-on: #2d321f;
+  --toggle-off: #242525;
+  --expand-bg: #00291c;
   --alert: #f15b5b;
+  --font-sans: "Uncut Sans", "Geist", Inter, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: "Fragment Mono SC", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
 }
 
 ::-webkit-scrollbar {
@@ -39,8 +53,9 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
-    monospace;
+  font: 14px/1.45 var(--font-sans);
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
 }
 
 .app {
@@ -49,12 +64,13 @@ body {
   height: 100vh;
 }
 
+/* ── Topbar ─────────────────────────────────────────────────────────────── */
 .topbar {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
-  padding: 0 1rem;
-  height: 52px;
+  gap: 14px;
+  padding: 0 12px;
+  height: 53px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   flex: none;
@@ -62,102 +78,149 @@ body {
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-weight: 600;
-  font-size: 15px;
-  letter-spacing: 0.2px;
+  gap: 12px;
 }
 .brand .logo-img {
   height: 22px;
   display: block;
 }
-.brand em {
+.brand .title {
   color: var(--muted);
-  font-style: normal;
+  font-size: 18px;
   font-weight: 400;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
 }
-.pot-select {
+
+/* Search lives in the topbar (left-of-centre), with results as a dropdown. */
+.topbar-search {
+  position: relative;
+  width: 266px;
+  flex: none;
+}
+.topbar-search form {
   display: flex;
   align-items: center;
-  gap: 8px;
 }
-.pot-select label {
-  color: var(--muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.pot-select select {
-  background: var(--panel-2);
+.topbar-search input {
+  width: 100%;
+  height: 29px;
+  background: var(--control);
+  border: 1px solid var(--border);
+  border-radius: 3px;
   color: var(--text);
+  padding: 0 30px 0 11px;
+  font: 14px var(--font-sans);
+  letter-spacing: -0.02em;
+}
+.topbar-search input::placeholder {
+  color: var(--muted);
+}
+.topbar-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.topbar-search .search-ico {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.search-results {
+  position: absolute;
+  top: 36px;
+  left: 0;
+  width: 360px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 13px;
-  min-width: 180px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 20;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
 }
+
+.topbar-spacer {
+  flex: 1;
+}
+
+/* Segmented Graph / Timeline toggle */
 .viewtoggle {
   display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 29px;
+  padding: 3px;
+  background: var(--control);
   border: 1px solid var(--border);
-  border-radius: 7px;
-  overflow: hidden;
+  border-radius: 3px;
+  flex: none;
 }
 .viewtoggle button {
-  background: var(--panel-2);
-  color: var(--muted);
+  background: transparent;
+  color: #686868;
   border: none;
-  padding: 6px 14px;
-  font-size: 13px;
+  height: 100%;
+  padding: 0 14px;
+  font: 500 12px var(--font-sans);
+  letter-spacing: 0.04em;
+  border-radius: 2px;
   cursor: pointer;
 }
 .viewtoggle button.on {
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-weight: 600;
-}
-.groupby {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.groupby label {
-  color: var(--muted);
-  font-size: 12px;
-}
-.groupby select {
-  background: var(--panel-2);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 8px;
-  font-size: 13px;
-}
-.stats {
-  margin-left: auto;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-/* pill chips with thin lime borders, like the badges on potpie.ai */
-.chip {
-  background: rgba(182, 227, 67, 0.07);
-  border: 1px solid rgba(182, 227, 67, 0.35);
-  border-radius: 20px;
-  padding: 4px 11px;
-  font-size: 12px;
+  background: var(--accent-soft);
   color: var(--accent);
-}
-.chip.muted {
-  background: transparent;
-  border-color: var(--border);
-  color: var(--muted);
-}
-.chip.spin {
-  background: rgba(241, 91, 91, 0.08);
-  border-color: rgba(241, 91, 91, 0.45);
-  color: var(--alert);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
 }
 
+/* Pot selector: "Pot" chip + native select inside one bordered control */
+.pot-select {
+  display: flex;
+  align-items: stretch;
+  height: 29px;
+  background: var(--control);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  flex: none;
+}
+.pot-select label {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+.pot-select select {
+  background: transparent;
+  color: var(--text);
+  border: none;
+  padding: 0 26px 0 12px;
+  font: 14px var(--font-sans);
+  letter-spacing: -0.02em;
+  min-width: 150px;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23696d6d' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+.pot-select select:focus {
+  outline: none;
+}
+
+/* ── Body / sidebar ─────────────────────────────────────────────────────── */
 .body {
   flex: 1;
   display: flex;
@@ -168,16 +231,22 @@ body {
   flex: none;
   background: var(--panel);
   border-right: 1px solid var(--border);
-  padding: 14px;
+  padding: 12px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 11px;
+}
+/* Keep each card at its natural height so the sidebar (not the cards) owns the
+   scroll — otherwise flex-shrink squeezes the node panel and its `overflow:
+   hidden` clips the property rows. */
+.sidebar > * {
+  flex: none;
 }
 .sidebar-resizer {
   flex: none;
   width: 5px;
-  margin-left: -3px; /* overlap the sidebar border so the grab area is easy to hit */
+  margin-left: -3px;
   cursor: col-resize;
   background: transparent;
   transition: background 0.15s;
@@ -193,69 +262,47 @@ body {
   overflow: hidden;
 }
 
-.search {
-  display: flex;
-  gap: 8px;
-}
-.search input {
-  flex: 1;
-  background: var(--panel-2);
+/* ── Cards (hint / node / legend) ───────────────────────────────────────── */
+.card,
+.hint-panel,
+.node-panel,
+.legend {
+  background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  padding: 8px 10px;
-  font-size: 13px;
+  border-radius: 4px;
 }
-.search input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-.search button,
-.expand-btn {
-  background: var(--accent);
-  color: var(--accent-ink);
-  border: none;
-  border-radius: 6px;
-  padding: 8px 14px;
-  font-weight: 600;
-  cursor: pointer;
-  font-size: 13px;
-}
-.search button:hover,
-.expand-btn:hover {
-  filter: brightness(1.08);
-  box-shadow: 0 0 14px rgba(182, 227, 67, 0.35);
-}
-
-.section-title {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
+.hint-panel {
   color: var(--muted);
-  margin-bottom: 8px;
-}
-.section-title::before {
-  content: "❯ ";
-  color: var(--accent);
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 14px;
+  letter-spacing: -0.02em;
 }
 
-.results {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.card-title,
+.section-title {
+  font-size: 12px;
+  letter-spacing: -0.02em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+/* ── Search results ─────────────────────────────────────────────────────── */
+.results .section-title {
+  padding: 2px 4px 6px;
 }
 .result {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--panel-2);
+  background: var(--control);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   padding: 7px 9px;
   cursor: pointer;
   text-align: left;
   color: var(--text);
-  font-size: 12px;
+  font-size: 13px;
 }
 .result:hover {
   border-color: var(--accent);
@@ -265,107 +312,297 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 .result .score {
   color: var(--muted);
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-}
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex: none;
 }
 .type-badge {
   flex: none;
   display: block;
 }
-.section-title.with-badge {
+
+/* ── Node inspect panel ─────────────────────────────────────────────────── */
+.node-panel {
+  padding: 0;
+  overflow: hidden;
+}
+.node-panel .np-head {
+  padding: 12px 14px 0;
+}
+.node-panel .np-type {
+  font-size: 12px;
+  letter-spacing: -0.02em;
+  color: var(--muted);
+  text-transform: uppercase;
   display: flex;
   align-items: center;
   gap: 7px;
+  margin-bottom: 8px;
 }
-
-.hint-panel,
-.node-panel,
-.legend {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
-}
-.hint-panel {
-  color: var(--muted);
-  font-size: 13px;
-}
-
 .node-key {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.45;
   word-break: break-all;
-  margin-bottom: 10px;
   color: var(--text);
+  margin-bottom: 12px;
 }
 .expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
-  margin-bottom: 10px;
+  height: 32px;
+  background: var(--expand-bg);
+  color: var(--accent);
+  border: none;
+  border-radius: 8px;
+  font: 500 12px var(--font-sans);
+  letter-spacing: 0.04em;
+  text-transform: capitalize;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+.expand-btn:hover {
+  box-shadow: 0 0 14px rgba(182, 227, 67, 0.18);
 }
 .props {
-  font-size: 12px;
+  background: var(--panel-2);
+  border-top: 1px solid var(--border);
 }
 .props .prop {
-  border-top: 1px solid var(--border);
-  padding: 6px 2px 7px;
+  border-bottom: 1px solid var(--border);
+  padding: 9px 14px 10px;
 }
 .props .pk {
   color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
   margin-bottom: 3px;
 }
 .props .pv {
+  color: var(--text);
+  font-size: 14px;
   word-break: break-word;
   line-height: 1.45;
+  letter-spacing: -0.02em;
 }
 
-.legend-row {
+/* ── Categories / Kind legend card ──────────────────────────────────────── */
+.legend {
+  padding: 12px;
+}
+.legend .card-title {
+  margin-bottom: 12px;
+}
+.kind-list {
+  background: var(--panel-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+/* Category groups: the header (Topology/Memory) sits on the card's dark
+   background, while its type rows live in a lighter inset panel below it. */
+.cat-list {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  padding: 2px 0;
-}
-.legend-row.indent {
-  padding-left: 16px;
-  cursor: pointer;
-}
-.legend-row.indent input {
-  accent-color: var(--accent);
-}
-.legend-count {
-  margin-left: auto;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.cat-group {
-  margin-bottom: 6px;
+  flex-direction: column;
 }
 .cat-head {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 12px;
+  gap: 8px;
+  padding: 8px;
   cursor: pointer;
-  padding: 3px 0;
 }
-.cat-head .cat-name {
+.cat-name {
+  color: var(--accent);
+  font-size: 14px;
+  letter-spacing: -0.02em;
   text-transform: capitalize;
-  font-weight: 600;
-  color: var(--text);
 }
-.cat-head input {
-  accent-color: var(--accent);
+.cat-rows {
+  background: var(--panel-2);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.cat-group:last-child .cat-rows {
+  margin-bottom: 0;
+}
+.cat-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px 7px 22px;
+  border-top: 1px solid var(--border-soft);
+  cursor: pointer;
+}
+.cat-row:first-child {
+  border-top: none;
+}
+.cat-row.dim {
+  opacity: 0.45;
+}
+.cat-row-name {
+  color: var(--text);
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+.count-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+  padding: 0 8px;
+  border-radius: 10px;
+  background: var(--badge-bg);
+  color: var(--muted-2);
+  font: 10px var(--font-mono);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.vis-toggle {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--accent);
+  background: var(--toggle-on);
+}
+.vis-toggle.off {
+  background: var(--toggle-off);
+  color: var(--muted-2);
+}
+.vis-toggle:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
-/* Timeline view */
+/* Kind legend rows (timeline view) */
+.kind-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+.kind-row + .kind-row {
+  border-top: 1px solid var(--border-soft);
+}
+.kind-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+/* ── Canvas overlays ────────────────────────────────────────────────────── */
+.canvas-stats {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stat-pill {
+  display: inline-flex;
+  align-items: stretch;
+  height: 29px;
+  background: var(--control);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.stat-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+.stat-seg + .stat-seg {
+  border-left: 1px solid var(--border);
+}
+.stat-seg b {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.stat-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 29px;
+  padding: 0 12px;
+  border-radius: 4px;
+  background: var(--control);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: -0.02em;
+}
+.stat-chip.spin {
+  color: var(--alert);
+  border-color: rgba(241, 91, 91, 0.45);
+  background: rgba(241, 91, 91, 0.08);
+}
+
+.canvas-tools {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+.info-btn {
+  width: 31px;
+  height: 31px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--control);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.info-btn:hover,
+.info-btn.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.hint-card {
+  max-width: 264px;
+  background: var(--control);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+}
+
+/* ── Timeline / graph canvas ────────────────────────────────────────────── */
 .timeline {
   position: absolute;
   inset: 0;
@@ -385,8 +622,11 @@ body {
   color: var(--muted);
   font-size: 14px;
   padding: 2rem;
+  max-width: 560px;
+  margin: 0 auto;
 }
 .timeline-empty code {
+  font-family: var(--font-mono);
   background: var(--panel-2);
   padding: 1px 5px;
   border-radius: 4px;
@@ -396,52 +636,60 @@ body {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  /* isolate the canvas in its own paint layer so per-frame redraws can't
-     bleed repaints/jitter into the topbar and sidebar */
   contain: layout paint size;
 }
+
+/* Vertical zoom control, bottom-right */
 .zoom-ctl {
   position: absolute;
-  bottom: 10px;
+  bottom: 12px;
   right: 12px;
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  background: var(--control);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  z-index: 4;
 }
 .zoom-ctl button {
-  background: rgba(21, 25, 22, 0.85);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  background: transparent;
+  border: none;
   color: var(--muted);
-  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
-  padding: 4px 9px;
+  font: 11px var(--font-mono);
+  width: 34px;
+  height: 28px;
   cursor: pointer;
-  min-width: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.zoom-ctl button + button {
+  border-top: 1px solid var(--border);
 }
 .zoom-ctl button:hover {
   color: var(--accent);
-  border-color: var(--accent);
+  background: rgba(182, 227, 67, 0.06);
 }
-.graph-hint {
-  position: absolute;
-  bottom: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: var(--muted);
-  font-size: 11px;
-  background: rgba(21, 25, 22, 0.85);
-  padding: 4px 12px;
-  border-radius: 20px;
-  border: 1px solid var(--border);
-  pointer-events: none;
+.zoom-ctl .zoom-val {
+  font-size: 9px;
+  color: var(--muted-2);
+  height: 18px;
+  cursor: default;
 }
+.zoom-ctl .zoom-val:hover {
+  background: transparent;
+  color: var(--muted-2);
+}
+
 .error {
   position: absolute;
   top: 12px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 5;
+  z-index: 6;
   background: #34100f;
-  border: 1px solid #f15b5b;
+  border: 1px solid var(--alert);
   color: #ffd9d2;
   padding: 8px 14px;
   border-radius: 6px;

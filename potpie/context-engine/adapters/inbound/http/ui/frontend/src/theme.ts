@@ -4,19 +4,19 @@
 // The chrome (topbar/sidebar) is a near-black neutral chassis; the graph and
 // timeline render on a dark neutral "screen" inside it, matching the side panels.
 export const UI = {
-  bg: "#151916",
-  panel2: "#222822",
+  bg: "#131313",
+  panel2: "#1a1a1a",
   accent: "#b6e343",
   glow: "rgba(182,227,67,0.9)",
-  ring: "#efe6df",
-  ringSoft: "rgba(239,230,223,0.5)",
+  ring: "#e8e8e8",
+  ringSoft: "rgba(232,232,232,0.5)",
   link: "rgba(138,167,155,0.32)",
-  label: "rgba(239,230,223,0.88)",
-  labelBright: "#fff9f5",
-  halo: "rgba(21,25,22,0.85)",
-  haloStrong: "rgba(21,25,22,0.95)",
+  label: "rgba(232,232,232,0.88)",
+  labelBright: "#ffffff",
+  halo: "rgba(10,11,11,0.85)",
+  haloStrong: "rgba(10,11,11,0.95)",
   iconStroke: "rgba(10,12,11,0.85)",
-  textMuted: "#8aa79b",
+  textMuted: "#696d6d",
   gridDot: "rgba(182,227,67,0.07)",
   font: 'SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
 } as const;
