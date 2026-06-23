@@ -63,14 +63,8 @@ def read_discovery(path: pathlib.Path) -> dict:
 def _write_private_text(path: pathlib.Path, data: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(data)
-    finally:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(data)
     os.chmod(path, 0o600)
 
 
