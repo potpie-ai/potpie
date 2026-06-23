@@ -1,7 +1,9 @@
 """Aggregated health registrar for transports, components, and services."""
 
 from __future__ import annotations
+
 import threading
+
 from domain.ports.daemon.shell import HealthStatus
 
 
@@ -27,10 +29,10 @@ class HealthRegistrar:
             states = list(self._states.values())
         if not states:
             return HealthStatus.STARTING
-        if any(s is HealthStatus.STARTING for s in states):
+        if any(state is HealthStatus.STARTING for state in states):
             return HealthStatus.STARTING
-        if any(s is HealthStatus.DEGRADED for s in states):
+        if any(state is HealthStatus.DEGRADED for state in states):
             return HealthStatus.DEGRADED
-        if all(s is HealthStatus.READY for s in states):
+        if all(state is HealthStatus.READY for state in states):
             return HealthStatus.READY
         return HealthStatus.STOPPED

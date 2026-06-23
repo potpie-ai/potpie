@@ -1,9 +1,9 @@
 """Detached daemon launcher: start the daemon as a background process and block until ready, or stop it.
 
-This is the reliable, transport-agnostic start/stop mechanism the ``host.daemon.Daemon``
-seam drives. ``start_detached`` is QUIET — it returns ``{"pid","socket","bind"}`` once the
-daemon has signalled readiness (discovery file written) or raises ``DaemonStartError``; it
-never prints, so it is safe to call from inside a rich/live setup UI.
+This is the reliable start/stop mechanism the ``host.daemon.Daemon`` seam
+drives. ``start_detached`` is QUIET — it returns daemon discovery metadata once
+readiness is signalled (discovery file written) or raises ``DaemonStartError``;
+it never prints, so it is safe to call from inside a rich/live setup UI.
 """
 
 from __future__ import annotations
@@ -30,12 +30,17 @@ class DaemonStartError(Exception):
         self.log_path = log_path
 
 
-def start_detached(home: pathlib.Path, *, ready_timeout_s: float = 60.0) -> dict:
+def start_detached(
+    home: pathlib.Path,
+    *,
+    ready_timeout_s: float = 60.0,
+    backend: str | None = None,
+) -> dict:
     """Start the daemon detached for ``home`` and block until it is fully serving.
 
-    Returns ``{"pid", "socket", "bind"}`` once the daemon signals readiness (discovery file
-    written), or raises :class:`DaemonStartError` on any failure (already running, child
-    crash, or readiness timeout).
+    Returns discovery metadata once the daemon signals readiness (discovery file
+    written), or raises :class:`DaemonStartError` on any failure (already
+    running, child crash, or readiness timeout).
     """
     home = pathlib.Path(home)
     pid_file = home / "daemon.pid"
@@ -53,12 +58,16 @@ def start_detached(home: pathlib.Path, *, ready_timeout_s: float = 60.0) -> dict
     log_fp = log_path.open("a")
     try:
         proc = subprocess.Popen(
-            [sys.executable, "-m", "host.daemon_runtime", "run", "--home", str(home)],
+            [sys.executable, "-m", "host.daemon_main"],
             stdout=log_fp,
             stderr=subprocess.STDOUT,
             start_new_session=True,
             close_fds=True,
-            env={**os.environ, "CONTEXT_ENGINE_HOME": str(home)},
+            env={
+                **os.environ,
+                "CONTEXT_ENGINE_HOME": str(home),
+                **({"CONTEXT_ENGINE_BACKEND": backend} if backend else {}),
+            },
         )
     finally:
         log_fp.close()
@@ -70,8 +79,14 @@ def start_detached(home: pathlib.Path, *, ready_timeout_s: float = 60.0) -> dict
             except (OSError, json.JSONDecodeError):
                 disc = {}
             bind = disc.get("bind", "")
+            base_url = disc.get("base_url", "")
             socket_path = bind[len("unix:") :] if bind.startswith("unix:") else bind
-            return {"pid": proc.pid, "socket": socket_path, "bind": bind}
+            return {
+                "pid": proc.pid,
+                "socket": socket_path,
+                "bind": bind,
+                "url": base_url,
+            }
         if proc.poll() is not None:
             raise DaemonStartError(
                 f"daemon failed to start (exit {proc.returncode})", log_path=log_path

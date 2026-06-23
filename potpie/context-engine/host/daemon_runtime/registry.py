@@ -1,6 +1,7 @@
 """Generic plugin registry used for transports, components, and service backends."""
 
 from __future__ import annotations
+
 from typing import Callable, Generic, TypeVar
 
 T = TypeVar("T")
