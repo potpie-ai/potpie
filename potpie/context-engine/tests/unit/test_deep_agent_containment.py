@@ -81,7 +81,7 @@ def test_playbook_allowlist_drops_undeclared_external_tools():
     ctx = _ctx([_event("e1", system="github", etype="pull_request", action="merged")])
     tools = [
         _NamedTool("github_get_pull_request"),  # declared
-        _NamedTool("sandbox_read_file"),  # NOT declared for this kind
+        _NamedTool("repo_file_reader"),  # NOT declared for this kind
         _NamedTool("evil_tool"),  # never declared
     ]
     kept = {t.name for t in agent._enforce_playbook_tool_allowlist(tools, ctx)}

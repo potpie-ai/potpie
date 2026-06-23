@@ -16,8 +16,8 @@ intentionally minimal:
   list operation; otherwise empty.
 
 Rebuild plan P0: removed ``propose_plan`` (deterministic page-event plan
-compilation). The LLM reconciliation agent + the eventual P4 doc-source
-scanner produce :RELATES_TO claims from the fetched page body.
+compilation). Fetched page content is evidence for the harness or parked LLM
+planner; this connector does not write graph claims directly.
 """
 
 from __future__ import annotations

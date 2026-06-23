@@ -14,8 +14,7 @@ Surfaces:
     .pots            PotManagementService  control plane
     .skills          SkillManager       skill catalog + install
     .backend         GraphBackend       active storage profile (6 capabilities)
-    .ledger          LedgerFacade       event-ledger pull/cursor/reconcile
-    .ingest          IngestService      working-tree config scanners
+    .ledger          LedgerFacade       event-ledger read/cursor surface
     .nudge           NudgeService       trigger-policy brain (graph nudge)
     .daemon          Daemon             local host lifecycle
     .config          ConfigService      home dir + config file
@@ -32,14 +31,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from application.services.graph_workbench import GraphWorkbenchService
-from application.services.ingest_service import IngestService
 from application.services.nudge_service import NudgeService
 from domain.ports.agent_context import AgentContextPort
 from domain.ports.graph.backend import GraphBackend
 from domain.ports.install import Installer
 from domain.ports.ledger.client import EventLedgerClientPort, LedgerPage
 from domain.ports.ledger.cursor import LedgerCursorStorePort
-from domain.ports.ledger.reconciler import EventReconcilerPort, ReconcileResult
 from domain.ports.services.auth import AuthService
 from domain.ports.services.config import ConfigService
 from domain.ports.services.graph_service import GraphService
@@ -51,16 +48,10 @@ from host.daemon import Daemon
 
 @dataclass(slots=True)
 class LedgerFacade:
-    """Bundles the three ledger ports + the pull→reconcile→advance flow.
-
-    Keeps the ``ledger pull --apply`` orchestration (fetch a page, reconcile it
-    into the graph, advance the cursor) in one place behind the host so the CLI
-    stays thin.
-    """
+    """Bundles the read-only ledger client and cursor store behind the host."""
 
     client: EventLedgerClientPort
     cursors: LedgerCursorStorePort
-    reconciler: EventReconcilerPort
 
     def status(self):
         return self.client.health()
@@ -88,19 +79,14 @@ class LedgerFacade:
             limit=limit,
         )
 
-    def pull(
-        self, *, pot_id: str, source_id: str, apply: bool = False, limit: int = 100
-    ) -> tuple[LedgerPage, ReconcileResult | None]:
+    def pull(self, *, pot_id: str, source_id: str, limit: int = 100) -> LedgerPage:
         cursor = self.cursors.get(pot_id=pot_id, source_id=source_id)
         page = self.client.fetch(
             pot_id=pot_id, source_id=source_id, cursor=cursor, limit=limit
         )
-        if not apply:
-            return page, None  # dry-run / preview
-        result = self.reconciler.reconcile(pot_id=pot_id, events=list(page.events))
         if page.next_cursor is not None:
             self.cursors.set(pot_id=pot_id, cursor=page.next_cursor)
-        return page, result
+        return page
 
 
 @dataclass(slots=True)
@@ -114,7 +100,6 @@ class HostShell:
     skills: SkillManager
     backend: GraphBackend
     ledger: LedgerFacade
-    ingest: IngestService
     nudge: NudgeService
     daemon: Daemon
     config: ConfigService

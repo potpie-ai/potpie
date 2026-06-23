@@ -1,9 +1,8 @@
 """Event Ledger ports — the external source-event seam.
 
 The ledger is not graph storage. A graph pulls normalized events through
-``EventLedgerClientPort``, tracks position with ``LedgerCursorStorePort``, and
-turns events into claims through ``EventReconcilerPort`` (the parked
-LLM-vs-deterministic decision).
+``EventLedgerClientPort`` and tracks position with ``LedgerCursorStorePort``.
+Graph writes are intentionally left to the harness-facing mutation surface.
 """
 
 from __future__ import annotations
@@ -17,16 +16,13 @@ from domain.ports.ledger.client import (
     LedgerSource,
 )
 from domain.ports.ledger.cursor import LedgerCursorStorePort
-from domain.ports.ledger.reconciler import EventReconcilerPort, ReconcileResult
 
 __all__ = [
     "EventLedgerClientPort",
-    "EventReconcilerPort",
     "LedgerCursor",
     "LedgerCursorStorePort",
     "LedgerEvent",
     "LedgerHealth",
     "LedgerPage",
     "LedgerSource",
-    "ReconcileResult",
 ]

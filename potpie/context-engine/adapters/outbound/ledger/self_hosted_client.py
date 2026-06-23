@@ -4,8 +4,7 @@
 pull/cursor contract as the managed client (dummy/TODO).
 
 ``FixtureEventLedgerClient`` is an in-process client seeded with synthetic
-normalized events — it lets the POC and tests exercise the full
-``ledger pull --apply`` → reconcile → claims path without any network.
+normalized events so tests can exercise ledger reads without any network.
 """
 
 from __future__ import annotations
