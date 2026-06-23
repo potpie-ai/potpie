@@ -1,14 +1,11 @@
-"""Local IPC auth: token for loopback HTTP; OS-user/UDS perms for the socket.
-
-This is the daemon's *transport* gate (who may call the socket), distinct from
-``application.services.auth_service`` / ``domain.ports.services.auth`` which own the
-user's identity and credentials.
-"""
+"""Local IPC auth for loopback HTTP or Unix-domain socket access."""
 
 from __future__ import annotations
+
 import os
 import pathlib
 import secrets
+
 from domain.ports.daemon.operations import Principal
 
 
@@ -27,7 +24,6 @@ class IpcAuthGate:
     def authenticate_token(self, presented: str) -> Principal:
         if self._token is None:
             raise AuthFailure("token auth not configured")
-        # constant-time compare
         if not secrets.compare_digest(presented, self._token):
             raise AuthFailure("invalid token")
         return Principal(name="local")
@@ -37,14 +33,12 @@ class IpcAuthGate:
 
     @staticmethod
     def generate_token_file(path: pathlib.Path) -> str:
-        tok = secrets.token_urlsafe(32)
+        token = secrets.token_urlsafe(32)
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            os.write(fd, tok.encode())
+            os.write(fd, token.encode())
         finally:
             os.close(fd)
-        os.chmod(
-            path, 0o600
-        )  # ensure 0600 even if the file pre-existed with looser perms
-        return tok
+        os.chmod(path, 0o600)
+        return token

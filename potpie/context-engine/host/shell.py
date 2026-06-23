@@ -10,11 +10,13 @@ command (and every HTTP/MCP handler) reaches the system through one
 Surfaces:
     .agent_context   AgentContextPort   the 4-tool agent surface (compose)
     .graph           GraphService       data plane
+    .graph_workbench GraphWorkbenchService  plan/propose/commit workflow
     .pots            PotManagementService  control plane
     .skills          SkillManager       skill catalog + install
     .backend         GraphBackend       active storage profile (6 capabilities)
     .ledger          LedgerFacade       event-ledger pull/cursor/reconcile
     .ingest          IngestService      working-tree config scanners
+    .nudge           NudgeService       trigger-policy brain (graph nudge)
     .daemon          Daemon             local host lifecycle
     .config          ConfigService      home dir + config file
     .installer       Installer          CLI-on-PATH + service-unit registration
@@ -29,6 +31,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from application.services.graph_workbench import GraphWorkbenchService
+from application.services.ingest_service import IngestService
+from application.services.nudge_service import NudgeService
 from domain.ports.agent_context import AgentContextPort
 from domain.ports.graph.backend import GraphBackend
 from domain.ports.install import Installer
@@ -41,7 +46,6 @@ from domain.ports.services.graph_service import GraphService
 from domain.ports.services.pot_management import PotManagementService
 from domain.ports.services.setup import SetupOrchestrator
 from domain.ports.services.skill_manager import SkillManager
-from application.services.ingest_service import IngestService
 from host.daemon import Daemon
 
 
@@ -105,11 +109,13 @@ class HostShell:
 
     agent_context: AgentContextPort
     graph: GraphService
+    graph_workbench: GraphWorkbenchService
     pots: PotManagementService
     skills: SkillManager
     backend: GraphBackend
     ledger: LedgerFacade
     ingest: IngestService
+    nudge: NudgeService
     daemon: Daemon
     config: ConfigService
     installer: Installer
