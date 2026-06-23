@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -191,24 +190,10 @@ def test_host_shell_defaults_to_falkordb_lite(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)
 
     host = build_host_shell()
-    expected = "falkordb_lite" if sys.version_info >= (3, 12) else "embedded"
 
-    assert default_backend_profile() == expected
-    assert host.backend.profile == expected
-    assert SetupPlan().backend == expected
-
-
-def test_default_backend_falls_back_below_falkordb_lite_python(monkeypatch) -> None:
-    import bootstrap.host_wiring as host_wiring
-    import domain.lifecycle as lifecycle
-
-    monkeypatch.delenv("CONTEXT_ENGINE_BACKEND", raising=False)
-    monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)
-    monkeypatch.setattr(host_wiring.sys, "version_info", (3, 11, 0))
-    monkeypatch.setattr(lifecycle.sys, "version_info", (3, 11, 0))
-
-    assert default_backend_profile() == "embedded"
-    assert SetupPlan().backend == "embedded"
+    assert default_backend_profile() == "falkordb_lite"
+    assert host.backend.profile == "falkordb_lite"
+    assert SetupPlan().backend == "falkordb_lite"
 
 
 def test_default_backend_ignores_blank_primary_env(monkeypatch) -> None:

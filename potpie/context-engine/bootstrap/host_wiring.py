@@ -8,16 +8,14 @@ onto ``HostShell`` and is not imported on the CLI path.
 
 Profile selection:
     backend profile defaults to ``falkordb_lite`` (embedded FalkorDBLite local
-    stack) on Python versions that can install it, otherwise ``embedded``.
-    ``$CONTEXT_ENGINE_BACKEND`` overrides it; ``neo4j`` is the shape-first
-    production target. The ledger defaults to an unbound dummy client; tests
-    can inject a ``FixtureEventLedgerClient``.
+    stack). ``$CONTEXT_ENGINE_BACKEND`` overrides it; ``neo4j`` is the
+    shape-first production target. The ledger defaults to an unbound dummy
+    client; tests can inject a ``FixtureEventLedgerClient``.
 """
 
 from __future__ import annotations
 
 import os
-import sys
 from typing import Any
 
 from adapters.outbound.graph.backends import build_backend
@@ -61,16 +59,12 @@ from host.shell import HostShell, LedgerFacade
 
 def default_backend_profile() -> str:
     # 'falkordb_lite' is the OSS local default: a graph-native, persistent
-    # backend across CLI invocations. FalkorDBLite wheels start at Python 3.12,
-    # so older interpreter installs retain the JSON embedded backend unless the
-    # user explicitly selects a profile.
+    # backend across CLI invocations.
     for env_name in ("CONTEXT_ENGINE_BACKEND", "GRAPH_DB_BACKEND"):
         profile = (os.getenv(env_name) or "").strip().lower()
         if profile:
             return profile
-    if sys.version_info >= (3, 12):
-        return "falkordb_lite"
-    return "embedded"
+    return "falkordb_lite"
 
 
 def default_host_mode() -> str:

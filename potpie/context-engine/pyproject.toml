@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "potpie-context-engine"
 version = "0.1.0"
 description = "Context graph API, webhooks, CLI, and MCP."
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
@@ -39,8 +39,8 @@ graph = [
 ]
 falkordb = [
     "falkordb>=1.6.1",
-    # FalkorDBLite (embedded) requires Python >= 3.12; marker keeps resolution
-    # valid across the project's wider requires-python range.
+    # Keep this marker for dependency metadata consumers even though Potpie
+    # itself supports Python 3.12+.
     "falkordblite>=0.10.0; python_version >= '3.12'",
     "redis>=7.1,<8",
 ]
@@ -116,6 +116,7 @@ include = [
     "adapters",
     "bootstrap",
     "benchmarks",
+    "host",
     "domain/playbooks/**/*.md",
     "adapters/inbound/cli/templates/**/*.md",
     "adapters/inbound/cli/templates/**/*.yaml",
