@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import contextvars
 import logging
 from contextlib import contextmanager
 
 _RESERVED = {"exc_info", "stack_info", "stacklevel", "extra"}
+_context_var: contextvars.ContextVar[dict] = contextvars.ContextVar(
+    "integrations_log_context", default={}
+)
 
 
 class StructuredLogger:
@@ -46,7 +50,12 @@ class StructuredLogger:
     def _log(self, level: int, msg, *args, **kwargs) -> None:
         passthrough = {key: kwargs.pop(key) for key in list(kwargs) if key in _RESERVED}
         extra = dict(passthrough.pop("extra", {}) or {})
-        fields = {**self._bound_fields, **extra.pop("obs_fields", {}), **kwargs}
+        fields = {
+            **_context_var.get(),
+            **self._bound_fields,
+            **extra.pop("obs_fields", {}),
+            **kwargs,
+        }
         passthrough["extra"] = {**extra, "obs_fields": fields}
         self._logger.log(level, msg, *args, **passthrough)
 
@@ -59,5 +68,9 @@ def get_logger(name: str) -> StructuredLogger:
 
 
 @contextmanager
-def log_context(**_fields):
-    yield
+def log_context(**fields):
+    token = _context_var.set({**_context_var.get(), **fields})
+    try:
+        yield
+    finally:
+        _context_var.reset(token)

@@ -13,6 +13,7 @@ def monolith() -> ObservabilityConfig:
 
 def standalone() -> ObservabilityConfig:
     return ObservabilityConfig(
+        service_name=os.getenv("SERVICE_NAME", "potpie"),
         env=(os.getenv("ENV") or "development").lower().strip(),
         level=os.getenv("LOG_LEVEL", "INFO").upper(),
         sinks=["console"],
