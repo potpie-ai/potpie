@@ -15,6 +15,7 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 from starlette.concurrency import run_in_threadpool
 
+from adapters.inbound.http.ui import build_ui_api_router, mount_ui_static
 from adapters.outbound.daemon_process.pidfile import (
     remove_pid_file,
     write_discovery,
@@ -149,6 +150,9 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
                     span.record_exception(exc)
                     span.set_error(exc.__class__.__name__)
                     return _error_payload(exc)
+
+    app.include_router(build_ui_api_router(host), prefix="/ui")
+    mount_ui_static(app)
 
     return app
 

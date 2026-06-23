@@ -70,7 +70,7 @@ benchmarks/
 
 ## Multi-source ingestion
 
-The engine ships production-grade readers for **GitHub** and **Linear**, and a minimal **Notion** reader. The four other connector kinds the bench uses — **Slack**, **Repo Docs**, **Alerting**, **Deploy** — are wired up as *passive stub connectors* (see `app/src/context-engine/adapters/outbound/connectors/_bench_stubs.py`). They emit a minimal `ReconciliationPlan` per envelope (one canonical entity, no edges) and let the reconciliation agent do the rest. The contract for swapping in a production reader later is the same `SourceConnectorPort` they implement.
+The engine ships production-grade readers for **GitHub** and **Linear**, and a minimal **Notion** reader. The four other connector kinds the bench uses — **Slack**, **Repo Docs**, **Alerting**, **Deploy** — are wired up as *passive stub connectors* (see `potpie/context-engine/adapters/outbound/connectors/_bench_stubs.py`). They emit a minimal `ReconciliationPlan` per envelope (one canonical entity, no edges) and let the reconciliation agent do the rest. The contract for swapping in a production reader later is the same `SourceConnectorPort` they implement.
 
 ## Two ways to run the engine
 
