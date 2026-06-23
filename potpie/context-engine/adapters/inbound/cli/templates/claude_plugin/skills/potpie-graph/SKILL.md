@@ -4,7 +4,7 @@ version: "5"
 description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions and responding to nudges. Prefer this over the MCP context_* tools whenever the shell is available."
 ---
 
-# Potpie Graph Surface (V2)
+# Potpie Graph Workbench
 
 The graph is project memory: preferences, prior bugs and their fixes, infra
 topology, decisions, and a timeline of changes. You are the intelligence that reads
