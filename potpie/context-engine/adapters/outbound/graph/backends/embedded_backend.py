@@ -29,6 +29,7 @@ from adapters.outbound.graph.backends.in_memory_backend import (
 from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
 from adapters.outbound.pots.local_pot_store import default_home
 from domain.lifecycle import DONE, SetupPlan, StepResult
+from domain.ports.embedder import EmbedderPort
 from domain.ports.graph.backend import BackendCapabilities
 
 _PROFILE = "embedded"
@@ -40,13 +41,22 @@ class EmbeddedGraphBackend:
     adapters and saves the store after each mutation."""
 
     home: Path = field(default_factory=default_home)
+    embedder: EmbedderPort | None = None
     _inner: InMemoryGraphBackend = field(init=False)
 
     def __post_init__(self) -> None:
         store = self._load_store()
+        store.embedder = self.embedder
         self._inner = InMemoryGraphBackend(
-            store=store, profile_name=_PROFILE, on_change=self._save_store
+            store=store,
+            profile_name=_PROFILE,
+            on_change=self._save_store,
+            embedder=self.embedder,
         )
+
+    @property
+    def match_mode(self) -> str:
+        return self._inner.match_mode
 
     @property
     def _path(self) -> Path:

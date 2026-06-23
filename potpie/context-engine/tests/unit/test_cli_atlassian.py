@@ -704,6 +704,64 @@ def test_run_atlassian_auth_opens_token_page_after_enter(
     assert prompts == ["Enter your API token", "Enter your Atlassian email"]
 
 
+def test_run_atlassian_auth_target_accepts_either_product(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(atlassian_auth.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_get_product_credentials",
+        lambda _product: {},
+    )
+    site = {
+        "cloud_id": "cloud-1",
+        "site_url": "https://team.atlassian.net",
+        "site_name": "Team",
+    }
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_prompt_and_resolve_site",
+        lambda: (site, None),
+    )
+
+    finalize_calls: list[str] = []
+
+    def _finalize(
+        _email: str,
+        _api_token: str,
+        selected_site: dict[str, object],
+        product: str,
+    ) -> tuple[dict[str, object] | None, AtlassianAuthErrorKind | None]:
+        finalize_calls.append(product)
+        if product == "confluence":
+            return {**selected_site, "token_style": "classic"}, None
+        return None, AtlassianAuthErrorKind.PRODUCT_ACCESS_DENIED
+
+    saved: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(atlassian_auth, "_finalize_selected_site", _finalize)
+    monkeypatch.setattr(
+        atlassian_auth,
+        "_save_product_credentials",
+        lambda product, payload: saved.append((product, payload)),
+    )
+    monkeypatch.setattr(atlassian_auth.typer, "confirm", lambda *_a, **_k: False)
+    prompt_values = iter(["api-token-secret", "user@example.com"])
+    monkeypatch.setattr(
+        atlassian_auth.typer,
+        "prompt",
+        lambda *_a, **_k: next(prompt_values),
+    )
+
+    run_atlassian_api_token_auth("atlassian", force=True)
+
+    out = capsys.readouterr().out
+    assert "Atlassian login — Atlassian API token" in out
+    assert finalize_calls == ["jira", "confluence"]
+    assert saved[0][0] == "atlassian"
+    assert saved[0][1]["api_token"] == "api-token-secret"
+
+
 @pytest.mark.parametrize("product", ["jira", "confluence"])
 def test_run_atlassian_auth_skips_browser_when_confirm_declined(
     monkeypatch: pytest.MonkeyPatch,

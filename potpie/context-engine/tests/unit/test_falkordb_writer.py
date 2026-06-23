@@ -16,7 +16,7 @@ from adapters.outbound.graph.falkordb_writer import (
     _records_from_result,
     build_falkordb_graph,
 )
-from domain.graph_mutations import EntityUpsert, ProvenanceRef
+from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
 
 pytestmark = pytest.mark.unit
 
@@ -72,6 +72,17 @@ class _FakeSettings:
 
     def falkordb_lite_path(self) -> str:
         return ".potpie/test/falkordb.db"
+
+
+class _FakeEmbedder:
+    name = "fake-embedder"
+    dimensions = 3
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        return (0.1, 0.2, 0.3)
+
+    def embed_many(self, texts):
+        return [self.embed(t) for t in texts]
 
 
 def test_records_from_result_maps_columns() -> None:
@@ -157,6 +168,20 @@ async def test_ensure_indexes_uses_unnamed_form() -> None:
         assert q.startswith("CREATE INDEX FOR")
 
 
+async def test_ensure_indexes_creates_falkordb_vector_index_with_embedder_dim() -> None:
+    graph = _FakeGraph()
+    w = FalkorDBGraphWriter(
+        _FakeSettings(), graph=graph, embedder=_FakeEmbedder()
+    )
+    await w.ensure_indexes()
+    vector_qs = [q for q, _ in graph.queries if "CREATE VECTOR INDEX" in q]
+    assert len(vector_qs) == 1
+    assert "RELATES_TO" in vector_qs[0]
+    assert "fact_embedding" in vector_qs[0]
+    assert "dimension:3" in vector_qs[0]
+    assert "similarityFunction:'cosine'" in vector_qs[0]
+
+
 async def test_upsert_entities_issues_merge_via_shim() -> None:
     graph = _FakeGraph()
     w = FalkorDBGraphWriter(_FakeSettings(), graph=graph)
@@ -178,6 +203,34 @@ async def test_upsert_entities_empty_is_noop() -> None:
     )
     assert n == 0
     assert graph.queries == []
+
+
+async def test_upsert_edges_writes_falkordb_vecf32_embedding() -> None:
+    graph = _FakeGraph()
+    w = FalkorDBGraphWriter(
+        _FakeSettings(), graph=graph, embedder=_FakeEmbedder()
+    )
+    prov = ProvenanceRef(pot_id="p1", source_event_id="e1")
+    n = await w.upsert_edges(
+        "p1",
+        [
+            EdgeUpsert(
+                edge_type="DEPENDS_ON",
+                from_entity_key="service:web",
+                to_entity_key="service:auth",
+                properties={"fact": "web depends on auth"},
+            )
+        ],
+        prov,
+    )
+
+    assert n == 1
+    vector_writes = [item for item in graph.queries if "vecf32($embedding)" in item[0]]
+    assert len(vector_writes) == 1
+    _, params = vector_writes[0]
+    assert params["embedding"] == [0.1, 0.2, 0.3]
+    assert params["embedding_model"] == "fake-embedder"
+    assert params["embedding_dim"] == 3
 
 
 def test_build_falkordb_graph_server_mode_requires_url() -> None:

@@ -17,6 +17,8 @@ from typing import Any
 
 import typer
 
+import click
+
 from adapters.outbound.cli_auth.atlassian_client import (  # noqa: F401  (re-export)
     AtlassianAuthErrorKind,
     AtlassianAuthScheme,
@@ -61,6 +63,17 @@ from adapters.outbound.cli_auth.provider_config import (
     AtlassianProduct,
 )
 
+AtlassianAuthTarget = Literal["atlassian", "jira", "confluence"]
+T = TypeVar("T")
+
+
+def _guard_typer_prompt(callback: Callable[[], T]) -> T:
+    """Map Click/Typer Ctrl+C aborts to ``KeyboardInterrupt`` for callers."""
+    try:
+        return callback()
+    except click.Abort:
+        raise KeyboardInterrupt from None
+
 
 @dataclass(frozen=True)
 class ProductConnectResult:
@@ -73,10 +86,12 @@ class ProductConnectResult:
 
 
 def _prompt_site_subdomain() -> str:
-    return typer.prompt(
-        "Enter your Atlassian site subdomain "
-        "(e.g. 'potpie-team' for potpie-team.atlassian.net)"
-    ).strip()
+    return _guard_typer_prompt(
+        lambda: typer.prompt(
+            "Enter your Atlassian site subdomain "
+            "(e.g. 'potpie-team' for potpie-team.atlassian.net)"
+        ).strip()
+    )
 
 
 def _prompt_and_resolve_site() -> tuple[
@@ -99,18 +114,28 @@ def _cli_credentials_supplied(
 
 
 def _prompt_credentials() -> tuple[str, str]:
-    api_token = typer.prompt("Enter your API token", hide_input=True).strip()
+    api_token = _guard_typer_prompt(
+        lambda: typer.prompt("Enter your API token", hide_input=True).strip()
+    )
     if not api_token:
         raise typer.Exit(code=1)
-    email = typer.prompt("Enter your Atlassian email").strip()
+    email = _guard_typer_prompt(
+        lambda: typer.prompt("Enter your Atlassian email").strip()
+    )
     if not email:
         raise typer.Exit(code=1)
     return email, api_token
 
 
-def _open_atlassian_api_token_page(product: AtlassianProduct) -> None:
+def _atlassian_target_label(product: AtlassianAuthTarget) -> str:
+    if product == "atlassian":
+        return "Atlassian"
+    return product.capitalize()
+
+
+def _open_atlassian_api_token_page(product: AtlassianAuthTarget) -> None:
     """Show setup steps, then open the Atlassian token page after confirmation."""
-    product_label = "Jira" if product == "jira" else "Confluence"
+    product_label = _atlassian_target_label(product)
     print_plain_line(
         f"{product_label} login — Atlassian API token",
         as_json=False,
@@ -165,10 +190,10 @@ def open_url_with_countdown(
 
 
 def _auth_failure_message(
-    product: AtlassianProduct,
+    product: AtlassianAuthTarget,
     error_kind: AtlassianAuthErrorKind | None = None,
 ) -> str:
-    name = product.capitalize()
+    name = _atlassian_target_label(product)
     lines = [
         f"Could not authenticate {name} with Atlassian.",
         "  - Use an API token from id.atlassian.com (scoped tokens are supported)",
@@ -190,18 +215,23 @@ def _auth_failure_message(
                 "  - Token is missing required read scopes "
                 "(Confluence: read:confluence-content at minimum)"
             )
-        else:
+        elif product == "jira":
             scope_hint = (
                 "  - Token is missing required read scopes "
                 "(Jira: read:jira-work at minimum)"
+            )
+        else:
+            scope_hint = (
+                "  - Token is missing required read scopes for Jira or Confluence"
             )
         lines.insert(1, scope_hint)
     elif error_kind == AtlassianAuthErrorKind.SITE_DISCOVERY_FAILED:
         lines.insert(1, "  - Could not resolve cloud ID for the site")
     elif error_kind == AtlassianAuthErrorKind.PRODUCT_ACCESS_DENIED:
+        product_hint = "Jira or Confluence" if product == "atlassian" else name
         lines.insert(
             1,
-            f"  - Token or account cannot access {name} on this site",
+            f"  - Token or account cannot access {product_hint} on this site",
         )
     else:
         lines.insert(
@@ -211,19 +241,23 @@ def _auth_failure_message(
     return "\n".join(lines)
 
 
-def _get_product_credentials(product: AtlassianProduct) -> dict[str, Any]:
+def _get_product_credentials(product: AtlassianAuthTarget) -> dict[str, Any]:
     store = get_store()
     if product == "jira":
         return store.get_jira_credentials()
+    if product == "atlassian":
+        return store.get_atlassian_credentials()
     return store.get_confluence_credentials()
 
 
 def _save_product_credentials(
-    product: AtlassianProduct, payload: dict[str, Any]
+    product: AtlassianAuthTarget, payload: dict[str, Any]
 ) -> None:
     store = get_store()
     if product == "jira":
         store.save_jira_credentials(payload)
+    elif product == "atlassian":
+        store.save_atlassian_credentials(payload)
     else:
         store.save_confluence_credentials(payload)
 
@@ -295,7 +329,7 @@ def connect_atlassian_product(
 
 
 def run_atlassian_api_token_auth(
-    product: AtlassianProduct,
+    product: AtlassianAuthTarget,
     *,
     force: bool = False,
     as_json: bool = False,
@@ -304,8 +338,8 @@ def run_atlassian_api_token_auth(
     api_token: str | None = None,
     site_subdomain: str | None = None,
 ) -> None:
-    """Authenticate Jira or Confluence using an Atlassian API token (one product only)."""
-    product_label = product.capitalize()
+    """Authenticate an Atlassian target using an Atlassian API token."""
+    product_label = _atlassian_target_label(product)
     try:
         existing = _get_product_credentials(product)
     except ProviderCredentialError as exc:
@@ -415,6 +449,6 @@ def run_atlassian_api_token_auth(
             "cloud_id": result.cloud_id,
             "path": str(credentials_path()),
             "token_storage": token_storage,
-            "product_verified": product,
+            "product_verified": verified_product or product,
         },
     )
