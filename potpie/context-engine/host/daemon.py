@@ -181,7 +181,13 @@ class Daemon:
         return {"detail": stop_daemon(self.home)}
 
     def restart(self) -> dict[str, Any]:
-        current_backend = self.status().get("backend")
+        current_status = self.status()
+        current_backend = current_status.get("backend")
+        if current_status.get("up") and not isinstance(current_backend, str):
+            raise RuntimeError(
+                "cannot determine running daemon backend; "
+                "refusing restart to avoid backend drift"
+            )
         self.stop()
         info = self.start(
             backend=current_backend if isinstance(current_backend, str) else None

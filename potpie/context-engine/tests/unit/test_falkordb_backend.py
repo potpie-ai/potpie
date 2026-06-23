@@ -188,6 +188,13 @@ def test_default_backend_falls_back_below_falkordb_lite_python(monkeypatch) -> N
     assert SetupPlan().backend == "embedded"
 
 
+def test_default_backend_ignores_blank_primary_env(monkeypatch) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "   ")
+    monkeypatch.setenv("GRAPH_DB_BACKEND", " embedded ")
+
+    assert default_backend_profile() == "embedded"
+
+
 def test_host_shell_accepts_falkordb_lite_env(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "falkordb_lite")

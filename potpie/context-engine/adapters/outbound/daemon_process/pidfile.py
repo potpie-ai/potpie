@@ -1,6 +1,7 @@
 """PID file, discovery file, and signal-based shutdown helpers."""
 
 from __future__ import annotations
+
 import asyncio
 import json
 import os
@@ -31,7 +32,7 @@ def write_pid_file(path: pathlib.Path, pid: int) -> None:
             existing = -1
         if existing > 0 and _pid_alive(existing):
             raise AlreadyRunning(f"daemon already running (pid={existing})")
-    path.write_text(f"{pid}\n")
+    _write_private_text(path, f"{pid}\n")
 
 
 def read_pid_file(path: pathlib.Path) -> int | None:
@@ -52,11 +53,25 @@ def remove_pid_file(path: pathlib.Path) -> None:
 
 def write_discovery(path: pathlib.Path, **fields) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(fields))
+    _write_private_text(path, json.dumps(fields))
 
 
 def read_discovery(path: pathlib.Path) -> dict:
     return json.loads(path.read_text())
+
+
+def _write_private_text(path: pathlib.Path, data: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(data)
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    os.chmod(path, 0o600)
 
 
 def install_signal_handlers(shutdown: asyncio.Event) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from adapters.inbound.cli import host_cli as cli_main
@@ -42,6 +43,25 @@ def test_daemon_restart_preserves_running_backend(tmp_path: Path, monkeypatch) -
         assert daemon.status()["backend"] == "embedded"
     finally:
         daemon.stop()
+
+
+def test_daemon_restart_refuses_when_running_backend_unknown(
+    tmp_path: Path, monkeypatch
+) -> None:
+    daemon = Daemon(home=tmp_path, in_process=False)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        daemon,
+        "status",
+        lambda: {"up": True, "mode": "detached", "home": str(tmp_path)},
+    )
+    monkeypatch.setattr(daemon, "stop", lambda: calls.append("stop"))
+    monkeypatch.setattr(daemon, "start", lambda **_kwargs: calls.append("start"))
+
+    with pytest.raises(RuntimeError, match="cannot determine running daemon backend"):
+        daemon.restart()
+
+    assert calls == []
 
 
 def test_remote_host_runs_setup_inside_daemon(tmp_path: Path, monkeypatch) -> None:

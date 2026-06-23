@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from adapters.inbound.cli import host_cli
 from adapters.inbound.cli.commands import _common, bootstrap
 from adapters.inbound.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
-from domain.lifecycle import PlannedSetupStep, SetupPlan, SetupPreview
+from domain.lifecycle import SKIPPED, PlannedSetupStep, SetupPlan, SetupPreview, SetupReport, StepResult
 
 runner = CliRunner()
 
@@ -18,6 +18,7 @@ runner = CliRunner()
 class _FakeDaemon:
     home: Path
     in_process: bool = False
+    backend: str | None = None
     calls: list[str] = field(default_factory=list)
 
     def start(self) -> dict[str, int | str]:
@@ -26,7 +27,18 @@ class _FakeDaemon:
 
     def status(self) -> dict[str, bool | str | int]:
         self.calls.append("status")
-        return {"up": True, "mode": "detached", "home": str(self.home), "pid": 123}
+        status: dict[str, bool | str | int] = {
+            "up": True,
+            "mode": "detached",
+            "home": str(self.home),
+            "pid": 123,
+        }
+        if self.backend is not None:
+            status["backend"] = self.backend
+        return status
+
+    def ensure(self, plan: SetupPlan) -> None:
+        self.calls.append(f"ensure:{plan.backend}")
 
     def stop(self) -> dict[str, str]:
         self.calls.append("stop")
@@ -118,6 +130,51 @@ def test_setup_daemon_dry_run_marks_daemon_host_mode(
     assert json.loads(result.stdout)["plan"]["host_mode"] == "daemon"
 
 
+def test_setup_daemon_uses_daemon_status_for_backend_validation(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    host = _SetupHost(home=tmp_path)
+    host.backend.profile = "falkordb_lite"
+    host.daemon.backend = "embedded"
+    monkeypatch.setattr(bootstrap, "get_host", lambda: host)
+    monkeypatch.setattr(
+        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        lambda **_kwargs: False,
+    )
+
+    result = runner.invoke(
+        host_cli.app,
+        ["--json", "setup", "--backend", "embedded", "--repo", "potpie", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert host.setup.host_mode == "daemon"
+    assert host.daemon.calls == ["ensure:embedded", "status"]
+
+
+def test_setup_daemon_fails_when_requested_backend_cannot_be_verified(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    host = _SetupHost(home=tmp_path)
+    monkeypatch.setattr(bootstrap, "get_host", lambda: host)
+    monkeypatch.setattr(
+        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        lambda **_kwargs: False,
+    )
+
+    result = runner.invoke(
+        host_cli.app,
+        ["--json", "setup", "--backend", "embedded", "--repo", "potpie", "--yes"],
+    )
+
+    assert result.exit_code == _common.EXIT_VALIDATION
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "validation_error"
+    assert "backend could not be verified" in payload["message"]
+
+
 class _Setup:
     host_mode: str | None = None
 
@@ -134,6 +191,20 @@ class _Setup:
                     True,
                     "host.daemon",
                     "ensure daemon",
+                ),
+            ),
+        )
+
+    def run(self, plan: SetupPlan) -> SetupReport:
+        self.host_mode = plan.host_mode
+        return SetupReport(
+            plan,
+            (
+                StepResult(
+                    "daemon",
+                    SKIPPED,
+                    "daemon already running",
+                    metadata={"mode": plan.host_mode},
                 ),
             ),
         )

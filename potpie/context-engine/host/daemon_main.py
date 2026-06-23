@@ -31,9 +31,33 @@ from host.daemon_rpc import decode, encode
 
 logger = logging.getLogger(__name__)
 
+_ALLOWED_RPC_SURFACES = frozenset(
+    {
+        "agent_context",
+        "auth",
+        "backend",
+        "backend.analytics",
+        "backend.claim_query",
+        "backend.inspection",
+        "backend.mutation",
+        "backend.semantic",
+        "backend.snapshot",
+        "config",
+        "graph",
+        "graph_workbench",
+        "installer",
+        "ledger",
+        "nudge",
+        "pots",
+        "setup",
+        "skills",
+    }
+)
+
 
 def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI:
     host = build_host_shell()
+    rpc_lock = asyncio.Lock()
     home = default_home()
     pid_file = home / "daemon.pid"
     discovery_file = home / "discovery.json"
@@ -88,16 +112,18 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
                 try:
                     surface = str(payload["surface"])
                     method = str(payload["method"])
+                    _validate_rpc_target(surface, method)
                     span.set_attributes({"rpc.surface": surface, "rpc.method": method})
                     args = decode(payload.get("args") or [])
                     kwargs = decode(payload.get("kwargs") or {})
                     if kwargs.get("pot_id"):
                         span.set_attribute("pot_id", kwargs["pot_id"])
-                    target = _resolve(host, surface)
-                    fn = getattr(target, method)
-                    result = await run_in_threadpool(fn, *args, **kwargs)
-                    if asyncio.iscoroutine(result):
-                        result = await result
+                    async with rpc_lock:
+                        target = _resolve(host, surface)
+                        fn = getattr(target, method)
+                        result = await run_in_threadpool(fn, *args, **kwargs)
+                        if asyncio.iscoroutine(result):
+                            result = await result
                     return {"ok": True, "result": encode(result)}
                 except Exception as exc:  # noqa: BLE001
                     span.record_exception(exc)
@@ -105,7 +131,7 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
                     return _error_payload(exc)
 
     @app.post("/attr")
-    def attr(
+    async def attr(
         payload: dict[str, Any], authorization: str | None = Header(None)
     ) -> dict[str, Any]:
         _authorize(authorization, token)
@@ -114,9 +140,11 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
                 try:
                     surface = str(payload["surface"])
                     name = str(payload["name"])
+                    _validate_rpc_target(surface, name)
                     span.set_attributes({"rpc.surface": surface, "rpc.attr": name})
-                    target = _resolve(host, surface)
-                    return {"ok": True, "result": encode(getattr(target, name))}
+                    async with rpc_lock:
+                        target = _resolve(host, surface)
+                        return {"ok": True, "result": encode(getattr(target, name))}
                 except Exception as exc:  # noqa: BLE001
                     span.record_exception(exc)
                     span.set_error(exc.__class__.__name__)
@@ -143,21 +171,28 @@ def main() -> None:
 def _resolve(host: Any, path: str) -> Any:
     obj = host
     for part in path.split("."):
-        if not part:
-            raise ValueError("invalid empty RPC path part")
+        if not part or part.startswith("_"):
+            raise ValueError("invalid RPC path")
         obj = getattr(obj, part)
     return obj
 
 
+def _validate_rpc_target(surface: str, member: str) -> None:
+    if surface not in _ALLOWED_RPC_SURFACES:
+        raise ValueError(f"invalid RPC surface: {surface}")
+    if not member or member.startswith("_"):
+        raise ValueError(f"invalid RPC member: {member}")
+
+
 def _authorize(header: str | None, token: str) -> None:
     expected = f"Bearer {token}"
-    if header != expected:
+    if header is None or not secrets.compare_digest(header, expected):
         raise HTTPException(status_code=401, detail="invalid daemon token")
 
 
 def _error_payload(exc: Exception) -> dict[str, Any]:
-    logger.exception("daemon RPC failed")
     if isinstance(exc, CapabilityNotImplemented):
+        logger.debug("daemon RPC returned expected capability error: %s", exc)
         error = {
             "code": "not_implemented",
             "message": str(exc),
@@ -166,10 +201,13 @@ def _error_payload(exc: Exception) -> dict[str, Any]:
             "recommended_next_action": exc.recommended_next_action,
         }
     elif isinstance(exc, PotNotFound):
+        logger.debug("daemon RPC returned expected missing pot error: %s", exc)
         error = {"code": "pot_not_found", "message": str(exc)}
     elif isinstance(exc, ValueError):
+        logger.debug("daemon RPC returned expected validation error: %s", exc)
         error = {"code": "validation_error", "message": str(exc)}
     else:
+        logger.exception("daemon RPC failed")
         from adapters.inbound.cli.sentry_runtime import capture_unexpected_daemon_error
 
         capture_unexpected_daemon_error(

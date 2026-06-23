@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+from fastapi import HTTPException
 from typer.testing import CliRunner
 
 from adapters.inbound.cli import host_cli
@@ -109,3 +111,28 @@ def test_daemon_rpc_expected_error_is_not_captured(monkeypatch) -> None:
     assert payload["ok"] is False
     assert payload["error"]["code"] == "not_implemented"
     assert captured == []
+
+
+def test_daemon_rpc_authorize_uses_compare_digest(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def _compare_digest(left: str, right: str) -> bool:
+        calls.append((left, right))
+        return left == right
+
+    monkeypatch.setattr(daemon_main.secrets, "compare_digest", _compare_digest)
+
+    daemon_main._authorize("Bearer token", "token")
+
+    assert calls == [("Bearer token", "Bearer token")]
+    with pytest.raises(HTTPException) as exc_info:
+        daemon_main._authorize(None, "token")
+    assert exc_info.value.status_code == 401
+
+
+def test_daemon_rpc_rejects_private_targets() -> None:
+    with pytest.raises(ValueError, match="invalid RPC member"):
+        daemon_main._validate_rpc_target("backend", "_profile")
+
+    with pytest.raises(ValueError, match="invalid RPC surface"):
+        daemon_main._validate_rpc_target("backend.__class__", "profile")

@@ -67,9 +67,10 @@ def default_backend_profile() -> str:
     # backend across CLI invocations. FalkorDBLite wheels start at Python 3.12,
     # so older interpreter installs retain the JSON embedded backend unless the
     # user explicitly selects a profile.
-    profile = os.getenv("CONTEXT_ENGINE_BACKEND") or os.getenv("GRAPH_DB_BACKEND")
-    if profile:
-        return profile.strip().lower()
+    for env_name in ("CONTEXT_ENGINE_BACKEND", "GRAPH_DB_BACKEND"):
+        profile = (os.getenv(env_name) or "").strip().lower()
+        if profile:
+            return profile
     if sys.version_info >= (3, 12):
         return "falkordb_lite"
     return "embedded"

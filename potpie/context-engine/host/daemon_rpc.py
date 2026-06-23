@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 TYPE_KEY = "__potpie_rpc_type__"
+_ALLOWED_CLASS_MODULE_PREFIXES = ("domain.",)
 
 
 def encode(value: Any) -> Any:
@@ -74,6 +75,8 @@ def decode(value: Any) -> Any:
 
 def _load_class(ref: str) -> type:
     module_name, qualname = ref.split(":", 1)
+    if not module_name.startswith(_ALLOWED_CLASS_MODULE_PREFIXES):
+        raise TypeError(f"RPC class module not allowed: {module_name}")
     obj: Any = importlib.import_module(module_name)
     for part in qualname.split("."):
         obj = getattr(obj, part)

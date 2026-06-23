@@ -143,7 +143,13 @@ def register(root: typer.Typer) -> None:
 
             if not in_process:
                 host.daemon.ensure(plan)
-                running_backend = host.backend.profile
+                daemon_status = host.daemon.status()
+                running_backend = daemon_status.get("backend")
+                if backend and not isinstance(running_backend, str):
+                    raise ValueError(
+                        "daemon is running but its backend could not be verified; "
+                        "stop it with 'potpie daemon stop' before changing backend"
+                    )
                 if backend and running_backend != backend:
                     raise ValueError(
                         "daemon is already running with backend "
@@ -259,9 +265,10 @@ def register(root: typer.Typer) -> None:
             pot = host.pots.active_pot()
             pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
             readiness = host.backend.mutation.readiness(pot_id)
+            daemon_status = host.daemon.status()
             emit(
                 {
-                    "daemon": host.daemon.status(),
+                    "daemon": daemon_status,
                     "backend_profile": host.backend.profile,
                     "backend_ready": readiness.ready,
                     "backend_readiness": {
@@ -281,7 +288,7 @@ def register(root: typer.Typer) -> None:
                     },
                 },
                 human=(
-                    f"daemon: {host.daemon.status()['mode']} (up)\n"
+                    f"daemon: {daemon_status['mode']} (up={daemon_status.get('up')})\n"
                     f"backend: {host.backend.profile} ready={readiness.ready} "
                     f"caps={', '.join(caps.implemented())}\n"
                     f"ledger: {host.ledger.status().binding} "
