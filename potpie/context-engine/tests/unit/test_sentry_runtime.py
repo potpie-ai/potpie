@@ -7,14 +7,14 @@ from typing import Any
 
 import pytest
 
-from context_engine.adapters.inbound.cli.telemetry import sentry_runtime
-from context_engine.bootstrap import sentry_metrics_runtime
-from context_engine.adapters.inbound.cli.telemetry.context import TelemetryContext
-from context_engine.adapters.inbound.cli.telemetry.sentry_runtime import (
+from adapters.inbound.cli.telemetry import sentry_runtime
+from bootstrap import sentry_metrics_runtime
+from adapters.inbound.cli.telemetry.context import TelemetryContext
+from adapters.inbound.cli.telemetry.sentry_runtime import (
     capture_unexpected_cli_error,
     configure_cli_sentry,
 )
-from context_engine.adapters.inbound.cli.telemetry.settings import SentrySettings
+from adapters.inbound.cli.telemetry.settings import SentrySettings
 
 
 @dataclass
@@ -139,7 +139,7 @@ def test_capture_unexpected_cli_error_sets_allowlisted_scope(monkeypatch) -> Non
         arch="arm64",
     )
     monkeypatch.setattr(
-        "context_engine.adapters.inbound.cli.telemetry.sentry_runtime.current_telemetry_context",
+        "adapters.inbound.cli.telemetry.sentry_runtime.current_telemetry_context",
         lambda: telemetry,
     )
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from context_engine.domain.identity import (
+from domain.identity import (
     IdentityClass,
     IdentityError,
     IdentitySpec,

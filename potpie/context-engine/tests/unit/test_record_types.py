@@ -10,19 +10,19 @@ from __future__ import annotations
 
 import pytest
 
-from context_engine.domain.agent_context_port import (
+from domain.agent_context_port import (
     CONTEXT_INCLUDE_VALUES,
     CONTEXT_RECORD_TYPES,
     PLANNED_INCLUDES,
     READER_BACKED_INCLUDES,
 )
-from context_engine.domain.coherence import (
+from domain.coherence import (
     OntologyCoherenceError,
     assert_playbook_vocabulary_coherence,
     assert_runtime_coherence,
 )
-from context_engine.domain.event_playbooks import EventPlaybook
-from context_engine.domain.ontology import (
+from domain.event_playbooks import EventPlaybook
+from domain.ontology import (
     EDGE_TYPES,
     ENTITY_TYPES,
     PUBLIC_RECORD_TYPES,

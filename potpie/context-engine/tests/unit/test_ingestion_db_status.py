@@ -1,6 +1,6 @@
 """Legacy DB status ↔ canonical ingestion status mapping."""
 
-from context_engine.domain.ingestion_db_status import (
+from domain.ingestion_db_status import (
     canonical_status_to_db,
     canonical_statuses_to_db_filters,
     db_status_to_canonical,

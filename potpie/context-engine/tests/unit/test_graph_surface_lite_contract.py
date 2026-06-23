@@ -11,19 +11,19 @@ from typing import Any
 
 import pytest
 
-from context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from context_engine.application.services.graph_service import DefaultGraphService
-from context_engine.domain.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
-from context_engine.domain.graph_mutations import ProvenanceContext
-from context_engine.domain.ports.agent_context import RecordRequest
-from context_engine.domain.ports.claim_query import ClaimRow
-from context_engine.domain.ports.services.graph_service import (
+from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from application.services.graph_service import DefaultGraphService
+from domain.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
+from domain.graph_mutations import ProvenanceContext
+from domain.ports.agent_context import RecordRequest
+from domain.ports.claim_query import ClaimRow
+from domain.ports.services.graph_service import (
     GraphCatalogRequest,
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
-from context_engine.domain.reconciliation import MutationBatch, MutationResult, MutationSummary
-from context_engine.domain.semantic_mutations import SemanticMutationRequest
+from domain.reconciliation import MutationBatch, MutationResult, MutationSummary
+from domain.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
 
@@ -1033,7 +1033,7 @@ def test_mcp_exposes_exactly_four_context_tools() -> None:
     """The Graph Surface Lite surface is CLI-only in V1.5; MCP stays at four."""
     import asyncio
 
-    from context_engine.adapters.inbound.mcp import server
+    from adapters.inbound.mcp import server
 
     tools = asyncio.run(server.mcp.list_tools())
     names = {t.name for t in tools}

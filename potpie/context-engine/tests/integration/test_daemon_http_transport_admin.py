@@ -8,21 +8,21 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
-from context_engine.adapters.inbound.daemon_http.transport import HttpTransport
-from context_engine.application.services.managed_service_manager import (
+from adapters.inbound.daemon_http.transport import HttpTransport
+from application.services.managed_service_manager import (
     ReadyTimeout,
     ServiceNotFound,
     ServiceStatus,
 )
-from context_engine.domain.ports.daemon.operations import (
+from domain.ports.daemon.operations import (
     AuthRequirement,
     OperationContext,
     OperationRegistry,
     OperationSpec,
 )
-from context_engine.host.daemon_runtime.context import ShellContext
-from context_engine.host.daemon_runtime.health import HealthRegistrar
-from context_engine.host.daemon_runtime.ipc_auth import IpcAuthGate
+from host.daemon_runtime.context import ShellContext
+from host.daemon_runtime.health import HealthRegistrar
+from host.daemon_runtime.ipc_auth import IpcAuthGate
 
 
 class EchoIn(BaseModel):

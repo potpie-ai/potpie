@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
-from context_engine.adapters.outbound.policy import DefaultPolicyAdapter
-from context_engine.domain.actor import Actor
-from context_engine.domain.ports.policy import (
+from adapters.outbound.policy import DefaultPolicyAdapter
+from domain.actor import Actor
+from domain.ports.policy import (
     ACTION_APPLY_WRITE,
     ACTION_POT_INGEST_EPISODE,
     ACTION_POT_READ,

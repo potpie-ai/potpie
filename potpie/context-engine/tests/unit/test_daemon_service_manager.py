@@ -2,21 +2,21 @@ import pathlib
 
 import pytest
 
-from context_engine.adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
-from context_engine.application.services.managed_service_manager import (
+from adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
+from application.services.managed_service_manager import (
     DependencyCycle,
     ServiceManager,
     ServiceNotFound,
     ServiceStatus,
 )
-from context_engine.domain.ports.daemon.shell import (
+from domain.ports.daemon.shell import (
     HealthStatus,
     ReadyProbe,
     ServiceBackend,
     ServiceSpec,
 )
-from context_engine.host.daemon_runtime.context import ShellContext
-from context_engine.host.daemon_runtime.registry import Registry
+from host.daemon_runtime.context import ShellContext
+from host.daemon_runtime.registry import Registry
 from tests.conftest import free_port
 
 

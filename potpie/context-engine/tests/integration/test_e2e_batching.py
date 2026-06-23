@@ -15,11 +15,11 @@ import time
 import pytest
 from sqlalchemy import text
 
-from context_engine.application.use_cases.flush_windowed_batches import flush_ready_windowed_pots
-from context_engine.application.use_cases.reap_stale_batches import reap_stale_batches
-from context_engine.domain.ingestion_event_models import IngestionSubmissionRequest
-from context_engine.domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
-from context_engine.domain.reconciliation_batch import (
+from application.use_cases.flush_windowed_batches import flush_ready_windowed_pots
+from application.use_cases.reap_stale_batches import reap_stale_batches
+from domain.ingestion_event_models import IngestionSubmissionRequest
+from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
+from domain.reconciliation_batch import (
     BATCH_STATUS_CLAIMED,
     BATCH_STATUS_FAILED,
     BATCH_STATUS_PENDING,

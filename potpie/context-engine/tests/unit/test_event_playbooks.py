@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from context_engine.domain.event_playbooks import (
+from domain.event_playbooks import (
     EventPlaybook,
     all_registered_playbooks,
     find_playbook,

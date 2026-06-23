@@ -84,59 +84,64 @@ dev = [
 ]
 
 [tool.hatch.build.force-include]
-"src/context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json"
-"src/context_engine/adapters/inbound/cli/ui/assets/potpie.png" = "context_engine/adapters/inbound/cli/ui/assets/potpie.png"
+"adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "adapters/inbound/cli/ui/assets/potpie-logo-static.json"
+"adapters/inbound/cli/ui/assets/potpie.png" = "adapters/inbound/cli/ui/assets/potpie.png"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/context_engine"]
+packages = ["domain", "application", "adapters", "bootstrap", "benchmarks", "host"]
 include = [
-    "src/context_engine/domain/playbooks/**/*.md",
-    "src/context_engine/adapters/inbound/cli/templates/**/*.md",
-    "src/context_engine/adapters/inbound/cli/templates/**/*.yaml",
-    "src/context_engine/adapters/inbound/cli/ui/assets/**/*.json",
-    "src/context_engine/adapters/inbound/cli/ui/assets/**/*.png",
-    "src/context_engine/adapters/inbound/cli/ui/assets/**/*.svg",
-    "src/context_engine/adapters/inbound/http/ui/frontend/dist/**",
+    "domain/playbooks/**/*.md",
+    "adapters/inbound/cli/templates/**/*.md",
+    "adapters/inbound/cli/templates/**/*.yaml",
+    "adapters/inbound/cli/ui/assets/**/*.json",
+    "adapters/inbound/cli/ui/assets/**/*.png",
+    "adapters/inbound/cli/ui/assets/**/*.svg",
+    "adapters/inbound/http/ui/frontend/dist/**",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
-    "src/context_engine/benchmarks/use_cases/**/*.yaml",
-    "src/context_engine/benchmarks/fixtures/raw_events/**/*.json",
-    "src/context_engine/benchmarks/_legacy/data/**/*.json",
+    "benchmarks/use_cases/**/*.yaml",
+    "benchmarks/fixtures/raw_events/**/*.json",
+    "benchmarks/_legacy/data/**/*.json",
 ]
 exclude = [
-    "src/context_engine/adapters/inbound/http/ui/frontend/node_modules/**",
-    "src/context_engine/adapters/inbound/http/ui/frontend/src/**",
-    "src/context_engine/adapters/inbound/http/ui/frontend/index.html",
-    "src/context_engine/adapters/inbound/http/ui/frontend/package*.json",
-    "src/context_engine/adapters/inbound/http/ui/frontend/tsconfig*",
-    "src/context_engine/adapters/inbound/http/ui/frontend/vite.config.ts",
-    "src/context_engine/adapters/inbound/http/ui/frontend/.gitignore",
+    "adapters/inbound/http/ui/frontend/node_modules/**",
+    "adapters/inbound/http/ui/frontend/src/**",
+    "adapters/inbound/http/ui/frontend/index.html",
+    "adapters/inbound/http/ui/frontend/package*.json",
+    "adapters/inbound/http/ui/frontend/tsconfig*",
+    "adapters/inbound/http/ui/frontend/vite.config.ts",
+    "adapters/inbound/http/ui/frontend/.gitignore",
 ]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/context_engine",
-    "src/context_engine/domain/playbooks/**/*.md",
-    "src/context_engine/adapters/inbound/cli/templates/**/*.md",
-    "src/context_engine/adapters/inbound/cli/templates/**/*.yaml",
-    "src/context_engine/adapters/inbound/cli/ui/assets/**/*.json",
-    "src/context_engine/adapters/inbound/cli/ui/assets/**/*.png",
-    "src/context_engine/adapters/inbound/cli/ui/assets/**/*.svg",
-    "src/context_engine/adapters/inbound/http/ui/frontend/dist/**",
+    "domain",
+    "application",
+    "adapters",
+    "bootstrap",
+    "benchmarks",
+    "host",
+    "domain/playbooks/**/*.md",
+    "adapters/inbound/cli/templates/**/*.md",
+    "adapters/inbound/cli/templates/**/*.yaml",
+    "adapters/inbound/cli/ui/assets/**/*.json",
+    "adapters/inbound/cli/ui/assets/**/*.png",
+    "adapters/inbound/cli/ui/assets/**/*.svg",
+    "adapters/inbound/http/ui/frontend/dist/**",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
 ]
 exclude = [
-    "src/context_engine/adapters/inbound/http/ui/frontend/node_modules/**",
-    "src/context_engine/adapters/inbound/http/ui/frontend/src/**",
-    "src/context_engine/adapters/inbound/http/ui/frontend/index.html",
+    "adapters/inbound/http/ui/frontend/node_modules/**",
+    "adapters/inbound/http/ui/frontend/src/**",
+    "adapters/inbound/http/ui/frontend/index.html",
 ]
 
 [tool.ruff]
 target-version = "py310"
-src = ["src", "tests"]
+src = [".", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

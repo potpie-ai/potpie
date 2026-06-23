@@ -7,13 +7,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from context_engine.adapters.outbound.graph.apply_plan import apply_mutation_batch
-from context_engine.adapters.outbound.graph.context_graph_service import ContextGraphService
-from context_engine.adapters.outbound.graph.cypher import upsert_entities_async
-from context_engine.domain.context_events import EventRef
-from context_engine.domain.errors import CapabilityNotImplemented
-from context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceContext, ProvenanceRef
-from context_engine.domain.reconciliation import (
+from adapters.outbound.graph.apply_plan import apply_mutation_batch
+from adapters.outbound.graph.context_graph_service import ContextGraphService
+from adapters.outbound.graph.cypher import upsert_entities_async
+from domain.context_events import EventRef
+from domain.errors import CapabilityNotImplemented
+from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceContext, ProvenanceRef
+from domain.reconciliation import (
     MutationBatch,
 )
 

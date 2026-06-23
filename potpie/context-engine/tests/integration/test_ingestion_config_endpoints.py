@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from context_engine.adapters.inbound.http.api.v1.context.router import create_context_router
-from context_engine.domain.ports.ingestion_config import IngestionConfig
+from adapters.inbound.http.api.v1.context.router import create_context_router
+from domain.ports.ingestion_config import IngestionConfig
 
 
 def _allow_decision() -> SimpleNamespace:

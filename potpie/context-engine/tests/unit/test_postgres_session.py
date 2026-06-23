@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from context_engine.adapters.outbound.postgres.session import database_url
+from adapters.outbound.postgres.session import database_url
 
 _DB_KEYS = (
     "DATABASE_URL",

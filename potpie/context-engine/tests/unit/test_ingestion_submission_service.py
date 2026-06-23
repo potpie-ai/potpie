@@ -4,15 +4,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from context_engine.application.services.graph_service import DefaultGraphService
-from context_engine.application.services.ingestion_submission_service import (
+from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from application.services.graph_service import DefaultGraphService
+from application.services.ingestion_submission_service import (
     DefaultIngestionSubmissionService,
 )
-from context_engine.domain.ingestion_event_models import IngestionSubmissionRequest
-from context_engine.domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
-from context_engine.domain.ports.claim_query import ClaimQueryFilter
-from context_engine.domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
+from domain.ingestion_event_models import IngestionSubmissionRequest
+from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
+from domain.ports.claim_query import ClaimQueryFilter
+from domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
 
 
 def _service(*, reconciliation_agent=None):

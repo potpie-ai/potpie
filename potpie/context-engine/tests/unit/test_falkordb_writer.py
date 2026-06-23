@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import pytest
 
-from context_engine.adapters.outbound.graph.falkordb_writer import (
+from adapters.outbound.graph.falkordb_writer import (
     FalkorDBGraphWriter,
     _records_from_result,
     build_falkordb_graph,
 )
-from context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
+from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
 
 pytestmark = pytest.mark.unit
 

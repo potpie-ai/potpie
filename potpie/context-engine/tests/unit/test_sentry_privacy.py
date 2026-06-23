@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from context_engine.adapters.inbound.cli.telemetry.sentry_privacy import (
+from adapters.inbound.cli.telemetry.sentry_privacy import (
     scrub_sentry_breadcrumb,
     scrub_sentry_event,
 )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from context_engine.domain.source_references import (
+from domain.source_references import (
     SourceReferenceRecord,
     assess_freshness,
     dedupe_source_references,

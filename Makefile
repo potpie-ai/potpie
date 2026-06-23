@@ -30,7 +30,7 @@ help: ## Show this help
 # root package as a uv tool in EDITABLE mode so the local behavior matches
 # `pip install potpie`.
 CE_DIR := potpie/context-engine
-UI_FRONTEND_DIR := $(CE_DIR)/src/context_engine/adapters/inbound/http/ui/frontend
+UI_FRONTEND_DIR := $(CE_DIR)/adapters/inbound/http/ui/frontend
 CLI_TOOL := potpie
 CLI_PYTHON ?= >=3.12,<3.14
 

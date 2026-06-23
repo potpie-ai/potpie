@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import pytest
 
-from context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from context_engine.adapters.outbound.ledger.self_hosted_client import FixtureEventLedgerClient
-from context_engine.bootstrap.host_wiring import build_host_shell
-from context_engine.domain.context_records import ContextRecordValidationError
-from context_engine.domain.lifecycle import (
+from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from adapters.outbound.ledger.self_hosted_client import FixtureEventLedgerClient
+from bootstrap.host_wiring import build_host_shell
+from domain.context_records import ContextRecordValidationError
+from domain.lifecycle import (
     DONE,
     NOT_IMPLEMENTED,
     PLANNED,
@@ -22,13 +22,13 @@ from context_engine.domain.lifecycle import (
     SetupPlan,
     SetupPreview,
 )
-from context_engine.domain.ports.agent_context import (
+from domain.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
     SearchRequest,
     StatusRequest,
 )
-from context_engine.domain.ports.ledger.client import LedgerEvent
+from domain.ports.ledger.client import LedgerEvent
 
 
 @pytest.fixture()
@@ -164,8 +164,8 @@ def test_setup_run_state_store_and_migrator_skip_cleanly(host):
 
 
 def test_stub_backend_profiles_registered_and_fail_closed():
-    from context_engine.adapters.outbound.graph.backends import KNOWN_PROFILES, build_backend
-    from context_engine.domain.errors import CapabilityNotImplemented
+    from adapters.outbound.graph.backends import KNOWN_PROFILES, build_backend
+    from domain.errors import CapabilityNotImplemented
 
     assert "falkordb" in KNOWN_PROFILES
     assert "falkordb_lite" in KNOWN_PROFILES

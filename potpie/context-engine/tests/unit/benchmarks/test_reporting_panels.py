@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from context_engine.benchmarks.core.reporting import aggregate_report
-from context_engine.benchmarks.core.result import AxisScore, DimensionScore, ScenarioResult
+from benchmarks.core.reporting import aggregate_report
+from benchmarks.core.result import AxisScore, DimensionScore, ScenarioResult
 
 
 def _scenario(

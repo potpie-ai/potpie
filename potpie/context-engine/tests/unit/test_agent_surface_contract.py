@@ -22,8 +22,8 @@ import asyncio
 
 import pytest
 
-from context_engine.adapters.inbound.mcp.server import mcp
-from context_engine.domain.agent_context_port import (
+from adapters.inbound.mcp.server import mcp
+from domain.agent_context_port import (
     CONTEXT_INCLUDE_VALUES,
     CONTEXT_RESOLVE_RECIPES,
     context_port_manifest,

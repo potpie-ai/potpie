@@ -7,15 +7,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from context_engine.adapters.outbound.graph.backends import KNOWN_PROFILES, build_backend
-from context_engine.adapters.outbound.graph.backends.falkordb_backend import FalkorDBGraphBackend
-from context_engine.bootstrap.host_wiring import build_host_shell, default_backend_profile
-from context_engine.bootstrap.ingestion_server import build_ingestion_server
-from context_engine.domain.context_events import EventRef
-from context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
-from context_engine.domain.lifecycle import SetupPlan
-from context_engine.domain.ports.graph.backend import GraphBackend
-from context_engine.domain.reconciliation import ReconciliationPlan
+from adapters.outbound.graph.backends import KNOWN_PROFILES, build_backend
+from adapters.outbound.graph.backends.falkordb_backend import FalkorDBGraphBackend
+from bootstrap.host_wiring import build_host_shell, default_backend_profile
+from bootstrap.ingestion_server import build_ingestion_server
+from domain.context_events import EventRef
+from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
+from domain.lifecycle import SetupPlan
+from domain.ports.graph.backend import GraphBackend
+from domain.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.unit
 
@@ -199,8 +199,8 @@ def test_host_shell_defaults_to_falkordb_lite(tmp_path, monkeypatch) -> None:
 
 
 def test_default_backend_falls_back_below_falkordb_lite_python(monkeypatch) -> None:
-    import context_engine.bootstrap.host_wiring as host_wiring
-    import context_engine.domain.lifecycle as lifecycle
+    import bootstrap.host_wiring as host_wiring
+    import domain.lifecycle as lifecycle
 
     monkeypatch.delenv("CONTEXT_ENGINE_BACKEND", raising=False)
     monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)

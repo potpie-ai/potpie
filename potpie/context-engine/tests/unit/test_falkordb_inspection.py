@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from context_engine.adapters.outbound.graph.falkordb_inspection import FalkorDBInspection
-from context_engine.domain.ports.claim_query import ClaimQueryFilter
+from adapters.outbound.graph.falkordb_inspection import FalkorDBInspection
+from domain.ports.claim_query import ClaimQueryFilter
 
 POT = "pot_test"
 

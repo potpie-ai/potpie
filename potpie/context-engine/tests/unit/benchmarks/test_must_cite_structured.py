@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from context_engine.benchmarks.core.replay import build_source_id_index
-from context_engine.benchmarks.core.scenario import RetrievalAssertions
-from context_engine.benchmarks.evaluators.retrieval import (
+from benchmarks.core.replay import build_source_id_index
+from benchmarks.core.scenario import RetrievalAssertions
+from benchmarks.evaluators.retrieval import (
     evaluate_retrieval,
     set_fixture_source_id_lookup,
 )

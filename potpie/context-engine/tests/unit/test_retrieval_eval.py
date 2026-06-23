@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import pytest
 
-from context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from context_engine.adapters.outbound.intelligence.local_embedder import build_embedder
-from context_engine.application.services.graph_service import DefaultGraphService
-from context_engine.benchmarks.retrieval_eval import evaluate, seed_golden
+from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from adapters.outbound.intelligence.local_embedder import build_embedder
+from application.services.graph_service import DefaultGraphService
+from benchmarks.retrieval_eval import evaluate, seed_golden
 
 pytestmark = pytest.mark.unit
 
@@ -51,8 +51,8 @@ def test_vector_recovers_morphological_variants_lexical_misses() -> None:
     scores both claims ~0 (a tie), so it cannot rank the right one first; the
     embedder ranks it first via shared subwords.
     """
-    from context_engine.domain.ports.claim_query import ClaimQueryFilter
-    from context_engine.domain.semantic_mutations import SemanticMutationRequest
+    from domain.ports.claim_query import ClaimQueryFilter
+    from domain.semantic_mutations import SemanticMutationRequest
 
     def rank_first_key(embedder) -> str | None:
         svc = DefaultGraphService(backend=InMemoryGraphBackend(embedder=embedder))

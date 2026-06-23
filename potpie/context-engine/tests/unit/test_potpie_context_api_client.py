@@ -7,8 +7,8 @@ from typing import Any
 import httpx
 import pytest
 
-from context_engine.domain.errors import CapabilityNotImplemented
-from context_engine.adapters.outbound.http.potpie_context_api_client import (
+from domain.errors import CapabilityNotImplemented
+from adapters.outbound.http.potpie_context_api_client import (
     IngestRejectedError,
     PotpieContextApiClient,
     PotpieContextApiError,
@@ -58,7 +58,7 @@ def test_client_uses_auth_header_provider_for_get_requests(
             return httpx.Response(200, json=[{"id": "c1"}])
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
         FakeClient,
     )
     c = PotpieContextApiClient(
@@ -121,7 +121,7 @@ def test_client_refreshes_auth_on_401_via_reauth_provider(
             return httpx.Response(200, json=[{"id": "c1"}])
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
         FakeClient,
     )
     c = PotpieContextApiClient(
@@ -143,7 +143,7 @@ def test_client_does_not_retry_401_without_reauth_provider(
     """No reauth hook (e.g. plain API key) → a 401 surfaces, no wasted retry."""
     get_calls: list[str] = []
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
         _always_401_get_client(get_calls),
     )
     c = PotpieContextApiClient("http://example.com", "k")
@@ -161,7 +161,7 @@ def test_client_does_not_retry_401_when_reauth_unchanged(
     """Reauth that returns identical headers → no retry (retry couldn't succeed)."""
     get_calls: list[str] = []
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
         _always_401_get_client(get_calls),
     )
     c = PotpieContextApiClient(
@@ -196,7 +196,7 @@ def test_client_ingest_queued(monkeypatch: pytest.MonkeyPatch) -> None:
             )
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
         FakeClient,
     )
     c = PotpieContextApiClient("http://example.com", "k")
@@ -235,7 +235,7 @@ def test_submit_event_omits_non_repo_scope_fields_when_none(
             return httpx.Response(202, json={"status": "queued", "event_id": "e1"})
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
         FakeClient,
     )
     c = PotpieContextApiClient("http://example.com", "k")
@@ -287,7 +287,7 @@ def test_list_context_pots_success(monkeypatch: pytest.MonkeyPatch) -> None:
             return httpx.Response(200, json=[{"id": "c1", "display_name": "x"}])
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
         FakeClient,
     )
     c = PotpieContextApiClient("http://example.com", "k")
@@ -315,7 +315,7 @@ def test_create_context_pot_success(monkeypatch: pytest.MonkeyPatch) -> None:
             raise AssertionError("unused")
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
         FakeClient,
     )
     c = PotpieContextApiClient("http://example.com", "k")
@@ -343,7 +343,7 @@ def test_get_context_pot_slug_availability(monkeypatch: pytest.MonkeyPatch) -> N
             return httpx.Response(200, json={"slug": "my-pot", "available": True})
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
         FakeClient,
     )
     c = PotpieContextApiClient("http://example.com", "k")
@@ -374,7 +374,7 @@ def test_list_pot_repositories_success(monkeypatch: pytest.MonkeyPatch) -> None:
             )
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
         FakeClient,
     )
     c = PotpieContextApiClient("http://example.com", "k")
@@ -407,7 +407,7 @@ def test_add_pot_repository_success(monkeypatch: pytest.MonkeyPatch) -> None:
             raise AssertionError("unused")
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
         FakeClient,
     )
     c = PotpieContextApiClient("http://example.com", "k")
@@ -416,7 +416,7 @@ def test_add_pot_repository_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_json_sanitize_datetime() -> None:
-    from context_engine.adapters.outbound.http.potpie_context_api_client import _json_body_for_httpx
+    from adapters.outbound.http.potpie_context_api_client import _json_body_for_httpx
     from datetime import datetime, timezone
 
     dt = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
@@ -426,7 +426,7 @@ def test_json_sanitize_datetime() -> None:
 
 
 def test_json_sanitize_datetime_nested_list() -> None:
-    from context_engine.adapters.outbound.http.potpie_context_api_client import _json_body_for_httpx
+    from adapters.outbound.http.potpie_context_api_client import _json_body_for_httpx
     from datetime import datetime, timezone
 
     dt = datetime(2025, 3, 1, tzinfo=timezone.utc)
@@ -435,7 +435,7 @@ def test_json_sanitize_datetime_nested_list() -> None:
 
 
 def test_json_sanitize_datetime_passthrough_non_datetime() -> None:
-    from context_engine.adapters.outbound.http.potpie_context_api_client import _json_body_for_httpx
+    from adapters.outbound.http.potpie_context_api_client import _json_body_for_httpx
 
     out = _json_body_for_httpx({"x": 42, "y": "hello", "z": None})
     assert out == {"x": 42, "y": "hello", "z": None}
@@ -459,7 +459,7 @@ def test_client_ingest_sync_passes_param(monkeypatch: pytest.MonkeyPatch) -> Non
             return httpx.Response(200, json={"event_id": "sync-1", "status": "ok"})
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
     code, data = c.ingest(
@@ -488,7 +488,7 @@ def test_client_ingest_async_no_param(monkeypatch: pytest.MonkeyPatch) -> None:
             return httpx.Response(202, json={"event_id": "e1", "status": "queued"})
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
     code, _ = c.ingest(
@@ -519,7 +519,7 @@ def test_client_ingest_duplicate_409_returns_event_id(
             )
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
     code, data = c.ingest(
@@ -548,7 +548,7 @@ def test_client_ingest_non_duplicate_409_raises(
             return httpx.Response(409, json={"detail": "Conflict"})
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
     with pytest.raises(PotpieContextApiError) as exc_info:
@@ -592,7 +592,7 @@ def test_client_ingest_422_raises_ingest_rejected(
             )
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
     with pytest.raises(IngestRejectedError) as exc_info:
@@ -626,7 +626,7 @@ def test_client_get_event_success(monkeypatch: pytest.MonkeyPatch) -> None:
             return httpx.Response(200, json={"event_id": "e1", "status": "done"})
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
     out = c.get_event("e1")
@@ -655,7 +655,7 @@ def test_client_list_events_success(monkeypatch: pytest.MonkeyPatch) -> None:
             )
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
     out = c.list_events("p1", limit=5, status="queued", ingestion_kind="raw_episode")
@@ -683,7 +683,7 @@ def test_client_reset_success(monkeypatch: pytest.MonkeyPatch) -> None:
             return httpx.Response(200, json={"ok": True})
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
     result = c.reset({"pot_id": "p"})
@@ -708,7 +708,7 @@ def test_client_record_success(monkeypatch: pytest.MonkeyPatch) -> None:
             )
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
     result = c.record(
@@ -736,7 +736,7 @@ def test_client_status_success(monkeypatch: pytest.MonkeyPatch) -> None:
             )
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
     result = c.status({"pot_id": "p"})
@@ -763,7 +763,7 @@ def test_client_health_success(monkeypatch: pytest.MonkeyPatch) -> None:
             raise AssertionError("unused")
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
     code, body = c.get_health()
@@ -791,7 +791,7 @@ def test_client_health_non_200_returns_none_body(
             raise AssertionError("unused")
 
     monkeypatch.setattr(
-        "context_engine.adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
     code, body = c.get_health()

@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 import pytest
 from typer.testing import CliRunner
 
-from context_engine.adapters.inbound.cli.commands import _common, pots
-from context_engine.domain.ports.services.pot_management import PotInfo, SourceInfo
+from adapters.inbound.cli.commands import _common, pots
+from domain.ports.services.pot_management import PotInfo, SourceInfo
 
 pytestmark = pytest.mark.unit
 

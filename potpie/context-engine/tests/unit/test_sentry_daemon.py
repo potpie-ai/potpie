@@ -6,11 +6,11 @@ import pytest
 from fastapi import HTTPException
 from typer.testing import CliRunner
 
-from context_engine.adapters.inbound.cli import host_cli
-from context_engine.adapters.inbound.cli.commands import _common
-from context_engine.adapters.inbound.cli.telemetry.context import current_telemetry_context
-from context_engine.domain.errors import CapabilityNotImplemented
-from context_engine.host import daemon_main
+from adapters.inbound.cli import host_cli
+from adapters.inbound.cli.commands import _common
+from adapters.inbound.cli.telemetry.context import current_telemetry_context
+from domain.errors import CapabilityNotImplemented
+from host import daemon_main
 
 
 class _CrashingDaemon:
@@ -22,7 +22,7 @@ class _CrashingDaemon:
 
     def stop(self) -> dict[str, str]:
         raise CapabilityNotImplemented(
-            "context_engine.host.daemon.stop",
+            "host.daemon.stop",
             recommended_next_action="host runs in-process; nothing to stop",
         )
 
@@ -38,7 +38,7 @@ def test_daemon_unexpected_failure_is_captured_with_session_id(
     captured: list[tuple[str, str, str | None]] = []
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setattr(
-        "context_engine.adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
+        "adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
         lambda exc, *, error_code, error_kind: captured.append(
             (error_code, error_kind, current_telemetry_context().daemon_session_id)
         ),
@@ -67,7 +67,7 @@ def test_daemon_expected_not_implemented_is_not_captured(
     captured: list[BaseException] = []
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setattr(
-        "context_engine.adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
+        "adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
         lambda exc, *, error_code, error_kind: captured.append(exc),
     )
     _common.set_host(_FakeHost())
@@ -84,7 +84,7 @@ def test_daemon_expected_not_implemented_is_not_captured(
 def test_daemon_rpc_unexpected_failure_is_captured(monkeypatch) -> None:
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "context_engine.adapters.inbound.cli.sentry_runtime.capture_unexpected_daemon_error",
+        "adapters.inbound.cli.sentry_runtime.capture_unexpected_daemon_error",
         lambda exc, *, error_code, error_kind: captured.append(
             (error_code, error_kind)
         ),
@@ -100,7 +100,7 @@ def test_daemon_rpc_unexpected_failure_is_captured(monkeypatch) -> None:
 def test_daemon_rpc_expected_error_is_not_captured(monkeypatch) -> None:
     captured: list[BaseException] = []
     monkeypatch.setattr(
-        "context_engine.adapters.inbound.cli.sentry_runtime.capture_unexpected_daemon_error",
+        "adapters.inbound.cli.sentry_runtime.capture_unexpected_daemon_error",
         lambda exc, *, error_code, error_kind: captured.append(exc),
     )
 

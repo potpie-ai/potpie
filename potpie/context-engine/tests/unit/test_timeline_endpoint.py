@@ -15,14 +15,14 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from context_engine.adapters.inbound.http.api.v1.context.router import (
+from adapters.inbound.http.api.v1.context.router import (
     _parse_window,
     create_context_router,
 )
-from context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from context_engine.adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
-from context_engine.application.services.graph_service import DefaultGraphService
-from context_engine.domain.ports.claim_query import ClaimRow
+from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
+from application.services.graph_service import DefaultGraphService
+from domain.ports.claim_query import ClaimRow
 
 API = "/api/v1/context"
 

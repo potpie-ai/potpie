@@ -4,10 +4,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from context_engine.adapters.outbound.graph.context_graph_service import ContextGraphService
-from context_engine.bootstrap.ingestion_server import IngestionServerContainer
-from context_engine.domain.graph_query import (
+from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from adapters.outbound.graph.context_graph_service import ContextGraphService
+from bootstrap.ingestion_server import IngestionServerContainer
+from domain.graph_query import (
     ContextGraphGoal,
     ContextGraphQuery,
     ContextGraphStrategy,

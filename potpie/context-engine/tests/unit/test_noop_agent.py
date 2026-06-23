@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from context_engine.adapters.outbound.reconciliation.noop_agent import NoOpReconciliationAgent
-from context_engine.domain.context_events import ContextEvent
-from context_engine.domain.reconciliation_batch import BatchAgentContext
+from adapters.outbound.reconciliation.noop_agent import NoOpReconciliationAgent
+from domain.context_events import ContextEvent
+from domain.reconciliation_batch import BatchAgentContext
 
 pytestmark = pytest.mark.unit
 

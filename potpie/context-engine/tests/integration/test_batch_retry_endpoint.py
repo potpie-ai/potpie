@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from context_engine.adapters.inbound.http.api.v1.context.router import create_context_router
+from adapters.inbound.http.api.v1.context.router import create_context_router
 
 
 def _ev(eid: str, pot_id: str = "pot-1") -> SimpleNamespace:

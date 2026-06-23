@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from context_engine.benchmarks.core.graph_inspect import GraphSnapshot
-from context_engine.benchmarks.core.scenario import (
+from benchmarks.core.graph_inspect import GraphSnapshot
+from benchmarks.core.scenario import (
     EntityAssertion,
     PostIngestAssertions,
     ReconciliationAssertion,
     RetrievalAssertions,
 )
-from context_engine.benchmarks.evaluators.ingestion_quality import evaluate_ingestion_quality
-from context_engine.benchmarks.evaluators.retrieval import evaluate_retrieval
+from benchmarks.evaluators.ingestion_quality import evaluate_ingestion_quality
+from benchmarks.evaluators.retrieval import evaluate_retrieval
 
 
 def test_ingestion_coverage_floor_gates_otherwise_passing_axis() -> None:
@@ -27,7 +27,7 @@ def test_ingestion_coverage_floor_gates_otherwise_passing_axis() -> None:
     )
     snapshot = GraphSnapshot()
     # Add one Service that satisfies the first assertion.
-    from context_engine.benchmarks.core.graph_inspect import GraphEntity
+    from benchmarks.core.graph_inspect import GraphEntity
 
     snapshot.entities.append(GraphEntity(label="Service", key="s1", properties={}))
     result = evaluate_ingestion_quality(
@@ -57,7 +57,7 @@ def test_ingestion_no_floor_means_report_only() -> None:
 
 def test_retrieval_precision_floor_gates() -> None:
     """A response that cites distractors fails when precision_floor is set."""
-    from context_engine.benchmarks.evaluators.retrieval import set_fixture_source_id_lookup
+    from benchmarks.evaluators.retrieval import set_fixture_source_id_lookup
 
     set_fixture_source_id_lookup(
         {

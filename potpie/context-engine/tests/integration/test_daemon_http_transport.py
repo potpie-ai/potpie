@@ -8,17 +8,17 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
-from context_engine.adapters.inbound.daemon_http.transport import HttpTransport
-from context_engine.domain.ports.daemon.operations import (
+from adapters.inbound.daemon_http.transport import HttpTransport
+from domain.ports.daemon.operations import (
     AuthRequirement,
     OperationContext,
     OperationError,
     OperationRegistry,
     OperationSpec,
 )
-from context_engine.host.daemon_runtime.context import ServiceEndpoints, ShellContext
-from context_engine.host.daemon_runtime.health import HealthRegistrar
-from context_engine.host.daemon_runtime.ipc_auth import IpcAuthGate
+from host.daemon_runtime.context import ServiceEndpoints, ShellContext
+from host.daemon_runtime.health import HealthRegistrar
+from host.daemon_runtime.ipc_auth import IpcAuthGate
 from tests.conftest import wait_for_condition
 
 

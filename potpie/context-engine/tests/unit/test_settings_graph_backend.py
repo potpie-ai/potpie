@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from context_engine.adapters.outbound.settings_env import EnvContextEngineSettings
+from adapters.outbound.settings_env import EnvContextEngineSettings
 
 pytestmark = pytest.mark.unit
 

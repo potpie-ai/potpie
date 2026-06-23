@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import pytest
 
-from context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from context_engine.adapters.outbound.intelligence.local_embedder import build_embedder
-from context_engine.adapters.outbound.session.injection_ledger import InMemoryInjectionLedger
-from context_engine.application.services.graph_service import DefaultGraphService
-from context_engine.application.services.nudge_service import NudgeService
-from context_engine.domain.nudge import GraphNudgeRequest
-from context_engine.domain.reconciliation_flags import agent_planner_enabled
-from context_engine.domain.semantic_mutations import SemanticMutationRequest
+from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from adapters.outbound.intelligence.local_embedder import build_embedder
+from adapters.outbound.session.injection_ledger import InMemoryInjectionLedger
+from application.services.graph_service import DefaultGraphService
+from application.services.nudge_service import NudgeService
+from domain.nudge import GraphNudgeRequest
+from domain.reconciliation_flags import agent_planner_enabled
+from domain.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
 

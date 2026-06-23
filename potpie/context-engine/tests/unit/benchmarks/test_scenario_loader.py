@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from context_engine.benchmarks.core.scenario import (
+from benchmarks.core.scenario import (
     DEFAULT_AXIS_WEIGHTS,
     AxisWeights,
     ScenarioLoadError,

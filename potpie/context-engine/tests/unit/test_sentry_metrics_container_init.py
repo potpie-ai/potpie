@@ -6,13 +6,13 @@ from types import ModuleType
 
 import pytest
 
-from context_engine.adapters.inbound.cli.telemetry.settings import SentrySettings
-from context_engine.adapters.outbound.graph import Neo4jGraphWriter
-from context_engine.application.services.source_connector_registry import SourceConnectorRegistry
-from context_engine.bootstrap import ingestion_server, sentry_metrics_runtime, standalone_container
-from context_engine.bootstrap.http_projects import ExplicitPotResolution
-from context_engine.domain.ports.observability import NoOpObservability
-from context_engine.domain.ports.telemetry import NoOpTelemetry
+from adapters.inbound.cli.telemetry.settings import SentrySettings
+from adapters.outbound.graph import Neo4jGraphWriter
+from application.services.source_connector_registry import SourceConnectorRegistry
+from bootstrap import ingestion_server, sentry_metrics_runtime, standalone_container
+from bootstrap.http_projects import ExplicitPotResolution
+from domain.ports.observability import NoOpObservability
+from domain.ports.telemetry import NoOpTelemetry
 
 
 class _FakeSentry(ModuleType):
@@ -144,7 +144,7 @@ def test_standalone_container_delegates_to_ingestion_server_build(
 
 
 def _patch_container_graph(monkeypatch: pytest.MonkeyPatch) -> None:
-    import context_engine.domain.coherence as coherence
+    import domain.coherence as coherence
 
     monkeypatch.setattr(
         ingestion_server,

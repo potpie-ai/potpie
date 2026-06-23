@@ -13,10 +13,10 @@ from datetime import datetime
 
 import pytest
 
-from context_engine.domain.context_events import EventRef
-from context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
-from context_engine.domain.ports.pot_resolution import RepoRef
-from context_engine.domain.reconciliation import ReconciliationPlan
+from domain.context_events import EventRef
+from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
+from domain.ports.pot_resolution import RepoRef
+from domain.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.integration
 

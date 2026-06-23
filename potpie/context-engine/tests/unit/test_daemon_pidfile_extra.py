@@ -7,7 +7,7 @@ import pathlib
 
 import pytest
 
-from context_engine.adapters.outbound.daemon_process.pidfile import (
+from adapters.outbound.daemon_process.pidfile import (
     install_signal_handlers,
     read_pid_file,
     remove_pid_file,

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from context_engine.adapters.inbound.cli import host_cli
-from context_engine.adapters.inbound.cli.commands import _common
-from context_engine.adapters.inbound.cli.telemetry.context import current_telemetry_context
-from context_engine.adapters.inbound.cli.telemetry.identity_store import load_or_create_identity
+from adapters.inbound.cli import host_cli
+from adapters.inbound.cli.commands import _common
+from adapters.inbound.cli.telemetry.context import current_telemetry_context
+from adapters.inbound.cli.telemetry.identity_store import load_or_create_identity
 
 
 def test_cli_invocations_share_install_and_daemon_session_ids(

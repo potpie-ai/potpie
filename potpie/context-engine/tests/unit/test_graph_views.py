@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from context_engine.domain.agent_context_port import READER_BACKED_INCLUDES
-from context_engine.domain.graph_views import (
+from domain.agent_context_port import READER_BACKED_INCLUDES
+from domain.graph_views import (
     GRAPH_VIEWS,
     backed_views,
     view_spec,

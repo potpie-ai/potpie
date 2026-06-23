@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from context_engine.adapters.inbound.cli.telemetry.settings import (
+from adapters.inbound.cli.telemetry.settings import (
     load_sentry_settings,
     telemetry_environment,
 )

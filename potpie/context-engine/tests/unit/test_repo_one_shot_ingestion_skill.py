@@ -19,19 +19,19 @@ from pathlib import Path
 
 import pytest
 
-from context_engine.adapters.outbound.connectors.github.api_client import PyGithubSourceControl
-from context_engine.adapters.outbound.reconciliation.llm_plan_schema import LlmReconciliationPlan
-from context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
+from adapters.outbound.connectors.github.api_client import PyGithubSourceControl
+from adapters.outbound.reconciliation.llm_plan_schema import LlmReconciliationPlan
+from adapters.outbound.reconciliation.pydantic_deep_agent import (
     PydanticDeepReconciliationAgent,
 )
-from context_engine.domain.identity import (
+from domain.identity import (
     IdentityClass,
     _EXTERNAL_ID_SAFE_RE,
     _SLUG_BODY_RE,
     get_identity,
     mint_entity_key,
 )
-from context_engine.domain.ontology import EDGE_TYPES, ENTITY_TYPES
+from domain.ontology import EDGE_TYPES, ENTITY_TYPES
 
 pytestmark = pytest.mark.unit
 
@@ -511,7 +511,7 @@ def test_skill_caps_list_pagination_to_two_calls_one_per_kind() -> None:
 
 def test_one_shot_ingest_playbook_is_registered() -> None:
     """The internal agent must be able to resolve the one-shot event-kind."""
-    from context_engine.domain.event_playbooks import find_playbook, is_default_playbook
+    from domain.event_playbooks import find_playbook, is_default_playbook
 
     pb = find_playbook("github", "repository", "one_shot_ingest")
     assert not is_default_playbook(pb), (
@@ -529,7 +529,7 @@ def test_one_shot_ingest_playbook_is_registered() -> None:
 
 def test_one_shot_playbook_extract_is_the_markdown_body() -> None:
     """The skill markdown body must be embedded verbatim in the playbook."""
-    from context_engine.domain.event_playbooks import find_playbook
+    from domain.event_playbooks import find_playbook
 
     pb = find_playbook("github", "repository", "one_shot_ingest")
     _, body = _read_skill()
@@ -558,7 +558,7 @@ def test_one_shot_playbook_extract_is_the_markdown_body() -> None:
 
 
 def test_one_shot_playbook_tool_hints_reference_real_tools() -> None:
-    from context_engine.domain.event_playbooks import find_playbook
+    from domain.event_playbooks import find_playbook
 
     pb = find_playbook("github", "repository", "one_shot_ingest")
     # Every hinted github_* tool must exist on the adapter.
@@ -576,7 +576,7 @@ def test_one_shot_playbook_tool_hints_reference_real_tools() -> None:
 
 def test_one_shot_playbook_renders_into_agent_prompt() -> None:
     """render_playbooks_section must include the one-shot skill body."""
-    from context_engine.domain.event_playbooks import find_playbook, render_playbooks_section
+    from domain.event_playbooks import find_playbook, render_playbooks_section
 
     pb = find_playbook("github", "repository", "one_shot_ingest")
     rendered = render_playbooks_section([pb])
@@ -678,7 +678,7 @@ def test_no_fix_emitted_from_issues() -> None:
 
 def test_playbook_tool_hints_include_issue_tools() -> None:
     """Playbook registration must expose the issue-side tools."""
-    from context_engine.domain.event_playbooks import find_playbook
+    from domain.event_playbooks import find_playbook
 
     pb = find_playbook("github", "repository", "one_shot_ingest")
     assert "github_list_issues" in pb.tool_hints

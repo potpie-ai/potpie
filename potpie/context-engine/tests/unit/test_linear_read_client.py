@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from context_engine.adapters.outbound.cli_auth.http import AuthHttpError
-from context_engine.adapters.outbound.cli_auth import linear_read_client as lrc
+from adapters.outbound.cli_auth.http import AuthHttpError
+from adapters.outbound.cli_auth import linear_read_client as lrc
 
 
 def test_fetch_linear_workspaces_from_organizations(monkeypatch: pytest.MonkeyPatch) -> None:

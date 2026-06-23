@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from context_engine.adapters.outbound.graph.falkordb_reader import FalkorDBClaimQueryStore
-from context_engine.domain.ports.claim_query import ClaimQueryFilter
+from adapters.outbound.graph.falkordb_reader import FalkorDBClaimQueryStore
+from domain.ports.claim_query import ClaimQueryFilter
 
 pytestmark = pytest.mark.unit
 

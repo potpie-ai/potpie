@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from context_engine.adapters.outbound.managed_services.container_backend import ContainerBackend
-from context_engine.domain.ports.daemon.shell import HealthStatus, ReadyProbe, ServiceSpec
-from context_engine.host.daemon_runtime.context import ServiceEndpoints, ShellContext
+from adapters.outbound.managed_services.container_backend import ContainerBackend
+from domain.ports.daemon.shell import HealthStatus, ReadyProbe, ServiceSpec
+from host.daemon_runtime.context import ServiceEndpoints, ShellContext
 
 
 @pytest.fixture
@@ -45,7 +45,7 @@ async def test_start_invokes_docker_run(ctx):
     fake_proc = MagicMock(returncode=0)
     fake_proc.communicate = AsyncMock(return_value=(b"abc123\n", b""))
     with patch(
-        "context_engine.adapters.outbound.managed_services.container_backend.asyncio.create_subprocess_exec",
+        "adapters.outbound.managed_services.container_backend.asyncio.create_subprocess_exec",
         new=AsyncMock(return_value=fake_proc),
     ) as run:
         await be.start(_spec(), ctx)
@@ -74,7 +74,7 @@ async def test_stop_invokes_docker_stop(ctx):
     fake_proc = MagicMock(returncode=0)
     fake_proc.communicate = AsyncMock(return_value=(b"", b""))
     with patch(
-        "context_engine.adapters.outbound.managed_services.container_backend.asyncio.create_subprocess_exec",
+        "adapters.outbound.managed_services.container_backend.asyncio.create_subprocess_exec",
         new=AsyncMock(return_value=fake_proc),
     ) as run:
         await be.stop(_spec())
@@ -91,7 +91,7 @@ async def test_start_failure_raises(ctx):
     fake_proc = MagicMock(returncode=125)
     fake_proc.communicate = AsyncMock(return_value=(b"", b"image not found"))
     with patch(
-        "context_engine.adapters.outbound.managed_services.container_backend.asyncio.create_subprocess_exec",
+        "adapters.outbound.managed_services.container_backend.asyncio.create_subprocess_exec",
         new=AsyncMock(return_value=fake_proc),
     ):
         with pytest.raises(RuntimeError) as ei:
@@ -103,7 +103,7 @@ async def test_start_failure_raises(ctx):
 async def test_probe_http_kind_returns_ready(ctx):
     be = ContainerBackend()
     with patch(
-        "context_engine.adapters.outbound.managed_services.container_backend._http_probe",
+        "adapters.outbound.managed_services.container_backend._http_probe",
         new=AsyncMock(return_value=True),
     ):
         assert await be.probe(_http_spec()) is HealthStatus.READY

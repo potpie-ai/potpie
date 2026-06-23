@@ -9,11 +9,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
+from adapters.outbound.reconciliation.pydantic_deep_agent import (
     PydanticDeepReconciliationAgent,
 )
-from context_engine.domain.context_events import ContextEvent
-from context_engine.domain.reconciliation_batch import BatchAgentContext
+from domain.context_events import ContextEvent
+from domain.reconciliation_batch import BatchAgentContext
 
 pytestmark = pytest.mark.unit
 

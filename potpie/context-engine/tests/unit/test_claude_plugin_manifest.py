@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-import context_engine.adapters.inbound.cli as _clipkg
+import adapters.inbound.cli as _clipkg
 
 pytestmark = pytest.mark.unit
 

@@ -9,9 +9,9 @@ from typing import Optional, Union
 
 import pytest
 
-from context_engine.adapters.inbound.cli.telemetry.settings import SentrySettings
+from adapters.inbound.cli.telemetry.settings import SentrySettings
 
-sentry_metrics_runtime = import_module("context_engine.bootstrap.sentry_metrics_runtime")
+sentry_metrics_runtime = import_module("bootstrap.sentry_metrics_runtime")
 runtime_importlib = getattr(sentry_metrics_runtime, "importlib")
 configure_metrics = getattr(sentry_metrics_runtime, "configure_metrics")
 count = getattr(sentry_metrics_runtime, "count")

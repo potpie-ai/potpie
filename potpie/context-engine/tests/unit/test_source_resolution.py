@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from context_engine.domain.source_resolution import (
+from domain.source_resolution import (
     NO_SOURCE_REFERENCES,
     RESOLVER_FALLBACK_CODES,
     RESOLVER_UNAVAILABLE,

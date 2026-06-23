@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pathlib
 
-from context_engine.host.daemon_runtime.config import (
+from host.daemon_runtime.config import (
     ComponentEntry,
     DaemonConfig,
     ReadyProbeEntry,
