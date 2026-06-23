@@ -64,6 +64,9 @@ from adapters.inbound.cli.telemetry.usage_events import (
 )
 from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
 from adapters.outbound.cli_auth.pkce import generate_pkce_pair
+from adapters.outbound.cli_auth.oauth_client_id_messages import (
+    missing_linear_client_id_message,
+)
 from adapters.outbound.cli_auth.provider_config import (
     Provider,
     authorization_url,
@@ -304,8 +307,8 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
     client_id = get_client_id("linear")
     if not client_id:
         emit_error(
-            "Linear OAuth not configured",
-            "Linear OAuth client id is missing (set LINEAR_CLIENT_ID in your environment).",
+            "Linear login unavailable",
+            missing_linear_client_id_message(),
             verbose=v,
         )
         raise typer.Exit(code=1)
