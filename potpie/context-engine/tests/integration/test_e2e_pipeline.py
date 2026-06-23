@@ -211,7 +211,8 @@ def _seed_topology(container, pot_id: str) -> None:
         edge_deletes=[],
         invalidations=[],
     )
-    asyncio.run(container.context_graph.apply_plan_async(plan, expected_pot_id=pot_id))
+    assert container.backend is not None
+    asyncio.run(container.backend.mutation.apply_async(plan, expected_pot_id=pot_id))
 
 
 class TestEnvelopeQuery:

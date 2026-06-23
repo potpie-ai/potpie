@@ -20,8 +20,8 @@ from adapters.inbound.http.api.v1.context.router import (
     create_context_router,
 )
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.graph.context_graph_service import ContextGraphService
 from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
+from application.services.graph_service import DefaultGraphService
 from domain.ports.claim_query import ClaimRow
 
 API = "/api/v1/context"
@@ -57,8 +57,8 @@ class _AllowPolicy:
 
 
 class _FakeContainer:
-    def __init__(self, context_graph: Any) -> None:
-        self.context_graph = context_graph
+    def __init__(self, graph: Any) -> None:
+        self.graph = graph
 
     def policy(self) -> _AllowPolicy:
         return _AllowPolicy()
@@ -91,8 +91,8 @@ def _client() -> TestClient:
             ),
         ]
     )
-    adapter = ContextGraphService(backend=InMemoryGraphBackend(store=store))
-    container = _FakeContainer(adapter)
+    graph = DefaultGraphService(backend=InMemoryGraphBackend(store=store))
+    container = _FakeContainer(graph)
     router = create_context_router(
         require_auth=lambda: {"user_id": "u"},
         get_container=lambda: container,  # type: ignore[arg-type]
