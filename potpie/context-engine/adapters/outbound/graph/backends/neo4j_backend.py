@@ -1,14 +1,15 @@
 """Neo4j ``GraphBackend`` — the shape-first production target.
 
-This is the canonical-store profile for the migration. The skeleton assembles
+This is the canonical-store profile for the migration. The backend assembles
 it from capability adapters and delegates the two *source-of-truth* ports to the
-existing, battle-tested Neo4j code; the four rebuildable-projection ports are
-wired to fail-closed stubs until they are built out.
+existing, battle-tested Neo4j code; semantic search is backed by Neo4j's native
+relationship vector index, while inspection/snapshot remain fail-closed stubs
+until they are built out.
 
     claim_query  -> Neo4jClaimQueryStore           (existing, real)
     mutation     -> existing apply path             # TODO(stage-N)
     analytics    -> ClaimQueryAnalytics             (computed from claim_query, real)
-    semantic     -> CapabilityNotImplemented        # TODO(stage-N): fold neo4j vector
+    semantic     -> ClaimQuerySemanticSearch        (native vector via claim_query)
     inspection   -> CapabilityNotImplemented        # TODO(stage-N): cypher traversal
     snapshot     -> CapabilityNotImplemented        # TODO(stage-N): portable export/import
 
@@ -20,20 +21,27 @@ is actually selected.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
 
 from adapters.outbound.graph.backends._unimplemented import (
     UnimplementedInspection,
-    UnimplementedSemantic,
     UnimplementedSnapshot,
 )
+from adapters.outbound.graph.backends.claim_query_semantic import ClaimQuerySemanticSearch
 from adapters.outbound.graph.backends.claim_query_analytics import ClaimQueryAnalytics
+from adapters.outbound.graph.cypher import _coerce_props_for_neo4j
+from adapters.outbound.graph.entity_summary_repair import (
+    ENTITY_SUMMARY_REPAIR_LIMIT,
+    ENTITY_SUMMARY_SCAN_CYPHER,
+    ENTITY_SUMMARY_UPDATE_CYPHER,
+    repaired_entity_properties,
+)
 from domain.graph_mutations import ProvenanceContext
 from domain.lifecycle import SetupPlan, StepResult
 from domain.ports.claim_query import ClaimQueryPort
 from domain.ports.graph.backend import BackendCapabilities
 from domain.ports.graph.mutation import BackendReadiness
-from domain.reconciliation import ReconciliationPlan, ReconciliationResult
+from domain.reconciliation import MutationBatch, MutationResult
 
 _PROFILE = "neo4j"
 
@@ -61,7 +69,7 @@ def _run_sync(coro: Any) -> Any:
 
 @dataclass(slots=True)
 class _Neo4jMutation:
-    """``GraphMutationPort`` over ``Neo4jGraphWriter`` + ``apply_reconciliation_plan``.
+    """``GraphMutationPort`` over ``Neo4jGraphWriter`` + ``apply_mutation_batch``.
 
     ``apply_async`` is the native door (it ``await``s the async writer directly);
     ``apply`` is a loop-aware sync bridge for CLI/tests. The writer is created
@@ -72,24 +80,25 @@ class _Neo4jMutation:
 
     settings: Any
     writer: Any = None  # injected (shared) or lazily created on first use
+    embedder: Any = None
 
     def _get_writer(self) -> Any:
         if self.writer is None:
             from adapters.outbound.graph import Neo4jGraphWriter
 
-            self.writer = Neo4jGraphWriter(self.settings)
+            self.writer = Neo4jGraphWriter(self.settings, embedder=self.embedder)
         return self.writer
 
     async def apply_async(
         self,
-        plan: ReconciliationPlan,
+        plan: MutationBatch,
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
-    ) -> ReconciliationResult:
-        from adapters.outbound.graph.apply_plan import apply_reconciliation_plan
+    ) -> MutationResult:
+        from adapters.outbound.graph.apply_plan import apply_mutation_batch
 
-        return await apply_reconciliation_plan(
+        return await apply_mutation_batch(
             self._get_writer(),
             plan,
             expected_pot_id=expected_pot_id,
@@ -98,11 +107,11 @@ class _Neo4jMutation:
 
     def apply(
         self,
-        plan: ReconciliationPlan,
+        plan: MutationBatch,
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
-    ) -> ReconciliationResult:
+    ) -> MutationResult:
         return _run_sync(
             self.apply_async(
                 plan,
@@ -130,12 +139,12 @@ class _Neo4jMutation:
         return BackendReadiness(
             profile=_PROFILE,
             ready=True,
-            detail="neo4j claim_query + mutation + analytics wired; semantic/inspection/snapshot pending",
+            detail="neo4j claim_query + mutation + semantic + analytics wired; inspection/snapshot pending",
             capability_ready={
                 "mutation": True,
                 "claim_query": True,
                 "analytics": True,
-                "semantic": False,
+                "semantic": True,
                 "inspection": False,
                 "snapshot": False,
             },
@@ -148,15 +157,22 @@ class Neo4jGraphBackend:
 
     settings: Any
     writer: Any = None  # optional shared Neo4jGraphWriter; reused by the mutation
+    embedder: Any = None
     _claim_query: ClaimQueryPort = field(init=False)
     _mutation: _Neo4jMutation = field(init=False)
+    _semantic: ClaimQuerySemanticSearch = field(init=False)
 
     def __post_init__(self) -> None:
         # Lazy: only touch neo4j when this profile is selected.
         from adapters.outbound.graph.neo4j_reader import Neo4jClaimQueryStore
 
-        self._claim_query = Neo4jClaimQueryStore(self.settings)
-        self._mutation = _Neo4jMutation(self.settings, writer=self.writer)
+        self._claim_query = Neo4jClaimQueryStore(
+            self.settings, embedder=self.embedder
+        )
+        self._mutation = _Neo4jMutation(
+            self.settings, writer=self.writer, embedder=self.embedder
+        )
+        self._semantic = ClaimQuerySemanticSearch(self._claim_query)
 
     @property
     def enabled(self) -> bool:
@@ -170,6 +186,11 @@ class Neo4jGraphBackend:
         return _PROFILE
 
     @property
+    def graph_writer(self) -> Any:
+        """Compatibility alias for old ingestion paths that seed via writer."""
+        return self._mutation._get_writer()
+
+    @property
     def claim_query(self) -> ClaimQueryPort:
         return self._claim_query
 
@@ -178,8 +199,8 @@ class Neo4jGraphBackend:
         return self._mutation
 
     @property
-    def semantic(self) -> UnimplementedSemantic:
-        return UnimplementedSemantic(_PROFILE)
+    def semantic(self) -> ClaimQuerySemanticSearch:
+        return self._semantic
 
     @property
     def inspection(self) -> UnimplementedInspection:
@@ -189,7 +210,10 @@ class Neo4jGraphBackend:
     def analytics(self) -> ClaimQueryAnalytics:
         # Real: counts/freshness/quality are computed from the canonical
         # claim store, which this profile already serves.
-        return ClaimQueryAnalytics(self._claim_query)
+        return ClaimQueryAnalytics(
+            self._claim_query,
+            entity_summary_repair=self._repair_entity_summaries,
+        )
 
     @property
     def snapshot(self) -> UnimplementedSnapshot:
@@ -201,19 +225,79 @@ class Neo4jGraphBackend:
             mutation=True,
             claim_query=True,
             analytics=True,
-            semantic=False,
+            semantic=True,
             inspection=False,
             snapshot=False,
         )
 
     def provision(self, plan: SetupPlan) -> StepResult:
-        from domain.errors import CapabilityNotImplemented
+        from domain.lifecycle import DONE, FAILED
 
-        raise CapabilityNotImplemented(
-            "graph.neo4j.provision",
-            detail="neo4j store provisioning (database create, indexes, native vector index) not implemented",
-            recommended_next_action="provision neo4j out-of-band, or run 'potpie setup --backend embedded'",
+        if not self.enabled:
+            return StepResult(
+                step="backend.provision",
+                state=FAILED,
+                detail="neo4j backend is not configured or context graph is disabled",
+                metadata={"profile": _PROFILE},
+            )
+        try:
+            ok = bool(_run_sync(self.graph_writer.ensure_indexes()))
+        except Exception as exc:  # noqa: BLE001
+            return StepResult(
+                step="backend.provision",
+                state=FAILED,
+                detail=str(exc),
+                metadata={"profile": _PROFILE},
+            )
+        return StepResult(
+            step="backend.provision",
+            state=DONE if ok else FAILED,
+            detail="neo4j backend ready" if ok else "neo4j index setup failed",
+            metadata={"profile": _PROFILE},
         )
+
+    def _repair_entity_summaries(self, pot_id: str) -> int:
+        from neo4j import GraphDatabase
+
+        uri = self.settings.neo4j_uri()
+        user = self.settings.neo4j_user()
+        password = self.settings.neo4j_password()
+        if not uri or user is None or password is None:
+            raise RuntimeError("neo4j_unavailable")
+
+        repaired = 0
+        driver = GraphDatabase.driver(uri, auth=(user, password))
+        try:
+            with driver.session() as session:
+                rows = list(
+                    session.run(
+                        ENTITY_SUMMARY_SCAN_CYPHER,
+                        gid=pot_id,
+                        limit=ENTITY_SUMMARY_REPAIR_LIMIT,
+                    )
+                )
+                for row in rows:
+                    key = str(row.get("key") or "").strip()
+                    if not key:
+                        continue
+                    raw_props = row.get("props")
+                    fixed = repaired_entity_properties(
+                        key, raw_props if isinstance(raw_props, Mapping) else {}
+                    )
+                    if fixed is None:
+                        continue
+                    result = session.run(
+                        ENTITY_SUMMARY_UPDATE_CYPHER,
+                        gid=pot_id,
+                        key=key,
+                        props=_coerce_props_for_neo4j(fixed),
+                    )
+                    rec = result.single()
+                    result.consume()
+                    repaired += int(rec["cnt"]) if rec is not None else 0
+        finally:
+            driver.close()
+        return repaired
 
 
 __all__ = ["Neo4jGraphBackend"]

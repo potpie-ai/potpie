@@ -293,6 +293,8 @@ class SetupWizardUI:
     def print_complete_summary(
         self,
         *,
+        setup_path: str,
+        data_path: str,
         pot_name: str | None = None,
         already_setup: bool,
     ) -> None:
@@ -305,6 +307,7 @@ class SetupWizardUI:
 
         console = stderr_console()
         width = panel_width_for_console(console)
+        cw = content_width_for_panel(width)
         console.print()
         title = (
             f"[bold {LOGO_COLOR}]Potpie is ready![/bold {LOGO_COLOR}]"
@@ -312,7 +315,10 @@ class SetupWizardUI:
             else "[dim]Already set up — no changes needed.[/dim]"
         )
         console.print(title)
-        lines: list[str] = []
+        lines: list[str] = [
+            f"[{LOGO_COLOR}]✓[/{LOGO_COLOR}] Config [cyan]{escape(_truncate_middle(setup_path, cw - 10))}[/cyan]",
+            f"[{LOGO_COLOR}]✓[/{LOGO_COLOR}] Data [cyan]{escape(_truncate_middle(data_path, cw - 8))}[/cyan]",
+        ]
         if pot_name:
             lines.append(
                 f"[{LOGO_COLOR}]✓[/{LOGO_COLOR}] Pot [bold]{escape(pot_name)}[/bold]"
@@ -328,7 +334,7 @@ class SetupWizardUI:
             typer.secho(f"  {step.detail}", fg=typer.colors.RED, err=True)
         if verbose_hint:
             typer.secho(
-                "\nRun with verbose logs:\n  potpie -v setup --repo . --scan",
+                "\nRun with verbose logs:\n  potpie -v setup --repo .",
                 fg=typer.colors.YELLOW,
                 err=True,
             )

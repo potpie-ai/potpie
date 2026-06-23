@@ -358,8 +358,6 @@ def print_search_results(
         tag = _lifecycle_cli_tag(row.get("lifecycle_status"))
         if tag:
             summary = f"{tag} {summary}".strip()
-        if row.get("superseded_label"):
-            summary = f"{row.get('superseded_label')} {summary}".strip()
         if len(summary) > 200:
             summary = summary[:197] + "..."
         uid = str(row.get("uuid") or "")

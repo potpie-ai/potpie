@@ -19,6 +19,7 @@ import time
 from contextlib import contextmanager
 from typing import Any, Final, Iterator, NoReturn
 
+import click
 import typer
 
 from domain.errors import (
@@ -191,7 +192,11 @@ def contract() -> Iterator[None]:
         result = "exit"
         error_code = "exit"
         raise
+    except (KeyboardInterrupt, EOFError):
+        raise
     except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, click.Abort) or type(exc).__name__ == "Abort":
+            raise
         result = "unexpected"
         error_code = "unexpected_cli_error"
         from adapters.inbound.cli.telemetry.sentry_runtime import (

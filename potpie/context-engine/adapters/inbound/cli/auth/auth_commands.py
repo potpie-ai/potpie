@@ -13,6 +13,8 @@ from typing import Any, Literal
 import typer
 from rich.markup import escape
 
+import click
+
 from adapters.inbound.cli.auth.atlassian_auth import run_atlassian_api_token_auth
 from adapters.inbound.cli.auth.bitbucket_auth import run_bitbucket_login as run_bitbucket_auth_flow
 from adapters.inbound.cli.auth.atlassian_read import (
@@ -89,7 +91,7 @@ _ALL_PROVIDERS: tuple[Provider, ...] = (
     "confluence",
     "bitbucket",
 )
-IntegrationAuthProvider = Literal["linear", "jira", "confluence"]
+IntegrationAuthProvider = Literal["linear", "atlassian", "jira", "confluence"]
 
 
 def _canonical_provider_for_json(product: str) -> str:
@@ -434,7 +436,7 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
 
 def _integration_auth_provider(provider: str) -> IntegrationAuthProvider:
     key = provider.strip().lower()
-    if key == "linear" or key == "jira" or key == "confluence":
+    if key in {"linear", "atlassian", "jira", "confluence"}:
         return key
     raise ValueError(f"Unknown integration provider {provider!r}.")
 
@@ -453,6 +455,8 @@ def _run_tracked_integration_login(
     )
     try:
         runner()
+    except (KeyboardInterrupt, EOFError, click.Abort):
+        raise
     except Exception as exc:  # noqa: BLE001 - auth telemetry must record failures.
         capture_integration_auth_event(
             "cli_onboarding_integration_auth_failed",
@@ -471,7 +475,7 @@ def _run_tracked_integration_login(
 
 
 def run_integration_login(provider: str, *, force: bool = False) -> None:
-    """Run the standard login flow for ``linear``, ``jira``, or ``confluence``."""
+    """Run the standard login flow for setup integrations."""
     key = _integration_auth_provider(provider)
 
     def _run() -> None:
