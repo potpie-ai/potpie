@@ -17,7 +17,6 @@ dependencies = [
     "typer>=0.15.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.0",
-    "potpie-observability[sentry]>=0.1.0,<0.2.0",
     "sentry-sdk>=2.61.1",
     # Default CLI backend is FalkorDBLite on Python 3.12+.
     "falkordblite>=0.10.0; python_version >= '3.12'",

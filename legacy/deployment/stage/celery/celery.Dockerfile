@@ -23,7 +23,6 @@ COPY potpie/context-engine ./potpie/context-engine
 COPY potpie/integrations ./potpie/integrations
 COPY potpie/parsing ./potpie/parsing
 COPY potpie/sandbox ./potpie/sandbox
-COPY potpie/observability ./potpie/observability
 
 # Install dependency layers first, including the local Rust extension
 RUN uv sync --frozen --all-packages --no-install-project

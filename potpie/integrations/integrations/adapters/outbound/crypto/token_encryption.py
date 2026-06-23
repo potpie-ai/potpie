@@ -6,7 +6,7 @@ import os
 import base64
 import hashlib
 from cryptography.fernet import Fernet
-from observability import get_logger
+from integrations.logging import get_logger
 
 logger = get_logger(__name__)
 

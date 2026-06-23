@@ -2,7 +2,7 @@
 
 This folder contains the original Potpie monolith: FastAPI app, agents, Celery workers, seed CLI, deployment assets, and regression tests.
 
-Core libraries live at the repo root under `potpie/` (`context-engine`, `parsing`, `sandbox`, `integrations`, `observability`). You can delete this entire `legacy/` directory if you only need those packages.
+Core libraries live at the repo root under `potpie/` (`context-engine`, `parsing`, `sandbox`, `integrations`). You can delete this entire `legacy/` directory if you only need those packages.
 
 ## Quick start
 
