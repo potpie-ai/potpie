@@ -19,7 +19,11 @@ from typing import Any
 from application.readers._common import (
     ReadRequest,
     ReadResponse,
+    claim_candidate_key,
+    claim_corroboration,
+    claim_payload,
     coverage_status_from_count,
+    dedupe_claim_rows,
     rank_candidates,
 )
 from domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
@@ -33,23 +37,26 @@ class RawGraphReader:
     family: str = "raw_graph"
 
     def read(self, req: ReadRequest) -> ReadResponse:
-        rows = self.claim_query.find_claims(
-            ClaimQueryFilter(
-                pot_id=req.pot_id,
-                include_invalidated=req.include_invalidated,
-                as_of=req.as_of,
-                limit=max(req.max_items * 4, 32),
+        rows = dedupe_claim_rows(
+            self.claim_query.find_claims(
+                ClaimQueryFilter(
+                    pot_id=req.pot_id,
+                    include_invalidated=req.include_invalidated,
+                    as_of=req.as_of,
+                    source_ref_in=req.source_refs,
+                    limit=max(req.max_items * 4, 32),
+                )
             )
         )
         candidates = [
             Candidate(
-                candidate_key=_candidate_key(row),
+                candidate_key=claim_candidate_key(row),
                 payload=_payload_from_row(row),
                 strength=row.evidence_strength,
                 valid_at=row.valid_at,
                 # No scoping for a raw dump — every edge is equally "in scope".
                 scope_overlap=0.5,
-                corroboration_count=_corroboration(row),
+                corroboration_count=claim_corroboration(row),
             )
             for row in rows
         ]
@@ -64,29 +71,8 @@ class RawGraphReader:
         )
 
 
-def _candidate_key(row: ClaimRow) -> str:
-    return f"{row.predicate}:{row.subject_key}:{row.object_key}:{row.source_ref or '-'}"
-
-
-def _corroboration(row: ClaimRow) -> int:
-    count = row.properties.get("corroboration_count")
-    if isinstance(count, int) and count > 0:
-        return count
-    return 1
-
-
 def _payload_from_row(row: ClaimRow) -> dict[str, Any]:
-    return {
-        "predicate": row.predicate,
-        "subject_key": row.subject_key,
-        "object_key": row.object_key,
-        "fact": row.fact,
-        "environment": row.properties.get("environment"),
-        "source_ref": row.source_ref,
-        "source_system": row.source_system,
-        "valid_at": row.valid_at.isoformat() if row.valid_at else None,
-        "evidence_strength": row.evidence_strength,
-    }
+    return claim_payload(row)
 
 
 __all__ = ["RawGraphReader"]

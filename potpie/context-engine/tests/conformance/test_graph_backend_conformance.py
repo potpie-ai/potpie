@@ -18,6 +18,9 @@ import sys
 import pytest
 
 from adapters.outbound.graph.backends import build_backend
+from adapters.outbound.graph.inbox_stores.local_json import LocalJsonGraphInboxStore
+from adapters.outbound.graph.plan_stores.local_json import LocalJsonGraphPlanStore
+from application.services.graph_workbench import GraphWorkbenchService
 from domain.context_events import EventRef
 from domain.errors import CapabilityNotImplemented
 from domain.graph_mutations import EdgeUpsert, EntityUpsert
@@ -63,6 +66,23 @@ def _plan(summary="prefers structured logging"):
     )
 
 
+def _semantic_payload() -> dict:
+    return {
+        "operations": [
+            {
+                "op": "link_entities",
+                "subgraph": "infra_topology",
+                "subject": {"key": "service:web", "type": "Service"},
+                "predicate": "DEPENDS_ON",
+                "object": {"key": "service:api", "type": "Service"},
+                "truth": "source_observation",
+                "evidence": [{"source_ref": "repo:manifest"}],
+                "description": "web service depends on api service",
+            }
+        ]
+    }
+
+
 @pytest.mark.parametrize("profile", FULL_PROFILES)
 def test_backend_satisfies_protocol(profile, tmp_path):
     backend = _build(profile, tmp_path)
@@ -90,6 +110,45 @@ async def test_apply_async_round_trips(profile, tmp_path):
     assert result.ok
     rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
     assert len(rows) == 1
+
+
+@pytest.mark.parametrize("profile", FULL_PROFILES)
+def test_workbench_commands_conform_on_runnable_backends(profile, tmp_path):
+    backend = _build(profile, tmp_path / "backend")
+    workbench = GraphWorkbenchService(
+        backend=backend,
+        plan_store=LocalJsonGraphPlanStore(home=tmp_path / "workbench"),
+        inbox_store=LocalJsonGraphInboxStore(home=tmp_path / "workbench"),
+    )
+
+    proposal = workbench.propose(_semantic_payload(), pot_id=POT)
+    assert proposal.ok is True
+    assert proposal.status == "validated"
+    assert backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT)) == []
+
+    committed = workbench.commit(proposal.plan_id, pot_id=POT)
+    assert committed.ok is True
+    assert committed.status == "committed"
+    rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
+    assert len(rows) == 1
+    assert rows[0].predicate == "DEPENDS_ON"
+
+    history = workbench.history(pot_id=POT, plan_id=proposal.plan_id)
+    assert history.ok is True
+    assert any(entry.plan_id == proposal.plan_id for entry in history.entries)
+
+    inbox_item = workbench.inbox_add(
+        pot_id=POT,
+        summary="Review possible graph duplicate",
+        suspected_subgraphs=("infra_topology",),
+    )
+    assert inbox_item.ok is True
+    inbox_list = workbench.inbox_list(pot_id=POT, status=("pending",))
+    assert len(inbox_list.items) == 1
+
+    quality = workbench.quality(pot_id=POT, report="summary")
+    assert quality.ok is True
+    assert quality.metrics["counts"]["claims"] == 1
 
 
 async def test_neo4j_sync_apply_refuses_inside_event_loop():

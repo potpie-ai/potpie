@@ -118,35 +118,7 @@ def envelope_to_dict(envelope: AgentEnvelope) -> dict[str, object]:
     Used by the HTTP/MCP boundary to send the envelope on the wire; ``intent``
     and ``include`` are already canonical strings.
     """
-    return {
-        "pot_id": envelope.pot_id,
-        "intent": envelope.intent,
-        "items": [
-            {
-                "include": item.include,
-                "candidate_key": item.candidate_key,
-                "score": item.score,
-                "payload": dict(item.payload),
-                "coverage_status": item.coverage_status,
-                "breakdown": dict(item.breakdown),
-            }
-            for item in envelope.items
-        ],
-        "coverage": [
-            {
-                "include": c.include,
-                "status": c.status,
-                "candidate_pool": c.candidate_pool,
-            }
-            for c in envelope.coverage
-        ],
-        "unsupported_includes": [
-            {"name": u.name, "reason": u.reason} for u in envelope.unsupported_includes
-        ],
-        "overall_confidence": envelope.overall_confidence,
-        "as_of": envelope.as_of.isoformat() if envelope.as_of else None,
-        "metadata": dict(envelope.metadata),
-    }
+    return envelope.to_dict()
 
 
 __all__ = [

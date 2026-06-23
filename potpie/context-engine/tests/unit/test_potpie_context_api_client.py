@@ -7,76 +7,29 @@ from typing import Any
 import httpx
 import pytest
 
+from domain.errors import CapabilityNotImplemented
 from adapters.outbound.http.potpie_context_api_client import (
-    CONTEXT_API_PREFIX,
     IngestRejectedError,
     PotpieContextApiClient,
     PotpieContextApiError,
 )
 
 
-def test_client_context_graph_query_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeClient:
-        def __init__(self, *a: Any, **k: Any) -> None:
-            pass
-
-        def __enter__(self) -> FakeClient:
-            return self
-
-        def __exit__(self, *a: Any) -> None:
-            pass
-
-        def post(self, url: str, **kwargs: Any) -> httpx.Response:
-            assert CONTEXT_API_PREFIX in url
-            assert url.endswith("/query/context-graph")
-            assert kwargs["headers"].get("X-API-Key") == "k"
-            body = kwargs.get("json") or {}
-            assert body["pot_id"] == "p1"
-            return httpx.Response(
-                200, json={"kind": "semantic_search", "result": [{"uuid": "u"}]}
-            )
-
-        def get(self, *a: Any, **k: Any) -> httpx.Response:
-            raise AssertionError("unused")
-
-    monkeypatch.setattr(
-        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
-        FakeClient,
-    )
+def test_client_context_graph_query_is_not_supported() -> None:
     c = PotpieContextApiClient("http://example.com", "k")
-    out = c.context_graph_query({"pot_id": "p1", "query": "q", "limit": 8})
-    assert out["result"] == [{"uuid": "u"}]
+    with pytest.raises(CapabilityNotImplemented) as exc:
+        c.context_graph_query({"pot_id": "p1", "query": "q", "limit": 8})
+    assert exc.value.capability == "http.context_graph_query"
 
 
-def test_client_context_graph_query_supports_bearer_auth(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeClient:
-        def __init__(self, *a: Any, **k: Any) -> None:
-            pass
-
-        def __enter__(self) -> FakeClient:
-            return self
-
-        def __exit__(self, *a: Any) -> None:
-            pass
-
-        def post(self, url: str, **kwargs: Any) -> httpx.Response:
-            assert url.endswith("/query/context-graph")
-            headers = kwargs["headers"]
-            assert headers.get("Authorization") == "Bearer id-token"
-            assert "X-API-Key" not in headers
-            return httpx.Response(200, json={"result": []})
-
-    monkeypatch.setattr(
-        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
-        FakeClient,
-    )
+def test_client_context_graph_query_bearer_surface_is_not_supported() -> None:
     c = PotpieContextApiClient(
         "http://example.com",
         auth_headers={"Authorization": "Bearer id-token"},
     )
-    assert c.context_graph_query({"pot_id": "p1", "query": "q"}) == {"result": []}
+    with pytest.raises(CapabilityNotImplemented) as exc:
+        c.context_graph_query({"pot_id": "p1", "query": "q"})
+    assert exc.value.capability == "http.context_graph_query"
 
 
 def test_client_uses_auth_header_provider_for_get_requests(
@@ -307,28 +260,11 @@ def test_submit_event_omits_non_repo_scope_fields_when_none(
     assert sent["payload"]["payload"] == {"team": "ENG", "count": 120}
 
 
-def test_client_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeClient:
-        def __init__(self, *a: Any, **k: Any) -> None:
-            pass
-
-        def __enter__(self) -> FakeClient:
-            return self
-
-        def __exit__(self, *a: Any) -> None:
-            pass
-
-        def post(self, *a: Any, **k: Any) -> httpx.Response:
-            return httpx.Response(401, json={"detail": "Invalid API key"})
-
-    monkeypatch.setattr(
-        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
-        FakeClient,
-    )
+def test_client_context_graph_query_does_not_attempt_remote_error_path() -> None:
     c = PotpieContextApiClient("http://example.com", "bad")
-    with pytest.raises(PotpieContextApiError) as ei:
+    with pytest.raises(CapabilityNotImplemented) as ei:
         c.context_graph_query({"pot_id": "p", "query": "q", "limit": 1})
-    assert ei.value.status_code == 401
+    assert ei.value.capability == "http.context_graph_query"
 
 
 def test_list_context_pots_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -863,75 +799,22 @@ def test_client_health_non_200_returns_none_body(
     assert body is None
 
 
-def test_client_context_graph_query_result_success(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeClient:
-        def __init__(self, *a: Any, **k: Any) -> None:
-            pass
-
-        def __enter__(self) -> FakeClient:
-            return self
-
-        def __exit__(self, *a: Any) -> None:
-            pass
-
-        def post(self, url: str, **kwargs: Any) -> httpx.Response:
-            assert "/query/context-graph" in url
-            return httpx.Response(200, json={"ok": True, "answer": {}})
-
-    monkeypatch.setattr(
-        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
-    )
+def test_client_context_graph_query_result_surface_is_not_supported() -> None:
     c = PotpieContextApiClient("http://example.com", "k")
-    result = c.context_graph_query({"pot_id": "p", "query": "q"})
-    assert result["ok"] is True
+    with pytest.raises(CapabilityNotImplemented) as exc:
+        c.context_graph_query({"pot_id": "p", "query": "q"})
+    assert exc.value.capability == "http.context_graph_query"
 
 
-def test_client_500_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeClient:
-        def __init__(self, *a: Any, **k: Any) -> None:
-            pass
-
-        def __enter__(self) -> FakeClient:
-            return self
-
-        def __exit__(self, *a: Any) -> None:
-            pass
-
-        def post(self, *a: Any, **k: Any) -> httpx.Response:
-            return httpx.Response(500, text="Internal Server Error")
-
-    monkeypatch.setattr(
-        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
-    )
+def test_client_context_graph_query_500_path_is_not_supported() -> None:
     c = PotpieContextApiClient("http://example.com", "k")
-    with pytest.raises(PotpieContextApiError) as exc_info:
+    with pytest.raises(CapabilityNotImplemented) as exc_info:
         c.context_graph_query({"pot_id": "p", "query": "q", "limit": 1})
-    assert exc_info.value.status_code == 500
+    assert exc_info.value.capability == "http.context_graph_query"
 
 
-def test_client_error_detail_contains_json_body(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeClient:
-        def __init__(self, *a: Any, **k: Any) -> None:
-            pass
-
-        def __enter__(self) -> FakeClient:
-            return self
-
-        def __exit__(self, *a: Any) -> None:
-            pass
-
-        def post(self, *a: Any, **k: Any) -> httpx.Response:
-            return httpx.Response(422, json={"detail": [{"msg": "field required"}]})
-
-    monkeypatch.setattr(
-        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
-    )
+def test_client_context_graph_query_json_error_path_is_not_supported() -> None:
     c = PotpieContextApiClient("http://example.com", "k")
-    with pytest.raises(PotpieContextApiError) as exc_info:
+    with pytest.raises(CapabilityNotImplemented) as exc_info:
         c.context_graph_query({"pot_id": "p", "query": "q", "limit": 1})
-    assert exc_info.value.status_code == 422
-    assert isinstance(exc_info.value.detail, dict)
+    assert exc_info.value.capability == "http.context_graph_query"

@@ -13,13 +13,12 @@ from adapters.outbound.reconciliation.context_graph_tools import (
 from application.services.reconciliation_validation import (
     validate_reconciliation_plan,
 )
+from domain.agent_envelope import AgentEnvelope
 from domain.context_events import ContextEvent, EventRef
 from domain.graph_mutations import EntityUpsert
-from domain.graph_query import (
-    ContextGraphQuery,
-    ContextGraphResult,
-)
-from domain.reconciliation import ReconciliationPlan, ReconciliationRequest
+from domain.llm_reconciliation import ReconciliationRequest
+from domain.ports.agent_context import ResolveRequest
+from domain.reconciliation import ReconciliationPlan
 
 
 def _make_request(
@@ -48,20 +47,23 @@ def _make_request(
     return ReconciliationRequest(event=ev, pot_id=pot_id, repo_name=repo_name)
 
 
-class _FakeGraph:
+class _FakeBackend:
     enabled = True
 
-    def __init__(self) -> None:
-        self.calls: list[ContextGraphQuery] = []
 
-    def query(self, request: ContextGraphQuery) -> ContextGraphResult:
+class _FakeGraph:
+    def __init__(self) -> None:
+        self.backend = _FakeBackend()
+        self.calls: list[ResolveRequest] = []
+
+    def resolve(self, request: ResolveRequest) -> AgentEnvelope:
         self.calls.append(request)
-        return ContextGraphResult(
-            kind=request.include[0] if request.include else "noop",
-            goal=str(request.goal),
-            strategy=str(request.strategy),
-            result={"rows": [], "echo_pot": request.pot_id},
-            meta={"limit": request.limit},
+        return AgentEnvelope(
+            pot_id=request.pot_id,
+            intent=request.intent or "unknown",
+            items=(),
+            coverage=(),
+            metadata={"max_items": request.max_items},
         )
 
 
@@ -70,11 +72,11 @@ def test_tools_adapter_scopes_query_to_request_pot_and_repo() -> None:
     tools = ContextGraphReconciliationTools(graph)
     req = _make_request(pot_id="pot-42", repo_name="acme/api")
     out = tools.execute_read_tool(req, "context_search", {"query": "telemetry"})
-    assert out["kind"] != "error"
+    assert out["kind"] == "resolve"
     assert graph.calls[-1].pot_id == "pot-42"
-    assert graph.calls[-1].scope.repo_name == "acme/api"
-    assert graph.calls[-1].query == "telemetry"
-    assert graph.calls[-1].include == []  # generic search routes by intent
+    assert graph.calls[-1].scope["repo_name"] == "acme/api"
+    assert graph.calls[-1].task == "telemetry"
+    assert graph.calls[-1].include == ()  # generic search routes by intent
 
 
 def test_tools_adapter_rejects_empty_query() -> None:
@@ -114,7 +116,7 @@ def test_read_tool_includes_are_orchestrator_backed() -> None:
 
 def test_tools_adapter_returns_disabled_when_graph_off() -> None:
     graph = _FakeGraph()
-    graph.enabled = False
+    graph.backend.enabled = False
     tools = ContextGraphReconciliationTools(graph)
     out = tools.execute_read_tool(_make_request(), "context_search", {"query": "x"})
     assert out == {"error": "context_graph_disabled", "kind": "error"}
@@ -124,8 +126,8 @@ def test_timeline_runs_without_a_scope_target() -> None:
     graph = _FakeGraph()
     tools = ContextGraphReconciliationTools(graph)
     out = tools.execute_read_tool(_make_request(), "context_timeline", {})
-    assert out["kind"] == "timeline"
-    assert graph.calls[-1].include == ["timeline"]
+    assert out["kind"] == "resolve"
+    assert graph.calls[-1].include == ("timeline",)
 
 
 def test_unknown_tool_name_returns_error() -> None:

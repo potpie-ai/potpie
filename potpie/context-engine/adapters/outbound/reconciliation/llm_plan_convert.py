@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from domain.context_events import EventRef
 from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp
-from domain.reconciliation import EvidenceRef, ReconciliationPlan
+from domain.llm_reconciliation import EvidenceRef
+from domain.reconciliation import ReconciliationPlan
 
 from adapters.outbound.reconciliation.llm_plan_schema import (
     LlmInvalidationOp,

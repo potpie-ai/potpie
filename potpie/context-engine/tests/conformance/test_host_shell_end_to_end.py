@@ -48,6 +48,10 @@ def test_setup_record_resolve_status_journey(host):
             pot_id=pot.pot_id,
             record_type="decision",
             summary="adopt hexagonal ports",
+            details={
+                "title": "adopt hexagonal ports",
+                "rationale": "Keep application services isolated behind ports.",
+            },
             scope={"service": "context-engine"},
         )
     )
@@ -143,7 +147,12 @@ def test_stub_backend_profiles_registered_and_fail_closed():
 def test_search_returns_envelope(host):
     pot = host.pots.create_pot(name="default", use=True)
     host.agent_context.record(
-        RecordRequest(pot_id=pot.pot_id, record_type="preference", summary="use ruff")
+        RecordRequest(
+            pot_id=pot.pot_id,
+            record_type="preference",
+            summary="use ruff",
+            details={"policy_kind": "style", "prescription": "use ruff"},
+        )
     )
     env = host.agent_context.search(
         SearchRequest(pot_id=pot.pot_id, query="ruff", include=("raw_graph",))
@@ -154,11 +163,13 @@ def test_search_returns_envelope(host):
 def test_unsupported_include_is_flagged_not_crashed(host):
     pot = host.pots.create_pot(name="default", use=True)
     env = host.agent_context.resolve(
-        ResolveRequest(pot_id=pot.pot_id, intent="feature", include=("owners",))
+        ResolveRequest(pot_id=pot.pot_id, intent="feature", include=("nonsense",))
     )
-    # 'owners' is advertised but reader-less → honest unsupported, no crash.
+    # An include outside the advertised vocab → honest unknown_include, no crash.
+    # (Every advertised family now has a reader, so there is no reader-less
+    # advertised include left to exercise the not_implemented path.)
     assert any(
-        u.name == "owners" and u.reason == "not_implemented"
+        u.name == "nonsense" and u.reason == "unknown_include"
         for u in env.unsupported_includes
     )
 

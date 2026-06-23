@@ -4,11 +4,10 @@ One background job exists: a per-batch processor (``handle_process_batch``).
 It is session-scoped and rebuilds the container per call so host-side
 session-bound resolvers (e.g. ``SqlalchemyPotResolution``) stay valid.
 
-Backfill is no longer a standalone enumerate-then-submit sweep. A source
-attach (GitHub ``repository.added`` / Linear ``linear_team.added``) emits a
-single ``agent_reconciliation`` event; the reconciliation agent — planner
-on, via the backfill playbooks — enumerates and seeds the graph through this
-same per-batch path.
+Backfill is no longer a standalone enumerate-then-submit sweep. A GitHub
+``repository.added`` source attach emits a single ``agent_reconciliation``
+event; the reconciliation agent — planner on, via the backfill playbooks —
+enumerates and seeds the graph through this same per-batch path.
 """
 
 from __future__ import annotations
