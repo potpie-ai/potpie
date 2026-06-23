@@ -102,7 +102,6 @@ dependencies = [
     "typer>=0.15.0",
     "potpie-parsing>=0.1.0,<0.2.0",
     "potpie-sandbox>=0.1.0,<0.2.0",
-    "potpie-observability>=0.1.0,<0.2.0",
     "daytona>=0.134.0",
     "tree-sitter-c-sharp==0.23.1",
     "tree-sitter-embedded-template==0.25.0",
@@ -137,7 +136,6 @@ potpie-parsing = { path = "../potpie/parsing" }
 potpie-context-engine = { path = "../potpie/context-engine", editable = true }
 potpie-integrations = { path = "../potpie/integrations", editable = true }
 potpie-sandbox = { path = "../potpie/sandbox", editable = true }
-potpie-observability = { path = "../potpie/observability", editable = true }
 
 [project.scripts]
 potpie-seed = "seed.cli:main"
@@ -155,7 +153,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["app*", "seed*"]
+include = ["app*", "observability*", "seed*"]
 
 [tool.ruff]
 exclude = ["tests", "app/alembic"]

@@ -1,7 +1,7 @@
 # Promtail config: tail Docker container stdout/stderr, parse our JSONL log
 # lines into labels Loki/Grafana can query.
 #
-# The observability package emits one JSON object per line to stdout with at
+# The legacy app emits one JSON object per line to stdout with at
 # least these keys: timestamp, level, logger, function, line, message — plus
 # any flattened obs_fields / obs_context (request_id, conversation_id, user_id,
 # task_id, run_id, ...).

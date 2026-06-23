@@ -30,7 +30,6 @@ dependencies = [
     "potpie-integrations>=0.1.0,<0.2.0",
     "potpie-parsing>=0.1.0,<0.2.0",
     "potpie-sandbox>=0.1.0,<0.2.0",
-    "potpie-observability>=0.1.0,<0.2.0",
 ]
 
 [project.urls]
@@ -73,7 +72,6 @@ potpie-parsing = { workspace = true }
 potpie-context-engine = { workspace = true, editable = true }
 potpie-integrations = { workspace = true, editable = true }
 potpie-sandbox = { workspace = true, editable = true }
-potpie-observability = { workspace = true, editable = true }
 
 [dependency-groups]
 dev = [

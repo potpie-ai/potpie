@@ -1,13 +1,13 @@
 # Observability deployment — Loki + Promtail + Grafana
 
-This is the production log-aggregation pipeline for the [observability
-package](../../potpie/observability). Closes the audit's
+This is the production log-aggregation pipeline for legacy JSONL application
+logs. Closes the audit's
 "JSONL-to-stdout-is-inert-without-a-shipper" gap.
 
 ## What it does
 
 1. The FastAPI and Celery containers emit one JSON object per line to stdout
-   (the `json_stdout` sink in the observability package).
+   (the legacy JSONL logging sink).
 2. **Promtail** tails Docker container logs, parses the JSON, and ships each
    line to Loki with `level` as a label and the structured fields
    (`request_id`, `conversation_id`, `run_id`, `user_id`, `task_id`,
@@ -64,7 +64,7 @@ on; structured metadata is high-cardinality fields you may search/extract**.
 - **Structured metadata** (unbounded values): `request_id`, `conversation_id`,
   `run_id`, `user_id`, `task_id`, `project_id`, `logger`
 
-This matches the observability package's design: high-cardinality
+This matches the logging design: high-cardinality
 correlation IDs go in `obs_context` / `obs_fields`, are flattened into the
 JSON output, and Promtail promotes them to structured metadata without
 turning them into labels.

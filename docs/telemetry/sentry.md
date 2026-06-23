@@ -2,7 +2,7 @@
 
 Sentry is used only for unexpected Potpie context-engine CLI failures. It is a
 small CLI-owned integration under `potpie/context-engine`, independent of
-`potpie/observability` and `legacy/deploy/observability`.
+the context-engine telemetry path and `legacy/deploy/observability`.
 
 ## Configuration
 
