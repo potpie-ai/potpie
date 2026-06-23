@@ -36,10 +36,25 @@ class WebpageExtractorTool:
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
         self.user_id = user_id
-        self.api_key = os.getenv("FIRECRAWL_API_KEY")
+        # fastCRW is a Firecrawl-API-compatible web scraper (single binary; self-host
+        # or cloud). Reuse the same FirecrawlApp client and point it at the fastCRW
+        # base URL. Falls back to Firecrawl when CRW_API_KEY is not set.
+        crw_api_key = (os.getenv("CRW_API_KEY") or "").strip()
+        self.api_key = crw_api_key or (os.getenv("FIRECRAWL_API_KEY") or "").strip()
+        self.api_url = None
+        if crw_api_key:
+            # Default to fastCRW cloud; allow self-host override via CRW_API_URL.
+            self.api_url = (
+                os.getenv("CRW_API_URL") or ""
+            ).strip() or "https://fastcrw.com/api"
         self.firecrawl = None
         if self.api_key:
-            self.firecrawl = FirecrawlApp(api_key=self.api_key)
+            if self.api_url:
+                self.firecrawl = FirecrawlApp(
+                    api_key=self.api_key, api_url=self.api_url
+                )
+            else:
+                self.firecrawl = FirecrawlApp(api_key=self.api_key)
 
     async def arun(self, url: str) -> Dict[str, Any]:
         return await asyncio.to_thread(self.run, url)
@@ -102,9 +117,10 @@ class WebpageExtractorTool:
 
 
 def webpage_extractor_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
-    if not os.getenv("FIRECRAWL_API_KEY"):
+    if not os.getenv("CRW_API_KEY") and not os.getenv("FIRECRAWL_API_KEY"):
         logger.warning(
-            "FIRECRAWL_API_KEY not set, webpage extractor tool will not be initialized"
+            "Neither CRW_API_KEY nor FIRECRAWL_API_KEY set, webpage extractor tool "
+            "will not be initialized"
         )
         return None
 
