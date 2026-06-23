@@ -78,8 +78,15 @@ def normalize_repo_ref(value: str) -> str | None:
         from urllib.parse import urlparse
 
         parsed = urlparse(raw)
-        if parsed.netloc and parsed.path:
-            return f"{parsed.netloc}/{parsed.path.strip('/')}".lower()
+        host = parsed.hostname or ""
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        if port:
+            host = f"{host}:{port}"
+        if host and parsed.path:
+            return f"{host}/{parsed.path.strip('/')}".lower()
     return raw.strip("/").lower()
 
 

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -25,7 +24,11 @@ from typing import Any, Callable, Final, Iterator, NoReturn
 import click
 import typer
 
-from adapters.inbound.cli.repo_location import repo_identity_key
+from adapters.inbound.cli.repo_location import (
+    current_git_remote as shared_current_git_remote,
+    normalize_repo_ref as shared_normalize_repo_ref,
+    repo_identity_key,
+)
 from domain.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
@@ -601,39 +604,11 @@ def _repo_source_matches_cwd(
 
 
 def _current_git_remote(cwd: Path) -> str | None:
-    try:
-        proc = subprocess.run(
-            ["git", "config", "--get", "remote.origin.url"],
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            timeout=1,
-            check=False,
-        )
-    except Exception:  # noqa: BLE001
-        return None
-    if proc.returncode != 0:
-        return None
-    return _normalize_repo_ref(proc.stdout.strip())
+    return shared_current_git_remote(cwd)
 
 
 def _normalize_repo_ref(value: str) -> str | None:
-    text = value.strip()
-    if not text:
-        return None
-    if text.endswith(".git"):
-        text = text[:-4]
-    if text.startswith("git@"):
-        # git@github.com:owner/repo
-        text = text[4:].replace(":", "/", 1)
-    elif "://" in text:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(text)
-        path = parsed.path.strip("/")
-        if parsed.netloc and path:
-            text = f"{parsed.netloc}/{path}"
-    return text.strip("/").lower().replace(" ", "-") or None
+    return shared_normalize_repo_ref(value)
 
 
 __all__ = [

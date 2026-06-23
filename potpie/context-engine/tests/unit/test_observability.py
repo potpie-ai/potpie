@@ -16,7 +16,7 @@ from bootstrap.observability_context import (
     get_correlation,
     reset_correlation,
 )
-from bootstrap.observability_runtime import get_observability
+from bootstrap.observability_runtime import get_observability, set_observability
 from domain.ports.observability import NoOpObservability, ObservabilityPort
 
 
@@ -103,7 +103,10 @@ def test_logging_setup_injects_correlation(caplog: pytest.LogCaptureFixture) -> 
 @pytest.mark.unit
 def test_host_shell_wires_process_observability() -> None:
     obs = NoOpObservability()
+    original = get_observability()
 
-    build_host_shell(backend=InMemoryGraphBackend(), observability=obs)
-
-    assert get_observability() is obs
+    try:
+        build_host_shell(backend=InMemoryGraphBackend(), observability=obs)
+        assert get_observability() is obs
+    finally:
+        set_observability(original)

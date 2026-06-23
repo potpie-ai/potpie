@@ -730,7 +730,7 @@ def test_search_entities_derives_summary_for_old_nodes_without_summary(service) 
         GraphEntitySearchRequest(pot_id="p", query="web auth", type="Service")
     ).to_dict()
 
-    web = result["entities"][0]
+    web = next(entity for entity in result["entities"] if entity["key"] == "service:web")
     assert web["key"] == "service:web"
     assert web["summary"] == "web"
     assert web["description"] == "web"
@@ -824,7 +824,7 @@ def test_search_entities_omits_supporting_claims_by_default(service) -> None:
     ).to_dict()
 
     assert result["entities"]
-    assert result["entities"][0]["supporting_claims"] == []
+    assert all(entity["supporting_claims"] == [] for entity in result["entities"])
 
 
 def test_search_entities_can_include_bounded_supporting_claims(service) -> None:
@@ -849,7 +849,8 @@ def test_search_entities_can_include_bounded_supporting_claims(service) -> None:
         )
     ).to_dict()
 
-    assert len(result["entities"][0]["supporting_claims"]) == 1
+    by_key = {entity["key"]: entity for entity in result["entities"]}
+    assert len(by_key["feature:payments"]["supporting_claims"]) == 1
 
 
 def test_read_projects_canonical_labels_from_key_prefix(service) -> None:
