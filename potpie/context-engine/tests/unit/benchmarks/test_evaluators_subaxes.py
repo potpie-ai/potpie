@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from benchmarks.evaluators.coverage import coverage_score
-from benchmarks.evaluators.precision import precision_score
+from potpie.context_engine.benchmarks.evaluators.coverage import coverage_score
+from potpie.context_engine.benchmarks.evaluators.precision import precision_score
 
 
 def test_coverage_full_recall_is_100() -> None:

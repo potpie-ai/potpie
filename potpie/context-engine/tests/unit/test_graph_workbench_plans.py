@@ -5,11 +5,11 @@ import json
 
 import pytest
 
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.graph.plan_stores.local_json import LocalJsonGraphPlanStore
-from application.services.graph_workbench import GraphWorkbenchService
-from domain.graph_plans import GraphMutationPlanRecord
-from domain.ports.claim_query import ClaimQueryFilter
+from potpie.context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from potpie.context_engine.adapters.outbound.graph.plan_stores.local_json import LocalJsonGraphPlanStore
+from potpie.context_engine.application.services.graph_workbench import GraphWorkbenchService
+from potpie.context_engine.domain.graph_plans import GraphMutationPlanRecord
+from potpie.context_engine.domain.ports.claim_query import ClaimQueryFilter
 
 pytestmark = pytest.mark.unit
 

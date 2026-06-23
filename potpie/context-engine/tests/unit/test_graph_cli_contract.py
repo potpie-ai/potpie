@@ -10,29 +10,29 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from bootstrap import observability_runtime
-from adapters.inbound.cli.commands import _common, graph
-from domain.graph_plans import (
+from potpie.context_engine.bootstrap import observability_runtime
+from potpie.context_engine.adapters.inbound.cli.commands import _common, graph
+from potpie.context_engine.domain.graph_plans import (
     GraphIngestionVerificationResult,
     GraphMutationCommitResult,
     GraphMutationDiff,
     GraphMutationProposal,
 )
-from domain.graph_history import GraphHistoryEntry, GraphHistoryResult
-from domain.graph_inbox import GraphInboxItem, GraphInboxResult
-from domain.graph_quality import GraphQualityFinding, GraphQualityResult
-from domain.nudge import GraphNudgeResult
-from domain.graph_views import views_for_catalog
-from domain.ports.services.graph_service import (
+from potpie.context_engine.domain.graph_history import GraphHistoryEntry, GraphHistoryResult
+from potpie.context_engine.domain.graph_inbox import GraphInboxItem, GraphInboxResult
+from potpie.context_engine.domain.graph_quality import GraphQualityFinding, GraphQualityResult
+from potpie.context_engine.domain.nudge import GraphNudgeResult
+from potpie.context_engine.domain.graph_views import views_for_catalog
+from potpie.context_engine.domain.ports.services.graph_service import (
     DataPlaneStatus,
     GraphCatalogResult,
     GraphEntityCandidate,
     GraphEntitySearchResult,
     GraphReadResult,
 )
-from domain.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
-from domain.ports.graph.analytics import RepairReport
-from domain.ports.graph.backend import BackendCapabilities
+from potpie.context_engine.domain.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
+from potpie.context_engine.domain.ports.graph.analytics import RepairReport
+from potpie.context_engine.domain.ports.graph.backend import BackendCapabilities
 
 pytestmark = pytest.mark.unit
 
@@ -1853,7 +1853,7 @@ def test_graph_status_warns_when_active_repo_pot_is_empty(monkeypatch) -> None:
     monkeypatch.setattr(
         graph, "_current_git_remote", lambda cwd: "github.com/acme/shop", raising=False
     )
-    from adapters.inbound.cli.commands import _common
+    from potpie.context_engine.adapters.inbound.cli.commands import _common
 
     monkeypatch.setattr(
         _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"

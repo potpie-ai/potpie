@@ -16,7 +16,7 @@ import logging
 
 import pytest
 
-from adapters.inbound.http.api.v1.context.router import (
+from potpie.context_engine.adapters.inbound.http.api.v1.context.router import (
     OPERATOR_TAG,
     _AUDIT_LOGGER_NAME,
     _actor_identity,

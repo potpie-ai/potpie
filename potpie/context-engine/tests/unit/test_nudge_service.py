@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.session.injection_ledger import InMemoryInjectionLedger
-from application.services.nudge_service import NudgeService
-from domain.nudge import NUDGE_POLICIES, GraphNudgeRequest, canonical_nudge_event, is_nudge_event
-from domain.ports.services.graph_service import GraphReadResult
+from potpie.context_engine.adapters.outbound.session.injection_ledger import InMemoryInjectionLedger
+from potpie.context_engine.application.services.nudge_service import NudgeService
+from potpie.context_engine.domain.nudge import NUDGE_POLICIES, GraphNudgeRequest, canonical_nudge_event, is_nudge_event
+from potpie.context_engine.domain.ports.services.graph_service import GraphReadResult
 
 pytestmark = pytest.mark.unit
 
@@ -168,7 +168,7 @@ def test_session_dedup_never_injects_same_key_twice() -> None:
 def test_min_score_threshold_filters(monkeypatch) -> None:
     import dataclasses
 
-    from domain import nudge as nudge_mod
+    from potpie.context_engine.domain import nudge as nudge_mod
 
     strict = dataclasses.replace(NUDGE_POLICIES["pre_edit"], min_score=0.8)
     monkeypatch.setitem(nudge_mod.NUDGE_POLICIES, "pre_edit", strict)

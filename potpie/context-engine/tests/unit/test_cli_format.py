@@ -3,8 +3,8 @@
 import pytest
 from rich.markup import escape
 
-from adapters.inbound.cli.ui.brand import LOGO_COLOR, UI_FOCUS_STYLE
-from adapters.inbound.cli.ui.format import (
+from potpie.context_engine.adapters.inbound.cli.ui.brand import LOGO_COLOR, UI_FOCUS_STYLE
+from potpie.context_engine.adapters.inbound.cli.ui.format import (
     format_key_value_line,
     format_line,
     format_list_line,

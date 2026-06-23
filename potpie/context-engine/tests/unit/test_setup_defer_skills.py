@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from bootstrap.host_wiring import build_host_shell
-from domain.lifecycle import SetupPlan
+from potpie.context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from potpie.context_engine.bootstrap.host_wiring import build_host_shell
+from potpie.context_engine.domain.lifecycle import SetupPlan
 
 
 @pytest.fixture()

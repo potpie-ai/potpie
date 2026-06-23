@@ -8,15 +8,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from application.readers._common import ReadResponse
-from application.services.envelope_builder import (
+from potpie.context_engine.application.readers._common import ReadResponse
+from potpie.context_engine.application.services.envelope_builder import (
     EnvelopeBuilder,
     IncludeResult,
     envelope_to_dict,
 )
-from domain.agent_context_port import CONTEXT_INTENTS, DEFAULT_INTENT_INCLUDES
-from domain.agent_envelope import CoverageReport, derive_overall_confidence
-from domain.ranking import Candidate, RankedItem
+from potpie.context_engine.domain.agent_context_port import CONTEXT_INTENTS, DEFAULT_INTENT_INCLUDES
+from potpie.context_engine.domain.agent_envelope import CoverageReport, derive_overall_confidence
+from potpie.context_engine.domain.ranking import Candidate, RankedItem
 
 
 _NOW = datetime(2026, 5, 20, tzinfo=timezone.utc)

@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from benchmarks.core.replay import build_source_id_index
-from benchmarks.core.scenario import RetrievalAssertions
-from benchmarks.evaluators.retrieval import (
+from potpie.context_engine.benchmarks.core.replay import build_source_id_index
+from potpie.context_engine.benchmarks.core.scenario import RetrievalAssertions
+from potpie.context_engine.benchmarks.evaluators.retrieval import (
     evaluate_retrieval,
     set_fixture_source_id_lookup,
 )

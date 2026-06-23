@@ -1,6 +1,6 @@
 """Split validation lines into {entity, issue} rows."""
 
-from domain.reconciliation_issues import validation_line_to_issue, validation_lines_to_issues
+from potpie.context_engine.domain.reconciliation_issues import validation_line_to_issue, validation_lines_to_issues
 
 
 def test_unknown_canonical_labels_entity_key_with_colons() -> None:

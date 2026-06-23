@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 
-from domain.ranking import (
+from potpie.context_engine.domain.ranking import (
     Candidate,
     RankingService,
     TaskContext,

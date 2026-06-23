@@ -13,9 +13,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from application.use_cases.reap_stale_batches import reap_stale_batches
-from bootstrap import sentry_metrics_runtime
-from domain.reconciliation_batch import BatchEventRef, ReconciliationBatch
+from potpie.context_engine.application.use_cases.reap_stale_batches import reap_stale_batches
+from potpie.context_engine.bootstrap import sentry_metrics_runtime
+from potpie.context_engine.domain.reconciliation_batch import BatchEventRef, ReconciliationBatch
 
 
 def _batch(bid: str, pot: str = "pot-1") -> ReconciliationBatch:

@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from benchmarks.core.scenario import discover_scenarios, load_scenario
+from potpie.context_engine.benchmarks.core.scenario import discover_scenarios, load_scenario
 
 # tests/unit/benchmarks/test_light_subset.py → ../../../ = context-engine/
 BENCHMARKS_ROOT = Path(__file__).resolve().parents[3] / "benchmarks"

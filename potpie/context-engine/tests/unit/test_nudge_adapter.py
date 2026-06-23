@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-import adapters.inbound.cli as _clipkg
+import potpie.context_engine.adapters.inbound.cli as _clipkg
 
 pytestmark = pytest.mark.unit
 

@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from adapters.inbound.cli.auth import linear_read as lr
-from adapters.outbound.cli_auth.linear_read_client import LinearReadError
+from potpie.context_engine.adapters.inbound.cli.auth import linear_read as lr
+from potpie.context_engine.adapters.outbound.cli_auth.linear_read_client import LinearReadError
 
 
 def test_run_linear_use_flow_requires_tty_without_keys(

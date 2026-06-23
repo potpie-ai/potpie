@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, call
 
-from application.use_cases.hard_reset_pot import hard_reset_pot
+from potpie.context_engine.application.use_cases.hard_reset_pot import hard_reset_pot
 
 
 def test_hard_reset_success() -> None:

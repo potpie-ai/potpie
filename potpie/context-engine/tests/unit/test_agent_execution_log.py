@@ -15,20 +15,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from adapters.outbound.postgres.agent_execution_log import _to_stream_event
-from adapters.outbound.reconciliation.pydantic_deep_agent import (
+from potpie.context_engine.adapters.outbound.postgres.agent_execution_log import _to_stream_event
+from potpie.context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
     _ExecutionLogSink,
     _make_event_stream_handler,
     _SeqAllocator,
 )
-from application.use_cases.process_batch import process_batch
-from domain.ports.agent_execution_log import (
+from potpie.context_engine.application.use_cases.process_batch import process_batch
+from potpie.context_engine.domain.ports.agent_execution_log import (
     NoOpAgentExecutionLog,
     ResumeState,
 )
-from domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
-from domain.ports.reconciliation_ledger import ContextEventRow
-from domain.reconciliation_batch import (
+from potpie.context_engine.domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
+from potpie.context_engine.domain.ports.reconciliation_ledger import ContextEventRow
+from potpie.context_engine.domain.reconciliation_batch import (
     BATCH_STATUS_PENDING,
     BatchAgentOutcome,
     BatchEventRef,

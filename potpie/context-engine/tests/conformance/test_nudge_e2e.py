@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.intelligence.local_embedder import build_embedder
-from adapters.outbound.session.injection_ledger import InMemoryInjectionLedger
-from application.services.graph_service import DefaultGraphService
-from application.services.nudge_service import NudgeService
-from domain.nudge import GraphNudgeRequest
-from domain.reconciliation_flags import agent_planner_enabled
-from domain.semantic_mutations import SemanticMutationRequest
+from potpie.context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from potpie.context_engine.adapters.outbound.intelligence.local_embedder import build_embedder
+from potpie.context_engine.adapters.outbound.session.injection_ledger import InMemoryInjectionLedger
+from potpie.context_engine.application.services.graph_service import DefaultGraphService
+from potpie.context_engine.application.services.nudge_service import NudgeService
+from potpie.context_engine.domain.nudge import GraphNudgeRequest
+from potpie.context_engine.domain.reconciliation_flags import agent_planner_enabled
+from potpie.context_engine.domain.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
 

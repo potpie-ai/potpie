@@ -2,7 +2,7 @@
 
 import pytest
 
-from adapters.inbound.cli.ui import interactive_prompts as prompts
+from potpie.context_engine.adapters.inbound.cli.ui import interactive_prompts as prompts
 
 
 def test_prompt_yes_no_selects_with_arrows(monkeypatch: pytest.MonkeyPatch) -> None:

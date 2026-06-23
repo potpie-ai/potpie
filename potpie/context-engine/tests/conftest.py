@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from host.daemon_runtime.context import ServiceEndpoints, ShellContext
+from potpie.context_engine.host.daemon_runtime.context import ServiceEndpoints, ShellContext
 
 
 @pytest.fixture()
@@ -76,7 +76,7 @@ def _reset_cli_state():
     """
     yield
     try:
-        from adapters.inbound.cli.commands import _common
+        from potpie.context_engine.adapters.inbound.cli.commands import _common
 
         _common._state["store"] = None
         _common._state["host"] = None

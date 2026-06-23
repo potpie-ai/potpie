@@ -33,7 +33,7 @@ help: ## Show this help
 # global `potpie` reaches your local backends out of the box. Re-run
 # `make cli-install` only when dependencies or entry points change.
 CE_DIR := potpie/context-engine
-UI_FRONTEND_DIR := $(CE_DIR)/adapters/inbound/http/ui/frontend
+UI_FRONTEND_DIR := $(CE_DIR)/src/potpie/context_engine/adapters/inbound/http/ui/frontend
 CLI_TOOL := potpie-context-engine
 CLI_PYTHON ?= >=3.12,<3.14
 

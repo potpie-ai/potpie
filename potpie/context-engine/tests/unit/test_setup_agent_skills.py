@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from adapters.inbound.cli.ui import interactive_prompts, setup_ux
+from potpie.context_engine.adapters.inbound.cli.ui import interactive_prompts, setup_ux
 
 
 def test_install_agents_to_repo_writes_claude_bundle(tmp_path: Path) -> None:
@@ -60,7 +60,7 @@ def test_globally_installed_harnesses_reports_all_agents_with_skills(
             return SimpleNamespace(installed=skills)
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.commands._common.get_host",
+        "potpie.context_engine.adapters.inbound.cli.commands._common.get_host",
         lambda: SimpleNamespace(skills=_Skills()),
     )
 

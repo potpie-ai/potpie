@@ -6,11 +6,11 @@ from contextlib import contextmanager
 
 import pytest
 
-from adapters.outbound.observability.telemetry_bridge import (
+from potpie.context_engine.adapters.outbound.observability.telemetry_bridge import (
     ObservabilityTelemetryBridge,
 )
-from bootstrap.observability_proxy import instrument_adapter
-from domain.ports.telemetry import CostEvent, DriftSnapshot
+from potpie.context_engine.bootstrap.observability_proxy import instrument_adapter
+from potpie.context_engine.domain.ports.telemetry import CostEvent, DriftSnapshot
 
 
 class Rec:

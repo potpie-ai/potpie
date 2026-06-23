@@ -10,7 +10,7 @@ canonical ``RELATES_TO`` relationship.
 
 from __future__ import annotations
 
-from benchmarks.core.graph_inspect import (
+from potpie.context_engine.benchmarks.core.graph_inspect import (
     _edge_predicate,
     _parse_neighborhood,
     _pick_label,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from application.services.agent_work_events import build_work_events
+from potpie.context_engine.application.services.agent_work_events import build_work_events
 
 pytestmark = pytest.mark.unit
 

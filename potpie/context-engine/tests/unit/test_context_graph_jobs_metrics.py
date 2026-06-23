@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from application.use_cases import context_graph_jobs
-from bootstrap.ingestion_server import IngestionServerContainer
-from bootstrap import sentry_metrics_runtime
+from potpie.context_engine.application.use_cases import context_graph_jobs
+from potpie.context_engine.bootstrap.ingestion_server import IngestionServerContainer
+from potpie.context_engine.bootstrap import sentry_metrics_runtime
 
 pytestmark = pytest.mark.unit
 

@@ -7,7 +7,7 @@ import pathlib
 
 import pytest
 
-from adapters.outbound.daemon_process.ipc_client import client_for, load_discovery
+from potpie.context_engine.adapters.outbound.daemon_process.ipc_client import client_for, load_discovery
 
 
 def test_load_discovery_missing(tmp_path: pathlib.Path):
