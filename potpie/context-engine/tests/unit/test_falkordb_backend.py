@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from adapters.outbound.graph.backends import KNOWN_PROFILES, build_backend
@@ -166,10 +168,11 @@ def test_host_shell_defaults_to_falkordb_lite(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)
 
     host = build_host_shell()
+    expected = "falkordb_lite" if sys.version_info >= (3, 12) else "embedded"
 
-    assert default_backend_profile() == "falkordb_lite"
-    assert host.backend.profile == "falkordb_lite"
-    assert SetupPlan().backend == "falkordb_lite"
+    assert default_backend_profile() == expected
+    assert host.backend.profile == expected
+    assert SetupPlan().backend == expected
 
 
 def test_default_backend_falls_back_below_falkordb_lite_python(monkeypatch) -> None:
