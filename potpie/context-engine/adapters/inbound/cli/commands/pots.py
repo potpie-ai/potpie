@@ -411,16 +411,28 @@ def source_add(
         )
         repo_default_set: bool | None = None
         try:
+            repo_identity = None
+            if is_repo and set_default:
+                setter = getattr(host.pots, "set_repo_default", None)
+                if not callable(setter):
+                    fail(
+                        code="repo_default_unavailable",
+                        message="This host does not support repo default bindings.",
+                        next_action="upgrade the local context-engine host",
+                    )
+                repo_identity = repo_location.repo_identity_key(source_location)
+                if not repo_identity:
+                    fail(
+                        code="repo_unresolved",
+                        message="Could not resolve the repository identity.",
+                        next_action="pass a repo location such as '<owner>/<repo>'",
+                    )
             src = host.pots.add_source(
                 pot_id=pot_id, kind=source_kind, location=source_location, name=name
             )
             if is_repo and set_default:
-                setter = getattr(host.pots, "set_repo_default", None)
-                if callable(setter):
-                    repo_identity = repo_location.repo_identity_key(source_location)
-                    if repo_identity:
-                        setter(repo=repo_identity, pot_id=pot_id)
-                        repo_default_set = True
+                setter(repo=repo_identity, pot_id=pot_id)
+                repo_default_set = True
             elif is_repo:
                 repo_default_set = False
         except Exception as exc:  # noqa: BLE001
@@ -480,7 +492,10 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
                     for s in sources
                 ]
             },
-            human="\n".join(f"  {s.kind}: {s.name} ({s.source_id})" for s in sources)
+            human="\n".join(
+                f"  {s.kind}: {getattr(s, 'location', s.name)} ({s.source_id})"
+                for s in sources
+            )
             or "(no sources)",
         )
 

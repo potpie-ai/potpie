@@ -67,7 +67,7 @@ def _node_type(key: str, labels: tuple[str, ...] | list[str]) -> str:
     # even if the node also carries other labels.
     prefix = key.split(":", 1)[0] if ":" in key else ""
     expected = _PREFIX_LABEL.get(prefix)
-    if expected and expected in labels:
+    if expected:
         return expected
     for lbl in labels:
         if lbl not in _BASE_LABELS:

@@ -57,6 +57,7 @@ cli-install: ui-build ## Install potpie + potpie-mcp globally (editable, all ext
 cli-update: cli-install ## Refresh the global install (alias for cli-install; code is already live via editable mode)
 
 cli-uninstall: ## Remove the global potpie CLI
+	-@if command -v potpie >/dev/null 2>&1; then potpie daemon stop >/dev/null 2>&1; fi
 	-uv tool uninstall $(CLI_TOOL)
 	-@uv tool uninstall context-engine >/dev/null 2>&1 || true
 

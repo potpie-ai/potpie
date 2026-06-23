@@ -48,7 +48,10 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const measure = () => setWidth(el.clientWidth);
+    const measure = () => {
+      const next = el.clientWidth;
+      setWidth((current) => (current === next ? current : next));
+    };
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     measure();

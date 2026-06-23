@@ -31,6 +31,7 @@ def _frontmatter_and_body(path: Path) -> tuple[dict[str, str], str]:
     raw = path.read_text(encoding="utf-8")
     assert raw.startswith("---\n"), f"{path} missing frontmatter"
     end = raw.find("\n---\n", 4)
+    assert end != -1, f"{path} missing frontmatter closing delimiter"
     fm: dict[str, str] = {}
     for line in raw[4:end].splitlines():
         key, _, value = line.partition(":")

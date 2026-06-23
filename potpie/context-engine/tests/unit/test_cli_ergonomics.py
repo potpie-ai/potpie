@@ -175,6 +175,19 @@ def test_source_list_includes_location() -> None:
     assert payload["sources"][0]["location"] == "github.com/acme/shop"
 
 
+def test_source_list_plain_output_includes_location() -> None:
+    src = _Source("repo", "shop", "github.com/acme/shop")
+    pots_service = _Pots(
+        [_Pot("p1", "shop", True)], {"p1": [src]}, active=_Pot("p1", "shop", True)
+    )
+    _common.set_host(_Host(pots_service))
+
+    result = CliRunner().invoke(pots.source_app, ["list"])
+
+    assert result.exit_code == 0, result.output
+    assert "repo: github.com/acme/shop (src_shop)" in result.output
+
+
 def test_source_add_targets_active_pot_even_when_repo_matches_other_pots(
     monkeypatch,
 ) -> None:

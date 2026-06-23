@@ -4,6 +4,7 @@ export interface GraphNode {
   labels: string[];
   type: string;
   caption: string;
+  summary?: string;
   properties: Record<string, unknown>;
   // runtime-only (added client-side for layout/sizing)
   degree?: number;

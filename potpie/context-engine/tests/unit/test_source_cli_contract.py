@@ -24,6 +24,7 @@ def _reset_cli_state():
 @dataclass
 class _Pots:
     calls: list[dict[str, str | None]] = field(default_factory=list)
+    repo_defaults: dict[str, str] = field(default_factory=dict)
 
     def list_pots(self) -> list[PotInfo]:
         return [PotInfo(pot_id="pot-1", name="default", active=True)]
@@ -38,6 +39,9 @@ class _Pots:
             {"pot_id": pot_id, "kind": kind, "location": location, "name": name}
         )
         return SourceInfo(source_id="src-1", kind=kind, name=name or location)
+
+    def set_repo_default(self, *, repo: str, pot_id: str) -> None:
+        self.repo_defaults[repo] = pot_id
 
 
 @dataclass
@@ -64,6 +68,7 @@ def test_source_add_plain_output_is_registration_only() -> None:
     ]
     assert "registered source repo:owner/repo (src-1)" in result.output
     assert "no ingestion or scan started" in result.output
+    assert fake_pots.repo_defaults == {"owner/repo": "pot-1"}
 
 
 def test_source_add_json_marks_registration_only() -> None:
@@ -73,7 +78,16 @@ def test_source_add_json_marks_registration_only() -> None:
 
     result = CliRunner().invoke(
         pots.source_app,
-        ["add", "repo", "owner/repo", "--name", "platform", "--pot", "pot-1"],
+        [
+            "add",
+            "repo",
+            "owner/repo",
+            "--name",
+            "platform",
+            "--pot",
+            "pot-1",
+            "--no-default",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -85,4 +99,23 @@ def test_source_add_json_marks_registration_only() -> None:
         "location": "owner/repo",
         "pot_id": "pot-1",
         "registration_only": True,
+        "repo_default_set": False,
     }
+    assert fake_pots.repo_defaults == {}
+
+
+def test_source_add_repo_default_reports_unavailable_host() -> None:
+    fake_pots = _Pots()
+    fake_pots.set_repo_default = None  # type: ignore[method-assign]
+    _common.set_host(_Host(pots=fake_pots))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(
+        pots.source_app,
+        ["add", "repo", "owner/repo", "--pot", "pot-1"],
+    )
+
+    assert result.exit_code != 0
+    emitted = json.loads(result.output)
+    assert emitted["code"] == "repo_default_unavailable"
+    assert fake_pots.calls == []

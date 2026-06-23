@@ -22,6 +22,7 @@ def test_node_type_prefers_canonical_key_prefix_over_stray_label() -> None:
         _node_type("activity:github:pr-848", ["Entity", "Dependency", "Activity"])
         == "Activity"
     )
+    assert _node_type("activity:github:pr-848", ["Entity", "Dependency"]) == "Activity"
     assert _node_type("repo:github.com/o/r", ["Entity", "Repository"]) == "Repository"
 
 

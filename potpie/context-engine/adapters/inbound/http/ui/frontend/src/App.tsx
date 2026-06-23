@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type PointerEvent as ReactPointerEvent,
@@ -74,6 +75,7 @@ export default function App() {
   const [results, setResults] = useState<SearchEntity[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadRequestRef = useRef(0);
 
   const [view, setViewState] = useState<"graph" | "timeline">(
     typeof location !== "undefined" && location.hash === "#timeline"
@@ -131,20 +133,24 @@ export default function App() {
   };
 
   const loadPot = useCallback(async (potId: string) => {
+    const requestId = ++loadRequestRef.current;
+    const isCurrent = () => requestId === loadRequestRef.current;
     setBusy(true);
     setError(null);
     setSelected(null);
     setResults([]);
     try {
       const [st, g] = await Promise.all([api.status(potId), api.graph(potId)]);
+      if (!isCurrent()) return;
       setStatus(st);
       setData({ nodes: g.nodes, edges: g.edges });
     } catch (e: any) {
+      if (!isCurrent()) return;
       setError(e?.message || String(e));
       setData(EMPTY);
       setStatus(null);
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }, []);
 
@@ -215,7 +221,7 @@ export default function App() {
         setData((cur) => mergeGraph(cur, { nodes: nb.nodes, edges: nb.edges }));
         const found = nb.nodes.find((n) => n.id === key);
         if (found) setSelected(found);
-      });
+      }).catch((e: any) => setError(e?.message || String(e)));
     }
   };
 

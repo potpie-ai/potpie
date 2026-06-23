@@ -217,7 +217,8 @@ body {
   background-position: right 9px center;
 }
 .pot-select select:focus {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ── Body / sidebar ─────────────────────────────────────────────────────── */
@@ -288,7 +289,7 @@ body {
 }
 
 /* ── Search results ─────────────────────────────────────────────────────── */
-.results .section-title {
+.search-results .section-title {
   padding: 2px 4px 6px;
 }
 .result {
