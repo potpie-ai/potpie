@@ -9,7 +9,7 @@ from fastapi import HTTPException
 import httpx
 import urllib.parse
 import time
-from observability import get_logger
+from integrations.logging import get_logger
 
 logger = get_logger(__name__)
 

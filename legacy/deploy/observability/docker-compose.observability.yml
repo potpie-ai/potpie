@@ -1,4 +1,4 @@
-# Log aggregation + dashboard stack for the observability package's prod JSONL output.
+# Log aggregation + dashboard stack for the legacy app's prod JSONL output.
 #
 # What this gives you:
 # - Loki         on :3100  — stores JSONL log lines from FastAPI + Celery
