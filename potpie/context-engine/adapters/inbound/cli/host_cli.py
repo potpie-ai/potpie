@@ -82,6 +82,7 @@ def build_app() -> typer.Typer:
     app.add_typer(ingest_cmds.ingest_app, name="ingest")
     app.add_typer(ledger.ledger_app, name="ledger")
     app.add_typer(graph.graph_app, name="graph")
+    app.add_typer(graph.timeline_app, name="timeline")
     app.add_typer(graph.backend_app, name="backend")
     app.add_typer(skills_cmds.skills_app, name="skills")
     app.add_typer(cloud.cloud_app, name="cloud")
