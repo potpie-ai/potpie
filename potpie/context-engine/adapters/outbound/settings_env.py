@@ -1,6 +1,7 @@
 """Environment-backed ContextEngineSettingsPort."""
 
 import os
+from pathlib import Path
 
 from domain.ports.settings import ContextEngineSettingsPort
 
@@ -64,7 +65,14 @@ def context_engine_falkordb_lite_path() -> str:
         or os.getenv("FALKORDB_LITE_PATH")
         or ""
     ).strip()
-    return v or ".potpie/context_graph/falkordb.db"
+    if v:
+        return v
+    # Home-rooted absolute default (same resolution as the pot store): a
+    # relative default lands wherever the daemon's cwd happens to be — e.g.
+    # inside site-packages for an installed CLI, wiped on reinstall.
+    home = (os.getenv("CONTEXT_ENGINE_HOME") or "").strip()
+    base = Path(home).expanduser() if home else Path.home() / ".potpie"
+    return str(base / "context_graph" / "falkordb.db")
 
 
 class EnvContextEngineSettings(ContextEngineSettingsPort):

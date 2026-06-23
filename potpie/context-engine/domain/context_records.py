@@ -16,7 +16,7 @@ downstream consumers can read it without re-parsing free text.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Iterable, Mapping
 
 
@@ -144,9 +144,30 @@ _RECORD_TYPE_TO_BUILDER: dict[str, str] = {
     "verification": "_build_verification",
 }
 
+_RECORD_TYPE_TO_CLASS: dict[str, type[Any]] = {
+    "fix": FixRecord,
+    "bug_pattern": BugPatternRecord,
+    "preference": PreferenceRecord,
+    "policy": PreferenceRecord,
+    "decision": DecisionRecord,
+    "verification": VerificationRecord,
+}
+
 
 def has_structured_schema(record_type: str) -> bool:
     return record_type in _RECORD_TYPE_TO_BUILDER
+
+
+def structured_detail_keys(record_type: str) -> frozenset[str]:
+    record_cls = _RECORD_TYPE_TO_CLASS.get(record_type)
+    if record_cls is None:
+        return frozenset()
+    return frozenset(f.name for f in fields(record_cls) if f.name != "summary")
+
+
+def has_structured_details(record_type: str, details: Mapping[str, Any]) -> bool:
+    keys = structured_detail_keys(record_type)
+    return bool(keys and any(key in keys for key in details))
 
 
 def validate_record_payload(
@@ -382,6 +403,8 @@ __all__ = [
     "VERIFICATION_OUTCOMES",
     "VerificationRecord",
     "has_structured_schema",
+    "has_structured_details",
     "record_to_dict",
+    "structured_detail_keys",
     "validate_record_payload",
 ]

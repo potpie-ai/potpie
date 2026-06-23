@@ -44,6 +44,20 @@ class _Settings:
         return "context_graph"
 
 
+class _FakeEmbedder:
+    name = "fake-integration-embedder"
+    dimensions = 3
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        t = text.lower()
+        if "auth" in t or "login" in t:
+            return (1.0, 0.0, 0.0)
+        return (0.0, 1.0, 0.0)
+
+    def embed_many(self, texts):
+        return [self.embed(t) for t in texts]
+
+
 @pytest.fixture()
 def shared_graph():
     tmp = tempfile.mkdtemp(prefix="falkordblite_test_")
@@ -144,3 +158,52 @@ def test_write_read_reset_roundtrip(shared_graph) -> None:
     final = asyncio.run(writer.reset_pot(pot))
     assert final["ok"] is True
     assert final["group_id_nodes_remaining"] == 0
+
+
+def test_vector_search_orders_by_cosine_distance(shared_graph) -> None:
+    settings = _Settings()
+    embedder = _FakeEmbedder()
+    writer = FalkorDBGraphWriter(settings, graph=shared_graph, embedder=embedder)
+    reader = FalkorDBClaimQueryStore(settings, graph=shared_graph, embedder=embedder)
+    pot = "potV"
+    prov = ProvenanceRef(pot_id=pot, source_event_id="e1", source_system="agent")
+
+    async def _seed() -> None:
+        assert await writer.ensure_indexes() is True
+        await writer.upsert_entities(
+            pot,
+            [
+                EntityUpsert("service:web", ("Entity", "Service"), {}),
+                EntityUpsert("service:auth", ("Entity", "Service"), {}),
+                EntityUpsert("service:db", ("Entity", "Service"), {}),
+            ],
+            prov,
+        )
+        await writer.upsert_edges(
+            pot,
+            [
+                EdgeUpsert(
+                    "DEPENDS_ON",
+                    "service:web",
+                    "service:auth",
+                    {"fact": "web depends on auth login"},
+                ),
+                EdgeUpsert(
+                    "DEPENDS_ON",
+                    "service:web",
+                    "service:db",
+                    {"fact": "web stores data in database"},
+                ),
+            ],
+            prov,
+        )
+
+    asyncio.run(_seed())
+
+    rows = reader.find_claims(
+        ClaimQueryFilter(pot_id=pot, fact_query="login auth", limit=2)
+    )
+
+    assert [r.object_key for r in rows] == ["service:auth", "service:db"]
+    assert rows[0].properties["semantic_similarity"] == pytest.approx(1.0)
+    assert rows[1].properties["semantic_similarity"] == pytest.approx(0.0)

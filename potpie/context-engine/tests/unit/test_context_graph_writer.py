@@ -119,6 +119,7 @@ def test_canonical_entity_upsert_sets_non_null_string_defaults() -> None:
     )
 
     assert count == 1
-    props = driver.session_obj.calls[0][1]["props"]
-    assert props["name"] == "123"
-    assert props["summary"] == ""
+    kwargs = driver.session_obj.calls[0][1]
+    assert kwargs["a_name"] == "123"
+    assert kwargs["a_summary"] == "123"
+    assert kwargs["a_description"] == "123"
