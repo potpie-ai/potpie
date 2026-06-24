@@ -99,6 +99,33 @@ def test_skill_manager_installs_project_scope(monkeypatch, tmp_path: Path) -> No
     assert rerun.changed == ()
 
 
+def test_project_scope_install_preserves_existing_agents_md(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
+    host = build_host_shell(backend=InMemoryGraphBackend())
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    agents_md = repo / "AGENTS.md"
+    agents_md.write_text("# Existing Setup\n\nKeep this.\n", encoding="utf-8")
+
+    result = host.skills.install(
+        agent="codex",
+        skill_id="potpie-cli",
+        path=str(repo),
+        scope="project",
+    )
+
+    text = agents_md.read_text(encoding="utf-8")
+    assert result.metadata["scope"] == "project"
+    assert "# Existing Setup" in text
+    assert "Keep this." in text
+    assert "<!-- potpie-start -->" in text
+    assert "# Context Engine" in text
+    assert (repo / ".agents" / "skills" / "potpie-cli" / "SKILL.md").exists()
+
+
 def test_skill_manager_removes_all_global_harness_skills(
     monkeypatch, tmp_path: Path
 ) -> None:

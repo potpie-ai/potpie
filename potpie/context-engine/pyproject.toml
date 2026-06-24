@@ -93,6 +93,9 @@ potpie-daemon = "host.daemon_main:main"
 [tool.hatch.build.force-include]
 "adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "adapters/inbound/cli/ui/assets/potpie-logo-static.json"
 "adapters/inbound/cli/ui/assets/potpie.png" = "adapters/inbound/cli/ui/assets/potpie.png"
+"adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
+"adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json"
+"adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json" = "adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json"
 
 [tool.hatch.build.targets.wheel]
 packages = ["domain", "application", "adapters", "bootstrap", "benchmarks", "host"]
