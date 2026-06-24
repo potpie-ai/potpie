@@ -19,30 +19,6 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
-def _default_linux_platform(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cs.sys, "platform", "linux")
-
-
-@pytest.fixture(autouse=True)
-def fake_keyring(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
-    store: dict[tuple[str, str], str] = {}
-
-    def _set_password(service: str, username: str, password: str) -> None:
-        store[(service, username)] = password
-
-    def _get_password(service: str, username: str) -> str | None:
-        return store.get((service, username))
-
-    def _delete_password(service: str, username: str) -> None:
-        store.pop((service, username), None)
-
-    monkeypatch.setattr(cs.keyring, "set_password", _set_password)
-    monkeypatch.setattr(cs.keyring, "get_password", _get_password)
-    monkeypatch.setattr(cs.keyring, "delete_password", _delete_password)
-    return store
-
-
-@pytest.fixture(autouse=True)
 def _github_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
     # The device flow requires POTPIE_GITHUB_CLIENT_ID (no hardcoded default).
     monkeypatch.setenv("POTPIE_GITHUB_CLIENT_ID", "Iv1.testclientid")
@@ -302,7 +278,7 @@ def test_list_user_owned_repositories_uses_owner_affiliation() -> None:
 
 
 def test_github_login_stores_token_only_after_verification(
-    monkeypatch: pytest.MonkeyPatch, tmp_path, fake_keyring: dict[tuple[str, str], str]
+    monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     opened_urls: list[str] = []
@@ -354,7 +330,6 @@ def test_github_login_stores_token_only_after_verification(
     assert stored["account"]["email"] == "octocat@example.com"
     secrets = cs._read_integration_secrets_file()
     assert secrets["github_token"] == "plaintext-token"
-    assert ("potpie", "github_token") not in fake_keyring
     raw = cs.read_credentials()
     assert "access_token" not in raw["integrations"]["github"]
     assert raw["integrations"]["github"]["account"] == {
@@ -661,7 +636,7 @@ def test_deprecated_git_login_alias(monkeypatch: pytest.MonkeyPatch, tmp_path) -
 
 
 def test_github_logout_clears_github_credentials(
-    monkeypatch: pytest.MonkeyPatch, tmp_path, fake_keyring: dict[tuple[str, str], str]
+    monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.write_provider_credentials(
@@ -680,7 +655,6 @@ def test_github_logout_clears_github_credentials(
     assert result.exit_code == 0, result.stdout
     assert cs.get_integration_metadata("github") == {}
     assert "github_token" not in cs._read_integration_secrets_file()
-    assert ("potpie", "github_token") not in fake_keyring
     assert "github" not in (cs.read_credentials().get("integrations") or {})
 
 

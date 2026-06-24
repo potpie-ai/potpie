@@ -1,6 +1,6 @@
 """Outbound adapters for the CLI auth subsystem.
 
-Persistence (keyring/file credential store), HTTP transport, and the
+Persistence (file credential store), HTTP transport, and the
 provider auth/flow clients (GitHub, Firebase, Potpie, Linear, Atlassian) that
 talk to external systems. The inbound CLI command surfaces under
 ``adapters/inbound/cli`` drive these via their ports
