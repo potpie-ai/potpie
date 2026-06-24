@@ -1,0 +1,63 @@
+name: Release Python packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_scope:
+        description: "Which Python package release path to run."
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - context-engine
+          - potpie
+      publish_target:
+        description: "Build only, publish to TestPyPI, or publish to PyPI."
+        required: true
+        default: build-only
+        type: choice
+        options:
+          - build-only
+          - testpypi
+          - pypi
+      confirm_publish:
+        description: "Required literal value 'publish' only when publish_target=pypi."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-release-${{ inputs.release_scope }}-${{ inputs.publish_target }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release-context-engine:
+    name: Release potpie-context-engine
+    if: ${{ inputs.release_scope != 'potpie' }}
+    uses: ./.github/workflows/release-context-engine.yml
+    with:
+      publish_target: ${{ inputs.publish_target }}
+      confirm_publish: ${{ inputs.confirm_publish }}
+      allow_python_release_tag: true
+
+  release-potpie:
+    name: Release potpie
+    needs:
+      - release-context-engine
+    if: >-
+      ${{
+        always()
+        && inputs.release_scope != 'context-engine'
+        && (
+          inputs.release_scope != 'all'
+          || needs.release-context-engine.result == 'success'
+        )
+      }}
+    uses: ./.github/workflows/release-potpie.yml
+    with:
+      publish_target: ${{ inputs.publish_target }}
+      confirm_publish: ${{ inputs.confirm_publish }}
+      allow_python_release_tag: true
