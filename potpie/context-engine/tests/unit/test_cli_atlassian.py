@@ -1010,8 +1010,8 @@ def _mock_keychain(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     def _load(_label: str, username: str) -> str | None:
         return secrets.get(username)
 
-    monkeypatch.setattr(cs, "_store_keychain_secret", _store)
-    monkeypatch.setattr(cs, "_load_keychain_secret", _load)
+    monkeypatch.setattr(cs, "_store_file_secret", _store)
+    monkeypatch.setattr(cs, "_load_file_secret", _load)
     return secrets
 
 
@@ -1390,8 +1390,8 @@ def _save_creds(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         return secrets.get(username)
 
     monkeypatch.setattr(cs, "credentials_path", lambda: cred_path)
-    monkeypatch.setattr(cs, "_store_keychain_secret", _store)
-    monkeypatch.setattr(cs, "_load_keychain_secret", _load)
+    monkeypatch.setattr(cs, "_store_file_secret", _store)
+    monkeypatch.setattr(cs, "_load_file_secret", _load)
     cs.save_jira_credentials(
         {
             "email": "user@example.com",

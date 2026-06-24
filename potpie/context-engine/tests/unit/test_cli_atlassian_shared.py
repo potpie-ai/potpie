@@ -10,11 +10,9 @@ from adapters.inbound.cli.auth import auth_commands
 from adapters.inbound.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
 from adapters.inbound.cli import host_cli as cli_main
-from adapters.inbound.cli.auth.atlassian_read import AtlassianReadError
 import json
 import stat
 from pathlib import Path
-from keyring.errors import KeyringError
 from adapters.outbound.cli_auth import credentials_store as cs
 from adapters.outbound.cli_auth.integration_profile import (
     build_atlassian_integration_record,
@@ -37,11 +35,6 @@ from adapters.outbound.cli_auth.provider_config import (
 # --- test_auth_commands.py ---
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def _default_linux_platform(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cs.sys, "platform", "linux")
 
 
 @pytest.fixture(autouse=True)
@@ -635,22 +628,7 @@ def test_integration_metadata_rejects_empty_provider() -> None:
         cs.get_integration_metadata(" ")
 
 
-def test_secure_secret_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
-    stored: dict[tuple[str, str], str] = {}
-
-    def set_password(service: str, username: str, password: str) -> None:
-        stored[(service, username)] = password
-
-    def get_password(service: str, username: str) -> str | None:
-        return stored.get((service, username))
-
-    def delete_password(service: str, username: str) -> None:
-        stored.pop((service, username), None)
-
-    monkeypatch.setattr(cs.keyring, "set_password", set_password)
-    monkeypatch.setattr(cs.keyring, "get_password", get_password)
-    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
-
+def test_secure_secret_roundtrip() -> None:
     cs.store_secure_secret("example_access_token", "secret-token")
     assert cs.load_secure_secret("example_access_token") == "secret-token"
     cs.delete_secure_secret("example_access_token")
@@ -663,45 +641,34 @@ def test_secure_secret_rejects_empty_name() -> None:
 
 
 def test_secure_secret_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
-    def set_password(service: str, username: str, password: str) -> None:
-        raise KeyringError("backend unavailable")
+    def fail_write(_secrets: dict[str, str]) -> None:
+        raise OSError("permission denied")
 
-    monkeypatch.setattr(cs.keyring, "set_password", set_password)
+    monkeypatch.setattr(cs, "_write_integration_secrets_file", fail_write)
 
     with pytest.raises(cs.CredentialStoreError, match="Failed to store Example token"):
         cs.store_secure_secret("example_token", "secret", label="Example token")
 
 
-def test_secure_secret_read_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
-    def get_password(service: str, username: str) -> str | None:
-        raise KeyringError("backend unavailable")
-
-    monkeypatch.setattr(cs.keyring, "get_password", get_password)
-
-    with pytest.raises(cs.CredentialStoreError, match="Failed to read Example token"):
-        cs.load_secure_secret("example_token", label="Example token")
+def test_secure_secret_missing_read_returns_empty() -> None:
+    assert cs.load_secure_secret("example_token", label="Example token") == ""
 
 
 def test_secure_secret_delete_unexpected_errors_are_wrapped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def delete_password(service: str, username: str) -> None:
-        raise RuntimeError("backend unavailable")
+    cs.store_secure_secret("example_token", "secret")
 
-    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
+    def fail_write(_secrets: dict[str, str]) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(cs, "_write_integration_secrets_file", fail_write)
 
     with pytest.raises(cs.CredentialStoreError, match="Failed to remove Example token"):
         cs.delete_secure_secret("example_token", label="Example token")
 
 
-def test_secure_secret_delete_keyring_error_is_ignored(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def delete_password(service: str, username: str) -> None:
-        raise KeyringError("not found")
-
-    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
-
+def test_secure_secret_delete_missing_is_ignored() -> None:
     cs.delete_secure_secret("example_token")
 
 
@@ -729,22 +696,8 @@ def test_resolve_cli_pot_ref_uuid_normalizes() -> None:
 
 
 @pytest.fixture
-def keychain(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
-    stored: dict[tuple[str, str], str] = {}
-
-    def set_password(service: str, username: str, password: str) -> None:
-        stored[(service, username)] = password
-
-    def get_password(service: str, username: str) -> str | None:
-        return stored.get((service, username))
-
-    def delete_password(service: str, username: str) -> None:
-        stored.pop((service, username), None)
-
-    monkeypatch.setattr(cs.keyring, "set_password", set_password)
-    monkeypatch.setattr(cs.keyring, "get_password", get_password)
-    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
-    return stored
+def keychain() -> dict[tuple[str, str], str]:
+    return {}
 
 
 def test_jira_credentials_roundtrip(
@@ -973,23 +926,16 @@ def test_get_integration_status_unknown_provider(
 def test_store_secure_secret_generic_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def set_password(service: str, username: str, password: str) -> None:
-        raise RuntimeError("unexpected")
+    def fail_write(_secrets: dict[str, str]) -> None:
+        raise OSError("unexpected")
 
-    monkeypatch.setattr(cs.keyring, "set_password", set_password)
-    with pytest.raises(cs.CredentialStoreError, match="keychain"):
+    monkeypatch.setattr(cs, "_write_integration_secrets_file", fail_write)
+    with pytest.raises(cs.CredentialStoreError, match="local credentials file"):
         cs.store_secure_secret("name", "secret")
 
 
-def test_load_secure_secret_generic_exception(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def get_password(service: str, username: str) -> str | None:
-        raise RuntimeError("unexpected")
-
-    monkeypatch.setattr(cs.keyring, "get_password", get_password)
-    with pytest.raises(cs.CredentialStoreError, match="keychain"):
-        cs.load_secure_secret("name")
+def test_load_secure_secret_missing_returns_empty() -> None:
+    assert cs.load_secure_secret("name") == ""
 
 
 def test_clear_integration_tokens_jira(
@@ -1046,8 +992,8 @@ def test_get_integration_status_reads_legacy_atlassian_flat_fields(
 ) -> None:
     cred_path = tmp_path / "credentials.json"
     monkeypatch.setattr(cs, "credentials_path", lambda: cred_path)
-    monkeypatch.setattr(cs, "_load_keychain_secret", lambda *a, **k: "legacy-token")
-    monkeypatch.setattr(cs, "_store_keychain_secret", lambda *a, **k: None)
+    monkeypatch.setattr(cs, "_load_file_secret", lambda *a, **k: "legacy-token")
+    monkeypatch.setattr(cs, "_store_file_secret", lambda *a, **k: None)
     cs._write_payload(
         {
             "integrations": {

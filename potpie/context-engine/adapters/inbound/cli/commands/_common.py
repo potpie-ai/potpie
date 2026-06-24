@@ -111,7 +111,7 @@ def get_store() -> CredentialStore:
     The auth/credential subsystem persists through this domain port; the concrete
     is chosen at the composition root (``bootstrap.cli_auth_wiring``), so this
     inbound module never imports an adapter. The default is the real
-    keychain-backed store; tests inject an in-memory fake via ``set_store``.
+    file-backed store; tests inject an in-memory fake via ``set_store``.
     """
     if _state["store"] is None:
         from bootstrap.cli_auth_wiring import build_credential_store

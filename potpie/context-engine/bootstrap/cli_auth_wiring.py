@@ -6,7 +6,7 @@ contract is a core-owned port (:class:`~domain.ports.cli_auth.credentials.Creden
 This module is the one place that picks the concrete implementation, so inbound
 command code depends on the port — never on an adapter.
 
-The default is the keychain-backed store; tests inject an in-memory fake via
+The default is the file-backed store; tests inject an in-memory fake via
 ``commands/_common.set_store`` instead.
 """
 
@@ -16,7 +16,7 @@ from domain.ports.cli_auth.credentials import CredentialStore
 
 
 def build_credential_store() -> CredentialStore:
-    """Construct the production ``CredentialStore`` (keychain + config file)."""
+    """Construct the production file-backed ``CredentialStore``."""
     from adapters.outbound.cli_auth.credentials import KeyringCredentialStore
 
     return KeyringCredentialStore()

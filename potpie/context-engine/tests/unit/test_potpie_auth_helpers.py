@@ -859,7 +859,7 @@ def test_login_api_key_command_stores_api_key_securely(monkeypatch) -> None:
     assert result.exit_code == 0, result.stdout
     assert store.api_key == "sk-legacy"
     assert store.api_base_url == "https://api.example.com/"
-    assert "Saved API key to keyring" in result.stdout
+    assert "Saved API key to local credentials file" in result.stdout
 
 
 def test_logout_clears_potpie_auth_only(monkeypatch) -> None:
