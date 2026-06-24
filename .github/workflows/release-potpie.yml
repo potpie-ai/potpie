@@ -1,0 +1,286 @@
+name: Release potpie
+
+on:
+  workflow_call:
+    inputs:
+      publish_target:
+        description: "Where to publish the verified artifacts."
+        required: true
+        type: string
+      confirm_publish:
+        description: "Required literal value 'publish' when publish_target=pypi."
+        required: false
+        default: ""
+        type: string
+      allow_python_release_tag:
+        description: "Allow the aggregate python-v<potpie-version> tag when called by the orchestrator."
+        required: false
+        default: false
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      publish_target:
+        description: "Where to publish the verified artifacts."
+        required: true
+        default: build-only
+        type: choice
+        options:
+          - build-only
+          - testpypi
+          - pypi
+      confirm_publish:
+        description: "Required literal value 'publish' only when publish_target=pypi."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: potpie-release-${{ inputs.publish_target }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  preflight:
+    name: Validate potpie release
+    runs-on: ubuntu-latest
+    outputs:
+      potpie_version: ${{ steps.validate.outputs.potpie_version }}
+      channel: ${{ steps.validate.outputs.channel }}
+      metadata_path: ${{ steps.validate.outputs.metadata_path }}
+    steps:
+      # actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      # actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13"
+
+      - name: Install validation dependencies
+        run: python -m pip install --upgrade packaging
+
+      - name: Validate release metadata
+        id: validate
+        run: >-
+          python scripts/validate_python_release.py
+          --package potpie
+          --publish-target "${{ inputs.publish_target }}"
+          --confirm-publish "${{ inputs.confirm_publish }}"
+          ${{ inputs.allow_python_release_tag && '--allow-python-release-tag' || '' }}
+
+      # actions/upload-artifact@v4
+      - name: Upload release metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-metadata-potpie
+          path: ${{ steps.validate.outputs.metadata_path }}
+          if-no-files-found: error
+
+  build:
+    name: Build potpie distributions
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      # actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade build twine
+
+      - name: Build potpie and local smoke dependency
+        env:
+          LINEAR_CLIENT_ID: ${{ vars.LINEAR_CLIENT_ID }}
+          POTPIE_GITHUB_CLIENT_ID: ${{ vars.POTPIE_GITHUB_CLIENT_ID }}
+        run: |
+          mkdir -p dist/potpie dist/smoke-deps
+          python -m build --sdist --wheel --outdir dist/smoke-deps potpie/context-engine
+          python -m build --sdist --wheel --outdir dist/potpie .
+          python -m twine check dist/smoke-deps/* dist/potpie/*
+
+      # actions/upload-artifact@v4
+      - name: Upload potpie distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dist-potpie
+          path: dist/potpie/*
+          if-no-files-found: error
+
+      # actions/upload-artifact@v4
+      - name: Upload smoke dependency distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dist-potpie-smoke-deps
+          path: dist/smoke-deps/*
+          if-no-files-found: error
+
+  smoke-install:
+    name: Smoke install potpie (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    needs:
+      - preflight
+      - build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12", "3.13"]
+    steps:
+      # actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      # actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # actions/download-artifact@v4
+      - name: Download potpie distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: dist-potpie
+          path: dist
+
+      # actions/download-artifact@v4
+      - name: Download local dependency distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: dist-potpie-smoke-deps
+          path: dist
+
+      - name: Smoke install and run CLI
+        env:
+          POTPIE_VERSION: ${{ needs.preflight.outputs.potpie_version }}
+        run: |
+          ls -la dist
+          python -m venv .release-smoke
+          .release-smoke/bin/python -m pip install --upgrade pip
+          .release-smoke/bin/python -m pip install --find-links dist "potpie==${POTPIE_VERSION}"
+          PATH="$PWD/.release-smoke/bin:$PATH" potpie status
+
+          tmpdir="$(mktemp -d)"
+          git init "$tmpdir/dummy-git-repo"
+          git -C "$tmpdir/dummy-git-repo" config user.email "ci@potpie.ai"
+          git -C "$tmpdir/dummy-git-repo" config user.name "Potpie CI"
+          git -C "$tmpdir/dummy-git-repo" commit --allow-empty -m "Initial smoke commit"
+          (
+            cd "$tmpdir/dummy-git-repo"
+            PATH="$GITHUB_WORKSPACE/.release-smoke/bin:$PATH" \
+            CONTEXT_ENGINE_HOME="$tmpdir/potpie-home" \
+            CONTEXT_ENGINE_HOST_MODE=in_process \
+            potpie setup --repo . --pot wheel-smoke --agent claude --dry-run --yes
+          )
+
+  assemble-artifacts:
+    name: Assemble potpie artifacts
+    needs:
+      - preflight
+      - build
+      - smoke-install
+    runs-on: ubuntu-latest
+    steps:
+      # actions/download-artifact@v4
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: dist-potpie
+          path: dist
+
+      # actions/download-artifact@v4
+      - name: Download release metadata
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-metadata-potpie
+          path: release-metadata
+
+      - name: Generate checksums
+        run: |
+          find dist -maxdepth 1 -type f -print | sort
+          shasum -a 256 dist/* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # actions/upload-artifact@v4
+      - name: Upload release artifact bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-artifacts-potpie
+          path: |
+            dist/*
+            release-metadata/release-metadata.json
+            SHA256SUMS.txt
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: Publish potpie to TestPyPI
+    if: ${{ inputs.publish_target == 'testpypi' }}
+    needs:
+      - preflight
+      - assemble-artifacts
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/potpie/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # actions/download-artifact@v4
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: dist-potpie
+          path: dist
+
+      # pypa/gh-action-pypi-publish@release/v1
+      - name: Publish distributions to TestPyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+        with:
+          packages-dir: dist/
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Publish potpie to PyPI
+    if: ${{ inputs.publish_target == 'pypi' }}
+    needs:
+      - preflight
+      - assemble-artifacts
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/potpie/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # actions/download-artifact@v4
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: dist-potpie
+          path: dist
+
+      # pypa/gh-action-pypi-publish@release/v1
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+        with:
+          packages-dir: dist/
