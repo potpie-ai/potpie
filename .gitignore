@@ -116,3 +116,4 @@ seed/.state/
 
 .omo
 .prsplit
+.env_old
