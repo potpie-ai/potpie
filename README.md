@@ -38,27 +38,31 @@ python3 -m pip install --user potpie
 > `uv tool install potpie` is recommended for CLI installs because global
 > mutation of Python packages is generally not recommended.
 
-### Step 2: Run potpie setup wizard
+### Step 2: Run the Potpie setup wizard
 
 ```bash
 potpie setup
 ```
 
-Potpie setup wizard walks you through the entire setup, choose integrations of your choice and set it up with your preferred harness.
+The setup wizard provisions local config, storage, the daemon, a default pot, and
+agent skills. It also lets you choose integrations and the coding harness Potpie
+should configure.
 
 ![alt text](assets/wiz_screen.png)
 
-### Step 3: Ingest the repo
+### Step 3: Open your configured harness
 
 Potpie is already integrated into your selected harness.
-You can start using potpie with repo of your choice.
+You can start using Potpie with the repo of your choice.
 
-Open your previously selected harness and tell it ingest the repo.
+Open your previously selected harness and ask it to use Potpie for the repo.
 ![alt text](assets/codex_potpie.png)
 
 
 > [!NOTE]
-> You don't need to ingest the repo manually, the agent will ingest the repo and update it incrementally when required.
+> You don't need to run a separate manual ingest command. The CLI registers
+> sources and the configured agent can ingest or update project context when the
+> task requires it.
 
 You can view your context graph in the web UI:
 
@@ -75,18 +79,32 @@ The main CLI commands are:
 
 | Command | Purpose |
 | --- | --- |
-| `potpie status --host` | Check local daemon, pot, graph, and skill readiness. |
-| `potpie status --verify` | Check connected integration credentials. |
+| `potpie setup` | Run first-time local setup for config, daemon, default pot, and agent skills. |
+| `potpie login` | Sign in to Potpie for account-backed and managed features. |
+| `potpie github login` / `potpie linear login` | Connect source integrations you want agents to use. |
+| `potpie status` | Show configured integration auth status. |
+| `potpie status --verify` | Verify integration credentials with lightweight API checks. |
+| `potpie status --host` | Check daemon, pot, graph, and skill readiness. |
+| `potpie doctor` | Run local diagnostics for daemon, backend capabilities, and skill drift. |
+| `potpie source add repo .` | Register the current repo as a source for the resolved pot. |
+| `potpie pot list` / `potpie pot use <id-or-name>` | List pots and choose the active workspace. |
 | `potpie resolve "<task>"` | Pull the context an agent should read before doing a task. |
 | `potpie search "<query>"` | Look up a specific file, workflow, bug, decision, or convention. |
+| `potpie record --type <type> --summary "<summary>"` | Write a durable project learning. |
+| `potpie graph ...` | Use lower-level graph reads, quality checks, proposals, and commits. |
+| `potpie ui` | Open the local graph explorer served by the daemon. |
 | `potpie skills install --agent <agent>` | Install or refresh Potpie guidance for an agent harness. |
 
 Examples:
 
 ```bash
+potpie setup --repo . --agent claude
+potpie github login
 potpie status --host
+potpie source add repo .
 potpie resolve "what should I know before working in this repository?"
 potpie search "authentication flow"
+potpie record --type decision --summary "Prefer the context-engine CLI for graph work"
 ```
 
 You can find an exhaustive list with more examples in our [docs](https://docs.potpie.ai).
