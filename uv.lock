@@ -2209,7 +2209,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sentence-transformers", marker = "extra == 'all'", specifier = ">=5.1.2" },
     { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=5.1.2" },
-    { name = "sentry-sdk", specifier = ">=2.61.1" },
+    { name = "sentry-sdk", specifier = ">=2.61.1,<3.0.0" },
     { name = "sqlalchemy", marker = "extra == 'all'", specifier = ">=2.0" },
     { name = "sqlalchemy", marker = "extra == 'postgres'", specifier = ">=2.0" },
     { name = "typer", specifier = ">=0.15.0" },
