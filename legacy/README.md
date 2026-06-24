@@ -86,7 +86,7 @@
    ```
 
    > **`CHAT_MODEL`** and **`INFERENCE_MODEL`** are used for agent reasoning and knowledge graph generation respectively. Model names follow the `provider/model_name` format as expected by [LiteLLM](https://docs.litellm.ai/docs/providers).
-
+   >
    > **💡 Using Ollama instead?** Set `LLM_PROVIDER=ollama` and use `CHAT_MODEL=ollama_chat/qwen2.5-coder:7b` and `INFERENCE_MODEL=ollama_chat/qwen2.5-coder:7b`.
 
    See `.env.template` for the full list of optional configuration (logging, feature flags, object storage, email, analytics, etc.).
@@ -175,17 +175,17 @@ Set `GITHUB_AUTH_MODE` to `app`, `pat`, or `none` to select the method.
 
 For self-hosted Git servers (e.g., GitBucket, GitLab, etc.), configure:
 
-
-      uv sync
-
+```bash
+uv sync
+```
 
 This will create a `.venv` directory and install all dependencies from `pyproject.toml`
 
-#### GitHub Authentication Setup
+### GitHub Authentication Setup
 
 Potpie supports multiple authentication methods for accessing GitHub repositories:
 
-##### For GitHub.com Repositories:
+#### For GitHub.com Repositories:
 
 **Option 1: GitHub App (Recommended for Production)**
   - Create a GitHub App in your organization
@@ -209,14 +209,15 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
   - Automatically used as fallback for public repositories
   - **Rate Limit**: 60 requests/hour per IP (very limited)
 
-##### For Self-Hosted Git Servers (GitBucket, GitLab, etc.):
+#### For Self-Hosted Git Servers (GitBucket, GitLab, etc.):
 
-      Set the following environment variables:
+Set the following environment variables:
 
-
-      CODE_PROVIDER=github   # Options: github, gitbucket
-      CODE_PROVIDER_BASE_URL=http://your-git-server.com/api/v3
-      CODE_PROVIDER_TOKEN=your-token
+```bash
+CODE_PROVIDER=github   # Options: github, gitbucket
+CODE_PROVIDER_BASE_URL=http://your-git-server.com/api/v3
+CODE_PROVIDER_TOKEN=your-token
+```
 
 
 **Important**: `GH_TOKEN_LIST` tokens are always used for GitHub.com, regardless of `CODE_PROVIDER_BASE_URL`.

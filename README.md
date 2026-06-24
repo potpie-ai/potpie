@@ -58,11 +58,11 @@ Open your previously selected harness and tell it ingest the repo.
 
 
 > [!NOTE]
-> You don't need to ingest the repo manually, the agent will ingest the repo and update it incrementally when required. 
+> You don't need to ingest the repo manually, the agent will ingest the repo and update it incrementally when required.
 
 You can view your contex graph in web:
 
-```
+```bash
 potpie ui
 ```
 
@@ -93,11 +93,11 @@ potpie search "authentication flow"
 potpie record --type decision --summary "Use the existing billing adapter for Stripe events"
 ```
 
-You can find a exhaustive list with more examples in our [docs](docs.potpie.ai).
+You can find a exhaustive list with more examples in our [docs](https://docs.potpie.ai).
 
 ## Architecture
 
-Potpie's current architecture is CLI-first. CLI is desinged to be used by both humans and agents. Read the deeper architecture notes in [`docs/context-graph/architecture.md`](./docs/context-graph/architecture.md).
+Potpie's current architecture is CLI-first. CLI is designed to be used by both humans and agents. Read the deeper architecture notes in [`docs/context-graph/architecture.md`](./docs/context-graph/architecture.md).
 
 ## License
 
@@ -116,4 +116,3 @@ to set up your environment, understand the workflow, and open a pull request.
 <a href="https://github.com/potpie-ai/potpie/graphs/contributors">
   <img src="https://contributors-img.web.app/image?repo=potpie-ai/potpie" alt="Contributors" />
 </a>
-
