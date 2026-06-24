@@ -93,7 +93,7 @@ potpie record --type decision --summary "Use the existing billing adapter for St
 
 You can find an exhaustive list with more examples in our [docs](https://docs.potpie.ai).
 
-## Integrations and coding tools
+## Integrations and Coding Harnesses
 
 Potpie supports a variety of integrations and coding harnesses, with more coming.
 If your team needs a new integration or harness, please
@@ -108,7 +108,7 @@ If your team needs a new integration or harness, please
 | ![Jira][jira-badge] | Index projects, issues, status and changelog context. |
 | ![Confluence][confluence-badge] | Index spaces, pages, runbooks and decisions. |
 
-### Coding tools
+### Coding harnesses
 
 | Tool | Description |
 | --- | --- |
