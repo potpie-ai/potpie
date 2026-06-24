@@ -189,16 +189,23 @@ def test_sentry_runtime_global_opt_out_overrides_baked_enablement(
     assert settings.enabled is False
 
 
-def test_shared_sentry_settings_ignore_cli_baked_defaults(
+def test_shared_sentry_settings_use_baked_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         build_defaults, "POTPIE_SENTRY_DSN", "https://baked@example.invalid/1"
     )
     monkeypatch.setattr(build_defaults, "POTPIE_SENTRY_ENVIRONMENT", "production")
+    monkeypatch.setattr(build_defaults, "POTPIE_SENTRY_RELEASE", "potpie-cli@baked")
+    monkeypatch.setattr(build_defaults, "POTPIE_SENTRY_DIST", "sha-baked")
+    monkeypatch.setattr(build_defaults, "POTPIE_SENTRY_ENABLED", "1")
+    monkeypatch.setattr(build_defaults, "POTPIE_TELEMETRY_DISABLED", "0")
 
     settings = shared_sentry_settings.load_sentry_settings()
 
-    assert settings.enabled is False
-    assert settings.dsn is None
-    assert settings.environment == "dev"
+    assert settings.enabled is True
+    assert settings.dsn == "https://baked@example.invalid/1"
+    assert settings.environment == "production"
+    assert shared_sentry_settings.telemetry_environment() == "production"
+    assert settings.release == "potpie-cli@baked"
+    assert settings.dist == "sha-baked"
