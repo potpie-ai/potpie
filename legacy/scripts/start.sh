@@ -43,7 +43,11 @@ fi
 # Synchronize and create the managed virtual environment if needed
 echo "Syncing Python environment with uv..."
 if ! (cd "$REPO_ROOT" && uv sync --all-packages); then
-  echo "Error: Failed to synchronize Python dependencies"
+  echo "Error: Failed to synchronize root Python dependencies"
+  exit 1
+fi
+if ! (cd "$REPO_ROOT" && uv sync --project "$LEGACY_ROOT"); then
+  echo "Error: Failed to synchronize legacy Python dependencies"
   exit 1
 fi
 
@@ -81,14 +85,13 @@ if [[ "$OSTYPE" == "darwin"* ]] || [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == 
   fi
 fi
 
-cd "$REPO_ROOT"
-source .venv/bin/activate
 cd "$LEGACY_ROOT"
 
-alembic -c alembic.ini upgrade heads
+echo "Applying database migrations..."
+uv run --project "$LEGACY_ROOT" alembic -c alembic.ini upgrade heads
 
 echo "Starting momentum application..."
-gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
+uv run --project "$LEGACY_ROOT" gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
 GUNICORN_PID=$!
 
 echo "Starting Celery worker..."
@@ -99,7 +102,7 @@ _cg_lc=$(printf '%s' "$_cg" | tr '[:upper:]' '[:lower:]')
 if [[ "$_cg_lc" != "false" && "$_cg_lc" != "0" && "$_cg_lc" != "no" && "$_cg_lc" != "off" && "$_cg_lc" != "" ]]; then
   CELERY_QUEUES="${CELERY_QUEUES},context-graph-etl"
 fi
-celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUES}" -E --concurrency=1 --pool=solo -B --schedule=.celerybeat-schedule &
+uv run --project "$LEGACY_ROOT" celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUES}" -E --concurrency=1 --pool=solo -B --schedule=.celerybeat-schedule &
 CELERY_PID=$!
 
 # Keep this script in the foreground and forward Ctrl+C to app workers.
