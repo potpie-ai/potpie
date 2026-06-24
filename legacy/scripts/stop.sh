@@ -2,6 +2,7 @@
 set -e
 
 LEGACY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$LEGACY_ROOT"
 
 echo "Stopping Potpie services..."
 
