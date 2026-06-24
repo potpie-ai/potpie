@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Optional
@@ -111,8 +112,27 @@ def _write_payload(payload: dict[str, Any]) -> None:
 
 def _write_payload_to_path(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    body = json.dumps(payload, indent=2) + "\n"
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp:
+            temp_path = Path(temp.name)
+            temp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+            temp.write(body)
+            temp.flush()
+            os.fsync(temp.fileno())
+        os.replace(temp_path, path)
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
 
 
 def _norm_secret_name(name: str) -> str:

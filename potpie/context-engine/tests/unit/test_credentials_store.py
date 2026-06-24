@@ -30,6 +30,33 @@ def test_write_read_roundtrip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     assert cs.get_stored_api_base_url() == "http://localhost:9999"
 
 
+def test_write_payload_uses_private_temp_file_before_atomic_replace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    original_replace = cs.os.replace
+    seen: dict[str, object] = {}
+
+    def assert_secure_replace(src: str | Path, dst: str | Path) -> None:
+        source = Path(src)
+        destination = Path(dst)
+        seen["called"] = True
+        seen["source_mode"] = stat.S_IMODE(source.stat().st_mode)
+        seen["destination_exists_before_replace"] = destination.exists()
+        original_replace(src, dst)
+
+    monkeypatch.setattr(cs.os, "replace", assert_secure_replace)
+
+    cs.write_credentials(api_key="secret-token")
+
+    assert seen == {
+        "called": True,
+        "source_mode": 0o600,
+        "destination_exists_before_replace": False,
+    }
+    assert stat.S_IMODE(cs.credentials_path().stat().st_mode) == 0o600
+
+
 def test_write_preserves_base_url_when_url_not_passed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
