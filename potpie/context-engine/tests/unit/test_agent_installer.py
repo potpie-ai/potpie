@@ -220,6 +220,43 @@ def test_install_agent_bundle_wraps_old_unmarked_agents_md(tmp_path: Path) -> No
     assert "<!-- potpie-start -->" in text
 
 
+def test_install_agent_bundle_replaces_embedded_unmarked_agents_md(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    target = repo / "AGENTS.md"
+    marked_template = next(
+        content
+        for rel, content in iter_template_files()
+        if rel.as_posix() == "AGENTS.md"
+    )
+    old_unmarked = (
+        marked_template.split("\n", 1)[1]
+        .rsplit("\n<!-- potpie-end -->", 1)[0]
+        .strip()
+    )
+    target.write_text(
+        "# My notes\n\nSome custom project instructions.\n\n"
+        f"{old_unmarked}\n\n"
+        "## Team notes\n\nKeep these too.\n",
+        encoding="utf-8",
+    )
+
+    result = install_agent_bundle(repo)
+
+    text = target.read_text(encoding="utf-8")
+    assert "AGENTS.md" in result.updated
+    assert "# My notes" in text
+    assert "Some custom project instructions." in text
+    assert "## Team notes" in text
+    assert "Keep these too." in text
+    assert text.count("# Context Engine") == 1
+    assert text.count("<!-- potpie-start -->") == 1
+    assert text.count("<!-- potpie-end -->") == 1
+
+
 def test_install_agent_bundle_updates_marked_agents_md_without_force(
     tmp_path: Path,
 ) -> None:

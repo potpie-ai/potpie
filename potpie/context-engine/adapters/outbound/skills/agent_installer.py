@@ -77,13 +77,19 @@ def iter_template_files() -> list[tuple[Path, str]]:
 def _merge_managed_markdown(existing: str, section: str) -> tuple[str, str]:
     """Return (merged_content, action) where action is 'unchanged'|'updated'|'created'."""
     normalized_section = section.strip()
+    unmarked_section = _strip_managed_markers(normalized_section)
     if _MANAGED_MARKER_RE.search(existing):
         merged = _MANAGED_MARKER_RE.sub(normalized_section, existing)
         if merged == existing:
             return existing, "unchanged"
         return merged, "updated"
-    if existing.strip() == _strip_managed_markers(normalized_section).strip():
+    if existing.strip() == unmarked_section.strip():
         merged = normalized_section + "\n"
+        if merged == existing:
+            return existing, "unchanged"
+        return merged, "updated"
+    if unmarked_section in existing:
+        merged = existing.replace(unmarked_section, normalized_section, 1)
         if merged == existing:
             return existing, "unchanged"
         return merged, "updated"
