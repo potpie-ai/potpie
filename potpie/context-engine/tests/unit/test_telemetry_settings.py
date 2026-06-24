@@ -45,6 +45,14 @@ def test_sentry_settings_disabled_without_dsn(monkeypatch: pytest.MonkeyPatch) -
 
     assert settings.enabled is False
     assert settings.dsn is None
+    assert settings.environment == "prod_oss"
+
+
+def test_telemetry_environment_defaults_to_prod_oss_without_runtime_or_baked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert cli_telemetry_environment() == "prod_oss"
+    assert shared_sentry_settings.telemetry_environment() == "prod_oss"
 
 
 def test_sentry_settings_respects_global_kill_switch(
