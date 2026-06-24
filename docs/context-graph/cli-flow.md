@@ -167,6 +167,7 @@ potpie login [--backend-url <url>] [--org <id>]
 potpie logout
 potpie whoami
 potpie status [--intent feature] [--harness claude] [--json]
+potpie auth status [--verify] [--json]
 potpie doctor
 potpie config get <key>
 potpie config set <key> <value>
@@ -176,6 +177,9 @@ potpie config set <key> <value>
 control plane, Graph Service data plane, GraphBackend capabilities/projections,
 Event Ledger binding and consumer backlog, Skill Manager drift, login state when
 relevant, and next action.
+
+`auth status` is the explicit local integration-auth report. `--verify` belongs
+there, not to the context-readiness `status` command.
 
 `doctor` is local-profile diagnostics: paths, logs, auth/socket state,
 migrations, and skill drift.

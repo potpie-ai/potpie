@@ -73,7 +73,10 @@ from adapters.outbound.cli_auth.provider_config import (
 from adapters.outbound.cli_auth.token_exchange import exchange_authorization_code
 
 auth_app = typer.Typer(
-    help="[Deprecated] Use `potpie <provider>` and `potpie status` instead.",
+    help=(
+        "Integration auth status and deprecated provider aliases. "
+        "Use `potpie <provider>` for provider login/logout."
+    ),
 )
 linear_app = typer.Typer(help="Linear integration.")
 jira_app = typer.Typer(help="Jira integration and read.")
@@ -492,7 +495,17 @@ def integration_status(
     rows: list[dict[str, Any]] = []
 
     for provider in _ALL_PROVIDERS:
-        meta = get_integration_status(provider)
+        try:
+            meta = get_integration_status(provider)
+        except ProviderCredentialError as exc:
+            rows.append(
+                {
+                    "provider": provider,
+                    "authenticated": False,
+                    "status_error": str(exc),
+                }
+            )
+            continue
         row = dict(meta)
         if verify and meta.get("authenticated"):
             try:
@@ -520,6 +533,11 @@ def integration_status(
 
     for row in rows:
         provider = row["provider"]
+        if row.get("status_error"):
+            _print_remote_line(
+                f"{provider}: status unavailable ({_esc(row['status_error'])})"
+            )
+            continue
         if not row.get("authenticated"):
             print_plain_line(f"{provider}: not authenticated", as_json=False)
             continue
@@ -556,7 +574,7 @@ def auth_status(
         help="Run a lightweight read-only API check for authenticated providers.",
     ),
 ) -> None:
-    """Deprecated: use ``potpie status``."""
+    """Show local integration auth status."""
     integration_status(verify=verify)
 
 

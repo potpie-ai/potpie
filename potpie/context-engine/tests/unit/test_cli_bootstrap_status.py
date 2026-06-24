@@ -41,7 +41,7 @@ class _FakeSetupMetrics:
         self.calls.append(_MetricCall(name, {} if attributes is None else attributes))
 
 
-def test_status_host_path_emits_report(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_status_default_emits_host_report(monkeypatch: pytest.MonkeyPatch) -> None:
     report = StatusReport(
         pot_id="foo-pot",
         profile="local",
@@ -59,7 +59,7 @@ def test_status_host_path_emits_report(monkeypatch: pytest.MonkeyPatch) -> None:
         bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
     )
 
-    result = runner.invoke(cli_main.app, ["status", "--host"])
+    result = runner.invoke(cli_main.app, ["status"])
 
     assert result.exit_code == 0, result.stdout
     assert "profile=local" in result.stdout
@@ -70,6 +70,29 @@ def test_status_host_path_emits_report(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(req, StatusRequest)
     assert req.intent == "feature"
     assert req.harness == "claude"
+
+
+def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) -> None:
+    report = StatusReport(
+        pot_id="foo-pot",
+        profile="local",
+        daemon_up=True,
+        active_pot="foo-pot",
+        backend_ready=True,
+    )
+    mock_host = MagicMock()
+    mock_host.agent_context.status.return_value = report
+
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(
+        bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
+    )
+
+    result = runner.invoke(cli_main.app, ["status", "--host"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "profile=local" in result.stdout
+    mock_host.agent_context.status.assert_called_once()
 
 
 def test_status_non_default_pot_triggers_host_path(
@@ -120,11 +143,20 @@ def test_status_host_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(bootstrap, "resolve_pot_id", lambda _host, pot: "foo-pot")
 
-    result = runner.invoke(cli_main.app, ["--json", "status", "--host"])
+    result = runner.invoke(cli_main.app, ["--json", "status"])
 
     assert result.exit_code == 0, result.stdout
     assert '"profile": "managed"' in result.stdout
     assert '"daemon_up": true' in result.stdout
+
+
+def test_status_verify_points_to_auth_status() -> None:
+    result = runner.invoke(cli_main.app, ["--json", "status", "--verify"])
+
+    assert result.exit_code == 1, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "validation_error"
+    assert "potpie auth status --verify" in payload["recommended_next_action"]
 
 
 def test_doctor_json_includes_backend_readiness(
