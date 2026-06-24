@@ -1,6 +1,72 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import build_config_values
+
+
+def test_oauth_build_config_loads_nearest_dotenv(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "LINEAR_CLIENT_ID=file-linear",
+                "export POTPIE_GITHUB_CLIENT_ID='file-github'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    nested = tmp_path / "potpie" / "context-engine"
+    nested.mkdir(parents=True)
+
+    values = build_config_values.oauth_config_values({}, dotenv_start=nested)
+
+    assert values == {
+        "LINEAR_CLIENT_ID": "file-linear",
+        "POTPIE_GITHUB_CLIENT_ID": "file-github",
+    }
+
+
+def test_build_config_environ_overrides_dotenv(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "LINEAR_CLIENT_ID=file-linear\nPOTPIE_GITHUB_CLIENT_ID=file-github\n",
+        encoding="utf-8",
+    )
+
+    values = build_config_values.oauth_config_values(
+        {
+            "LINEAR_CLIENT_ID": "env-linear",
+            "POTPIE_GITHUB_CLIENT_ID": "env-github",
+        },
+        dotenv_start=tmp_path,
+    )
+
+    assert values == {
+        "LINEAR_CLIENT_ID": "env-linear",
+        "POTPIE_GITHUB_CLIENT_ID": "env-github",
+    }
+
+
+def test_build_config_input_detection(tmp_path: Path) -> None:
+    assert not build_config_values.has_build_config_inputs(
+        build_config_values.OAUTH_NAMES,
+        {},
+        dotenv_start=tmp_path,
+    )
+
+    assert build_config_values.has_build_config_inputs(
+        build_config_values.OAUTH_NAMES,
+        {"LINEAR_CLIENT_ID": ""},
+        dotenv_start=tmp_path,
+    )
+
+    (tmp_path / ".env").write_text("UNRELATED=1\n", encoding="utf-8")
+    assert build_config_values.has_build_config_inputs(
+        build_config_values.OAUTH_NAMES,
+        {},
+        dotenv_start=tmp_path,
+    )
 
 
 def test_telemetry_build_config_defaults_dist_to_github_sha() -> None:
@@ -20,8 +86,7 @@ def test_telemetry_build_config_defaults_dist_to_github_sha() -> None:
     }
 
 
-def test_telemetry_build_config_explicit_dist_wins_over_github_sha(
-) -> None:
+def test_telemetry_build_config_explicit_dist_wins_over_github_sha() -> None:
     values = build_config_values.telemetry_config_values(
         {
             "GITHUB_SHA": "abc123",
@@ -30,6 +95,24 @@ def test_telemetry_build_config_explicit_dist_wins_over_github_sha(
     )
 
     assert values["POTPIE_SENTRY_DIST"] == "explicit-dist"
+
+
+def test_telemetry_build_config_loads_dotenv(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "POTPIE_POSTHOG_API_KEY=file-posthog",
+                "POTPIE_SENTRY_DSN=file-sentry",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    values = build_config_values.telemetry_config_values({}, dotenv_start=tmp_path)
+
+    assert values["POTPIE_POSTHOG_API_KEY"] == "file-posthog"
+    assert values["POTPIE_SENTRY_DSN"] == "file-sentry"
 
 
 def test_write_python_constants(tmp_path) -> None:
@@ -43,3 +126,15 @@ def test_write_python_constants(tmp_path) -> None:
         "A = 'x'",
         "B = ''",
     ]
+
+
+def test_prefer_existing_config_values(tmp_path: Path) -> None:
+    out = tmp_path / "_build_config.py"
+    build_config_values.write_python_constants(out, {"A": "old", "B": "kept"})
+
+    values = build_config_values.prefer_existing_config_values(
+        out,
+        {"A": "", "B": "default", "C": "new"},
+    )
+
+    assert values == {"A": "old", "B": "kept", "C": "new"}
