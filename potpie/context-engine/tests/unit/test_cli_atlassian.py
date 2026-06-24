@@ -680,13 +680,11 @@ def test_run_atlassian_auth_opens_token_page_after_enter(
         "open",
         lambda url, **_kwargs: opened_urls.append(url) or True,
     )
-    confirms: list[str] = []
-
-    def _confirm(prompt: str, **kwargs: object) -> bool:
-        confirms.append(prompt)
-        return True
-
-    monkeypatch.setattr(atlassian_auth.typer, "confirm", _confirm)
+    monkeypatch.setattr(
+        atlassian_auth,
+        "open_url_with_countdown",
+        lambda url, **kwargs: opened_urls.append(url) or None,
+    )
     prompts: list[str] = []
     prompt_values = iter(["api-token-secret", "user@example.com"])
 
@@ -701,11 +699,8 @@ def test_run_atlassian_auth_opens_token_page_after_enter(
     out = capsys.readouterr().out
     assert "Jira login — Atlassian API token" in out or "Confluence login — Atlassian API token" in out
     assert "  • One token works for both Jira and Confluence" in out
-    assert "Press Enter to open the page" in out
-    assert "Opening id.atlassian.com ..." in out
-    assert "Opening Atlassian in 10 seconds..." not in out
+    assert "using API tokens without scopes" in out
     assert opened_urls == [atlassian_auth.ATLASSIAN_API_TOKEN_PAGE]
-    assert confirms == ["Press Enter to continue"]
     assert prompts == ["Enter your API token", "Enter your Atlassian email"]
 
 
@@ -806,9 +801,9 @@ def test_run_atlassian_auth_skips_browser_when_confirm_declined(
         lambda url, **_kwargs: opened_urls.append(url) or True,
     )
     monkeypatch.setattr(
-        atlassian_auth.typer,
-        "confirm",
-        lambda *_args, **_kwargs: False,
+        atlassian_auth,
+        "open_url_with_countdown",
+        lambda url, **kwargs: opened_urls.append(url) or None,
     )
     prompt_values = iter(["api-token-secret", "user@example.com"])
     prompts: list[str] = []
@@ -821,9 +816,8 @@ def test_run_atlassian_auth_skips_browser_when_confirm_declined(
 
     run_atlassian_api_token_auth(product, force=True)
 
-    out = capsys.readouterr().out
-    assert "Opening id.atlassian.com ..." not in out
-    assert opened_urls == []
+    capsys.readouterr().out
+    assert opened_urls == [atlassian_auth.ATLASSIAN_API_TOKEN_PAGE]
     assert prompts == ["Enter your API token", "Enter your Atlassian email"]
 
 

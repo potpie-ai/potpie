@@ -324,11 +324,10 @@ def run_bitbucket_login(
 
     if result.status == "connected":
         token_storage = integration_token_storage()
-        storage_label = (
-            "system keychain"
-            if token_storage == "keychain"
-            else "local credentials file"
-        )
+        stored = get_store().get_integration_status("bitbucket")
+        if stored.get("token_storage"):
+            token_storage = str(stored["token_storage"])
+        storage_label = "local credentials file"
         print_plain_line(
             f"Connected Bitbucket. Stored tokens in {storage_label}; "
             f"metadata saved to {credentials_path()}.",
