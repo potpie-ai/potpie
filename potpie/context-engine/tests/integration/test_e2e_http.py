@@ -4,9 +4,9 @@
 Every other e2e test calls the use-case/adapter layer directly; this module
 is the only one that traverses the real entrypoint — auth + hardening
 middleware, request validation, the policy tenant boundary, deps wiring, and
-``ContextGraphResult`` → JSON serialization. Deterministic: no LLM, no
-Postgres (DB-backed endpoints are covered at the service layer by the batching
-and pipeline suites). Skips with the rest of the suite when Neo4j is down.
+unsupported legacy graph-query handling. Deterministic: no LLM, no Postgres
+(DB-backed endpoints are covered at the service layer by the batching and
+pipeline suites). Skips with the rest of the suite when Neo4j is down.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ import pytest
 
 from domain.context_events import EventRef
 from domain.graph_mutations import EdgeUpsert, EntityUpsert
-from domain.graph_query import ContextGraphGoal, ContextGraphQuery
 from domain.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.integration
@@ -49,9 +48,11 @@ def _seed_plan(pot_id: str) -> ReconciliationPlan:
 
 
 def _seed(container, pot_id: str) -> None:
+    assert container.backend is not None
     asyncio.run(
-        container.context_graph.apply_plan_async(
-            _seed_plan(pot_id), expected_pot_id=pot_id
+        container.backend.mutation.apply_async(
+            _seed_plan(pot_id),
+            expected_pot_id=pot_id,
         )
     )
 
@@ -152,28 +153,17 @@ class TestHttpAuth:
 
 
 class TestHttpQuery:
-    def test_query_context_graph_roundtrips_seeded_topology(
-        self, make_client, container, pot_id
-    ) -> None:
-        _seed(container, pot_id)
+    def test_query_context_graph_is_not_supported(self, make_client, pot_id) -> None:
         client = make_client()
-        q = ContextGraphQuery(
-            pot_id=pot_id,
-            goal=ContextGraphGoal.RETRIEVE,
-            include=["infra_topology"],
-            limit=50,
-        )
-        r = client.post(f"{API}/query/context-graph", json=q.model_dump(mode="json"))
-        assert r.status_code == 200, r.text
+        r = client.post(f"{API}/query/context-graph", json={"pot_id": pot_id})
+        assert r.status_code == 501, r.text
         body = r.json()
-        assert body.get("error") is None
-        assert body.get("result") is not None
+        assert body["detail"]["code"] == "http_context_graph_query_not_supported"
 
-    def test_query_validation_returns_422(self, make_client) -> None:
+    def test_query_validation_is_bypassed_for_unsupported_route(self, make_client) -> None:
         client = make_client()
-        # Missing required ``pot_id`` → FastAPI request validation rejects it.
         r = client.post(f"{API}/query/context-graph", json={"goal": "neighborhood"})
-        assert r.status_code == 422
+        assert r.status_code == 501
 
 
 # ---------------------------------------------------------------------------

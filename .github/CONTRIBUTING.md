@@ -36,7 +36,7 @@ If you’re unsure about how to get started, feel free to browse our issues labe
 Ensure you have the following software installed:
 
 - [Git](https://git-scm.com/)
-- [Python 3.11+](https://www.python.org/)
+- [Python 3.12+](https://www.python.org/)
 - [uv](https://docs.astral.sh/uv/) - Fast Python package installer (install via `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - [Docker](https://www.docker.com/) (if applicable)
 

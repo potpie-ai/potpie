@@ -1,13 +1,14 @@
-"""Event stream publisher adapters."""
+"""Event stream publisher adapters.
 
-from adapters.outbound.event_stream.inmemory_publisher import (
-    InMemoryEventStreamPublisher,
-)
+The deployable adapter is ``RedisEventStreamPublisher``. The in-memory
+publisher (``inmemory_publisher.py``) is a test double — import it from its
+module directly; it is deliberately not re-exported here.
+"""
+
 from adapters.outbound.event_stream.redis_publisher import (
     RedisEventStreamPublisher,
 )
 
 __all__ = [
-    "InMemoryEventStreamPublisher",
     "RedisEventStreamPublisher",
 ]

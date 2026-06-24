@@ -209,7 +209,7 @@ daemon-hosted orchestrator → render the `SetupReport`.
 class SetupPlan:
     mode: str = "local"        # local setup; managed auth uses LoginPlan
     host_mode: str = "daemon"  # daemon | in_process
-    backend: str = default_setup_backend()  # falkordb_lite on Python >=3.12, else embedded
+    backend: str = default_setup_backend()  # falkordb_lite
     repo: str | None = "."
     pot: str = "default"
     agent: str = "claude"

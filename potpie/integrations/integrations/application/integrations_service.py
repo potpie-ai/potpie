@@ -30,7 +30,7 @@ from integrations.adapters.outbound.postgres.integration_model import Integratio
 from starlette.config import Config
 import time
 import uuid
-from observability import get_logger
+from integrations.logging import get_logger
 from integrations import hash_user_id
 from datetime import datetime, timedelta, timezone
 from integrations.adapters.outbound.crypto.token_encryption import decrypt_token

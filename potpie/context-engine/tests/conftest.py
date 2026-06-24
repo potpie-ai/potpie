@@ -62,8 +62,14 @@ def daemon_ctx(tmp_path: Path) -> ShellContext:
 
 
 @pytest.fixture(autouse=True)
-def _reset_cli_store():
-    """Reset the process-wide injected credential store after each test.
+def _default_in_process_cli_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep existing CLI unit tests on the direct host unless they opt into daemon mode."""
+    monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "in_process")
+
+
+@pytest.fixture(autouse=True)
+def _reset_cli_state():
+    """Reset process-wide injected CLI state after each test.
 
     ``commands/_common`` caches CLI flags, host, and store in module state; clear
     them so fakes injected by one test never leak into the next.
@@ -78,6 +84,31 @@ def _reset_cli_store():
         _common._state["verbose"] = False
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _reset_product_analytics_state():
+    """Keep product analytics globals isolated between tests.
+
+    The CLI uses one module-global background dispatcher per process. In the test
+    process, earlier CLI/setup tests can leave queued analytics payloads behind;
+    reset the dispatcher and sink so dispatcher tests only observe their own
+    events.
+    """
+
+    _reset_product_analytics_globals()
+
+    yield
+
+    _reset_product_analytics_globals()
+
+
+def _reset_product_analytics_globals() -> None:
+    from adapters.inbound.cli.telemetry import product_analytics
+
+    product_analytics._flush_product_analytics_dispatcher()
+    product_analytics._dispatcher = product_analytics._ProductAnalyticsDispatcher()
+    product_analytics._sink = product_analytics.NoOpProductAnalyticsSink()
 
 
 @pytest.fixture(autouse=True)

@@ -7,7 +7,7 @@ name = "potpie-legacy"
 version = "0.1.0"
 description = "Optional Potpie demo host (FastAPI, agents, Celery, seed). Delete this folder if you only need core packages."
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 authors = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
 maintainers = [{ name = "Potpie AI", email = "founders@potpie.ai" }]
@@ -17,7 +17,6 @@ classifiers = [
     "Framework :: FastAPI",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
@@ -102,7 +101,6 @@ dependencies = [
     "typer>=0.15.0",
     "potpie-parsing>=0.1.0,<0.2.0",
     "potpie-sandbox>=0.1.0,<0.2.0",
-    "potpie-observability>=0.1.0,<0.2.0",
     "daytona>=0.134.0",
     "tree-sitter-c-sharp==0.23.1",
     "tree-sitter-embedded-template==0.25.0",
@@ -137,7 +135,6 @@ potpie-parsing = { path = "../potpie/parsing" }
 potpie-context-engine = { path = "../potpie/context-engine", editable = true }
 potpie-integrations = { path = "../potpie/integrations", editable = true }
 potpie-sandbox = { path = "../potpie/sandbox", editable = true }
-potpie-observability = { path = "../potpie/observability", editable = true }
 
 [project.scripts]
 potpie-seed = "seed.cli:main"
@@ -155,7 +152,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["app*", "seed*"]
+include = ["app*", "observability*", "seed*"]
 
 [tool.ruff]
 exclude = ["tests", "app/alembic"]

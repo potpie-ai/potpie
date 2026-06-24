@@ -8,7 +8,7 @@ import hashlib
 import base64
 import json
 import time
-from observability import get_logger
+from integrations.logging import get_logger
 from integrations import hash_user_id
 
 import urllib.parse

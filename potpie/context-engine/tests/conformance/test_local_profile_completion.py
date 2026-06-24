@@ -1,8 +1,7 @@
-"""S6 local-profile completion: record→predicate mapping + ingest scan.
+"""S6 local-profile completion: record→predicate mapping.
 
 These exercise the additive local-profile work: that a recorded preference lands
-on its ontology predicate (and so surfaces in the matching reader), and that
-``HostShell.ingest`` runs working-tree scanners and writes resolvable claims.
+on its ontology predicate and surfaces in the matching reader.
 """
 
 from __future__ import annotations
@@ -28,6 +27,11 @@ def test_recorded_preference_surfaces_in_coding_preferences(host):
             pot_id=pot.pot_id,
             record_type="preference",
             summary="Always use ruff for linting",
+            details={
+                "policy_kind": "style",
+                "prescription": "Always use ruff for linting",
+                "code_scope": {"language": "python"},
+            },
             scope={"language": "python", "service": "context-engine"},
         )
     )
@@ -63,33 +67,6 @@ def test_free_form_record_falls_back_to_related_to(host):
         ResolveRequest(pot_id=pot.pot_id, include=("raw_graph",))
     )
     assert any("make deploy" in dict(i.payload).get("fact", "") for i in env.items)
-
-
-def test_ingest_scan_writes_resolvable_claims(host, tmp_path):
-    pot = host.pots.create_pot(name="default", use=True)
-    tree = tmp_path / "repo"
-    tree.mkdir()
-    (tree / "CODEOWNERS").write_text("* @team-core\n/api/ @team-api\n")
-    (tree / "package.json").write_text(
-        '{"name": "svc", "dependencies": {"express": "^4"}}'
-    )
-
-    result = host.ingest.scan_path(
-        pot_id=pot.pot_id, root=str(tree), run_id="run1", repo_name="o/r"
-    )
-    assert "codeowners" in result.scanners_run
-    assert result.edges_upserted > 0
-
-    env = host.agent_context.resolve(
-        ResolveRequest(pot_id=pot.pot_id, include=("raw_graph",))
-    )
-    assert len(env.items) == result.edges_upserted
-
-
-def test_ingest_scan_missing_root_raises(host):
-    pot = host.pots.create_pot(name="default", use=True)
-    with pytest.raises(ValueError, match="does not exist"):
-        host.ingest.scan_path(pot_id=pot.pot_id, root="/no/such/path", run_id="r")
 
 
 def test_claim_query_analytics_counts_match_backend():

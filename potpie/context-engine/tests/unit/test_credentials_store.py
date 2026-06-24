@@ -487,7 +487,7 @@ def test_get_provider_credentials_reads_from_integration_secrets_file(
     assert cs.get_provider_credentials("github")["access_token"] == "from-file"
 
 
-def test_github_status_detects_file_credentials_on_any_platform(
+def test_github_status_detects_file_credentials(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -689,6 +689,30 @@ def test_integration_secrets_stored_in_json_file(
     metadata = json.loads(cs.credentials_path().read_text(encoding="utf-8"))
     assert metadata["integrations"]["github"]["token_storage"] == "file"
     assert cs.get_provider_credentials("github")["access_token"] == "linux-file-token"
+
+
+def test_github_status_detects_file_credentials_on_any_platform(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_provider_credentials(
+        "github",
+        {
+            "provider": "github",
+            "provider_host": "github.com",
+            "access_token": "linux-file-token",
+            "account": {"login": "octocat", "email": "octo@example.com"},
+            "updated_at": "2026-05-29T00:00:00+00:00",
+        },
+    )
+
+    status = cs.get_integration_status("github")
+
+    assert status["authenticated"] is True
+    assert status["login"] == "octocat"
+    assert status["email"] == "octo@example.com"
+    assert status["token_storage"] == "file"
 
 
 def test_potpie_api_key_uses_file_secret_store(

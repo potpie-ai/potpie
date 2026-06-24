@@ -4,7 +4,7 @@ from typing import Dict, Optional, Any
 from starlette.config import Config
 from integrations.adapters.outbound.oauth.atlassian_oauth_base import AtlassianOAuthBase
 import httpx
-from observability import get_logger
+from integrations.logging import get_logger
 
 logger = get_logger(__name__)
 

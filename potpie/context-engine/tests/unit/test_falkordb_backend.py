@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from adapters.outbound.graph.backends import KNOWN_PROFILES, build_backend
 from adapters.outbound.graph.backends.falkordb_backend import FalkorDBGraphBackend
-from bootstrap.host_wiring import build_host_shell
+from bootstrap.host_wiring import build_host_shell, default_backend_profile
+from bootstrap.ingestion_server import build_ingestion_server
 from domain.context_events import EventRef
 from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
+from domain.lifecycle import SetupPlan
 from domain.ports.graph.backend import GraphBackend
 from domain.reconciliation import ReconciliationPlan
 
@@ -150,6 +154,27 @@ async def test_falkordb_backend_apply_uses_writer() -> None:
     assert len(writer.edges) == 1
 
 
+def test_ingestion_server_accepts_falkordb_backend() -> None:
+    container = build_ingestion_server(settings=_Settings(), pots=MagicMock())
+
+    assert container.backend is not None
+    assert container.backend.profile == "falkordb"
+    assert container.context_graph is not None
+    assert container.graph_writer is not None
+
+
+def test_ingestion_server_accepts_falkordb_lite_backend() -> None:
+    container = build_ingestion_server(
+        settings=_Settings(backend="falkordb_lite", mode="server"),
+        pots=MagicMock(),
+    )
+
+    assert container.backend is not None
+    assert container.backend.profile == "falkordb_lite"
+    assert container.context_graph is not None
+    assert container.graph_writer is not None
+
+
 def test_host_shell_accepts_falkordb_env(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "falkordb")
@@ -157,6 +182,25 @@ def test_host_shell_accepts_falkordb_env(tmp_path, monkeypatch) -> None:
     host = build_host_shell()
 
     assert host.backend.profile == "falkordb"
+
+
+def test_host_shell_defaults_to_falkordb_lite(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    monkeypatch.delenv("CONTEXT_ENGINE_BACKEND", raising=False)
+    monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)
+
+    host = build_host_shell()
+
+    assert default_backend_profile() == "falkordb_lite"
+    assert host.backend.profile == "falkordb_lite"
+    assert SetupPlan().backend == "falkordb_lite"
+
+
+def test_default_backend_ignores_blank_primary_env(monkeypatch) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "   ")
+    monkeypatch.setenv("GRAPH_DB_BACKEND", " embedded ")
+
+    assert default_backend_profile() == "embedded"
 
 
 def test_host_shell_accepts_falkordb_lite_env(tmp_path, monkeypatch) -> None:

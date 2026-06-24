@@ -291,7 +291,7 @@ def _is_github_login_cancel(exc: BaseException) -> bool:
 
 
 def github_logout_impl() -> None:
-    """Remove GitHub credentials from keychain and config."""
+    """Remove GitHub credentials from local credential files."""
     j, v = _flags()
     store = get_store()
     was_authenticated = bool(get_integration_status("github").get("authenticated"))

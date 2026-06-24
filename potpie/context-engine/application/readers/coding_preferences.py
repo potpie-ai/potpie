@@ -20,11 +20,16 @@ from typing import Any, Mapping
 from application.readers._common import (
     ReadRequest,
     ReadResponse,
+    claim_candidate_key,
+    claim_corroboration,
+    claim_payload,
     coverage_status_from_count,
+    dedupe_claim_rows,
     rank_candidates,
 )
 from domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 from domain.ranking import Candidate, RankingService
+from domain.scope_match import hierarchical_scope_overlap
 
 
 @dataclass(slots=True)
@@ -37,14 +42,17 @@ class CodingPreferencesReader:
     predicate: str = "POLICY_APPLIES_TO"
 
     def read(self, req: ReadRequest) -> ReadResponse:
-        rows = self.claim_query.find_claims(
-            ClaimQueryFilter(
-                pot_id=req.pot_id,
-                predicate_in=(self.predicate,),
-                include_invalidated=req.include_invalidated,
-                as_of=req.as_of,
-                fact_query=req.query,
-                limit=max(req.max_items * 4, 16),
+        rows = dedupe_claim_rows(
+            self.claim_query.find_claims(
+                ClaimQueryFilter(
+                    pot_id=req.pot_id,
+                    predicate_in=(self.predicate,),
+                    include_invalidated=req.include_invalidated,
+                    as_of=req.as_of,
+                    source_ref_in=req.source_refs,
+                    fact_query=req.query,
+                    limit=max(req.max_items * 4, 16),
+                )
             )
         )
 
@@ -59,11 +67,11 @@ class CodingPreferencesReader:
             sim = row.properties.get("semantic_similarity")
             candidates.append(
                 Candidate(
-                    candidate_key=_make_candidate_key(row),
+                    candidate_key=claim_candidate_key(row),
                     payload=_payload_from_row(row),
                     strength=row.evidence_strength,
                     valid_at=row.valid_at,
-                    corroboration_count=_corroboration(row),
+                    corroboration_count=claim_corroboration(row),
                     scope_overlap=overlap if scope_keys else None,
                     semantic_similarity=float(sim)
                     if isinstance(sim, (int, float))
@@ -89,7 +97,18 @@ class CodingPreferencesReader:
 
 def _normalise_scope_for_overlap(scope: Mapping[str, Any]) -> dict[str, str]:
     """Pick the scope keys preferences care about; lowercase + strip."""
-    interesting = ("language", "framework", "repo", "service", "file_path", "audience")
+    interesting = (
+        "language",
+        "framework",
+        "repo",
+        "service",
+        "file_path",
+        "path",
+        "symbol",
+        "function_name",
+        "audience",
+        "environment",
+    )
     out: dict[str, str] = {}
     for key in interesting:
         val = scope.get(key)
@@ -99,50 +118,26 @@ def _normalise_scope_for_overlap(scope: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _scope_overlap(row: ClaimRow, task_scope: Mapping[str, str]) -> float:
-    """Compute task-scope ↔ rule-scope overlap as a [0, 1] score.
+    """Hierarchical task-scope ↔ rule-scope overlap in [0, 1] (R4).
 
-    The rule's code_scope is taken from ``row.properties['code_scope']``
-    (per the P3/P6 ontology). Score = (overlap_count / max(task, rule)).
-    A rule with no scope at all is treated as global (overlap = 0.5).
+    The rule's scope is ``row.properties['code_scope']``. Matching is by
+    containment, not flat equality: a repo-wide rule applies to a file in that
+    repo, and a ``src/payments/**`` rule applies to ``src/payments/client.py``.
+    A rule with no scope is global (0.5).
     """
     rule_scope_raw = row.properties.get("code_scope")
     if not isinstance(rule_scope_raw, Mapping):
         return 0.5 if not task_scope else 0.3
-    rule_scope: dict[str, str] = {
-        k: v.lower().strip()
-        for k, v in rule_scope_raw.items()
-        if isinstance(k, str) and isinstance(v, str) and v.strip()
+    rule_scope = {
+        k: v for k, v in rule_scope_raw.items() if isinstance(v, str) and v.strip()
     }
     if not rule_scope:
         return 0.5
-    matching = sum(
-        1 for key, value in rule_scope.items() if task_scope.get(key) == value
-    )
-    denominator = max(len(rule_scope), len(task_scope)) or 1
-    return matching / denominator
-
-
-def _corroboration(row: ClaimRow) -> int:
-    count = row.properties.get("corroboration_count")
-    if isinstance(count, int) and count > 0:
-        return count
-    return 1
-
-
-def _make_candidate_key(row: ClaimRow) -> str:
-    return f"{row.predicate}:{row.subject_key}:{row.object_key}:{row.source_ref or '-'}"
+    return hierarchical_scope_overlap(task_scope, rule_scope)
 
 
 def _payload_from_row(row: ClaimRow) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "subject_key": row.subject_key,
-        "object_key": row.object_key,
-        "fact": row.fact,
-        "source_ref": row.source_ref,
-        "source_system": row.source_system,
-        "valid_at": row.valid_at.isoformat() if row.valid_at else None,
-        "evidence_strength": row.evidence_strength,
-    }
+    payload = claim_payload(row, extra={"properties": dict(row.properties or {})})
     # Surface common preference fields the agent will want to see
     for key in ("policy_kind", "code_scope", "strength", "audience", "prescription"):
         if key in row.properties:

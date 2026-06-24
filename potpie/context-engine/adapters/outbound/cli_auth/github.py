@@ -7,7 +7,13 @@ from typing import Any
 
 import httpx
 
+from adapters.outbound.cli_auth._oauth_client_ids import (
+    POTPIE_GITHUB_CLIENT_ID as PACKAGE_GITHUB_CLIENT_ID,
+)
 from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+from adapters.outbound.cli_auth.oauth_client_id_messages import (
+    missing_github_client_id_message,
+)
 from adapters.outbound.cli_auth.errors import CliAuthError
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 from adapters.outbound.cli_auth.models import (
@@ -34,14 +40,16 @@ class GitHubDeviceFlowError(CliAuthError):
 
 
 def get_github_client_id() -> str:
-    """Resolve GitHub OAuth app client ID from environment (.env via load_cli_env)."""
+    """Resolve GitHub OAuth app client ID.
+
+    Precedence:
+    1. ``POTPIE_GITHUB_CLIENT_ID`` environment variable (runtime override / local dev)
+    2. Value shipped with the package at build time
+    """
     load_cli_env()
-    client_id = os.getenv(GITHUB_CLIENT_ID_ENV, "").strip()
+    client_id = os.getenv(GITHUB_CLIENT_ID_ENV, "").strip() or PACKAGE_GITHUB_CLIENT_ID
     if not client_id:
-        raise GitHubDeviceFlowError(
-            f"{GITHUB_CLIENT_ID_ENV} is not set. "
-            "Add it to potpie/.env (see .env.template)."
-        )
+        raise GitHubDeviceFlowError(missing_github_client_id_message())
     return client_id
 
 
@@ -321,5 +329,5 @@ def build_provider_credentials(
             "auth_flow": "device",
             "verification_uri": verification_uri,
         },
-        token_storage="keychain",
+        token_storage="file",
     )

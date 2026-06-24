@@ -16,7 +16,7 @@ from starlette.config import Config
 import httpx
 import urllib.parse
 import time
-from observability import get_logger
+from integrations.logging import get_logger
 from integrations import hash_user_id
 
 logger = get_logger(__name__)

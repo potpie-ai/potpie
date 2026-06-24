@@ -173,7 +173,7 @@ assert_playbook_vocabulary_coherence heuristic guard (scans registered playbook 
 ### PR-10 — chore(domain): setup-backend defaults + minor port doc/signature touches
 **type:** chore · **size:** S · **depends on:** PR-1
 
-lifecycle.default_setup_backend() (falkordb_lite on py>=3.12 else embedded) + SetupPlan defaults (backend factory, pot 'foo-pot'->'default'), ports/settings doc tweak, ports/graph/backend profile-list (falkordb_lite/embedded/falkordb), SourceInfo.location, skill_manager uninstall all_/optional skill_id, and the cosmetic-only domain/ports/daemon cleanup (em-dash, import ordering, comment removal — zero behavior change).
+lifecycle.default_setup_backend() (falkordb_lite) + SetupPlan defaults (backend factory, pot 'foo-pot'->'default'), ports/settings doc tweak, ports/graph/backend profile-list (falkordb_lite/embedded/falkordb), SourceInfo.location, skill_manager uninstall all_/optional skill_id, and the cosmetic-only domain/ports/daemon cleanup (em-dash, import ordering, comment removal — zero behavior change).
 
 **Files / areas:**
 - `potpie/context-engine/domain/lifecycle.py`

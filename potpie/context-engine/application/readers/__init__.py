@@ -11,13 +11,21 @@ deterministic ranker.
 """
 
 from application.readers.coding_preferences import CodingPreferencesReader
+from application.readers.decisions import DecisionsReader
+from application.readers.docs import DocsReader
+from application.readers.features import FeaturesReader
 from application.readers.infra_topology import InfraTopologyReader
+from application.readers.owners import OwnersReader
 from application.readers.prior_bugs import PriorBugsReader
 from application.readers.timeline_reader import TimelineReader
 
 __all__ = [
     "CodingPreferencesReader",
+    "DecisionsReader",
+    "DocsReader",
+    "FeaturesReader",
     "InfraTopologyReader",
+    "OwnersReader",
     "PriorBugsReader",
     "TimelineReader",
 ]

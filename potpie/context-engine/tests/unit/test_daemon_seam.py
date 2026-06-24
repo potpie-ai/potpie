@@ -51,7 +51,7 @@ def test_detached_ensure_reuses_running_daemon(tmp_path: pathlib.Path, monkeypat
     )
     d = Daemon(home=tmp_path, in_process=False)
     res = d.ensure()
-    assert res.state == DONE and "already running" in (res.detail or "")
+    assert res.state == SKIPPED and "already running" in (res.detail or "")
 
 
 def test_install_is_idempotent_noop(tmp_path: pathlib.Path):

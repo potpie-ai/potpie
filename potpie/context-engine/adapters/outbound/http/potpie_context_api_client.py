@@ -10,6 +10,8 @@ from urllib.parse import quote
 
 import httpx
 
+from domain.errors import CapabilityNotImplemented
+
 CONTEXT_API_PREFIX = "/api/v2/context"
 
 
@@ -358,10 +360,15 @@ class PotpieContextApiClient:
         return self._get_with_auth_retry(self._url(path), params=params)
 
     def context_graph_query(self, body: dict[str, Any]) -> dict[str, Any]:
-        r = self.post_context("/query/context-graph", json_body=body)
-        self._raise_for_status(r)
-        out = r.json()
-        return out if isinstance(out, dict) else {}
+        del body
+        raise CapabilityNotImplemented(
+            "http.context_graph_query",
+            detail=(
+                "remote ContextGraphQuery is no longer a supported client "
+                "surface; use the local HostShell/GraphService path."
+            ),
+            recommended_next_action="Use context_resolve/context_search or graph read locally.",
+        )
 
     def ingest(self, body: dict[str, Any], *, sync: bool) -> tuple[int, dict[str, Any]]:
         params = {"sync": "true"} if sync else None
@@ -443,13 +450,12 @@ class PotpieContextApiClient:
         return out if isinstance(out, dict) else {}
 
     async def context_graph_query_async(self, body: dict[str, Any]) -> dict[str, Any]:
-        payload = _json_body_for_httpx(body)
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            r = await client.post(
-                self._url("/query/context-graph"),
-                headers=self._headers(),
-                json=payload,
-            )
-        self._raise_for_status(r)
-        out = r.json()
-        return out if isinstance(out, dict) else {}
+        del body
+        raise CapabilityNotImplemented(
+            "http.context_graph_query_async",
+            detail=(
+                "remote ContextGraphQuery is no longer a supported client "
+                "surface; use the local HostShell/GraphService path."
+            ),
+            recommended_next_action="Use context_resolve/context_search or graph read locally.",
+        )

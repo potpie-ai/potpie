@@ -41,7 +41,7 @@ def register(root: typer.Typer) -> None:
     @root.command()
     def setup(
         repo: str = typer.Option(".", "--repo"),
-        pot: str = typer.Option("foo-pot", "--pot"),
+        pot: str = typer.Option("default", "--pot"),
         agent: str = typer.Option("claude", "--agent"),
         backend: str = typer.Option(
             None,
@@ -58,17 +58,25 @@ def register(root: typer.Typer) -> None:
             "--daemon/--in-process",
             help=(
                 "Provision a real detached daemon. Defaults to "
-                "$CONTEXT_ENGINE_HOST_MODE or in-process."
+                "$CONTEXT_ENGINE_HOST_MODE or daemon."
             ),
         ),
     ) -> None:
         """Idempotent first-run: provision config, storage, daemon, default pot, skills."""
         with contract():
             host = get_host()
+            in_process = getattr(host.daemon, "in_process", False)
+            from bootstrap.host_wiring import default_backend_profile
+
+            selected_backend = backend or (
+                getattr(host.backend, "profile", default_backend_profile())
+                if in_process
+                else default_backend_profile()
+            )
             # --backend selects the storage profile for this run. Backend
             # selection happens at wiring time, so rebuild the host on the chosen
             # profile when it differs from the active one (keeps the report honest).
-            if backend and backend != host.backend.profile:
+            if in_process and backend and backend != host.backend.profile:
                 from adapters.inbound.cli.commands._common import set_host
                 from adapters.outbound.graph.backends import build_backend
                 from bootstrap.host_wiring import build_host_shell
@@ -77,6 +85,8 @@ def register(root: typer.Typer) -> None:
                     backend=build_backend(backend), profile=host.profile
                 )
                 set_host(host)
+                in_process = getattr(host.daemon, "in_process", False)
+                selected_backend = host.backend.profile
             if daemon is not None and host.daemon.in_process != (not daemon):
                 import os
 
@@ -88,14 +98,14 @@ def register(root: typer.Typer) -> None:
                 )
                 host = build_host_shell(backend=host.backend, profile=host.profile)
                 set_host(host)
+                in_process = getattr(host.daemon, "in_process", False)
+                selected_backend = host.backend.profile
             json_output = is_json()
             use_rich = setup_ux.rich_enabled(as_json=json_output) and not yes
             plan = SetupPlan(
                 mode=host.profile if host.profile in ("local", "managed") else "local",
-                host_mode="in_process"
-                if getattr(host.daemon, "in_process", False)
-                else "daemon",
-                backend=host.backend.profile,
+                host_mode="in_process" if in_process else "daemon",
+                backend=selected_backend,
                 repo=repo,
                 pot=pot,
                 agent=agent,
@@ -106,7 +116,8 @@ def register(root: typer.Typer) -> None:
             )
             setup_started_ms = now_ms()
             begin_setup_run()
-            host.setup.set_observer(CliSetupAnalyticsObserver())
+            if in_process:
+                host.setup.set_observer(CliSetupAnalyticsObserver())
             capture_setup_started(
                 plan,
                 interactive=use_rich,
@@ -114,7 +125,13 @@ def register(root: typer.Typer) -> None:
             )
 
             if dry_run:
-                preview = host.setup.preview(plan)
+                if in_process or host.daemon.status().get("up"):
+                    preview = host.setup.preview(plan)
+                else:
+                    from bootstrap.host_wiring import build_host_shell
+
+                    preview_host = build_host_shell()
+                    preview = preview_host.setup.preview(plan)
                 capture_setup_dry_run_completed(
                     plan=plan,
                     planned_step_count=len(preview.steps),
@@ -123,6 +140,22 @@ def register(root: typer.Typer) -> None:
                 emit(preview.to_dict(), human=_preview_human(preview))
                 _emit_setup_run_metric(plan, result="dry_run", dry_run=True)
                 return
+
+            if not in_process:
+                host.daemon.ensure(plan)
+                daemon_status = host.daemon.status()
+                running_backend = daemon_status.get("backend")
+                if backend and not isinstance(running_backend, str):
+                    raise ValueError(
+                        "daemon is running but its backend could not be verified; "
+                        "stop it with 'potpie daemon stop' before changing backend"
+                    )
+                if backend and running_backend != backend:
+                    raise ValueError(
+                        "daemon is already running with backend "
+                        f"{running_backend!r}; stop it with 'potpie daemon stop' "
+                        f"before running setup with backend {backend!r}"
+                    )
 
             report = host.setup.run(plan)
             capture_setup_completed(
@@ -150,6 +183,7 @@ def register(root: typer.Typer) -> None:
                     agent=agent,
                     scan=scan,
                     use_rich=True,
+                    config_home=getattr(host.daemon, "home", None),
                 )
                 if report.ok:
                     setup_ux.maybe_prompt_github_login(
@@ -228,19 +262,35 @@ def register(root: typer.Typer) -> None:
         with contract():
             host = get_host()
             caps = host.backend.capabilities()
+            pot = host.pots.active_pot()
+            pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
+            readiness = host.backend.mutation.readiness(pot_id)
+            daemon_status = host.daemon.status()
             emit(
                 {
-                    "daemon": host.daemon.status(),
+                    "daemon": daemon_status,
                     "backend_profile": host.backend.profile,
+                    "backend_ready": readiness.ready,
+                    "backend_readiness": {
+                        "profile": readiness.profile,
+                        "ready": readiness.ready,
+                        "capability_ready": dict(readiness.capability_ready),
+                        "detail": readiness.detail,
+                    },
                     "backend_capabilities": list(caps.implemented()),
+                    "active_pot": pot_id or None,
+                    "recommended_next_action": None
+                    if readiness.ready
+                    else "Run `potpie backend doctor` or inspect `potpie graph status --json`.",
                     "ledger": {
                         "available": host.ledger.status().available,
                         "binding": host.ledger.status().binding,
                     },
                 },
                 human=(
-                    f"daemon: {host.daemon.status()['mode']} (up)\n"
-                    f"backend: {host.backend.profile} caps={', '.join(caps.implemented())}\n"
+                    f"daemon: {daemon_status['mode']} (up={daemon_status.get('up')})\n"
+                    f"backend: {host.backend.profile} ready={readiness.ready} "
+                    f"caps={', '.join(caps.implemented())}\n"
                     f"ledger: {host.ledger.status().binding} "
                     f"available={host.ledger.status().available}"
                 ),

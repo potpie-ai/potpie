@@ -63,6 +63,9 @@ from adapters.inbound.cli.telemetry.usage_events import (
 )
 from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
 from adapters.outbound.cli_auth.pkce import generate_pkce_pair
+from adapters.outbound.cli_auth.oauth_client_id_messages import (
+    missing_linear_client_id_message,
+)
 from adapters.outbound.cli_auth.provider_config import (
     Provider,
     authorization_url,
@@ -214,10 +217,8 @@ def _print_linear_login_success(
         status.get("site_name"),
     )
     who = account[0] or account[1] or "Linear"
-    token_storage = str(status.get("token_storage") or "keychain")
-    storage_label = (
-        "system keychain" if token_storage == "keychain" else "local credentials file"
-    )
+    token_storage = str(status.get("token_storage") or "file")
+    storage_label = "local credentials file"
     org_suffix = f" @ {account[2]}" if account[2] else ""
     if refreshed:
         summary = f"Linear session refreshed for {who}{org_suffix}."
@@ -303,8 +304,8 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
     client_id = get_client_id("linear")
     if not client_id:
         emit_error(
-            "Linear OAuth not configured",
-            "Linear OAuth client id is missing (set LINEAR_CLIENT_ID in your environment).",
+            "Linear login unavailable",
+            missing_linear_client_id_message(),
             verbose=v,
         )
         raise typer.Exit(code=1)

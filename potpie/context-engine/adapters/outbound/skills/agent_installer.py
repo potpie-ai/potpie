@@ -13,7 +13,7 @@ _MANAGED_MARKER_RE = re.compile(
     r"<!-- (?:context-engine|potpie)-start -->.*?<!-- (?:context-engine|potpie)-end -->",
     re.DOTALL,
 )
-_DEFAULT_MERGE_FILES = frozenset({"CLAUDE.md"})
+_DEFAULT_MERGE_FILES = frozenset({"AGENTS.md", "CLAUDE.md"})
 
 AGENT_TYPES = ("default", "codex", "claude", "claude-plugin", "cursor", "opencode")
 _SOURCE_SKILLS_PREFIX = ".agents/skills/"
@@ -74,21 +74,39 @@ def iter_template_files() -> list[tuple[Path, str]]:
     return _iter_bundle_files("agent_bundle")
 
 
-def _merge_managed_markdown(
-    existing: str, section: str, *, force: bool
-) -> tuple[str, str]:
+def _merge_managed_markdown(existing: str, section: str) -> tuple[str, str]:
     """Return (merged_content, action) where action is 'unchanged'|'updated'|'created'."""
+    normalized_section = section.strip()
+    unmarked_section = _strip_managed_markers(normalized_section)
     if _MANAGED_MARKER_RE.search(existing):
-        merged = _MANAGED_MARKER_RE.sub(section.strip(), existing)
+        merged = _MANAGED_MARKER_RE.sub(normalized_section, existing)
         if merged == existing:
             return existing, "unchanged"
-        if not force:
-            return existing, "skipped"
+        return merged, "updated"
+    if existing.strip() == unmarked_section.strip():
+        merged = normalized_section + "\n"
+        if merged == existing:
+            return existing, "unchanged"
+        return merged, "updated"
+    if unmarked_section in existing:
+        merged = existing.replace(unmarked_section, normalized_section, 1)
+        if merged == existing:
+            return existing, "unchanged"
         return merged, "updated"
     # No marker found — append the section
     separator = "\n\n" if existing.strip() else ""
-    merged = existing.rstrip() + separator + section.strip() + "\n"
-    return merged, "created"
+    merged = existing.rstrip() + separator + normalized_section + "\n"
+    action = "updated" if existing.strip() else "created"
+    return merged, action
+
+
+def _strip_managed_markers(section: str) -> str:
+    lines = section.strip().splitlines()
+    if len(lines) >= 2 and lines[0].strip().endswith("-start -->"):
+        lines = lines[1:]
+    if lines and lines[-1].strip().endswith("-end -->"):
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
 
 
 def _remap_skills_path(rel_path: Path, target_prefix: str) -> Path | None:
@@ -169,10 +187,7 @@ def _install_bundle(
         if out_path.name in merge_files:
             section = content
             existing = target.read_text(encoding="utf-8") if target.exists() else ""
-            merged, action = _merge_managed_markdown(existing, section, force=force)
-            if action == "skipped":
-                result.skipped.append(out_path.as_posix())
-                continue
+            merged, action = _merge_managed_markdown(existing, section)
             if action == "unchanged":
                 result.unchanged.append(out_path.as_posix())
                 continue
@@ -307,12 +322,6 @@ def install_agent_bundle(
             remap=_claude_skills_bundle_remap,
         )
     elif normalized == "claude-plugin":
-        # Works from a source checkout. NB for wheel distribution: the monorepo
-        # .gitignore ignores ``*.json``, and Hatchling's VCS-aware selector then
-        # omits the plugin's plugin.json/marketplace.json/hooks.json from the wheel
-        # even with an ``include`` glob. Shipping those in a wheel needs a
-        # ``[tool.hatch.build] artifacts`` override or a .gitignore exception
-        # (deliberately deferred: plugin install is dev/source only for now).
         _install_bundle(
             root,
             "claude_plugin",

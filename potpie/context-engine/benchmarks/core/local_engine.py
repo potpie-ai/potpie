@@ -40,7 +40,7 @@ def _ensure_repo_root_on_path() -> None:
     are importable via the editable ``.pth``; the app-side wiring
     (``app.modules.context_graph.wiring`` etc.) lives at the repo root, which
     is only on the path when the process was launched from there. This file
-    is ``app/src/context-engine/benchmarks/core/local_engine.py`` → the repo
+    is ``potpie/context-engine/benchmarks/core/local_engine.py`` → the repo
     root is ``parents[4]``.
     """
     repo_root = str(Path(__file__).resolve().parents[4])

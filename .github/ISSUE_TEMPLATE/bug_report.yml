@@ -75,7 +75,7 @@ body:
         - uv version
         - Any relevant environment variables (sanitize sensitive data)
       placeholder: |
-        Python: 3.11.5
+        Python: 3.12.5
         Docker: 24.0.0
         uv: 0.1.0
         ENV: development

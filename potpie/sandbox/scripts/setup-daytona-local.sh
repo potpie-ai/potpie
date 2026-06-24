@@ -2,7 +2,7 @@
 # Bring up the local Daytona docker-compose stack, mint a dev API key, and
 # print every dashboard the bundled compose ships for observability.
 #
-# Requires: docker, docker compose v2, python 3.11+
+# Requires: docker, docker compose v2, python 3.12+
 # Optional: DAYTONA_REPO_PATH (defaults to /Users/nandan/Desktop/Dev/daytona)
 #           SANDBOX_ENV_FILE  (defaults to <sandbox>/.env.daytona.local)
 #

@@ -2,11 +2,14 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.hooks.custom]
+path = "oauth_client_id_injection_hook.py"
+
 [project]
 name = "potpie-context-engine"
-version = "0.1.0"
+version = "0.1.0b1"
 description = "Context graph API, webhooks, CLI, and MCP."
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
@@ -17,8 +20,7 @@ dependencies = [
     "typer>=0.15.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.0",
-    "potpie-observability[sentry]>=0.1.0,<0.2.0",
-    "sentry-sdk>=2.61.1",
+    "sentry-sdk>=2.61.1,<3.0.0",
     # Default CLI backend is FalkorDBLite on Python 3.12+.
     "falkordblite>=0.10.0; python_version >= '3.12'",
     # redis 8 enables maintenance notifications that break FalkorDBLite's
@@ -40,8 +42,8 @@ graph = [
 ]
 falkordb = [
     "falkordb>=1.6.1",
-    # FalkorDBLite (embedded) requires Python >= 3.12; marker keeps resolution
-    # valid across the project's wider requires-python range.
+    # Keep this marker for dependency metadata consumers even though Potpie
+    # itself supports Python 3.12+.
     "falkordblite>=0.10.0; python_version >= '3.12'",
     "redis>=7.1,<8",
 ]
@@ -91,6 +93,9 @@ potpie-daemon = "host.daemon_main:main"
 [tool.hatch.build.force-include]
 "adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "adapters/inbound/cli/ui/assets/potpie-logo-static.json"
 "adapters/inbound/cli/ui/assets/potpie.png" = "adapters/inbound/cli/ui/assets/potpie.png"
+"adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
+"adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json"
+"adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json" = "adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json"
 
 [tool.hatch.build.targets.wheel]
 packages = ["domain", "application", "adapters", "bootstrap", "benchmarks", "host"]
@@ -111,12 +116,15 @@ include = [
 
 [tool.hatch.build.targets.sdist]
 include = [
+    "build_config_values.py",
+    "oauth_client_id_injection_hook.py",
     "domain",
     "domain/playbooks/**/*.md",
     "application",
     "adapters",
     "bootstrap",
     "benchmarks",
+    "host",
     "domain/playbooks/**/*.md",
     "adapters/inbound/cli/templates/**/*.md",
     "adapters/inbound/cli/templates/**/*.yaml",

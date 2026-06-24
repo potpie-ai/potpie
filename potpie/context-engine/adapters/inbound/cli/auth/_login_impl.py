@@ -1,9 +1,9 @@
 """Potpie-account login/logout implementations (host-routed CLI).
 
 The real ``potpie login`` / ``potpie logout`` flows: a browser Firebase sign-in
-(custom token → Firebase session, stored in the system keychain) or a direct
+(custom token → Firebase session, stored in the local credentials file) or a direct
 ``--api-key`` store. Lifted out of the old monolithic ``main.py`` into its own
-module so the heavy auth import tree (httpx, webbrowser, keyring) stays off
+module so the heavy auth import tree (httpx, webbrowser) stays off
 ``build_app``'s eager import path — ``commands/auth.py`` imports these lazily
 inside the command bodies.
 """
@@ -68,7 +68,7 @@ def potpie_login_impl() -> None:
 
     if j:
         print_json_blob(
-            {"ok": True, "auth_type": "potpie", "token_storage": "keychain"},
+            {"ok": True, "auth_type": "potpie", "token_storage": "file"},
             as_json=True,
         )
         return
@@ -76,7 +76,7 @@ def potpie_login_impl() -> None:
 
 
 def potpie_logout_impl() -> None:
-    """Remove Potpie CLI auth from the system keychain (revoking API keys)."""
+    """Remove Potpie CLI auth from local credential files (revoking API keys)."""
     j, v = _flags()
     api_key = ""
     clear_api_key = False
@@ -124,7 +124,7 @@ def potpie_logout_impl() -> None:
 
 
 def potpie_login_api_key_impl(token: str, url: str | None) -> None:
-    """Store a Potpie API key (and optional base URL) in the keyring."""
+    """Store a Potpie API key (and optional base URL) in the local credentials file."""
     j, v = _flags()
     try:
         store = get_store()
@@ -143,9 +143,14 @@ def potpie_login_api_key_impl(token: str, url: str | None) -> None:
         )
     path = store.credentials_path()
     print_plain_line(
-        f"Saved API key to keyring ({path}).",
+        f"Saved API key to local credentials file ({path}).",
         as_json=j,
-        json_payload={"ok": True, "auth_type": "api_key", "path": str(path)},
+        json_payload={
+            "ok": True,
+            "auth_type": "api_key",
+            "token_storage": "file",
+            "path": str(path),
+        },
     )
 
 
