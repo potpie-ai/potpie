@@ -1,23 +1,17 @@
 """Live end-to-end integration tests against a real Neo4j (see e2e_surface.md).
 
-Deterministic only — no LLM, no Postgres. Each test resolves a host-managed
-pot, ingests topology via the config-scanner path and the validated
-reconciliation-plan path, and reads it back via direct Cypher against the
-canonical ``:RELATES_TO`` graph. The module skips entirely if Neo4j is
-unreachable; each pot's partition is reset on teardown (see conftest).
+Each test resolves a host-managed pot, applies explicit graph mutations, and
+reads them back via direct Cypher against the canonical ``:RELATES_TO`` graph.
+The module skips entirely if Neo4j is unreachable; each pot's partition is reset
+on teardown (see conftest).
 """
 
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
 
 import pytest
 
-from application.use_cases.scan_working_tree import (
-    ScanWorkingTreeUseCase,
-    WorkingTreeFile,
-)
 from domain.context_events import EventRef
 from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
 from domain.ports.pot_resolution import RepoRef
@@ -55,6 +49,16 @@ def _read_relates_to(settings, pot_id: str, predicate: str | None = None) -> lis
             return [dict(rec) for rec in rows]
     finally:
         drv.close()
+
+
+def _apply_plan(container, plan: ReconciliationPlan, *, expected_pot_id: str):
+    assert container.backend is not None
+    return asyncio.run(
+        container.backend.mutation.apply_async(
+            plan,
+            expected_pot_id=expected_pot_id,
+        )
+    )
 
 
 def _count_entities(settings, pot_id: str) -> int:
@@ -125,26 +129,6 @@ def _live_owner_as_of(settings, pot_id: str, as_of_iso: str) -> str | None:
             return rec["obj"] if rec is not None else None
     finally:
         drv.close()
-
-
-def _scan(use_case: ScanWorkingTreeUseCase, *, pot_id: str, files):
-    return asyncio.run(
-        use_case.execute(pot_id=pot_id, run_id="e2e-scan", working_tree=files)
-    )
-
-
-_K8S_MANIFEST = """
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: auth-svc
-  labels:
-    app.kubernetes.io/name: auth-svc
-spec:
-  replicas: 2
-""".strip()
-
-_CODEOWNERS = "*    @acme/platform-team\n"
 
 
 def _topology_plan(pot_id: str) -> ReconciliationPlan:
@@ -231,96 +215,14 @@ class TestPotLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# Deterministic ingestion — config scanner path
-# ---------------------------------------------------------------------------
-
-
-class TestScannerIngestion:
-    def test_kubernetes_manifest_ingests_deployed_to(
-        self, container, scanner_registry, settings, pot_id
-    ) -> None:
-        use_case = ScanWorkingTreeUseCase(
-            scanner_registry=scanner_registry, canonical_writer=container.graph_writer
-        )
-        files = [
-            WorkingTreeFile(
-                path="clusters/prod/auth-svc.yaml",
-                content=_K8S_MANIFEST,
-                repo_name="acme/platform",
-            )
-        ]
-        result = _scan(use_case, pot_id=pot_id, files=files)
-
-        assert "kubernetes-manifest" in result.scanners_run
-        assert result.entities_upserted >= 2  # Service + Environment
-        assert result.edges_upserted >= 1  # DEPLOYED_TO
-
-        labels = _label_counts(settings, pot_id)
-        assert labels.get("Service", 0) >= 1
-        assert labels.get("Environment", 0) >= 1
-
-        deployed = _read_relates_to(settings, pot_id, predicate="DEPLOYED_TO")
-        assert len(deployed) == 1
-        assert deployed[0]["subj"] == "service:auth-svc"
-        assert deployed[0]["obj"] == "environment:prod"
-        assert deployed[0]["environment"] == "prod"
-        assert deployed[0]["strength"] == "deterministic"
-
-    def test_codeowners_ingests_owned_by(
-        self, container, scanner_registry, settings, pot_id
-    ) -> None:
-        use_case = ScanWorkingTreeUseCase(
-            scanner_registry=scanner_registry, canonical_writer=container.graph_writer
-        )
-        files = [
-            WorkingTreeFile(
-                path=".github/CODEOWNERS",
-                content=_CODEOWNERS,
-                repo_name="acme/platform",
-            )
-        ]
-        result = _scan(use_case, pot_id=pot_id, files=files)
-
-        assert "codeowners" in result.scanners_run
-        assert result.edges_upserted >= 1
-
-        owned = _read_relates_to(settings, pot_id, predicate="OWNED_BY")
-        assert len(owned) == 1
-        assert owned[0]["obj"] == "team:acme-platform-team"
-        assert owned[0]["strength"] == "deterministic"
-
-        assert _label_counts(settings, pot_id).get("Team", 0) >= 1
-
-    def test_combined_working_tree(
-        self, container, scanner_registry, settings, pot_id
-    ) -> None:
-        use_case = ScanWorkingTreeUseCase(
-            scanner_registry=scanner_registry, canonical_writer=container.graph_writer
-        )
-        files = [
-            WorkingTreeFile(
-                "clusters/prod/auth-svc.yaml", _K8S_MANIFEST, "acme/platform"
-            ),
-            WorkingTreeFile(".github/CODEOWNERS", _CODEOWNERS, "acme/platform"),
-        ]
-        result = _scan(use_case, pot_id=pot_id, files=files)
-        assert {"kubernetes-manifest", "codeowners"} <= set(result.scanners_run)
-
-        preds = {row["pred"] for row in _read_relates_to(settings, pot_id)}
-        assert {"DEPLOYED_TO", "OWNED_BY"} <= preds
-
-
-# ---------------------------------------------------------------------------
-# Deterministic ingestion — validated reconciliation plan path
+# Backend mutation path
 # ---------------------------------------------------------------------------
 
 
 class TestApplyPlanIngestion:
     def test_apply_plan_writes_full_topology(self, container, settings, pot_id) -> None:
         plan = _topology_plan(pot_id)
-        res = asyncio.run(
-            container.context_graph.apply_plan_async(plan, expected_pot_id=pot_id)
-        )
+        res = _apply_plan(container, plan, expected_pot_id=pot_id)
         assert res.ok is True
         assert res.mutation_summary.entity_upserts_applied == 8
         assert res.mutation_summary.edge_upserts_applied == 6
@@ -428,11 +330,7 @@ class TestCanonicalReadback:
     def test_apply_plan_populates_canonical_entities(
         self, container, settings, pot_id
     ) -> None:
-        asyncio.run(
-            container.context_graph.apply_plan_async(
-                _topology_plan(pot_id), expected_pot_id=pot_id
-            )
-        )
+        _apply_plan(container, _topology_plan(pot_id), expected_pot_id=pot_id)
         assert _count_entities(settings, pot_id) == 8
         labels = _label_counts(settings, pot_id)
         assert labels.get("Service", 0) == 2
@@ -457,11 +355,7 @@ class TestCanonicalReadback:
 
 class TestPotReset:
     def test_reset_pot_clears_partition(self, container, settings, pot_id) -> None:
-        asyncio.run(
-            container.context_graph.apply_plan_async(
-                _topology_plan(pot_id), expected_pot_id=pot_id
-            )
-        )
+        _apply_plan(container, _topology_plan(pot_id), expected_pot_id=pot_id)
         assert _count_entities(settings, pot_id) == 8
 
         out = asyncio.run(container.graph_writer.reset_pot(pot_id))
@@ -593,18 +487,14 @@ class TestBitemporalContract:
 class TestPlanIdempotency:
     def test_reapplying_plan_is_idempotent(self, container, settings, pot_id) -> None:
         plan = _topology_plan(pot_id)
-        first = asyncio.run(
-            container.context_graph.apply_plan_async(plan, expected_pot_id=pot_id)
-        )
+        first = _apply_plan(container, plan, expected_pot_id=pot_id)
         assert first.ok is True
 
         entities_before = _count_entities(settings, pot_id)
         edges_before = _read_relates_to(settings, pot_id)
 
         # Re-apply the identical plan (same source_refs → same MERGE keys).
-        second = asyncio.run(
-            container.context_graph.apply_plan_async(plan, expected_pot_id=pot_id)
-        )
+        second = _apply_plan(container, plan, expected_pot_id=pot_id)
         assert second.ok is True
 
         entities_after = _count_entities(settings, pot_id)

@@ -6,6 +6,10 @@ import os
 from typing import Literal
 from urllib.parse import urlparse
 
+from adapters.outbound.cli_auth._oauth_client_ids import (
+    LINEAR_CLIENT_ID as PACKAGE_LINEAR_CLIENT_ID,
+)
+
 Provider = Literal["linear", "github", "atlassian", "jira", "confluence"]
 OAuthProvider = Literal["linear"]
 AtlassianProduct = Literal["jira", "confluence"]
@@ -61,7 +65,7 @@ def get_callback_port() -> int:
 def get_client_id(provider: OAuthProvider) -> str:
     if provider != "linear":
         return ""
-    return os.getenv("LINEAR_CLIENT_ID", "").strip()
+    return os.getenv("LINEAR_CLIENT_ID", "").strip() or PACKAGE_LINEAR_CLIENT_ID
 
 
 def get_client_secret(provider: OAuthProvider) -> str:

@@ -7,13 +7,16 @@ import logging
 import pytest
 
 from adapters.outbound.observability.console import ConsoleObservability
+from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from bootstrap.ingestion_server import _default_observability
+from bootstrap.host_wiring import build_host_shell
 from bootstrap.observability_context import (
     bind_correlation,
     correlation_scope,
     get_correlation,
     reset_correlation,
 )
+from bootstrap.observability_runtime import get_observability, set_observability
 from domain.ports.observability import NoOpObservability, ObservabilityPort
 
 
@@ -95,3 +98,15 @@ def test_logging_setup_injects_correlation(caplog: pytest.LogCaptureFixture) -> 
         assert CorrelationFilter().filter(rec) is True
         assert rec.pot_id == "pZ"
         assert rec.event_id == "eZ"
+
+
+@pytest.mark.unit
+def test_host_shell_wires_process_observability() -> None:
+    obs = NoOpObservability()
+    original = get_observability()
+
+    try:
+        build_host_shell(backend=InMemoryGraphBackend(), observability=obs)
+        assert get_observability() is obs
+    finally:
+        set_observability(original)

@@ -1,11 +1,12 @@
 """The three ports of the hexagonal daemon shell: Transport, Component, ServiceBackend."""
 
 from __future__ import annotations
+
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
 from domain.ports.daemon.operations import OperationRegistry
-from domain.ports.daemon.service import ServiceSpec, ReadyProbe, RestartPolicy
+from domain.ports.daemon.service import ReadyProbe, RestartPolicy, ServiceSpec
 
 
 class HealthStatus(Enum):
@@ -30,7 +31,7 @@ class Component(Protocol):
     async def on_start(self, ctx: "ShellContext") -> None: ...  # type: ignore[name-defined]  # noqa: F821
     async def on_stop(self) -> None: ...
     def health(self) -> HealthStatus: ...
-    def operations(self) -> list: ...  # list[OperationSpec]
+    def operations(self) -> list: ...
 
 
 @runtime_checkable
@@ -40,8 +41,6 @@ class ServiceBackend(Protocol):
     async def probe(self, spec: ServiceSpec) -> HealthStatus: ...
 
 
-# Convenience re-exports: the service value objects live in ``service`` but are commonly
-# imported alongside these ports.
 __all__ = [
     "HealthStatus",
     "Transport",

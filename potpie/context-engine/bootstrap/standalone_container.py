@@ -4,12 +4,7 @@ from __future__ import annotations
 
 import os
 
-from adapters.outbound.connectors._bench_stubs import (
-    AlertingStubConnector,
-    DeployStubConnector,
-    RepoDocsStubConnector,
-    SlackStubConnector,
-)
+from adapters.outbound.connectors._bench_stubs import register_bench_stubs
 from adapters.outbound.connectors.notion import NotionConnector
 from adapters.outbound.reconciliation.factory import (
     try_pydantic_deep_reconciliation_agent,
@@ -55,10 +50,7 @@ def build_standalone_context_engine_container() -> IngestionServerContainer:
     registry = SourceConnectorRegistry()
     registry.register(NotionConnector())
     # Bench-time stubs — same rationale as in build_ingestion_server_with_github_token.
-    registry.register(SlackStubConnector())
-    registry.register(RepoDocsStubConnector())
-    registry.register(AlertingStubConnector())
-    registry.register(DeployStubConnector())
+    register_bench_stubs(registry)
     return build_ingestion_server(
         pots=pots,
         connectors=registry,

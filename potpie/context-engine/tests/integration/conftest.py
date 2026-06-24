@@ -116,19 +116,6 @@ def container(settings, pot_id, repo_name):
         pass
 
 
-@pytest.fixture()
-def scanner_registry():
-    """Topology-relevant config scanners registered for the scan use case."""
-    from application.services.config_scanner_registry import ConfigSourceScannerRegistry
-    from adapters.outbound.scanners.kubernetes_manifest import KubernetesManifestScanner
-    from adapters.outbound.scanners.codeowners import CodeownersScanner
-
-    reg = ConfigSourceScannerRegistry()
-    reg.register(KubernetesManifestScanner())
-    reg.register(CodeownersScanner())
-    return reg
-
-
 # ---------------------------------------------------------------------------
 # Real Postgres test database (created inside the configured instance)
 # ---------------------------------------------------------------------------

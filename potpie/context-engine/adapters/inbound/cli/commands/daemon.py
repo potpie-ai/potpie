@@ -37,6 +37,22 @@ def _start(daemon: Daemon) -> dict[str, int | str]:
         )
 
 
+def _restart(daemon: Daemon) -> dict[str, int | str]:
+    try:
+        return daemon.restart()
+    except AttributeError:
+        daemon.stop()
+        return _start(daemon)
+    except DaemonStartError as exc:
+        fail(
+            code="daemon_start_failed",
+            message=str(exc),
+            detail=(str(exc.log_path) if exc.log_path else None),
+            next_action="inspect the daemon log with 'potpie daemon logs'",
+            exit_code=EXIT_UNAVAILABLE,
+        )
+
+
 @daemon_app.command("start")
 def daemon_start() -> None:
     with contract():
@@ -62,8 +78,7 @@ def daemon_logs(follow: bool = typer.Option(False, "--follow")) -> None:
 def daemon_restart() -> None:
     with contract():
         daemon = _detached_daemon()
-        daemon.stop()
-        info = _start(daemon)
+        info = _restart(daemon)
         emit(info, human=f"restarted (pid={info.get('pid')})")
 
 

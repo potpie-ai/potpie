@@ -6,6 +6,9 @@ import time
 from typing import Any
 
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from adapters.outbound.cli_auth.oauth_client_id_messages import (
+    missing_linear_client_id_message,
+)
 from adapters.outbound.cli_auth.provider_config import (
     OAuthProvider,
     get_client_id,
@@ -30,10 +33,7 @@ def exchange_authorization_code(
 
     client_id = get_client_id(provider)
     if not client_id:
-        raise ValueError(
-            "Linear OAuth client id is not configured "
-            "(set LINEAR_CLIENT_ID in your environment)."
-        )
+        raise ValueError(missing_linear_client_id_message())
     if not code_verifier:
         raise ValueError("code_verifier is required for PKCE token exchange.")
 
@@ -85,10 +85,7 @@ def refresh_access_token(
 
     client_id = get_client_id(provider)
     if not client_id:
-        raise ValueError(
-            "Linear OAuth client id is not configured "
-            "(set LINEAR_CLIENT_ID in your environment)."
-        )
+        raise ValueError(missing_linear_client_id_message())
 
     payload: dict[str, Any] = {
         "grant_type": "refresh_token",

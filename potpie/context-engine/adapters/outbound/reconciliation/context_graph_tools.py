@@ -1,25 +1,20 @@
-"""Read-only reconciliation tools backed by ``ContextGraphPort``.
+"""Read-only reconciliation tools backed by canonical ``GraphService``.
 
 Bounded tool set for the Ingestion Agent to inspect current graph state,
 look up entities/facts, and surface prior events/conflicts before emitting a
-reconciliation plan. All tools are pot-scoped and read-only — mutation still
-flows through ``ContextGraphPort.apply_plan``.
+reconciliation plan. All tools are pot-scoped and read-only.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
-from domain.graph_query import (
-    ContextGraphQuery,
-    preset_context_search,
-    preset_reader_lookup,
-)
-from domain.ports.context_graph import ContextGraphPort
+from application.services.envelope_builder import envelope_to_dict
+from domain.llm_reconciliation import ReconciliationRequest
+from domain.ports.agent_context import ResolveRequest
 from domain.ports.reconciliation_tools import ReconciliationToolsPort, ToolDescriptor
-from domain.reconciliation import ReconciliationRequest
+from domain.ports.services.graph_service import GraphService
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +48,6 @@ _TOOLS: tuple[ToolDescriptor, ...] = (
             "properties": {
                 "query": {"type": "string", "description": "free-text query"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 8},
-                "node_labels": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "optional canonical labels to constrain results",
-                },
             },
             "required": ["query"],
         },
@@ -143,41 +133,31 @@ _TOOLS: tuple[ToolDescriptor, ...] = (
 )
 
 
-def _run_query(graph: ContextGraphPort, query: ContextGraphQuery) -> dict[str, Any]:
-    """Run a query synchronously.
-
-    The agent may invoke tools from inside a running event loop (pydantic-deep
-    runs under ``asyncio.run``). ``ContextGraphPort.query()`` handles this by
-    raising only for answer queries when a loop is already running; the
-    retrieve-goal queries used by these tools (the generic search and the P9
-    reader lookups) execute on the sync path.
-    """
+def _run_query(graph: GraphService, request: ResolveRequest) -> dict[str, Any]:
+    """Run a bounded read through the canonical graph service."""
     try:
-        result = graph.query(query)
-    except RuntimeError as exc:
-        # Sync path refused to run in a live loop; fall back to async via thread.
-        import concurrent.futures as _cf
-
-        def _inner() -> Any:
-            return asyncio.run(graph.query_async(query))
-
-        try:
-            with _cf.ThreadPoolExecutor(max_workers=1) as pool:
-                result = pool.submit(_inner).result()
-        except Exception as inner_exc:
-            logger.exception("reconciliation tool async fallback failed")
-            return {"error": str(inner_exc), "kind": "error", "source_error": str(exc)}
+        env = graph.resolve(request)
     except Exception as exc:
         logger.exception("reconciliation tool query failed")
         return {"error": str(exc), "kind": "error"}
-    return result.model_dump()
+    return {
+        "kind": "resolve",
+        "goal": "retrieve",
+        "strategy": "auto",
+        "result": envelope_to_dict(env),
+        "meta": {"path": "resolve"},
+    }
+
+
+def _scope(**fields: Any) -> dict[str, Any]:
+    return {key: value for key, value in fields.items() if value not in (None, [], ())}
 
 
 class ContextGraphReconciliationTools(ReconciliationToolsPort):
-    """Bounded read-only tools over ``ContextGraphPort``."""
+    """Bounded read-only tools over canonical ``GraphService``."""
 
-    def __init__(self, context_graph: ContextGraphPort) -> None:
-        self._graph = context_graph
+    def __init__(self, graph: GraphService) -> None:
+        self._graph = graph
 
     def list_tools(self, request: ReconciliationRequest) -> list[ToolDescriptor]:
         # Current request context is not used to narrow the catalog in v1;
@@ -191,7 +171,8 @@ class ContextGraphReconciliationTools(ReconciliationToolsPort):
         tool_name: str,
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
-        if not self._graph.enabled:
+        backend = getattr(self._graph, "backend", None)
+        if not bool(getattr(backend, "enabled", True)):
             return {"error": "context_graph_disabled", "kind": "error"}
         if tool_name not in READ_TOOL_INCLUDE:
             return {"error": f"unknown_tool:{tool_name}", "kind": "error"}
@@ -205,30 +186,27 @@ class ContextGraphReconciliationTools(ReconciliationToolsPort):
         if include is None:  # generic, intent-routed search
             if not query:
                 return {"error": "query_required", "kind": "error"}
-            labels_arg = args.get("node_labels") or []
-            node_labels = (
-                [str(x) for x in labels_arg] if isinstance(labels_arg, list) else []
-            )
-            graph_query = preset_context_search(
+            resolve_request = ResolveRequest(
                 pot_id=pot_id,
-                query=query,
-                repo_name=repo_name,
-                node_labels=node_labels or None,
-                limit=limit,
+                task=query,
+                scope=_scope(repo_name=repo_name),
+                max_items=limit,
             )
         else:  # targeted single-reader lookup
             pr_number = args.get("pr_number")
-            graph_query = preset_reader_lookup(
+            resolve_request = ResolveRequest(
                 pot_id=pot_id,
-                include=include,
-                query=query or None,
-                repo_name=repo_name,
-                file_path=args.get("file_path"),
-                function_name=args.get("function_name"),
-                pr_number=int(pr_number) if pr_number else None,
-                limit=limit,
+                task=query or None,
+                include=(include,),
+                scope=_scope(
+                    repo_name=repo_name,
+                    file_path=args.get("file_path"),
+                    function_name=args.get("function_name"),
+                    pr_number=int(pr_number) if pr_number else None,
+                ),
+                max_items=limit,
             )
-        return _run_query(self._graph, graph_query)
+        return _run_query(self._graph, resolve_request)
 
 
 def build_initial_context_snapshot(

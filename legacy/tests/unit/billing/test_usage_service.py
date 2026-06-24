@@ -335,7 +335,7 @@ class TestReportMessageUsageSync:
             mock_loop.run_until_complete.assert_called_once()
 
     def test_report_message_usage_sync_runtime_error_no_loop(self, user_args):
-        """Test RuntimeError is caught when no loop exists (Python 3.11+ behavior)"""
+        """Test RuntimeError is caught when no loop exists."""
         mock_loop = MagicMock()
         mock_loop.is_running.return_value = False
         mock_loop.run_until_complete.side_effect = RuntimeError("no running event loop")

@@ -23,6 +23,7 @@ declaration, don't relax the check.
 
 from __future__ import annotations
 
+import re
 from typing import Iterable
 
 from domain.identity import all_identities
@@ -191,31 +192,241 @@ def assert_runtime_coherence(
 
     runtime = frozenset(reader_backed_includes)
     declared = READER_BACKED_INCLUDES
-    if runtime == declared:
-        return
-    only_runtime = sorted(runtime - declared)
-    only_declared = sorted(declared - runtime)
     parts: list[str] = []
-    if only_runtime:
-        parts.append(
-            f"readers registered but not advertised: {only_runtime} "
-            f"(add to agent_context_port.READER_BACKED_INCLUDES)"
+    if runtime == declared:
+        reader_error = ""
+    else:
+        only_runtime = sorted(runtime - declared)
+        only_declared = sorted(declared - runtime)
+        reader_parts: list[str] = []
+        if only_runtime:
+            reader_parts.append(
+                f"readers registered but not advertised: {only_runtime} "
+                f"(add to agent_context_port.READER_BACKED_INCLUDES)"
+            )
+        if only_declared:
+            reader_parts.append(
+                f"readers advertised but not registered: {only_declared} "
+                f"(register in ReadOrchestrator._routing or remove from "
+                f"READER_BACKED_INCLUDES)"
+            )
+        reader_error = (
+            "runtime reader registry diverges from advertised contract: "
+            + "; ".join(reader_parts)
         )
-    if only_declared:
+    if reader_error:
+        parts.append(reader_error)
+    playbook_errors = _playbook_vocabulary_errors()
+    if playbook_errors:
         parts.append(
-            f"readers advertised but not registered: {only_declared} "
-            f"(register in ReadOrchestrator._routing or remove from "
-            f"READER_BACKED_INCLUDES)"
+            "event playbook vocabulary diverges from ontology: "
+            + "; ".join(playbook_errors)
         )
-    raise OntologyCoherenceError(
-        "runtime reader registry diverges from advertised contract: " + "; ".join(parts)
+    if parts:
+        raise OntologyCoherenceError(" ".join(parts))
+
+
+_EDGE_TOKEN_RE = re.compile(r"\b[A-Z][A-Z0-9_]{2,}\b")
+_LABEL_TOKEN_RE = re.compile(r"\b[A-Z][A-Za-z0-9]+s?\b")
+_GRAPH_CONTEXT_RE = re.compile(
+    r"\b(seed|seeds|seeding|emit|emits|emitted|link|links|linked|"
+    r"edge|edges|predicate|predicates|claim|claims|record|records|"
+    r"create|creates|created|upsert|upserts|assert|asserts)\b",
+    re.IGNORECASE,
+)
+_PLAYBOOK_LABEL_STOPWORDS = frozenset(
+    {
+        "ADR",
+        "Always",
+        "Anti",
+        "Backfill",
+        "Batch",
+        "Be",
+        "Bounds",
+        "Bug",
+        "Claude",
+        "Code",
+        "Comments",
+        "Contract",
+        "Discussion",
+        "Discussions",
+        "Do",
+        "Don",
+        "Drain",
+        "Each",
+        "Emit",
+        "Entity",
+        "Every",
+        "Finish",
+        "GitHub",
+        "If",
+        "Issue",
+        "Link",
+        "Never",
+        "No",
+        "Not",
+        "One",
+        "PHASE",
+        "Pass",
+        "Payload",
+        "Planner",
+        "PR",
+        "PRs",
+        "Principle",
+        "Purpose",
+        "README",
+        "Review",
+        "Run",
+        "Seed",
+        "Single",
+        "Source",
+        "Stop",
+        "Take",
+        "The",
+        "This",
+        "Tool",
+        "Trivial",
+        "URL",
+        "Use",
+        "When",
+        "Where",
+        "Your",
+    }
+)
+_PLAYBOOK_EDGE_TOKEN_STOPWORDS = frozenset(
+    {
+        "CONTENT_HASH",
+        "CONTEXT_ENGINE_BACKFILL_MAX_ITEMS",
+        "CONTEXT_ENGINE_BACKFILL_WINDOW_DAYS",
+        "ENTITY_TYPES",
+        "EXTERNAL_ID",
+        "SLUG_ALIAS",
+    }
+)
+
+
+def _playbook_vocabulary_errors(playbooks: Iterable[object] | None = None) -> list[str]:
+    if playbooks is None:
+        from domain.event_playbooks import all_registered_playbooks
+
+        playbooks = all_registered_playbooks()
+    errors: list[str] = []
+    for playbook in playbooks:
+        label = _playbook_label(playbook)
+        text = _playbook_text(playbook)
+        unknown_labels = sorted(_extract_unknown_playbook_labels(text))
+        unknown_edges = sorted(_extract_unknown_playbook_edges(text))
+        if unknown_labels:
+            errors.append(f"{label} references unknown entity labels {unknown_labels}")
+        if unknown_edges:
+            errors.append(f"{label} references unknown predicates {unknown_edges}")
+    return errors
+
+
+def assert_playbook_vocabulary_coherence(
+    playbooks: Iterable[object] | None = None,
+) -> None:
+    """Confirm registered event playbooks only name canonical graph vocabulary."""
+    errors = _playbook_vocabulary_errors(playbooks)
+    if errors:
+        raise OntologyCoherenceError(
+            "event playbook vocabulary diverges from ontology: " + "; ".join(errors)
+        )
+
+
+def _playbook_label(playbook: object) -> str:
+    return "/".join(
+        str(getattr(playbook, field, "*"))
+        for field in ("source_system", "event_type", "action")
     )
+
+
+def _playbook_text(playbook: object) -> str:
+    return "\n".join(
+        str(getattr(playbook, field, "") or "")
+        for field in ("summary", "available_data", "extract", "skip")
+    )
+
+
+def _extract_unknown_playbook_edges(text: str) -> set[str]:
+    unknown: set[str] = set()
+    for match in _EDGE_TOKEN_RE.finditer(text):
+        token = match.group(0)
+        if token in EDGE_TYPES:
+            continue
+        if token in _PLAYBOOK_EDGE_TOKEN_STOPWORDS:
+            continue
+        if "_" in token and _has_graph_context(text, match):
+            unknown.add(token)
+    return unknown
+
+
+def _extract_unknown_playbook_labels(text: str) -> set[str]:
+    unknown: set[str] = set()
+    known_labels = set(ENTITY_TYPES)
+    for match in _LABEL_TOKEN_RE.finditer(text):
+        token = match.group(0)
+        if token.isupper() or token in EDGE_TYPES:
+            continue
+        if token in _PLAYBOOK_LABEL_STOPWORDS:
+            continue
+        candidate = _normalise_label_candidate(token, known_labels)
+        if candidate in known_labels:
+            continue
+        if _has_label_context(text, match, known_labels):
+            unknown.add(candidate)
+    return unknown
+
+
+def _normalise_label_candidate(token: str, known_labels: set[str]) -> str:
+    if token in known_labels:
+        return token
+    if token.endswith("ies") and f"{token[:-3]}y" in known_labels:
+        return f"{token[:-3]}y"
+    if token.endswith("es") and token[:-2] in known_labels:
+        return token[:-2]
+    if token.endswith("s") and token[:-1] in known_labels:
+        return token[:-1]
+    return token
+
+
+def _has_label_context(text: str, match: re.Match[str], known_labels: set[str]) -> bool:
+    before = text[max(0, match.start() - 64) : match.start()]
+    after = text[match.end() : match.end() + 64]
+    if before.rstrip().endswith(("→", "/", "(")) or after.lstrip().startswith(
+        ("→", "/", ")")
+    ):
+        return True
+    if re.search(
+        r"\b(seed|seeds|seeding|emit|emits|emitted|record|records|"
+        r"create|creates|created|upsert|upserts)\W+(?:\w+\W+){0,6}$",
+        before,
+        re.IGNORECASE,
+    ):
+        return True
+    window = text[max(0, match.start() - 96) : match.end() + 96]
+    if re.search(r"\b(or|and)\s+(an?\s+)?$", before, re.IGNORECASE) and (
+        any(label in window for label in known_labels)
+        or any(edge_type in window for edge_type in EDGE_TYPES)
+    ):
+        return True
+    return False
+
+
+def _has_graph_context(text: str, match: re.Match[str]) -> bool:
+    window = text[max(0, match.start() - 80) : match.end() + 80]
+    if _GRAPH_CONTEXT_RE.search(window):
+        return True
+    if any(edge_type in window for edge_type in EDGE_TYPES):
+        return True
+    return any(label in window for label in ENTITY_TYPES)
 
 
 # Re-export public record types for callers that want to iterate them.
 __all__ = (
     "OntologyCoherenceError",
     "PUBLIC_RECORD_TYPES",
+    "assert_playbook_vocabulary_coherence",
     "assert_runtime_coherence",
 )
 

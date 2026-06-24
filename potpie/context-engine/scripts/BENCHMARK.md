@@ -1,6 +1,6 @@
 # Context Graph Benchmark
 
-A comprehensive benchmark harness for the Potpie context graph, implemented as the `benchmarks` package under `app/src/context-engine/benchmarks/`.
+A comprehensive benchmark harness for the Potpie context graph, implemented as the `benchmarks` package under `potpie/context-engine/benchmarks/`.
 
 ## Modes
 
@@ -14,7 +14,7 @@ A comprehensive benchmark harness for the Potpie context graph, implemented as t
 
 ```bash
 # From the context-engine package root
-cd app/src/context-engine
+cd potpie/context-engine
 
 # Mock mode (fastest, no server)
 uv run python -m benchmarks.cli mock

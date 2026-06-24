@@ -15,9 +15,7 @@ class ContextGraphGoal(StrEnum):
     # were removed when the engine collapsed onto one evidence-envelope read
     # contract; the agent synthesises answers from the returned evidence.
     RETRIEVE = "retrieve"
-    NEIGHBORHOOD = "neighborhood"
     TIMELINE = "timeline"
-    AGGREGATE = "aggregate"
 
 
 class ContextGraphStrategy(StrEnum):

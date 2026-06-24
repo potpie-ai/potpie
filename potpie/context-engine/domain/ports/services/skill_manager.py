@@ -110,11 +110,12 @@ class SkillManager(Protocol):
         self,
         *,
         agent: str,
-        skill_id: str,
+        skill_id: str | None = None,
+        all_: bool = False,
         path: str | None = None,
         scope: str = "global",
     ) -> SkillOperationResult:
-        """Remove an installed skill from an agent harness."""
+        """Remove one installed skill, or all installed skills when ``all_``."""
         ...
 
     def status(

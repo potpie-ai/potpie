@@ -48,14 +48,18 @@ Design pillars:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Iterable
 
+from domain.graph_contract import ONTOLOGY_VERSION
 from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert
 from domain.identity import IdentityClass, IdentitySpec, register_identity
 
-ONTOLOGY_VERSION = "2026-05-unified-v1"
+# ``ONTOLOGY_VERSION`` is owned by :mod:`domain.graph_contract` (the single
+# contract home) and mirrored here so existing importers of
+# ``domain.ontology.ONTOLOGY_VERSION`` and the graph catalog never disagree.
+__all_ontology_version__ = ONTOLOGY_VERSION
 
 
 # --- Lifecycle vocabulary ---------------------------------------------------
@@ -133,6 +137,10 @@ class EntityTypeSpec:
 
     required_properties: frozenset[str] = frozenset()
     lifecycle_states: frozenset[str] = frozenset()
+    lifecycle_transitions: dict[str, frozenset[str]] = field(default_factory=dict)
+    patchable_properties: frozenset[str] = frozenset(
+        {"name", "summary", "description", "title"}
+    )
     public: bool = True
 
     # --- Structural traits ---------------------------------------------------
@@ -178,7 +186,15 @@ class EdgeTypeSpec:
     """Edge carries ``lifecycle_status`` (proposed/in_progress/completed/...)."""
 
     predicate_family: str | None = None
-    """Membership in a predicate family for auto-supersession and conflict detection."""
+    """Recall/maintenance grouping for related predicates.
+
+    Predicate families group facts for readers, quality reporting, and
+    maintenance. Family membership alone does not mean two live objects are
+    mutually exclusive.
+    """
+
+    exclusive_family: str | None = None
+    """Optional conflict/supersession family for mutually exclusive bindings."""
 
     # --- Edge cardinality --------------------------------------------------
     singleton: bool = False
@@ -230,6 +246,10 @@ def _e(
     """
     required = kwargs.pop("required", ())
     lifecycle = kwargs.pop("lifecycle", frozenset())
+    lifecycle_transitions = kwargs.pop("lifecycle_transitions", {})
+    patchable = kwargs.pop(
+        "patchable", ("name", "summary", "description", "title")
+    )
     if identity_policy is None:
         suffix = {
             IdentityClass.SLUG_ALIAS: "<slug>",
@@ -247,6 +267,11 @@ def _e(
         authoritative_source=authoritative_source,
         required_properties=frozenset(required),
         lifecycle_states=frozenset(lifecycle),
+        lifecycle_transitions={
+            str(source): frozenset(str(target) for target in targets)
+            for source, targets in dict(lifecycle_transitions).items()
+        },
+        patchable_properties=frozenset(str(item) for item in patchable),
         **kwargs,
     )
 
@@ -340,17 +365,14 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         freshness_ttl_hours=WEEK,
         text_patterns=(r"\b(cluster|region|eks|gke|ecs|kubernetes|k8s)\b",),
     ),
-    # --- Scanner-emitted topology nodes ------------------------------------
-    # Code-anchored entities scanners surface during working-tree ingestion.
+    # --- Code-anchored topology nodes --------------------------------------
     # ``Dependency`` is a package-manager dependency (``requests==2.31``);
-    # ``APIContract`` is an OpenAPI operation (path + method). Both are
-    # registered by their scanner today; declared here so the central catalog
-    # owns them and the coherence check stays green.
+    # ``APIContract`` is an OpenAPI operation (path + method). Harnesses may
+    # assert these when grounded in explicit repository evidence.
     "Dependency": _e(
         "Dependency",
         "topology",
-        "A third-party package / library a service depends on. Scanner-emitted "
-        "from package manifests (pyproject.toml, package.json, ...).",
+        "A third-party package / library a service depends on.",
         identity_class=IdentityClass.EXTERNAL_ID,
         key_prefix="dependency",
         identity_policy="dependency:<ecosystem>:<name>",
@@ -364,7 +386,7 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         "APIContract",
         "topology",
         "One operation in an OpenAPI / RPC spec — a (path, method) pair a "
-        "service exposes. Scanner-emitted from OpenAPI 3.x docs.",
+        "service exposes.",
         identity_class=IdentityClass.EXTERNAL_ID,
         key_prefix="api_contract",
         identity_policy="api_contract:<service>:<method>:<path>",
@@ -373,6 +395,83 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         freshness_ttl_hours=WEEK,
         property_signatures=("http_method", "path"),
         text_patterns=(r"\bAPI\b", r"\bendpoint\b", r"\boperation\b"),
+    ),
+    "Adapter": _e(
+        "Adapter",
+        "topology",
+        "A runtime or integration adapter selected by a service, often with "
+        "environment-specific bindings (graph backend, payment provider, auth provider).",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="adapter",
+        identity_policy="adapter:<domain>:<slug>",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        property_signatures=("adapter_kind", "provider"),
+        text_patterns=(r"\badapter\b", r"\bprovider\b", r"\bbackend\b"),
+    ),
+    "ConfigVariable": _e(
+        "ConfigVariable",
+        "topology",
+        "A named environment/config value that selects behavior for a service "
+        "or adapter.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="config",
+        identity_policy="config:<service-or-env>:<name>",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        property_signatures=("config_key", "env_var"),
+        text_patterns=(r"\bconfig\b", r"\benv var\b", r"\benvironment variable\b"),
+    ),
+    "DeploymentTarget": _e(
+        "DeploymentTarget",
+        "topology",
+        "A concrete deployment mechanism/target such as a Kubernetes workload, "
+        "container app, serverless function, or preview target.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="deployment_target",
+        identity_policy="deployment_target:<environment>:<slug>",
+        scope=True,
+        project_map_family="deployment_targets",
+        fact_family="topology",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        property_signatures=("deployment_kind", "platform"),
+        text_patterns=(r"\bdeployment\b", r"\bworkload\b", r"\bserverless\b"),
+    ),
+    "CodeAsset": _e(
+        "CodeAsset",
+        "code",
+        "A repository code anchor: file, directory, module, class, function, "
+        "symbol, or generated-code unit. Used when project memory needs a "
+        "first-class code endpoint instead of a free-form path property.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="code",
+        identity_policy="code:<repo-or-service>:<path-or-symbol>",
+        fact_family="code",
+        source_of_truth=SOT_CODE,
+        freshness_ttl_hours=WEEK,
+        property_signatures=("file_path", "path", "symbol", "language"),
+        text_patterns=(r"\bfile\b", r"\bmodule\b", r"\bclass\b", r"\bfunction\b"),
+    ),
+    # --- Product functionality ----------------------------------------------
+    # ``Feature`` is the first-class answer to "what does this repo/service
+    # do?". Harnesses assert features from authored evidence (README, docs,
+    # route specs) via PROVIDES / IMPLEMENTED_IN claims; nothing infers them
+    # from file trees.
+    "Feature": _e(
+        "Feature",
+        "product",
+        "A user-facing or system-facing capability a repository or service "
+        "provides (e.g. checkout, SSO login, usage metering).",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="feature",
+        project_map_family="features",
+        fact_family="product",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+        text_patterns=(r"\bfeature\b", r"\bcapabilit(y|ies)\b"),
     ),
     # --- People ------------------------------------------------------------
     "Team": _e(
@@ -470,6 +569,10 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         source_of_truth=SOT_MEMORY,
         freshness_ttl_hours=12 * WEEK,
         lifecycle=("proposed", "active", "deprecated"),
+        lifecycle_transitions={
+            "proposed": ("active", "deprecated"),
+            "active": ("deprecated",),
+        },
     ),
     "BugPattern": _e(
         "BugPattern",
@@ -508,6 +611,11 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         source_of_truth=SOT_MEMORY,
         freshness_ttl_hours=24 * WEEK,
         lifecycle=("proposed", "accepted", "superseded", "deprecated", "rejected"),
+        lifecycle_transitions={
+            "proposed": ("accepted", "rejected"),
+            "accepted": ("superseded", "deprecated"),
+            "superseded": ("deprecated",),
+        },
         text_patterns=(r"\bdecision\b", r"\b(ADR|architecture decision)\b"),
         property_signatures=("rationale", "alternatives_rejected"),
     ),
@@ -564,6 +672,7 @@ def _x(
     public: bool = True,
     lifecycle_carrier: bool = False,
     predicate_family: str | None = None,
+    exclusive_family: str | None = None,
     singleton: bool = False,
     source_inferred: Iterable[str] = (),
     target_inferred: Iterable[str] = (),
@@ -577,6 +686,7 @@ def _x(
         category=category,
         lifecycle_carrier=lifecycle_carrier,
         predicate_family=predicate_family,
+        exclusive_family=exclusive_family,
         singleton=singleton,
         source_inferred_labels=tuple(source_inferred),
         target_inferred_labels=tuple(target_inferred),
@@ -617,6 +727,33 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         predicate_family="datastore_binding",
         source_inferred=("Service",),
     ),
+    "USES_ADAPTER": _x(
+        "USES_ADAPTER",
+        "A service selects or binds to a runtime/integration adapter. The edge "
+        "may be environment-qualified.",
+        [("Service", "Adapter")],
+        category="topology",
+        predicate_family="adapter_binding",
+        source_inferred=("Service",),
+        target_inferred=("Adapter",),
+    ),
+    "CONFIGURES": _x(
+        "CONFIGURES",
+        "A service or adapter is configured by a named config variable.",
+        [("Service", "ConfigVariable"), ("Adapter", "ConfigVariable")],
+        category="topology",
+        predicate_family="config_binding",
+        target_inferred=("ConfigVariable",),
+    ),
+    "DEPLOYED_WITH": _x(
+        "DEPLOYED_WITH",
+        "A service is deployed through a concrete deployment target/mechanism.",
+        [("Service", "DeploymentTarget")],
+        category="topology",
+        predicate_family="deployment_mechanism",
+        source_inferred=("Service",),
+        target_inferred=("DeploymentTarget",),
+    ),
     "EXPOSES": _x(
         "EXPOSES",
         "A service exposes an API operation (path + method) defined by an "
@@ -629,11 +766,27 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
     "HOSTED_ON": _x(
         "HOSTED_ON",
         "An environment runs on a cluster / platform.",
-        [("Environment", "Cluster")],
+        [("Environment", "Cluster"), ("DeploymentTarget", "Cluster")],
         category="topology",
         predicate_family="deployment_target",
         source_inferred=("Environment",),
         target_inferred=("Cluster",),
+    ),
+    "PROVIDES": _x(
+        "PROVIDES",
+        "A repository or service provides a feature / capability. The spine "
+        "of 'what does this repo do'.",
+        [("Repository", "Feature"), ("Service", "Feature")],
+        category="topology",
+        target_inferred=("Feature",),
+    ),
+    "IMPLEMENTED_IN": _x(
+        "IMPLEMENTED_IN",
+        "A feature's implementation lives in a repository, service, or code "
+        "asset. The navigation backlink from capability to code.",
+        [("Feature", "Repository"), ("Feature", "Service"), ("Feature", "CodeAsset")],
+        category="topology",
+        source_inferred=("Feature",),
     ),
     "OWNED_BY": _x(
         "OWNED_BY",
@@ -646,6 +799,7 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         ],
         category="ownership",
         predicate_family="owner_binding",
+        exclusive_family="owner_binding",
         singleton=True,
     ),
     "MEMBER_OF": _x(
@@ -672,8 +826,7 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
     ),
     "PERFORMED": _x(
         "PERFORMED",
-        "A person or team performed an activity. Direction: actor → activity, "
-        "matching ``timeline_plan.build_timeline_mutations``.",
+        "A person or team performed an activity. Direction: actor → activity.",
         [("Person", ACTIVITY_ENDPOINT), ("Team", ACTIVITY_ENDPOINT)],
         category="timeline",
         target_inferred=("Activity",),
@@ -799,7 +952,7 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
 CANONICAL_LABELS: frozenset[str] = frozenset(ENTITY_TYPES.keys())
 CANONICAL_EDGE_TYPES: frozenset[str] = frozenset(EDGE_TYPES.keys())
 # Writer-internal bookkeeping edges. These are NOT part of the agent-facing
-# vocabulary (agents/scanners must never emit them) and so are deliberately
+# vocabulary (agents must never emit them) and so are deliberately
 # kept out of ``EDGE_TYPES`` / ``CANONICAL_EDGE_TYPES``. The canonical writer's
 # supersession machinery emits ``SUPERSEDES`` directly (see
 # ``canonical_writer._write_supersedes_claim``); declaring it here keeps the
@@ -930,17 +1083,23 @@ EDGE_ENDPOINT_INFERRED_LABELS: dict[tuple[str, str], tuple[str, ...]] = (
 )
 
 
-# Predicate families — built from spec predicate_family field.
-def _build_predicate_family_edge_names() -> dict[str, frozenset[str]]:
+# Predicate families — built from spec metadata fields.
+def _build_predicate_family_edge_names(
+    attr: str,
+) -> dict[str, frozenset[str]]:
     out: dict[str, set[str]] = {}
     for edge_type, spec in EDGE_TYPES.items():
-        if spec.predicate_family:
-            out.setdefault(spec.predicate_family, set()).add(edge_type)
+        family = getattr(spec, attr)
+        if family:
+            out.setdefault(family, set()).add(edge_type)
     return {fam: frozenset(names) for fam, names in out.items()}
 
 
 PREDICATE_FAMILY_EDGE_NAMES: dict[str, frozenset[str]] = (
-    _build_predicate_family_edge_names()
+    _build_predicate_family_edge_names("predicate_family")
+)
+EXCLUSIVE_PREDICATE_FAMILY_EDGE_NAMES: dict[str, frozenset[str]] = (
+    _build_predicate_family_edge_names("exclusive_family")
 )
 
 
@@ -985,6 +1144,15 @@ def predicate_family_for_edge_name(name: str) -> str | None:
     return None
 
 
+def exclusive_predicate_family_for_edge_name(name: str) -> str | None:
+    """Return mutually-exclusive family id for a predicate, if any."""
+    n = normalize_edge_name(name)
+    for fam, members in EXCLUSIVE_PREDICATE_FAMILY_EDGE_NAMES.items():
+        if n in members:
+            return fam
+    return None
+
+
 def predicate_family_for_episodic_supersede(
     edge_name: str,
     target_labels: Iterable[str] | None = None,
@@ -996,7 +1164,7 @@ def predicate_family_for_episodic_supersede(
     that all canonical predicates have known endpoint shapes.
     """
     del target_labels
-    return predicate_family_for_edge_name(edge_name)
+    return exclusive_predicate_family_for_edge_name(edge_name)
 
 
 def object_counterparty_uuid_for_edge(
@@ -1021,7 +1189,7 @@ def object_counterparty_uuid_for_edge(
         if predicate_family is not None
         else predicate_family_for_edge_name(edge_name)
     )
-    if fam is None or fam not in PREDICATE_FAMILY_EDGE_NAMES:
+    if fam is None or fam not in EXCLUSIVE_PREDICATE_FAMILY_EDGE_NAMES:
         return None
     return target_uuid
 
@@ -1047,7 +1215,7 @@ def temporal_subject_key_for_edge(
         if predicate_family is not None
         else predicate_family_for_edge_name(edge_name)
     )
-    if fam is None or fam not in PREDICATE_FAMILY_EDGE_NAMES:
+    if fam is None or fam not in EXCLUSIVE_PREDICATE_FAMILY_EDGE_NAMES:
         return None
     return source_uuid
 
@@ -1496,6 +1664,7 @@ PUBLIC_RECORD_TYPES: frozenset[str] = frozenset(
 # include" from "missing reader_include on a record type".
 STRUCTURAL_INCLUDES: frozenset[str] = frozenset(
     {
+        "features",
         "infra_topology",
         "timeline",
         "owners",

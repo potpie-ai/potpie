@@ -6,6 +6,8 @@ Covers default (neo4j), backend selection, and the
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from adapters.outbound.settings_env import EnvContextEngineSettings
@@ -75,9 +77,15 @@ def test_mode_default_lite_and_override(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_lite_path_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear(monkeypatch)
+    monkeypatch.delenv("CONTEXT_ENGINE_HOME", raising=False)
+    # Default is home-rooted and absolute: a relative path would resolve
+    # against the daemon's cwd (e.g. site-packages for an installed CLI).
+    default = EnvContextEngineSettings().falkordb_lite_path()
+    assert default == str(Path.home() / ".potpie" / "context_graph" / "falkordb.db")
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", "/srv/potpie-home")
     assert (
         EnvContextEngineSettings().falkordb_lite_path()
-        == ".potpie/context_graph/falkordb.db"
+        == "/srv/potpie-home/context_graph/falkordb.db"
     )
     monkeypatch.setenv("FALKORDB_LITE_PATH", "/tmp/cg.db")
     assert EnvContextEngineSettings().falkordb_lite_path() == "/tmp/cg.db"

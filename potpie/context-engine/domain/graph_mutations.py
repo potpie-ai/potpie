@@ -1,4 +1,4 @@
-"""Typed structural graph mutations (reconciliation domain)."""
+"""Typed structural graph mutations."""
 
 from __future__ import annotations
 
@@ -94,12 +94,14 @@ class ProvenanceContext:
     """Caller-supplied context threaded into ``apply_plan``.
 
     Carries the optional provenance fields the ``ReconciliationPlan``
-    cannot reconstruct on its own (source event times, resolved source
-    ref/kind, agent identity, reconciliation run id). Combined with
-    ``plan.event_ref`` and ``plan.confidence`` this produces a full
+    cannot reconstruct on its own (source identifiers, source event times,
+    resolved source ref/kind, agent identity, reconciliation run id). Combined
+    with ``plan.event_ref`` and ``plan.confidence`` this produces a full
     :class:`ProvenanceRef` to stamp onto every mutation.
     """
 
+    source_event_id: str | None = None
+    source_system: str | None = None
     source_kind: str | None = None
     source_ref: str | None = None
     event_occurred_at: datetime | None = None

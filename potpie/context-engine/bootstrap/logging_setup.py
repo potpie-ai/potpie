@@ -5,9 +5,9 @@ sites and *no* configuration: format and level were whatever uvicorn /
 root defaults happened to be, and the one structured ``extra={"audit":...}``
 payload was dropped on the floor (no formatter rendered it).
 
-:func:`configure_logging` is idempotent and called from every entrypoint
-(HTTP, MCP, CLI). It is deliberately **stdlib-only** — no structlog hard
-dependency. The ~200 existing ``getLogger`` sites get structured JSON +
+:func:`configure_logging` is idempotent and shared by the HTTP and MCP
+entrypoints. It is deliberately **stdlib-only** — no structlog hard dependency.
+The ~200 existing ``getLogger`` sites get structured JSON +
 trace correlation for free because the *handler/formatter* is the swappable
 seam, not the logger objects. The active correlation ids (see
 :mod:`bootstrap.observability_context`) are injected into every record via a

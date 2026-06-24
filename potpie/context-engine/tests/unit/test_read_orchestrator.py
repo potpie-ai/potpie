@@ -35,11 +35,10 @@ def test_resolve_routes_backed_include_to_reader() -> None:
     assert env.unsupported_includes == ()
 
 
-def test_unbacked_include_in_vocab_is_unsupported_not_implemented() -> None:
+def test_owners_include_is_backed_and_empty_when_no_claims() -> None:
     orch = ReadOrchestrator(claim_query=InMemoryClaimQueryStore())
-    env = orch.resolve(pot_id="p1", include=["owners"])  # in vocab, no reader
-    assert [u.name for u in env.unsupported_includes] == ["owners"]
-    assert env.unsupported_includes[0].reason == "not_implemented"
+    env = orch.resolve(pot_id="p1", include=["owners"])
+    assert env.unsupported_includes == ()
     assert env.items == ()
 
 
@@ -80,11 +79,10 @@ def test_raw_graph_returns_generic_related_to_edges() -> None:
     assert infra.items == ()
 
 
-def test_intent_expands_to_backed_and_planned() -> None:
+def test_intent_expands_to_backed_readers() -> None:
     orch = ReadOrchestrator(claim_query=_store_with_pref())
     env = orch.resolve(pot_id="p1", intent="feature")
-    # feature default includes the backed coding_preferences (→ item) plus the
-    # planned owners/decisions/docs (→ unsupported not_implemented).
+    # feature default includes coding_preferences plus other backed graph
+    # readers; empty backed readers return no items, not unsupported includes.
     assert "coding_preferences" in {i.include for i in env.items}
-    unsupported = {u.name for u in env.unsupported_includes}
-    assert {"owners", "decisions", "docs"} <= unsupported
+    assert env.unsupported_includes == ()

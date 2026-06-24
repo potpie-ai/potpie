@@ -1,13 +1,15 @@
 import os
 import pathlib
+import stat
+
 import pytest
 from adapters.outbound.daemon_process.pidfile import (
-    write_pid_file,
+    AlreadyRunning,
+    read_discovery,
     read_pid_file,
     remove_pid_file,
     write_discovery,
-    read_discovery,
-    AlreadyRunning,
+    write_pid_file,
 )
 
 
@@ -15,6 +17,7 @@ def test_pid_roundtrip(tmp_path: pathlib.Path):
     p = tmp_path / "potpied.pid"
     write_pid_file(p, 12345)
     assert read_pid_file(p) == 12345
+    assert stat.S_IMODE(p.stat().st_mode) == 0o600
     remove_pid_file(p)
     assert not p.exists()
 
@@ -40,3 +43,15 @@ def test_discovery_roundtrip(tmp_path: pathlib.Path):
     d = read_discovery(f)
     assert d["transport"] == "http"
     assert d["bind"] == "unix:/tmp/x.sock"
+    assert stat.S_IMODE(f.stat().st_mode) == 0o600
+
+
+def test_discovery_overwrites_permissive_file_as_private(tmp_path: pathlib.Path):
+    f = tmp_path / "discovery.json"
+    f.write_text("{}", encoding="utf-8")
+    f.chmod(0o644)
+
+    write_discovery(f, token="secret")
+
+    assert read_discovery(f)["token"] == "secret"
+    assert stat.S_IMODE(f.stat().st_mode) == 0o600

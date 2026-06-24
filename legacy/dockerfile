@@ -1,5 +1,5 @@
 # Use an official Python runtime as a parent image
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y git procps wget curl gnupg2 ca-certificates supervisor build-essential && rm -rf /var/lib/apt/lists/*
@@ -23,7 +23,6 @@ COPY potpie/context-engine ./potpie/context-engine
 COPY potpie/integrations ./potpie/integrations
 COPY potpie/parsing ./potpie/parsing
 COPY potpie/sandbox ./potpie/sandbox
-COPY potpie/observability ./potpie/observability
 
 # Install dependency layers first, including the local Rust extension
 RUN uv sync --frozen --all-packages --no-install-project
@@ -31,9 +30,6 @@ RUN uv sync --frozen --all-packages --no-install-project
 # Ensure the virtual environment binaries are on PATH
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
-
-# Download required NLTK data inside the managed environment
-RUN uv run python -c "import nltk; nltk.download('punkt')"
 
 # Install gVisor (runsc) via official APT repository for command isolation
 RUN curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg && \

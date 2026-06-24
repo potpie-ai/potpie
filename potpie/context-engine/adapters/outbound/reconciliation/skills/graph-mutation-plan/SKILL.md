@@ -38,9 +38,7 @@ upserts the same node:
 | Issue | `github:issue:<owner>/<repo>:<n>` |
 | Module / package | `module:<repo>:<dotted.path>` |
 | Feature | `feature:<repo>:<slug>` |
-| Linear issue | `linear:issue:<identifier>` (e.g. `linear:issue:ENG-123`) |
-| Linear project | `linear:project:<id>` |
-| Linear document | `linear:document:<id>` |
+| External ticket / issue | `ticket:<source>:<identifier>` |
 | Activity (timeline) | `timeline:activity:<verb>:<short_hex>` |
 | Period bucket | `timeline:period:daily:<pot_id>:<YYYY-MM-DD>` |
 

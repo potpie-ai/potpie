@@ -35,12 +35,6 @@ from application.use_cases.report_status import report_status
 from application.use_cases.submit_raw_episode import submit_raw_episode
 from bootstrap.ingestion_server import IngestionServerContainer
 from domain.actor import Actor, ActorSurface, normalize_surface
-from domain.graph_query import (
-    ContextGraphBudget,
-    ContextGraphGoal,
-    ContextGraphQuery,
-    ContextGraphScope,
-)
 from domain.ingestion_event_models import (
     EventListFilters,
     IngestionEventStatus,
@@ -57,6 +51,7 @@ from domain.ports.policy import (
     REASON_UNKNOWN_POT,
     PolicyDecision,
 )
+from domain.ports.agent_context import ResolveRequest
 
 # Surfaces a client may self-declare via the untrusted ``X-Potpie-Client``
 # header. ``system``/``webhook`` are deliberately excluded — those are
@@ -144,31 +139,6 @@ def _ingest_rejection_returns_422() -> bool:
     """
     v = os.getenv("CONTEXT_ENGINE_INGEST_422", "1").strip().lower()
     return v not in ("0", "false", "no", "off")
-
-
-def _context_graph_jsonable(value: Any) -> Any:
-    """Convert graph adapter payloads, including Neo4j temporal values, to JSON-safe data."""
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, datetime):
-        return value.isoformat()
-    isoformat = getattr(value, "isoformat", None)
-    if callable(isoformat):
-        try:
-            return str(isoformat())
-        except Exception:
-            pass
-    iso_format = getattr(value, "iso_format", None)
-    if callable(iso_format):
-        try:
-            return str(iso_format())
-        except Exception:
-            pass
-    if isinstance(value, dict):
-        return {str(k): _context_graph_jsonable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_context_graph_jsonable(v) for v in value]
-    return str(value)
 
 
 class BatchRetryEventsRequest(BaseModel):
@@ -1027,10 +997,10 @@ def create_context_router(
             action=ACTION_POT_READ,
             pot_id=pot_id,
         )
-        if container.context_graph is None:
+        if container.graph is None:
             raise HTTPException(
                 status_code=503,
-                detail="Unified context graph query port is not configured.",
+                detail="Canonical graph service is not configured.",
             )
         # An explicit `since` wins; otherwise derive it from the relative
         # `window`. valid_at is compared as a UTC ISO string downstream, so
@@ -1041,24 +1011,25 @@ def create_context_router(
             if delta is not None:
                 resolved_since = datetime.now(timezone.utc) - delta
 
-        query = ContextGraphQuery(
-            pot_id=pot_id,
-            goal=ContextGraphGoal.TIMELINE,
-            include=["timeline"],
-            scope=ContextGraphScope(
-                services=[s.strip() for s in (service or []) if s and s.strip()]
-            ),
-            since=resolved_since,
-            until=until,
-            include_invalidated=include_invalidated,
-            budget=ContextGraphBudget(max_items=limit),
+        envelope = container.graph.resolve(
+            ResolveRequest(
+                pot_id=pot_id,
+                include=("timeline",),
+                scope={
+                    "services": [s.strip() for s in (service or []) if s and s.strip()]
+                },
+                since=resolved_since,
+                until=until,
+                include_invalidated=include_invalidated,
+                max_items=limit,
+                metadata={"http_timeline": True},
+            )
         )
-        result = await container.context_graph.query_async(query)
-        envelope = result.model_dump().get("result") or {}
+        envelope_payload = envelope.to_dict()
 
         wanted = {v.strip().lower() for v in (verb_class or []) if v and v.strip()}
         items: list[dict[str, Any]] = []
-        for entry in envelope.get("items", []):
+        for entry in envelope_payload.get("items", []):
             payload = entry.get("payload") or {}
             kind = payload.get("verb_class")
             if wanted and (kind or "").lower() not in wanted:
@@ -1083,7 +1054,7 @@ def create_context_router(
         return {
             "pot_id": pot_id,
             "items": items,
-            "coverage": envelope.get("overall_confidence"),
+            "coverage": envelope_payload.get("overall_confidence"),
             "window": {
                 "since": resolved_since.isoformat() if resolved_since else None,
                 "until": until.isoformat() if until else None,
@@ -1417,7 +1388,11 @@ def create_context_router(
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
         sync: bool = Query(
-            False, description="Inline reconcile (200) instead of enqueue (202)."
+            False,
+            description=(
+                "Compatibility flag; context_record now applies through the "
+                "deterministic semantic mutation path."
+            ),
         ),
         x_context_ingest_sync: str | None = Header(
             None,
@@ -1518,31 +1493,37 @@ def create_context_router(
 
     @router.post(
         "/query/context-graph",
-        summary="Direct ContextGraphQuery endpoint",
+        summary="Unsupported legacy ContextGraphQuery endpoint",
         description=(
-            "Executes the minimal query surface directly: one graph query method "
-            "with goal, strategy, scope, filters, temporal controls, and budget."
+            "Legacy remote graph-query clients are no longer supported. Use the "
+            "local HostShell / AgentContextPort / GraphService surfaces."
         ),
     )
     async def post_context_graph_query(
-        body: ContextGraphQuery,
+        body: dict[str, Any],
         actor: Any = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
     ) -> dict[str, Any]:
+        del body
         _enforce(
             container,
             actor=actor,
             resource=RESOURCE_POT,
             action=ACTION_POT_READ,
-            pot_id=body.pot_id,
+            pot_id=None,
         )
-        if container.context_graph is None:
-            raise HTTPException(
-                status_code=503,
-                detail="Unified context graph query port is not configured.",
-            )
-        result = await container.context_graph.query_async(body)
-        return _context_graph_jsonable(result.model_dump())
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "code": "http_context_graph_query_not_supported",
+                "message": (
+                    "Remote ContextGraphQuery is no longer a supported client surface."
+                ),
+                "recommended_next_action": (
+                    "Use local context_resolve/context_search or graph read."
+                ),
+            },
+        )
 
     return router
 

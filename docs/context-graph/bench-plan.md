@@ -1,11 +1,11 @@
 # Context Graph Benchmarks
 
-Last reviewed: 2026-05-29.
+Last reviewed: 2026-06-05.
 
 The benchmark validates graph quality. It is not the OSS packaging roadmap. The
 same scenarios should run against in-memory, embedded, Neo4j, and managed
 backends through the `GraphBackend` contract. Source events can enter through
-direct scanner fixtures or an Event Ledger replay path.
+explicit harness-style mutation fixtures or an Event Ledger replay path.
 
 ## Pipeline
 
@@ -15,7 +15,7 @@ flowchart LR
   cg_ledger_replay["Event Ledger replay<br/>optional"]
   cg_ingest["ingest / reconcile"]
   cg_graph_backend["GraphBackend"]
-  cg_query["context_resolve/search"]
+  cg_query["potpie graph read/propose"]
   cg_eval["evaluators"]
   cg_report["report"]
 
@@ -61,14 +61,14 @@ Each scenario has three primary axes:
 | Axis | Meaning |
 |---|---|
 | Ingestion | Did the graph contain the expected entities/claims and avoid bad ones? |
-| Retrieval | Did the engine surface the expected evidence and avoid distractors? |
-| Synthesis | Did the agent answer satisfy the rubric using surfaced context? |
+| Retrieval | Did named read views surface the expected evidence and avoid distractors? |
+| Agent use | Did the agent answer or proposed update satisfy the rubric using surfaced context? |
 
 Coverage and precision are reported alongside ingestion and retrieval.
 
 Default weights:
 
-| Use case | Ingestion | Retrieval | Synthesis |
+| Use case | Ingestion | Retrieval | Agent use |
 |---|---:|---:|---:|
 | `PREF` | 20 | 40 | 40 |
 | `INFRA` | 30 | 40 | 30 |
@@ -105,8 +105,8 @@ distractor_events:
   - { event: github/pr_merge__noise_*.json, at: "-90d..0d", count: 10 }
 
 query:
-  intent: debugging
-  include: [prior_bugs, timeline]
+  subgraph: bugs
+  view: prior_occurrences
   scope: { services: [inventory-svc] }
 
 retrieval_assertions:
@@ -174,9 +174,9 @@ The report should show:
 Example panel:
 
 ```text
-| Use case | N | Aggregate | Ing | Ret | Syn | Cov | Prec | Pass |
-|----------|--:|----------:|----:|----:|----:|----:|-----:|-----:|
-| PREF     | 6 |      72.4 | 60  | 78  | 76  | 84  |  91  | 4/6  |
+| Use case | N | Aggregate | Ing | Ret | Agent | Cov | Prec | Pass |
+|----------|--:|----------:|----:|----:|------:|----:|-----:|-----:|
+| PREF     | 6 |      72.4 | 60  | 78  |    76 | 84  |  91  | 4/6  |
 ```
 
 ## Current Status

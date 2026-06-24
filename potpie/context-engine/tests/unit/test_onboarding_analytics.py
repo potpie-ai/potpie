@@ -229,6 +229,35 @@ def test_setup_picker_login_preserves_entrypoint(
     )
 
 
+def test_setup_atlassian_login_runs_shared_jira_flow(
+    fake_sink: _FakeSink,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _fake_atlassian_login(product: str, **kwargs: object) -> None:
+        calls.append({"product": product, **kwargs})
+
+    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
+    monkeypatch.setattr(
+        auth_commands,
+        "run_atlassian_api_token_auth",
+        _fake_atlassian_login,
+    )
+
+    with onboarding_entrypoint("post_setup_integration_picker"):
+        auth_commands.run_integration_login("atlassian", force=True)
+
+    assert calls == [
+        {"product": "atlassian", "force": True, "as_json": False, "verbose": False}
+    ]
+    assert fake_sink.events[0].properties["provider"] == "atlassian"
+    assert (
+        fake_sink.events[0].properties["entrypoint"] == "post_setup_integration_picker"
+    )
+
+
 def test_direct_atlassian_login_records_funnel_without_credentials(
     fake_sink: _FakeSink,
     monkeypatch: pytest.MonkeyPatch,

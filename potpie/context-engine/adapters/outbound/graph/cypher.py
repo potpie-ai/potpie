@@ -4,9 +4,9 @@ Rebuild plan P0 (Position B): every claim is one ``:RELATES_TO`` edge
 between entities keyed by deterministic ``(group_id, entity_key)``. The
 edge carries the predicate (``name``), bitemporal validity
 (``valid_at`` / ``invalid_at`` for event time, ``created_at`` /
-``expired_at`` for system time), source provenance (``source_system``,
-``source_ref``, ``evidence_strength``), and the natural-language fact
-text the agent reads + the vector index embeds.
+``expired_at`` for system time), V1.5 claim metadata (``truth``,
+``source_refs``, ``claim_key``), and the natural-language fact text the agent
+reads + the vector index embeds.
 
 Position B's MERGE key includes ``source_ref`` so two distinct sources
 making the same claim land as two corroborating edges, and a re-scan of
@@ -20,9 +20,10 @@ including supersession (T6), point-in-time queries (T4), corroboration
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from typing import Any
 
 from domain.graph_mutations import (
@@ -32,11 +33,15 @@ from domain.graph_mutations import (
     InvalidationOp,
     ProvenanceRef,
 )
+from domain.graph_entity_summary import compact_entity_summary
+from domain.graph_contract import evidence_strength_for_truth
 from domain.ontology import (
     CANONICAL_EDGE_TYPES,
     ENTITY_TYPES,
+    canonical_entity_labels,
     is_canonical_entity_label,
 )
+from domain.retrieval_card import build_retrieval_card
 from domain.singleton_predicates import is_singleton_predicate
 
 logger = logging.getLogger(__name__)
@@ -52,6 +57,7 @@ _RESERVED_EDGE_PROPERTY_KEYS: frozenset[str] = frozenset(
         "source_ref",
         "evidence_strength",
         "fact",
+        "fact_embedding",
         "confidence",
         "valid_at",
     }
@@ -97,12 +103,12 @@ def _is_valid_predicate(name: str) -> bool:
     return name in CANONICAL_EDGE_TYPES
 
 
-def _string_or_default(value: Any, default: str) -> str:
+def _clean_entity_text(value: Any) -> str:
+    """One-line-normalize an authored display field; '' when absent."""
     if value is None:
-        return default
-    if isinstance(value, str):
-        return value
-    return str(value)
+        return ""
+    text = value if isinstance(value, str) else str(value)
+    return " ".join(text.strip().split())
 
 
 def _stable_source_ref(
@@ -117,8 +123,8 @@ def _stable_source_ref(
     The MERGE key includes ``source_ref`` so corroborating writes from
     different sources stay distinct; without it every claim from the
     same predicate triple would collide and look like a single source.
-    When the caller (LLM agent or scanner) provides ``source_ref``
-    explicitly via ``EdgeUpsert.properties``, we honor that.
+    When the caller provides ``source_ref`` explicitly via
+    ``EdgeUpsert.properties``, we honor that.
 
     The fallback is ``provenance.source_ref`` if set, else a hash over the
     source_event_id + the edge triple. This stays stable across re-scans
@@ -152,6 +158,86 @@ def _render_fact(
     if extra and isinstance(extra.get("fact"), str) and extra["fact"]:
         return extra["fact"]
     return f"{from_key} {predicate} {to_key}"
+
+
+def _embedding_props(
+    *,
+    embedder: Any | None,
+    predicate: str,
+    from_key: str,
+    to_key: str,
+    edge_props: dict[str, Any],
+) -> dict[str, Any]:
+    """Build embedding properties for a claim edge, if an embedder is wired."""
+    if embedder is None:
+        return {}
+    card = build_retrieval_card(
+        description=edge_props.get("description")
+        if isinstance(edge_props.get("description"), str)
+        else None,
+        fact=edge_props.get("fact") if isinstance(edge_props.get("fact"), str) else None,
+        subject_key=from_key,
+        predicate=predicate,
+        object_key=to_key,
+        scope=edge_props.get("code_scope") if isinstance(edge_props.get("code_scope"), dict) else None,
+    )
+    if not card:
+        return {}
+    # Embeddings are best-effort enrichment: a model/runtime error must not abort
+    # the structural edge write. Degrade to no embedding props and persist anyway.
+    try:
+        embedding = embedder.embed(card)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("claim embedding skipped: %s", exc)
+        return {}
+    return {
+        "fact_embedding": [float(x) for x in embedding],
+        "embedding_model": getattr(embedder, "name", "unknown"),
+        "embedding_dim": int(getattr(embedder, "dimensions", len(embedding))),
+    }
+
+
+# Temporal types the Neo4j driver maps to native temporal properties — pass
+# these through untouched rather than JSON-encoding them.
+_NEO4J_TEMPORAL_TYPES = (datetime, date, time)
+
+
+def _neo4j_safe_value(value: Any) -> Any:
+    """Coerce one property value to a Neo4j-storable type.
+
+    Neo4j node/edge properties accept only primitives (``bool``/``int``/
+    ``float``/``str``), native temporals, and *homogeneous arrays of
+    primitives* — never maps or arrays-of-maps. The V1.5 claim metadata stamps
+    structured values (``evidence`` as a list of dicts, ``created_by`` /
+    ``code_scope`` as dicts) that the in-memory/embedded backends store
+    natively; on Neo4j they are JSON-encoded so the data survives the write
+    losslessly (readers that need the structure parse the JSON back). Flat
+    arrays (``source_refs``, ``identity_key``) stay native arrays.
+    """
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, _NEO4J_TEMPORAL_TYPES):
+        return value
+    if isinstance(value, (list, tuple)):
+        # Neo4j 5.x property arrays must be *homogeneous* arrays of primitives —
+        # no nulls, no maps, and no mixed element types ([1, "x"] / [True, 1] are
+        # rejected at write time). Only a single-primitive-type list survives as a
+        # native array; anything else is JSON-encoded so the write does not fail.
+        # (bool is a subclass of int, so classify it separately.)
+        if all(isinstance(v, (bool, int, float, str)) for v in value):
+            kinds = {bool if isinstance(v, bool) else type(v) for v in value}
+            if len(kinds) <= 1:  # empty or single-type
+                return list(value)
+        return json.dumps(list(value), default=str, sort_keys=True)
+    if isinstance(value, dict):
+        return json.dumps(value, default=str, sort_keys=True)
+    # Unknown type: stringify defensively rather than letting the driver raise.
+    return str(value)
+
+
+def _coerce_props_for_neo4j(props: dict[str, Any]) -> dict[str, Any]:
+    """Make every value in a property bag Neo4j-storable (see :func:`_neo4j_safe_value`)."""
+    return {k: _neo4j_safe_value(v) for k, v in props.items()}
 
 
 def _split_edge_properties(
@@ -193,21 +279,48 @@ async def upsert_entities_async(
     async with driver.session() as session:
         for item in items:
             props = dict(item.properties)
+            # Authored display/retrieval fields overwrite; key-derived
+            # fallbacks only fill nodes that have no value yet, so a bare
+            # re-reference (key + type only) never clobbers an authored
+            # summary/description already stored on the node.
+            authored_name = _clean_entity_text(props.pop("name", None))
+            authored_summary = compact_entity_summary(
+                props.pop("summary", None),
+                props.get("description"),
+                props.get("title"),
+                authored_name,
+            )
+            authored_description = (
+                _clean_entity_text(props.pop("description", None)) or authored_summary
+            )
             props["group_id"] = pot_id
             props["provenance_source_event"] = provenance.source_event_id
             props.update(prov_props)
-            # Backwards-compat with the prior hydrator that required
-            # non-null ``name`` / ``summary`` on entity nodes.
-            props["name"] = _string_or_default(props.get("name"), item.entity_key)
-            props["summary"] = _string_or_default(props.get("summary"), "")
             await session.run(
                 "MERGE (e:Entity {group_id: $gid, entity_key: $key}) "
                 "ON CREATE SET e.uuid = randomUUID(), e.created_at = timestamp() "
-                "SET e += $props",
+                "SET e += $props "
+                "SET e.name = CASE WHEN $a_name <> '' THEN $a_name "
+                "WHEN coalesce(e.name, '') = '' THEN $key ELSE e.name END, "
+                "e.summary = CASE WHEN $a_summary <> '' THEN $a_summary "
+                "WHEN coalesce(e.summary, '') = '' THEN $key ELSE e.summary END, "
+                "e.description = CASE WHEN $a_description <> '' THEN $a_description "
+                "WHEN coalesce(e.description, '') = '' THEN $key ELSE e.description END",
                 gid=pot_id,
                 key=item.entity_key,
-                props=props,
+                props=_coerce_props_for_neo4j(props),
+                a_name=authored_name,
+                a_summary=authored_summary,
+                a_description=authored_description,
             )
+            wanted_labels = set(canonical_entity_labels(item.labels))
+            if wanted_labels:
+                for stale in sorted(set(ENTITY_TYPES) - wanted_labels):
+                    await session.run(
+                        f"MATCH (e:Entity {{group_id: $gid, entity_key: $key}}) REMOVE e:{stale}",  # pyright: ignore[reportArgumentType]
+                        gid=pot_id,
+                        key=item.entity_key,
+                    )
             for lbl in item.labels:
                 if lbl == "Entity":
                     continue
@@ -232,6 +345,8 @@ async def upsert_edges_async(
     pot_id: str,
     items: list[EdgeUpsert],
     provenance: ProvenanceRef,
+    *,
+    embedder: Any | None = None,
 ) -> int:
     """Upsert every edge as a ``:RELATES_TO {name: <predicate>, ...}`` claim.
 
@@ -250,7 +365,7 @@ async def upsert_edges_async(
       explicit), ``invalid_at`` (null until supersession).
     - **Provenance:** ``source_system``, ``evidence_strength``, ``fact``,
       ``confidence`` (optional), ``observed_at`` (write time).
-    - **Ontology extras:** whatever else the LLM agent / scanner put on
+    - **Ontology extras:** whatever else the caller put on
       ``EdgeUpsert.properties`` (e.g. ``environment``, ``code_scope``).
     """
     _require_valid_pot_id(pot_id)
@@ -291,7 +406,8 @@ async def upsert_edges_async(
                 reserved.get("source_system") or provenance.source_system or "agent"
             )
 
-            evidence_strength = reserved.get("evidence_strength") or "inferred"
+            truth = extras.get("truth") if isinstance(extras.get("truth"), str) else None
+            evidence_strength = evidence_strength_for_truth(truth)
 
             fact = _render_fact(
                 predicate=predicate,
@@ -317,6 +433,15 @@ async def upsert_edges_async(
             # Carry the ontology-specific extras alongside POC fields.
             for k, v in extras.items():
                 edge_props[k] = v
+            edge_props.update(
+                _embedding_props(
+                    embedder=embedder,
+                    predicate=predicate,
+                    from_key=item.from_entity_key,
+                    to_key=item.to_entity_key,
+                    edge_props=edge_props,
+                )
+            )
             # Stamp a compact provenance pointer; full provenance is on
             # the source event that source_ref references.
             edge_props["provenance_source_event"] = provenance.source_event_id
@@ -347,7 +472,7 @@ async def upsert_edges_async(
                 to_key=item.to_entity_key,
                 source_ref=source_ref,
                 now=now.isoformat(),
-                props=edge_props,
+                props=_coerce_props_for_neo4j(edge_props),
             )
             # F3 deterministic supersession: when a singleton-predicate
             # claim from a deterministic-strength source lands, invalidate
@@ -642,7 +767,7 @@ async def _write_supersedes_claim(
 # ----------------------------------------------------------------------
 
 
-async def ensure_canonical_indexes(driver: Any) -> None:
+async def ensure_canonical_indexes(driver: Any, *, embedding_dim: int = 1536) -> None:
     """Create the indexes the Position B traversal patterns rely on.
 
     - ``entity_group_key``: pot-scoped entity lookup by deterministic key.
@@ -685,10 +810,11 @@ async def ensure_canonical_indexes(driver: Any) -> None:
                 CREATE VECTOR INDEX claim_fact_embeddings IF NOT EXISTS
                 FOR ()-[r:RELATES_TO]-() ON (r.fact_embedding)
                 OPTIONS { indexConfig: {
-                    `vector.dimensions`: 1536,
+                    `vector.dimensions`: $embedding_dim,
                     `vector.similarity_function`: 'cosine'
                 }}
-                """
+                """,
+                embedding_dim=int(embedding_dim),
             )
         except Exception as exc:
             logger.warning(

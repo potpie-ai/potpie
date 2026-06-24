@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
+import subprocess
 from typing import Callable
+from urllib.parse import urlparse
 
 from domain.errors import CapabilityNotImplemented
 from domain.lifecycle import (
@@ -70,12 +73,11 @@ _SEAM_PLAN: tuple[tuple[str, str, str], ...] = (
     ("auth", "auth", "init local auth"),
     ("source", "pot management", "register repo '{repo}'"),
     ("skills", "skill manager", "install skills for '{agent}'"),
-    ("scan", "ingestion / scan", "scan working tree"),
 )
 
 # Soft steps never gate the run. Host-gated steps are hard only for a detached
 # daemon host; an in-process host skips them.
-_SOFT_STEPS = frozenset({"auth", "source", "skills", "scan"})
+_SOFT_STEPS = frozenset({"auth", "source", "skills"})
 _HOST_GATED = frozenset({"installer", "daemon"})
 
 
@@ -102,11 +104,9 @@ def _skip_reason(step: str, plan: SetupPlan) -> str | None:
 
 
 def _planned_steps(plan: SetupPlan) -> list[PlannedSetupStep]:
-    """The ordered dry-run steps for ``plan`` (omitting scan unless requested)."""
+    """The ordered dry-run steps for ``plan``."""
     steps: list[PlannedSetupStep] = []
     for step, owner, action_tmpl in _SEAM_PLAN:
-        if step == "scan" and not plan.scan:
-            continue
         if step == "pot.default" and plan.defer_default_pot:
             continue
         if step == "skills" and plan.defer_skills:
@@ -132,7 +132,7 @@ def _planned_steps(plan: SetupPlan) -> list[PlannedSetupStep]:
 @dataclass(slots=True)
 class DefaultSetupOrchestrator:
     """Sequences config → installer → backend → pot.init → state store → migrate
-    → default pot → daemon → auth → source → skills → scan over the bespoke
+    → default pot → daemon → auth → source → skills over the bespoke
     per-component methods."""
 
     config: ConfigService
@@ -207,8 +207,6 @@ class DefaultSetupOrchestrator:
                 else []
             ),
         ]
-        if plan.scan:
-            steps.append(self._step("scan", hard("scan"), lambda: self._scan(plan)))
         return SetupReport(plan=plan, steps=tuple(steps))
 
     # --- step runner --------------------------------------------------------
@@ -280,8 +278,10 @@ class DefaultSetupOrchestrator:
             return StepResult(
                 "source", SKIPPED, f"repo '{plan.repo}' already registered"
             )
-        self.pots.add_source(pot_id=active.pot_id, kind="repo", location=plan.repo)
-        return StepResult("source", DONE, f"registered repo '{plan.repo}'")
+        location = _resolve_setup_repo_location(plan.repo)
+        self.pots.add_source(pot_id=active.pot_id, kind="repo", location=location)
+        self.pots.set_repo_default(repo=location, pot_id=active.pot_id)
+        return StepResult("source", DONE, f"registered repo '{location}'")
 
     def _skills(self, plan: SetupPlan) -> str | StepResult:
         if plan.agent.strip().lower() == "default":
@@ -291,16 +291,52 @@ class DefaultSetupOrchestrator:
         result = self.skills.install(agent=plan.agent)
         return f"installed {list(result.changed)} for {plan.agent}"
 
-    def _scan(self, plan: SetupPlan) -> StepResult:
-        raise CapabilityNotImplemented(
-            "ingest.scan",
-            detail="scanner ingestion is not wired into setup yet",
-            recommended_next_action="run 'potpie ingest scan' once scanners land",
-        )
-
 
 def _describe(result: object) -> str | None:
     return None if result is None else str(result)
 
 
 __all__ = ["DefaultSetupOrchestrator"]
+
+
+def _resolve_setup_repo_location(location: str) -> str:
+    raw = (location or "").strip()
+    if raw.lower() in (".", "current"):
+        cwd = Path.cwd().resolve()
+        remote = _current_git_remote(cwd)
+        return remote or str(cwd)
+    if raw.startswith((".", "~")):
+        return str(Path(raw).expanduser().resolve(strict=False))
+    return raw
+
+
+def _current_git_remote(cwd: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(cwd), "remote", "get-url", "origin"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    return _normalize_repo_ref(proc.stdout.strip())
+
+
+def _normalize_repo_ref(value: str) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    if raw.endswith(".git"):
+        raw = raw[:-4]
+    if raw.startswith("git@") and ":" in raw:
+        host, path = raw[4:].split(":", 1)
+        return f"{host}/{path}".strip("/")
+    if "://" in raw:
+        parsed = urlparse(raw)
+        if parsed.netloc and parsed.path:
+            return f"{parsed.netloc}/{parsed.path.strip('/')}"
+    return raw

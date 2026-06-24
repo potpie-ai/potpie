@@ -22,8 +22,16 @@ def reconciliation_enabled() -> bool:
 
 
 def agent_planner_enabled() -> bool:
-    """LLM-backed planner (default: on). Set false to disable the agent path."""
-    return _truthy(os.getenv("CONTEXT_ENGINE_AGENT_PLANNER_ENABLED"), True)
+    """LLM-backed reconciliation planner — **opt-in** (default: off).
+
+    Graph V1.5 Step 11 parks service-side LLM reconciliation as non-canonical:
+    canonical graph writes go through the harness-facing semantic mutation
+    surface, never a Potpie-owned planner. The agentic path stays available for
+    experiments/backfill — set ``CONTEXT_ENGINE_AGENT_PLANNER_ENABLED=1`` to opt
+    back in. Event playbooks (:func:`domain.event_playbooks.playbooks_enable_planner`)
+    can still enable it per-batch for one-shot backfill without the global flag.
+    """
+    return _truthy(os.getenv("CONTEXT_ENGINE_AGENT_PLANNER_ENABLED"), False)
 
 
 def infer_canonical_labels_enabled() -> bool:

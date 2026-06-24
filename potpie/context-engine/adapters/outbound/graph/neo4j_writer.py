@@ -1,4 +1,4 @@
-"""Graph writer port + Neo4j adapter.
+"""Neo4j graph writer adapter.
 
 One writer, one substrate: the reconciliation agent emits a typed
 :class:`ReconciliationPlan` and ``apply_reconciliation_plan`` calls these
@@ -10,7 +10,7 @@ the deterministic plan.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Coroutine, Protocol, TypeVar
+from typing import Any, Callable, Coroutine, TypeVar
 
 from adapters.outbound.graph.cypher import (
     _require_valid_pot_id,
@@ -20,6 +20,7 @@ from adapters.outbound.graph.cypher import (
     upsert_edges_async,
     upsert_entities_async,
 )
+from adapters.outbound.graph.writer_port import GraphWriterPort
 from domain.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
@@ -34,46 +35,15 @@ logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 
-class GraphWriterPort(Protocol):
-    """The single graph mutation surface.
-
-    Every write to the project context graph goes through these five
-    verbs. Mutations are deterministic, idempotent on stable entity_keys,
-    and stamped with the provenance ref the caller threads in.
-    """
-
-    @property
-    def enabled(self) -> bool: ...
-
-    async def ensure_indexes(self) -> bool:
-        """Idempotently create entity / claim / vector indexes."""
-        ...
-
-    async def upsert_entities(
-        self, pot_id: str, items: list[EntityUpsert], provenance: ProvenanceRef
-    ) -> int: ...
-
-    async def upsert_edges(
-        self, pot_id: str, items: list[EdgeUpsert], provenance: ProvenanceRef
-    ) -> int: ...
-
-    async def delete_edges(
-        self, pot_id: str, items: list[EdgeDelete], provenance: ProvenanceRef
-    ) -> int: ...
-
-    async def invalidate(
-        self, pot_id: str, items: list[InvalidationOp], provenance: ProvenanceRef
-    ) -> int: ...
-
-    async def reset_pot(self, pot_id: str) -> dict[str, Any]: ...
-
-
 class Neo4jGraphWriter(GraphWriterPort):
     """Production writer: applies typed mutations as Position-B :RELATES_TO edges."""
 
-    def __init__(self, settings: ContextEngineSettingsPort) -> None:
+    def __init__(
+        self, settings: ContextEngineSettingsPort, *, embedder: Any | None = None
+    ) -> None:
         self._settings = settings
         self._enabled = settings.is_enabled()
+        self._embedder = embedder
 
     @property
     def enabled(self) -> bool:
@@ -107,7 +77,10 @@ class Neo4jGraphWriter(GraphWriterPort):
     async def ensure_indexes(self) -> bool:
         if not self.enabled:
             return False
-        await self._with_driver(lambda d: ensure_canonical_indexes(d))
+        embedding_dim = int(getattr(self._embedder, "dimensions", 1536))
+        await self._with_driver(
+            lambda d: ensure_canonical_indexes(d, embedding_dim=embedding_dim)
+        )
         return True
 
     async def upsert_entities(
@@ -125,7 +98,9 @@ class Neo4jGraphWriter(GraphWriterPort):
         if not items:
             return 0
         return await self._with_driver(
-            lambda d: upsert_edges_async(d, pot_id, items, provenance)
+            lambda d: upsert_edges_async(
+                d, pot_id, items, provenance, embedder=self._embedder
+            )
         )
 
     async def delete_edges(

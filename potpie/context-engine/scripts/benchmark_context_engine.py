@@ -3,9 +3,9 @@
 
 Use this path from the repository root:
 
-    uv run python app/src/context-engine/scripts/benchmark_context_engine.py mock
-    uv run python app/src/context-engine/scripts/benchmark_context_engine.py http-e2e
-    uv run python app/src/context-engine/scripts/benchmark_context_engine.py api
+    uv run python potpie/context-engine/scripts/benchmark_context_engine.py mock
+    uv run python potpie/context-engine/scripts/benchmark_context_engine.py http-e2e
+    uv run python potpie/context-engine/scripts/benchmark_context_engine.py api
 """
 
 from __future__ import annotations

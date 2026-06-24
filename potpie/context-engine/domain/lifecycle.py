@@ -27,15 +27,20 @@ PLANNED = "planned"
 _OK_STATES = frozenset({DONE, SKIPPED, PLANNED})
 
 
+def default_setup_backend() -> str:
+    """Default CLI setup backend."""
+    return "falkordb_lite"
+
+
 @dataclass(frozen=True, slots=True)
 class SetupPlan:
     """The first-run intent the orchestrator executes (built from CLI flags)."""
 
     mode: str = "local"  # local setup; managed auth uses LoginPlan
     host_mode: str = "daemon"  # daemon | in_process — flips daemon/installer hardness
-    backend: str = "embedded"  # embedded | postgres | neo4j | in_memory
+    backend: str = field(default_factory=default_setup_backend)
     repo: str | None = "."
-    pot: str = "foo-pot"
+    pot: str = "default"
     agent: str = "claude"
     scan: bool = False
     assume_yes: bool = False
