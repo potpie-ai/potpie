@@ -79,7 +79,6 @@ The main CLI commands are:
 | `potpie status --verify` | Check connected integration credentials. |
 | `potpie resolve "<task>"` | Pull the context an agent should read before doing a task. |
 | `potpie search "<query>"` | Look up a specific file, workflow, bug, decision, or convention. |
-| `potpie record --type <type> --summary "..."` | Save a reusable project learning. |
 | `potpie skills install --agent <agent>` | Install or refresh Potpie guidance for an agent harness. |
 
 Examples:
@@ -88,7 +87,6 @@ Examples:
 potpie status --host
 potpie resolve "what should I know before working in this repository?"
 potpie search "authentication flow"
-potpie record --type decision --summary "Use the existing billing adapter for Stripe events"
 ```
 
 You can find an exhaustive list with more examples in our [docs](https://docs.potpie.ai).
