@@ -12,8 +12,10 @@ from adapters.inbound.cli.commands._common import (
     contract,
     current_repo_identity_for_cli,
     emit,
+    empty_pot_warnings,
     fail,
     get_host,
+    pot_graph_counts,
     pot_scope_info,
     repo_pot_candidates,
     resolve_pot_id,
@@ -557,16 +559,115 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
         )
 
 
+def _enrich_source(host, src, pot_id: str) -> dict:
+    """Build the rich source row used by both per-pot summary and single-source status."""
+    location = getattr(src, "location", None)
+    kind = getattr(src, "kind", "unknown")
+    repo_default = False
+    if kind == "repo" and location:
+        repo_key = repo_identity_key(location)
+        if repo_key:
+            getter = getattr(host.pots, "repo_default", None)
+            if callable(getter):
+                try:
+                    default_pot = getter(repo=repo_key)
+                    repo_default = bool(default_pot == pot_id)
+                except Exception:  # noqa: BLE001
+                    pass
+    return {
+        "id": src.source_id,
+        "kind": kind,
+        "name": src.name,
+        "location": location,
+        "status": getattr(src, "status", "ok"),
+        "repo_default": repo_default,
+        "registration_only": True,
+        "ingestion_status": "not_started",
+    }
+
+
 @source_app.command("status")
-def source_status(source_id: str, pot: str = typer.Option(None, "--pot")) -> None:
+def source_status(
+    source_id: str | None = typer.Argument(None),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    """Show source status for the pot (all sources) or a single source by ID."""
     with contract():
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
-        src = host.pots.source_status(pot_id=pot_id, source_id=source_id)
-        emit(
-            {"id": src.source_id, "status": src.status, "name": src.name},
-            human=f"{src.name}: {src.status}",
-        )
+
+        if source_id is None:
+            # Per-pot summary: all sources with enriched fields
+            sources = host.pots.list_sources(pot_id=pot_id)
+            pot_info = pot_scope_info(host, pot_id)
+            counts = pot_graph_counts(host, pot_id)
+            claim_count = counts.get("claims", 0)
+
+            source_rows = [_enrich_source(host, s, pot_id) for s in sources]
+
+            recommended = None
+            if not sources:
+                recommended = (
+                    "No sources registered. "
+                    "Run `potpie source add repo .` to register a repository."
+                )
+            elif claim_count == 0:
+                warnings = empty_pot_warnings(host, pot_id)
+                recommended = warnings[0] if warnings else (
+                    "Sources are registered only; no claims in graph yet. "
+                    "Use ledger/agent ingestion to populate."
+                )
+
+            emit(
+                {
+                    "pot_id": pot_id,
+                    "pot": pot_info,
+                    "source_count": len(sources),
+                    "claim_count": claim_count,
+                    "sources": source_rows,
+                    "recommended_next_action": recommended,
+                },
+                human=(
+                    "\n".join(
+                        [
+                            (
+                                f"pot={pot_info['name']} ({pot_id}) "
+                                f"sources={len(sources)} claims={claim_count}"
+                            ),
+                            *(
+                                (
+                                    f"  {row['kind']}: "
+                                    f"{row['location'] or row['name']} "
+                                    f"({row['id']}) "
+                                    f"status={row['status']}"
+                                    + (" [repo-default]" if row["repo_default"] else "")
+                                    + " [registration-only]"
+                                )
+                                for row in source_rows
+                            ),
+                        ]
+                    )
+                    if sources
+                    else (
+                        f"pot={pot_info['name']} ({pot_id}) "
+                        f"sources=0 claims={claim_count}\n"
+                        "(no sources)"
+                    )
+                )
+                + (f"\nnote: {recommended}" if recommended else ""),
+            )
+        else:
+            # Single-source mode: same enriched shape
+            src = host.pots.source_status(pot_id=pot_id, source_id=source_id)
+            row = _enrich_source(host, src, pot_id)
+            emit(
+                row,
+                human=(
+                    f"{src.name}: {src.status} kind={src.kind}"
+                    + (" [repo-default]" if row["repo_default"] else "")
+                    + " [registration-only]"
+                ),
+            )
 
 
 @source_app.command("remove")

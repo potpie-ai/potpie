@@ -14,6 +14,7 @@ import typer
 from adapters.inbound.cli.commands._common import (
     EXIT_DEGRADED,
     contract,
+    current_repo_identity_for_cli,
     emit,
     get_host,
     is_json,
@@ -266,6 +267,20 @@ def register(root: typer.Typer) -> None:
             pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
             readiness = host.backend.mutation.readiness(pot_id)
             daemon_status = host.daemon.status()
+
+            # Resolve effective repo pot: what source/graph routing would use here
+            repo_identity = current_repo_identity_for_cli()
+            repo_default_pot_id: str | None = None
+            effective_current_repo_pot: str | None = None
+            if repo_identity:
+                getter = getattr(host.pots, "repo_default", None)
+                if callable(getter):
+                    try:
+                        repo_default_pot_id = getter(repo=repo_identity) or None
+                    except Exception:  # noqa: BLE001
+                        pass
+                effective_current_repo_pot = repo_default_pot_id or pot_id or None
+
             emit(
                 {
                     "daemon": daemon_status,
@@ -279,6 +294,8 @@ def register(root: typer.Typer) -> None:
                     },
                     "backend_capabilities": list(caps.implemented()),
                     "active_pot": pot_id or None,
+                    "effective_current_repo_pot": effective_current_repo_pot,
+                    "repo_default_pot": repo_default_pot_id,
                     "recommended_next_action": None
                     if readiness.ready
                     else "Run `potpie backend doctor` or inspect `potpie graph status --json`.",
@@ -293,6 +310,16 @@ def register(root: typer.Typer) -> None:
                     f"caps={', '.join(caps.implemented())}\n"
                     f"ledger: {host.ledger.status().binding} "
                     f"available={host.ledger.status().available}"
+                    + (
+                        f"\nrepo: {repo_identity} → {effective_current_repo_pot}"
+                        + (
+                            f" (default={repo_default_pot_id})"
+                            if repo_default_pot_id
+                            else " (no repo default set)"
+                        )
+                        if repo_identity
+                        else ""
+                    )
                 ),
             )
 

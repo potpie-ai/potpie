@@ -119,3 +119,167 @@ def test_source_add_repo_default_reports_unavailable_host() -> None:
     emitted = json.loads(result.output)
     assert emitted["code"] == "repo_default_unavailable"
     assert fake_pots.calls == []
+
+
+# ---------------------------------------------------------------------------
+# source status — audit-10: no-ID per-pot summary and enriched single-source
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _StatusPots:
+    """Fake pots service with list_sources, source_status, and repo_default."""
+
+    _sources: list[SourceInfo] = field(default_factory=list)
+    repo_defaults: dict[str, str] = field(default_factory=dict)
+
+    def list_pots(self) -> list[PotInfo]:
+        return [PotInfo(pot_id="pot-1", name="default", active=True)]
+
+    def active_pot(self) -> PotInfo:
+        return PotInfo(pot_id="pot-1", name="default", active=True)
+
+    def list_sources(self, *, pot_id: str) -> list[SourceInfo]:
+        return self._sources
+
+    def source_status(self, *, pot_id: str, source_id: str) -> SourceInfo:
+        for s in self._sources:
+            if s.source_id == source_id:
+                return s
+        raise ValueError(f"no source {source_id}")
+
+    def repo_default(self, *, repo: str) -> str | None:
+        return self.repo_defaults.get(repo)
+
+    def add_source(
+        self, *, pot_id: str, kind: str, location: str, name: str | None = None
+    ) -> SourceInfo:
+        src = SourceInfo(
+            source_id="src-new",
+            kind=kind,
+            name=name or location,
+            location=location,
+        )
+        self._sources.append(src)
+        return src
+
+    def set_repo_default(self, *, repo: str, pot_id: str) -> None:
+        self.repo_defaults[repo] = pot_id
+
+
+@dataclass
+class _StatusHost:
+    pots: _StatusPots
+    graph: object = None
+
+
+def test_source_status_no_id_returns_pot_summary() -> None:
+    """No-ID invocation returns per-pot summary with all sources and pot info."""
+    src = SourceInfo(
+        source_id="src-1",
+        kind="repo",
+        name="acme/shop",
+        location="github.com/acme/shop",
+        status="ok",
+    )
+    fake_pots = _StatusPots(_sources=[src])
+    _common.set_host(_StatusHost(pots=fake_pots))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(pots.source_app, ["status", "--pot", "pot-1"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["pot_id"] == "pot-1"
+    assert payload["source_count"] == 1
+    assert len(payload["sources"]) == 1
+    row = payload["sources"][0]
+    assert row["id"] == "src-1"
+    assert row["kind"] == "repo"
+    assert row["location"] == "github.com/acme/shop"
+    assert row["registration_only"] is True
+    assert row["ingestion_status"] == "not_started"
+    assert "claim_count" in payload
+
+
+def test_source_status_no_id_marks_repo_default() -> None:
+    """Source whose location is the pot's repo default is marked repo_default=True."""
+    src = SourceInfo(
+        source_id="src-1",
+        kind="repo",
+        name="acme/shop",
+        location="github.com/acme/shop",
+        status="ok",
+    )
+    fake_pots = _StatusPots(_sources=[src])
+    fake_pots.repo_defaults["github.com/acme/shop"] = "pot-1"
+    _common.set_host(_StatusHost(pots=fake_pots))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(pots.source_app, ["status", "--pot", "pot-1"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["sources"][0]["repo_default"] is True
+
+
+def test_source_status_no_id_no_sources_recommends_add() -> None:
+    """Per-pot summary with no sources includes a recommended_next_action hint."""
+    fake_pots = _StatusPots(_sources=[])
+    _common.set_host(_StatusHost(pots=fake_pots))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(pots.source_app, ["status", "--pot", "pot-1"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["source_count"] == 0
+    assert payload["recommended_next_action"] is not None
+    assert "source add repo" in payload["recommended_next_action"]
+
+
+def test_source_status_with_id_returns_enriched_row() -> None:
+    """Providing a source-id returns a single enriched row, not the old 3-field shape."""
+    src = SourceInfo(
+        source_id="src-abc",
+        kind="repo",
+        name=".",
+        location="/home/user/project",
+        status="ok",
+    )
+    fake_pots = _StatusPots(_sources=[src])
+    _common.set_host(_StatusHost(pots=fake_pots))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(
+        pots.source_app, ["status", "src-abc", "--pot", "pot-1"]
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["id"] == "src-abc"
+    assert payload["kind"] == "repo"
+    assert payload["location"] == "/home/user/project"
+    assert payload["registration_only"] is True
+    assert payload["ingestion_status"] == "not_started"
+    assert "status" in payload
+
+
+def test_source_status_no_id_human_output_contains_kind_and_location() -> None:
+    """Plain-text no-ID output shows kind, location, and registration-only hint."""
+    src = SourceInfo(
+        source_id="src-1",
+        kind="repo",
+        name="shop",
+        location="github.com/acme/shop",
+        status="ok",
+    )
+    fake_pots = _StatusPots(_sources=[src])
+    _common.set_host(_StatusHost(pots=fake_pots))
+
+    result = CliRunner().invoke(pots.source_app, ["status", "--pot", "pot-1"])
+
+    assert result.exit_code == 0, result.output
+    assert "repo" in result.output
+    assert "github.com/acme/shop" in result.output
+    assert "registration-only" in result.output
