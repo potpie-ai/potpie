@@ -385,6 +385,8 @@ def _make_doctor_host(*, active_pot_id: str | None, repo_default: str | None) ->
         _Pot(active_pot_id) if active_pot_id else None
     )
     mock_host.pots.repo_default.return_value = repo_default
+    known_pot_ids = {pid for pid in (active_pot_id, repo_default) if pid}
+    mock_host.pots.list_pots.return_value = [_Pot(pid) for pid in sorted(known_pot_ids)]
     return mock_host
 
 

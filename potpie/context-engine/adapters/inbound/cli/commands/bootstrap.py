@@ -18,6 +18,7 @@ from adapters.inbound.cli.commands._common import (
     emit,
     get_host,
     is_json,
+    repo_default_pot_id,
     resolve_pot_id,
 )
 from adapters.inbound.cli.telemetry.onboarding_events import (
@@ -268,18 +269,11 @@ def register(root: typer.Typer) -> None:
             readiness = host.backend.mutation.readiness(pot_id)
             daemon_status = host.daemon.status()
 
-            # Resolve effective repo pot: what source/graph routing would use here
             repo_identity = current_repo_identity_for_cli()
-            repo_default_pot_id: str | None = None
-            effective_current_repo_pot: str | None = None
-            if repo_identity:
-                getter = getattr(host.pots, "repo_default", None)
-                if callable(getter):
-                    try:
-                        repo_default_pot_id = getter(repo=repo_identity) or None
-                    except Exception:  # noqa: BLE001
-                        pass
-                effective_current_repo_pot = repo_default_pot_id or pot_id or None
+            default_pot_id = repo_default_pot_id(host, repo_identity)
+            effective_current_repo_pot = (
+                default_pot_id or pot_id or None if repo_identity else None
+            )
 
             emit(
                 {
@@ -295,7 +289,7 @@ def register(root: typer.Typer) -> None:
                     "backend_capabilities": list(caps.implemented()),
                     "active_pot": pot_id or None,
                     "effective_current_repo_pot": effective_current_repo_pot,
-                    "repo_default_pot": repo_default_pot_id,
+                    "repo_default_pot": default_pot_id,
                     "recommended_next_action": None
                     if readiness.ready
                     else "Run `potpie backend doctor` or inspect `potpie graph status --json`.",
@@ -313,8 +307,8 @@ def register(root: typer.Typer) -> None:
                     + (
                         f"\nrepo: {repo_identity} → {effective_current_repo_pot}"
                         + (
-                            f" (default={repo_default_pot_id})"
-                            if repo_default_pot_id
+                            f" (default={default_pot_id})"
+                            if default_pot_id
                             else " (no repo default set)"
                         )
                         if repo_identity

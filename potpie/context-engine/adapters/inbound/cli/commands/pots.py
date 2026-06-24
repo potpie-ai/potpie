@@ -17,6 +17,7 @@ from adapters.inbound.cli.commands._common import (
     get_host,
     pot_graph_counts,
     pot_scope_info,
+    repo_default_matches,
     repo_pot_candidates,
     resolve_pot_id,
 )
@@ -566,14 +567,7 @@ def _enrich_source(host, src, pot_id: str) -> dict:
     repo_default = False
     if kind == "repo" and location:
         repo_key = repo_identity_key(location)
-        if repo_key:
-            getter = getattr(host.pots, "repo_default", None)
-            if callable(getter):
-                try:
-                    default_pot = getter(repo=repo_key)
-                    repo_default = bool(default_pot == pot_id)
-                except Exception:  # noqa: BLE001
-                    pass
+        repo_default = repo_default_matches(host, repo_key, pot_id)
     return {
         "id": src.source_id,
         "kind": kind,
