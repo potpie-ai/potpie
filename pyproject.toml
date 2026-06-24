@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Software Development",
 ]
 dependencies = [
-    "potpie-context-engine[all]==0.1.0b1",
+    "potpie-context-engine[all]==0.1.0b2",
 ]
 
 [project.scripts]

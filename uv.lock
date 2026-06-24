@@ -2462,7 +2462,7 @@ wheels = [
 
 [[package]]
 name = "potpie"
-version = "2.0.0b1"
+version = "2.0.0b2"
 source = { editable = "." }
 dependencies = [
     { name = "potpie-context-engine", extra = ["all"] },
@@ -2497,7 +2497,7 @@ dev = [
 
 [[package]]
 name = "potpie-context-engine"
-version = "0.1.0b1"
+version = "0.1.0b2"
 source = { editable = "potpie/context-engine" }
 dependencies = [
     { name = "falkordblite" },
