@@ -87,7 +87,7 @@ def telemetry_environment() -> str:
         _env("POTPIE_SENTRY_ENVIRONMENT")
         or _env("SENTRY_ENVIRONMENT")
         or _baked(build_defaults.POTPIE_SENTRY_ENVIRONMENT)
-        or "dev"
+        or build_defaults.DEFAULT_POTPIE_SENTRY_ENVIRONMENT
     )
 
 

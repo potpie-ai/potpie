@@ -25,6 +25,8 @@ TELEMETRY_NAMES = (
     "POTPIE_POSTHOG_HOST",
 )
 
+DEFAULT_POTPIE_SENTRY_ENVIRONMENT = "prod_oss"
+
 
 def oauth_config_values(environ: Mapping[str, str] | None = None) -> dict[str, str]:
     return {
@@ -45,7 +47,9 @@ def telemetry_config_values(
         ),
         "POTPIE_SENTRY_DSN": _env("POTPIE_SENTRY_DSN", environ),
         "POTPIE_SENTRY_ENVIRONMENT": _env_or_default(
-            "POTPIE_SENTRY_ENVIRONMENT", "production", environ
+            "POTPIE_SENTRY_ENVIRONMENT",
+            DEFAULT_POTPIE_SENTRY_ENVIRONMENT,
+            environ,
         ),
         "POTPIE_SENTRY_RELEASE": _env("POTPIE_SENTRY_RELEASE", environ),
         "POTPIE_SENTRY_DIST": _env("POTPIE_SENTRY_DIST", environ)

@@ -10,7 +10,7 @@ def test_telemetry_build_config_defaults_dist_to_github_sha() -> None:
         "POTPIE_TELEMETRY_DISABLED": "0",
         "POTPIE_SENTRY_ENABLED": "1",
         "POTPIE_SENTRY_DSN": "",
-        "POTPIE_SENTRY_ENVIRONMENT": "production",
+        "POTPIE_SENTRY_ENVIRONMENT": "prod_oss",
         "POTPIE_SENTRY_RELEASE": "",
         "POTPIE_SENTRY_DIST": "abc123",
         "POTPIE_POSTHOG_ENABLED": "1",
