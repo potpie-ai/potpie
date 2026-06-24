@@ -220,6 +220,29 @@ def test_install_agent_bundle_wraps_old_unmarked_agents_md(tmp_path: Path) -> No
     assert "<!-- potpie-start -->" in text
 
 
+def test_install_agent_bundle_updates_marked_agents_md_without_force(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    target = repo / "AGENTS.md"
+    target.write_text(
+        "# Local Setup\n\n<!-- potpie-start -->\nstale\n<!-- potpie-end -->\n\nKeep me.\n",
+        encoding="utf-8",
+    )
+
+    result = install_agent_bundle(repo)
+
+    text = target.read_text(encoding="utf-8")
+    assert "AGENTS.md" in result.updated
+    assert "# Local Setup" in text
+    assert "Keep me." in text
+    assert "stale" not in text
+    assert "# Context Engine" in text
+    assert text.count("<!-- potpie-start -->") == 1
+
+
 # --- Claude bundle tests ---
 
 
@@ -288,20 +311,25 @@ def test_install_agent_bundle_claude_updates_section_with_force(tmp_path: Path) 
     assert "# Project" in content
 
 
-def test_install_agent_bundle_claude_skips_changed_section_without_force(
+def test_install_agent_bundle_claude_updates_changed_section_without_force(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".git").mkdir()
     (repo / "CLAUDE.md").write_text(
-        "<!-- potpie-start -->\nCUSTOM\n<!-- potpie-end -->\n",
+        "# Project\n\n<!-- potpie-start -->\nCUSTOM\n<!-- potpie-end -->\n\nKeep me.\n",
         encoding="utf-8",
     )
 
     result = install_agent_bundle(repo, agent="claude")
 
-    assert "CLAUDE.md" in result.skipped
+    content = (repo / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "CLAUDE.md" in result.updated
+    assert "# Project" in content
+    assert "Keep me." in content
+    assert "CUSTOM" not in content
+    assert "context_resolve" in content
 
 
 def test_install_agent_bundle_claude_plugin_lays_out_plugin_dir(tmp_path: Path) -> None:

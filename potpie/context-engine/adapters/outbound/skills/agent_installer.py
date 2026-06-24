@@ -74,17 +74,13 @@ def iter_template_files() -> list[tuple[Path, str]]:
     return _iter_bundle_files("agent_bundle")
 
 
-def _merge_managed_markdown(
-    existing: str, section: str, *, force: bool
-) -> tuple[str, str]:
+def _merge_managed_markdown(existing: str, section: str) -> tuple[str, str]:
     """Return (merged_content, action) where action is 'unchanged'|'updated'|'created'."""
     normalized_section = section.strip()
     if _MANAGED_MARKER_RE.search(existing):
         merged = _MANAGED_MARKER_RE.sub(normalized_section, existing)
         if merged == existing:
             return existing, "unchanged"
-        if not force:
-            return existing, "skipped"
         return merged, "updated"
     if existing.strip() == _strip_managed_markers(normalized_section).strip():
         merged = normalized_section + "\n"
@@ -185,10 +181,7 @@ def _install_bundle(
         if out_path.name in merge_files:
             section = content
             existing = target.read_text(encoding="utf-8") if target.exists() else ""
-            merged, action = _merge_managed_markdown(existing, section, force=force)
-            if action == "skipped":
-                result.skipped.append(out_path.as_posix())
-                continue
+            merged, action = _merge_managed_markdown(existing, section)
             if action == "unchanged":
                 result.unchanged.append(out_path.as_posix())
                 continue

@@ -96,25 +96,19 @@ def _reset_product_analytics_state():
     events.
     """
 
-    try:
-        from adapters.inbound.cli.telemetry import product_analytics
-
-        product_analytics._flush_product_analytics_dispatcher()
-        product_analytics._dispatcher = product_analytics._ProductAnalyticsDispatcher()
-        product_analytics._sink = product_analytics.NoOpProductAnalyticsSink()
-    except Exception:
-        pass
+    _reset_product_analytics_globals()
 
     yield
 
-    try:
-        from adapters.inbound.cli.telemetry import product_analytics
+    _reset_product_analytics_globals()
 
-        product_analytics._flush_product_analytics_dispatcher()
-        product_analytics._dispatcher = product_analytics._ProductAnalyticsDispatcher()
-        product_analytics._sink = product_analytics.NoOpProductAnalyticsSink()
-    except Exception:
-        pass
+
+def _reset_product_analytics_globals() -> None:
+    from adapters.inbound.cli.telemetry import product_analytics
+
+    product_analytics._flush_product_analytics_dispatcher()
+    product_analytics._dispatcher = product_analytics._ProductAnalyticsDispatcher()
+    product_analytics._sink = product_analytics.NoOpProductAnalyticsSink()
 
 
 @pytest.fixture(autouse=True)
