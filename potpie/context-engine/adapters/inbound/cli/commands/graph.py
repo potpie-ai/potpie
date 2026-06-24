@@ -41,6 +41,10 @@ from adapters.inbound.cli.commands._common import (
     pot_scope_info,
     resolve_pot_id,
 )
+from adapters.inbound.cli.telemetry.product_analytics import AnalyticsValue
+from adapters.inbound.cli.telemetry.usage_events import (
+    capture_usage_command_succeeded,
+)
 from domain.errors import CapabilityNotImplemented
 from domain.graph_contract import GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION
 from domain.graph_contract import ONTOLOGY_VERSION
@@ -172,6 +176,13 @@ def _graph_command(command: str):
                 duration_ms=duration_ms,
                 attributes=attrs,
             )
+            _record_graph_command_usage_event(
+                command=command,
+                duration_ms=duration_ms,
+                result=ctx.telemetry_result,
+                error_code=ctx.telemetry_error_code,
+                attributes=attrs,
+            )
 
 
 def _graph_telemetry_shape(command: str) -> tuple[str, dict[str, str]]:
@@ -229,6 +240,73 @@ def _record_graph_command_telemetry(
         )
     except Exception:  # noqa: BLE001 - observability must never fail a command
         pass
+    try:
+        from bootstrap import sentry_metrics_runtime
+
+        sentry_metrics_runtime.count(
+            f"ce.graph.{metric_root}_total",
+            attributes=metric_attrs,
+        )
+        sentry_metrics_runtime.distribution(
+            f"ce.graph.{metric_root}_ms",
+            duration_ms,
+            unit="millisecond",
+            attributes=metric_attrs,
+        )
+        sentry_metrics_runtime.flush(timeout=2.0)
+    except Exception:  # noqa: BLE001 - Sentry metrics must never fail a command
+        pass
+
+
+_GRAPH_USAGE_ATTRIBUTE_KEYS: frozenset[str] = frozenset(
+    {
+        "backend_profile",
+        "backend_ready",
+        "match_mode",
+        "operation",
+        "report",
+        "risk",
+        "status",
+        "subgraph",
+        "view",
+    }
+)
+
+
+def _record_graph_command_usage_event(
+    *,
+    command: str,
+    duration_ms: float,
+    result: str,
+    error_code: str,
+    attributes: Mapping[str, Any],
+) -> None:
+    if result != "ok" or error_code != "none":
+        return
+    props: dict[str, AnalyticsValue] = {
+        "command_family": _graph_command_family(command),
+        "duration_ms": round(duration_ms, 3),
+        "error_code": error_code,
+        "result": result,
+    }
+    for key in sorted(_GRAPH_USAGE_ATTRIBUTE_KEYS):
+        value = attributes.get(key)
+        if value is None:
+            continue
+        if isinstance(value, (bool, int, float, str)):
+            props[key] = value
+        else:
+            props[key] = str(value)
+    capture_usage_command_succeeded(
+        command=command,
+        result_kind="graph_command",
+        properties=props,
+    )
+
+
+def _graph_command_family(command: str) -> str:
+    raw = command.removeprefix("graph.").replace("-", "_")
+    return raw.split(".", 1)[0] if raw else "unknown"
 
 
 def _graph_telemetry_attributes(result: Mapping[str, Any]) -> dict[str, str]:
