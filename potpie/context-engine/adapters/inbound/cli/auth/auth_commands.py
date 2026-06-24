@@ -218,10 +218,8 @@ def _print_linear_login_success(
         status.get("site_name"),
     )
     who = account[0] or account[1] or "Linear"
-    token_storage = str(status.get("token_storage") or "keychain")
-    storage_label = (
-        "system keychain" if token_storage == "keychain" else "local credentials file"
-    )
+    token_storage = str(status.get("token_storage") or "file")
+    storage_label = "local credentials file"
     org_suffix = f" @ {account[2]}" if account[2] else ""
     if refreshed:
         summary = f"Linear session refreshed for {who}{org_suffix}."

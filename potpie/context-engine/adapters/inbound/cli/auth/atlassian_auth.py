@@ -13,7 +13,8 @@ import time
 import webbrowser
 import select
 from dataclasses import dataclass
-from typing import Any
+from collections.abc import Callable
+from typing import Any, Literal, TypeVar
 
 import typer
 
@@ -428,11 +429,10 @@ def run_atlassian_api_token_auth(
         raise typer.Exit(code=EXIT_AUTH)
 
     token_storage = integration_token_storage()
-    storage_label = (
-        "system keychain"
-        if token_storage == "keychain"
-        else "local credentials file"
-    )
+    stored = get_integration_status(product)
+    if stored.get("token_storage"):
+        token_storage = str(stored["token_storage"])
+    storage_label = "local credentials file"
     summary = (
         f"Connected {product_label} to {result.site_url}. "
         f"Stored tokens in {storage_label}; metadata saved to {credentials_path()}."
@@ -449,6 +449,6 @@ def run_atlassian_api_token_auth(
             "cloud_id": result.cloud_id,
             "path": str(credentials_path()),
             "token_storage": token_storage,
-            "product_verified": verified_product or product,
+            "product_verified": product,
         },
     )
