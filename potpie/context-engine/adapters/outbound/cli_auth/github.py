@@ -329,5 +329,5 @@ def build_provider_credentials(
             "auth_flow": "device",
             "verification_uri": verification_uri,
         },
-        token_storage="keychain",
+        token_storage="file",
     )

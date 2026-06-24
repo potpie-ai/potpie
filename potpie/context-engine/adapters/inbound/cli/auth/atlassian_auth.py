@@ -361,11 +361,7 @@ def run_atlassian_api_token_auth(
     stored = get_integration_status(product)
     if stored.get("token_storage"):
         token_storage = str(stored["token_storage"])
-    storage_label = (
-        "system keychain"
-        if token_storage == "keychain"
-        else "local credentials file"
-    )
+    storage_label = "local credentials file"
     summary = (
         f"Connected {product_label} to {site['site_url']}. "
         f"Stored tokens in {storage_label}; metadata saved to {credentials_path()}."

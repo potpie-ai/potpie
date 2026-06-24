@@ -40,7 +40,7 @@ class ProviderCredentials:
     updated_at: str
     expires_at: str | None
     metadata: dict[str, Any]
-    token_storage: str = "keychain"
+    token_storage: str = "file"
 
     def as_dict(self) -> dict[str, Any]:
         return {
