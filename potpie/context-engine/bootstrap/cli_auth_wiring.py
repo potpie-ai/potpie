@@ -17,9 +17,9 @@ from domain.ports.cli_auth.credentials import CredentialStore
 
 def build_credential_store() -> CredentialStore:
     """Construct the production file-backed ``CredentialStore``."""
-    from adapters.outbound.cli_auth.credentials import KeyringCredentialStore
+    from adapters.outbound.cli_auth.credentials import FileCredentialStore
 
-    return KeyringCredentialStore()
+    return FileCredentialStore()
 
 
 __all__ = ["build_credential_store"]

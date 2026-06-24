@@ -1,6 +1,6 @@
 """File-backed implementation of the ``CredentialStore`` port.
 
-`KeyringCredentialStore` implements the core-owned
+`FileCredentialStore` implements the core-owned
 :class:`~domain.ports.cli_auth.credentials.CredentialStore` port, delegating to the
 existing :mod:`adapters.outbound.cli_auth.credentials_store` module (the file-backed
 store is *wrapped, not rewritten*). It is constructed at the composition root
@@ -18,7 +18,7 @@ from domain.ports.cli_auth.credentials import CredentialStore
 from adapters.outbound.cli_auth import credentials_store as _store
 
 
-class KeyringCredentialStore(CredentialStore):
+class FileCredentialStore(CredentialStore):
     """Production `CredentialStore` backed by local credential files.
 
     Thin delegation to the `credentials_store` module so the existing
@@ -136,4 +136,4 @@ class KeyringCredentialStore(CredentialStore):
         _store.save_confluence_workspace_prefs(space_key=space_key)
 
 
-__all__ = ["CredentialStore", "KeyringCredentialStore"]
+__all__ = ["CredentialStore", "FileCredentialStore"]
