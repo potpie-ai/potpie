@@ -41,7 +41,7 @@ python3 -m pip install --user potpie
 ### Step 2: Run potpie setup wizard
 
 ```bash
-potpie setup 
+potpie setup
 ```
 
 Potpie setup wizard walks you through the entire setup, choose integrations of your choice and set it up with your preferred harness.
@@ -60,7 +60,7 @@ Open your previously selected harness and tell it ingest the repo.
 > [!NOTE]
 > You don't need to ingest the repo manually, the agent will ingest the repo and update it incrementally when required.
 
-You can view your contex graph in web:
+You can view your context graph in the web UI:
 
 ```bash
 potpie ui
@@ -69,14 +69,12 @@ potpie ui
 This will open a graph explorer in your browser.
 ![alt text](assets/web_ui.png)
 
+## Basic CLI user checklist
 
-
-## Usage
-
-The main cli commands are:
+The main CLI commands are:
 
 | Command | Purpose |
-|---|---|
+| --- | --- |
 | `potpie status --host` | Check local daemon, pot, graph, and skill readiness. |
 | `potpie status --verify` | Check connected integration credentials. |
 | `potpie resolve "<task>"` | Pull the context an agent should read before doing a task. |
@@ -84,7 +82,7 @@ The main cli commands are:
 | `potpie record --type <type> --summary "..."` | Save a reusable project learning. |
 | `potpie skills install --agent <agent>` | Install or refresh Potpie guidance for an agent harness. |
 
-Example:
+Examples:
 
 ```bash
 potpie status --host
@@ -93,7 +91,40 @@ potpie search "authentication flow"
 potpie record --type decision --summary "Use the existing billing adapter for Stripe events"
 ```
 
-You can find a exhaustive list with more examples in our [docs](https://docs.potpie.ai).
+You can find an exhaustive list with more examples in our [docs](https://docs.potpie.ai).
+
+## Integrations and coding tools
+
+Potpie supports a variety of integrations and coding harnesses, with more coming.
+If your team needs a new integration or harness, please
+[raise a ticket](https://github.com/potpie-ai/potpie/issues/new/choose).
+
+### Integrations
+
+| Tool | Description |
+| --- | --- |
+| ![GitHub][github-badge] | Index repositories, pull requests, issues, reviews and source history. |
+| ![Linear][linear-badge] | Index teams, issues, projects and documents. |
+| ![Jira][jira-badge] | Index projects, issues, status and changelog context. |
+| ![Confluence][confluence-badge] | Index spaces, pages, runbooks and decisions. |
+
+### Coding tools
+
+| Tool | Description |
+| --- | --- |
+| ![Claude Code][claude-badge] | Install Potpie instructions and skills for Claude Code. |
+| ![OpenAI Codex][codex-badge] | Install Potpie instructions and skills for OpenAI Codex. |
+| ![Cursor][cursor-badge] | Install Potpie instructions and skills for Cursor. |
+| ![OpenCode][opencode-badge] | Install Potpie skills for OpenCode. |
+
+[github-badge]: https://img.shields.io/badge/GitHub-111827?style=flat-square&logo=github&logoColor=white
+[linear-badge]: https://img.shields.io/badge/Linear-111827?style=flat-square&logo=linear&logoColor=white
+[jira-badge]: https://img.shields.io/badge/Jira-111827?style=flat-square&logo=jira&logoColor=white
+[confluence-badge]: https://img.shields.io/badge/Confluence-111827?style=flat-square&logo=confluence&logoColor=white
+[claude-badge]: https://img.shields.io/badge/Claude%20Code-111827?style=flat-square&logo=anthropic&logoColor=white
+[codex-badge]: https://img.shields.io/badge/OpenAI%20Codex-111827?style=flat-square&logo=openai&logoColor=white
+[cursor-badge]: https://img.shields.io/badge/Cursor-111827?style=flat-square&logo=cursor&logoColor=white
+[opencode-badge]: https://img.shields.io/badge/OpenCode-111827?style=flat-square&logo=opencode&logoColor=white
 
 ## Architecture
 
