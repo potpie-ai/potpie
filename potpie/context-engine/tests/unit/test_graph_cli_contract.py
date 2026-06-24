@@ -12,6 +12,8 @@ from typer.testing import CliRunner
 
 from bootstrap import observability_runtime
 from adapters.inbound.cli.commands import _common, graph
+from adapters.inbound.cli.telemetry import product_analytics
+from adapters.inbound.cli.telemetry.context import TelemetryContext
 from domain.graph_plans import (
     GraphIngestionVerificationResult,
     GraphMutationCommitResult,
@@ -235,6 +237,14 @@ class _RecordingObservability:
         del name, value, attributes
 
 
+class _ProductAnalyticsSink:
+    def __init__(self) -> None:
+        self.events = []
+
+    def capture(self, event) -> None:
+        self.events.append(event)
+
+
 class _Nudge:
     def __init__(self) -> None:
         self.request = None
@@ -453,6 +463,31 @@ def _valid_mutation_payload() -> dict:
             }
         ]
     }
+
+
+def _bind_graph_product_analytics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> _ProductAnalyticsSink:
+    sink = _ProductAnalyticsSink()
+    monkeypatch.setattr(product_analytics, "_sink", sink)
+    monkeypatch.setattr(
+        product_analytics,
+        "current_telemetry_context",
+        lambda: TelemetryContext(
+            anonymous_install_id="install_graph",
+            invocation_id="invoke_graph",
+            daemon_session_id="daemon_graph",
+            environment="test",
+            command="graph",
+            subcommand=None,
+            output_mode="json",
+            cli_version="0.1.0",
+            python_version="3.13.0",
+            os="darwin",
+            arch="arm64",
+        ),
+    )
+    return sink
 
 
 def _bulk_mutation_payload(count: int = 3) -> dict:
@@ -761,7 +796,25 @@ def test_graph_workbench_commands_emit_v2_observability(
 ) -> None:
     _common.set_json(True)
     obs = _RecordingObservability()
+    sentry_counts = []
+    sentry_distributions = []
     monkeypatch.setattr(observability_runtime, "_OBSERVABILITY", obs)
+    monkeypatch.setattr(
+        "bootstrap.sentry_metrics_runtime.count",
+        lambda name, value=1, *, unit=None, attributes=None: sentry_counts.append(
+            (name, value, unit, dict(attributes or {}))
+        ),
+    )
+    monkeypatch.setattr(
+        "bootstrap.sentry_metrics_runtime.distribution",
+        lambda name, value, *, unit=None, attributes=None: sentry_distributions.append(
+            (name, value, unit, dict(attributes or {}))
+        ),
+    )
+    monkeypatch.setattr(
+        "bootstrap.sentry_metrics_runtime.flush", lambda timeout=2.0: None
+    )
+    sink = _bind_graph_product_analytics(monkeypatch)
     payload_file = tmp_path / "mutation.json"
     payload_file.write_text(json.dumps(_valid_mutation_payload()), encoding="utf-8")
 
@@ -810,6 +863,36 @@ def test_graph_workbench_commands_emit_v2_observability(
         "graph.inbox",
         "graph.quality",
     }
+    graph_sentry_counts = [
+        item for item in sentry_counts if item[0].startswith("ce.graph.")
+    ]
+    assert {item[0] for item in graph_sentry_counts} >= {
+        "ce.graph.propose_total",
+        "ce.graph.inbox_total",
+        "ce.graph.quality_total",
+    }
+    sentry_propose = next(
+        item for item in graph_sentry_counts if item[0] == "ce.graph.propose_total"
+    )
+    assert sentry_propose[3]["risk"] == "low"
+    assert sentry_propose[3]["status"] == "validated"
+    assert any(item[0] == "ce.graph.propose_ms" for item in sentry_distributions)
+    analytics_events = [
+        event for event in sink.events if event.name == "cli_usage_command_succeeded"
+    ]
+    assert [event.properties["command"] for event in analytics_events] == [
+        "graph.propose",
+        "graph.inbox.add",
+        "graph.quality.summary",
+    ]
+    assert {event.properties["result_kind"] for event in analytics_events} == {
+        "graph_command"
+    }
+    assert analytics_events[0].properties["risk"] == "low"
+    assert analytics_events[1].properties["operation"] == "add"
+    assert analytics_events[2].properties["report"] == "summary"
+    assert "pot_id" not in analytics_events[0].properties
+    assert "request_id" not in analytics_events[0].properties
 
 
 def test_graph_commit_applies_plan_id_only() -> None:
@@ -1636,6 +1719,25 @@ def test_graph_read_emits_v2_observability(monkeypatch: pytest.MonkeyPatch) -> N
     assert counter[2]["subgraph"] == "recent_changes"
     assert counter[2]["view"] == "recent_changes.timeline"
     assert any(item[0] == "ce.graph.read_ms" for item in obs.histograms)
+
+
+def test_graph_validation_error_does_not_record_usage_analytics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _common.set_json(True)
+    sink = _bind_graph_product_analytics(monkeypatch)
+    graph_service = _Graph(read_result=_timeline_env())
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["read", "--subgraph", "recent_changes"],
+    )
+
+    assert result.exit_code == 1
+    assert [
+        event for event in sink.events if event.name == "cli_usage_command_succeeded"
+    ] == []
 
 
 def test_graph_nudge_accepts_dash_event_alias() -> None:
