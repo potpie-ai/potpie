@@ -74,6 +74,7 @@ potpie ui
 ```
 
 This will open a graph explorer in your browser.
+![alt text](assets/web_ui.png)
 
 
 
