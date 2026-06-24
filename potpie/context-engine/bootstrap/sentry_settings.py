@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from importlib import metadata
 from typing import ClassVar, Final
 
+from adapters.inbound.cli.telemetry import _build_defaults as build_defaults
+
 _FALSE_VALUES: Final[frozenset[str]] = frozenset({"0", "false", "no", "off"})
 
 
@@ -26,17 +28,32 @@ class SentrySettings:
 
 
 def load_sentry_settings() -> SentrySettings:
-    dsn = _env("POTPIE_SENTRY_DSN") or _env("SENTRY_DSN")
-    telemetry_disabled = _is_truthy_flag("POTPIE_TELEMETRY_DISABLED")
-    sentry_disabled = _is_falsey_flag("POTPIE_SENTRY_ENABLED")
+    dsn = (
+        _env("POTPIE_SENTRY_DSN")
+        or _env("SENTRY_DSN")
+        or _baked(build_defaults.POTPIE_SENTRY_DSN)
+    )
+    telemetry_disabled = _is_truthy_config(
+        "POTPIE_TELEMETRY_DISABLED",
+        build_defaults.POTPIE_TELEMETRY_DISABLED,
+    )
+    sentry_disabled = _is_falsey_config(
+        "POTPIE_SENTRY_ENABLED",
+        build_defaults.POTPIE_SENTRY_ENABLED,
+    )
     return SentrySettings(
         enabled=dsn is not None and not telemetry_disabled and not sentry_disabled,
         dsn=dsn,
         environment=telemetry_environment(),
         release=_env("POTPIE_SENTRY_RELEASE")
         or _env("SENTRY_RELEASE")
+        or _baked(build_defaults.POTPIE_SENTRY_RELEASE)
         or default_cli_release(),
-        dist=_env("POTPIE_SENTRY_DIST") or _env("SENTRY_DIST"),
+        dist=(
+            _env("POTPIE_SENTRY_DIST")
+            or _env("SENTRY_DIST")
+            or _baked(build_defaults.POTPIE_SENTRY_DIST)
+        ),
     )
 
 
@@ -49,7 +66,12 @@ def default_cli_release() -> str:
 
 
 def telemetry_environment() -> str:
-    return _env("POTPIE_SENTRY_ENVIRONMENT") or _env("SENTRY_ENVIRONMENT") or "dev"
+    return (
+        _env("POTPIE_SENTRY_ENVIRONMENT")
+        or _env("SENTRY_ENVIRONMENT")
+        or _baked(build_defaults.POTPIE_SENTRY_ENVIRONMENT)
+        or "dev"
+    )
 
 
 def _env(name: str) -> str | None:
@@ -60,14 +82,26 @@ def _env(name: str) -> str | None:
     return stripped or None
 
 
-def _is_falsey_flag(name: str) -> bool:
-    value = os.getenv(name)
-    return value is not None and value.strip().lower() in _FALSE_VALUES
+def _baked(value: str) -> str | None:
+    stripped = value.strip()
+    return stripped or None
 
 
-def _is_truthy_flag(name: str) -> bool:
+def _flag_config(name: str, baked: str) -> str | None:
     value = os.getenv(name)
-    if value is None:
-        return False
-    normalized = value.strip().lower()
-    return normalized != "" and normalized not in _FALSE_VALUES
+    if value is not None:
+        return value.strip().lower()
+    baked_value = _baked(baked)
+    if baked_value is None:
+        return None
+    return baked_value.lower()
+
+
+def _is_falsey_config(name: str, baked: str = "") -> bool:
+    value = _flag_config(name, baked)
+    return value is not None and value in _FALSE_VALUES
+
+
+def _is_truthy_config(name: str, baked: str = "") -> bool:
+    value = _flag_config(name, baked)
+    return value is not None and value != "" and value not in _FALSE_VALUES
