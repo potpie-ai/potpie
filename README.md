@@ -18,14 +18,7 @@
 [Potpie](https://potpie.ai) turns your codebase and software development lifecycle into a living context graph for AI agents.
 It indexes code, structure, decisions, source history, team knowledge and engineering workflows, so agents can answer questions, plan changes, debug failures, and write code with project-specific context.
 
-<p align="center">
-  <a href="./docs/context-graph/README.md">
-    <picture>
-      <source srcset="./assets/context_graph.webp" type="image/webp" />
-      <img width="900" alt="Potpie living context graph showing code, decisions, history, and team knowledge connected for AI agents" src="./assets/context_graph.gif" />
-    </picture>
-  </a>
-</p>
+![](assets/context_graph.gif)
 
 ## Install and setup Potpie
 
