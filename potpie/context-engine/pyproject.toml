@@ -113,6 +113,8 @@ include = [
 
 [tool.hatch.build.targets.sdist]
 include = [
+    "build_config_values.py",
+    "oauth_client_id_injection_hook.py",
     "domain",
     "domain/playbooks/**/*.md",
     "application",
