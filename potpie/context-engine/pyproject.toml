@@ -7,7 +7,7 @@ path = "oauth_client_id_injection_hook.py"
 
 [project]
 name = "potpie-context-engine"
-version = "0.1.0"
+version = "0.1.0b1"
 description = "Context graph API, webhooks, CLI, and MCP."
 requires-python = ">=3.12,<3.14"
 dependencies = [
