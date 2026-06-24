@@ -46,6 +46,11 @@ bundle into an agent harness (`commands/skills.py` → `HostShell.skills`). The
 default scope is global, so skills are installed once into the selected
 harness's user-level skills directory:
 
+The shipped templates live under `adapters/inbound/cli/templates/`: project
+bundles in `agent_bundle/` and `claude_bundle/`, compact global instruction
+blocks in `global_agent_bundle/`, and the Claude Code plugin in
+`claude_plugin/`.
+
 | Harness | Global path |
 |---------|-------------|
 | Cursor | `~/.cursor/skills/<skill>/SKILL.md` |
@@ -55,7 +60,9 @@ harness's user-level skills directory:
 
 For harnesses with documented file-backed global instructions, install/update
 also refreshes a compact Potpie managed block in `~/.claude/CLAUDE.md` and
-`~/.codex/AGENTS.md`.
+`~/.codex/AGENTS.md`. Existing user-authored content is preserved; Potpie only
+appends or updates the `<!-- potpie-start -->` / `<!-- potpie-end -->` managed
+section.
 
 Remove one global skill with `potpie skills remove <id> --agent claude`, or
 delete every globally installed Potpie skill for a harness with
@@ -66,7 +73,9 @@ Use `--scope project --path .` for repo-local installs. The bundle keeps the
 agent surface to the four tools above and encodes feature / debugging / review /
 operations / docs / onboarding workflows as `context_resolve` recipes. Agents
 see only an advisory `skills` block in `context_status` with missing/outdated
-skills and the exact install command.
+skills and the exact install command. Repo-local `AGENTS.md` and `CLAUDE.md`
+files are merged the same way as global instruction files, so setup does not
+replace existing agent instructions.
 
 ## MCP
 

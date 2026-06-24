@@ -350,7 +350,9 @@ skills directory:
 | Codex | `$HOME/.agents/skills/<skill>/SKILL.md` |
 
 Use `--scope project --path .` when a repo-local install should be committed or
-shared with the repository.
+shared with the repository. Instruction files such as `AGENTS.md` and
+`CLAUDE.md` are merged through Potpie managed blocks; existing user-authored
+content is preserved and Potpie only appends or updates its marked section.
 
 ## Output Contract
 

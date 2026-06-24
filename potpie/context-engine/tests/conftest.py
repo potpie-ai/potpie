@@ -87,6 +87,31 @@ def _reset_cli_state():
 
 
 @pytest.fixture(autouse=True)
+def _reset_product_analytics_state():
+    """Keep product analytics globals isolated between tests.
+
+    The CLI uses one module-global background dispatcher per process. In the test
+    process, earlier CLI/setup tests can leave queued analytics payloads behind;
+    reset the dispatcher and sink so dispatcher tests only observe their own
+    events.
+    """
+
+    _reset_product_analytics_globals()
+
+    yield
+
+    _reset_product_analytics_globals()
+
+
+def _reset_product_analytics_globals() -> None:
+    from adapters.inbound.cli.telemetry import product_analytics
+
+    product_analytics._flush_product_analytics_dispatcher()
+    product_analytics._dispatcher = product_analytics._ProductAnalyticsDispatcher()
+    product_analytics._sink = product_analytics.NoOpProductAnalyticsSink()
+
+
+@pytest.fixture(autouse=True)
 def _no_real_browser(monkeypatch: pytest.MonkeyPatch) -> None:
     """Never open a real browser during tests.
 
