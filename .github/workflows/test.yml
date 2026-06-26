@@ -112,6 +112,9 @@ jobs:
         with:
           version: "0.10.7"
 
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install dependencies
         run: uv sync --frozen --all-packages --no-cache
 

@@ -93,7 +93,24 @@ def _isolated_env(tmp_path: Path) -> dict[str, str]:
     return env
 
 
+def _has_usable_rust_toolchain() -> bool:
+    try:
+        proc = subprocess.run(
+            ["cargo", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
 def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path) -> None:
+    if not _has_usable_rust_toolchain():
+        pytest.skip("Rust toolchain (cargo) is required for fresh-clone workspace sync")
+
     clone_root = tmp_path / "repo-clone"
     env = _isolated_env(tmp_path)
 
