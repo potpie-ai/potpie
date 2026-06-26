@@ -15,7 +15,9 @@ from adapters.outbound.cli_auth.credentials_store import (
 )
 from adapters.outbound.cli_auth.errors import CliAuthError
 from adapters.outbound.cli_auth.gitbucket_client import (
+    GitBucketClientError,
     _token_auth_header,
+    ensure_gitbucket_pat_transport_allowed,
     gitbucket_api_base,
 )
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
@@ -103,6 +105,11 @@ def list_gitbucket_repos(
     if not host_provided and not token_provided:
         host_url, token = _load_credentials()
 
+    try:
+        ensure_gitbucket_pat_transport_allowed(host_url)
+    except GitBucketClientError as exc:
+        raise GitBucketReadError(str(exc)) from exc
+
     api_base = gitbucket_api_base(host_url)
     headers = _token_auth_header(token)
     owns = http is None
@@ -115,7 +122,9 @@ def list_gitbucket_repos(
             http.close()
 
     if not isinstance(data, list):
-        return []
+        raise GitBucketReadError(
+            "GitBucket API returned an unexpected response format for /user/repos."
+        )
     return [
         _normalize_repo(repo)
         for repo in data

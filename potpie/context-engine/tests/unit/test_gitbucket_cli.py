@@ -32,7 +32,7 @@ from adapters.outbound.cli_auth.integration_profile import (
 from adapters.outbound.cli_auth.integration_verify import verify_integration_access
 from adapters.outbound.cli_auth.provider_config import (
     GITBUCKET_API_VERSION,
-    GITBUCKET_TOKEN_PAGE_PATH,
+    GITBUCKET_TOKEN_PAGE_SUFFIX,
 )
 
 pytestmark = pytest.mark.unit
@@ -124,8 +124,8 @@ def test_gitbucket_api_base_and_token_page_url() -> None:
     host = "https://git.company.com/gitbucket"
     assert gitbucket_api_base(host) == f"{host}/api/{GITBUCKET_API_VERSION}"
     assert (
-        gitbucket_token_page_url(host)
-        == f"{host}{GITBUCKET_TOKEN_PAGE_PATH}"
+        gitbucket_token_page_url(host, "alice")
+        == f"{host}/alice/{GITBUCKET_TOKEN_PAGE_SUFFIX}"
     )
 
 
@@ -281,16 +281,35 @@ def test_list_gitbucket_repos_handles_non_dict_owner() -> None:
     ]
 
 
-def test_list_gitbucket_repos_non_list_response_returns_empty() -> None:
+def test_list_gitbucket_repos_non_list_response_raises() -> None:
     client = FakeClient([httpx.Response(200, json={"message": "unexpected"})])
 
-    repos = list_gitbucket_repos(
-        host_url="http://localhost:8080",
-        token="secret-token",
-        http=client,
-    )
+    with pytest.raises(
+        GitBucketReadError,
+        match="unexpected response format for /user/repos",
+    ):
+        list_gitbucket_repos(
+            host_url="http://localhost:8080",
+            token="secret-token",
+            http=client,
+        )
 
-    assert repos == []
+
+def test_list_gitbucket_repos_rejects_insecure_http_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("POTPIE_GITBUCKET_ALLOW_INSECURE_HTTP", raising=False)
+    monkeypatch.delenv("GITBUCKET_ALLOW_INSECURE_HTTP", raising=False)
+    client = FakeClient([httpx.Response(200, json=[])])
+
+    with pytest.raises(GitBucketReadError, match="plain HTTP is only allowed"):
+        list_gitbucket_repos(
+            host_url="http://192.168.1.1:8080",
+            token="secret-token",
+            http=client,
+        )
+
+    assert client.calls == []
 
 
 def test_list_gitbucket_repos_requires_stored_credentials() -> None:
@@ -775,6 +794,7 @@ def test_open_token_page_opens_browser_when_confirmed(
 ) -> None:
     opened: list[str] = []
     monkeypatch.setattr(gb_cmds, "_guard_typer_prompt", lambda callback: True)
+    monkeypatch.setattr(gb_cmds, "_prompt_gitbucket_login", lambda: "alice")
     monkeypatch.setattr(
         gb_cmds,
         "print_plain_line",
@@ -788,7 +808,7 @@ def test_open_token_page_opens_browser_when_confirmed(
 
     gb_cmds._open_token_page("http://localhost:8080")
 
-    assert opened == ["http://localhost:8080/settings/tokens"]
+    assert opened == ["http://localhost:8080/alice/_application"]
 
 
 def test_run_gitbucket_auth_interactive_flow(

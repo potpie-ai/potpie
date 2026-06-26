@@ -16,7 +16,7 @@ from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpC
 from adapters.outbound.cli_auth.provider_config import (
     GITBUCKET_ALLOW_INSECURE_HTTP_ENV_VARS,
     GITBUCKET_API_VERSION,
-    GITBUCKET_TOKEN_PAGE_PATH,
+    GITBUCKET_TOKEN_PAGE_SUFFIX,
 )
 
 _HTTP_TIMEOUT = 30.0
@@ -88,7 +88,7 @@ def _is_loopback_hostname(hostname: str | None) -> bool:
         return False
 
 
-def _ensure_gitbucket_pat_transport_allowed(host_url: str) -> None:
+def ensure_gitbucket_pat_transport_allowed(host_url: str) -> None:
     """Reject plain HTTP to non-loopback hosts before sending a PAT."""
     normalized = normalize_gitbucket_host_url(host_url)
     if not normalized:
@@ -111,9 +111,13 @@ def gitbucket_api_base(host_url: str) -> str:
     return f"{normalize_gitbucket_host_url(host_url)}/api/{GITBUCKET_API_VERSION}"
 
 
-def gitbucket_token_page_url(host_url: str) -> str:
-    """Return the URL for the GitBucket personal access token creation page."""
-    return f"{normalize_gitbucket_host_url(host_url)}{GITBUCKET_TOKEN_PAGE_PATH}"
+def gitbucket_token_page_url(host_url: str, login: str) -> str:
+    """Return the GitBucket Applications page where users create personal access tokens."""
+    normalized = normalize_gitbucket_host_url(host_url)
+    username = login.strip().strip("/")
+    if not username:
+        raise ValueError("GitBucket username is required for the token page URL.")
+    return f"{normalized}/{username}/{GITBUCKET_TOKEN_PAGE_SUFFIX}"
 
 
 def _token_auth_header(token: str) -> dict[str, str]:
@@ -132,7 +136,7 @@ def verify_gitbucket_token(
     Raises :class:`GitBucketClientError` on failure.
     """
     normalized = normalize_gitbucket_host_url(host_url)
-    _ensure_gitbucket_pat_transport_allowed(normalized)
+    ensure_gitbucket_pat_transport_allowed(normalized)
     api_base = gitbucket_api_base(normalized)
     headers = _token_auth_header(token)
     owns = http is None
@@ -196,6 +200,7 @@ def verify_gitbucket_token(
 __all__ = [
     "GitBucketAccount",
     "GitBucketClientError",
+    "ensure_gitbucket_pat_transport_allowed",
     "gitbucket_api_base",
     "gitbucket_token_page_url",
     "normalize_gitbucket_host_url",

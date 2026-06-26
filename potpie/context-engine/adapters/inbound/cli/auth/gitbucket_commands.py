@@ -69,6 +69,17 @@ def _prompt_host_url() -> str:
     )
 
 
+def _prompt_gitbucket_login() -> str:
+    login = _guard_typer_prompt(
+        lambda: typer.prompt(
+            "GitBucket username (for opening the token page)"
+        ).strip()
+    )
+    if not login:
+        raise typer.Exit(code=1)
+    return login
+
+
 def _prompt_token() -> str:
     token = _guard_typer_prompt(
         lambda: typer.prompt("Personal access token", hide_input=True).strip()
@@ -78,7 +89,7 @@ def _prompt_token() -> str:
     return token
 
 
-def _open_token_page(host_url: str) -> None:
+def _open_token_page(host_url: str, *, login: str | None = None) -> None:
     """Show setup steps, then open the GitBucket token creation page."""
     print_plain_line("GitBucket login — personal access token", as_json=False)
     for line in (
@@ -96,7 +107,8 @@ def _open_token_page(host_url: str) -> None:
     if not confirmed:
         return
 
-    token_page = gitbucket_token_page_url(host_url)
+    login_value = (login or "").strip() or _prompt_gitbucket_login()
+    token_page = gitbucket_token_page_url(host_url, login_value)
     print_plain_line(f"Opening {token_page} ...", as_json=False)
     opened = webbrowser.open(token_page, new=1)
     if not opened:
@@ -239,7 +251,11 @@ def run_gitbucket_api_token_auth(
         if not as_json:
             _open_token_page(host_value)
         else:
-            webbrowser.open(gitbucket_token_page_url(host_value), new=1)
+            login_value = _prompt_gitbucket_login()
+            webbrowser.open(
+                gitbucket_token_page_url(host_value, login_value),
+                new=1,
+            )
         token_value = _prompt_token()
     else:
         if not as_json:
@@ -263,7 +279,8 @@ def run_gitbucket_api_token_auth(
                     verbose=verbose,
                 )
                 raise typer.Exit(code=EXIT_AUTH)
-            token_page = gitbucket_token_page_url(host_value)
+            login_value = _prompt_gitbucket_login()
+            token_page = gitbucket_token_page_url(host_value, login_value)
             webbrowser.open(token_page, new=1)
         token_value = _prompt_token()
 

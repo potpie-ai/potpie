@@ -31,7 +31,8 @@ ATLASSIAN_ACCESSIBLE_RESOURCES_URL = (
     f"{ATLASSIAN_API_GATEWAY}/oauth/token/accessible-resources"
 )
 
-GITBUCKET_TOKEN_PAGE_PATH = "/settings/tokens"
+# GitBucket PATs are created at /{username}/_application (Account Settings → Applications).
+GITBUCKET_TOKEN_PAGE_SUFFIX = "_application"
 GITBUCKET_API_VERSION = "v3"
 GITBUCKET_TOKEN_ENV_VARS = ("GITBUCKET_TOKEN", "POTPIE_GITBUCKET_TOKEN")
 GITBUCKET_ALLOW_INSECURE_HTTP_ENV_VARS = (
