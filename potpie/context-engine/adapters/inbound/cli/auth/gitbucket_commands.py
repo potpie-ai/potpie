@@ -89,6 +89,28 @@ def _prompt_token() -> str:
     return token
 
 
+def _open_computed_token_page(token_page: str, *, as_json: bool) -> bool:
+    if not as_json:
+        print_plain_line(f"Opening {token_page} ...", as_json=False)
+    opened = webbrowser.open(token_page, new=1)
+    if as_json:
+        print_json_blob(
+            {
+                "ok": True,
+                "provider": "gitbucket",
+                "action": "open_token_page",
+                "token_page_url": token_page,
+                "browser_opened": opened,
+            },
+            as_json=True,
+        )
+        return opened
+    if not opened:
+        print_plain_line("Could not open a browser. Open this URL:", as_json=False)
+        print_plain_line(token_page, as_json=False, markup=False)
+    return opened
+
+
 def _open_token_page(host_url: str, *, login: str | None = None) -> None:
     """Show setup steps, then open the GitBucket token creation page."""
     print_plain_line("GitBucket login — personal access token", as_json=False)
@@ -109,11 +131,8 @@ def _open_token_page(host_url: str, *, login: str | None = None) -> None:
 
     login_value = (login or "").strip() or _prompt_gitbucket_login()
     token_page = gitbucket_token_page_url(host_url, login_value)
-    print_plain_line(f"Opening {token_page} ...", as_json=False)
-    opened = webbrowser.open(token_page, new=1)
+    opened = _open_computed_token_page(token_page, as_json=False)
     if not opened:
-        print_plain_line("Could not open a browser. Open this URL:", as_json=False)
-        print_plain_line(token_page, as_json=False, markup=False)
         return
     print_plain_line("Paste the token below when you are ready.", as_json=False)
 
@@ -252,9 +271,9 @@ def run_gitbucket_api_token_auth(
             _open_token_page(host_value)
         else:
             login_value = _prompt_gitbucket_login()
-            webbrowser.open(
+            _open_computed_token_page(
                 gitbucket_token_page_url(host_value, login_value),
-                new=1,
+                as_json=True,
             )
         token_value = _prompt_token()
     else:
@@ -281,7 +300,7 @@ def run_gitbucket_api_token_auth(
                 raise typer.Exit(code=EXIT_AUTH)
             login_value = _prompt_gitbucket_login()
             token_page = gitbucket_token_page_url(host_value, login_value)
-            webbrowser.open(token_page, new=1)
+            _open_computed_token_page(token_page, as_json=True)
         token_value = _prompt_token()
 
     try:

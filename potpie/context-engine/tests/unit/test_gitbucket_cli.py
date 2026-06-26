@@ -838,6 +838,51 @@ def test_open_token_page_opens_browser_when_confirmed(
     assert opened == ["http://localhost:8080/alice/_application"]
 
 
+def test_open_token_page_prints_url_when_browser_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    printed: list[str] = []
+    monkeypatch.setattr(gb_cmds, "_guard_typer_prompt", lambda callback: True)
+    monkeypatch.setattr(gb_cmds, "_prompt_gitbucket_login", lambda: "alice")
+    monkeypatch.setattr(
+        gb_cmds,
+        "print_plain_line",
+        lambda message, **_: printed.append(str(message)),
+    )
+    monkeypatch.setattr(gb_cmds.webbrowser, "open", lambda url, **_: False)
+
+    gb_cmds._open_token_page("http://localhost:8080")
+
+    assert "Could not open a browser. Open this URL:" in printed
+    assert "http://localhost:8080/alice/_application" in printed
+
+
+def test_run_gitbucket_auth_json_mode_emits_token_page_when_browser_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(gb_cmds.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(gb_cmds, "_prompt_gitbucket_login", lambda: "alice")
+    monkeypatch.setattr(gb_cmds, "_prompt_token", lambda: "gb-token")
+    monkeypatch.setattr(gb_cmds.webbrowser, "open", lambda url, **_: False)
+    monkeypatch.setattr(
+        gb_cmds,
+        "verify_gitbucket_token",
+        lambda host, token, **_: GitBucketAccount(login="alice"),
+    )
+
+    gb_cmds.run_gitbucket_api_token_auth(
+        force=True,
+        as_json=True,
+        host="http://localhost:8080",
+    )
+
+    out = capsys.readouterr().out
+    assert '"action": "open_token_page"' in out
+    assert '"token_page_url": "http://localhost:8080/alice/_application"' in out
+    assert '"browser_opened": false' in out
+
+
 def test_run_gitbucket_auth_interactive_flow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
