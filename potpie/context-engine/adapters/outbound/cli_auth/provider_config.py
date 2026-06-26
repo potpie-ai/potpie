@@ -10,7 +10,7 @@ from adapters.outbound.cli_auth._oauth_client_ids import (
     LINEAR_CLIENT_ID as PACKAGE_LINEAR_CLIENT_ID,
 )
 
-Provider = Literal["linear", "github", "atlassian", "jira", "confluence"]
+Provider = Literal["linear", "github", "atlassian", "jira", "confluence", "gitbucket"]
 OAuthProvider = Literal["linear"]
 AtlassianProduct = Literal["jira", "confluence"]
 
@@ -30,6 +30,9 @@ ATLASSIAN_API_GATEWAY = "https://api.atlassian.com"
 ATLASSIAN_ACCESSIBLE_RESOURCES_URL = (
     f"{ATLASSIAN_API_GATEWAY}/oauth/token/accessible-resources"
 )
+
+GITBUCKET_TOKEN_PAGE_PATH = "/settings/tokens"
+GITBUCKET_API_VERSION = "v3"
 
 
 def get_redirect_uri() -> str:
