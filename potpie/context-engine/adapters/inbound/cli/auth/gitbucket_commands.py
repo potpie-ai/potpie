@@ -348,6 +348,11 @@ def gitbucket_login(
             "GITBUCKET_TOKEN (or POTPIE_GITBUCKET_TOKEN) or pipe it on stdin."
         ),
     ),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        help="GitBucket personal access token for non-interactive login.",
+    ),
 ) -> None:
     """Connect to a GitBucket instance with a personal access token."""
     load_cli_env()
@@ -357,6 +362,7 @@ def gitbucket_login(
         as_json=j,
         verbose=v,
         host=host,
+        token=token,
     )
 
 

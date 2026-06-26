@@ -673,6 +673,33 @@ def test_gitbucket_login_cli_non_interactive_via_env(
     assert cs.get_gitbucket_credentials()["token"] == "gb-token"
 
 
+def test_gitbucket_login_cli_non_interactive_via_token_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        gb_cmds,
+        "verify_gitbucket_token",
+        lambda host, token, **_: GitBucketAccount(login="alice", email="a@example.com"),
+    )
+
+    result = runner.invoke(
+        cli_main.app,
+        [
+            "gitbucket",
+            "login",
+            "--host",
+            "http://localhost:8080",
+            "--token",
+            "gb-token",
+            "--force",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Logged in to GitBucket as alice" in result.output
+    assert cs.get_gitbucket_credentials()["token"] == "gb-token"
+
+
 def test_run_gitbucket_auth_non_interactive_via_stdin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
