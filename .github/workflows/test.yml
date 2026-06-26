@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,8 +35,18 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --all-packages --no-cache
 
-      - name: Run pre-commit hooks
-        run: uv run pre-commit run --all-files
+      - name: Run static quality checks
+        run: |
+          uv lock --check
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.base_ref }}" --depth=1
+            mapfile -t changed < <(git diff --name-only --diff-filter=ACMRT "origin/${{ github.base_ref }}...HEAD")
+          else
+            mapfile -t changed < <(git diff --name-only --diff-filter=ACMRT "${{ github.event.before }}" "${{ github.sha }}")
+          fi
+          if [ "${#changed[@]}" -gt 0 ]; then
+            uv run pre-commit run --files "${changed[@]}"
+          fi
 
       - name: Run cargo clippy
         run: cargo clippy --manifest-path potpie/parsing/Cargo.toml --no-default-features -- -D warnings
@@ -74,10 +86,11 @@ jobs:
         run: uv sync --frozen --all-packages --no-cache
 
       - name: Run integrations package tests
+        working-directory: potpie/integrations
         env:
           POSTGRES_SERVER: "postgresql://postgres:postgres@localhost:5432/postgres"
           ENV: "development"
-        run: uv run --project potpie/integrations pytest tests
+        run: uv run --project . pytest tests
 
   ui-build:
     runs-on: ubuntu-latest

@@ -42,11 +42,12 @@ def _plan(
         event_ref=EventRef(event_id="e1", source_system="agent", pot_id=pot_id),
         summary=summary,
         entity_upserts=[
-            EntityUpsert(entity_key="pref:logging", labels=("Preference",))
+            EntityUpsert(entity_key="pref:logging", labels=("Preference",)),
+            EntityUpsert(entity_key="svc:api", labels=("Service",)),
         ],
         edge_upserts=[
             EdgeUpsert(
-                edge_type="RELATES_TO",
+                edge_type="DEPENDS_ON",
                 from_entity_key="pref:logging",
                 to_entity_key="svc:api",
                 properties={"fact": summary},
