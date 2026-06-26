@@ -135,5 +135,15 @@ class FileCredentialStore(CredentialStore):
     def save_confluence_workspace_prefs(self, *, space_key: str) -> None:
         _store.save_confluence_workspace_prefs(space_key=space_key)
 
+    # --- GitBucket product credentials -----------------------------------
+    def get_gitbucket_credentials(self) -> dict[str, Any]:
+        return _store.get_gitbucket_credentials()
+
+    def save_gitbucket_credentials(self, credentials: dict[str, Any]) -> None:
+        _store.save_gitbucket_credentials(credentials)
+
+    def clear_gitbucket_credentials(self) -> None:
+        _store.clear_gitbucket_credentials()
+
 
 __all__ = ["CredentialStore", "FileCredentialStore"]

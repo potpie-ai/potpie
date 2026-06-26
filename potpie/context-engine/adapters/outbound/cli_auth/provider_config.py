@@ -10,7 +10,7 @@ from adapters.outbound.cli_auth._oauth_client_ids import (
     LINEAR_CLIENT_ID as PACKAGE_LINEAR_CLIENT_ID,
 )
 
-Provider = Literal["linear", "github", "atlassian", "jira", "confluence"]
+Provider = Literal["linear", "github", "atlassian", "jira", "confluence", "gitbucket"]
 OAuthProvider = Literal["linear"]
 AtlassianProduct = Literal["jira", "confluence"]
 
@@ -29,6 +29,15 @@ ATLASSIAN_API_TOKEN_PAGE = "https://id.atlassian.com/manage-profile/security/api
 ATLASSIAN_API_GATEWAY = "https://api.atlassian.com"
 ATLASSIAN_ACCESSIBLE_RESOURCES_URL = (
     f"{ATLASSIAN_API_GATEWAY}/oauth/token/accessible-resources"
+)
+
+# GitBucket PATs are created at /{username}/_application (Account Settings → Applications).
+GITBUCKET_TOKEN_PAGE_SUFFIX = "_application"
+GITBUCKET_API_VERSION = "v3"
+GITBUCKET_TOKEN_ENV_VARS = ("GITBUCKET_TOKEN", "POTPIE_GITBUCKET_TOKEN")
+GITBUCKET_ALLOW_INSECURE_HTTP_ENV_VARS = (
+    "POTPIE_GITBUCKET_ALLOW_INSECURE_HTTP",
+    "GITBUCKET_ALLOW_INSECURE_HTTP",
 )
 
 

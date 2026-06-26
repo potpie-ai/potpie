@@ -310,3 +310,45 @@ def atlassian_site_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
         if value:
             out[key] = value
     return out
+
+
+def build_gitbucket_integration_record(credentials: dict[str, Any]) -> dict[str, Any]:
+    """Build non-secret GitBucket metadata aligned with the integration record shape."""
+    now = utc_now_iso()
+    host_url = str(credentials.get("host_url") or "").strip()
+    login = str(credentials.get("login") or "").strip()
+    email = str(credentials.get("email") or "").strip()
+    account: dict[str, Any] = {}
+    if login:
+        account["login"] = login
+    if email:
+        account["email"] = email
+
+    record: dict[str, Any] = {
+        "provider": "gitbucket",
+        "provider_host": host_url or "gitbucket",
+        "host_url": host_url,
+        "auth_type": "personal_access_token",
+        "token_storage": "file",
+        "stored_at": _stored_at_from_credentials(credentials),
+        "created_at": credentials.get("created_at") or now,
+        "updated_at": now,
+        "metadata": {"auth_flow": "personal_access_token"},
+    }
+    if account:
+        record["account"] = account
+    return record
+
+
+def gitbucket_account_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    account = entry.get("account")
+    if isinstance(account, dict):
+        return account
+    login = entry.get("login")
+    if login:
+        out: dict[str, Any] = {"login": str(login)}
+        email = entry.get("email")
+        if email:
+            out["email"] = str(email)
+        return out
+    return {}

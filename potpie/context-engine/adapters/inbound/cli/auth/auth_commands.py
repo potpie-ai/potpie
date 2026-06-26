@@ -80,8 +80,8 @@ jira_app = typer.Typer(help="Jira integration and read.")
 confluence_app = typer.Typer(help="Confluence integration and read.")
 
 _OAUTH_CALLBACK_TIMEOUT = 300.0
-_ALL_PROVIDERS: tuple[Provider, ...] = ("github", "linear", "jira", "confluence")
-IntegrationAuthProvider = Literal["linear", "atlassian", "jira", "confluence"]
+_ALL_PROVIDERS: tuple[Provider, ...] = ("github", "linear", "jira", "confluence", "gitbucket")
+IntegrationAuthProvider = Literal["linear", "atlassian", "jira", "confluence", "gitbucket"]
 
 
 def _canonical_provider_for_json(product: str) -> str:
@@ -424,7 +424,7 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
 
 def _integration_auth_provider(provider: str) -> IntegrationAuthProvider:
     key = provider.strip().lower()
-    if key in {"linear", "atlassian", "jira", "confluence"}:
+    if key in {"linear", "atlassian", "jira", "confluence", "gitbucket"}:
         return key
     raise ValueError(f"Unknown integration provider {provider!r}.")
 
@@ -469,6 +469,15 @@ def run_integration_login(provider: str, *, force: bool = False) -> None:
     def _run() -> None:
         if key == "linear":
             _run_linear_oauth_flow(force=force)
+            return
+        if key == "gitbucket":
+            from adapters.inbound.cli.auth.gitbucket_commands import (
+                run_gitbucket_api_token_auth,
+            )
+
+            load_cli_env()
+            j, v = _flags()
+            run_gitbucket_api_token_auth(force=force, as_json=j, verbose=v)
             return
         load_cli_env()
         j, v = _flags()
@@ -530,6 +539,8 @@ def integration_status(
             parts.append(f"site={_esc(row['site_name'])}")
         if row.get("site_url"):
             parts.append(f"url={_esc(row['site_url'])}")
+        if row.get("host_url"):
+            parts.append(f"host={_esc(row['host_url'])}")
         if row.get("expires_at") is not None:
             parts.append(f"expires_at={_esc(row['expires_at'])}")
         if row.get("cloud_id"):
@@ -826,11 +837,15 @@ def _register_auth_compat_providers() -> None:
     from adapters.inbound.cli.auth.github_commands import (
         _build_auth_compat_github,
     )
+    from adapters.inbound.cli.auth.gitbucket_commands import (
+        _build_auth_compat_gitbucket,
+    )
 
     register_provider_app("github", _build_auth_compat_github())
     register_provider_app("linear", _build_auth_compat_linear())
     register_provider_app("jira", _build_auth_compat_jira())
     register_provider_app("confluence", _build_auth_compat_confluence())
+    register_provider_app("gitbucket", _build_auth_compat_gitbucket())
 
 
 def register_integration_commands(root: typer.Typer) -> None:
@@ -839,12 +854,14 @@ def register_integration_commands(root: typer.Typer) -> None:
         git_app,
         github_app,
     )
+    from adapters.inbound.cli.auth.gitbucket_commands import gitbucket_app
 
     root.add_typer(github_app, name="github")
     root.add_typer(git_app, name="git")
     root.add_typer(linear_app, name="linear")
     root.add_typer(jira_app, name="jira")
     root.add_typer(confluence_app, name="confluence")
+    root.add_typer(gitbucket_app, name="gitbucket")
     root.add_typer(auth_app, name="auth")
 
 
