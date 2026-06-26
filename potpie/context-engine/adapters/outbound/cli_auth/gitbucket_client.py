@@ -6,6 +6,7 @@ login command lives in ``adapters.inbound.cli.auth.gitbucket_commands``.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -77,11 +78,14 @@ def _is_loopback_hostname(hostname: str | None) -> bool:
     if not hostname:
         return False
     host = hostname.strip().lower()
-    if host in {"localhost", "::1"}:
+    if host == "localhost":
         return True
-    if host == "127.0.0.1" or host.startswith("127."):
-        return True
-    return False
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _ensure_gitbucket_pat_transport_allowed(host_url: str) -> None:

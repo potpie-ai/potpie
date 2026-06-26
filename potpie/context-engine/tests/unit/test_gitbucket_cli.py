@@ -107,6 +107,19 @@ def test_verify_gitbucket_token_allows_remote_http_with_insecure_flag(
     assert client.calls
 
 
+def test_verify_gitbucket_token_rejects_127_prefixed_non_loopback_hostname(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("POTPIE_GITBUCKET_ALLOW_INSECURE_HTTP", raising=False)
+    monkeypatch.delenv("GITBUCKET_ALLOW_INSECURE_HTTP", raising=False)
+    client = FakeClient([httpx.Response(200, json={"login": "alice"})])
+
+    with pytest.raises(GitBucketClientError, match="plain HTTP is only allowed"):
+        verify_gitbucket_token("http://127.example.com:8080", "secret-token", http=client)
+
+    assert client.calls == []
+
+
 def test_gitbucket_api_base_and_token_page_url() -> None:
     host = "https://git.company.com/gitbucket"
     assert gitbucket_api_base(host) == f"{host}/api/{GITBUCKET_API_VERSION}"
@@ -644,11 +657,17 @@ def test_gitbucket_login_cli_non_interactive_via_env(
 def test_run_gitbucket_auth_non_interactive_via_stdin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    read_calls = 0
+
     class _PipedStdin:
         def isatty(self) -> bool:
             return False
 
         def read(self) -> str:
+            nonlocal read_calls
+            read_calls += 1
+            if read_calls > 1:
+                raise AssertionError("stdin.read() must only be called once")
             return "gb-token\n"
 
     monkeypatch.delenv("GITBUCKET_TOKEN", raising=False)
@@ -665,6 +684,7 @@ def test_run_gitbucket_auth_non_interactive_via_stdin(
         host="http://localhost:8080",
     )
 
+    assert read_calls == 1
     assert cs.get_gitbucket_credentials()["token"] == "gb-token"
 
 

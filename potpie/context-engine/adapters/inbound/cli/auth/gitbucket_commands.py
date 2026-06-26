@@ -123,28 +123,40 @@ def _token_from_stdin() -> str | None:
     return None
 
 
-def _resolve_gitbucket_token(*, explicit: str | None = None) -> str | None:
+def _resolve_gitbucket_token(
+    *,
+    explicit: str | None = None,
+    piped_token: str | None = None,
+) -> str | None:
     """Resolve a PAT from env/stdin; ``explicit`` is for programmatic callers/tests only."""
     if (explicit or "").strip():
         return explicit.strip()
     env_token = _token_from_environment()
     if env_token:
         return env_token
+    if piped_token is not None:
+        return piped_token.strip() or None
     return _token_from_stdin()
 
 
-def _non_interactive_login_ready(
+def _non_interactive_credentials_available(
     host: str | None,
     token: str | None = None,
 ) -> bool:
-    return bool((host or "").strip()) and bool(_resolve_gitbucket_token(explicit=token))
+    if not (host or "").strip():
+        return False
+    if (token or "").strip():
+        return True
+    if _token_from_environment():
+        return True
+    return not sys.stdin.isatty()
 
 
 def _cli_credentials_supplied(
     host: str | None,
     token: str | None,
 ) -> bool:
-    return _non_interactive_login_ready(host, token)
+    return _non_interactive_credentials_available(host, token)
 
 
 def run_gitbucket_api_token_auth(
@@ -193,7 +205,17 @@ def run_gitbucket_api_token_auth(
 
     if supplied:
         host_value = normalize_gitbucket_host_url((host or "").strip())
-        token_value = _resolve_gitbucket_token(explicit=token)
+        piped_token: str | None = None
+        if (
+            not (token or "").strip()
+            and not _token_from_environment()
+            and not sys.stdin.isatty()
+        ):
+            piped_token = _token_from_stdin()
+        token_value = _resolve_gitbucket_token(
+            explicit=token,
+            piped_token=piped_token,
+        )
         if not token_value:
             emit_error(
                 "GitBucket authentication failed",
