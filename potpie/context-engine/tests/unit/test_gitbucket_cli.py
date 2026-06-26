@@ -815,6 +815,35 @@ def test_run_gitbucket_auth_interactive_flow(
     assert any("Logged in to GitBucket as alice" in line for line in printed)
 
 
+def test_run_gitbucket_auth_interactive_flow_reuses_cli_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompted_host = False
+
+    def _unexpected_host_prompt() -> str:
+        nonlocal prompted_host
+        prompted_host = True
+        return "http://should-not-be-used"
+
+    monkeypatch.setattr(gb_cmds.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(gb_cmds, "_prompt_host_url", _unexpected_host_prompt)
+    monkeypatch.setattr(gb_cmds, "_prompt_token", lambda: "gb-token")
+    monkeypatch.setattr(gb_cmds, "_open_token_page", lambda _host: None)
+    monkeypatch.setattr(
+        gb_cmds,
+        "verify_gitbucket_token",
+        lambda host, token, **_: GitBucketAccount(login="alice"),
+    )
+
+    gb_cmds.run_gitbucket_api_token_auth(
+        force=True,
+        host="http://localhost:8080",
+    )
+
+    assert not prompted_host
+    assert cs.get_gitbucket_credentials()["host_url"] == "http://localhost:8080"
+
+
 def test_run_gitbucket_auth_empty_host_in_interactive_mode_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -139,6 +139,10 @@ def _resolve_gitbucket_token(
     return _token_from_stdin()
 
 
+def _host_supplied(host: str | None) -> bool:
+    return bool((host or "").strip())
+
+
 def _non_interactive_credentials_available(
     host: str | None,
     token: str | None = None,
@@ -223,6 +227,20 @@ def run_gitbucket_api_token_auth(
                 verbose=verbose,
             )
             raise typer.Exit(code=EXIT_AUTH)
+    elif _host_supplied(host):
+        host_value = normalize_gitbucket_host_url((host or "").strip())
+        if not host_value:
+            emit_error(
+                "GitBucket authentication failed",
+                "Host URL must not be empty.",
+                verbose=verbose,
+            )
+            raise typer.Exit(code=EXIT_AUTH)
+        if not as_json:
+            _open_token_page(host_value)
+        else:
+            webbrowser.open(gitbucket_token_page_url(host_value), new=1)
+        token_value = _prompt_token()
     else:
         if not as_json:
             host_value_raw = _prompt_host_url()
