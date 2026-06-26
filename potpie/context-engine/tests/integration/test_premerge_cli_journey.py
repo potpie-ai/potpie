@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.premerge_journey]
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _CONTEXT_ENGINE_PROJECT = "potpie/context-engine"
@@ -85,15 +85,16 @@ def _isolated_env(tmp_path: Path) -> dict[str, str]:
     home = tmp_path / "home"
     xdg.mkdir(parents=True, exist_ok=True)
     home.mkdir(parents=True, exist_ok=True)
+    source_home = Path(os.environ.get("HOME", Path.home()))
     env = os.environ.copy()
     env["XDG_CONFIG_HOME"] = str(xdg)
     env["HOME"] = str(home)
     env["CONTEXT_ENGINE_HOST_MODE"] = "in_process"
     env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
-    for key in ("RUSTUP_HOME", "CARGO_HOME"):
-        value = os.environ.get(key)
-        if value:
-            env[key] = value
+    # Keep rustup/cargo on the host toolchain when HOME is redirected for Potpie
+    # config isolation — otherwise `cargo` exists on PATH but has no toolchain.
+    env.setdefault("RUSTUP_HOME", os.environ.get("RUSTUP_HOME", str(source_home / ".rustup")))
+    env.setdefault("CARGO_HOME", os.environ.get("CARGO_HOME", str(source_home / ".cargo")))
     return env
 
 
@@ -116,13 +117,16 @@ def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path)
     clone_root = tmp_path / "repo-clone"
     env = _isolated_env(tmp_path)
     if not _has_usable_rust_toolchain(env):
-        pytest.skip("Rust toolchain (cargo) is required for fresh-clone workspace sync")
+        message = "Rust toolchain (cargo) is required for fresh-clone workspace sync"
+        if os.environ.get("PREMERGE_JOURNEY_REQUIRED") == "1":
+            pytest.fail(message)
+        pytest.skip(message)
 
     _run(
         ["git", "clone", "--depth", "1", str(_REPO_ROOT), str(clone_root)],
         cwd=tmp_path,
         env=env,
-        timeout=180,
+        timeout=60,
         step="git clone",
     )
 
@@ -130,7 +134,7 @@ def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path)
         ["uv", "sync", "--frozen", "--all-packages", "--no-cache"],
         cwd=clone_root,
         env=env,
-        timeout=1200,
+        timeout=240,
         step="uv sync",
     )
 
@@ -146,7 +150,7 @@ def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path)
         "embedded",
         "--yes",
         "--in-process",
-        timeout=600,
+        timeout=120,
     )
     setup = _unwrap_result(setup_payload)
     assert setup.get("ok") is True
@@ -155,7 +159,7 @@ def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path)
     }
     assert step_states.get("source") in {"done", "skipped"}
 
-    source_payload = _run_json_cli(clone_root, env, "source", "add", "repo", ".", timeout=180)
+    source_payload = _run_json_cli(clone_root, env, "source", "add", "repo", ".", timeout=60)
     source_add = _unwrap_result(source_payload)
     assert source_add.get("kind") == "repo"
     assert source_add.get("registration_only") is True
@@ -213,7 +217,7 @@ def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path)
         "mutate",
         "--file",
         str(mutation_file),
-        timeout=300,
+        timeout=60,
     )
     mutate = _unwrap_result(mutate_payload)
     assert mutate.get("status") in {"applied", "committed"}
@@ -233,12 +237,12 @@ def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path)
         "service:journey-service",
         "--limit",
         "10",
-        timeout=180,
+        timeout=60,
     )
     read_result = _unwrap_result(read_payload)
     assert read_result.get("items"), "expected graph read to return journey topology items"
 
-    status_payload = _run_json_cli(clone_root, env, "graph", "status", timeout=180)
+    status_payload = _run_json_cli(clone_root, env, "graph", "status", timeout=60)
     status = _unwrap_result(status_payload)
     claim_count = int(
         (((status.get("backend") or {}).get("counts") or {}).get("claims") or 0)

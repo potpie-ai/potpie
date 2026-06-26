@@ -92,11 +92,12 @@ jobs:
         env:
           POSTGRES_SERVER: "postgresql://postgres:postgres@localhost:5432/postgres"
           ENV: "development"
-        run: uv run --project . pytest tests
+        run: uv run --project . pytest tests -m "not premerge_journey"
 
   premerge-cli-journey:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 5
 
     steps:
       - name: Checkout
@@ -121,6 +122,8 @@ jobs:
         run: uv sync --frozen --all-packages --no-cache
 
       - name: Run pre-merge CLI journey test
+        env:
+          PREMERGE_JOURNEY_REQUIRED: "1"
         run: uv run --project potpie/context-engine pytest potpie/context-engine/tests/integration/test_premerge_cli_journey.py -v
 
   potpie-sandbox:
