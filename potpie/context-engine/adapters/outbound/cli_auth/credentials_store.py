@@ -1116,13 +1116,17 @@ def save_gitbucket_credentials(credentials: dict[str, Any]) -> None:
     if not token:
         raise ProviderCredentialError("GitBucket personal access token is required.")
 
+    prior = _read_metadata_entry(_GITBUCKET_CREDENTIALS_KEY)
+    merged = {**prior, **credentials, "token": token}
+    host_url = str(merged.get("host_url") or "").strip()
+    if not host_url:
+        raise ProviderCredentialError("GitBucket host URL is required.")
+
     token_storage = _store_file_secret(
         "GitBucket token",
         _GITBUCKET_TOKEN_SECRET,
         token,
     )
-    prior = _read_metadata_entry(_GITBUCKET_CREDENTIALS_KEY)
-    merged = {**prior, **credentials}
     record = build_gitbucket_integration_record(merged)
     record["token_storage"] = token_storage
     _write_metadata_entry(_GITBUCKET_CREDENTIALS_KEY, record)

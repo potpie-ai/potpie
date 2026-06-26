@@ -6,12 +6,14 @@ login command lives in ``adapters.inbound.cli.auth.gitbucket_commands``.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 from adapters.outbound.cli_auth.provider_config import (
+    GITBUCKET_ALLOW_INSECURE_HTTP_ENV_VARS,
     GITBUCKET_API_VERSION,
     GITBUCKET_TOKEN_PAGE_PATH,
 )
@@ -63,6 +65,43 @@ def normalize_gitbucket_host_url(host_url: str) -> str:
     return normalized
 
 
+def _gitbucket_allow_insecure_http() -> bool:
+    for name in GITBUCKET_ALLOW_INSECURE_HTTP_ENV_VARS:
+        value = os.getenv(name, "").strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+    return False
+
+
+def _is_loopback_hostname(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    host = hostname.strip().lower()
+    if host in {"localhost", "::1"}:
+        return True
+    if host == "127.0.0.1" or host.startswith("127."):
+        return True
+    return False
+
+
+def _ensure_gitbucket_pat_transport_allowed(host_url: str) -> None:
+    """Reject plain HTTP to non-loopback hosts before sending a PAT."""
+    normalized = normalize_gitbucket_host_url(host_url)
+    if not normalized:
+        return
+    parsed = urlparse(normalized)
+    if parsed.scheme != "http":
+        return
+    if _is_loopback_hostname(parsed.hostname):
+        return
+    if _gitbucket_allow_insecure_http():
+        return
+    raise GitBucketClientError(
+        "GitBucket over plain HTTP is only allowed for localhost. "
+        "Use https:// or set POTPIE_GITBUCKET_ALLOW_INSECURE_HTTP=1 for development."
+    )
+
+
 def gitbucket_api_base(host_url: str) -> str:
     """Return the GitBucket REST API base URL for a given host URL."""
     return f"{normalize_gitbucket_host_url(host_url)}/api/{GITBUCKET_API_VERSION}"
@@ -89,6 +128,7 @@ def verify_gitbucket_token(
     Raises :class:`GitBucketClientError` on failure.
     """
     normalized = normalize_gitbucket_host_url(host_url)
+    _ensure_gitbucket_pat_transport_allowed(normalized)
     api_base = gitbucket_api_base(normalized)
     headers = _token_auth_header(token)
     owns = http is None

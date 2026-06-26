@@ -8,6 +8,7 @@ sub-application.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 import webbrowser
@@ -16,8 +17,6 @@ from typing import TypeVar
 
 import click
 import typer
-
-T = TypeVar("T")
 
 from adapters.outbound.cli_auth.credentials_store import (
     ProviderCredentialError,
@@ -37,7 +36,12 @@ from adapters.outbound.cli_auth.gitbucket_read_client import (
 )
 from adapters.inbound.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
 from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
+from adapters.outbound.cli_auth.provider_config import (
+    GITBUCKET_TOKEN_ENV_VARS,
+)
 from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+
+T = TypeVar("T")
 
 gitbucket_app = typer.Typer(help="GitBucket integration.")
 
@@ -102,11 +106,45 @@ def _open_token_page(host_url: str) -> None:
     print_plain_line("Paste the token below when you are ready.", as_json=False)
 
 
+def _token_from_environment() -> str | None:
+    for name in GITBUCKET_TOKEN_ENV_VARS:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return None
+
+
+def _token_from_stdin() -> str | None:
+    if sys.stdin.isatty():
+        return None
+    piped = sys.stdin.read()
+    if piped and piped.strip():
+        return piped.strip()
+    return None
+
+
+def _resolve_gitbucket_token(*, explicit: str | None = None) -> str | None:
+    """Resolve a PAT from env/stdin; ``explicit`` is for programmatic callers/tests only."""
+    if (explicit or "").strip():
+        return explicit.strip()
+    env_token = _token_from_environment()
+    if env_token:
+        return env_token
+    return _token_from_stdin()
+
+
+def _non_interactive_login_ready(
+    host: str | None,
+    token: str | None = None,
+) -> bool:
+    return bool((host or "").strip()) and bool(_resolve_gitbucket_token(explicit=token))
+
+
 def _cli_credentials_supplied(
     host: str | None,
     token: str | None,
 ) -> bool:
-    return bool((host or "").strip() and (token or "").strip())
+    return _non_interactive_login_ready(host, token)
 
 
 def run_gitbucket_api_token_auth(
@@ -128,8 +166,8 @@ def run_gitbucket_api_token_auth(
 
     if existing.get("token") and existing.get("host_url") and not force:
         host_url_stored = existing.get("host_url", "")
-        account = existing.get("account") or {}
-        login = account.get("login") or ""
+        account = existing.get("account") if isinstance(existing.get("account"), dict) else {}
+        login = str(existing.get("login") or account.get("login") or "").strip()
         print_plain_line(
             "GitBucket is already connected.",
             as_json=as_json,
@@ -146,16 +184,23 @@ def run_gitbucket_api_token_auth(
     supplied = _cli_credentials_supplied(host, token)
     if not sys.stdin.isatty() and not supplied:
         emit_error(
-            "GitBucket authentication requires a terminal",
-            "Run in an interactive shell or pass --host and --token for "
-            "non-interactive login.",
+            "GitBucket authentication requires credentials",
+            "Set GITBUCKET_TOKEN (or POTPIE_GITBUCKET_TOKEN), pipe the token on "
+            "stdin with --host, or run in an interactive shell.",
             verbose=verbose,
         )
         raise typer.Exit(code=1)
 
     if supplied:
         host_value = normalize_gitbucket_host_url((host or "").strip())
-        token_value = (token or "").strip()
+        token_value = _resolve_gitbucket_token(explicit=token)
+        if not token_value:
+            emit_error(
+                "GitBucket authentication failed",
+                "Personal access token is required.",
+                verbose=verbose,
+            )
+            raise typer.Exit(code=EXIT_AUTH)
     else:
         if not as_json:
             host_value_raw = _prompt_host_url()
@@ -241,12 +286,10 @@ def gitbucket_login(
     host: str | None = typer.Option(
         None,
         "--host",
-        help="GitBucket host URL, e.g. https://git.company.com (non-interactive).",
-    ),
-    token: str | None = typer.Option(
-        None,
-        "--token",
-        help="Personal access token (non-interactive).",
+        help=(
+            "GitBucket host URL for non-interactive login. Provide the token via "
+            "GITBUCKET_TOKEN (or POTPIE_GITBUCKET_TOKEN) or pipe it on stdin."
+        ),
     ),
 ) -> None:
     """Connect to a GitBucket instance with a personal access token."""
@@ -257,7 +300,6 @@ def gitbucket_login(
         as_json=j,
         verbose=v,
         host=host,
-        token=token,
     )
 
 

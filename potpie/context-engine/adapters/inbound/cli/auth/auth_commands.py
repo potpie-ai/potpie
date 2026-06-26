@@ -424,7 +424,7 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
 
 def _integration_auth_provider(provider: str) -> IntegrationAuthProvider:
     key = provider.strip().lower()
-    if key in {"linear", "atlassian", "jira", "confluence"}:
+    if key in {"linear", "atlassian", "jira", "confluence", "gitbucket"}:
         return key
     raise ValueError(f"Unknown integration provider {provider!r}.")
 
@@ -469,6 +469,15 @@ def run_integration_login(provider: str, *, force: bool = False) -> None:
     def _run() -> None:
         if key == "linear":
             _run_linear_oauth_flow(force=force)
+            return
+        if key == "gitbucket":
+            from adapters.inbound.cli.auth.gitbucket_commands import (
+                run_gitbucket_api_token_auth,
+            )
+
+            load_cli_env()
+            j, v = _flags()
+            run_gitbucket_api_token_auth(force=force, as_json=j, verbose=v)
             return
         load_cli_env()
         j, v = _flags()

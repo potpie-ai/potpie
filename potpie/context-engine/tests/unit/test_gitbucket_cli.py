@@ -76,6 +76,37 @@ def test_normalize_gitbucket_host_url_variants() -> None:
     )
 
 
+def test_verify_gitbucket_token_rejects_remote_http_without_insecure_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("POTPIE_GITBUCKET_ALLOW_INSECURE_HTTP", raising=False)
+    monkeypatch.delenv("GITBUCKET_ALLOW_INSECURE_HTTP", raising=False)
+    client = FakeClient([httpx.Response(200, json={"login": "alice"})])
+
+    with pytest.raises(GitBucketClientError, match="plain HTTP is only allowed"):
+        verify_gitbucket_token("http://192.168.1.1:8080", "secret-token", http=client)
+
+    assert client.calls == []
+
+
+def test_verify_gitbucket_token_allows_remote_http_with_insecure_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POTPIE_GITBUCKET_ALLOW_INSECURE_HTTP", "1")
+    client = FakeClient(
+        [httpx.Response(200, json={"login": "alice", "email": "a@example.com"})]
+    )
+
+    account = verify_gitbucket_token(
+        "http://192.168.1.1:8080",
+        "secret-token",
+        http=client,
+    )
+
+    assert account.login == "alice"
+    assert client.calls
+
+
 def test_gitbucket_api_base_and_token_page_url() -> None:
     host = "https://git.company.com/gitbucket"
     assert gitbucket_api_base(host) == f"{host}/api/{GITBUCKET_API_VERSION}"
@@ -200,6 +231,43 @@ def test_list_gitbucket_repos_with_explicit_credentials() -> None:
     assert url == "http://localhost:8080/api/v3/user/repos?per_page=10"
 
 
+def test_list_gitbucket_repos_handles_non_dict_owner() -> None:
+    client = FakeClient(
+        [
+            httpx.Response(
+                200,
+                json=[
+                    {
+                        "full_name": "alice/widgets",
+                        "name": "widgets",
+                        "owner": "alice",
+                        "private": False,
+                    }
+                ],
+            )
+        ]
+    )
+
+    repos = list_gitbucket_repos(
+        host_url="http://localhost:8080",
+        token="secret-token",
+        http=client,
+    )
+
+    assert repos == [
+        {
+            "full_name": "alice/widgets",
+            "name": "widgets",
+            "owner": "",
+            "private": False,
+            "description": "",
+            "default_branch": "",
+            "html_url": "",
+            "clone_url": "",
+        }
+    ]
+
+
 def test_list_gitbucket_repos_non_list_response_returns_empty() -> None:
     client = FakeClient([httpx.Response(200, json={"message": "unexpected"})])
 
@@ -215,6 +283,20 @@ def test_list_gitbucket_repos_non_list_response_returns_empty() -> None:
 def test_list_gitbucket_repos_requires_stored_credentials() -> None:
     with pytest.raises(GitBucketReadError, match="not connected"):
         list_gitbucket_repos()
+
+
+def test_list_gitbucket_repos_rejects_partial_explicit_credentials() -> None:
+    with pytest.raises(
+        GitBucketReadError,
+        match="host_url and token must be provided together",
+    ):
+        list_gitbucket_repos(host_url="http://localhost:8080")
+
+    with pytest.raises(
+        GitBucketReadError,
+        match="host_url and token must be provided together",
+    ):
+        list_gitbucket_repos(token="secret-token")
 
 
 def test_list_gitbucket_repos_401() -> None:
@@ -254,6 +336,11 @@ def test_gitbucket_credentials_roundtrip() -> None:
 def test_save_gitbucket_credentials_requires_token() -> None:
     with pytest.raises(cs.ProviderCredentialError, match="token is required"):
         cs.save_gitbucket_credentials({"host_url": "http://localhost:8080", "token": "  "})
+
+
+def test_save_gitbucket_credentials_requires_host_url() -> None:
+    with pytest.raises(cs.ProviderCredentialError, match="host URL is required"):
+        cs.save_gitbucket_credentials({"token": "gb-token"})
 
 
 def test_get_integration_tokens_gitbucket() -> None:
@@ -453,6 +540,32 @@ def test_run_gitbucket_auth_already_connected_skips_login(
 
     assert printed
     assert printed[-1].get("already_connected") is True
+    assert printed[-1].get("login") == "alice"
+
+
+def test_run_gitbucket_auth_already_connected_uses_top_level_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    printed: list[dict] = []
+
+    class _Store:
+        def get_gitbucket_credentials(self) -> dict[str, Any]:
+            return {
+                "host_url": "http://localhost:8080",
+                "login": "alice",
+                "token": "gb-token",
+            }
+
+    monkeypatch.setattr(gb_cmds, "get_store", lambda: _Store())
+    monkeypatch.setattr(
+        gb_cmds,
+        "print_plain_line",
+        lambda *args, **kwargs: printed.append(kwargs.get("json_payload") or {}),
+    )
+
+    gb_cmds.run_gitbucket_api_token_auth(as_json=True)
+
+    assert printed[-1].get("login") == "alice"
 
 
 def test_run_gitbucket_auth_rejects_non_tty_without_credentials(
@@ -471,7 +584,7 @@ def test_run_gitbucket_auth_rejects_non_tty_without_credentials(
 
     assert exc.value.exit_code == 1
     assert captured
-    assert "interactive" in captured[0][1].lower()
+    assert "gitbucket_token" in captured[0][1].lower()
 
 
 def test_run_gitbucket_auth_verification_failure_exits_auth(
@@ -502,9 +615,10 @@ def test_run_gitbucket_auth_verification_failure_exits_auth(
     assert "Authentication failed" in captured[0][1]
 
 
-def test_gitbucket_login_cli_non_interactive(
+def test_gitbucket_login_cli_non_interactive_via_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("GITBUCKET_TOKEN", "gb-token")
     monkeypatch.setattr(
         gb_cmds,
         "verify_gitbucket_token",
@@ -518,14 +632,39 @@ def test_gitbucket_login_cli_non_interactive(
             "login",
             "--host",
             "http://localhost:8080",
-            "--token",
-            "gb-token",
             "--force",
         ],
     )
 
     assert result.exit_code == 0, result.output
     assert "Logged in to GitBucket as alice" in result.output
+    assert cs.get_gitbucket_credentials()["token"] == "gb-token"
+
+
+def test_run_gitbucket_auth_non_interactive_via_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _PipedStdin:
+        def isatty(self) -> bool:
+            return False
+
+        def read(self) -> str:
+            return "gb-token\n"
+
+    monkeypatch.delenv("GITBUCKET_TOKEN", raising=False)
+    monkeypatch.delenv("POTPIE_GITBUCKET_TOKEN", raising=False)
+    monkeypatch.setattr(gb_cmds.sys, "stdin", _PipedStdin())
+    monkeypatch.setattr(
+        gb_cmds,
+        "verify_gitbucket_token",
+        lambda host, token, **_: GitBucketAccount(login="alice", email="a@example.com"),
+    )
+
+    gb_cmds.run_gitbucket_api_token_auth(
+        force=True,
+        host="http://localhost:8080",
+    )
+
     assert cs.get_gitbucket_credentials()["token"] == "gb-token"
 
 
@@ -854,3 +993,31 @@ def test_list_gitbucket_repos_http_status_error() -> None:
             http=client,
         )
 
+
+def test_integration_auth_provider_accepts_gitbucket() -> None:
+    from adapters.inbound.cli.auth import auth_commands
+
+    assert auth_commands._integration_auth_provider("gitbucket") == "gitbucket"
+    assert auth_commands._integration_auth_provider(" GitBucket ") == "gitbucket"
+
+
+def test_run_integration_login_gitbucket_routes_to_gitbucket_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adapters.inbound.cli.auth import auth_commands
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_gitbucket_login(**kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
+    monkeypatch.setattr(
+        "adapters.inbound.cli.auth.gitbucket_commands.run_gitbucket_api_token_auth",
+        _fake_gitbucket_login,
+    )
+
+    auth_commands.run_integration_login("gitbucket", force=True)
+
+    assert calls == [{"force": True, "as_json": False, "verbose": False}]

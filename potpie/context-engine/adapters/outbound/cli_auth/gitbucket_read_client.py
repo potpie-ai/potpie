@@ -65,10 +65,16 @@ def _get_json(
 
 
 def _normalize_repo(repo: dict[str, Any]) -> dict[str, Any]:
+    owner_value = repo.get("owner")
+    owner_login = (
+        str(owner_value.get("login") or "")
+        if isinstance(owner_value, dict)
+        else ""
+    )
     return {
         "full_name": str(repo.get("full_name") or ""),
         "name": str(repo.get("name") or ""),
-        "owner": str((repo.get("owner") or {}).get("login") or ""),
+        "owner": owner_login,
         "private": bool(repo.get("private")),
         "description": str(repo.get("description") or ""),
         "default_branch": str(repo.get("default_branch") or ""),
@@ -88,7 +94,13 @@ def list_gitbucket_repos(
 
     If ``host_url`` and ``token`` are omitted, loads them from stored credentials.
     """
-    if host_url is None or token is None:
+    host_provided = host_url is not None
+    token_provided = token is not None
+    if host_provided != token_provided:
+        raise GitBucketReadError(
+            "GitBucket host_url and token must be provided together."
+        )
+    if not host_provided and not token_provided:
         host_url, token = _load_credentials()
 
     api_base = gitbucket_api_base(host_url)
