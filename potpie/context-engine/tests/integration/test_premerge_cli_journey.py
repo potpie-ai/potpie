@@ -90,13 +90,18 @@ def _isolated_env(tmp_path: Path) -> dict[str, str]:
     env["HOME"] = str(home)
     env["CONTEXT_ENGINE_HOST_MODE"] = "in_process"
     env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
+    for key in ("RUSTUP_HOME", "CARGO_HOME"):
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
     return env
 
 
-def _has_usable_rust_toolchain() -> bool:
+def _has_usable_rust_toolchain(env: dict[str, str]) -> bool:
     try:
         proc = subprocess.run(
             ["cargo", "--version"],
+            env=env,
             capture_output=True,
             text=True,
             timeout=10,
@@ -108,11 +113,10 @@ def _has_usable_rust_toolchain() -> bool:
 
 
 def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path) -> None:
-    if not _has_usable_rust_toolchain():
-        pytest.skip("Rust toolchain (cargo) is required for fresh-clone workspace sync")
-
     clone_root = tmp_path / "repo-clone"
     env = _isolated_env(tmp_path)
+    if not _has_usable_rust_toolchain(env):
+        pytest.skip("Rust toolchain (cargo) is required for fresh-clone workspace sync")
 
     _run(
         ["git", "clone", "--depth", "1", str(_REPO_ROOT), str(clone_root)],
