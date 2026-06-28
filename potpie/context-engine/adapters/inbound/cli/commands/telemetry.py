@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import typer
 
-from adapters.inbound.cli.commands._common import emit
+from adapters.inbound.cli.commands._common import EXIT_UNAVAILABLE, emit, fail
 from adapters.inbound.cli.telemetry import sentry_runtime, settings
 from adapters.inbound.cli.telemetry.identity_store import (
     identity_path,
     load_or_create_identity,
 )
 from adapters.inbound.cli.telemetry.preferences import (
+    TelemetryPreferenceWriteError,
     TelemetryPreferences,
     save_preferences,
 )
@@ -26,7 +27,7 @@ def status() -> None:
 @telemetry_app.command("enable")
 def enable() -> None:
     """Enable anonymous Potpie CLI telemetry."""
-    save_preferences(TelemetryPreferences(enabled=True))
+    _save_preferences(TelemetryPreferences(enabled=True))
     _refresh_runtime_sinks()
     _emit_status()
 
@@ -34,23 +35,36 @@ def enable() -> None:
 @telemetry_app.command("disable")
 def disable() -> None:
     """Disable outbound Potpie CLI telemetry."""
-    save_preferences(TelemetryPreferences(enabled=False))
+    _save_preferences(TelemetryPreferences(enabled=False))
     _refresh_runtime_sinks()
     _emit_status()
 
 
 def _emit_status() -> None:
-    state = settings.telemetry_state()
+    status = settings.load_telemetry_status()
     identity = load_or_create_identity()
     path = identity_path()
     payload = {
-        "telemetry": state,
-        "crash_reports": "anonymous",
-        "analytics": "anonymous",
+        "telemetry": status.telemetry,
+        "crash_reports": status.crash_reports,
+        "analytics": status.analytics,
         "install_id": identity.anonymous_install_id,
         "identity_path": str(path),
     }
     emit(payload, human=_human_status(payload))
+
+
+def _save_preferences(preferences: TelemetryPreferences) -> None:
+    try:
+        save_preferences(preferences)
+    except TelemetryPreferenceWriteError as exc:
+        fail(
+            code="telemetry_preference_write_failed",
+            message="Could not update telemetry preference.",
+            detail=str(exc),
+            next_action="check that the Potpie config directory is writable, then retry",
+            exit_code=EXIT_UNAVAILABLE,
+        )
 
 
 def _refresh_runtime_sinks() -> None:
@@ -60,7 +74,7 @@ def _refresh_runtime_sinks() -> None:
 
 def _human_status(payload: dict[str, str]) -> str:
     lines = [f"Potpie CLI telemetry: {payload['telemetry']}"]
-    if payload["telemetry"] == "blocked":
+    if payload["telemetry"] in {"blocked", "disabled"}:
         return "\n".join(lines)
     lines.extend(
         [

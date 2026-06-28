@@ -14,6 +14,15 @@ class TelemetryPreferences:
     enabled: bool = True
 
 
+class TelemetryPreferenceWriteError(RuntimeError):
+    """Raised when the local telemetry preference file cannot be written."""
+
+    def __init__(self, path: Path, cause: OSError) -> None:
+        self.path = path
+        self.cause = cause
+        super().__init__(f"Unable to write telemetry preferences at {path}: {cause}")
+
+
 def preferences_path() -> Path:
     return config_dir() / "telemetry" / "settings.json"
 
@@ -53,13 +62,13 @@ def save_preferences(preferences: TelemetryPreferences) -> None:
             )
         tmp.chmod(stat.S_IRUSR | stat.S_IWUSR)
         _ = tmp.replace(path)
-    except OSError:
+    except OSError as exc:
         if tmp is not None:
             try:
                 tmp.unlink(missing_ok=True)
             except OSError:
                 pass
-        return
+        raise TelemetryPreferenceWriteError(path, exc) from exc
 
 
 def telemetry_enabled_by_preference() -> bool:
@@ -78,6 +87,7 @@ def _read_payload(path: Path) -> dict[str, object]:
 
 
 __all__ = [
+    "TelemetryPreferenceWriteError",
     "TelemetryPreferences",
     "load_preferences",
     "preferences_path",
