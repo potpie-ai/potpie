@@ -13,7 +13,7 @@ def test_cli_invocations_share_install_and_daemon_session_ids(
     tmp_path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setenv("POTPIE_SENTRY_ENVIRONMENT", "staging")
+    monkeypatch.setenv("POTPIE_ENVIRONMENT", "staging")
     monkeypatch.delenv("SENTRY_DSN", raising=False)
     monkeypatch.delenv("POTPIE_SENTRY_DSN", raising=False)
     runner = CliRunner()

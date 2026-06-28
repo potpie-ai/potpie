@@ -34,9 +34,7 @@ def build_standalone_context_engine_container() -> IngestionServerContainer:
         )
     pots = ExplicitPotResolution(mapping)
     jobs = get_context_graph_job_queue()
-    token = (
-        os.getenv("CONTEXT_ENGINE_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN") or ""
-    ).strip()
+    token = (os.getenv("CONTEXT_ENGINE_GITHUB_TOKEN") or "").strip()
     reco = try_pydantic_deep_reconciliation_agent()
     if token:
         return build_ingestion_server_with_github_token(

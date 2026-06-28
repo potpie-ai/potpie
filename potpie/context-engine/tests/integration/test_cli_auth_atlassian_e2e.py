@@ -13,8 +13,8 @@ From ``potpie/context-engine``:
 
   uv run pytest tests/integration/test_cli_auth_atlassian_e2e.py -v
 
-Required env (see below). ``load_cli_env()`` may still merge repo ``potpie/.env`` when
-present.
+Required env (see below). Runtime settings may merge repo ``potpie/.env`` only
+when the bootstrap environment resolves to ``dev``.
 
 Environment variables
 ---------------------
@@ -92,15 +92,15 @@ def _run_potpie(
 
 @pytest.fixture()
 def isolated_cli_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """Isolated credentials dir + repo .env merged via load_cli_env."""
+    """Isolated credentials dir + dev-only repo .env merge via runtime settings."""
     _require_e2e_enabled()
     xdg = tmp_path / "xdg"
     xdg.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
     _reset_cli_env_loader()
-    from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+    from bootstrap.runtime_settings import ensure_runtime_environment_loaded
 
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     merged = os.environ.copy()
     merged["XDG_CONFIG_HOME"] = str(xdg)
     merged["PYTHONPATH"] = str(_CONTEXT_ENGINE_ROOT)

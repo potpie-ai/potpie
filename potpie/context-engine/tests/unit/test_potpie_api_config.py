@@ -6,16 +6,18 @@ from adapters.outbound.cli_auth import potpie_api_config as config
 from adapters.outbound.cli_auth.firebase_session import FirebaseSession
 
 
-def test_resolve_api_base_url_uses_cli_default_env(monkeypatch) -> None:
-    monkeypatch.setenv("POTPIE_CLI_API_BASE_URL", "https://stage-api.potpie.ai/")
-    monkeypatch.delenv("POTPIE_API_URL", raising=False)
-    monkeypatch.delenv("POTPIE_BASE_URL", raising=False)
+def test_resolve_api_base_url_uses_canonical_env(monkeypatch) -> None:
+    monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
+    monkeypatch.setenv("POTPIE_API_URL", "https://stage-api.potpie.ai/")
     monkeypatch.setattr(config, "get_stored_api_base_url", lambda: "")
 
     assert config.resolve_potpie_api_base_url() == "https://stage-api.potpie.ai"
 
 
-def test_resolve_api_base_url_uses_code_default_and_port(monkeypatch) -> None:
+def test_resolve_api_base_url_uses_code_default_and_ignores_old_aliases(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
     for key in (
         "POTPIE_API_URL",
         "POTPIE_BASE_URL",
@@ -29,31 +31,27 @@ def test_resolve_api_base_url_uses_code_default_and_port(monkeypatch) -> None:
 
     assert config.resolve_potpie_api_base_url() == "http://localhost:8001"
 
-    monkeypatch.setenv("POTPIE_API_URL", "")
-    monkeypatch.setattr(config, "_DEFAULT_API_URL", "")
+    monkeypatch.setenv("POTPIE_CLI_API_BASE_URL", "https://old-api.potpie.ai")
     monkeypatch.setenv("POTPIE_API_PORT", "8123")
-    assert config.resolve_potpie_api_base_url() == "http://127.0.0.1:8123"
+    assert config.resolve_potpie_api_base_url() == "http://localhost:8001"
 
 
-def test_resolve_api_base_url_errors_when_missing(monkeypatch) -> None:
-    for key in (
-        "POTPIE_API_URL",
-        "POTPIE_BASE_URL",
-        "POTPIE_CLI_API_BASE_URL",
-        "POTPIE_CLI_BASE_URL",
-        "POTPIE_PORT",
-        "POTPIE_API_PORT",
-    ):
-        monkeypatch.delenv(key, raising=False)
+def test_resolve_api_base_url_uses_stored_url_before_code_default(monkeypatch) -> None:
+    monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
+    monkeypatch.delenv("POTPIE_API_URL", raising=False)
+    monkeypatch.setattr(
+        config, "get_stored_api_base_url", lambda: "https://stored-api.potpie.ai/"
+    )
+
+    assert config.resolve_potpie_api_base_url() == "https://stored-api.potpie.ai"
+
+
+def test_resolve_api_base_url_env_wins_over_stored_url(monkeypatch) -> None:
+    monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
+    monkeypatch.setenv("POTPIE_API_URL", "https://runtime-api.potpie.ai/")
     monkeypatch.setattr(config, "get_stored_api_base_url", lambda: "")
-    monkeypatch.setattr(config, "_DEFAULT_API_URL", "")
 
-    try:
-        config.resolve_potpie_api_base_url()
-    except ValueError as exc:
-        assert "Potpie API base URL missing" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
+    assert config.resolve_potpie_api_base_url() == "https://runtime-api.potpie.ai"
 
 
 def test_resolve_potpie_api_key_errors_when_missing(monkeypatch) -> None:

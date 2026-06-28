@@ -13,8 +13,8 @@ From ``potpie/context-engine``:
 
   uv run pytest tests/integration/test_cli_auth_linear_e2e.py -v
 
-Required env (see below). ``load_cli_env()`` still merges repo ``potpie/.env`` for
-``LINEAR_CLIENT_ID`` and related vars.
+Required env (see below). Runtime settings may merge repo ``potpie/.env`` only
+when the bootstrap environment resolves to ``dev``.
 
 Environment variables
 ---------------------
@@ -99,7 +99,7 @@ def _run_potpie(
 def isolated_cli_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[dict[str, str]]:
-    """Isolated credentials dir + repo .env merged via load_cli_env."""
+    """Isolated credentials dir + dev-only repo .env merge via runtime settings."""
     _require_e2e_enabled()
     import adapters.outbound.cli_auth.env_bootstrap as env_bootstrap
 
@@ -113,9 +113,9 @@ def isolated_cli_env(
     monkeypatch.setenv("POTPIE_E2E_KEYRING_FILE", str(keyring_file))
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", _E2E_KEYRING_BACKEND)
     env_bootstrap._loaded = False
-    from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+    from bootstrap.runtime_settings import ensure_runtime_environment_loaded
 
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     _activate_e2e_keyring()
     merged = os.environ.copy()
     merged["XDG_CONFIG_HOME"] = str(xdg)

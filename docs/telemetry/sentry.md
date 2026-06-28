@@ -6,19 +6,34 @@ the context-engine telemetry path and `legacy/deploy/observability`.
 
 ## Configuration
 
-The CLI root callback loads the existing project `.env` through `load_cli_env()`.
-Telemetry code then reads the process environment only; it does not load
-additional env files and does not persist DSNs.
+The CLI root callback resolves runtime settings through
+`bootstrap.runtime_settings`. A project `.env` file is read only when the
+bootstrap environment is `dev`; non-dev environments read the process
+environment and packaged distribution defaults only. `.env` values fill missing
+process env keys and cannot set or change `POTPIE_ENVIRONMENT`.
 
 Environment precedence:
 
-- `POTPIE_SENTRY_DSN`, then `SENTRY_DSN`: enables Sentry when present.
+- process environment
+- `.env` values, only when `POTPIE_ENVIRONMENT` resolves to `dev` and only for
+  missing keys
+- distribution defaults packaged into the wheel
+- code defaults
+
+Canonical Sentry configuration:
+
+- `POTPIE_ENVIRONMENT`: Sentry environment and telemetry event environment.
+- `POTPIE_SENTRY_DSN`: enables Sentry when present.
 - `POTPIE_TELEMETRY_DISABLED=1`: disables all outbound telemetry.
 - `POTPIE_SENTRY_ENABLED=0`: disables Sentry only.
-- `POTPIE_SENTRY_ENVIRONMENT`, then `SENTRY_ENVIRONMENT`, default `dev`.
-- `POTPIE_SENTRY_RELEASE`, then `SENTRY_RELEASE`, default
+- `POTPIE_SENTRY_RELEASE`: optional release override; otherwise
   `potpie-cli@<potpie-context-engine version>`.
-- `POTPIE_SENTRY_DIST`, then `SENTRY_DIST`: optional Sentry dist.
+- `POTPIE_SENTRY_DIST`: optional dist override; otherwise the generated build
+  Git SHA when available.
+
+Generic `SENTRY_*` aliases are not read. Distribution defaults are packaged
+public defaults for installed wheels, not production environment variables or
+secrets.
 
 Sentry initializes directly through `sentry-sdk` with:
 

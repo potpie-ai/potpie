@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from adapters.inbound.cli.telemetry import _build_defaults as build_defaults
 from adapters.inbound.cli.telemetry import product_analytics
 from adapters.inbound.cli.telemetry.context import TelemetryContext
 from adapters.inbound.cli.telemetry.product_analytics import (
@@ -16,16 +15,10 @@ from adapters.inbound.cli.telemetry.product_analytics import (
     set_product_analytics_sink,
 )
 from adapters.inbound.cli.telemetry.settings import load_product_analytics_settings
+from bootstrap import runtime_settings
 
 _PRODUCT_ANALYTICS_ENV_NAMES = (
-    "POTPIE_TELEMETRY_DISABLED",
-    "POTPIE_POSTHOG_ENABLED",
-    "POTPIE_PRODUCT_ANALYTICS_ENABLED",
-    "POTPIE_POSTHOG_API_KEY",
-    "POTPIE_POSTHOG_HOST",
-)
-
-_BUILD_DEFAULT_NAMES = (
+    "POTPIE_ENVIRONMENT",
     "POTPIE_TELEMETRY_DISABLED",
     "POTPIE_POSTHOG_ENABLED",
     "POTPIE_PRODUCT_ANALYTICS_ENABLED",
@@ -38,8 +31,8 @@ _BUILD_DEFAULT_NAMES = (
 def _clear_product_analytics_config(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in _PRODUCT_ANALYTICS_ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
-    for name in _BUILD_DEFAULT_NAMES:
-        monkeypatch.setattr(build_defaults, name, "")
+    monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
+    monkeypatch.setattr(runtime_settings, "load_distribution_defaults", lambda: {})
 
 
 @dataclass
@@ -83,27 +76,38 @@ def test_product_analytics_settings_respect_kill_switch(monkeypatch) -> None:
     assert settings.api_key == "phc_test"
 
 
-def test_product_analytics_settings_use_baked_config_without_runtime_env(
+def test_product_analytics_settings_use_distribution_defaults_without_runtime_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(build_defaults, "POTPIE_TELEMETRY_DISABLED", "0")
-    monkeypatch.setattr(build_defaults, "POTPIE_POSTHOG_ENABLED", "1")
-    monkeypatch.setattr(build_defaults, "POTPIE_PRODUCT_ANALYTICS_ENABLED", "1")
-    monkeypatch.setattr(build_defaults, "POTPIE_POSTHOG_API_KEY", "phc_baked")
-    monkeypatch.setattr(build_defaults, "POTPIE_POSTHOG_HOST", "https://baked.invalid")
+    monkeypatch.delenv("POTPIE_ENVIRONMENT", raising=False)
+    monkeypatch.setattr(
+        runtime_settings,
+        "load_distribution_defaults",
+        lambda: {
+            "environment": "prod_oss",
+            "posthog_api_key": "phc_dist",
+            "posthog_host": "https://dist.invalid",
+        },
+    )
 
     settings = load_product_analytics_settings()
 
     assert settings.enabled is True
-    assert settings.api_key == "phc_baked"
-    assert settings.host == "https://baked.invalid"
+    assert settings.api_key == "phc_dist"
+    assert settings.host == "https://dist.invalid"
 
 
 def test_product_analytics_runtime_env_overrides_baked_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(build_defaults, "POTPIE_POSTHOG_API_KEY", "phc_baked")
-    monkeypatch.setattr(build_defaults, "POTPIE_POSTHOG_HOST", "https://baked.invalid")
+    monkeypatch.setattr(
+        runtime_settings,
+        "load_distribution_defaults",
+        lambda: {
+            "posthog_api_key": "phc_dist",
+            "posthog_host": "https://dist.invalid",
+        },
+    )
     monkeypatch.setenv("POTPIE_POSTHOG_API_KEY", "phc_runtime")
     monkeypatch.setenv("POTPIE_POSTHOG_HOST", "https://runtime.invalid")
 
@@ -118,7 +122,6 @@ def test_product_analytics_runtime_env_overrides_baked_config(
     ("env_name", "env_value"),
     [
         ("POTPIE_TELEMETRY_DISABLED", "1"),
-        ("POTPIE_POSTHOG_ENABLED", "0"),
         ("POTPIE_PRODUCT_ANALYTICS_ENABLED", "0"),
     ],
 )
@@ -127,15 +130,23 @@ def test_product_analytics_runtime_opt_out_overrides_baked_enablement(
     env_name: str,
     env_value: str,
 ) -> None:
-    monkeypatch.setattr(build_defaults, "POTPIE_TELEMETRY_DISABLED", "0")
-    monkeypatch.setattr(build_defaults, "POTPIE_POSTHOG_ENABLED", "1")
-    monkeypatch.setattr(build_defaults, "POTPIE_PRODUCT_ANALYTICS_ENABLED", "1")
-    monkeypatch.setattr(build_defaults, "POTPIE_POSTHOG_API_KEY", "phc_baked")
+    monkeypatch.setenv("POTPIE_POSTHOG_API_KEY", "phc_runtime")
     monkeypatch.setenv(env_name, env_value)
 
     settings = load_product_analytics_settings()
 
     assert settings.enabled is False
+
+
+def test_deprecated_posthog_enabled_alias_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POTPIE_POSTHOG_API_KEY", "phc_runtime")
+    monkeypatch.setenv("POTPIE_POSTHOG_ENABLED", "0")
+
+    settings = load_product_analytics_settings()
+
+    assert settings.enabled is True
 
 
 def test_capture_event_uses_existing_telemetry_identity(monkeypatch) -> None:

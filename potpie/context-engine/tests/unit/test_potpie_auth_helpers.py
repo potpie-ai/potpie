@@ -33,11 +33,23 @@ from adapters.outbound.cli_auth.firebase_session import (
 runner = CliRunner()
 
 
-def test_resolve_potpie_ui_url_uses_cli_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("POTPIE_CLI_UI_BASE_URL", "https://stage.potpie.ai/")
-    monkeypatch.delenv("POTPIE_UI_URL", raising=False)
+def test_resolve_potpie_ui_url_uses_canonical_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
+    monkeypatch.setenv("POTPIE_UI_URL", "https://stage.potpie.ai/")
 
     assert potpie_auth.resolve_potpie_ui_url() == "https://stage.potpie.ai"
+
+
+def test_resolve_potpie_ui_url_ignores_old_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
+    monkeypatch.delenv("POTPIE_UI_URL", raising=False)
+    monkeypatch.setenv("POTPIE_CLI_UI_BASE_URL", "https://stage.potpie.ai/")
+
+    assert potpie_auth.resolve_potpie_ui_url() == "http://localhost:3000"
 
 
 def test_build_sign_in_url_encodes_callback_and_state() -> None:
@@ -333,9 +345,8 @@ def test_run_browser_login_flow_builds_sign_in_url(
             )
 
         monkeypatch.setattr(potpie_auth, "wait_for_cli_callback", _wait)
-        monkeypatch.delenv("POTPIE_UI_URL", raising=False)
-        monkeypatch.delenv("POTPIE_CLI_APP_BASE_URL", raising=False)
-        monkeypatch.setenv("POTPIE_CLI_UI_BASE_URL", "https://app.potpie.ai")
+        monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
+        monkeypatch.setenv("POTPIE_UI_URL", "https://app.potpie.ai")
 
         result = potpie_auth.run_browser_login_flow()
 
@@ -355,6 +366,7 @@ def test_run_browser_login_flow_builds_sign_in_url(
 def test_resolve_potpie_api_url_for_auth_defaults_and_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
     for key in (
         "POTPIE_API_URL",
         "POTPIE_BASE_URL",
@@ -367,7 +379,10 @@ def test_resolve_potpie_api_url_for_auth_defaults_and_port(
     assert potpie_auth.resolve_potpie_api_url_for_auth() == "http://localhost:8001"
 
     monkeypatch.setenv("POTPIE_PORT", "8123")
-    assert potpie_auth.resolve_potpie_api_url_for_auth() == "http://127.0.0.1:8123"
+    assert potpie_auth.resolve_potpie_api_url_for_auth() == "http://localhost:8001"
+
+    monkeypatch.setenv("POTPIE_API_URL", "https://api.potpie.ai/")
+    assert potpie_auth.resolve_potpie_api_url_for_auth() == "https://api.potpie.ai"
 
 
 def test_fetch_account_me_uses_bearer_token(monkeypatch: pytest.MonkeyPatch) -> None:

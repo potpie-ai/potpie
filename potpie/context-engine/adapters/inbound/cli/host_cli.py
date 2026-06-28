@@ -54,14 +54,14 @@ def build_app() -> typer.Typer:
             configure_cli_logging,
             configure_error_output,
         )
-        from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+        from bootstrap.runtime_settings import ensure_runtime_environment_loaded
         from bootstrap import sentry_metrics_runtime
 
         set_json(json_)
         set_verbose(verbose)
         configure_error_output(as_json=json_)
         configure_cli_logging(verbose)
-        load_cli_env()
+        ensure_runtime_environment_loaded()
 
         bind_telemetry_context(ctx, json_output=json_)
         sentry_settings = settings.load_sentry_settings()

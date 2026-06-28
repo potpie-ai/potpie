@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.hooks.custom]
-path = "oauth_client_id_injection_hook.py"
+path = "distribution_defaults_hook.py"
 
 [project]
 name = "potpie-context-engine"
@@ -117,7 +117,7 @@ include = [
 [tool.hatch.build.targets.sdist]
 include = [
     "build_config_values.py",
-    "oauth_client_id_injection_hook.py",
+    "distribution_defaults_hook.py",
     "domain",
     "domain/playbooks/**/*.md",
     "application",
