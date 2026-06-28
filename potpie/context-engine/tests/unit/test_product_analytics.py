@@ -35,7 +35,11 @@ _BUILD_DEFAULT_NAMES = (
 
 
 @pytest.fixture(autouse=True)
-def _clear_product_analytics_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clear_product_analytics_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     for name in _PRODUCT_ANALYTICS_ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
     for name in _BUILD_DEFAULT_NAMES:
@@ -81,6 +85,39 @@ def test_product_analytics_settings_respect_kill_switch(monkeypatch) -> None:
 
     assert settings.enabled is False
     assert settings.api_key == "phc_test"
+
+
+def test_product_analytics_settings_respect_persisted_telemetry_disable(
+    monkeypatch,
+) -> None:
+    from adapters.inbound.cli.telemetry.preferences import (
+        TelemetryPreferences,
+        save_preferences,
+    )
+
+    monkeypatch.setenv("POTPIE_POSTHOG_API_KEY", "phc_test")
+    save_preferences(TelemetryPreferences(enabled=False))
+
+    settings = load_product_analytics_settings()
+
+    assert settings.enabled is False
+    assert settings.api_key == "phc_test"
+
+
+def test_product_analytics_settings_persisted_enable_preserves_existing_gates(
+    monkeypatch,
+) -> None:
+    from adapters.inbound.cli.telemetry.preferences import (
+        TelemetryPreferences,
+        save_preferences,
+    )
+
+    monkeypatch.setenv("POTPIE_POSTHOG_API_KEY", "phc_test")
+    save_preferences(TelemetryPreferences(enabled=True))
+
+    settings = load_product_analytics_settings()
+
+    assert settings.enabled is True
 
 
 def test_product_analytics_settings_use_baked_config_without_runtime_env(

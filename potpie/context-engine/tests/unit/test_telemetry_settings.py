@@ -33,7 +33,8 @@ _BUILD_DEFAULT_NAMES = (
 
 
 @pytest.fixture(autouse=True)
-def _clear_sentry_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clear_sentry_config(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     for name in _SENTRY_ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
     for name in _BUILD_DEFAULT_NAMES:
@@ -65,6 +66,39 @@ def test_sentry_settings_respects_global_kill_switch(
 
     assert settings.enabled is False
     assert settings.dsn == "https://public@example.invalid/1"
+
+
+def test_sentry_settings_respects_persisted_telemetry_disable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adapters.inbound.cli.telemetry.preferences import (
+        TelemetryPreferences,
+        save_preferences,
+    )
+
+    monkeypatch.setenv("POTPIE_SENTRY_DSN", "https://public@example.invalid/1")
+    save_preferences(TelemetryPreferences(enabled=False))
+
+    settings = load_cli_sentry_settings()
+
+    assert settings.enabled is False
+    assert settings.dsn == "https://public@example.invalid/1"
+
+
+def test_sentry_settings_persisted_enable_preserves_existing_gates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adapters.inbound.cli.telemetry.preferences import (
+        TelemetryPreferences,
+        save_preferences,
+    )
+
+    monkeypatch.setenv("POTPIE_SENTRY_DSN", "https://public@example.invalid/1")
+    save_preferences(TelemetryPreferences(enabled=True))
+
+    settings = load_cli_sentry_settings()
+
+    assert settings.enabled is True
 
 
 def test_sentry_settings_ignores_blank_global_kill_switch(

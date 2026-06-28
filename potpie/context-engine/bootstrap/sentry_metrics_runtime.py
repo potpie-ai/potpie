@@ -89,6 +89,13 @@ def configure_metrics(settings: SentrySettings) -> None:
         _enabled = False
 
 
+def disable_metrics() -> None:
+    global _configured, _enabled, _sentry_sdk
+    _enabled = False
+    _configured = False
+    _sentry_sdk = None
+
+
 def metrics_configured() -> bool:
     return _configured
 

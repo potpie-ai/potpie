@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import ClassVar, Final
 
 from adapters.inbound.cli.telemetry import _build_defaults as build_defaults
+from adapters.inbound.cli.telemetry.preferences import telemetry_enabled_by_preference
 from bootstrap.sentry_settings import (
     SentrySettings,
     default_cli_release,
@@ -40,8 +41,12 @@ def load_sentry_settings() -> SentrySettings:
         "POTPIE_SENTRY_ENABLED",
         build_defaults.POTPIE_SENTRY_ENABLED,
     )
+    user_enabled = telemetry_enabled_by_preference()
     return SentrySettings(
-        enabled=dsn is not None and not telemetry_disabled and not sentry_disabled,
+        enabled=dsn is not None
+        and user_enabled
+        and not telemetry_disabled
+        and not sentry_disabled,
         dsn=dsn,
         environment=telemetry_environment(),
         release=_env("POTPIE_SENTRY_RELEASE")
@@ -71,8 +76,12 @@ def load_product_analytics_settings() -> ProductAnalyticsSettings:
         "POTPIE_PRODUCT_ANALYTICS_ENABLED",
         build_defaults.POTPIE_PRODUCT_ANALYTICS_ENABLED,
     )
+    user_enabled = telemetry_enabled_by_preference()
     return ProductAnalyticsSettings(
-        enabled=api_key is not None and not telemetry_disabled and not product_disabled,
+        enabled=api_key is not None
+        and user_enabled
+        and not telemetry_disabled
+        and not product_disabled,
         api_key=api_key,
         host=(
             _env("POTPIE_POSTHOG_HOST")
@@ -89,6 +98,17 @@ def telemetry_environment() -> str:
         or _baked(build_defaults.POTPIE_SENTRY_ENVIRONMENT)
         or build_defaults.DEFAULT_POTPIE_SENTRY_ENVIRONMENT
     )
+
+
+def telemetry_state() -> str:
+    if _is_truthy_config(
+        "POTPIE_TELEMETRY_DISABLED",
+        build_defaults.POTPIE_TELEMETRY_DISABLED,
+    ):
+        return "blocked"
+    if not telemetry_enabled_by_preference():
+        return "disabled"
+    return "enabled"
 
 
 def _env(name: str) -> str | None:
@@ -130,5 +150,6 @@ __all__ = [
     "default_cli_release",
     "load_product_analytics_settings",
     "load_sentry_settings",
+    "telemetry_state",
     "telemetry_environment",
 ]

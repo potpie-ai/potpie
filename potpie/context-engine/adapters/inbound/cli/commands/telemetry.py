@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import typer
+
+from adapters.inbound.cli.commands._common import emit
+from adapters.inbound.cli.telemetry import sentry_runtime, settings
+from adapters.inbound.cli.telemetry.identity_store import (
+    identity_path,
+    load_or_create_identity,
+)
+from adapters.inbound.cli.telemetry.preferences import (
+    TelemetryPreferences,
+    save_preferences,
+)
+from adapters.inbound.cli.telemetry.product_analytics import configure_product_analytics
+
+telemetry_app = typer.Typer(help="CLI telemetry controls.")
+
+
+@telemetry_app.command("status")
+def status() -> None:
+    """Show Potpie CLI telemetry status."""
+    _emit_status()
+
+
+@telemetry_app.command("enable")
+def enable() -> None:
+    """Enable anonymous Potpie CLI telemetry."""
+    save_preferences(TelemetryPreferences(enabled=True))
+    _refresh_runtime_sinks()
+    _emit_status()
+
+
+@telemetry_app.command("disable")
+def disable() -> None:
+    """Disable outbound Potpie CLI telemetry."""
+    save_preferences(TelemetryPreferences(enabled=False))
+    _refresh_runtime_sinks()
+    _emit_status()
+
+
+def _emit_status() -> None:
+    state = settings.telemetry_state()
+    identity = load_or_create_identity()
+    path = identity_path()
+    payload = {
+        "telemetry": state,
+        "crash_reports": "anonymous",
+        "analytics": "anonymous",
+        "install_id": identity.anonymous_install_id,
+        "identity_path": str(path),
+    }
+    emit(payload, human=_human_status(payload))
+
+
+def _refresh_runtime_sinks() -> None:
+    sentry_runtime.configure_cli_sentry(settings.load_sentry_settings())
+    configure_product_analytics(settings.load_product_analytics_settings())
+
+
+def _human_status(payload: dict[str, str]) -> str:
+    lines = [f"Potpie CLI telemetry: {payload['telemetry']}"]
+    if payload["telemetry"] == "blocked":
+        return "\n".join(lines)
+    lines.extend(
+        [
+            "",
+            f"Crash reports: {payload['crash_reports']}",
+            f"Analytics: {payload['analytics']}",
+            f"Install ID: {payload['install_id']}",
+            f"Identity path: {payload['identity_path']}",
+        ]
+    )
+    return "\n".join(lines)
+
+
+__all__ = ["telemetry_app"]
