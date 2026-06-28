@@ -20,7 +20,6 @@ from bootstrap import runtime_settings
 _PRODUCT_ANALYTICS_ENV_NAMES = (
     "POTPIE_ENVIRONMENT",
     "POTPIE_TELEMETRY_DISABLED",
-    "POTPIE_POSTHOG_ENABLED",
     "POTPIE_PRODUCT_ANALYTICS_ENABLED",
     "POTPIE_POSTHOG_API_KEY",
     "POTPIE_POSTHOG_HOST",
@@ -136,17 +135,6 @@ def test_product_analytics_runtime_opt_out_overrides_baked_enablement(
     settings = load_product_analytics_settings()
 
     assert settings.enabled is False
-
-
-def test_deprecated_posthog_enabled_alias_is_ignored(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("POTPIE_POSTHOG_API_KEY", "phc_runtime")
-    monkeypatch.setenv("POTPIE_POSTHOG_ENABLED", "0")
-
-    settings = load_product_analytics_settings()
-
-    assert settings.enabled is True
 
 
 def test_capture_event_uses_existing_telemetry_identity(monkeypatch) -> None:

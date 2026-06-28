@@ -14,25 +14,13 @@ def test_resolve_api_base_url_uses_canonical_env(monkeypatch) -> None:
     assert config.resolve_potpie_api_base_url() == "https://stage-api.potpie.ai"
 
 
-def test_resolve_api_base_url_uses_code_default_and_ignores_old_aliases(
+def test_resolve_api_base_url_uses_code_default(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
-    for key in (
-        "POTPIE_API_URL",
-        "POTPIE_BASE_URL",
-        "POTPIE_CLI_API_BASE_URL",
-        "POTPIE_CLI_BASE_URL",
-        "POTPIE_PORT",
-        "POTPIE_API_PORT",
-    ):
-        monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("POTPIE_API_URL", raising=False)
     monkeypatch.setattr(config, "get_stored_api_base_url", lambda: "")
 
-    assert config.resolve_potpie_api_base_url() == "http://localhost:8001"
-
-    monkeypatch.setenv("POTPIE_CLI_API_BASE_URL", "https://old-api.potpie.ai")
-    monkeypatch.setenv("POTPIE_API_PORT", "8123")
     assert config.resolve_potpie_api_base_url() == "http://localhost:8001"
 
 

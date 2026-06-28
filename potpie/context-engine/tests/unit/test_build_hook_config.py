@@ -103,6 +103,13 @@ def test_build_config_input_detection(tmp_path: Path) -> None:
     )
 
     (tmp_path / ".env").write_text("UNRELATED=1\n", encoding="utf-8")
+    assert not build_config_values.has_build_config_inputs(
+        build_config_values.DISTRIBUTION_DEFAULT_INPUT_NAMES,
+        {},
+        dotenv_start=tmp_path,
+    )
+
+    (tmp_path / ".env").write_text("POTPIE_SENTRY_DSN=file-sentry\n", encoding="utf-8")
     assert build_config_values.has_build_config_inputs(
         build_config_values.DISTRIBUTION_DEFAULT_INPUT_NAMES,
         {},
@@ -178,7 +185,9 @@ def test_prefer_existing_distribution_defaults(tmp_path: Path) -> None:
 
 def test_prefer_existing_build_info(tmp_path: Path) -> None:
     out = tmp_path / "_build_info.py"
-    build_config_values.write_python_constants(out, {"GIT_SHA": "old", "BUILD_TIME": "kept"})
+    build_config_values.write_python_constants(
+        out, {"GIT_SHA": "old", "BUILD_TIME": "kept"}
+    )
 
     values = build_config_values.prefer_existing_config_values(
         out,

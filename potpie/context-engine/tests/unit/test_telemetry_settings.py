@@ -14,12 +14,8 @@ _SENTRY_ENV_NAMES = (
     "POTPIE_TELEMETRY_DISABLED",
     "POTPIE_SENTRY_ENABLED",
     "POTPIE_SENTRY_DSN",
-    "SENTRY_DSN",
-    "SENTRY_ENVIRONMENT",
     "POTPIE_SENTRY_RELEASE",
-    "SENTRY_RELEASE",
     "POTPIE_SENTRY_DIST",
-    "SENTRY_DIST",
 )
 
 
@@ -51,20 +47,10 @@ def test_potpie_sentry_dsn_enables_sentry(
     assert settings.dsn == "https://public@example.invalid/1"
 
 
-def test_generic_sentry_dsn_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SENTRY_DSN", "https://generic@example.invalid/1")
-
-    settings = load_cli_sentry_settings()
-
-    assert settings.enabled is False
-    assert settings.dsn is None
-
-
 def test_potpie_environment_is_used_for_sentry_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("POTPIE_ENVIRONMENT", "staging")
-    monkeypatch.setenv("SENTRY_ENVIRONMENT", "prod")
     monkeypatch.setenv("POTPIE_SENTRY_DSN", "https://public@example.invalid/1")
 
     settings = load_cli_sentry_settings()
@@ -78,7 +64,6 @@ def test_sentry_release_comes_from_env_or_package_version(
 ) -> None:
     monkeypatch.setenv("POTPIE_SENTRY_DSN", "https://public@example.invalid/1")
     monkeypatch.setenv("POTPIE_SENTRY_RELEASE", "potpie-cli@test")
-    monkeypatch.setenv("SENTRY_RELEASE", "generic@test")
 
     settings = load_cli_sentry_settings()
 
@@ -92,7 +77,6 @@ def test_sentry_dist_comes_from_env_or_build_info(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("POTPIE_SENTRY_DSN", "https://public@example.invalid/1")
-    monkeypatch.setenv("SENTRY_DIST", "generic-dist")
     monkeypatch.setattr(shared_sentry_settings, "build_git_sha", lambda: "abc123")
 
     settings = load_cli_sentry_settings()

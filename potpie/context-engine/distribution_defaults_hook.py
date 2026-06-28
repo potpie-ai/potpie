@@ -33,7 +33,9 @@ class DistributionDefaultsHook(BuildHookInterface):
                 "DISTRIBUTION_DEFAULTS",
                 distribution_defaults,
             )
-        if not config_values.has_build_config_inputs(config_values.BUILD_INFO_INPUT_NAMES):
+        if not config_values.has_build_config_inputs(
+            config_values.BUILD_INFO_INPUT_NAMES
+        ):
             build_info = config_values.prefer_existing_config_values(
                 config_values.BUILD_INFO_OUT,
                 build_info,

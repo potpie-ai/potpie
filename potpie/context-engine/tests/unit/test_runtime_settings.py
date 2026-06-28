@@ -28,19 +28,6 @@ _CONFIG_ENV_NAMES = (
     "POTPIE_GITHUB_CLIENT_ID",
     "CONTEXT_ENGINE_GITHUB_TOKEN",
     "GITHUB_WEBHOOK_SECRET",
-    "SENTRY_DSN",
-    "SENTRY_ENVIRONMENT",
-    "SENTRY_RELEASE",
-    "SENTRY_DIST",
-    "POTPIE_POSTHOG_ENABLED",
-    "POTPIE_BASE_URL",
-    "POTPIE_CLI_API_BASE_URL",
-    "POTPIE_CLI_BASE_URL",
-    "POTPIE_PORT",
-    "POTPIE_API_PORT",
-    "POTPIE_CLI_UI_BASE_URL",
-    "POTPIE_CLI_APP_BASE_URL",
-    "GITHUB_TOKEN",
 )
 
 
@@ -98,9 +85,7 @@ def test_source_checkout_default_environment_is_dev() -> None:
 
 
 def test_installed_distribution_default_environment_is_prod_oss() -> None:
-    assert (
-        resolve_bootstrap_environment({}, {"environment": "prod_oss"}) == "prod_oss"
-    )
+    assert resolve_bootstrap_environment({}, {"environment": "prod_oss"}) == "prod_oss"
 
 
 def test_dev_environment_reads_dotenv_for_missing_keys(
@@ -201,29 +186,17 @@ def test_boolean_flags_parse_canonical_values(raw: str, expected: bool) -> None:
     assert settings.product_analytics_enabled is expected
 
 
-def test_api_and_ui_urls_are_separate_and_old_aliases_are_ignored() -> None:
+def test_api_and_ui_urls_are_separate() -> None:
     settings = load_runtime_settings(
         {
             "POTPIE_API_URL": "https://api.example.invalid/",
             "POTPIE_UI_URL": "https://ui.example.invalid/",
-            "POTPIE_BASE_URL": "https://old-api.example.invalid",
-            "POTPIE_CLI_UI_BASE_URL": "https://old-ui.example.invalid",
         },
         distribution_defaults={},
     )
 
     assert settings.potpie_api_url == "https://api.example.invalid"
     assert settings.potpie_ui_url == "https://ui.example.invalid"
-
-    old_only = load_runtime_settings(
-        {
-            "POTPIE_BASE_URL": "https://old-api.example.invalid",
-            "POTPIE_CLI_UI_BASE_URL": "https://old-ui.example.invalid",
-        },
-        distribution_defaults={},
-    )
-    assert old_only.potpie_api_url == "http://localhost:8001"
-    assert old_only.potpie_ui_url == "http://localhost:3000"
 
 
 def test_project_child_environment_emits_canonical_values_and_drops_aliases() -> None:

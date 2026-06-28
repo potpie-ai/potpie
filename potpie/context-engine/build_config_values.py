@@ -64,8 +64,7 @@ def build_info_values(
 ) -> dict[str, str]:
     source = _merged_build_environ(environ, dotenv_start=dotenv_start)
     return {
-        "GIT_SHA": _env("POTPIE_BUILD_GIT_SHA", source)
-        or _env("GITHUB_SHA", source),
+        "GIT_SHA": _env("POTPIE_BUILD_GIT_SHA", source) or _env("GITHUB_SHA", source),
         "BUILD_TIME": _env("POTPIE_BUILD_TIME", source) or _utc_now(),
     }
 
@@ -151,7 +150,10 @@ def has_build_config_inputs(
     source = os.environ if environ is None else environ
     if any(name in source for name in names):
         return True
-    return _find_nearest_dotenv(dotenv_start or _DOTENV_SEARCH_START) is not None
+    if environ is not None and dotenv_start is None:
+        return False
+    dotenv = _read_nearest_dotenv(dotenv_start or _DOTENV_SEARCH_START)
+    return any(name in dotenv for name in names)
 
 
 def _env(name: str, environ: Mapping[str, str] | None = None) -> str:
@@ -174,8 +176,11 @@ def _clean(value: object) -> str:
 
 
 def _utc_now() -> str:
-    return datetime.now(tz=timezone.utc).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
+    return (
+        datetime.now(tz=timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
     )
 
 

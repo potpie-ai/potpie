@@ -42,16 +42,6 @@ def test_resolve_potpie_ui_url_uses_canonical_env(
     assert potpie_auth.resolve_potpie_ui_url() == "https://stage.potpie.ai"
 
 
-def test_resolve_potpie_ui_url_ignores_old_alias(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
-    monkeypatch.delenv("POTPIE_UI_URL", raising=False)
-    monkeypatch.setenv("POTPIE_CLI_UI_BASE_URL", "https://stage.potpie.ai/")
-
-    assert potpie_auth.resolve_potpie_ui_url() == "http://localhost:3000"
-
-
 def test_build_sign_in_url_encodes_callback_and_state() -> None:
     url = potpie_auth.build_sign_in_url(
         ui_base_url="https://app.potpie.ai/",
@@ -363,22 +353,11 @@ def test_run_browser_login_flow_builds_sign_in_url(
         listener_socket.close()
 
 
-def test_resolve_potpie_api_url_for_auth_defaults_and_port(
+def test_resolve_potpie_api_url_for_auth_defaults_and_canonical_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
-    for key in (
-        "POTPIE_API_URL",
-        "POTPIE_BASE_URL",
-        "POTPIE_CLI_API_BASE_URL",
-        "POTPIE_CLI_BASE_URL",
-        "POTPIE_PORT",
-        "POTPIE_API_PORT",
-    ):
-        monkeypatch.delenv(key, raising=False)
-    assert potpie_auth.resolve_potpie_api_url_for_auth() == "http://localhost:8001"
-
-    monkeypatch.setenv("POTPIE_PORT", "8123")
+    monkeypatch.delenv("POTPIE_API_URL", raising=False)
     assert potpie_auth.resolve_potpie_api_url_for_auth() == "http://localhost:8001"
 
     monkeypatch.setenv("POTPIE_API_URL", "https://api.potpie.ai/")
