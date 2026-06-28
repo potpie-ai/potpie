@@ -238,7 +238,9 @@ def test_setup_atlassian_login_runs_shared_jira_flow(
     def _fake_atlassian_login(product: str, **kwargs: object) -> None:
         calls.append({"product": product, **kwargs})
 
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -267,7 +269,9 @@ def test_direct_atlassian_login_records_funnel_without_credentials(
     def _fake_atlassian_login(product: str, **kwargs: object) -> None:
         calls.append({"product": product, **kwargs})
 
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(
         auth_commands,
         "run_atlassian_api_token_auth",
