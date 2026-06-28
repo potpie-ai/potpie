@@ -8,9 +8,9 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import host_cli as cli_main
+from potpie.cli import host_cli as cli_main
 from adapters.outbound.cli_auth import github as gh_auth
-from adapters.inbound.cli.auth import github_commands as gh_cmds
+from potpie.cli.auth import github_commands as gh_cmds
 from adapters.outbound.cli_auth import credentials_store as cs
 
 pytestmark = pytest.mark.unit
@@ -773,7 +773,7 @@ def test_potpie_login_delegates_to_impl(monkeypatch: pytest.MonkeyPatch) -> None
     called: list[bool] = []
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth._login_impl.potpie_login_impl",
+        "potpie.cli.auth._login_impl.potpie_login_impl",
         lambda: called.append(True),
     )
 

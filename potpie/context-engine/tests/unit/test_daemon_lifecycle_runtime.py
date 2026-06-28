@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import host_cli as cli_main
+from potpie.cli import host_cli as cli_main
 from domain.lifecycle import DONE, SKIPPED, SetupPlan
-from host.daemon import Daemon
-from host.daemon_client import DaemonRpcClient, RemoteHostShell
+from potpie.daemon.lifecycle import Daemon
+from potpie.daemon.client import DaemonRpcClient, RemoteHostShell
 
 
 def test_daemon_ensure_starts_and_reuses(tmp_path: Path, monkeypatch) -> None:

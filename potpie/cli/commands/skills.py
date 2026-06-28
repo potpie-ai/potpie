@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import typer
 
-from adapters.inbound.cli.commands._common import contract, emit, get_host
-from adapters.inbound.cli.telemetry.onboarding_events import (
+from potpie.cli.commands._common import contract, emit, get_host
+from potpie.cli.telemetry.onboarding_events import (
     capture_project_binding_event,
     elapsed_ms,
     now_ms,

@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from adapters.inbound.cli.auth import auth_commands
-from adapters.inbound.cli.telemetry.onboarding_events import (
+from potpie.cli.auth import auth_commands
+from potpie.cli.telemetry.onboarding_events import (
     CliSetupAnalyticsObserver,
     begin_setup_run,
     capture_activation_succeeded,
@@ -17,7 +17,7 @@ from adapters.inbound.cli.telemetry.onboarding_events import (
     onboarding_entrypoint,
     repo_location_kind,
 )
-from adapters.inbound.cli.telemetry.product_analytics import (
+from potpie.cli.telemetry.product_analytics import (
     ProductAnalyticsEvent,
     set_product_analytics_sink,
 )
@@ -39,14 +39,14 @@ def fake_sink(monkeypatch: pytest.MonkeyPatch) -> _FakeSink:
     sink = _FakeSink()
     set_product_analytics_sink(sink)
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        "potpie.cli.telemetry.product_analytics.current_telemetry_context",
         lambda: _telemetry_context(),
     )
     return sink
 
 
 def _telemetry_context():
-    from adapters.inbound.cli.telemetry.context import TelemetryContext
+    from potpie.cli.telemetry.context import TelemetryContext
 
     return TelemetryContext(
         anonymous_install_id="install_123",

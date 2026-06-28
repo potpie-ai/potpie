@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from adapters.inbound.cli.auth import linear_read as lr
+from potpie.cli.auth import linear_read as lr
 from adapters.outbound.cli_auth.linear_read_client import LinearReadError
 
 

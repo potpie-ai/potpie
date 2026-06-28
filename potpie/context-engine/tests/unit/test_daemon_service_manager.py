@@ -2,8 +2,8 @@ import pathlib
 
 import pytest
 
-from adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
-from application.services.managed_service_manager import (
+from potpie.daemon.managed_services.subprocess_backend import SubprocessBackend
+from potpie.daemon.runtime.service_manager import (
     DependencyCycle,
     ServiceManager,
     ServiceNotFound,
@@ -15,8 +15,8 @@ from domain.ports.daemon.shell import (
     ServiceBackend,
     ServiceSpec,
 )
-from host.daemon_runtime.context import ShellContext
-from host.daemon_runtime.registry import Registry
+from potpie.daemon.runtime.context import ShellContext
+from potpie.daemon.runtime.registry import Registry
 from tests.conftest import free_port
 
 

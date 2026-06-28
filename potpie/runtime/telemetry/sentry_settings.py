@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from importlib import metadata
 from typing import ClassVar
 
-from bootstrap.runtime_settings import build_git_sha, load_runtime_settings
+from potpie.runtime.settings import build_git_sha, load_runtime_settings
 
 
 @dataclass(frozen=True)
@@ -36,16 +36,20 @@ def load_sentry_settings() -> SentrySettings:
         dsn=settings.sentry_dsn,
         environment=settings.environment,
         release=_env("POTPIE_SENTRY_RELEASE")
+        or _env("SENTRY_RELEASE")
         or default_cli_release(),
-        dist=_env("POTPIE_SENTRY_DIST") or build_git_sha(),
+        dist=_env("POTPIE_SENTRY_DIST") or _env("SENTRY_DIST") or build_git_sha(),
     )
 
 
 def default_cli_release() -> str:
     try:
-        version = metadata.version("potpie-context-engine")
+        version = metadata.version("potpie")
     except metadata.PackageNotFoundError:
-        version = "0.1.0"
+        try:
+            version = metadata.version("potpie-context-engine")
+        except metadata.PackageNotFoundError:
+            version = "0.1.0"
     return f"potpie-cli@{version}"
 
 
@@ -59,3 +63,11 @@ def _env(name: str) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+__all__ = [
+    "SentrySettings",
+    "default_cli_release",
+    "load_sentry_settings",
+    "telemetry_environment",
+]

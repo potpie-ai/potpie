@@ -6,7 +6,7 @@ explore the project-memory graph interactively. Talks to the same
 uses — no new application logic, just an HTTP + SPA projection.
 """
 
-from adapters.inbound.http.ui.router import build_ui_api_router
-from adapters.inbound.http.ui.static import frontend_dist_dir, mount_ui_static
+from potpie.daemon.http.ui.router import build_ui_api_router
+from potpie.daemon.http.ui.static import frontend_dist_dir, mount_ui_static
 
 __all__ = ["build_ui_api_router", "frontend_dist_dir", "mount_ui_static"]

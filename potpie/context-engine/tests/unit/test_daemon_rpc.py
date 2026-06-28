@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from domain.lifecycle import SetupPlan
-from host.daemon_rpc import TYPE_KEY, decode, encode
+from potpie.daemon.rpc import TYPE_KEY, decode, encode
 
 
 def test_daemon_rpc_roundtrips_domain_dataclasses() -> None:

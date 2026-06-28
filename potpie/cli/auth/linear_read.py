@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-from adapters.inbound.cli.auth.atlassian_read import _prompt_workspace
+from potpie.cli.auth.atlassian_read import _prompt_workspace
 from adapters.outbound.cli_auth.credentials_store import save_linear_workspace_prefs
 from adapters.outbound.cli_auth.linear_read_client import (
     LinearReadError,

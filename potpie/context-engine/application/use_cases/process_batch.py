@@ -24,12 +24,10 @@ from application.services.agent_work_events import (
     WorkEventRecord,
     build_work_events,
 )
-from bootstrap import sentry_metrics_runtime
 from bootstrap.observability_context import correlation_scope
 from bootstrap.observability_runtime import get_observability
 from domain.actor import SYSTEM_ACTOR
 from domain.context_events import ContextEvent
-from domain.ports.observability import SPAN_KIND_INTERNAL
 from domain.ports.agent_checkpoint_store import AgentCheckpointStorePort
 from domain.ports.agent_execution_log import (
     AgentExecutionLogPort,
@@ -40,6 +38,7 @@ from domain.ports.event_stream import (
     EventStreamPublisherPort,
     NoOpEventStreamPublisher,
 )
+from domain.ports.observability import SPAN_KIND_INTERNAL
 from domain.ports.policy import (
     ACTION_APPLY_WRITE,
     RESOURCE_APPLY,
@@ -401,21 +400,19 @@ def process_batch(
             _obs.histogram(
                 "ce.agent.tool_calls",
                 float(chunk_outcome.tool_call_count),
-                attributes={"pot_id": batch.pot_id},
-            )
-            sentry_metrics_runtime.distribution(
-                "ce.agent.tool_calls",
-                float(chunk_outcome.tool_call_count),
-                attributes={"result": "ok" if chunk_outcome.ok else "failed"},
+                attributes={
+                    "pot_id": batch.pot_id,
+                    "result": "ok" if chunk_outcome.ok else "failed",
+                },
             )
         except Exception as exc:
             logger.exception(
                 "batch %s chunk %d/%d agent run failed", batch.id, idx, chunks_total
             )
-            sentry_metrics_runtime.distribution(
+            _obs.histogram(
                 "ce.agent.tool_calls",
                 0,
-                attributes={"result": "failed"},
+                attributes={"pot_id": batch.pot_id, "result": "failed"},
             )
             failure_outcome = BatchAgentOutcome(ok=False, error=str(exc))
             # The crashed agent may have streamed records up to its last
@@ -500,12 +497,7 @@ def process_batch(
         get_observability().counter(
             "ce.events.reconciled_total",
             len(completed),
-            attributes={"pot_id": batch.pot_id},
-        )
-        sentry_metrics_runtime.count(
-            "ce.events.reconciled_total",
-            len(completed),
-            attributes={"result": "reconciled"},
+            attributes={"pot_id": batch.pot_id, "result": "reconciled"},
         )
         return ProcessBatchOutcome(
             batch_id=batch.id,
@@ -542,22 +534,12 @@ def process_batch(
         _obs_fin.counter(
             "ce.events.reconciled_total",
             len(aggregated_completed),
-            attributes={"pot_id": batch.pot_id},
-        )
-        sentry_metrics_runtime.count(
-            "ce.events.reconciled_total",
-            len(aggregated_completed),
-            attributes={"result": "reconciled"},
+            attributes={"pot_id": batch.pot_id, "result": "reconciled"},
         )
     _obs_fin.counter(
         "ce.events.failed_total",
         len(failed_event_ids),
-        attributes={"pot_id": batch.pot_id},
-    )
-    sentry_metrics_runtime.count(
-        "ce.events.failed_total",
-        len(failed_event_ids),
-        attributes={"result": "failed"},
+        attributes={"pot_id": batch.pot_id, "result": "failed"},
     )
     _safe_publish_status(
         stream,

@@ -4,13 +4,16 @@ import importlib
 from types import ModuleType
 from typing import Protocol
 
-from bootstrap.sentry_metrics_runtime import configure_metrics, metrics_configured
+from potpie.runtime.telemetry.sentry_metrics import (
+    configure_metrics,
+    metrics_configured,
+)
+from potpie.runtime.telemetry.sentry_settings import SentrySettings
 
 from .context import (
     TelemetryContext,
     current_telemetry_context,
 )
-from .settings import SentrySettings
 
 _configured = False
 

@@ -2,29 +2,32 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
-import json
 
 import pytest
+from potpie.cli.commands import _common, graph
+from potpie.cli.telemetry import product_analytics
+from potpie.cli.telemetry.context import TelemetryContext
 from typer.testing import CliRunner
 
 from bootstrap import observability_runtime
-from adapters.inbound.cli.commands import _common, graph
-from adapters.inbound.cli.telemetry import product_analytics
-from adapters.inbound.cli.telemetry.context import TelemetryContext
+from domain.graph_history import GraphHistoryEntry, GraphHistoryResult
+from domain.graph_inbox import GraphInboxItem, GraphInboxResult
 from domain.graph_plans import (
     GraphIngestionVerificationResult,
     GraphMutationCommitResult,
     GraphMutationDiff,
     GraphMutationProposal,
 )
-from domain.graph_history import GraphHistoryEntry, GraphHistoryResult
-from domain.graph_inbox import GraphInboxItem, GraphInboxResult
 from domain.graph_quality import GraphQualityFinding, GraphQualityResult
-from domain.nudge import GraphNudgeResult
 from domain.graph_views import views_for_catalog
+from domain.nudge import GraphNudgeResult
+from domain.ports.graph.analytics import RepairReport
+from domain.ports.graph.backend import BackendCapabilities
+from domain.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
 from domain.ports.services.graph_service import (
     DataPlaneStatus,
     GraphCatalogResult,
@@ -32,9 +35,6 @@ from domain.ports.services.graph_service import (
     GraphEntitySearchResult,
     GraphReadResult,
 )
-from domain.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
-from domain.ports.graph.analytics import RepairReport
-from domain.ports.graph.backend import BackendCapabilities
 
 pytestmark = pytest.mark.unit
 
@@ -800,19 +800,19 @@ def test_graph_workbench_commands_emit_v2_observability(
     sentry_distributions = []
     monkeypatch.setattr(observability_runtime, "_OBSERVABILITY", obs)
     monkeypatch.setattr(
-        "bootstrap.sentry_metrics_runtime.count",
+        "potpie.runtime.telemetry.sentry_metrics.count",
         lambda name, value=1, *, unit=None, attributes=None: sentry_counts.append(
             (name, value, unit, dict(attributes or {}))
         ),
     )
     monkeypatch.setattr(
-        "bootstrap.sentry_metrics_runtime.distribution",
+        "potpie.runtime.telemetry.sentry_metrics.distribution",
         lambda name, value, *, unit=None, attributes=None: sentry_distributions.append(
             (name, value, unit, dict(attributes or {}))
         ),
     )
     monkeypatch.setattr(
-        "bootstrap.sentry_metrics_runtime.flush", lambda timeout=2.0: None
+        "potpie.runtime.telemetry.sentry_metrics.flush", lambda timeout=2.0: None
     )
     sink = _bind_graph_product_analytics(monkeypatch)
     payload_file = tmp_path / "mutation.json"
@@ -1955,7 +1955,7 @@ def test_graph_status_warns_when_active_repo_pot_is_empty(monkeypatch) -> None:
     monkeypatch.setattr(
         graph, "_current_git_remote", lambda cwd: "github.com/acme/shop", raising=False
     )
-    from adapters.inbound.cli.commands import _common
+    from potpie.cli.commands import _common
 
     monkeypatch.setattr(
         _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"

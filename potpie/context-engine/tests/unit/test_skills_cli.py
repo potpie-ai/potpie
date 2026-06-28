@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import pytest
 from typer.testing import CliRunner
 
-from adapters.inbound.cli.commands import _common, skills
+from potpie.cli.commands import _common, skills
 from domain.ports.services.skill_manager import SkillOperationResult
 
 

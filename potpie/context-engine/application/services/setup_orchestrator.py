@@ -16,10 +16,10 @@ and skipped for an in-process host.
 
 from __future__ import annotations
 
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-import subprocess
 from typing import Callable
 from urllib.parse import urlparse
 
@@ -36,15 +36,15 @@ from domain.lifecycle import (
     SetupReport,
     StepResult,
 )
+from domain.ports.daemon.lifecycle import DaemonLifecyclePort
 from domain.ports.graph.backend import GraphBackend
 from domain.ports.install import Installer
 from domain.ports.services.auth import AuthService
 from domain.ports.services.config import ConfigService
 from domain.ports.services.pot_management import PotManagementService
+from domain.ports.services.setup import NoOpSetupObserver, SetupObserver
 from domain.ports.services.skill_manager import SkillManager
 from domain.ports.services.state_store import MigrationPort, StateStorePort
-from domain.ports.services.setup import NoOpSetupObserver, SetupObserver
-from host.daemon import Daemon
 
 # Dependency-ordered seam plan: (step, owner, action template). Mirrors the
 # architecture.md "Seam → owner map"; the orchestrator depends only on each
@@ -141,7 +141,7 @@ class DefaultSetupOrchestrator:
     pots: PotManagementService
     state_store: StateStorePort
     migrator: MigrationPort
-    daemon: Daemon
+    daemon: DaemonLifecyclePort
     auth: AuthService
     skills: SkillManager
     observer: SetupObserver = field(default_factory=NoOpSetupObserver)
@@ -216,7 +216,7 @@ class DefaultSetupOrchestrator:
         try:
             result = fn()
             if isinstance(result, StepResult):
-                # Preserve the component's own state/detail; enforce this step's name + hard flag.
+                # Preserve state/detail; enforce this step's name and hard flag.
                 step_result = StepResult(
                     name,
                     result.state,

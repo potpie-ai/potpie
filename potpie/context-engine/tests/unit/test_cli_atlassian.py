@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from adapters.outbound.cli_auth.http import AuthHttpError
 import pytest
 import typer
-from adapters.inbound.cli.auth import atlassian_auth
+from potpie.cli.auth import atlassian_auth
 from adapters.outbound.cli_auth.atlassian_client import (
     AtlassianAuthErrorKind,
     AtlassianVerifyResult,
@@ -20,7 +20,7 @@ from adapters.outbound.cli_auth.atlassian_client import (
     site_url_from_subdomain,
     verify_gateway_product,
 )
-from adapters.inbound.cli.auth.atlassian_auth import (
+from potpie.cli.auth.atlassian_auth import (
     _auth_failure_message,
     run_atlassian_api_token_auth,
 )
@@ -30,9 +30,9 @@ from adapters.outbound.cli_auth.atlassian_client import (
     discover_sites_with_api_token,
     fetch_accessible_resources,
 )
-from adapters.inbound.cli.auth.atlassian_read import _auth_header_variants
+from potpie.cli.auth.atlassian_read import _auth_header_variants
 from adapters.outbound.cli_auth import credentials_store as cs
-from adapters.inbound.cli.auth.atlassian_read import (
+from potpie.cli.auth.atlassian_read import (
     AtlassianReadError,
     _cloud_id_from_credentials,
     _get_json,
@@ -41,7 +41,7 @@ from adapters.inbound.cli.auth.atlassian_read import (
     fetch_confluence_spaces_sample,
     fetch_jira_issues_sample,
 )
-from adapters.inbound.cli.auth.atlassian_read import (
+from potpie.cli.auth.atlassian_read import (
     fetch_confluence_pages_in_space,
     fetch_jira_issues_in_project,
     fetch_jira_projects,
@@ -463,7 +463,7 @@ def test_finalize_selected_site_fetches_cloud_id() -> None:
 
 
 def test_verify_site_with_api_token_success() -> None:
-    from adapters.inbound.cli.auth.atlassian_auth import verify_site_with_api_token
+    from potpie.cli.auth.atlassian_auth import verify_site_with_api_token
 
     with (
         patch(
@@ -913,7 +913,7 @@ def test_fetch_accessible_resources_invalid_json_tries_next_scheme() -> None:
 
 
 def test_discover_sites_with_api_token_filters_by_gateway() -> None:
-    from adapters.inbound.cli.auth.atlassian_auth import AtlassianVerifyResult
+    from potpie.cli.auth.atlassian_auth import AtlassianVerifyResult
 
     candidates = [
         {
@@ -938,7 +938,7 @@ def test_discover_sites_with_api_token_filters_by_gateway() -> None:
 
 
 def test_collect_login_site_candidates_merges_resources_and_email_hints() -> None:
-    from adapters.inbound.cli.auth.atlassian_auth import collect_login_site_candidates
+    from potpie.cli.auth.atlassian_auth import collect_login_site_candidates
 
     with (
         patch(
@@ -1325,7 +1325,7 @@ def test_get_json_returns_list_payload_wrapped(monkeypatch: pytest.MonkeyPatch) 
 def test_prompt_workspace_interactive_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import adapters.inbound.cli.auth.atlassian_read as atlassian_read
+    import potpie.cli.auth.atlassian_read as atlassian_read
 
     prompts = iter(["2"])
     monkeypatch.setattr(
@@ -1551,11 +1551,11 @@ def test_jira_use_flow_saves_prefs_only_after_successful_fetch(
     _save_creds(monkeypatch, tmp_path)
     saved: list[str] = []
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.atlassian_read.save_jira_workspace_prefs",
+        "potpie.cli.auth.atlassian_read.save_jira_workspace_prefs",
         lambda *, project_key: saved.append(project_key),
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.atlassian_read.fetch_jira_projects",
+        "potpie.cli.auth.atlassian_read.fetch_jira_projects",
         lambda **kwargs: [{"key": "ENG", "name": "Engineering"}],
     )
 
@@ -1563,7 +1563,7 @@ def test_jira_use_flow_saves_prefs_only_after_successful_fetch(
         raise AtlassianReadError("jira read failed")
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.atlassian_read.fetch_jira_issues_in_project",
+        "potpie.cli.auth.atlassian_read.fetch_jira_issues_in_project",
         _fail_fetch,
     )
 
@@ -1573,7 +1573,7 @@ def test_jira_use_flow_saves_prefs_only_after_successful_fetch(
     assert saved == []
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.atlassian_read.fetch_jira_issues_in_project",
+        "potpie.cli.auth.atlassian_read.fetch_jira_issues_in_project",
         lambda *args, **kwargs: [{"key": "ENG-1"}],
     )
     result = run_jira_use_flow(workspace_key="ENG", limit=5)
@@ -1584,7 +1584,7 @@ def test_jira_use_flow_saves_prefs_only_after_successful_fetch(
 def test_jira_use_flow_requires_key_when_non_interactive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import adapters.inbound.cli.auth.atlassian_read as atlassian_read
+    import potpie.cli.auth.atlassian_read as atlassian_read
 
     monkeypatch.setattr(atlassian_read.sys.stdin, "isatty", lambda: False)
     with pytest.raises(AtlassianReadError, match="Interactive workspace"):
@@ -1594,7 +1594,7 @@ def test_jira_use_flow_requires_key_when_non_interactive(
 def test_confluence_use_flow_requires_key_when_non_interactive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import adapters.inbound.cli.auth.atlassian_read as atlassian_read
+    import potpie.cli.auth.atlassian_read as atlassian_read
 
     monkeypatch.setattr(atlassian_read.sys.stdin, "isatty", lambda: False)
     with pytest.raises(AtlassianReadError, match="Interactive workspace"):
@@ -1604,7 +1604,7 @@ def test_confluence_use_flow_requires_key_when_non_interactive(
 def test_jira_use_flow_interactive_prompt(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    import adapters.inbound.cli.auth.atlassian_read as atlassian_read
+    import potpie.cli.auth.atlassian_read as atlassian_read
 
     _save_creds(monkeypatch, tmp_path)
     monkeypatch.setattr(atlassian_read.sys.stdin, "isatty", lambda: True)
@@ -1643,11 +1643,11 @@ def test_confluence_use_flow_saves_prefs_only_after_successful_fetch(
     )
     saved: list[str] = []
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.atlassian_read.save_confluence_workspace_prefs",
+        "potpie.cli.auth.atlassian_read.save_confluence_workspace_prefs",
         lambda *, space_key: saved.append(space_key),
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.atlassian_read.fetch_confluence_spaces_sample",
+        "potpie.cli.auth.atlassian_read.fetch_confluence_spaces_sample",
         lambda **kwargs: [{"key": "DOCS", "name": "Docs"}],
     )
 
@@ -1655,7 +1655,7 @@ def test_confluence_use_flow_saves_prefs_only_after_successful_fetch(
         raise AtlassianReadError("confluence read failed")
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.atlassian_read.fetch_confluence_pages_in_space",
+        "potpie.cli.auth.atlassian_read.fetch_confluence_pages_in_space",
         _fail_fetch,
     )
 
@@ -1665,7 +1665,7 @@ def test_confluence_use_flow_saves_prefs_only_after_successful_fetch(
     assert saved == []
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.atlassian_read.fetch_confluence_pages_in_space",
+        "potpie.cli.auth.atlassian_read.fetch_confluence_pages_in_space",
         lambda *args, **kwargs: [{"title": "Page"}],
     )
     result = run_confluence_use_flow(workspace_key="DOCS", limit=5)

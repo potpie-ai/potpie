@@ -34,7 +34,7 @@ from adapters.outbound.cli_auth.credentials_store import (
     save_confluence_workspace_prefs,
     save_jira_workspace_prefs,
 )
-from adapters.inbound.cli.ui.output import print_plain_line
+from potpie.cli.ui.output import print_plain_line
 
 
 def _prompt_choice(label: str, *, default: str = "1") -> int:

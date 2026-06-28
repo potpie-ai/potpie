@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from host.daemon_runtime.context import ServiceEndpoints, ShellContext
+from potpie.daemon.runtime.context import ServiceEndpoints, ShellContext
 
 
 @pytest.fixture()
@@ -76,7 +76,7 @@ def _reset_cli_state():
     """
     yield
     try:
-        from adapters.inbound.cli.commands import _common
+        from potpie.cli.commands import _common
 
         _common._state["store"] = None
         _common._state["host"] = None
@@ -84,6 +84,15 @@ def _reset_cli_state():
         _common._state["verbose"] = False
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _configure_cli_template_resources():
+    """Tests that exercise packaged skills use the root CLI template resources."""
+    from adapters.outbound.skills import agent_installer, bundle_catalog
+
+    agent_installer.configure_template_package("potpie.cli")
+    bundle_catalog.configure_template_package("potpie.cli")
 
 
 @pytest.fixture(autouse=True)
@@ -104,7 +113,7 @@ def _reset_product_analytics_state():
 
 
 def _reset_product_analytics_globals() -> None:
-    from adapters.inbound.cli.telemetry import product_analytics
+    from potpie.cli.telemetry import product_analytics
 
     product_analytics._flush_product_analytics_dispatcher()
     product_analytics._dispatcher = product_analytics._ProductAnalyticsDispatcher()

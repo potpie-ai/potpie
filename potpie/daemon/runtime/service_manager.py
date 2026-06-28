@@ -7,8 +7,8 @@ from dataclasses import dataclass
 
 from domain.ports.daemon.service import ServiceSpec
 from domain.ports.daemon.shell import HealthStatus, ServiceBackend
-from host.daemon_runtime.context import ShellContext
-from host.daemon_runtime.registry import Registry
+from potpie.daemon.runtime.context import ShellContext
+from potpie.daemon.runtime.registry import Registry
 
 
 class ServiceNotFound(KeyError):

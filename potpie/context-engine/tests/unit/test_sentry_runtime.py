@@ -6,15 +6,14 @@ from types import ModuleType
 from typing import Any
 
 import pytest
-
-from adapters.inbound.cli.telemetry import sentry_runtime
-from bootstrap import sentry_metrics_runtime
-from adapters.inbound.cli.telemetry.context import TelemetryContext
-from adapters.inbound.cli.telemetry.sentry_runtime import (
+from potpie.cli.telemetry import sentry_runtime
+from potpie.cli.telemetry.context import TelemetryContext
+from potpie.cli.telemetry.sentry_runtime import (
     capture_unexpected_cli_error,
     configure_cli_sentry,
 )
-from adapters.inbound.cli.telemetry.settings import SentrySettings
+from potpie.runtime.telemetry import sentry_metrics as sentry_metrics_runtime
+from potpie.runtime.telemetry.sentry_settings import SentrySettings
 
 
 @dataclass
@@ -139,7 +138,7 @@ def test_capture_unexpected_cli_error_sets_allowlisted_scope(monkeypatch) -> Non
         arch="arm64",
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.sentry_runtime.current_telemetry_context",
+        "potpie.cli.telemetry.sentry_runtime.current_telemetry_context",
         lambda: telemetry,
     )
 

@@ -1,17 +1,16 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib import import_module
-import sys
 from types import ModuleType
 from typing import Optional, Union
 
 import pytest
+from potpie.runtime.telemetry.sentry_settings import SentrySettings
 
-from adapters.inbound.cli.telemetry.settings import SentrySettings
-
-sentry_metrics_runtime = import_module("bootstrap.sentry_metrics_runtime")
+sentry_metrics_runtime = import_module("potpie.runtime.telemetry.sentry_metrics")
 runtime_importlib = getattr(sentry_metrics_runtime, "importlib")
 configure_metrics = getattr(sentry_metrics_runtime, "configure_metrics")
 count = getattr(sentry_metrics_runtime, "count")

@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
-from bootstrap.runtime_settings import load_runtime_settings
-from bootstrap.sentry_settings import (
+from potpie.runtime.settings import load_runtime_settings
+from potpie.runtime.telemetry.sentry_settings import (
     SentrySettings,
     default_cli_release,
     load_sentry_settings,

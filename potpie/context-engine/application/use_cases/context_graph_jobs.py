@@ -18,7 +18,6 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from application.use_cases.process_batch import process_batch
-from bootstrap import sentry_metrics_runtime
 from bootstrap.ingestion_server import IngestionServerContainer
 from bootstrap.observability_context import correlation_scope
 from bootstrap.observability_runtime import get_observability
@@ -57,8 +56,9 @@ def handle_process_batch(
     loses), ``claim_batch_by_id`` returns ``None`` and this is a no-op.
     """
     container = build_ingestion_server(db)
+    obs = get_observability()
     if container.reconciliation_agent is None:
-        sentry_metrics_runtime.count(
+        obs.counter(
             "ce.batch.finished_total",
             1,
             attributes={"result": "skipped_no_reconciliation_agent"},
@@ -67,7 +67,7 @@ def handle_process_batch(
     batches_repo = container.batch_repository(db)
     batch = batches_repo.claim_batch_by_id(batch_id)
     if batch is None:
-        sentry_metrics_runtime.count(
+        obs.counter(
             "ce.batch.finished_total",
             1,
             attributes={"result": "skipped_not_pending"},
@@ -75,7 +75,6 @@ def handle_process_batch(
         return {"status": "skipped", "reason": "not_pending", "batch_id": batch_id}
 
     reco_ledger = container.reconciliation_ledger(db)
-    obs = get_observability()
     links = _ingress_links(reco_ledger, batches_repo, batch.id)
     # The batch is the primary async trace (fan-in: N events → 1 run → M
     # mutations). It links back to each event's ingress trace.
@@ -87,12 +86,9 @@ def handle_process_batch(
             links=links,
         ) as span:
             obs.counter(
-                "ce.batch.started_total", 1, attributes={"pot_id": batch.pot_id}
-            )
-            sentry_metrics_runtime.count(
                 "ce.batch.started_total",
                 1,
-                attributes={"result": "started"},
+                attributes={"pot_id": batch.pot_id, "result": "started"},
             )
             # Time-in-pending: the windowed-5min canary. If the flusher
             # wedges, this is what screams before anything else.
@@ -104,13 +100,7 @@ def handle_process_batch(
                     obs.histogram(
                         "ce.batch.time_in_pending_ms",
                         wait_ms,
-                        attributes={"pot_id": batch.pot_id},
-                    )
-                    sentry_metrics_runtime.distribution(
-                        "ce.batch.time_in_pending_ms",
-                        wait_ms,
-                        unit="millisecond",
-                        attributes={"result": "started"},
+                        attributes={"pot_id": batch.pot_id, "result": "started"},
                     )
             except Exception:  # noqa: BLE001 — best-effort metric
                 pass
@@ -139,11 +129,6 @@ def handle_process_batch(
                     "pot_id": batch.pot_id,
                     "result": "ok" if outcome.ok else "failed",
                 },
-            )
-            sentry_metrics_runtime.count(
-                "ce.batch.finished_total",
-                1,
-                attributes={"result": "ok" if outcome.ok else "failed"},
             )
     return {
         "status": "ok" if outcome.ok else "failed",

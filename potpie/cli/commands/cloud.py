@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import typer
 
-from adapters.inbound.cli.commands._common import contract
+from potpie.cli.commands._common import contract
 from domain.errors import CapabilityNotImplemented
 
 cloud_app = typer.Typer(help="Managed profile + sync (TODO).")

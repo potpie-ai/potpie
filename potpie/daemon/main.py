@@ -15,8 +15,8 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 from starlette.concurrency import run_in_threadpool
 
-from adapters.inbound.http.ui import build_ui_api_router, mount_ui_static
-from adapters.outbound.daemon_process.pidfile import (
+from potpie.daemon.http.ui import build_ui_api_router, mount_ui_static
+from potpie.daemon.process.pidfile import (
     remove_pid_file,
     write_discovery,
     write_pid_file,
@@ -25,10 +25,10 @@ from adapters.outbound.pots.local_pot_store import default_home
 from bootstrap.logging_setup import configure_logging
 from bootstrap.observability_context import correlation_scope
 from bootstrap.observability_runtime import get_observability
-from bootstrap.host_wiring import build_host_shell
+from potpie.runtime import build_potpie_host_shell
 from domain.errors import CapabilityNotImplemented, PotNotFound
 from domain.ports.observability import SPAN_KIND_SERVER
-from host.daemon_rpc import decode, encode
+from potpie.daemon.rpc import decode, encode
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ _ALLOWED_RPC_SURFACES = frozenset(
 
 
 def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI:
-    host = build_host_shell()
+    host = build_potpie_host_shell()
     rpc_lock = asyncio.Lock()
     home = default_home()
     pid_file = home / "daemon.pid"
@@ -74,6 +74,7 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
             token=token,
             pid=pid,
             log_file=log_file,
+            backend=host.backend.profile,
         )
         write_discovery(discovery_file, **discovery)
         write_discovery(legacy_discovery_file, **discovery)
@@ -159,7 +160,7 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
 
 def main() -> None:
     configure_logging()
-    from adapters.inbound.cli.sentry_runtime import configure_daemon_sentry
+    from potpie.daemon.telemetry.sentry_runtime import configure_daemon_sentry
 
     configure_daemon_sentry()
     home = default_home()
@@ -212,7 +213,9 @@ def _error_payload(exc: Exception) -> dict[str, Any]:
         error = {"code": "validation_error", "message": str(exc)}
     else:
         logger.exception("daemon RPC failed")
-        from adapters.inbound.cli.sentry_runtime import capture_unexpected_daemon_error
+        from potpie.daemon.telemetry.sentry_runtime import (
+            capture_unexpected_daemon_error,
+        )
 
         capture_unexpected_daemon_error(
             exc,

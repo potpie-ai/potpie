@@ -16,8 +16,8 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import repo_location
-from adapters.inbound.cli.commands import _common, graph, pots, ui
+from potpie.cli import repo_location
+from potpie.cli.commands import _common, graph, pots, ui
 from application.services.semantic_mutation_validator import validate_semantic_request
 from domain.semantic_mutations import SemanticMutationRequest
 

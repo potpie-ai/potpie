@@ -11,7 +11,7 @@ from datetime import datetime
 
 import typer
 
-from adapters.inbound.cli.commands._common import (
+from potpie.cli.commands._common import (
     contract,
     emit,
     fail,

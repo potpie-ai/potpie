@@ -6,7 +6,7 @@ binds them to a ``HostShell``. Every command routes
 entrypoint (see ``[project.scripts]``); the in-process ``HostShell`` is the only
 composition root for the agent surface.
 
-    Run: ``potpie --help`` (or ``python -m adapters.inbound.cli.host_cli --help``)
+    Run: ``potpie --help`` (or ``python -m potpie.cli.main --help``)
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from importlib import metadata
 
 import typer
 
-from adapters.inbound.cli.commands import auth as auth_cmds
-from adapters.inbound.cli.commands import (
+from potpie.cli.commands import auth as auth_cmds
+from potpie.cli.commands import (
     bootstrap,
     cloud,
     daemon,
@@ -27,11 +27,11 @@ from adapters.inbound.cli.commands import (
     pots,
     service,
 )
-from adapters.inbound.cli.commands import query as query_cmds
-from adapters.inbound.cli.commands import skills as skills_cmds
-from adapters.inbound.cli.commands import ui as ui_cmds
-from adapters.inbound.cli.commands._common import set_json, set_verbose
-from adapters.inbound.cli.telemetry.context import bind_telemetry_context
+from potpie.cli.commands import query as query_cmds
+from potpie.cli.commands import skills as skills_cmds
+from potpie.cli.commands import ui as ui_cmds
+from potpie.cli.commands._common import set_json, set_verbose
+from potpie.cli.telemetry.context import bind_telemetry_context
 
 
 def _package_version() -> str:
@@ -72,16 +72,16 @@ def build_app() -> typer.Typer:
             help="Show version information and exit.",
         ),
     ) -> None:
-        from adapters.inbound.cli.telemetry import sentry_runtime, settings
-        from adapters.inbound.cli.telemetry.product_analytics import (
+        from potpie.cli.telemetry import sentry_runtime, settings
+        from potpie.cli.telemetry.product_analytics import (
             configure_product_analytics,
         )
-        from adapters.inbound.cli.ui.output import (
+        from potpie.cli.ui.output import (
             configure_cli_logging,
             configure_error_output,
         )
-        from bootstrap.runtime_settings import ensure_runtime_environment_loaded
-        from bootstrap import sentry_metrics_runtime
+        from potpie.runtime.settings import ensure_runtime_environment_loaded
+        from potpie.runtime.telemetry import sentry_metrics
 
         set_json(json_)
         set_verbose(verbose)
@@ -92,7 +92,7 @@ def build_app() -> typer.Typer:
         bind_telemetry_context(ctx, json_output=json_)
         sentry_settings = settings.load_sentry_settings()
         sentry_runtime.configure_cli_sentry(sentry_settings)
-        sentry_metrics_runtime.configure_metrics(sentry_settings)
+        sentry_metrics.configure_metrics(sentry_settings)
         configure_product_analytics(settings.load_product_analytics_settings())
 
     # Top-level commands (the four-tool surface + bootstrap + auth/login).

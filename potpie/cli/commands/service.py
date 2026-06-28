@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import typer
 
-from adapters.inbound.cli.commands._common import (
+from potpie.cli.commands._common import (
     EXIT_UNAVAILABLE,
     contract,
     emit,
     fail,
     get_host,
 )
-from adapters.outbound.daemon_process.ipc_client import client_for
+from potpie.daemon.process.ipc_client import client_for, load_discovery
 
 service_app = typer.Typer(help="Manage the daemon's supporting services.")
 
@@ -26,6 +26,14 @@ def _home():
 
 def _client():
     """Open a client to the running daemon, or fail cleanly if it is not up."""
+    discovery = load_discovery(_home())
+    if discovery and discovery.get("base_url") and not discovery.get("bind"):
+        fail(
+            code="not_implemented",
+            message="service admin commands are not exposed by the HTTP daemon yet",
+            next_action="use 'potpie daemon status' for daemon health until admin endpoints are added",
+            exit_code=EXIT_UNAVAILABLE,
+        )
     try:
         return client_for(_home())
     except RuntimeError as exc:

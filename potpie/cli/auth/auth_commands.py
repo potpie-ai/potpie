@@ -15,8 +15,8 @@ from rich.markup import escape
 
 import click
 
-from adapters.inbound.cli.auth.atlassian_auth import run_atlassian_api_token_auth
-from adapters.inbound.cli.auth.atlassian_read import (
+from potpie.cli.auth.atlassian_auth import run_atlassian_api_token_auth
+from potpie.cli.auth.atlassian_read import (
     AtlassianReadError,
     fetch_confluence_spaces_sample,
     fetch_jira_projects,
@@ -27,7 +27,7 @@ from adapters.outbound.cli_auth.linear_read_client import (
     LinearReadError,
     fetch_linear_workspaces,
 )
-from adapters.inbound.cli.auth.linear_read import run_linear_use_flow
+from potpie.cli.auth.linear_read import run_linear_use_flow
 from adapters.outbound.cli_auth.callback_server import (
     OAuthCallbackResult,
     wait_for_oauth_callback,
@@ -44,18 +44,18 @@ from adapters.outbound.cli_auth.integration_session import (
     token_needs_refresh,
 )
 from adapters.outbound.cli_auth.integration_verify import verify_integration_access
-from adapters.inbound.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
-from adapters.inbound.cli.telemetry.onboarding_events import (
+from potpie.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
+from potpie.cli.telemetry.onboarding_events import (
     capture_integration_auth_event,
     current_entrypoint,
     elapsed_ms,
     now_ms,
     sanitized_failure_kind,
 )
-from adapters.inbound.cli.telemetry.usage_events import (
+from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
-from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
+from potpie.cli.ui.output import emit_error, print_json_blob, print_plain_line
 from adapters.outbound.cli_auth.pkce import generate_pkce_pair
 from adapters.outbound.cli_auth.oauth_client_id_messages import (
     missing_linear_client_id_message,
@@ -117,7 +117,7 @@ def _print_standard_logout(
 
 
 def _flags() -> tuple[bool, bool]:
-    from adapters.inbound.cli.commands._common import is_json, is_verbose
+    from potpie.cli.commands._common import is_json, is_verbose
 
     return is_json(), is_verbose()
 
@@ -615,7 +615,7 @@ def auth_logout(provider: str) -> None:
         linear_logout_impl()
         return
     if key == "github":
-        from adapters.inbound.cli.auth.github_commands import github_logout_impl
+        from potpie.cli.auth.github_commands import github_logout_impl
 
         github_logout_impl()
         return
@@ -823,7 +823,7 @@ def _build_auth_compat_confluence() -> typer.Typer:
 
 def _register_auth_compat_providers() -> None:
     """Mount deprecated ``potpie auth <provider>`` mirrors on ``auth_app``."""
-    from adapters.inbound.cli.auth.github_commands import (
+    from potpie.cli.auth.github_commands import (
         _build_auth_compat_github,
     )
 
@@ -835,7 +835,7 @@ def _register_auth_compat_providers() -> None:
 
 def register_integration_commands(root: typer.Typer) -> None:
     """Mount provider commands at the CLI root and the deprecated ``auth`` group."""
-    from adapters.inbound.cli.auth.github_commands import (
+    from potpie.cli.auth.github_commands import (
         git_app,
         github_app,
     )

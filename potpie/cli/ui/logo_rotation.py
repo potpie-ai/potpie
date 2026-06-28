@@ -9,7 +9,7 @@ from pathlib import Path
 
 from rich.text import Text
 
-from adapters.inbound.cli.ui.brand import LOGO_COLOR, LOGO_STYLE
+from potpie.cli.ui.brand import LOGO_COLOR, LOGO_STYLE
 LOGO_DIM_STYLE = f"dim {LOGO_COLOR}"
 _INTRO_MAX_ROWS = 5
 _INTRO_MAX_SCALE = 0.72
@@ -53,7 +53,7 @@ def _base_logo_image():
         with Image.open(png) as img:
             return img.convert("RGBA")
 
-    from adapters.inbound.cli.ui.static_logo_loader import load_raw_logo_lines
+    from potpie.cli.ui.static_logo_loader import load_raw_logo_lines
 
     lines = load_raw_logo_lines()
     if not lines:
@@ -137,7 +137,7 @@ def _intro_logo_grid(viewport_width: int, max_rows: int) -> tuple[list[list[_Log
             span = max((c.wave_pos for row in grid for c in row if c), default=0) + 1
             return grid, span
 
-    from adapters.inbound.cli.ui.static_logo_loader import load_raw_logo_lines, layout_logo_lines
+    from potpie.cli.ui.static_logo_loader import load_raw_logo_lines, layout_logo_lines
 
     lines = load_raw_logo_lines()
     if not lines:

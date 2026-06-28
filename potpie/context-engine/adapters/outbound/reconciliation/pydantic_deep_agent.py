@@ -27,7 +27,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from bootstrap import sentry_metrics_runtime
+from adapters.outbound.reconciliation.context_graph_tools import (
+    build_initial_context_snapshot,
+)
+from adapters.outbound.reconciliation.llm_plan_convert import (
+    llm_plan_to_reconciliation_plan,
+)
+from adapters.outbound.reconciliation.llm_plan_schema import LlmReconciliationPlan
 from domain.context_events import ContextEvent, EventRef
 from domain.event_playbooks import (
     EventPlaybook,
@@ -37,6 +43,7 @@ from domain.event_playbooks import (
     render_playbooks_section,
 )
 from domain.graph_mutations import ProvenanceContext
+from domain.llm_reconciliation import ReconciliationRequest
 from domain.ports.agent_checkpoint_store import AgentCheckpointStorePort
 from domain.ports.agent_execution_log import (
     AgentExecutionLogPort,
@@ -47,18 +54,9 @@ from domain.ports.event_stream import (
     EventStreamPublisherPort,
     NoOpEventStreamPublisher,
 )
-from domain.llm_reconciliation import ReconciliationRequest
 from domain.ports.reconciliation_tools import ReconciliationToolsPort
 from domain.ports.telemetry import CostEvent, NoOpTelemetry, TelemetryPort
 from domain.reconciliation_batch import BatchAgentContext, BatchAgentOutcome
-
-from adapters.outbound.reconciliation.context_graph_tools import (
-    build_initial_context_snapshot,
-)
-from adapters.outbound.reconciliation.llm_plan_convert import (
-    llm_plan_to_reconciliation_plan,
-)
-from adapters.outbound.reconciliation.llm_plan_schema import LlmReconciliationPlan
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
@@ -928,11 +926,6 @@ class PydanticDeepReconciliationAgent:
                 )
             except Exception:  # noqa: BLE001 — never break failure handling
                 pass
-            sentry_metrics_runtime.count(
-                "ce.agent.timeout_total",
-                1,
-                attributes={"result": "timeout"},
-            )
             logger.error(
                 "agent.run() timed out after %.0fs for batch %s",
                 run_timeout,
@@ -1173,7 +1166,9 @@ class PydanticDeepReconciliationAgent:
             from pydantic_ai import Tool  # type: ignore[import-not-found]
         except Exception:
             try:
-                from pydantic_deep import Tool  # type: ignore[import-not-found, no-redef]
+                from pydantic_deep import (
+                    Tool,  # type: ignore[import-not-found, no-redef]
+                )
             except Exception:
                 logger.warning("pydantic-ai/pydantic-deep Tool not importable")
                 return []

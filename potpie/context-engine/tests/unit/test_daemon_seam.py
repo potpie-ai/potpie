@@ -1,11 +1,11 @@
-"""host.daemon.Daemon seam: in-process stand-in vs detached lifecycle (launcher faked)."""
+"""potpie.daemon.lifecycle.Daemon seam: in-process stand-in vs detached lifecycle (launcher faked)."""
 
 from __future__ import annotations
 
 import pathlib
 
 from domain.lifecycle import DONE, SKIPPED
-from host.daemon import Daemon
+from potpie.daemon.lifecycle import Daemon
 
 
 def test_in_process_status_health_and_ensure_skips(tmp_path: pathlib.Path):
@@ -28,7 +28,7 @@ def test_detached_ensure_starts_when_not_running(tmp_path: pathlib.Path, monkeyp
         }
 
     monkeypatch.setattr(
-        "adapters.outbound.daemon_process.launcher.start_detached", fake_start_detached
+        "potpie.daemon.process.launcher.start_detached", fake_start_detached
     )
     d = Daemon(home=tmp_path, in_process=False)
     res = d.ensure()
@@ -41,13 +41,13 @@ def test_detached_ensure_reuses_running_daemon(tmp_path: pathlib.Path, monkeypat
     # Pretend a live daemon is already recorded.
     (tmp_path / "daemon.pid").write_text("999999\n")
     (tmp_path / "discovery.json").write_text('{"bind": "unix:/x/daemon.sock"}')
-    monkeypatch.setattr("host.daemon._pid_alive", lambda pid: True)
+    monkeypatch.setattr("potpie.daemon.lifecycle._pid_alive", lambda pid: True)
 
     def _boom(*a, **k):  # must NOT be called when already running
         raise AssertionError("start_detached should not be called when daemon is up")
 
     monkeypatch.setattr(
-        "adapters.outbound.daemon_process.launcher.start_detached", _boom
+        "potpie.daemon.process.launcher.start_detached", _boom
     )
     d = Daemon(home=tmp_path, in_process=False)
     res = d.ensure()

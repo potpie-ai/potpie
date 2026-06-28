@@ -55,8 +55,8 @@ from adapters.outbound.cli_auth.credentials_store import (
     get_integration_status,
     integration_token_storage,
 )
-from adapters.inbound.cli.commands._common import EXIT_AUTH, get_store
-from adapters.inbound.cli.ui.output import emit_error, print_plain_line
+from potpie.cli.commands._common import EXIT_AUTH, get_store
+from potpie.cli.ui.output import emit_error, print_plain_line
 from adapters.outbound.cli_auth.provider_config import (
     ATLASSIAN_API_TOKEN_PAGE,
     AtlassianProduct,

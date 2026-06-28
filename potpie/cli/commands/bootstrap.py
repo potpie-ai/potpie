@@ -10,8 +10,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import typer
+from domain.errors import CapabilityNotImplemented, ContextEngineDisabled
+from domain.lifecycle import SetupPlan, SetupReport
+from domain.ports.agent_context import StatusRequest
 
-from adapters.inbound.cli.commands._common import (
+from potpie.cli.commands._common import (
     EXIT_DEGRADED,
     contract,
     emit,
@@ -19,7 +22,7 @@ from adapters.inbound.cli.commands._common import (
     is_json,
     resolve_pot_id,
 )
-from adapters.inbound.cli.telemetry.onboarding_events import (
+from potpie.cli.telemetry.onboarding_events import (
     CliSetupAnalyticsObserver,
     begin_setup_run,
     capture_activation_succeeded,
@@ -30,11 +33,8 @@ from adapters.inbound.cli.telemetry.onboarding_events import (
     elapsed_ms,
     now_ms,
 )
-from adapters.inbound.cli.ui import setup_ux
-from bootstrap import sentry_metrics_runtime
-from domain.errors import CapabilityNotImplemented
-from domain.lifecycle import SetupPlan, SetupReport
-from domain.ports.agent_context import StatusRequest
+from potpie.cli.ui import setup_ux
+from potpie.runtime.telemetry import sentry_metrics
 
 
 def register(root: typer.Typer) -> None:
@@ -77,11 +77,12 @@ def register(root: typer.Typer) -> None:
             # selection happens at wiring time, so rebuild the host on the chosen
             # profile when it differs from the active one (keeps the report honest).
             if in_process and backend and backend != host.backend.profile:
-                from adapters.inbound.cli.commands._common import set_host
                 from adapters.outbound.graph.backends import build_backend
-                from bootstrap.host_wiring import build_host_shell
 
-                host = build_host_shell(
+                from potpie.cli.commands._common import set_host
+                from potpie.runtime import build_potpie_host_shell
+
+                host = build_potpie_host_shell(
                     backend=build_backend(backend), profile=host.profile
                 )
                 set_host(host)
@@ -90,13 +91,13 @@ def register(root: typer.Typer) -> None:
             if daemon is not None and host.daemon.in_process != (not daemon):
                 import os
 
-                from adapters.inbound.cli.commands._common import set_host
-                from bootstrap.host_wiring import build_host_shell
+                from potpie.cli.commands._common import set_host
+                from potpie.runtime import build_potpie_host_shell
 
                 os.environ["CONTEXT_ENGINE_HOST_MODE"] = (
                     "daemon" if daemon else "in_process"
                 )
-                host = build_host_shell(backend=host.backend, profile=host.profile)
+                host = build_potpie_host_shell(backend=host.backend, profile=host.profile)
                 set_host(host)
                 in_process = getattr(host.daemon, "in_process", False)
                 selected_backend = host.backend.profile
@@ -128,9 +129,9 @@ def register(root: typer.Typer) -> None:
                 if in_process or host.daemon.status().get("up"):
                     preview = host.setup.preview(plan)
                 else:
-                    from bootstrap.host_wiring import build_host_shell
+                    from potpie.runtime import build_potpie_host_shell
 
-                    preview_host = build_host_shell()
+                    preview_host = build_potpie_host_shell()
                     preview = preview_host.setup.preview(plan)
                 capture_setup_dry_run_completed(
                     plan=plan,
@@ -230,7 +231,7 @@ def register(root: typer.Typer) -> None:
             host or pot is not None or intent != "feature" or harness != "claude"
         )
         if not host_status:
-            from adapters.inbound.cli.auth.auth_commands import integration_status
+            from potpie.cli.auth.auth_commands import integration_status
 
             integration_status(verify=verify)
             return
@@ -261,11 +262,21 @@ def register(root: typer.Typer) -> None:
         """Local diagnostics: daemon, backend capabilities, skill drift."""
         with contract():
             host = get_host()
-            caps = host.backend.capabilities()
-            pot = host.pots.active_pot()
-            pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
-            readiness = host.backend.mutation.readiness(pot_id)
-            daemon_status = host.daemon.status()
+            try:
+                caps = host.backend.capabilities()
+                pot = host.pots.active_pot()
+                pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
+                readiness = host.backend.mutation.readiness(pot_id)
+                daemon_status = host.daemon.status()
+            except ContextEngineDisabled:
+                from potpie.runtime import build_potpie_host_shell
+
+                host = build_potpie_host_shell()
+                caps = host.backend.capabilities()
+                pot = host.pots.active_pot()
+                pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
+                readiness = host.backend.mutation.readiness(pot_id)
+                daemon_status = host.daemon.status()
             emit(
                 {
                     "daemon": daemon_status,
@@ -412,7 +423,7 @@ def _status_human(report) -> str:
 
 
 def _emit_setup_run_metric(plan: SetupPlan, *, result: str, dry_run: bool) -> None:
-    sentry_metrics_runtime.count(
+    sentry_metrics.count(
         "ce.setup.runs_total",
         attributes={
             "result": result,
@@ -426,7 +437,7 @@ def _emit_setup_run_metric(plan: SetupPlan, *, result: str, dry_run: bool) -> No
 
 def _emit_setup_step_metrics(report: SetupReport) -> None:
     for step in report.steps:
-        sentry_metrics_runtime.count(
+        sentry_metrics.count(
             "ce.setup.step_total",
             attributes={
                 "step": step.step,

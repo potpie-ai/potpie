@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import typer
 
-from adapters.inbound.cli.commands._common import (
+from potpie.cli.commands._common import (
     EXIT_UNAVAILABLE,
     contract,
     emit,
     fail,
     get_host,
 )
-from adapters.outbound.daemon_process.launcher import DaemonStartError
-from host.daemon import Daemon
+from potpie.daemon.process.launcher import DaemonStartError
+from potpie.daemon.lifecycle import Daemon
 
 daemon_app = typer.Typer(help="Local daemon lifecycle (recovery tools).")
 

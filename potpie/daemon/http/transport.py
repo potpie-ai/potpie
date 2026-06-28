@@ -12,8 +12,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from adapters.inbound.daemon_http.errors import error_envelope, status_for_error
-from application.services.managed_service_manager import (
+from potpie.daemon.http.errors import error_envelope, status_for_error
+from potpie.daemon.runtime.service_manager import (
     DependencyCycle,
     ServiceNotFound,
 )
@@ -25,9 +25,9 @@ from domain.ports.daemon.operations import (
     Principal,
 )
 from domain.ports.daemon.shell import HealthStatus
-from host.daemon_runtime.context import ShellContext
-from host.daemon_runtime.health import HealthRegistrar
-from host.daemon_runtime.ipc_auth import AuthFailure, IpcAuthGate
+from potpie.daemon.runtime.context import ShellContext
+from potpie.daemon.runtime.health import HealthRegistrar
+from potpie.daemon.runtime.ipc_auth import AuthFailure, IpcAuthGate
 
 
 class HttpTransport:

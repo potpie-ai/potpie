@@ -18,14 +18,14 @@ from rich.table import Table
 from rich.markup import escape
 from rich.text import Text
 
-from adapters.inbound.cli.ui.brand import (
+from potpie.cli.ui.brand import (
     LOGO_COLOR,
     LOGO_DIM_STYLE,
     LOGO_SEPARATOR_STYLE,
     LOGO_STYLE,
     LOGO_SUBTLE_SEPARATOR_STYLE,
 )
-from adapters.inbound.cli.ui.potpie_logo_anim import (
+from potpie.cli.ui.potpie_logo_anim import (
     content_width_for_panel,
     panel_width_for_console,
     play_intro,

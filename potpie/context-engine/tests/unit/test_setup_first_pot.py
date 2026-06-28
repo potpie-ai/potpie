@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from adapters.inbound.cli.ui import interactive_prompts, setup_ux
+from potpie.cli.ui import interactive_prompts, setup_ux
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from bootstrap.host_wiring import build_host_shell
 
@@ -15,7 +15,7 @@ from bootstrap.host_wiring import build_host_shell
 def host(tmp_path, monkeypatch):
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     shell = build_host_shell(backend=InMemoryGraphBackend())
-    from adapters.inbound.cli.commands import _common
+    from potpie.cli.commands import _common
 
     _common.set_host(shell)
     return shell
@@ -33,7 +33,7 @@ def test_maybe_prompt_first_pot_creates_and_registers_repo(
         lambda **_k: "my-pot",
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.ui.potpie_logo_anim.play_setup_finish",
+        "potpie.cli.ui.potpie_logo_anim.play_setup_finish",
         lambda *_a, **_k: None,
     )
 

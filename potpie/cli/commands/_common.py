@@ -23,18 +23,22 @@ from typing import Any, Callable, Final, Iterator, NoReturn
 
 import click
 import typer
-
-from adapters.inbound.cli.repo_location import (
-    current_git_remote as shared_current_git_remote,
-    normalize_repo_ref as shared_normalize_repo_ref,
-    repo_identity_key,
-)
 from domain.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
     PotNotFound,
 )
 from domain.ports.cli_auth.credentials import CredentialStore
+
+from potpie.cli.repo_location import (
+    current_git_remote as shared_current_git_remote,
+)
+from potpie.cli.repo_location import (
+    normalize_repo_ref as shared_normalize_repo_ref,
+)
+from potpie.cli.repo_location import (
+    repo_identity_key,
+)
 
 # --- exit codes (cli-flow.md output contract) -------------------------------
 EXIT_OK = 0
@@ -86,17 +90,17 @@ def get_host():
         mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "").strip().lower()
         if mode != "in_process":
             try:
-                from host.daemon_client import RemoteHostShell
+                from potpie.daemon.client import RemoteHostShell
             except ModuleNotFoundError as exc:
-                if exc.name != "host.daemon_client":
+                if exc.name != "potpie.daemon.client":
                     raise
             else:
                 _state["host"] = RemoteHostShell()
                 return _state["host"]
 
-        from bootstrap.host_wiring import build_host_shell
+        from potpie.runtime import build_potpie_host_shell
 
-        _state["host"] = build_host_shell()
+        _state["host"] = build_potpie_host_shell()
     return _state["host"]
 
 
@@ -148,7 +152,7 @@ def emit(payload: dict[str, Any], *, human: str) -> None:
     if is_json():
         typer.echo(json.dumps(payload, default=str))
     else:
-        from adapters.inbound.cli.ui.format import print_human_block
+        from potpie.cli.ui.format import print_human_block
 
         print_human_block(human)
 
@@ -179,7 +183,7 @@ def fail(
             )
         )
     else:
-        from adapters.inbound.cli.ui.format import print_structured_error
+        from potpie.cli.ui.format import print_structured_error
 
         print_structured_error(
             title=message,
@@ -245,7 +249,7 @@ def contract() -> Iterator[None]:
             raise
         result = "unexpected"
         error_code = "unexpected_cli_error"
-        from adapters.inbound.cli.telemetry.sentry_runtime import (
+        from potpie.cli.telemetry.sentry_runtime import (
             capture_unexpected_cli_error,
         )
 
@@ -273,16 +277,16 @@ def _record_cli_contract_metrics(
     result: str,
     error_code: str,
 ) -> None:
-    from bootstrap import sentry_metrics_runtime
+    from potpie.runtime.telemetry import sentry_metrics
 
     attributes = _cli_metric_attributes(result=result, error_code=error_code)
     duration_ms = max((time.perf_counter() - started_at) * 1000.0, 0.0)
     try:
-        sentry_metrics_runtime.count(
+        sentry_metrics.count(
             "ce.cli.invocations_total",
             attributes=attributes,
         )
-        sentry_metrics_runtime.distribution(
+        sentry_metrics.distribution(
             "ce.cli.duration_ms",
             duration_ms,
             unit="millisecond",
@@ -292,7 +296,7 @@ def _record_cli_contract_metrics(
         pass
     finally:
         try:
-            sentry_metrics_runtime.flush(timeout=2.0)
+            sentry_metrics.flush(timeout=2.0)
         except Exception:  # noqa: BLE001
             pass
 
@@ -302,7 +306,7 @@ def _cli_metric_attributes(
     result: str,
     error_code: str,
 ) -> dict[str, str | int | float | bool]:
-    from adapters.inbound.cli.telemetry.context import current_telemetry_context
+    from potpie.cli.telemetry.context import current_telemetry_context
 
     telemetry = current_telemetry_context()
     attributes: dict[str, str | int | float | bool] = {

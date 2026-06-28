@@ -2,20 +2,27 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.inbound.cli.telemetry.settings import (
+from potpie.runtime import settings as runtime_settings
+from potpie.runtime.telemetry import sentry_settings as shared_sentry_settings
+from potpie.runtime.telemetry.sentry_settings import (
     load_sentry_settings as load_cli_sentry_settings,
+)
+from potpie.runtime.telemetry.sentry_settings import (
     telemetry_environment as cli_telemetry_environment,
 )
-from bootstrap import runtime_settings
-from bootstrap import sentry_settings as shared_sentry_settings
 
 _SENTRY_ENV_NAMES = (
     "POTPIE_ENVIRONMENT",
     "POTPIE_TELEMETRY_DISABLED",
     "POTPIE_SENTRY_ENABLED",
     "POTPIE_SENTRY_DSN",
+    "POTPIE_SENTRY_ENVIRONMENT",
     "POTPIE_SENTRY_RELEASE",
     "POTPIE_SENTRY_DIST",
+    "SENTRY_DSN",
+    "SENTRY_ENVIRONMENT",
+    "SENTRY_RELEASE",
+    "SENTRY_DIST",
 )
 
 
@@ -47,6 +54,17 @@ def test_potpie_sentry_dsn_enables_sentry(
     assert settings.dsn == "https://public@example.invalid/1"
 
 
+def test_generic_sentry_dsn_enables_sentry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SENTRY_DSN", "https://generic@example.invalid/1")
+
+    settings = load_cli_sentry_settings()
+
+    assert settings.enabled is True
+    assert settings.dsn == "https://generic@example.invalid/1"
+
+
 def test_potpie_environment_is_used_for_sentry_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -57,6 +75,18 @@ def test_potpie_environment_is_used_for_sentry_environment(
 
     assert settings.environment == "staging"
     assert cli_telemetry_environment() == "staging"
+
+
+def test_sentry_environment_compat_env_is_used_without_potpie_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("POTPIE_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("POTPIE_SENTRY_ENVIRONMENT", "sentry-staging")
+
+    settings = load_cli_sentry_settings()
+
+    assert settings.environment == "sentry-staging"
+    assert cli_telemetry_environment() == "sentry-staging"
 
 
 def test_sentry_release_comes_from_env_or_package_version(
@@ -100,11 +130,38 @@ def test_sentry_uses_distribution_defaults_without_runtime_env(
         },
     )
 
-    settings = shared_sentry_settings.load_sentry_settings()
+    settings = load_cli_sentry_settings()
 
     assert settings.enabled is True
     assert settings.dsn == "https://dist@example.invalid/1"
     assert settings.environment == "prod_oss"
+    assert cli_telemetry_environment() == "prod_oss"
+
+
+def test_sentry_runtime_env_overrides_baked_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runtime_settings,
+        "load_distribution_defaults",
+        lambda: {
+            "environment": "production",
+            "sentry_dsn": "https://baked@example.invalid/1",
+        },
+    )
+    monkeypatch.delenv("POTPIE_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("POTPIE_SENTRY_DSN", "https://runtime@example.invalid/1")
+    monkeypatch.setenv("POTPIE_SENTRY_ENVIRONMENT", "staging")
+    monkeypatch.setenv("POTPIE_SENTRY_RELEASE", "potpie-cli@runtime")
+    monkeypatch.setenv("POTPIE_SENTRY_DIST", "sha-runtime")
+
+    settings = load_cli_sentry_settings()
+
+    assert settings.enabled is True
+    assert settings.dsn == "https://runtime@example.invalid/1"
+    assert settings.environment == "staging"
+    assert settings.release == "potpie-cli@runtime"
+    assert settings.dist == "sha-runtime"
 
 
 def test_sentry_opt_outs_disable_canonical_dsn(
@@ -119,3 +176,39 @@ def test_sentry_opt_outs_disable_canonical_dsn(
     monkeypatch.setenv("POTPIE_TELEMETRY_DISABLED", "1")
 
     assert load_cli_sentry_settings().enabled is False
+
+
+def test_sentry_runtime_opt_out_overrides_baked_enablement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runtime_settings,
+        "load_distribution_defaults",
+        lambda: {
+            "sentry_enabled": "1",
+            "sentry_dsn": "https://baked@example.invalid/1",
+        },
+    )
+    monkeypatch.setenv("POTPIE_SENTRY_ENABLED", "0")
+
+    settings = load_cli_sentry_settings()
+
+    assert settings.enabled is False
+
+
+def test_sentry_runtime_global_opt_out_overrides_baked_enablement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        runtime_settings,
+        "load_distribution_defaults",
+        lambda: {
+            "sentry_dsn": "https://baked@example.invalid/1",
+            "telemetry_disabled": "0",
+        },
+    )
+    monkeypatch.setenv("POTPIE_TELEMETRY_DISABLED", "1")
+
+    settings = load_cli_sentry_settings()
+
+    assert settings.enabled is False

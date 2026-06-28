@@ -5,11 +5,11 @@ from collections.abc import Callable, Mapping, Sequence
 from types import ModuleType
 from typing import Final, Optional, Union
 
-from adapters.inbound.cli.telemetry.sentry_privacy import (
+from potpie.runtime.telemetry.sentry_privacy import (
     scrub_sentry_breadcrumb,
     scrub_sentry_event,
 )
-from bootstrap.sentry_settings import SentrySettings
+from potpie.runtime.telemetry.sentry_settings import SentrySettings
 
 _ALLOWED_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {
@@ -84,8 +84,7 @@ def configure_metrics(settings: SentrySettings) -> None:
         _sentry_sdk = sentry_sdk
         _configured = True
         _enabled = True
-    # Sentry SDK failures must never affect context-engine control flow.
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - Sentry must never affect product flow.
         _enabled = False
 
 
@@ -107,8 +106,7 @@ def count(
         metric = _get_metric(_sentry_sdk, "count")
         if metric is not None:
             _ = metric(name, value, unit, attributes=safe_attributes)
-    # Sentry SDK failures must never affect context-engine control flow.
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - Sentry must never affect product flow.
         return
 
 
@@ -126,8 +124,7 @@ def distribution(
         metric = _get_metric(_sentry_sdk, "distribution")
         if metric is not None:
             _ = metric(name, value, unit, attributes=safe_attributes)
-    # Sentry SDK failures must never affect context-engine control flow.
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - Sentry must never affect product flow.
         return
 
 
@@ -145,8 +142,7 @@ def gauge(
         metric = _get_metric(_sentry_sdk, "gauge")
         if metric is not None:
             _ = metric(name, value, unit, attributes=safe_attributes)
-    # Sentry SDK failures must never affect context-engine control flow.
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - Sentry must never affect product flow.
         return
 
 
@@ -157,16 +153,14 @@ def flush(timeout: float = 2.0) -> None:
         sentry_flush = _get_sentry_flush(_sentry_sdk)
         if sentry_flush is not None:
             _ = sentry_flush(timeout=timeout)
-    # Sentry SDK failures must never affect context-engine control flow.
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - Sentry must never affect product flow.
         return
 
 
 def _load_sentry_sdk() -> ModuleType | None:
     try:
         return importlib.import_module("sentry_sdk")
-    # Importing the external SDK can run package code outside this project.
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - importing external SDK can run package code.
         return None
 
 

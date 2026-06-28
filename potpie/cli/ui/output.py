@@ -16,8 +16,8 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.syntax import Syntax
 
-from adapters.inbound.cli.ui.brand import LOGO_COLOR, UI_MUTED_STYLE
-from adapters.inbound.cli.ui.format import (
+from potpie.cli.ui.brand import LOGO_COLOR, UI_MUTED_STYLE
+from potpie.cli.ui.format import (
     PANEL_BORDER,
     format_line,
     key_value_panel,

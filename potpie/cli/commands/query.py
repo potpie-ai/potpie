@@ -9,16 +9,16 @@ from __future__ import annotations
 
 import typer
 
-from adapters.inbound.cli.commands._common import (
+from potpie.cli.commands._common import (
     contract,
     emit,
     get_host,
     resolve_pot_id,
 )
-from adapters.inbound.cli.telemetry.onboarding_events import (
+from potpie.cli.telemetry.onboarding_events import (
     capture_activation_succeeded,
 )
-from adapters.inbound.cli.telemetry.usage_events import (
+from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
 from domain.ports.agent_context import RecordRequest, ResolveRequest, SearchRequest

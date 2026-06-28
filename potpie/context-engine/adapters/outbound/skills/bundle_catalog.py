@@ -10,10 +10,28 @@ from __future__ import annotations
 from functools import lru_cache
 from importlib import resources
 
+from domain.errors import CapabilityNotImplemented
 from domain.ports.services.skill_manager import SkillInfo
 
 AGENT_BUNDLE_NAME = "agent_bundle"
 SKILLS_PREFIX = ".agents/skills/"
+_template_package: str | None = None
+
+
+def configure_template_package(package: str) -> None:
+    global _template_package
+    _template_package = package
+    clear_bundle_catalog_cache()
+
+
+def _template_files_root():
+    if not _template_package:
+        raise CapabilityNotImplemented(
+            "skills.template_package",
+            detail="No packaged Potpie CLI template resource package is configured.",
+            recommended_next_action="run this command through the root 'potpie' CLI",
+        )
+    return resources.files(_template_package)
 
 
 def _parse_front_matter(raw: str) -> tuple[dict[str, str], str]:
@@ -79,7 +97,7 @@ def _is_recommended(meta: dict[str, str]) -> bool:
 @lru_cache(maxsize=1)
 def load_bundle_skills() -> tuple[SkillInfo, ...]:
     """All skills shipped under ``agent_bundle/.agents/skills/``, sorted by id."""
-    root = resources.files("adapters.inbound.cli").joinpath(
+    root = _template_files_root().joinpath(
         "templates", AGENT_BUNDLE_NAME, SKILLS_PREFIX.rstrip("/")
     )
     skills: list[SkillInfo] = []
@@ -107,11 +125,6 @@ def recommended_skill_ids() -> tuple[str, ...]:
     return tuple(skill.id for skill in load_bundle_skills())
 
 
-# Backwards-compatible aliases for callers expecting module-level tuples.
-BUILTIN_SKILLS: tuple[SkillInfo, ...] = load_bundle_skills()
-RECOMMENDED_SKILL_IDS: tuple[str, ...] = recommended_skill_ids()
-
-
 def clear_bundle_catalog_cache() -> None:
     """Test helper: drop cached scans of the packaged bundle."""
     load_bundle_skills.cache_clear()
@@ -121,11 +134,10 @@ def clear_bundle_catalog_cache() -> None:
 
 __all__ = [
     "AGENT_BUNDLE_NAME",
-    "BUILTIN_SKILLS",
-    "RECOMMENDED_SKILL_IDS",
     "SKILLS_PREFIX",
     "catalog_by_id",
     "clear_bundle_catalog_cache",
+    "configure_template_package",
     "load_bundle_skills",
     "recommended_skill_ids",
 ]

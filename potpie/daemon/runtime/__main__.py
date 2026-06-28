@@ -1,6 +1,6 @@
-"""Detached daemon child entrypoint: ``python -m host.daemon_runtime run --home <home>``.
+"""Detached daemon child entrypoint: ``python -m potpie.daemon.runtime run --home <home>``.
 
-Invoked by ``adapters.outbound.daemon_process.launcher.start_detached`` (never a public
+Invoked by ``potpie.daemon.process.launcher.start_detached`` (never a public
 CLI command). Builds an in-process ``HostShell``, derives the daemon manifest in code,
 and runs the ``DaemonRuntime`` — exposing the host's services over the socket — until a
 SIGTERM/SIGINT stops it.
@@ -23,20 +23,20 @@ def _serve(home: pathlib.Path) -> None:
     # spawn another detached daemon (recursion guard).
     os.environ["CONTEXT_ENGINE_HOST_MODE"] = "in_process"
 
-    from adapters.outbound.daemon_process.pidfile import (
+    from potpie.daemon.process.pidfile import (
         remove_pid_file,
         write_discovery,
         write_pid_file,
     )
-    from bootstrap.host_wiring import build_host_shell
-    from host.daemon_runtime.config import build_daemon_config
-    from host.daemon_runtime.shell import (
+    from potpie.runtime import build_potpie_host_shell
+    from potpie.daemon.runtime.config import build_daemon_config
+    from potpie.daemon.runtime.shell import (
         DaemonRuntime,
         EntryPointPluginsLoader,
         default_registries,
     )
 
-    host = build_host_shell()
+    host = build_potpie_host_shell()
     cfg = build_daemon_config(home)
     pid_file = home / "daemon.pid"
     disc_file = home / "discovery.json"
@@ -76,7 +76,7 @@ def _serve(home: pathlib.Path) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(prog="python -m host.daemon_runtime")
+    ap = argparse.ArgumentParser(prog="python -m potpie.daemon.runtime")
     sub = ap.add_subparsers(dest="cmd", required=True)
     runp = sub.add_parser("run", help="Run the daemon in the foreground (internal).")
     runp.add_argument("--home", required=True)

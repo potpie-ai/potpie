@@ -4,9 +4,9 @@ The host-routed command-line entrypoint for the context graph. Every command
 routes `CLI → HostShell → service(s) → ports`; the in-process `HostShell` is the
 single composition root for the agent surface (shared with the MCP server).
 
-- **Entrypoint:** `adapters/inbound/cli/host_cli.py` (registered as the `potpie`
+- **Entrypoint:** `potpie/cli/main.py` (registered as the `potpie`
   console script in `pyproject.toml` → `[project.scripts]`).
-- **Command groups:** `adapters/inbound/cli/commands/` — one module per
+- **Command groups:** `potpie/cli/commands/` — one module per
   `cli-flow.md` section (`bootstrap`, `query`, `pots`/`source`, `daemon`,
   `ledger`, `graph`, `timeline`, `backend`, `skills`, `cloud`).
 - **Cross-cutting contract:** `commands/_common.py` owns `--json` output, the
@@ -36,7 +36,7 @@ The end-state architecture (services, ports, composition roots) is in
 The in-progress Graph V1.5 handover plan is
 **[`docs/context-graph/graphv1-5-implementation-plan.md`](../../../../../../docs/context-graph/graphv1-5-implementation-plan.md)**.
 
-Run `potpie --help` (or `python -m adapters.inbound.cli.host_cli --help`) to list
+Run `potpie --help` (or `python -m potpie.cli.main --help`) to list
 the live commands.
 
 ## Agent harness install
@@ -46,10 +46,9 @@ bundle into an agent harness (`commands/skills.py` → `HostShell.skills`). The
 default scope is global, so skills are installed once into the selected
 harness's user-level skills directory:
 
-The shipped templates live under `adapters/inbound/cli/templates/`: project
-bundles in `agent_bundle/` and `claude_bundle/`, compact global instruction
-blocks in `global_agent_bundle/`, and the Claude Code plugin in
-`claude_plugin/`.
+The shipped templates live under `potpie/cli/templates/`: project bundles in
+`agent_bundle/` and `claude_bundle/`, compact global instruction blocks in
+`global_agent_bundle/`, and the Claude Code plugin in `claude_plugin/`.
 
 | Harness | Global path |
 |---------|-------------|

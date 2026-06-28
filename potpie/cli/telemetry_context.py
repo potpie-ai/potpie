@@ -4,12 +4,12 @@ from pathlib import Path
 
 import typer
 
-from adapters.inbound.cli.telemetry.context import (
+from potpie.cli.telemetry.context import (
     TelemetryContext,
     bind_telemetry_context,
     current_telemetry_context,
 )
-from adapters.inbound.cli.telemetry.identity_store import load_or_create_identity
+from potpie.cli.telemetry.identity_store import load_or_create_identity
 
 
 def bind_cli_telemetry_context(

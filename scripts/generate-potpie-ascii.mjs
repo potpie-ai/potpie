@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * Generates ASCII art from adapters/inbound/cli/assets/potpie.svg (sharp).
- * Run from context-engine root:
+ * Generates ASCII art from potpie/cli/ui/assets/potpie.svg (sharp).
+ * Run from the repository root:
  *   node scripts/generate-potpie-ascii.mjs
  *
  * Same algorithm as potpie-vscode-extension/scripts/generate-potpie-ascii.mjs
- * Writes adapters/inbound/cli/assets/potpie-logo-static.json
+ * Writes potpie/cli/ui/assets/potpie-logo-static.json
  */
 
 import fs from "fs";
@@ -16,11 +16,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const svgPath = path.join(
   projectRoot,
-  "adapters/inbound/cli/assets/potpie.svg",
+  "potpie/cli/ui/assets/potpie.svg",
 );
 const outputPath = path.join(
   projectRoot,
-  "adapters/inbound/cli/assets/potpie-logo-static.json",
+  "potpie/cli/ui/assets/potpie-logo-static.json",
 );
 
 // Extension default is 56×28; scaled to fit intro viewport (96×20) without clipping
@@ -58,7 +58,7 @@ async function main() {
     const sharpModule = await import("sharp");
     sharp = sharpModule.default;
   } catch {
-    console.warn("⚠️  'sharp' not found. Install in context-engine: npm install --save-dev sharp");
+    console.warn("⚠️  'sharp' not found. Install it with: npm install --save-dev sharp");
     process.exit(1);
   }
 

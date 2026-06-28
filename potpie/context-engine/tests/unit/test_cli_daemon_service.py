@@ -6,9 +6,9 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import host_cli
-from adapters.inbound.cli.commands import _common, bootstrap
-from adapters.inbound.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
+from potpie.cli import host_cli
+from potpie.cli.commands import _common, bootstrap
+from potpie.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
 from domain.lifecycle import SKIPPED, PlannedSetupStep, SetupPlan, SetupPreview, SetupReport, StepResult
 
 runner = CliRunner()
@@ -119,7 +119,7 @@ def test_setup_daemon_dry_run_marks_daemon_host_mode(
     host = _SetupHost(home=tmp_path)
     monkeypatch.setattr(bootstrap, "get_host", lambda: host)
     monkeypatch.setattr(
-        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        "potpie.cli.ui.setup_ux.rich_enabled",
         lambda **_kwargs: False,
     )
 
@@ -139,7 +139,7 @@ def test_setup_daemon_uses_daemon_status_for_backend_validation(
     host.daemon.backend = "embedded"
     monkeypatch.setattr(bootstrap, "get_host", lambda: host)
     monkeypatch.setattr(
-        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        "potpie.cli.ui.setup_ux.rich_enabled",
         lambda **_kwargs: False,
     )
 
@@ -160,7 +160,7 @@ def test_setup_daemon_fails_when_requested_backend_cannot_be_verified(
     host = _SetupHost(home=tmp_path)
     monkeypatch.setattr(bootstrap, "get_host", lambda: host)
     monkeypatch.setattr(
-        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        "potpie.cli.ui.setup_ux.rich_enabled",
         lambda **_kwargs: False,
     )
 
@@ -189,7 +189,7 @@ class _Setup:
                 PlannedSetupStep(
                     "daemon",
                     True,
-                    "host.daemon",
+                    "daemon lifecycle",
                     "ensure daemon",
                 ),
             ),

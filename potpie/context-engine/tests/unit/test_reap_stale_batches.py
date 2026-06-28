@@ -14,8 +14,18 @@ from unittest.mock import MagicMock
 import pytest
 
 from application.use_cases.reap_stale_batches import reap_stale_batches
-from bootstrap import sentry_metrics_runtime
+from domain.ports.observability import NoOpObservability
 from domain.reconciliation_batch import BatchEventRef, ReconciliationBatch
+
+
+class _RecordingObservability(NoOpObservability):
+    def __init__(self) -> None:
+        self.counter_calls: list[tuple[str, int, dict[str, object]]] = []
+
+    def counter(
+        self, name: str, value: int = 1, *, attributes: dict[str, object] | None = None
+    ) -> None:
+        self.counter_calls.append((name, value, dict(attributes or {})))
 
 
 def _batch(bid: str, pot: str = "pot-1") -> ReconciliationBatch:
@@ -48,14 +58,8 @@ class TestReapStaleBatches:
     def test_reaps_each_stale_batch_events_first_then_batch(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        sentry_counts: list[tuple[str, int, dict[str, str]]] = []
-        monkeypatch.setattr(
-            sentry_metrics_runtime,
-            "count",
-            lambda name, value=1, *, attributes=None, unit=None: sentry_counts.append(
-                (name, value, dict(attributes or {}))
-            ),
-        )
+        obs = _RecordingObservability()
+        monkeypatch.setattr("bootstrap.observability_runtime.get_observability", lambda: obs)
         batches = MagicMock()
         batches.list_stale_in_flight_batches.return_value = [
             _batch("b1"),
@@ -87,9 +91,9 @@ class TestReapStaleBatches:
         ledger.fail_inflight_events.assert_any_call(
             ["b1-e1"], ledger.fail_inflight_events.call_args_list[0].args[1]
         )
-        assert sentry_counts == [
-            ("ce.batch.reaped_total", 1, {"result": "reaped"}),
-            ("ce.batch.reaped_total", 1, {"result": "reaped"}),
+        assert obs.counter_calls == [
+            ("ce.batch.reaped_total", 1, {"pot_id": "pot-1", "result": "reaped"}),
+            ("ce.batch.reaped_total", 1, {"pot_id": "pot-1", "result": "reaped"}),
         ]
 
     def test_lease_is_passed_through_to_the_repo_query(self) -> None:

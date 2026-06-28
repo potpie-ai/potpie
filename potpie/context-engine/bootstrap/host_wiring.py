@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from adapters.outbound.daemon_lifecycle import InProcessDaemonLifecycle
 from adapters.outbound.graph.backends import build_backend
 from adapters.outbound.graph.inbox_stores import LocalJsonGraphInboxStore
 from adapters.outbound.graph.plan_stores import LocalJsonGraphPlanStore
@@ -50,10 +51,10 @@ from bootstrap.observability_context import correlation_scope
 from bootstrap.observability_runtime import set_observability
 from bootstrap.observability_wiring import default_observability
 from domain.coherence import assert_runtime_coherence
+from domain.ports.daemon.lifecycle import DaemonLifecyclePort
 from domain.ports.graph.backend import GraphBackend
 from domain.ports.ledger.client import EventLedgerClientPort
 from domain.ports.observability import ObservabilityPort
-from host.daemon import Daemon
 from host.shell import HostShell, LedgerFacade
 
 
@@ -84,6 +85,7 @@ def build_host_shell(
     ledger_client: EventLedgerClientPort | None = None,
     observability: ObservabilityPort | None = None,
     settings: Any = None,
+    daemon_lifecycle: DaemonLifecyclePort | None = None,
 ) -> HostShell:
     """Compose a ``HostShell`` from the default local services + adapters.
 
@@ -127,7 +129,7 @@ def build_host_shell(
         nudge = NudgeService(graph=graph, ledger=LocalInjectionLedger())
 
         # Lifecycle components (each independently ownable; see the setup orchestrator).
-        daemon = Daemon(in_process=(default_host_mode() != "daemon"))
+        daemon = daemon_lifecycle or InProcessDaemonLifecycle()
         config = LocalConfigService()
         installer = LocalInstaller()
         auth = LocalAuthService()

@@ -8,7 +8,7 @@ import time
 import urllib.error
 import urllib.request
 import pytest
-from adapters.inbound.cli.commands._common import set_store
+from potpie.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
 from adapters.outbound.cli_auth.callback_server import (
     OAuthCallbackResult,
@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 from adapters.outbound.cli_auth import token_exchange as tx
 from adapters.outbound.cli_auth import integration_session as session
 import typer
-from adapters.inbound.cli.auth import auth_commands
+from potpie.cli.auth import auth_commands
 import json
 # --- test_callback_server.py ---
 

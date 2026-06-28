@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from adapters.outbound.managed_services.subprocess_backend import (
+from potpie.daemon.managed_services.subprocess_backend import (
     _cmd_probe,
     _http_probe,
     _tcp_probe,
 )
 from domain.ports.daemon.service import ServiceSpec
 from domain.ports.daemon.shell import HealthStatus
-from host.daemon_runtime.context import ShellContext
+from potpie.daemon.runtime.context import ShellContext
 
 
 class ExternalBackend:

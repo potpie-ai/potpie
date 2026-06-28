@@ -9,8 +9,8 @@ import httpx
 
 from adapters.outbound.pots.local_pot_store import default_home
 from domain.errors import CapabilityNotImplemented, ContextEngineDisabled, PotNotFound
-from host.daemon import Daemon
-from host.daemon_rpc import decode, encode
+from potpie.daemon.lifecycle import Daemon
+from potpie.daemon.rpc import decode, encode
 
 
 @dataclass(slots=True)

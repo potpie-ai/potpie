@@ -11,14 +11,12 @@ import json
 import re
 import sys
 import time
-from contextlib import contextmanager
 from collections.abc import Mapping
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import typer
-
-from bootstrap.observability_runtime import get_observability
 from application.services.graph_workbench import (
     graph_error_envelope,
     graph_not_implemented_envelope,
@@ -27,24 +25,7 @@ from application.services.graph_workbench import (
     normalize_catalog_result,
     normalize_workbench_result,
 )
-from adapters.inbound.cli.commands._common import (
-    EXIT_UNAVAILABLE,
-    EXIT_VALIDATION,
-    contract,
-    empty_pot_warnings,
-    emit,
-    fail,
-    get_host,
-    is_json,
-    json_error_formatter,
-    pot_scope_human,
-    pot_scope_info,
-    resolve_pot_id,
-)
-from adapters.inbound.cli.telemetry.product_analytics import AnalyticsValue
-from adapters.inbound.cli.telemetry.usage_events import (
-    capture_usage_command_succeeded,
-)
+from bootstrap.observability_runtime import get_observability
 from domain.errors import CapabilityNotImplemented
 from domain.graph_contract import GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION
 from domain.graph_contract import ONTOLOGY_VERSION
@@ -53,9 +34,28 @@ from domain.graph_workbench import (
     GraphUnsupported,
     GraphWorkbenchStatus,
 )
-from domain.ports.observability import SPAN_KIND_INTERNAL
 from domain.graph_workbench_ontology import describe_contract
 from domain.nudge import NUDGE_EVENT_HELP
+from domain.ports.observability import SPAN_KIND_INTERNAL
+
+from potpie.cli.commands._common import (
+    EXIT_UNAVAILABLE,
+    EXIT_VALIDATION,
+    contract,
+    emit,
+    empty_pot_warnings,
+    fail,
+    get_host,
+    is_json,
+    json_error_formatter,
+    pot_scope_human,
+    pot_scope_info,
+    resolve_pot_id,
+)
+from potpie.cli.telemetry.product_analytics import AnalyticsValue
+from potpie.cli.telemetry.usage_events import (
+    capture_usage_command_succeeded,
+)
 
 graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
 inbox_app = typer.Typer(help="Pending graph-work inbox.")
@@ -241,19 +241,19 @@ def _record_graph_command_telemetry(
     except Exception:  # noqa: BLE001 - observability must never fail a command
         pass
     try:
-        from bootstrap import sentry_metrics_runtime
+        from potpie.runtime.telemetry import sentry_metrics
 
-        sentry_metrics_runtime.count(
+        sentry_metrics.count(
             f"ce.graph.{metric_root}_total",
             attributes=metric_attrs,
         )
-        sentry_metrics_runtime.distribution(
+        sentry_metrics.distribution(
             f"ce.graph.{metric_root}_ms",
             duration_ms,
             unit="millisecond",
             attributes=metric_attrs,
         )
-        sentry_metrics_runtime.flush(timeout=2.0)
+        sentry_metrics.flush(timeout=2.0)
     except Exception:  # noqa: BLE001 - Sentry metrics must never fail a command
         pass
 

@@ -26,12 +26,12 @@ from adapters.outbound.cli_auth.potpie import (
     run_browser_login_flow,
 )
 from adapters.outbound.cli_auth.credentials_store import CredentialStoreError
-from adapters.inbound.cli.commands._common import EXIT_AUTH, get_store
-from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
+from potpie.cli.commands._common import EXIT_AUTH, get_store
+from potpie.cli.ui.output import emit_error, print_json_blob, print_plain_line
 
 
 def _flags() -> tuple[bool, bool]:
-    from adapters.inbound.cli.commands._common import is_json, is_verbose
+    from potpie.cli.commands._common import is_json, is_verbose
 
     return is_json(), is_verbose()
 
@@ -160,7 +160,7 @@ def _capture_unexpected_potpie_auth_error(
     title: str,
     verbose: bool,
 ) -> NoReturn:
-    from adapters.inbound.cli.telemetry.sentry_runtime import (
+    from potpie.cli.telemetry.sentry_runtime import (
         capture_unexpected_cli_error,
     )
 

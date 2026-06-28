@@ -10,7 +10,7 @@ import subprocess
 
 from domain.ports.daemon.service import ServiceSpec
 from domain.ports.daemon.shell import HealthStatus
-from host.daemon_runtime.context import ShellContext
+from potpie.daemon.runtime.context import ShellContext
 
 
 class SubprocessBackend:

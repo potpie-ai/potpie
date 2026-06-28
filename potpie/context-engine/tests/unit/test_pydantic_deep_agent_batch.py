@@ -12,11 +12,21 @@ import pytest
 from adapters.outbound.reconciliation.pydantic_deep_agent import (
     PydanticDeepReconciliationAgent,
 )
-from bootstrap import sentry_metrics_runtime
 from domain.context_events import ContextEvent
+from domain.ports.observability import NoOpObservability
 from domain.reconciliation_batch import BatchAgentContext
 
 pytestmark = pytest.mark.unit
+
+
+class _RecordingObservability(NoOpObservability):
+    def __init__(self) -> None:
+        self.counter_calls: list[tuple[str, int, dict[str, object]]] = []
+
+    def counter(
+        self, name: str, value: int = 1, *, attributes: dict[str, object] | None = None
+    ) -> None:
+        self.counter_calls.append((name, value, dict(attributes or {})))
 
 
 def _event(eid: str) -> ContextEvent:
@@ -131,16 +141,12 @@ def test_run_batch_short_circuits_for_empty_event_list() -> None:
     assert out.completed_event_ids == []
 
 
-def test_run_batch_timeout_mirrors_sentry_metric(
+def test_run_batch_timeout_emits_observability_metric(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    counts: list[tuple[str, int, dict[str, str]]] = []
+    obs = _RecordingObservability()
     monkeypatch.setattr(
-        sentry_metrics_runtime,
-        "count",
-        lambda name, value=1, *, attributes=None, unit=None: counts.append(
-            (name, value, dict(attributes or {}))
-        ),
+        "bootstrap.observability_runtime.get_observability", lambda: obs
     )
     monkeypatch.setenv("CONTEXT_ENGINE_AGENT_RUN_TIMEOUT_SECS", "0.001")
 
@@ -178,4 +184,4 @@ def test_run_batch_timeout_mirrors_sentry_metric(
     out = agent.run_batch(ctx)
 
     assert out.ok is False
-    assert ("ce.agent.timeout_total", 1, {"result": "timeout"}) in counts
+    assert ("ce.agent.timeout_total", 1, {"pot_id": "pot-1"}) in obs.counter_calls

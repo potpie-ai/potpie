@@ -16,7 +16,7 @@ Surfaces:
     .backend         GraphBackend       active storage profile (6 capabilities)
     .ledger          LedgerFacade       event-ledger read/cursor surface
     .nudge           NudgeService       trigger-policy brain (graph nudge)
-    .daemon          Daemon             local host lifecycle
+    .daemon          DaemonLifecyclePort local host lifecycle
     .config          ConfigService      home dir + config file
     .installer       Installer          CLI-on-PATH + service-unit registration
     .auth            AuthService        local identity/credentials
@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from application.services.graph_workbench import GraphWorkbenchService
 from application.services.nudge_service import NudgeService
 from domain.ports.agent_context import AgentContextPort
+from domain.ports.daemon.lifecycle import DaemonLifecyclePort
 from domain.ports.graph.backend import GraphBackend
 from domain.ports.install import Installer
 from domain.ports.ledger.client import EventLedgerClientPort, LedgerPage
@@ -43,7 +44,6 @@ from domain.ports.services.graph_service import GraphService
 from domain.ports.services.pot_management import PotManagementService
 from domain.ports.services.setup import SetupOrchestrator
 from domain.ports.services.skill_manager import SkillManager
-from host.daemon import Daemon
 
 
 @dataclass(slots=True)
@@ -101,7 +101,7 @@ class HostShell:
     backend: GraphBackend
     ledger: LedgerFacade
     nudge: NudgeService
-    daemon: Daemon
+    daemon: DaemonLifecyclePort
     config: ConfigService
     installer: Installer
     auth: AuthService

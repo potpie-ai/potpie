@@ -11,14 +11,14 @@ from domain.ports.daemon.operations import (
     OperationSpec,
 )
 from domain.ports.daemon.shell import HealthStatus
-from host.daemon_runtime.config import (
+from potpie.daemon.runtime.config import (
     ComponentEntry,
     DaemonConfig,
     ShellSettings,
     TransportEntry,
     build_daemon_config,
 )
-from host.daemon_runtime.shell import (
+from potpie.daemon.runtime.shell import (
     BuiltinPluginsLoader,
     DaemonRuntime,
     default_registries,

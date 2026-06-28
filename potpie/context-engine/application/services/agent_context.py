@@ -56,7 +56,7 @@ class AgentContextService:
         return StatusReport(
             pot_id=pot_id,
             profile=self.profile,
-            daemon_up=True,  # in-process host; real daemon liveness is host.daemon
+            daemon_up=True,  # in-process host; real daemon liveness belongs to the product runtime
             active_pot=active.name if active else None,
             backend_ready=backend_ready,
             data_plane=_data_plane_dict(data_plane),

@@ -20,24 +20,24 @@ from adapters.outbound.cli_auth.github import (
     request_device_code,
     verify_account,
 )
-from adapters.inbound.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
+from potpie.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
 from adapters.outbound.cli_auth.credentials_store import (
     CredentialStoreError,
     ProviderCredentialError,
     _integration_secret_store_label,
     get_integration_status,
 )
-from adapters.inbound.cli.telemetry.onboarding_events import (
+from potpie.cli.telemetry.onboarding_events import (
     capture_github_auth_event,
     current_entrypoint,
     elapsed_ms,
     now_ms,
     sanitized_failure_kind,
 )
-from adapters.inbound.cli.telemetry.usage_events import (
+from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
-from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_plain_line
+from potpie.cli.ui.output import emit_error, print_json_blob, print_plain_line
 
 if sys.platform == "win32":
     import msvcrt
@@ -63,7 +63,7 @@ git_test_app = typer.Typer(help="Deprecated: use `potpie github repos`.", hidden
 
 
 def _flags() -> tuple[bool, bool]:
-    from adapters.inbound.cli.commands._common import is_json, is_verbose
+    from potpie.cli.commands._common import is_json, is_verbose
 
     return is_json(), is_verbose()
 
@@ -417,7 +417,7 @@ def _capture_unexpected_auth_error(
     title: str,
     verbose: bool,
 ) -> NoReturn:
-    from adapters.inbound.cli.telemetry.sentry_runtime import (
+    from potpie.cli.telemetry.sentry_runtime import (
         capture_unexpected_cli_error,
     )
 

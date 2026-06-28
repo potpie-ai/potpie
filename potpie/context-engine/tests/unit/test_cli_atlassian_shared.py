@@ -6,10 +6,10 @@ from __future__ import annotations
 import typer
 import pytest
 from typer.testing import CliRunner
-from adapters.inbound.cli.auth import auth_commands
-from adapters.inbound.cli.commands._common import set_store
+from potpie.cli.auth import auth_commands
+from potpie.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
-from adapters.inbound.cli import host_cli as cli_main
+from potpie.cli import host_cli as cli_main
 import json
 import stat
 from pathlib import Path
@@ -18,7 +18,7 @@ from adapters.outbound.cli_auth.integration_profile import (
     build_atlassian_integration_record,
     build_product_integration_record,
 )
-from adapters.inbound.cli.auth.atlassian_auth import (
+from potpie.cli.auth.atlassian_auth import (
     AtlassianAuthErrorKind,
     AtlassianVerifyResult,
 )
@@ -118,7 +118,7 @@ def test_auth_logout_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_flags_delegates_to_common(monkeypatch: pytest.MonkeyPatch) -> None:
-    from adapters.inbound.cli.commands import _common
+    from potpie.cli.commands import _common
 
     monkeypatch.setattr(_common, "is_json", lambda: True)
     monkeypatch.setattr(_common, "is_verbose", lambda: True)

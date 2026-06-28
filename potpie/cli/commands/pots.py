@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import httpx
 import typer
 
-from adapters.inbound.cli.commands._common import (
+from potpie.cli.commands._common import (
     contract,
     current_repo_identity_for_cli,
     emit,
@@ -18,7 +18,7 @@ from adapters.inbound.cli.commands._common import (
     repo_pot_candidates,
     resolve_pot_id,
 )
-from adapters.inbound.cli.telemetry.onboarding_events import (
+from potpie.cli.telemetry.onboarding_events import (
     capture_project_binding_event,
     elapsed_ms,
     now_ms,
@@ -32,7 +32,7 @@ from adapters.outbound.http.potpie_context_api_client import (
     PotpieContextApiClient,
     PotpieContextApiError,
 )
-from adapters.inbound.cli.repo_location import repo_identity_key, resolve_repo_location
+from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
 from domain.errors import CapabilityNotImplemented
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")

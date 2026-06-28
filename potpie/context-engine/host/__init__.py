@@ -6,7 +6,6 @@ object every inbound adapter binds to. ``Daemon`` is the local lifecycle shell.
 
 from __future__ import annotations
 
-from host.daemon import Daemon
 from host.shell import HostShell, LedgerFacade
 
-__all__ = ["Daemon", "HostShell", "LedgerFacade"]
+__all__ = ["HostShell", "LedgerFacade"]

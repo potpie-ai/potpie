@@ -9,7 +9,7 @@ from pathlib import Path
 
 from rich.text import Text
 
-from adapters.inbound.cli.ui.brand import LOGO_COLOR, LOGO_STYLE
+from potpie.cli.ui.brand import LOGO_COLOR, LOGO_STYLE
 
 VIEWPORT_WIDTH = 96
 VIEWPORT_HEIGHT = 12

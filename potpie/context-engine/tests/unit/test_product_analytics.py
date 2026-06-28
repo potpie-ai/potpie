@@ -4,18 +4,18 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from adapters.inbound.cli.telemetry import product_analytics
-from adapters.inbound.cli.telemetry.context import TelemetryContext
-from adapters.inbound.cli.telemetry.product_analytics import (
+from potpie.cli.telemetry import product_analytics
+from potpie.cli.telemetry.context import TelemetryContext
+from potpie.cli.telemetry.product_analytics import (
+    PostHogSink,
     ProductAnalyticsEvent,
     ProductAnalyticsSettings,
-    PostHogSink,
     capture_event,
     configure_product_analytics,
     set_product_analytics_sink,
 )
-from adapters.inbound.cli.telemetry.settings import load_product_analytics_settings
-from bootstrap import runtime_settings
+from potpie.cli.telemetry.settings import load_product_analytics_settings
+from potpie.runtime import settings as runtime_settings
 
 _PRODUCT_ANALYTICS_ENV_NAMES = (
     "POTPIE_ENVIRONMENT",
@@ -141,7 +141,7 @@ def test_capture_event_uses_existing_telemetry_identity(monkeypatch) -> None:
     sink = _FakeSink()
     set_product_analytics_sink(sink)
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        "potpie.cli.telemetry.product_analytics.current_telemetry_context",
         _telemetry_context,
     )
 
@@ -170,7 +170,7 @@ def test_capture_event_is_noop_without_telemetry_context(monkeypatch) -> None:
     sink = _FakeSink()
     set_product_analytics_sink(sink)
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        "potpie.cli.telemetry.product_analytics.current_telemetry_context",
         lambda: None,
     )
 
@@ -183,7 +183,7 @@ def test_configure_product_analytics_uses_noop_when_disabled(monkeypatch) -> Non
     sink = _FakeSink()
     set_product_analytics_sink(sink)
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        "potpie.cli.telemetry.product_analytics.current_telemetry_context",
         _telemetry_context,
     )
 

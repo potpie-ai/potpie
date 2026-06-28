@@ -15,7 +15,7 @@ from adapters.outbound.skills.agent_installer import (
     install_skill_bundle,
     project_skill_path,
 )
-from adapters.outbound.skills.bundle_catalog import RECOMMENDED_SKILL_IDS
+from adapters.outbound.skills.bundle_catalog import recommended_skill_ids
 
 
 @dataclass(slots=True)
@@ -52,7 +52,7 @@ class FileBackedAgentTarget:
     def installed(self) -> Mapping[str, str]:
         manifest = self._load()
         installed: dict[str, str] = {}
-        for sid in RECOMMENDED_SKILL_IDS:
+        for sid in recommended_skill_ids():
             if self._skill_file(sid).exists():
                 installed[sid] = manifest.get(sid, "unknown")
         return installed
@@ -110,7 +110,7 @@ class ProjectAgentTarget:
     def installed(self) -> Mapping[str, str]:
         manifest = self._load()
         installed: dict[str, str] = {}
-        for sid in RECOMMENDED_SKILL_IDS:
+        for sid in recommended_skill_ids():
             if project_skill_path(self.path, agent=self.agent, skill_id=sid).exists():
                 installed[sid] = manifest.get(sid, "unknown")
         return installed

@@ -1,3 +1,5 @@
+"""Privacy scrubbers for Potpie Sentry events and metrics."""
+
 from __future__ import annotations
 
 from pathlib import PurePath

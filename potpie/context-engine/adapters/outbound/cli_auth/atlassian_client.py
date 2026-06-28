@@ -1,7 +1,7 @@
 """Outbound Atlassian Cloud client: API-token verification + site discovery.
 
 Pure HTTP/transport for Jira & Confluence (no CLI/presentation). The interactive
-login command lives in ``adapters.inbound.cli.auth.atlassian_auth``.
+login command lives in the product CLI package.
 """
 
 from __future__ import annotations

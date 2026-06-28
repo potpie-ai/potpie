@@ -1,13 +1,13 @@
 """Compact static setup intro logo."""
 
-from adapters.inbound.cli.ui.logo_rotation import _intro_logo_grid, render_intro_logo, render_static_intro_logo
-from adapters.inbound.cli.ui.potpie_logo_anim import (
+from potpie.cli.ui.logo_rotation import _intro_logo_grid, render_intro_logo, render_static_intro_logo
+from potpie.cli.ui.potpie_logo_anim import (
     _celebration_sparkle,
     _center_on_logo,
     _logo_layout,
     _warming_line,
 )
-from adapters.inbound.cli.ui.static_logo_loader import layout_logo_lines, load_raw_logo_lines
+from potpie.cli.ui.static_logo_loader import layout_logo_lines, load_raw_logo_lines
 
 
 def test_intro_logo_wave_changes_between_frames() -> None:
@@ -44,7 +44,7 @@ def test_center_on_logo_inset_matches_logo_bounds() -> None:
     from rich.padding import Padding
     from rich.text import Text
 
-    from adapters.inbound.cli.ui.potpie_logo_anim import _SPLASH_LEFT_GAP, _center_on_logo
+    from potpie.cli.ui.potpie_logo_anim import _SPLASH_LEFT_GAP, _center_on_logo
 
     label = Text("potpie")
     block = _center_on_logo(label, logo=logo, content_w=76)

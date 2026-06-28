@@ -31,7 +31,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from bootstrap import sentry_metrics_runtime
 from domain.ports.batch_repository import BatchRepositoryPort
 from domain.ports.reconciliation_ledger import ReconciliationLedgerPort
 
@@ -89,15 +88,7 @@ def reap_stale_batches(
                 get_observability().counter(
                     "ce.batch.reaped_total",
                     1,
-                    attributes={"pot_id": batch.pot_id},
-                )
-            except Exception:  # noqa: BLE001 — never break the reaper
-                pass
-            try:
-                sentry_metrics_runtime.count(
-                    "ce.batch.reaped_total",
-                    1,
-                    attributes={"result": "reaped"},
+                    attributes={"pot_id": batch.pot_id, "result": "reaped"},
                 )
             except Exception:  # noqa: BLE001 — never break the reaper
                 pass

@@ -7,14 +7,14 @@ import sys
 from rich.console import Console
 from rich.text import Text
 
-from adapters.inbound.cli.ui.brand import (
+from potpie.cli.ui.brand import (
     LOGO_STYLE,
     LOGO_SUBTLE_SEPARATOR_STYLE,
     UI_FOCUS_STYLE,
     UI_MUTED_STYLE,
 )
-from adapters.inbound.cli.ui.potpie_logo_anim import content_width_for_panel, panel_width_for_console
-from adapters.inbound.cli.ui.setup_wizard_ui import is_interactive_tty
+from potpie.cli.ui.potpie_logo_anim import content_width_for_panel, panel_width_for_console
+from potpie.cli.ui.setup_wizard_ui import is_interactive_tty
 
 _SUBTLE_SEPARATOR_CHAR = "─"
 

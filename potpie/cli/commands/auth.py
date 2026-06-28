@@ -19,7 +19,7 @@ import typer
 
 
 def register(root: typer.Typer) -> None:
-    from adapters.inbound.cli.auth.auth_commands import register_integration_commands
+    from potpie.cli.auth.auth_commands import register_integration_commands
 
     register_integration_commands(root)
 
@@ -39,7 +39,7 @@ def register(root: typer.Typer) -> None:
         ),
     ) -> None:
         """Sign in to Potpie (browser Firebase session, or --api-key to store a key)."""
-        from adapters.inbound.cli.auth._login_impl import (
+        from potpie.cli.auth._login_impl import (
             potpie_login_api_key_impl,
             potpie_login_impl,
         )
@@ -52,7 +52,7 @@ def register(root: typer.Typer) -> None:
     @root.command("logout")
     def logout() -> None:
         """Remove Potpie account auth from local credential files."""
-        from adapters.inbound.cli.auth._login_impl import potpie_logout_impl
+        from potpie.cli.auth._login_impl import potpie_logout_impl
 
         potpie_logout_impl()
 

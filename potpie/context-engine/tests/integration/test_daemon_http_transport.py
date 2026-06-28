@@ -8,7 +8,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
-from adapters.inbound.daemon_http.transport import HttpTransport
+from potpie.daemon.http.transport import HttpTransport
 from domain.ports.daemon.operations import (
     AuthRequirement,
     OperationContext,
@@ -16,9 +16,9 @@ from domain.ports.daemon.operations import (
     OperationRegistry,
     OperationSpec,
 )
-from host.daemon_runtime.context import ServiceEndpoints, ShellContext
-from host.daemon_runtime.health import HealthRegistrar
-from host.daemon_runtime.ipc_auth import IpcAuthGate
+from potpie.daemon.runtime.context import ServiceEndpoints, ShellContext
+from potpie.daemon.runtime.health import HealthRegistrar
+from potpie.daemon.runtime.ipc_auth import IpcAuthGate
 from tests.conftest import wait_for_condition
 
 

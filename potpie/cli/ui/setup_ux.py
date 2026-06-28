@@ -16,8 +16,8 @@ from typing import Any
 
 import click
 
-from adapters.inbound.cli.commands._common import get_store
-from adapters.inbound.cli.telemetry.onboarding_events import (
+from potpie.cli.commands._common import get_store
+from potpie.cli.telemetry.onboarding_events import (
     capture_github_prompt_outcome,
     capture_github_prompt_shown,
     capture_integration_auth_event,
@@ -29,7 +29,7 @@ from adapters.inbound.cli.telemetry.onboarding_events import (
     onboarding_entrypoint,
     sanitized_failure_kind,
 )
-from adapters.inbound.cli.ui.setup_wizard_ui import (
+from potpie.cli.ui.setup_wizard_ui import (
     SetupWizardUI,
     StepStatus,
     is_interactive_tty,
@@ -195,7 +195,7 @@ def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any
 
 def install_agents_globally(agents: list[str]) -> list[tuple[str, Any]]:
     """Install packaged skill bundles into each harness's global skill location."""
-    from adapters.inbound.cli.commands._common import get_host
+    from potpie.cli.commands._common import get_host
     from adapters.outbound.skills.agent_installer import AGENT_TYPES
 
     host = get_host()
@@ -217,7 +217,7 @@ def _agent_label(agent: str) -> str:
 
 
 def _install_agents_globally_with_progress(agents: list[str]) -> list[tuple[str, Any]]:
-    from adapters.inbound.cli.ui.output import print_plain_line
+    from potpie.cli.ui.output import print_plain_line
 
     results: list[tuple[str, Any]] = []
     if rich_enabled(as_json=False):
@@ -225,8 +225,8 @@ def _install_agents_globally_with_progress(agents: list[str]) -> list[tuple[str,
         from rich.live import Live
         from rich.text import Text
 
-        from adapters.inbound.cli.ui.brand import LOGO_STYLE, UI_MUTED_STYLE
-        from adapters.inbound.cli.ui.setup_wizard_ui import stderr_console
+        from potpie.cli.ui.brand import LOGO_STYLE, UI_MUTED_STYLE
+        from potpie.cli.ui.setup_wizard_ui import stderr_console
 
         completed: list[tuple[str, str]] = []
 
@@ -303,7 +303,7 @@ def _agent_usage_hint(agent_ids: list[str]) -> str | None:
 
 def _globally_installed_harnesses() -> list[str]:
     """Harnesses that already have Potpie skills on disk (any prior setup run)."""
-    from adapters.inbound.cli.commands._common import get_host
+    from potpie.cli.commands._common import get_host
 
     host = get_host()
     installed: list[str] = []
@@ -347,7 +347,7 @@ def _integration_login_command(provider: str) -> str:
 
 
 def _print_integration_skipped(provider: str) -> None:
-    from adapters.inbound.cli.ui.format import print_line
+    from potpie.cli.ui.format import print_line
 
     label = _integration_label(provider)
     command = _integration_login_command(provider)
@@ -365,7 +365,7 @@ def _integration_login_aborted(exc: BaseException) -> bool:
 
 def _try_integration_login(provider: str) -> None:
     """Run one post-setup integration login; Ctrl+C skips without aborting setup."""
-    from adapters.inbound.cli.auth.auth_commands import run_integration_login
+    from potpie.cli.auth.auth_commands import run_integration_login
 
     import typer
 
@@ -400,7 +400,7 @@ def _github_already_authenticated() -> bool:
         return False
     login = str(status.get("login") or "").strip()
     suffix = f" as {login}" if login else ""
-    from adapters.inbound.cli.ui.output import print_plain_line
+    from potpie.cli.ui.output import print_plain_line
 
     print_plain_line(
         f"GitHub already connected{suffix}; skipping login.",
@@ -411,7 +411,7 @@ def _github_already_authenticated() -> bool:
 
 
 def _maybe_prompt_agent_skills(*, setup_agent: str) -> None:
-    from adapters.inbound.cli.ui.interactive_prompts import prompt_multi_checkbox
+    from potpie.cli.ui.interactive_prompts import prompt_multi_checkbox
 
     valid = frozenset(agent for agent in POST_SETUP_AGENT_ORDER if agent != "default")
     default_checked = (
@@ -480,8 +480,8 @@ def maybe_prompt_github_login(
         capture_github_prompt_outcome("skipped", duration_ms=0)
         return
 
-    from adapters.inbound.cli.auth.github_commands import github_login_impl
-    from adapters.inbound.cli.ui.interactive_prompts import prompt_multi_checkbox
+    from potpie.cli.auth.github_commands import github_login_impl
+    from potpie.cli.ui.interactive_prompts import prompt_multi_checkbox
 
     import typer
 
@@ -553,7 +553,7 @@ def maybe_prompt_github_login(
 
 
 def _register_repo_source(*, repo: str) -> str:
-    from adapters.inbound.cli.commands._common import get_host
+    from potpie.cli.commands._common import get_host
 
     started_ms = now_ms()
     capture_project_binding_event(
@@ -603,10 +603,10 @@ def _maybe_prompt_first_pot(
     repo: Path | None,
     default_pot_name: str,
 ) -> None:
-    from adapters.inbound.cli.commands._common import get_host
-    from adapters.inbound.cli.ui.interactive_prompts import prompt_first_pot_name
-    from adapters.inbound.cli.ui.potpie_logo_anim import play_setup_finish
-    from adapters.inbound.cli.ui.setup_wizard_ui import stderr_console
+    from potpie.cli.commands._common import get_host
+    from potpie.cli.ui.interactive_prompts import prompt_first_pot_name
+    from potpie.cli.ui.potpie_logo_anim import play_setup_finish
+    from potpie.cli.ui.setup_wizard_ui import stderr_console
 
     capture_project_binding_event(
         "cli_onboarding_first_pot_prompt_shown",

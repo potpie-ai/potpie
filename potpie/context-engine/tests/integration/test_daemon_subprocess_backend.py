@@ -3,9 +3,9 @@ import pathlib
 
 import pytest
 
-from adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
+from potpie.daemon.managed_services.subprocess_backend import SubprocessBackend
 from domain.ports.daemon.shell import HealthStatus, ReadyProbe, ServiceSpec
-from host.daemon_runtime.context import ShellContext
+from potpie.daemon.runtime.context import ShellContext
 from tests.conftest import free_port
 
 

@@ -9,6 +9,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Iterable
 
+from domain.errors import CapabilityNotImplemented
+
 _MANAGED_MARKER_RE = re.compile(
     r"<!-- (?:context-engine|potpie)-start -->.*?<!-- (?:context-engine|potpie)-end -->",
     re.DOTALL,
@@ -20,6 +22,22 @@ _SOURCE_SKILLS_PREFIX = ".agents/skills/"
 # The Claude Code plugin installs as a self-contained directory so its
 # ``.claude-plugin/plugin.json`` stays the plugin root for ``/plugin marketplace add``.
 _CLAUDE_PLUGIN_PREFIX = ".claude/potpie-plugin"
+_template_package: str | None = None
+
+
+def configure_template_package(package: str) -> None:
+    global _template_package
+    _template_package = package
+
+
+def _template_files_root():
+    if not _template_package:
+        raise CapabilityNotImplemented(
+            "skills.template_package",
+            detail="No packaged Potpie CLI template resource package is configured.",
+            recommended_next_action="run this command through the root 'potpie' CLI",
+        )
+    return resources.files(_template_package)
 
 
 @dataclass
@@ -49,7 +67,7 @@ def resolve_install_root(path: str | Path) -> Path:
 
 def _iter_bundle_files(bundle_name: str) -> list[tuple[Path, str]]:
     """Return packaged template files from the named bundle as (repo-relative path, UTF-8 text)."""
-    root = resources.files("adapters.inbound.cli").joinpath("templates", bundle_name)
+    root = _template_files_root().joinpath("templates", bundle_name)
     out: list[tuple[Path, str]] = []
     stack = [(root, Path("."))]
     while stack:

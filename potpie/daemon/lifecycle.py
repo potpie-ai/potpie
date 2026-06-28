@@ -3,7 +3,7 @@
 The daemon shell is the local background process for lifecycle, IPC, health,
 and logs. It is not the business layer. When ``in_process`` is true, the host
 runs in the CLI process and reports synthetic liveness. When detached, the
-daemon process runs ``host.daemon_main`` and serves HostShell RPC over loopback
+daemon process runs ``potpie.daemon.main`` and serves HostShell RPC over loopback
 HTTP.
 
 Liveness and readiness are separate: the daemon can be live while a backend or
@@ -40,7 +40,7 @@ class Daemon:
 
     def discovery(self) -> dict[str, str] | None:
         """Return daemon discovery metadata for either supported local daemon."""
-        from adapters.outbound.daemon_process.ipc_client import load_discovery
+        from potpie.daemon.process.ipc_client import load_discovery
 
         discovery = load_discovery(self.home)
         if discovery is not None:
@@ -64,7 +64,7 @@ class Daemon:
                 "home": str(self.home),
                 "detail": "in-process host; no detached daemon",
             }
-        from adapters.outbound.daemon_process.pidfile import read_pid_file
+        from potpie.daemon.process.pidfile import read_pid_file
 
         pid = read_pid_file(self.home / "daemon.pid")
         up = bool(pid and _pid_alive(pid))
@@ -109,7 +109,7 @@ class Daemon:
                 }
             except Exception:  # noqa: BLE001 - daemon health must be best-effort.
                 return {"live": False, "mode": "detached"}
-        from adapters.outbound.daemon_process.ipc_client import client_for
+        from potpie.daemon.process.ipc_client import client_for
 
         try:
             with client_for(self.home) as client:
@@ -167,7 +167,7 @@ class Daemon:
         }
 
     def start(self, *, backend: str | None = None) -> dict[str, Any]:
-        from adapters.outbound.daemon_process.launcher import start_detached
+        from potpie.daemon.process.launcher import start_detached
 
         return start_detached(
             self.home,
@@ -176,7 +176,7 @@ class Daemon:
         )
 
     def stop(self) -> dict[str, Any]:
-        from adapters.outbound.daemon_process.launcher import stop_daemon
+        from potpie.daemon.process.launcher import stop_daemon
 
         return {"detail": stop_daemon(self.home)}
 

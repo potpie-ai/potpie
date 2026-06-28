@@ -2,9 +2,8 @@
 
 Persistence (file credential store), HTTP transport, and the
 provider auth/flow clients (GitHub, Firebase, Potpie, Linear, Atlassian) that
-talk to external systems. The inbound CLI command surfaces under
-``adapters/inbound/cli`` drive these via their ports
+talk to external systems. Product CLI command surfaces drive these via their ports
 (:class:`~domain.ports.cli_auth.credentials.CredentialStore`,
 :class:`~adapters.outbound.cli_auth.http.HttpClient`). Nothing here imports from
-``adapters.inbound``.
+inbound CLI code.
 """

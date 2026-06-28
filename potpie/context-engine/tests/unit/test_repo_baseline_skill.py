@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-import adapters.inbound.cli as _clipkg
+import potpie.cli as _clipkg
 from domain.ontology import CANONICAL_EDGE_TYPES, CANONICAL_LABELS
 
 pytestmark = pytest.mark.unit

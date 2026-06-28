@@ -12,8 +12,8 @@ from pathlib import Path
 
 from adapters.outbound.skills.claude_target import ProjectAgentTarget
 from adapters.outbound.skills.bundle_catalog import (
-    RECOMMENDED_SKILL_IDS,
     catalog_by_id,
+    recommended_skill_ids,
 )
 from domain.ports.agent_context import SkillNudge
 from domain.ports.services.skill_manager import (
@@ -95,7 +95,7 @@ class DefaultSkillManager:
     ) -> SkillOperationResult:
         target = self._target_for_scope(agent=agent, scope=scope, path=path)
         catalog = catalog_by_id()
-        ids = [skill_id] if skill_id else list(RECOMMENDED_SKILL_IDS)
+        ids = [skill_id] if skill_id else list(recommended_skill_ids())
         changed: list[str] = []
         installed = target.installed()
         for sid in ids:
@@ -180,7 +180,7 @@ class DefaultSkillManager:
         installed_infos: list[SkillInfo] = []
         missing: list[SkillInfo] = []
         outdated: list[SkillInfo] = []
-        for sid in RECOMMENDED_SKILL_IDS:
+        for sid in recommended_skill_ids():
             info = catalog[sid]
             ver = installed.get(sid)
             if ver is None:

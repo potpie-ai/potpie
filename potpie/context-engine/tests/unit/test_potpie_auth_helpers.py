@@ -12,14 +12,14 @@ from typing import Any
 import httpx
 
 from adapters.outbound.cli_auth.http import AuthHttpError
-from adapters.inbound.cli.commands._common import set_store
+from potpie.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
 import pytest
 
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import host_cli as cli_main
-from adapters.inbound.cli.auth import _login_impl
+from potpie.cli import host_cli as cli_main
+from potpie.cli.auth import _login_impl
 from adapters.outbound.cli_auth import firebase_session
 from adapters.outbound.cli_auth import potpie as potpie_auth
 from bootstrap import runtime_settings

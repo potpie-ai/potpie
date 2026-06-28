@@ -2,7 +2,7 @@
 
 import json
 
-from adapters.inbound.cli.ui.output import DoctorSnapshot, print_unified_status_report
+from potpie.cli.ui.output import DoctorSnapshot, print_unified_status_report
 
 
 def test_unified_status_json(capsys) -> None:

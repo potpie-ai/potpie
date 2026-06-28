@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from adapters.inbound.http.ui.router import (
+from potpie.daemon.http.ui.router import (
     _caption,
     _node_type,
     _parse_scope,
@@ -129,7 +129,7 @@ def test_pots_api_includes_counts_for_selector() -> None:
 
 
 def test_daemon_app_mounts_ui_api_and_static(monkeypatch) -> None:
-    from host import daemon_main
+    from potpie.daemon import main as daemon_main
 
     class Pot:
         pot_id = "p1"
@@ -161,7 +161,7 @@ def test_daemon_app_mounts_ui_api_and_static(monkeypatch) -> None:
         graph = Graph()
         backend = Backend()
 
-    monkeypatch.setattr(daemon_main, "build_host_shell", lambda: Host())
+    monkeypatch.setattr(daemon_main, "build_potpie_host_shell", lambda: Host())
 
     app = daemon_main.create_app(
         token="test-token",

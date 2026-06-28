@@ -11,7 +11,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from adapters.inbound.cli.ui.brand import (
+from potpie.cli.ui.brand import (
     LOGO_COLOR,
     LOGO_DIM_STYLE,
     LOGO_SUBTLE_SEPARATOR_STYLE,
@@ -19,7 +19,7 @@ from adapters.inbound.cli.ui.brand import (
     UI_MUTED_STYLE,
     UI_WARN_STYLE,
 )
-from adapters.inbound.cli.ui.setup_wizard_ui import rich_ui_enabled
+from potpie.cli.ui.setup_wizard_ui import rich_ui_enabled
 
 PANEL_BORDER = LOGO_COLOR
 _SUBTLE_SEP_CHAR = "─"

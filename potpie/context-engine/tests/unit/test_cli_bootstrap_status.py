@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import platform
 import sys
+from dataclasses import dataclass
 from typing import Union
 from unittest.mock import MagicMock
 
 import pytest
+from potpie.cli import host_cli as cli_main
+from potpie.cli.commands import bootstrap
+from potpie.cli.commands._common import EXIT_DEGRADED
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import host_cli as cli_main
-from adapters.inbound.cli.commands import bootstrap
-from adapters.inbound.cli.commands._common import EXIT_DEGRADED
 from bootstrap.host_wiring import default_host_mode
 from domain.lifecycle import DONE, FAILED, SetupPlan, SetupReport, StepResult
 from domain.ports.agent_context import StatusReport, StatusRequest
@@ -92,7 +92,7 @@ def test_status_non_default_pot_triggers_host_path(
         called.append(True)
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.auth_commands.integration_status",
+        "potpie.cli.auth.auth_commands.integration_status",
         _integration_status,
     )
     report = StatusReport(
@@ -197,10 +197,10 @@ def test_setup_dry_run_preview(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
-        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        "potpie.cli.ui.setup_ux.rich_enabled",
         lambda **_k: False,
     )
-    monkeypatch.setattr(bootstrap, "sentry_metrics_runtime", metrics, raising=False)
+    monkeypatch.setattr(bootstrap, "sentry_metrics", metrics, raising=False)
 
     result = runner.invoke(cli_main.app, ["setup", "--dry-run"])
 
@@ -250,10 +250,10 @@ def test_setup_success_emits_run_and_step_metrics(
 
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
-        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        "potpie.cli.ui.setup_ux.rich_enabled",
         lambda **_k: False,
     )
-    monkeypatch.setattr(bootstrap, "sentry_metrics_runtime", metrics, raising=False)
+    monkeypatch.setattr(bootstrap, "sentry_metrics", metrics, raising=False)
 
     result = runner.invoke(
         cli_main.app,
@@ -318,10 +318,10 @@ def test_setup_degraded_report_preserves_exit_code_and_emits_metrics(
 
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
-        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        "potpie.cli.ui.setup_ux.rich_enabled",
         lambda **_k: False,
     )
-    monkeypatch.setattr(bootstrap, "sentry_metrics_runtime", metrics, raising=False)
+    monkeypatch.setattr(bootstrap, "sentry_metrics", metrics, raising=False)
 
     result = runner.invoke(cli_main.app, ["setup", "--yes"])
 

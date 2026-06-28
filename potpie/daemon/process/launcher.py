@@ -1,6 +1,6 @@
 """Detached daemon launcher: start the daemon as a background process and block until ready, or stop it.
 
-This is the reliable start/stop mechanism the ``host.daemon.Daemon`` seam
+This is the reliable start/stop mechanism the ``potpie.daemon.lifecycle.Daemon`` seam
 drives. ``start_detached`` is QUIET — it returns daemon discovery metadata once
 readiness is signalled (discovery file written) or raises ``DaemonStartError``;
 it never prints, so it is safe to call from inside a rich/live setup UI.
@@ -16,8 +16,8 @@ import subprocess
 import sys
 import time
 
-from adapters.outbound.daemon_process.pidfile import read_pid_file
-from bootstrap.runtime_settings import load_runtime_settings, project_child_environment
+from potpie.daemon.process.pidfile import read_pid_file
+from potpie.runtime.settings import load_runtime_settings, project_child_environment
 
 
 class DaemonStartError(Exception):
@@ -67,7 +67,7 @@ def start_detached(
     )
     try:
         proc = subprocess.Popen(
-            [sys.executable, "-m", "host.daemon_main"],
+            [sys.executable, "-m", "potpie.daemon.main"],
             stdout=log_fp,
             stderr=subprocess.STDOUT,
             start_new_session=True,

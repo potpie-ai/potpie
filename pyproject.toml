@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "potpie"
 version = "2.0.0b3"
-description = "Potpie context engine"
+description = "Potpie product runtime package."
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 license = "Apache-2.0"
@@ -26,13 +26,19 @@ classifiers = [
     "Topic :: Software Development",
 ]
 dependencies = [
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    "keyring>=25.0.0",
     "potpie-context-engine[all]==0.1.0b3",
+    "rich>=13.0",
+    "sentry-sdk>=2.61.1,<3.0.0",
+    "typer>=0.15.0",
+    "uvicorn[standard]>=0.32.0",
 ]
 
 [project.scripts]
-potpie = "adapters.inbound.cli.host_cli:main"
-potpie-mcp = "adapters.inbound.mcp.server:main"
-potpie-daemon = "host.daemon_main:main"
+potpie = "potpie.cli.main:main"
+potpie-daemon = "potpie.daemon.main:main"
 
 [project.urls]
 Homepage = "https://potpie.ai"
@@ -40,17 +46,45 @@ Documentation = "https://docs.potpie.ai"
 Source = "https://github.com/potpie-ai/potpie"
 Issues = "https://github.com/potpie-ai/potpie/issues"
 
+[tool.hatch.build.hooks.custom]
+path = "telemetry_build_hook.py"
+
+[tool.hatch.build.force-include]
+"potpie/cli/telemetry/_build_config.py" = "potpie/cli/telemetry/_build_config.py"
+"potpie/runtime/telemetry/_build_config.py" = "potpie/runtime/telemetry/_build_config.py"
+
 [tool.hatch.build.targets.wheel]
-bypass-selection = true
+packages = ["potpie"]
+include = [
+    "potpie/cli/templates/**/*",
+    "potpie/cli/ui/assets/**/*",
+]
+exclude = [
+    "/potpie/context-engine",
+    "/potpie/integrations",
+    "/potpie/parsing",
+    "/potpie/sandbox",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "/LICENSE",
     "/README.md",
     "/pyproject.toml",
+    "/scripts/generate-potpie-ascii.mjs",
+    "/telemetry_build_config_values.py",
+    "/telemetry_build_hook.py",
+    "/potpie/__init__.py",
+    "/potpie/cli",
+    "/potpie/daemon",
+    "/potpie/runtime",
 ]
 exclude = [
     "/.gitignore",
+    "/potpie/context-engine",
+    "/potpie/integrations",
+    "/potpie/parsing",
+    "/potpie/sandbox",
 ]
 
 [tool.uv]
@@ -67,7 +101,12 @@ override-dependencies = [
 ]
 
 [tool.uv.workspace]
-members = ["potpie/*"]
+members = [
+    "potpie/context-engine",
+    "potpie/integrations",
+    "potpie/parsing",
+    "potpie/sandbox",
+]
 
 [tool.uv.sources]
 potpie-context-engine = { workspace = true, editable = true }

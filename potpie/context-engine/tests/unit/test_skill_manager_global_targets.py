@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.skills.bundle_catalog import RECOMMENDED_SKILL_IDS
+from adapters.outbound.skills.bundle_catalog import recommended_skill_ids
 from bootstrap.host_wiring import build_host_shell
 
 
@@ -134,22 +134,23 @@ def test_skill_manager_removes_all_global_harness_skills(
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
     host = build_host_shell(backend=InMemoryGraphBackend())
 
+    expected_skill_ids = recommended_skill_ids()
     install_result = host.skills.install(agent="codex")
-    assert set(install_result.changed) == set(RECOMMENDED_SKILL_IDS)
+    assert set(install_result.changed) == set(expected_skill_ids)
 
     skills_root = home / ".agents" / "skills"
     assert all(
         (skills_root / skill_id / "SKILL.md").exists()
-        for skill_id in RECOMMENDED_SKILL_IDS
+        for skill_id in expected_skill_ids
     )
 
     remove_result = host.skills.remove(agent="codex", all_=True)
 
     assert remove_result.metadata["scope"] == "global"
-    assert set(remove_result.changed) == set(RECOMMENDED_SKILL_IDS)
+    assert set(remove_result.changed) == set(expected_skill_ids)
     assert all(
         not (skills_root / skill_id / "SKILL.md").exists()
-        for skill_id in RECOMMENDED_SKILL_IDS
+        for skill_id in expected_skill_ids
     )
     assert host.skills.status(agent="codex").installed == ()
 

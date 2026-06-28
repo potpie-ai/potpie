@@ -11,9 +11,9 @@ from rich.live import Live
 from rich.padding import Padding
 from rich.text import Text
 
-from adapters.inbound.cli.ui.brand import LOGO_COLOR, LOGO_DIM_STYLE, LOGO_STYLE, UI_MUTED_STYLE
-from adapters.inbound.cli.ui.logo_rotation import render_intro_logo, render_static_intro_logo
-from adapters.inbound.cli.ui.static_logo_loader import VIEWPORT_WIDTH, load_static_logo
+from potpie.cli.ui.brand import LOGO_COLOR, LOGO_DIM_STYLE, LOGO_STYLE, UI_MUTED_STYLE
+from potpie.cli.ui.logo_rotation import render_intro_logo, render_static_intro_logo
+from potpie.cli.ui.static_logo_loader import VIEWPORT_WIDTH, load_static_logo
 
 _ACCENT = LOGO_STYLE
 _DIM = LOGO_DIM_STYLE

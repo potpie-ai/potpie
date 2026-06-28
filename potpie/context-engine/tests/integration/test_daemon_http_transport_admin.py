@@ -8,8 +8,8 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
-from adapters.inbound.daemon_http.transport import HttpTransport
-from application.services.managed_service_manager import (
+from potpie.daemon.http.transport import HttpTransport
+from potpie.daemon.runtime.service_manager import (
     ReadyTimeout,
     ServiceNotFound,
     ServiceStatus,
@@ -20,9 +20,9 @@ from domain.ports.daemon.operations import (
     OperationRegistry,
     OperationSpec,
 )
-from host.daemon_runtime.context import ShellContext
-from host.daemon_runtime.health import HealthRegistrar
-from host.daemon_runtime.ipc_auth import IpcAuthGate
+from potpie.daemon.runtime.context import ShellContext
+from potpie.daemon.runtime.health import HealthRegistrar
+from potpie.daemon.runtime.ipc_auth import IpcAuthGate
 
 
 class EchoIn(BaseModel):

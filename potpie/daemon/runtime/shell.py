@@ -1,6 +1,6 @@
 """DaemonRuntime: assembles registries, plugins, transports, components, services. Runs until shutdown.
 
-This is the async runtime the detached daemon process executes (``python -m host.daemon_runtime``).
+This is the async runtime the detached daemon process executes (``python -m potpie.daemon.runtime``).
 It is distinct from ``host.shell.HostShell`` (the in-process service facade) — the runtime
 *hosts* services and exposes them over a transport.
 """
@@ -13,19 +13,19 @@ import logging
 import pathlib
 from dataclasses import dataclass
 
-from adapters.inbound.daemon_http.transport import HttpTransport
-from adapters.outbound.managed_services.container_backend import ContainerBackend
-from adapters.outbound.managed_services.external_backend import ExternalBackend
-from adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
-from application.services.managed_service_manager import ServiceManager
+from potpie.daemon.http.transport import HttpTransport
+from potpie.daemon.managed_services.container_backend import ContainerBackend
+from potpie.daemon.managed_services.external_backend import ExternalBackend
+from potpie.daemon.managed_services.subprocess_backend import SubprocessBackend
+from potpie.daemon.runtime.service_manager import ServiceManager
 from domain.ports.daemon.operations import OperationRegistry, OperationSpec
 from domain.ports.daemon.service import ReadyProbe, RestartPolicy, ServiceSpec
 from domain.ports.daemon.shell import Component, HealthStatus, ServiceBackend, Transport
-from host.daemon_runtime.config import DaemonConfig
-from host.daemon_runtime.context import ServiceEndpoints, ShellContext
-from host.daemon_runtime.health import HealthRegistrar
-from host.daemon_runtime.ipc_auth import IpcAuthGate
-from host.daemon_runtime.registry import Registry
+from potpie.daemon.runtime.config import DaemonConfig
+from potpie.daemon.runtime.context import ServiceEndpoints, ShellContext
+from potpie.daemon.runtime.health import HealthRegistrar
+from potpie.daemon.runtime.ipc_auth import IpcAuthGate
+from potpie.daemon.runtime.registry import Registry
 
 DAEMON_LOGGER_NAMESPACE = "potpied"
 logger = logging.getLogger(f"{DAEMON_LOGGER_NAMESPACE}.shell")
