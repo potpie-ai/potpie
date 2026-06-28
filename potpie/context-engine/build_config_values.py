@@ -9,13 +9,16 @@ from typing import Final
 
 DISTRIBUTION_DEFAULTS_OUT = Path("bootstrap/_distribution_defaults.py")
 BUILD_INFO_OUT = Path("bootstrap/_build_info.py")
-DISTRIBUTION_DEFAULT_INPUT_NAMES = (
-    "POTPIE_ENVIRONMENT",
-    "POTPIE_SENTRY_DSN",
-    "POTPIE_POSTHOG_API_KEY",
-    "POTPIE_POSTHOG_HOST",
-    "LINEAR_CLIENT_ID",
-    "POTPIE_GITHUB_CLIENT_ID",
+DISTRIBUTION_DEFAULT_INPUT_NAMES_BY_FIELD = {
+    "environment": "POTPIE_ENVIRONMENT",
+    "sentry_dsn": "POTPIE_SENTRY_DSN",
+    "posthog_api_key": "POTPIE_POSTHOG_API_KEY",
+    "posthog_host": "POTPIE_POSTHOG_HOST",
+    "linear_client_id": "LINEAR_CLIENT_ID",
+    "github_client_id": "POTPIE_GITHUB_CLIENT_ID",
+}
+DISTRIBUTION_DEFAULT_INPUT_NAMES = tuple(
+    DISTRIBUTION_DEFAULT_INPUT_NAMES_BY_FIELD.values()
 )
 BUILD_INFO_INPUT_NAMES = ("POTPIE_BUILD_GIT_SHA", "GITHUB_SHA", "POTPIE_BUILD_TIME")
 
@@ -110,18 +113,22 @@ def write_python_constants(path: Path, values: Mapping[str, str]) -> None:
     )
 
 
-def prefer_existing_mapping_values(
+def prefer_existing_distribution_default_values(
     path: Path,
-    mapping_name: str,
     values: Mapping[str, str],
+    environ: Mapping[str, str] | None = None,
+    *,
+    dotenv_start: Path | None = None,
 ) -> dict[str, str]:
-    """Keep generated sdist mapping values when a wheel build lacks build inputs."""
-    existing = _read_python_mapping(path, mapping_name)
+    """Keep generated sdist distribution defaults unless their env input is set."""
+    existing = _read_python_mapping(path, "DISTRIBUTION_DEFAULTS")
     if not existing:
         return dict(values)
+    source = _merged_build_environ(environ, dotenv_start=dotenv_start)
     merged = dict(values)
     for name in values:
-        if name in existing:
+        input_name = DISTRIBUTION_DEFAULT_INPUT_NAMES_BY_FIELD[name]
+        if name in existing and not _env(input_name, source):
             merged[name] = existing[name]
     return merged
 
