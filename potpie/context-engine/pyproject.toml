@@ -7,9 +7,9 @@ path = "distribution_defaults_hook.py"
 
 [project]
 name = "potpie-context-engine"
-version = "0.1.0b1"
+version = "0.1.0b3"
 description = "Context graph API, webhooks, CLI, and MCP."
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.12,<3.15"
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
@@ -85,11 +85,6 @@ dev = [
     "ruff>=0.8.0",
 ]
 
-[project.scripts]
-potpie = "adapters.inbound.cli.host_cli:main"
-potpie-mcp = "adapters.inbound.mcp.server:main"
-potpie-daemon = "host.daemon_main:main"
-
 [tool.hatch.build.force-include]
 "adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "adapters/inbound/cli/ui/assets/potpie-logo-static.json"
 "adapters/inbound/cli/ui/assets/potpie.png" = "adapters/inbound/cli/ui/assets/potpie.png"
@@ -149,6 +144,7 @@ markers = [
     "unit: unit tests",
     "integration: integration tests (no external services required, but exercise real third-party libs)",
     "cli_auth_e2e: opt-in live CLI auth tests (Linear/Jira/Confluence); requires RUN_CLI_AUTH_E2E=1",
+    "premerge_journey: dedicated pre-merge CLI journey test (Rust required; run in premerge-cli-journey job only)",
 ]
 
 [dependency-groups]

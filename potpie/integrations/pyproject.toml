@@ -7,7 +7,7 @@ name = "potpie-integrations"
 version = "0.1.0"
 description = "Potpie external integrations (hexagonal layout, mirrors context-engine structure)."
 readme = "README.md"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.12,<3.15"
 dependencies = []
 
 [tool.hatch.build.targets.wheel]

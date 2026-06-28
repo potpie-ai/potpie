@@ -117,8 +117,8 @@ def test_build_workspace_index_result_fields_are_readonly_and_present(
     )
 
 
-def test_python_package_supports_python_3_12_to_3_13() -> None:
+def test_python_package_supports_python_3_12_to_3_14() -> None:
     pyproject = Path(__file__).parents[1] / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text())
 
-    assert data["project"]["requires-python"] == ">=3.12,<3.14"
+    assert data["project"]["requires-python"] == ">=3.12,<3.15"

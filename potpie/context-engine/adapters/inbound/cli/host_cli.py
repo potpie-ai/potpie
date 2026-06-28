@@ -11,6 +11,10 @@ composition root for the agent surface.
 
 from __future__ import annotations
 
+import platform
+import sys
+from importlib import metadata
+
 import typer
 
 from adapters.inbound.cli.commands import auth as auth_cmds
@@ -30,6 +34,21 @@ from adapters.inbound.cli.commands._common import set_json, set_verbose
 from adapters.inbound.cli.telemetry.context import bind_telemetry_context
 
 
+def _package_version() -> str:
+    try:
+        return metadata.version("potpie-context-engine")
+    except metadata.PackageNotFoundError:
+        return "0.1.0"
+
+
+def _version_callback(value: bool) -> None:
+    if not value:
+        return
+    typer.echo(f"potpie-context-engine {_package_version()}")
+    typer.echo(f"python {platform.python_version()} ({sys.executable})")
+    raise typer.Exit()
+
+
 def build_app() -> typer.Typer:
     app = typer.Typer(
         name="potpie",
@@ -44,6 +63,13 @@ def build_app() -> typer.Typer:
         json_: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
         verbose: bool = typer.Option(
             False, "--verbose", "-v", help="Verbose tracebacks on errors."
+        ),
+        version: bool = typer.Option(
+            False,
+            "--version",
+            callback=_version_callback,
+            is_eager=True,
+            help="Show version information and exit.",
         ),
     ) -> None:
         from adapters.inbound.cli.telemetry import sentry_runtime, settings

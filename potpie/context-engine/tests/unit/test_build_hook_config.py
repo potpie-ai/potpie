@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import build_config_values
@@ -25,6 +27,87 @@ def test_distribution_defaults_use_internal_field_names() -> None:
         "linear_client_id": "linear-client",
         "github_client_id": "github-client",
     }
+
+
+def test_distribution_defaults_load_nearest_dotenv(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "POTPIE_ENVIRONMENT=prod_oss",
+                "POTPIE_SENTRY_DSN=file-sentry",
+                "POTPIE_POSTHOG_API_KEY=file-posthog",
+                "POTPIE_POSTHOG_HOST=https://posthog.invalid",
+                "LINEAR_CLIENT_ID=file-linear",
+                "export POTPIE_GITHUB_CLIENT_ID='file-github'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    nested = tmp_path / "potpie" / "context-engine"
+    nested.mkdir(parents=True)
+
+    values = build_config_values.distribution_default_values({}, dotenv_start=nested)
+
+    assert values == {
+        "environment": "prod_oss",
+        "sentry_dsn": "file-sentry",
+        "posthog_api_key": "file-posthog",
+        "posthog_host": "https://posthog.invalid",
+        "linear_client_id": "file-linear",
+        "github_client_id": "file-github",
+    }
+
+
+def test_build_config_environ_overrides_dotenv(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "POTPIE_SENTRY_DSN=file-sentry",
+                "POTPIE_POSTHOG_API_KEY=file-posthog",
+                "LINEAR_CLIENT_ID=file-linear",
+                "POTPIE_GITHUB_CLIENT_ID=file-github",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    values = build_config_values.distribution_default_values(
+        {
+            "POTPIE_SENTRY_DSN": "env-sentry",
+            "POTPIE_POSTHOG_API_KEY": "env-posthog",
+            "LINEAR_CLIENT_ID": "env-linear",
+            "POTPIE_GITHUB_CLIENT_ID": "env-github",
+        },
+        dotenv_start=tmp_path,
+    )
+
+    assert values["sentry_dsn"] == "env-sentry"
+    assert values["posthog_api_key"] == "env-posthog"
+    assert values["linear_client_id"] == "env-linear"
+    assert values["github_client_id"] == "env-github"
+
+
+def test_build_config_input_detection(tmp_path: Path) -> None:
+    assert not build_config_values.has_build_config_inputs(
+        build_config_values.DISTRIBUTION_DEFAULT_INPUT_NAMES,
+        {},
+        dotenv_start=tmp_path,
+    )
+
+    assert build_config_values.has_build_config_inputs(
+        build_config_values.DISTRIBUTION_DEFAULT_INPUT_NAMES,
+        {"LINEAR_CLIENT_ID": ""},
+        dotenv_start=tmp_path,
+    )
+
+    (tmp_path / ".env").write_text("UNRELATED=1\n", encoding="utf-8")
+    assert build_config_values.has_build_config_inputs(
+        build_config_values.DISTRIBUTION_DEFAULT_INPUT_NAMES,
+        {},
+        dotenv_start=tmp_path,
+    )
 
 
 def test_distribution_defaults_have_safe_public_defaults() -> None:
@@ -58,6 +141,51 @@ def test_write_distribution_mapping_does_not_emit_env_var_constants(tmp_path) ->
     assert "'environment': 'prod_oss'" in text
     assert "POTPIE_SENTRY_DSN =" not in text
     assert "LINEAR_CLIENT_ID =" not in text
+
+
+def test_write_python_constants(tmp_path: Path) -> None:
+    out = tmp_path / "_build_info.py"
+
+    build_config_values.write_python_constants(out, {"GIT_SHA": "abc123"})
+
+    assert out.read_text(encoding="utf-8").splitlines() == [
+        "# Auto-generated at wheel build time - do not edit manually.",
+        "# Runtime environment variables override these packaged public defaults.",
+        "GIT_SHA = 'abc123'",
+    ]
+
+
+def test_prefer_existing_distribution_defaults(tmp_path: Path) -> None:
+    out = tmp_path / "_distribution_defaults.py"
+    build_config_values.write_python_mapping(
+        out,
+        "DISTRIBUTION_DEFAULTS",
+        {"environment": "prod_oss", "sentry_dsn": "old"},
+    )
+
+    values = build_config_values.prefer_existing_mapping_values(
+        out,
+        "DISTRIBUTION_DEFAULTS",
+        {"environment": "dev", "sentry_dsn": "", "posthog_api_key": "new"},
+    )
+
+    assert values == {
+        "environment": "prod_oss",
+        "sentry_dsn": "old",
+        "posthog_api_key": "new",
+    }
+
+
+def test_prefer_existing_build_info(tmp_path: Path) -> None:
+    out = tmp_path / "_build_info.py"
+    build_config_values.write_python_constants(out, {"GIT_SHA": "old", "BUILD_TIME": "kept"})
+
+    values = build_config_values.prefer_existing_config_values(
+        out,
+        {"GIT_SHA": "", "BUILD_TIME": "default", "EXTRA": "new"},
+    )
+
+    assert values == {"GIT_SHA": "old", "BUILD_TIME": "kept", "EXTRA": "new"}
 
 
 def test_release_validation_fails_when_required_defaults_are_missing() -> None:

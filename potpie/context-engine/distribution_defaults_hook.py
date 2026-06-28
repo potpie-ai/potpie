@@ -24,6 +24,20 @@ class DistributionDefaultsHook(BuildHookInterface):
         del version
         config_values = _load_config_values_module()
         distribution_defaults = config_values.distribution_default_values()
+        build_info = config_values.build_info_values()
+        if not config_values.has_build_config_inputs(
+            config_values.DISTRIBUTION_DEFAULT_INPUT_NAMES
+        ):
+            distribution_defaults = config_values.prefer_existing_mapping_values(
+                config_values.DISTRIBUTION_DEFAULTS_OUT,
+                "DISTRIBUTION_DEFAULTS",
+                distribution_defaults,
+            )
+        if not config_values.has_build_config_inputs(config_values.BUILD_INFO_INPUT_NAMES):
+            build_info = config_values.prefer_existing_config_values(
+                config_values.BUILD_INFO_OUT,
+                build_info,
+            )
         if config_values.should_validate_distribution_defaults():
             config_values.validate_distribution_defaults(distribution_defaults)
         config_values.write_python_mapping(
@@ -33,7 +47,7 @@ class DistributionDefaultsHook(BuildHookInterface):
         )
         config_values.write_python_constants(
             config_values.BUILD_INFO_OUT,
-            config_values.build_info_values(),
+            build_info,
         )
         build_data.setdefault("artifacts", []).extend(
             [
