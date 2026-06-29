@@ -1,12 +1,4 @@
-"""Animated setup wizard rendered over the REAL host-routed setup.
-
-``host.setup.run(plan)`` returns a fully-completed :class:`SetupReport` (every
-step already executed). This module replays those steps through the Rich
-checklist so first-run reads as live — but each row's *final* state is the real
-``StepResult.state``, and a failed hard step shows the real ``detail`` and exits
-degraded. JSON and non-interactive callers never reach here: ``commands/bootstrap``
-routes them to the plain ``emit`` path instead.
-"""
+"""Setup wizard UI for the real host-routed setup flow."""
 
 from __future__ import annotations
 
@@ -33,14 +25,20 @@ from adapters.inbound.cli.ui.setup_wizard_ui import (
     SetupWizardUI,
     StepStatus,
     is_interactive_tty,
-    rich_ui_enabled,
+    live_ui_enabled,
 )
+from domain.lifecycle import SetupPlan, SetupReport
+from domain.ports.services.setup import SetupObserver, SetupOrchestrator
 
 # Real orchestrator step_id -> (running label, done label). See
 # application/services/setup_orchestrator.py for the canonical step list.
 STEP_LABELS: dict[str, tuple[str, str]] = {
     "config": ("Creating config files…", "Config files ready"),
     "installer": ("Installing CLI / service…", "CLI ready"),
+    "embeddings.model": (
+        "Setting up embedding model…",
+        "Embedding model ready",
+    ),
     "backend.provision": ("Provisioning graph backend…", "Backend ready"),
     "pot.init": ("Initializing control plane…", "Control plane ready"),
     "state_store.provision": ("Preparing state store…", "State store ready"),
@@ -55,7 +53,7 @@ STEP_LABELS: dict[str, tuple[str, str]] = {
 
 # Rows that get the animated "chomp" glyph while running.
 CHOMP_STEPS = frozenset(
-    {"backend.provision", "state_store.provision", "daemon", "scan"}
+    {"embeddings.model", "backend.provision", "state_store.provision", "daemon", "scan"}
 )
 
 # Lifecycle StepResult.state -> wizard ChecklistStep status. A soft
@@ -73,7 +71,7 @@ _MIN_DWELL_S = 0.18
 
 # Soft steps that are hidden when they only report no-op / stub outcomes.
 _UI_HIDE_WHEN: dict[str, frozenset[str]] = {
-    "auth": frozenset({"not_implemented", "skipped"}),
+    "auth": frozenset({"done", "failed", "not_implemented", "skipped"}),
     "source": frozenset({"skipped"}),
     "state_store.provision": frozenset({"skipped"}),
 }
@@ -87,8 +85,162 @@ def _visible_in_checklist(step: Any) -> bool:
 
 
 def rich_enabled(*, as_json: bool) -> bool:
-    """True when the animated wizard should drive output (TTY, not --json)."""
-    return rich_ui_enabled(as_json=as_json)
+    """True when setup may use repainting Rich Live regions."""
+    return live_ui_enabled(as_json=as_json)
+
+
+def interactive_onboarding_enabled(*, as_json: bool) -> bool:
+    """True when setup can ask post-run onboarding prompts."""
+    if as_json:
+        return False
+    return is_interactive_tty()
+
+
+class _CompositeSetupObserver:
+    def __init__(self, *observers: SetupObserver | None) -> None:
+        self._observers = tuple(observer for observer in observers if observer is not None)
+
+    def step_started(self, *, step: str, hard: bool) -> None:
+        for observer in self._observers:
+            observer.step_started(step=step, hard=hard)
+
+    def step_completed(self, *, result: Any, duration_ms: int) -> None:
+        for observer in self._observers:
+            observer.step_completed(result=result, duration_ms=duration_ms)
+
+
+class _WizardSetupObserver:
+    def __init__(self, wizard: SetupWizardUI) -> None:
+        self._wizard = wizard
+        self._visible_steps = {step.step_id for step in wizard.steps}
+
+    def step_started(self, *, step: str, hard: bool) -> None:
+        del hard
+        if step not in self._visible_steps:
+            return
+        try:
+            self._wizard.start_step(step)
+        except KeyError:
+            return
+
+    def step_completed(self, *, result: Any, duration_ms: int) -> None:
+        if result.step not in self._visible_steps:
+            return
+        try:
+            self._wizard.complete_step(
+                result.step,
+                status=STATE_MAP.get(result.state, "warn"),
+                detail=result.detail,
+                duration_ms=duration_ms,
+            )
+        except KeyError:
+            return
+
+
+class _PlainSetupObserver:
+    def __init__(self, planned_steps: list[Any], *, agent: str) -> None:
+        self._visible_steps = {step.step for step in planned_steps}
+        self._agent = agent
+
+    def step_started(self, *, step: str, hard: bool) -> None:
+        del hard
+        if step not in self._visible_steps:
+            return
+        running, _done = _step_labels(step, agent=self._agent)
+        click.echo(f"› {running}", err=True)
+
+    def step_completed(self, *, result: Any, duration_ms: int) -> None:
+        del duration_ms
+        if result.step not in self._visible_steps:
+            return
+        _running, done = _step_labels(result.step, agent=self._agent)
+        mark = {
+            "done": "✓",
+            "skipped": "–",
+            "failed": "✗",
+            "not_implemented": "!",
+        }.get(result.state, "!")
+        line = f"{mark} {done}"
+        if result.detail:
+            line = f"{line} {result.detail}"
+        click.echo(line, err=True)
+
+
+def run_setup_live(
+    setup: SetupOrchestrator,
+    plan: SetupPlan,
+    *,
+    repo: Path,
+    agent: str,
+    scan: bool,
+    use_rich: bool,
+    config_home: Path | None = None,
+    pot_name: str | None = None,
+    observer: SetupObserver | None = None,
+) -> SetupReport:
+    """Run setup while the Rich checklist reflects the real active step."""
+    started_ms = now_ms()
+    capture_wizard_event("cli_onboarding_wizard_shown")
+    wizard = SetupWizardUI(use_rich=use_rich)
+    preview = setup.preview(plan)
+    visible_steps = [step for step in preview.steps if _visible_in_preview(step)]
+    for step in visible_steps:
+        running, done = _step_labels(step.step, agent=agent)
+        wizard.add_step(
+            step.step, running, chomp=step.step in CHOMP_STEPS, done_label=done
+        )
+
+    wizard.run_intro(repo=repo, agent=agent, scan=scan)
+    setup.set_observer(_CompositeSetupObserver(_WizardSetupObserver(wizard), observer))
+    with wizard.live():
+        report = setup.run(plan)
+
+    failed_step_id = _first_hard_failed_step(report)
+    if failed_step_id is not None:
+        wizard.print_failed(step_id=failed_step_id)
+        capture_wizard_event(
+            "cli_onboarding_wizard_failed_view_shown",
+            duration_ms=elapsed_ms(started_ms),
+            failed_step=failed_step_id,
+        )
+        return report
+
+    _print_complete_summary(
+        wizard,
+        report,
+        config_home=config_home,
+        pot_name=pot_name,
+        started_ms=started_ms,
+    )
+    return report
+
+
+def run_setup_plain(
+    setup: SetupOrchestrator,
+    plan: SetupPlan,
+    *,
+    repo: Path,
+    agent: str,
+    scan: bool,
+    observer: SetupObserver | None = None,
+) -> SetupReport:
+    """Run setup with deterministic streaming lines for non-live terminals."""
+    preview = setup.preview(plan)
+    visible_steps = [step for step in preview.steps if _visible_in_preview(step)]
+    click.echo("Potpie Setup", err=True)
+    click.echo("Setting up local onboarding for this repo.", err=True)
+    extras = f"repo={repo.resolve()} agent={agent}"
+    if scan:
+        extras += " scan=on"
+    click.echo(extras, err=True)
+    click.echo("", err=True)
+    setup.set_observer(
+        _CompositeSetupObserver(
+            _PlainSetupObserver(visible_steps, agent=agent),
+            observer,
+        )
+    )
+    return setup.run(plan)
 
 
 def render_setup_report(
@@ -107,9 +259,7 @@ def render_setup_report(
     wizard = SetupWizardUI(use_rich=use_rich)
     visible_steps = [step for step in report.steps if _visible_in_checklist(step)]
     for step in visible_steps:
-        running, done = STEP_LABELS.get(step.step, (step.step, step.step))
-        if step.step == "skills":
-            running = f"Installing agent skills ({agent})…"
+        running, done = _step_labels(step.step, agent=agent)
         wizard.add_step(
             step.step, running, chomp=step.step in CHOMP_STEPS, done_label=done
         )
@@ -139,6 +289,40 @@ def render_setup_report(
         )
         return
 
+    _print_complete_summary(
+        wizard,
+        report,
+        config_home=config_home,
+        pot_name=pot_name,
+        started_ms=started_ms,
+    )
+
+
+def _visible_in_preview(step: Any) -> bool:
+    if step.step == "auth":
+        return False
+    if step.step == "source" and step.skip_reason:
+        return False
+    if step.step == "state_store.provision" and step.skip_reason:
+        return False
+    return True
+
+
+def _first_hard_failed_step(report: Any) -> str | None:
+    for step in report.steps:
+        if step.hard and step.state == "failed":
+            return step.step
+    return None
+
+
+def _print_complete_summary(
+    wizard: SetupWizardUI,
+    report: Any,
+    *,
+    config_home: Path | None,
+    pot_name: str | None,
+    started_ms: int,
+) -> None:
     setup_path = str(config_home / "config.json") if config_home else ""
     data_path = str(config_home) if config_home else ""
     wizard.print_complete_summary(
@@ -153,6 +337,13 @@ def render_setup_report(
         "cli_onboarding_wizard_completed",
         duration_ms=elapsed_ms(started_ms),
     )
+
+
+def _step_labels(step_id: str, *, agent: str) -> tuple[str, str]:
+    running, done = STEP_LABELS.get(step_id, (step_id, step_id))
+    if step_id == "skills":
+        running = f"Installing agent skills ({agent})…"
+    return running, done
 
 
 # Post-setup integration picker (order used for sequential login).
@@ -605,8 +796,6 @@ def _maybe_prompt_first_pot(
 ) -> None:
     from adapters.inbound.cli.commands._common import get_host
     from adapters.inbound.cli.ui.interactive_prompts import prompt_first_pot_name
-    from adapters.inbound.cli.ui.potpie_logo_anim import play_setup_finish
-    from adapters.inbound.cli.ui.setup_wizard_ui import stderr_console
 
     capture_project_binding_event(
         "cli_onboarding_first_pot_prompt_shown",
@@ -642,11 +831,23 @@ def _maybe_prompt_first_pot(
         properties={"source_state": source_state},
     )
 
-    play_setup_finish(
-        stderr_console(),
-        pot_name=pot.name,
-        agent_hint=_agent_usage_hint(_globally_installed_harnesses()),
-    )
+    agent_hint = _agent_usage_hint(_globally_installed_harnesses())
+    if rich_enabled(as_json=False):
+        from adapters.inbound.cli.ui.potpie_logo_anim import play_setup_finish
+        from adapters.inbound.cli.ui.setup_wizard_ui import stderr_console
+
+        play_setup_finish(
+            stderr_console(),
+            pot_name=pot.name,
+            agent_hint=agent_hint,
+        )
+        return
+
+    from adapters.inbound.cli.ui.output import print_plain_line
+
+    print_plain_line(f"✓ Pot {pot.name} is ready.", as_json=False, markup=False)
+    if agent_hint:
+        print_plain_line(agent_hint, as_json=False, markup=False)
 
 
 __all__ = [
@@ -654,6 +855,9 @@ __all__ = [
     "STATE_MAP",
     "CHOMP_STEPS",
     "rich_enabled",
+    "interactive_onboarding_enabled",
+    "run_setup_live",
+    "run_setup_plain",
     "render_setup_report",
     "maybe_prompt_github_login",
     "install_agents_globally",

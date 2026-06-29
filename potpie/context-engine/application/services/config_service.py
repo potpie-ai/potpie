@@ -40,6 +40,12 @@ class LocalConfigService:
         data.setdefault("profile", plan.mode)
         data.setdefault("backend", plan.backend)
         data.setdefault("home", str(self.home))
+        data.setdefault("embedder", plan.embeddings)
+        data.setdefault("embedding_model", plan.embedding_model)
+        data.setdefault(
+            "embedding_cache",
+            str(self.home / "models" / "sentence-transformers"),
+        )
         self._save(data)
         return self._path
 
