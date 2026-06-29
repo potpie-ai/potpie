@@ -1,5 +1,6 @@
 ---
 name: potpie-cli
+version: "2"
 description: "Use when the task is centered on running, explaining, configuring, or troubleshooting the `potpie` command: doctor, login, pot management, source registration, search, graph workbench reads/writes, and pot scope behavior."
 ---
 
@@ -46,9 +47,9 @@ suggested `pot default set --repo current <pot>` command before continuing.
 
 ```bash
 potpie search "query"
-potpie --json search "query" -n 15
-potpie search "query" --node-labels PullRequest,Decision
-potpie search "query" --with-temporal
+potpie --json search "query"
+potpie search "query" --include decisions,features
+potpie search "query" --pot <pot-id-or-alias>
 ```
 
 ## Graph Workbench
