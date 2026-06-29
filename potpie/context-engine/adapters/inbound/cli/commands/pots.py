@@ -12,6 +12,7 @@ from adapters.inbound.cli.commands._common import (
     contract,
     current_repo_identity_for_cli,
     emit,
+    enrich_with_pot_guidance,
     fail,
     get_host,
     pot_scope_info,
@@ -141,18 +142,32 @@ def pot_create(
     use: bool = typer.Option(False, "--use"),
 ) -> None:
     with contract():
-        pot = get_host().pots.create_pot(name=name, repo=repo, use=use)
-        emit(
+        host = get_host()
+        pot = host.pots.create_pot(name=name, repo=repo, use=use)
+        payload, human = enrich_with_pot_guidance(
+            host,
+            pot.pot_id,
             {"id": pot.pot_id, "name": pot.name, "active": pot.active},
-            human=f"created pot '{pot.name}' ({pot.pot_id}){' [active]' if pot.active else ''}",
+            human=(
+                f"created pot '{pot.name}' ({pot.pot_id})"
+                f"{' [active]' if pot.active else ''}"
+            ),
         )
+        emit(payload, human=human)
 
 
 @pot_app.command("use")
 def pot_use(ref: str) -> None:
     with contract():
-        pot = get_host().pots.use_pot(ref=ref)
-        emit({"id": pot.pot_id, "name": pot.name}, human=f"active pot → {pot.name}")
+        host = get_host()
+        pot = host.pots.use_pot(ref=ref)
+        payload, human = enrich_with_pot_guidance(
+            host,
+            pot.pot_id,
+            {"id": pot.pot_id, "name": pot.name},
+            human=f"active pot → {pot.name}",
+        )
+        emit(payload, human=human)
 
 
 @pot_app.command("linked")
@@ -495,7 +510,9 @@ def source_add(
                 "duration_ms": elapsed_ms(started_ms),
             },
         )
-        emit(
+        payload, human = enrich_with_pot_guidance(
+            host,
+            pot_id,
             {
                 "source_id": src.source_id,
                 "kind": src.kind,
@@ -512,6 +529,7 @@ def source_add(
                 + "no ingestion or scan started"
             ),
         )
+        emit(payload, human=human)
 
 
 @source_app.command("list")
@@ -521,22 +539,8 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
         pot_id = resolve_pot_id(host, pot)
         sources = host.pots.list_sources(pot_id=pot_id)
         pot_info = pot_scope_info(host, pot_id)
-        emit(
-            {
-                "pot_id": pot_id,
-                "pot": pot_info,
-                "source_count": len(sources),
-                "sources": [
-                    {
-                        "id": s.source_id,
-                        "kind": s.kind,
-                        "name": s.name,
-                        "location": getattr(s, "location", None),
-                    }
-                    for s in sources
-                ],
-            },
-            human="\n".join(
+        human = (
+            "\n".join(
                 [
                     (
                         f"pot={pot_info['name']} ({pot_id}) "
@@ -553,8 +557,28 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
                 f"pot={pot_info['name']} ({pot_id}) "
                 f"sources=0 claims={(pot_info.get('counts') or {}).get('claims', 0)}\n"
                 "(no sources)"
-            ),
+            )
         )
+        payload, human = enrich_with_pot_guidance(
+            host,
+            pot_id,
+            {
+                "pot_id": pot_id,
+                "pot": pot_info,
+                "source_count": len(sources),
+                "sources": [
+                    {
+                        "id": s.source_id,
+                        "kind": s.kind,
+                        "name": s.name,
+                        "location": getattr(s, "location", None),
+                    }
+                    for s in sources
+                ],
+            },
+            human=human,
+        )
+        emit(payload, human=human)
 
 
 @source_app.command("status")

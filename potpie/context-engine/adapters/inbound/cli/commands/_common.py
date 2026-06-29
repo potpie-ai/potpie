@@ -454,6 +454,46 @@ def empty_pot_warnings(host: Any, pot_id: str) -> tuple[str, ...]:
     )
 
 
+def empty_pot_guidance(host: Any, pot_id: str) -> tuple[str, ...]:
+    """Recovery hints when a pot has no graph claims yet."""
+    warnings = list(empty_pot_warnings(host, pot_id))
+    if int((pot_graph_counts(host, pot_id).get("claims") or 0)) != 0:
+        return tuple(warnings)
+    if pot_source_count(host, pot_id) > 0:
+        warnings.append(
+            "pot has registered sources but 0 claims; next: run harness-led ingestion "
+            "(agent skills + `potpie graph propose/commit`), switch with "
+            "`potpie pot use <id>` or inspect `potpie pot linked --repo current`, "
+            "or keep this empty pot intentionally."
+        )
+    elif not warnings:
+        warnings.append(
+            "pot has 0 claims and no sources; next: `potpie source add repo .` "
+            "then harness-led ingestion, or keep this empty pot intentionally."
+        )
+    return tuple(warnings)
+
+
+def enrich_with_pot_guidance(
+    host: Any,
+    pot_id: str,
+    payload: dict[str, Any],
+    *,
+    human: str,
+) -> tuple[dict[str, Any], str]:
+    warnings = empty_pot_guidance(host, pot_id)
+    if not warnings:
+        return payload, human
+    return (
+        {
+            **payload,
+            "warnings": list(warnings),
+            "recommended_next_action": warnings[0],
+        },
+        "\n".join([human, *(f"! {warning}" for warning in warnings)]),
+    )
+
+
 def pot_graph_counts(host: Any, pot_id: str) -> dict[str, int]:
     graph = getattr(host, "graph", None)
     if graph is None:
@@ -623,7 +663,9 @@ __all__ = [
     "get_host",
     "get_store",
     "current_repo_identity_for_cli",
+    "empty_pot_guidance",
     "empty_pot_warnings",
+    "enrich_with_pot_guidance",
     "is_json",
     "is_verbose",
     "pot_graph_counts",

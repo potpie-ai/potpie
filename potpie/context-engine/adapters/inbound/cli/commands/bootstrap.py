@@ -14,6 +14,7 @@ import typer
 from adapters.inbound.cli.commands._common import (
     EXIT_DEGRADED,
     contract,
+    enrich_with_pot_guidance,
     emit,
     get_host,
     is_json,
@@ -326,11 +327,15 @@ def register(root: typer.Typer) -> None:
                     detail="managed pot routing is not implemented",
                     recommended_next_action="select a local pot; managed routing lands in HU3",
                 )
-            pot = get_host().pots.use_pot(ref=ref)
-            emit(
+            host = get_host()
+            pot = host.pots.use_pot(ref=ref)
+            payload, human = enrich_with_pot_guidance(
+                host,
+                pot.pot_id,
                 {"id": pot.pot_id, "name": pot.name, "origin": "local"},
                 human=f"active pot → {pot.name} (local)",
             )
+            emit(payload, human=human)
 
     config_app = typer.Typer(
         help="Local config get/set (persisted to <home>/config.json)."
