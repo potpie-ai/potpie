@@ -82,6 +82,10 @@ def test_bootstrap_output_flags_reset_per_argv() -> None:
     assert not _common.is_json()
     assert _common.is_verbose()
 
+    _common.bootstrap_output_flags_from_argv(["pot", "list"])
+    assert not _common.is_json()
+    assert not _common.is_verbose()
+
 
 def test_bootstrap_output_flags_ignore_positional_after_double_dash() -> None:
     _common.bootstrap_output_flags_from_argv(
