@@ -18,6 +18,39 @@ from typing import Any
 from adapters.outbound.pots.local_pot_store import default_home
 from domain.lifecycle import SetupPlan
 
+KNOWN_CONFIG_KEYS: tuple[str, ...] = (
+    "profile",
+    "backend",
+    "home",
+    "ledger.binding",
+    "ledger.org",
+    "ledger.url",
+)
+
+_SECRET_KEY_MARKERS: tuple[str, ...] = (
+    "token",
+    "secret",
+    "password",
+    "api_key",
+    "api-key",
+    "credential",
+)
+
+_REDACTED = "<redacted>"
+
+
+def is_secret_config_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(marker in lowered for marker in _SECRET_KEY_MARKERS)
+
+
+def public_config_value(key: str, value: Any) -> str | None:
+    if value is None:
+        return None
+    if is_secret_config_key(key):
+        return _REDACTED
+    return str(value)
+
 
 @dataclass(slots=True)
 class LocalConfigService:
@@ -47,6 +80,13 @@ class LocalConfigService:
         value = self._load().get(key)
         return None if value is None else str(value)
 
+    def list_public(self) -> dict[str, str | None]:
+        """Return all config entries with secret-like keys redacted."""
+        return {
+            key: public_config_value(key, value)
+            for key, value in sorted(self._load().items())
+        }
+
     def set(self, key: str, value: str) -> None:
         data = self._load()
         data[key] = value
@@ -71,4 +111,9 @@ class LocalConfigService:
         tmp.replace(self._path)
 
 
-__all__ = ["LocalConfigService"]
+__all__ = [
+    "KNOWN_CONFIG_KEYS",
+    "LocalConfigService",
+    "is_secret_config_key",
+    "public_config_value",
+]
