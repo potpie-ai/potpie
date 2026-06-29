@@ -139,6 +139,17 @@ class TestPotDefaultShowCompact:
         assert "candidates" in payload
         assert "hint" not in payload
 
+    def test_linked_still_returns_full_candidates(self, monkeypatch) -> None:
+        _setup_default_show(monkeypatch, default_pot_id="p1")
+        result = CliRunner().invoke(pots.pot_app, ["linked"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert "candidates" in payload
+        assert len(payload["candidates"]) >= 1
+        assert payload["default_pot_id"] == "p1"
+        assert payload["repo"] == "github.com/acme/shop"
+
 
 # ============================================================================
 # Audit 22 — cloud group invocations return structured JSON
