@@ -19,7 +19,7 @@ import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Final, Iterator, NoReturn
+from typing import Any, Callable, Final, Iterator, NoReturn, Sequence
 
 import click
 import typer
@@ -70,6 +70,19 @@ def set_json(value: bool) -> None:
 
 def is_json() -> bool:
     return bool(_state["json"])
+
+
+def bootstrap_output_flags_from_argv(argv: Sequence[str] | None = None) -> None:
+    """Apply ``--json`` / ``--verbose`` before Typer finishes parsing.
+
+    The root callback only runs after a command line parses successfully. Early
+    bootstrap keeps parse-time failures on the documented JSON error contract.
+    """
+    args = tuple(argv or ())
+    if "--json" in args:
+        set_json(True)
+    if "--verbose" in args or "-v" in args:
+        set_verbose(True)
 
 
 def set_verbose(value: bool) -> None:
@@ -617,6 +630,7 @@ __all__ = [
     "EXIT_OK",
     "EXIT_UNAVAILABLE",
     "EXIT_VALIDATION",
+    "bootstrap_output_flags_from_argv",
     "contract",
     "emit",
     "fail",
