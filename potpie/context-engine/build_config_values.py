@@ -21,6 +21,10 @@ DISTRIBUTION_DEFAULT_INPUT_NAMES = tuple(
     DISTRIBUTION_DEFAULT_INPUT_NAMES_BY_FIELD.values()
 )
 BUILD_INFO_INPUT_NAMES = ("POTPIE_BUILD_GIT_SHA", "GITHUB_SHA", "POTPIE_BUILD_TIME")
+BUILD_INFO_INPUT_NAMES_BY_FIELD = {
+    "GIT_SHA": ("POTPIE_BUILD_GIT_SHA", "GITHUB_SHA"),
+    "BUILD_TIME": ("POTPIE_BUILD_TIME",),
+}
 
 HEADER = """\
 # Auto-generated at wheel build time - do not edit manually.
@@ -144,6 +148,28 @@ def prefer_existing_config_values(
     merged = dict(values)
     for name in values:
         if name in existing:
+            merged[name] = existing[name]
+    return merged
+
+
+def prefer_existing_build_info_values(
+    path: Path,
+    values: Mapping[str, str],
+    environ: Mapping[str, str] | None = None,
+    *,
+    dotenv_start: Path | None = None,
+) -> dict[str, str]:
+    """Keep generated sdist build metadata unless its field input is set."""
+    existing = _read_python_constants(path)
+    if not existing:
+        return dict(values)
+    source = _merged_build_environ(environ, dotenv_start=dotenv_start)
+    merged = dict(values)
+    for name in values:
+        input_names = BUILD_INFO_INPUT_NAMES_BY_FIELD[name]
+        if name in existing and not any(
+            _env(input_name, source) for input_name in input_names
+        ):
             merged[name] = existing[name]
     return merged
 

@@ -7,6 +7,7 @@ from collections.abc import Collection
 from pathlib import Path
 
 _loaded: bool = False
+_PROTECTED_DOTENV_KEYS = frozenset({"POTPIE_ENVIRONMENT"})
 
 
 def _parse_env_line(line: str) -> tuple[str, str] | None:
@@ -27,7 +28,10 @@ def _parse_env_line(line: str) -> tuple[str, str] | None:
     return key, val
 
 
-def _load_env_file(path: Path, *, skip_keys: Collection[str] = ()) -> None:
+def _load_env_file(
+    path: Path, *, skip_keys: Collection[str] = _PROTECTED_DOTENV_KEYS
+) -> None:
+    blocked_keys = _PROTECTED_DOTENV_KEYS.union(skip_keys)
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
@@ -37,7 +41,7 @@ def _load_env_file(path: Path, *, skip_keys: Collection[str] = ()) -> None:
         if not parsed:
             continue
         k, v = parsed
-        if k in skip_keys:
+        if k in blocked_keys:
             continue
         if k not in os.environ:
             os.environ[k] = v
@@ -46,7 +50,7 @@ def _load_env_file(path: Path, *, skip_keys: Collection[str] = ()) -> None:
 _PROJECT_ROOT_MARKERS = ("pyproject.toml", ".git")
 
 
-def load_cli_env(*, skip_keys: Collection[str] = ()) -> None:
+def load_cli_env(*, skip_keys: Collection[str] = _PROTECTED_DOTENV_KEYS) -> None:
     """Merge the project root's ``.env`` (never an arbitrary ancestor's).
 
     The previous behavior walked up to 24 parents and loaded the *first*
@@ -74,7 +78,7 @@ def load_cli_env(*, skip_keys: Collection[str] = ()) -> None:
 
 
 def _load_monorepo_potpie_env(
-    start: Path, *, skip_keys: Collection[str] = ()
+    start: Path, *, skip_keys: Collection[str] = _PROTECTED_DOTENV_KEYS
 ) -> None:
     """Merge ``potpie/.env`` when the CLI runs inside the Potpie monorepo."""
     for ancestor in [start, *start.parents]:

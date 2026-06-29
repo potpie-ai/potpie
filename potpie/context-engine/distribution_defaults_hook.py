@@ -9,12 +9,16 @@ win at runtime.
 from __future__ import annotations
 
 import importlib.util
+import shutil
+import tempfile
 from pathlib import Path
 from types import ModuleType
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 _CONFIG_VALUES = "build_config_values.py"
+_GENERATED_BUILD_DIRS_KEY = "_potpie_generated_build_dirs"
+_GENERATED_DIR_PREFIX = "potpie-context-engine-build-"
 
 
 class DistributionDefaultsHook(BuildHookInterface):
@@ -31,30 +35,39 @@ class DistributionDefaultsHook(BuildHookInterface):
                 distribution_defaults,
             )
         )
-        if not config_values.has_build_config_inputs(
-            config_values.BUILD_INFO_INPUT_NAMES
-        ):
-            build_info = config_values.prefer_existing_config_values(
-                config_values.BUILD_INFO_OUT,
-                build_info,
-            )
+        build_info = config_values.prefer_existing_build_info_values(
+            config_values.BUILD_INFO_OUT,
+            build_info,
+        )
         if config_values.should_validate_distribution_defaults():
             config_values.validate_distribution_defaults(distribution_defaults)
+        generated_dir = Path(tempfile.mkdtemp(prefix=_GENERATED_DIR_PREFIX))
+        distribution_defaults_out = (
+            generated_dir / config_values.DISTRIBUTION_DEFAULTS_OUT.name
+        )
+        build_info_out = generated_dir / config_values.BUILD_INFO_OUT.name
         config_values.write_python_mapping(
-            config_values.DISTRIBUTION_DEFAULTS_OUT,
+            distribution_defaults_out,
             "DISTRIBUTION_DEFAULTS",
             distribution_defaults,
         )
         config_values.write_python_constants(
-            config_values.BUILD_INFO_OUT,
+            build_info_out,
             build_info,
         )
-        build_data.setdefault("artifacts", []).extend(
-            [
-                str(config_values.DISTRIBUTION_DEFAULTS_OUT),
-                str(config_values.BUILD_INFO_OUT),
-            ]
+        build_data.setdefault("force_include", {}).update(
+            {
+                str(
+                    distribution_defaults_out
+                ): config_values.DISTRIBUTION_DEFAULTS_OUT.as_posix(),
+                str(build_info_out): config_values.BUILD_INFO_OUT.as_posix(),
+            }
         )
+        build_data.setdefault(_GENERATED_BUILD_DIRS_KEY, []).append(str(generated_dir))
+
+    def finalize(self, version: str, build_data: dict, artifact_path: str) -> None:
+        del version, artifact_path
+        _remove_generated_artifacts(build_data)
 
 
 def _load_config_values_module() -> ModuleType:
@@ -65,3 +78,18 @@ def _load_config_values_module() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _remove_generated_artifacts(build_data: dict) -> None:
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    for raw_path in build_data.get(_GENERATED_BUILD_DIRS_KEY, []):
+        path = Path(raw_path)
+        resolved = path.resolve(strict=False)
+        if (
+            not path.is_absolute()
+            or resolved.parent != temp_root
+            or not resolved.name.startswith(_GENERATED_DIR_PREFIX)
+        ):
+            raise RuntimeError(f"Refusing to remove unexpected build directory: {path}")
+        if resolved.exists():
+            shutil.rmtree(resolved)

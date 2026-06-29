@@ -19,7 +19,6 @@ from adapters.outbound.cli_auth.models import (
     ProviderCredentials,
 )
 
-GITHUB_CLIENT_ID_ENV = "POTPIE_GITHUB_CLIENT_ID"
 GITHUB_SCOPES = ("repo", "read:org", "read:user", "user:email")
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"

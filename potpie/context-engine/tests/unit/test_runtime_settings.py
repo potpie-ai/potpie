@@ -155,6 +155,19 @@ def test_dotenv_cannot_set_environment(
     assert os.getenv("POTPIE_ENVIRONMENT") is None
 
 
+def test_direct_dotenv_loader_cannot_set_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'tmp'\n")
+    (tmp_path / ".env").write_text("POTPIE_ENVIRONMENT=prod\n")
+    monkeypatch.chdir(tmp_path)
+
+    env_bootstrap.load_cli_env()
+
+    assert os.getenv("POTPIE_ENVIRONMENT") is None
+
+
 def test_blank_env_values_are_treated_as_missing() -> None:
     settings = load_runtime_settings(
         {"POTPIE_SENTRY_DSN": "  "},
@@ -225,7 +238,11 @@ def test_project_child_environment_emits_canonical_values_and_drops_aliases() ->
             "POTPIE_BASE_URL": "legacy",
             "GITHUB_TOKEN": "legacy",
         },
-        overrides={"CONTEXT_ENGINE_HOME": "/tmp/potpie", "POTPIE_API_URL": "override"},
+        overrides={
+            "CONTEXT_ENGINE_HOME": "/tmp/potpie",
+            "POTPIE_API_URL": "override",
+            "SENTRY_DSN": "override-legacy",
+        },
     )
 
     assert child["PATH"] == "/bin"

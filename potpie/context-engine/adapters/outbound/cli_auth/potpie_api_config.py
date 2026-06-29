@@ -24,8 +24,6 @@ from adapters.outbound.cli_auth.credentials_store import (
     update_potpie_firebase_refresh_token,
 )
 
-_DEFAULT_API_URL = "http://localhost:8001"
-
 
 @dataclass(frozen=True)
 class PotpieAuthConfig:

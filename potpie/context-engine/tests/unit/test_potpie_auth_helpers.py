@@ -22,6 +22,7 @@ from adapters.inbound.cli import host_cli as cli_main
 from adapters.inbound.cli.auth import _login_impl
 from adapters.outbound.cli_auth import firebase_session
 from adapters.outbound.cli_auth import potpie as potpie_auth
+from bootstrap import runtime_settings
 from adapters.outbound.cli_auth.firebase_session import (
     FirebaseSession,
     FirebaseSessionError,
@@ -357,6 +358,11 @@ def test_resolve_potpie_api_url_for_auth_defaults_and_canonical_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
+    monkeypatch.setattr(
+        potpie_auth,
+        "load_runtime_settings",
+        lambda: runtime_settings.load_runtime_settings(distribution_defaults={}),
+    )
     monkeypatch.delenv("POTPIE_API_URL", raising=False)
     assert potpie_auth.resolve_potpie_api_url_for_auth() == "http://localhost:8001"
 

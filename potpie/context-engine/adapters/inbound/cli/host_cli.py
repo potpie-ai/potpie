@@ -85,9 +85,9 @@ def build_app() -> typer.Typer:
 
         set_json(json_)
         set_verbose(verbose)
+        ensure_runtime_environment_loaded()
         configure_error_output(as_json=json_)
         configure_cli_logging(verbose)
-        ensure_runtime_environment_loaded()
 
         bind_telemetry_context(ctx, json_output=json_)
         sentry_settings = settings.load_sentry_settings()

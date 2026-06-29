@@ -37,7 +37,9 @@ def test_resolve_api_base_url_uses_stored_url_before_code_default(monkeypatch) -
 def test_resolve_api_base_url_env_wins_over_stored_url(monkeypatch) -> None:
     monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
     monkeypatch.setenv("POTPIE_API_URL", "https://runtime-api.potpie.ai/")
-    monkeypatch.setattr(config, "get_stored_api_base_url", lambda: "")
+    monkeypatch.setattr(
+        config, "get_stored_api_base_url", lambda: "https://stored-api.potpie.ai/"
+    )
 
     assert config.resolve_potpie_api_base_url() == "https://runtime-api.potpie.ai"
 

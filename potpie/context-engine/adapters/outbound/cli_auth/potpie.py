@@ -18,8 +18,6 @@ from adapters.outbound.cli_auth.errors import CliAuthError
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 from bootstrap.runtime_settings import load_runtime_settings
 
-_DEFAULT_UI_URL = "http://localhost:3000"
-_DEFAULT_API_URL = "http://localhost:8001"
 _DEFAULT_PORT_MIN = 9000
 _DEFAULT_PORT_MAX = 9999
 _DEFAULT_TIMEOUT_SECONDS = 300.0
@@ -39,8 +37,7 @@ def resolve_potpie_ui_url() -> str:
     url = load_runtime_settings().potpie_ui_url
     if not url:
         raise PotpieCliAuthError(
-            "Potpie UI URL is not set. "
-            "Example: POTPIE_UI_URL=http://localhost:3000"
+            "Potpie UI URL is not set. Example: POTPIE_UI_URL=http://localhost:3000"
         )
     return url
 

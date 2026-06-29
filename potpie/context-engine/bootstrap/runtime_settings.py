@@ -14,7 +14,6 @@ _CODE_DEFAULT_UI_URL: Final[str] = "http://localhost:3000"
 _CODE_DEFAULT_POSTHOG_HOST: Final[str] = "https://us.i.posthog.com"
 _FALSE_VALUES: Final[frozenset[str]] = frozenset({"0", "false", "no", "off"})
 _TRUE_VALUES: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
-_DOTENV_SKIP_KEYS: Final[frozenset[str]] = frozenset({"POTPIE_ENVIRONMENT"})
 _DEPRECATED_CHILD_ENV_KEYS: Final[frozenset[str]] = frozenset(
     {
         "SENTRY_DSN",
@@ -77,9 +76,9 @@ def load_runtime_settings(
         potpie_api_url=(
             _env(environ, "POTPIE_API_URL") or _CODE_DEFAULT_API_URL
         ).rstrip("/"),
-        potpie_ui_url=(
-            _env(environ, "POTPIE_UI_URL") or _CODE_DEFAULT_UI_URL
-        ).rstrip("/"),
+        potpie_ui_url=(_env(environ, "POTPIE_UI_URL") or _CODE_DEFAULT_UI_URL).rstrip(
+            "/"
+        ),
         potpie_api_key=_env(environ, "POTPIE_API_KEY"),
         telemetry_disabled=_flag(
             _env(environ, "POTPIE_TELEMETRY_DISABLED")
@@ -124,7 +123,7 @@ def ensure_runtime_environment_loaded(
         else load_distribution_defaults()
     )
     if resolve_bootstrap_environment(os.environ, defaults) == "dev":
-        load_cli_env(skip_keys=_DOTENV_SKIP_KEYS)
+        load_cli_env()
 
 
 def resolve_bootstrap_environment(
@@ -143,7 +142,11 @@ def project_child_environment(
     base: Mapping[str, str],
     overrides: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    child = {key: value for key, value in base.items() if key not in _DEPRECATED_CHILD_ENV_KEYS}
+    child = {
+        key: value
+        for key, value in base.items()
+        if key not in _DEPRECATED_CHILD_ENV_KEYS
+    }
     child.update(
         {
             "POTPIE_ENVIRONMENT": settings.environment,
@@ -166,7 +169,14 @@ def project_child_environment(
         child, "CONTEXT_ENGINE_GITHUB_TOKEN", settings.context_engine_github_token
     )
     _set_if_present(child, "GITHUB_WEBHOOK_SECRET", settings.github_webhook_secret)
-    child.update(overrides or {})
+    if overrides:
+        child.update(
+            {
+                key: value
+                for key, value in overrides.items()
+                if key not in _DEPRECATED_CHILD_ENV_KEYS
+            }
+        )
     return child
 
 

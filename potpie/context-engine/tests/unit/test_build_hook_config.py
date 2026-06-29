@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import shutil
+import subprocess
 import sys
+import tarfile
+import zipfile
 from pathlib import Path
 from types import ModuleType
 
@@ -50,6 +55,61 @@ def _hide_build_env(monkeypatch: pytest.MonkeyPatch, *names: str) -> None:
         monkeypatch.setenv(name, " ")
 
 
+def _force_include_source(build_data: dict, destination: str) -> Path:
+    for source, target in build_data["force_include"].items():
+        if target == destination:
+            return Path(source)
+    raise AssertionError(f"Missing force_include destination: {destination}")
+
+
+def _archive_text(path: Path, member_suffix: str) -> str:
+    if path.suffix == ".whl":
+        with zipfile.ZipFile(path) as archive:
+            return archive.read(member_suffix).decode("utf-8")
+    if path.name.endswith(".tar.gz"):
+        with tarfile.open(path, "r:gz") as archive:
+            member = next(
+                item
+                for item in archive.getmembers()
+                if item.name.endswith(f"/{member_suffix}")
+            )
+            extracted = archive.extractfile(member)
+            assert extracted is not None
+            return extracted.read().decode("utf-8")
+    raise AssertionError(f"Unsupported build artifact: {path}")
+
+
+def _build_smoke_env() -> dict[str, str]:
+    env = {
+        name: os.environ[name]
+        for name in (
+            "PATH",
+            "HOME",
+            "TMPDIR",
+            "TEMP",
+            "TMP",
+            "UV_CACHE_DIR",
+            "SSL_CERT_FILE",
+            "REQUESTS_CA_BUNDLE",
+        )
+        if name in os.environ
+    }
+    env.update(
+        {
+            "POTPIE_VALIDATE_DISTRIBUTION_DEFAULTS": "1",
+            "POTPIE_ENVIRONMENT": "prod_oss",
+            "POTPIE_SENTRY_DSN": "https://sentry.example.invalid/1",
+            "POTPIE_POSTHOG_API_KEY": "phc_public_smoke",
+            "POTPIE_POSTHOG_HOST": "https://posthog.example.invalid",
+            "LINEAR_CLIENT_ID": "linear-smoke-client",
+            "POTPIE_GITHUB_CLIENT_ID": "github-smoke-client",
+            "POTPIE_BUILD_GIT_SHA": "smoke-sha",
+            "POTPIE_BUILD_TIME": "2026-06-28T00:00:00Z",
+        }
+    )
+    return env
+
+
 def test_distribution_defaults_use_internal_field_names() -> None:
     values = build_config_values.distribution_default_values(
         {
@@ -76,6 +136,16 @@ def test_distribution_default_input_mapping_is_exhaustive() -> None:
     fields = set(build_config_values.distribution_default_values({}))
 
     assert set(build_config_values.DISTRIBUTION_DEFAULT_INPUT_NAMES_BY_FIELD) == fields
+
+
+def test_build_info_input_mapping_is_exhaustive() -> None:
+    fields = set(
+        build_config_values.build_info_values(
+            {"POTPIE_BUILD_TIME": "2026-06-28T00:00:00Z"}
+        )
+    )
+
+    assert set(build_config_values.BUILD_INFO_INPUT_NAMES_BY_FIELD) == fields
 
 
 def test_distribution_defaults_load_nearest_dotenv(tmp_path: Path) -> None:
@@ -281,8 +351,12 @@ def test_distribution_defaults_hook_uses_field_aware_preservation(
 
     hook.initialize("wheel", build_data)
 
+    generated_defaults_path = _force_include_source(
+        build_data,
+        "bootstrap/_distribution_defaults.py",
+    )
     generated = build_config_values._read_python_mapping(
-        bootstrap_dir / "_distribution_defaults.py",
+        generated_defaults_path,
         "DISTRIBUTION_DEFAULTS",
     )
     assert generated == {
@@ -293,12 +367,122 @@ def test_distribution_defaults_hook_uses_field_aware_preservation(
         "linear_client_id": "old-linear",
         "github_client_id": "old-github",
     }
-    assert build_data == {
-        "artifacts": [
-            "bootstrap/_distribution_defaults.py",
-            "bootstrap/_build_info.py",
+    assert build_data["force_include"][str(generated_defaults_path)] == (
+        "bootstrap/_distribution_defaults.py"
+    )
+    assert (
+        build_data["force_include"][
+            str(_force_include_source(build_data, "bootstrap/_build_info.py"))
         ]
-    }
+        == "bootstrap/_build_info.py"
+    )
+
+
+def test_distribution_defaults_hook_uses_temp_artifacts_and_cleans_them(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    distribution_defaults_hook = _load_distribution_defaults_hook(monkeypatch)
+    bootstrap_dir = tmp_path / "bootstrap"
+    bootstrap_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("POTPIE_VALIDATE_DISTRIBUTION_DEFAULTS", raising=False)
+    hook = object.__new__(distribution_defaults_hook.DistributionDefaultsHook)
+    build_data: dict[str, list[str]] = {}
+
+    hook.initialize("wheel", build_data)
+    distribution_defaults_source = _force_include_source(
+        build_data,
+        "bootstrap/_distribution_defaults.py",
+    )
+    build_info_source = _force_include_source(build_data, "bootstrap/_build_info.py")
+    assert distribution_defaults_source.is_file()
+    assert build_info_source.is_file()
+    assert not (bootstrap_dir / "_distribution_defaults.py").exists()
+    assert not (bootstrap_dir / "_build_info.py").exists()
+
+    hook.finalize("wheel", build_data, str(tmp_path / "dist.whl"))
+
+    assert not distribution_defaults_source.exists()
+    assert not build_info_source.exists()
+
+
+def test_distribution_defaults_hook_finalize_preserves_unowned_source_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    distribution_defaults_hook = _load_distribution_defaults_hook(monkeypatch)
+    bootstrap_dir = tmp_path / "bootstrap"
+    bootstrap_dir.mkdir()
+    distribution_defaults = bootstrap_dir / "_distribution_defaults.py"
+    build_info = bootstrap_dir / "_build_info.py"
+    distribution_defaults.write_text("DISTRIBUTION_DEFAULTS = {}\n", encoding="utf-8")
+    build_info.write_text("GIT_SHA = ''\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    hook = object.__new__(distribution_defaults_hook.DistributionDefaultsHook)
+
+    hook.finalize("wheel", {}, str(tmp_path / "dist.whl"))
+
+    assert distribution_defaults.is_file()
+    assert build_info.is_file()
+
+
+def test_distribution_defaults_hook_refuses_unexpected_cleanup_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    distribution_defaults_hook = _load_distribution_defaults_hook(monkeypatch)
+    hook = object.__new__(distribution_defaults_hook.DistributionDefaultsHook)
+
+    with pytest.raises(RuntimeError, match="Refusing to remove unexpected"):
+        hook.finalize(
+            "wheel",
+            {"_potpie_generated_build_dirs": [str(tmp_path / "not-owned")]},
+            str(tmp_path / "dist.whl"),
+        )
+
+
+def test_distribution_defaults_hook_builds_wheel_and_sdist_with_generated_modules(
+    tmp_path: Path,
+) -> None:
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is required for the packaging smoke test")
+    context_engine = Path(__file__).resolve().parents[2]
+
+    result = subprocess.run(
+        [uv, "build", "--out-dir", str(tmp_path)],
+        cwd=context_engine,
+        env=_build_smoke_env(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    artifacts = list(tmp_path.iterdir())
+    wheel = next(path for path in artifacts if path.suffix == ".whl")
+    sdist = next(path for path in artifacts if path.name.endswith(".tar.gz"))
+    for artifact in (wheel, sdist):
+        distribution_defaults = _archive_text(
+            artifact, "bootstrap/_distribution_defaults.py"
+        )
+        build_info = _archive_text(artifact, "bootstrap/_build_info.py")
+        assert "DISTRIBUTION_DEFAULTS = {" in distribution_defaults
+        assert "'environment': 'prod_oss'" in distribution_defaults
+        assert "'sentry_dsn': 'https://sentry.example.invalid/1'" in (
+            distribution_defaults
+        )
+        assert "'posthog_api_key': 'phc_public_smoke'" in distribution_defaults
+        assert "'posthog_host': 'https://posthog.example.invalid'" in (
+            distribution_defaults
+        )
+        assert "'linear_client_id': 'linear-smoke-client'" in distribution_defaults
+        assert "'github_client_id': 'github-smoke-client'" in distribution_defaults
+        assert "GIT_SHA = 'smoke-sha'" in build_info
+        assert "BUILD_TIME = '2026-06-28T00:00:00Z'" in build_info
+    assert not (context_engine / "bootstrap" / "_distribution_defaults.py").exists()
+    assert not (context_engine / "bootstrap" / "_build_info.py").exists()
 
 
 def test_prefer_existing_build_info(tmp_path: Path) -> None:
@@ -313,6 +497,28 @@ def test_prefer_existing_build_info(tmp_path: Path) -> None:
     )
 
     assert values == {"GIT_SHA": "old", "BUILD_TIME": "kept", "EXTRA": "new"}
+
+
+def test_prefer_existing_build_info_preserves_missing_field_inputs(
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "_build_info.py"
+    build_config_values.write_python_constants(
+        out, {"GIT_SHA": "old-sha", "BUILD_TIME": "2026-06-27T00:00:00Z"}
+    )
+
+    values = build_config_values.prefer_existing_build_info_values(
+        out,
+        build_config_values.build_info_values(
+            {"POTPIE_BUILD_TIME": "2026-06-28T00:00:00Z"}
+        ),
+        environ={"POTPIE_BUILD_TIME": "2026-06-28T00:00:00Z"},
+    )
+
+    assert values == {
+        "GIT_SHA": "old-sha",
+        "BUILD_TIME": "2026-06-28T00:00:00Z",
+    }
 
 
 def test_release_validation_fails_when_required_defaults_are_missing() -> None:
