@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from typing import Literal
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from adapters.outbound.cli_auth._oauth_client_ids import (
     LINEAR_CLIENT_ID as PACKAGE_LINEAR_CLIENT_ID,
@@ -14,7 +14,8 @@ Provider = Literal["linear", "github", "atlassian", "jira", "confluence"]
 OAuthProvider = Literal["linear"]
 AtlassianProduct = Literal["jira", "confluence"]
 
-DEFAULT_CALLBACK_PORT = 8080
+DEFAULT_CALLBACK_PORT = 28757
+DEFAULT_FALLBACK_CALLBACK_PORTS = (28763,)
 DEFAULT_CALLBACK_PATH = "/callback"
 DEFAULT_REDIRECT_URI = (
     f"http://localhost:{DEFAULT_CALLBACK_PORT}{DEFAULT_CALLBACK_PATH}"
@@ -60,6 +61,28 @@ def get_callback_port() -> int:
         except ValueError:
             pass
     return int(_parsed_redirect_uri().port or DEFAULT_CALLBACK_PORT)
+
+
+def get_callback_port_candidates() -> tuple[int, ...]:
+    base_port = get_callback_port()
+    if _callback_config_overridden():
+        return (base_port,)
+    return (base_port, *DEFAULT_FALLBACK_CALLBACK_PORTS)
+
+
+def _callback_config_overridden() -> bool:
+    return bool(
+        os.getenv("POTPIE_CLI_OAUTH_REDIRECT_URI", "").strip()
+        or os.getenv("POTPIE_CLI_OAUTH_CALLBACK_PORT", "").strip()
+    )
+
+
+def get_redirect_uri_for_port(port: int) -> str:
+    if not 1 <= port <= 65535:
+        raise ValueError("OAuth callback port must be between 1 and 65535.")
+    parsed = _parsed_redirect_uri()
+    netloc = f"{parsed.hostname or DEFAULT_CALLBACK_HOST}:{port}"
+    return urlunparse(parsed._replace(netloc=netloc))
 
 
 def get_client_id(provider: OAuthProvider) -> str:

@@ -25,14 +25,18 @@ from adapters.outbound.cli_auth.integration_verify import (
     verify_integration_access,
 )
 from adapters.outbound.cli_auth.provider_config import (
+    DEFAULT_CALLBACK_PORT,
+    DEFAULT_FALLBACK_CALLBACK_PORTS,
     LINEAR_TOKEN_URL,
     authorization_url,
     get_callback_host,
     get_callback_path,
     get_callback_port,
+    get_callback_port_candidates,
     get_client_id,
     get_client_secret,
     get_redirect_uri,
+    get_redirect_uri_for_port,
     get_scopes,
     token_url,
 )
@@ -857,15 +861,22 @@ def test_get_integration_status_unknown_provider(
 
 
 def test_get_integration_status_github_unauthenticated(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     status = cs.get_integration_status("github")
-    assert status == {"provider": "github", "authenticated": False, "auth_type": "oauth"}
+    assert status == {
+        "provider": "github",
+        "authenticated": False,
+        "auth_type": "oauth",
+    }
 
 
 def test_get_integration_status_github_authenticated(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, keychain: dict[tuple[str, str], str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    keychain: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.write_provider_credentials(
@@ -1240,6 +1251,19 @@ def test_redirect_and_callback_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
     assert get_callback_host() == "127.0.0.1"
     assert get_callback_path() == "/custom/callback"
     assert get_callback_port() == 9001
+    assert get_callback_port_candidates() == (9001,)
+
+
+def test_default_callback_port_is_five_digit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("POTPIE_CLI_OAUTH_REDIRECT_URI", raising=False)
+    monkeypatch.delenv("POTPIE_CLI_OAUTH_CALLBACK_PORT", raising=False)
+    assert DEFAULT_CALLBACK_PORT == 28757
+    assert DEFAULT_FALLBACK_CALLBACK_PORTS == (28763,)
+    assert get_callback_port() == DEFAULT_CALLBACK_PORT
+    assert get_callback_port_candidates() == (
+        DEFAULT_CALLBACK_PORT,
+        *DEFAULT_FALLBACK_CALLBACK_PORTS,
+    )
 
 
 def test_get_callback_port_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1249,6 +1273,17 @@ def test_get_callback_port_env_override(monkeypatch: pytest.MonkeyPatch) -> None
     )
     monkeypatch.setenv("POTPIE_CLI_OAUTH_CALLBACK_PORT", "9999")
     assert get_callback_port() == 9999
+    assert get_callback_port_candidates() == (9999,)
+
+
+def test_get_redirect_uri_for_port_rewrites_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "POTPIE_CLI_OAUTH_REDIRECT_URI",
+        "http://127.0.0.1:9001/custom/callback",
+    )
+    assert get_redirect_uri_for_port(9002) == "http://127.0.0.1:9002/custom/callback"
 
 
 def test_linear_oauth_urls() -> None:
