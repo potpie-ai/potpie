@@ -143,7 +143,9 @@ def test_github_repos_records_usage_after_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(github_commands, "get_store", lambda: _FakeGitHubStore())
-    monkeypatch.setattr(github_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        github_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(
         github_commands,
         "list_user_owned_repositories",
@@ -179,7 +181,9 @@ def test_provider_list_commands_record_usage_after_success(
     runner_name: str,
     fetch_name: str,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(
         auth_commands,
         fetch_name,
