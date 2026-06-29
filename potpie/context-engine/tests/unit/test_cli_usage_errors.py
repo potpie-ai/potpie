@@ -64,3 +64,25 @@ def test_cli_runner_still_uses_typer_for_direct_app_invoke() -> None:
     result = CliRunner().invoke(host_cli.app, ["--json", "pot", "create"])
     assert result.exit_code == 2
     assert "Missing argument" in result.output
+
+
+def test_bootstrap_output_flags_reset_per_argv() -> None:
+    _common.bootstrap_output_flags_from_argv(["--json", "pot", "list"])
+    assert _common.is_json()
+    assert not _common.is_verbose()
+
+    _common.bootstrap_output_flags_from_argv(["pot", "list"])
+    assert not _common.is_json()
+    assert not _common.is_verbose()
+
+    _common.bootstrap_output_flags_from_argv(["-v", "pot", "list"])
+    assert not _common.is_json()
+    assert _common.is_verbose()
+
+
+def test_bootstrap_output_flags_ignore_positional_after_double_dash() -> None:
+    _common.bootstrap_output_flags_from_argv(
+        ["source", "add", "repo", ".", "--", "--json", "--verbose"]
+    )
+    assert not _common.is_json()
+    assert not _common.is_verbose()

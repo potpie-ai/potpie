@@ -79,10 +79,11 @@ def bootstrap_output_flags_from_argv(argv: Sequence[str] | None = None) -> None:
     bootstrap keeps parse-time failures on the documented JSON error contract.
     """
     args = tuple(argv or ())
-    if "--json" in args:
-        set_json(True)
-    if "--verbose" in args or "-v" in args:
-        set_verbose(True)
+    scan_args = args
+    if "--" in args:
+        scan_args = args[: args.index("--")]
+    set_json("--json" in scan_args)
+    set_verbose("--verbose" in scan_args or "-v" in scan_args)
 
 
 def set_verbose(value: bool) -> None:
