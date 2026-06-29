@@ -4,8 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "node scripts/dev.mjs",
+    "test": "npm run test:dev-port",
+    "test:dev-port": "node --test scripts/dev-port.test.mjs",
+    "build": "npm run test:dev-port && tsc -b && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
