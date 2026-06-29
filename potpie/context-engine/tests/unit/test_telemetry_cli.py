@@ -12,6 +12,8 @@ from adapters.inbound.cli.telemetry.preferences import (
     load_preferences,
     preferences_path,
 )
+from adapters.inbound.cli.telemetry.product_analytics import ProductAnalyticsSettings
+from adapters.inbound.cli.telemetry.settings import SentrySettings
 from bootstrap import runtime_settings
 
 _TELEMETRY_ENV_NAMES = (
@@ -155,6 +157,34 @@ def test_telemetry_preference_commands_refresh_runtime_sinks(
     assert calls == ["refresh", "refresh"]
 
 
+def test_telemetry_disable_refreshes_runtime_sinks_with_disabled_settings(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    _enable_all_sinks(monkeypatch)
+    sentry_calls: list[SentrySettings] = []
+    analytics_calls: list[ProductAnalyticsSettings] = []
+    monkeypatch.setattr(
+        telemetry_cmd.sentry_runtime,
+        "configure_cli_sentry",
+        lambda settings: sentry_calls.append(settings),
+    )
+    monkeypatch.setattr(
+        telemetry_cmd,
+        "configure_product_analytics",
+        lambda settings: analytics_calls.append(settings),
+    )
+
+    result = CliRunner().invoke(host_cli.app, ["telemetry", "disable"])
+
+    assert result.exit_code == 0, result.stdout
+    assert sentry_calls[-1].enabled is False
+    assert sentry_calls[-1].dsn == "https://public@example.invalid/1"
+    assert analytics_calls[-1].enabled is False
+    assert analytics_calls[-1].api_key == "phc_test"
+
+
 def test_telemetry_status_reports_blocked_for_global_env_override(
     monkeypatch,
     tmp_path,
@@ -183,6 +213,27 @@ def test_telemetry_status_json(monkeypatch, tmp_path) -> None:
     assert payload["crash_reports"] == "anonymous"
     assert payload["analytics"] == "anonymous"
     assert set(payload) == {"telemetry", "crash_reports", "analytics"}
+
+
+def test_telemetry_status_json_reports_persisted_disabled(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    _enable_all_sinks(monkeypatch)
+    runner = CliRunner()
+
+    disabled = runner.invoke(host_cli.app, ["telemetry", "disable"])
+    result = runner.invoke(host_cli.app, ["--json", "telemetry", "status"])
+
+    assert disabled.exit_code == 0, disabled.stdout
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "telemetry": "disabled",
+        "crash_reports": "disabled",
+        "analytics": "disabled",
+    }
 
 
 @pytest.mark.parametrize(

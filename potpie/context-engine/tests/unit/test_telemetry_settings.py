@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
+from adapters.inbound.cli.telemetry.preferences import (
+    TelemetryPreferences,
+    save_preferences,
+)
 from adapters.inbound.cli.telemetry.settings import (
+    load_telemetry_resolution,
     load_sentry_settings as load_cli_sentry_settings,
     telemetry_environment as cli_telemetry_environment,
 )
@@ -27,6 +32,34 @@ def _clear_sentry_config(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
     monkeypatch.setattr(runtime_settings, "load_distribution_defaults", lambda: {})
     monkeypatch.setattr(shared_sentry_settings, "build_git_sha", lambda: None)
+
+
+def test_telemetry_resolution_defaults_to_enabled_without_preference() -> None:
+    resolution = load_telemetry_resolution()
+
+    assert resolution.telemetry == "enabled"
+    assert resolution.runtime.telemetry_disabled is False
+
+
+def test_telemetry_resolution_applies_persisted_disable_as_final_cli_preference() -> None:
+    save_preferences(TelemetryPreferences(enabled=False))
+
+    resolution = load_telemetry_resolution()
+
+    assert resolution.telemetry == "disabled"
+    assert resolution.runtime.telemetry_disabled is True
+
+
+def test_telemetry_resolution_env_block_wins_over_persisted_enable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POTPIE_TELEMETRY_DISABLED", "1")
+    save_preferences(TelemetryPreferences(enabled=True))
+
+    resolution = load_telemetry_resolution()
+
+    assert resolution.telemetry == "blocked"
+    assert resolution.runtime.telemetry_disabled is True
 
 
 def test_sentry_settings_disabled_without_dsn() -> None:
@@ -63,11 +96,6 @@ def test_sentry_settings_respects_global_kill_switch(
 def test_sentry_settings_respects_persisted_telemetry_disable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from adapters.inbound.cli.telemetry.preferences import (
-        TelemetryPreferences,
-        save_preferences,
-    )
-
     monkeypatch.setenv("POTPIE_SENTRY_DSN", "https://public@example.invalid/1")
     save_preferences(TelemetryPreferences(enabled=False))
 
@@ -80,11 +108,6 @@ def test_sentry_settings_respects_persisted_telemetry_disable(
 def test_sentry_settings_persisted_enable_preserves_existing_gates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from adapters.inbound.cli.telemetry.preferences import (
-        TelemetryPreferences,
-        save_preferences,
-    )
-
     monkeypatch.setenv("POTPIE_SENTRY_DSN", "https://public@example.invalid/1")
     save_preferences(TelemetryPreferences(enabled=True))
 
@@ -204,11 +227,6 @@ def test_sentry_opt_outs_disable_canonical_dsn(
 def test_env_block_wins_over_persisted_enable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from adapters.inbound.cli.telemetry.preferences import (
-        TelemetryPreferences,
-        save_preferences,
-    )
-
     monkeypatch.setenv("POTPIE_SENTRY_DSN", "https://public@example.invalid/1")
     monkeypatch.setenv("POTPIE_TELEMETRY_DISABLED", "1")
     save_preferences(TelemetryPreferences(enabled=True))

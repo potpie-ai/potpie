@@ -21,11 +21,42 @@ def _clear_runtime_config(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setattr(runtime_settings, "load_distribution_defaults", lambda: {})
 
 
+def test_start_detached_enables_telemetry_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    env = _captured_child_env(monkeypatch, tmp_path)
+
+    assert env["POTPIE_TELEMETRY_DISABLED"] == "0"
+
+
 def test_start_detached_applies_persisted_cli_telemetry_preference(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,
 ) -> None:
     save_preferences(TelemetryPreferences(enabled=False))
+
+    env = _captured_child_env(monkeypatch, tmp_path)
+
+    assert env["POTPIE_TELEMETRY_DISABLED"] == "1"
+
+
+def test_start_detached_env_block_wins_over_persisted_enable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    monkeypatch.setenv("POTPIE_TELEMETRY_DISABLED", "1")
+    save_preferences(TelemetryPreferences(enabled=True))
+
+    env = _captured_child_env(monkeypatch, tmp_path)
+
+    assert env["POTPIE_TELEMETRY_DISABLED"] == "1"
+
+
+def _captured_child_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> dict[str, str]:
     captured: dict[str, dict[str, str]] = {}
 
     class _FakePopen:
@@ -62,4 +93,4 @@ def test_start_detached_applies_persisted_cli_telemetry_preference(
     result = launcher.start_detached(tmp_path / "home", ready_timeout_s=1)
 
     assert result["pid"] == 4242
-    assert captured["env"]["POTPIE_TELEMETRY_DISABLED"] == "1"
+    return captured["env"]
