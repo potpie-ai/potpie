@@ -46,24 +46,30 @@ class DistributionDefaultsHook(BuildHookInterface):
             generated_dir / config_values.DISTRIBUTION_DEFAULTS_OUT.name
         )
         build_info_out = generated_dir / config_values.BUILD_INFO_OUT.name
-        config_values.write_python_mapping(
-            distribution_defaults_out,
-            "DISTRIBUTION_DEFAULTS",
-            distribution_defaults,
-        )
-        config_values.write_python_constants(
-            build_info_out,
-            build_info,
-        )
-        build_data.setdefault("force_include", {}).update(
-            {
-                str(
-                    distribution_defaults_out
-                ): config_values.DISTRIBUTION_DEFAULTS_OUT.as_posix(),
-                str(build_info_out): config_values.BUILD_INFO_OUT.as_posix(),
-            }
-        )
-        build_data.setdefault(_GENERATED_BUILD_DIRS_KEY, []).append(str(generated_dir))
+        try:
+            config_values.write_python_mapping(
+                distribution_defaults_out,
+                "DISTRIBUTION_DEFAULTS",
+                distribution_defaults,
+            )
+            config_values.write_python_constants(
+                build_info_out,
+                build_info,
+            )
+            build_data.setdefault("force_include", {}).update(
+                {
+                    str(
+                        distribution_defaults_out
+                    ): config_values.DISTRIBUTION_DEFAULTS_OUT.as_posix(),
+                    str(build_info_out): config_values.BUILD_INFO_OUT.as_posix(),
+                }
+            )
+            build_data.setdefault(_GENERATED_BUILD_DIRS_KEY, []).append(
+                str(generated_dir)
+            )
+        except Exception:
+            shutil.rmtree(generated_dir, ignore_errors=True)
+            raise
 
     def finalize(self, version: str, build_data: dict, artifact_path: str) -> None:
         del version, artifact_path

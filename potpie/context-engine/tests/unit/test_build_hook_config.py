@@ -326,6 +326,57 @@ def test_distribution_defaults_hook_uses_temp_artifacts_and_cleans_them(
     assert not build_info_source.exists()
 
 
+def test_distribution_defaults_hook_cleans_temp_dir_when_initialize_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    distribution_defaults_hook = _load_distribution_defaults_hook(monkeypatch)
+    generated_dir = tmp_path / "generated-build-dir"
+    fake_config_values = ModuleType("fake_config_values")
+    fake_config_values.DISTRIBUTION_DEFAULTS_OUT = Path(
+        "bootstrap/_distribution_defaults.py"
+    )
+    fake_config_values.BUILD_INFO_OUT = Path("bootstrap/_build_info.py")
+    fake_config_values.distribution_default_values = lambda: {"environment": "prod_oss"}
+    fake_config_values.build_info_values = lambda: {"GIT_SHA": "abc123"}
+    fake_config_values.prefer_existing_distribution_default_values = (
+        lambda path, values: values
+    )
+    fake_config_values.prefer_existing_build_info_values = lambda path, values: values
+    fake_config_values.should_validate_distribution_defaults = lambda: False
+    fake_config_values.validate_distribution_defaults = lambda values: None
+
+    def write_python_mapping(path: Path, name: str, values: dict[str, str]) -> None:
+        del name, values
+        path.write_text("DISTRIBUTION_DEFAULTS = {}\n", encoding="utf-8")
+
+    def write_python_constants(path: Path, values: dict[str, str]) -> None:
+        del path, values
+        raise OSError("write failed")
+
+    def mkdtemp(prefix: str) -> str:
+        assert prefix == "potpie-context-engine-build-"
+        generated_dir.mkdir()
+        return str(generated_dir)
+
+    fake_config_values.write_python_mapping = write_python_mapping
+    fake_config_values.write_python_constants = write_python_constants
+    monkeypatch.setattr(
+        distribution_defaults_hook,
+        "_load_config_values_module",
+        lambda: fake_config_values,
+    )
+    monkeypatch.setattr(distribution_defaults_hook.tempfile, "mkdtemp", mkdtemp)
+    hook = object.__new__(distribution_defaults_hook.DistributionDefaultsHook)
+    build_data: dict[str, list[str]] = {}
+
+    with pytest.raises(OSError, match="write failed"):
+        hook.initialize("wheel", build_data)
+
+    assert not generated_dir.exists()
+    assert build_data == {}
+
+
 def test_distribution_defaults_hook_finalize_preserves_unowned_source_files(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
-from bootstrap.env_bootstrap import load_cli_env
+from bootstrap import env_bootstrap
 
 _CODE_DEFAULT_ENVIRONMENT: Final[str] = "dev"
 _CODE_DEFAULT_API_URL: Final[str] = "http://localhost:8001"
@@ -123,7 +123,7 @@ def ensure_runtime_environment_loaded(
         else load_distribution_defaults()
     )
     if resolve_bootstrap_environment(os.environ, defaults) == "dev":
-        load_cli_env()
+        env_bootstrap.load_cli_env()
 
 
 def resolve_bootstrap_environment(

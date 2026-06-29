@@ -155,6 +155,21 @@ def test_dotenv_cannot_set_environment(
     assert os.getenv("POTPIE_ENVIRONMENT") is None
 
 
+def test_runtime_environment_loader_uses_env_bootstrap_module_patch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    def load_cli_env() -> None:
+        calls.append("loaded")
+
+    monkeypatch.setattr(env_bootstrap, "load_cli_env", load_cli_env)
+
+    ensure_runtime_environment_loaded({})
+
+    assert calls == ["loaded"]
+
+
 def test_direct_dotenv_loader_cannot_set_environment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
