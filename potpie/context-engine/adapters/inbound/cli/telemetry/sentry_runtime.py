@@ -4,11 +4,7 @@ import importlib
 from types import ModuleType
 from typing import Protocol
 
-from bootstrap.sentry_metrics_runtime import (
-    configure_metrics,
-    disable_metrics,
-    metrics_configured,
-)
+from bootstrap.sentry_metrics_runtime import configure_metrics, metrics_configured
 
 from .context import (
     TelemetryContext,
@@ -39,7 +35,6 @@ def configure_cli_sentry(settings: SentrySettings) -> None:
 def disable_cli_sentry() -> None:
     global _configured
     _configured = False
-    disable_metrics()
 
 
 def capture_unexpected_cli_error(

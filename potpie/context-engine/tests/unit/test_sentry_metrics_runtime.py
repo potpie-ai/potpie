@@ -15,7 +15,6 @@ sentry_metrics_runtime = import_module("bootstrap.sentry_metrics_runtime")
 runtime_importlib = getattr(sentry_metrics_runtime, "importlib")
 configure_metrics = getattr(sentry_metrics_runtime, "configure_metrics")
 count = getattr(sentry_metrics_runtime, "count")
-disable_metrics = getattr(sentry_metrics_runtime, "disable_metrics")
 distribution = getattr(sentry_metrics_runtime, "distribution")
 gauge = getattr(sentry_metrics_runtime, "gauge")
 flush = getattr(sentry_metrics_runtime, "flush")
@@ -200,21 +199,6 @@ def test_count_distribution_and_gauge_emit_metrics(
     assert fake.metrics.gauge_calls == [
         _MetricCall("ce.active", 4, None, {"state": "done"}),
     ]
-
-
-def test_disable_metrics_stops_runtime_emission(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake = _FakeSentry()
-    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
-
-    configure_metrics(_settings(enabled=True))
-    disable_metrics()
-    count("ce.disabled_after_enable", attributes={"result": "ok"})
-    flush()
-
-    assert fake.metrics.count_calls == []
-    assert fake.flush_calls == []
 
 
 def test_flush_is_noop_when_disabled_and_calls_sdk_when_enabled(

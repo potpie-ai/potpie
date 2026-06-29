@@ -121,7 +121,9 @@ def test_configure_cli_sentry_disabled_does_not_import(monkeypatch) -> None:
     assert "sentry_sdk" not in sys.modules
 
 
-def test_configure_cli_sentry_disabled_resets_capture_runtime(monkeypatch) -> None:
+def test_configure_cli_sentry_disabled_only_resets_cli_capture_runtime(
+    monkeypatch,
+) -> None:
     fake = _FakeSentry()
     monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
     enabled = SentrySettings(
@@ -148,7 +150,7 @@ def test_configure_cli_sentry_disabled_resets_capture_runtime(monkeypatch) -> No
     )
 
     assert sentry_runtime._configured is False
-    assert sentry_metrics_runtime.metrics_configured() is False
+    assert sentry_metrics_runtime.metrics_configured() is True
     assert fake.captured == []
 
 

@@ -28,11 +28,16 @@ def preferences_path() -> Path:
 
 
 def load_preferences() -> TelemetryPreferences:
-    payload = _read_payload(preferences_path())
+    try:
+        payload = _read_payload(preferences_path())
+    except FileNotFoundError:
+        return TelemetryPreferences()
+    if payload is None:
+        return TelemetryPreferences(enabled=False)
     enabled = payload.get("enabled")
     if isinstance(enabled, bool):
         return TelemetryPreferences(enabled=enabled)
-    return TelemetryPreferences()
+    return TelemetryPreferences(enabled=False)
 
 
 def save_preferences(preferences: TelemetryPreferences) -> None:
@@ -75,14 +80,19 @@ def telemetry_enabled_by_preference() -> bool:
     return load_preferences().enabled
 
 
-def _read_payload(path: Path) -> dict[str, object]:
+def _read_payload(path: Path) -> dict[str, object] | None:
     try:
         raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise
+    except OSError:
+        return None
+    try:
         data: object = json.loads(raw)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
+    except json.JSONDecodeError:
+        return None
     if not isinstance(data, dict):
-        return {}
+        return None
     return {str(key): value for key, value in data.items()}
 
 

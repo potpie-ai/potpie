@@ -9,7 +9,10 @@ from adapters.inbound.cli import host_cli
 from adapters.inbound.cli.commands import telemetry as telemetry_cmd
 from adapters.inbound.cli.telemetry import _build_defaults as build_defaults
 from adapters.inbound.cli.telemetry.identity_store import identity_path
-from adapters.inbound.cli.telemetry.preferences import preferences_path
+from adapters.inbound.cli.telemetry.preferences import (
+    load_preferences,
+    preferences_path,
+)
 
 _TELEMETRY_ENV_NAMES = (
     "POTPIE_TELEMETRY_DISABLED",
@@ -108,6 +111,35 @@ def test_telemetry_disable_and_enable_persist_state(monkeypatch, tmp_path) -> No
     payload = json.loads(preferences_path().read_text(encoding="utf-8"))
     assert payload["schema_version"] == 1
     assert payload["enabled"] is True
+
+
+@pytest.mark.parametrize("contents", ["not json", "[]", "{}"])
+def test_telemetry_preferences_fail_closed_for_invalid_existing_file(
+    monkeypatch,
+    tmp_path,
+    contents,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    path = preferences_path()
+    path.parent.mkdir(parents=True)
+    path.write_text(contents, encoding="utf-8")
+
+    preferences = load_preferences()
+
+    assert preferences.enabled is False
+
+
+def test_telemetry_preferences_fail_closed_for_unreadable_existing_file(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    path = preferences_path()
+    path.mkdir(parents=True)
+
+    preferences = load_preferences()
+
+    assert preferences.enabled is False
 
 
 def test_telemetry_preference_commands_refresh_runtime_sinks(
