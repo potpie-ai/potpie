@@ -150,8 +150,8 @@ def register_repo_source(
     ``make_default`` is false.
     """
     resolved_location = resolve_repo_location(location)
+    repo_key = repo_identity_key(resolved_location)
     repo_default_set = False
-    repo_key: str | None = None
     repo_default_setter = None
     if make_default:
         repo_default_setter = getattr(host.pots, "set_repo_default", None)
@@ -168,7 +168,6 @@ def register_repo_source(
         name=name,
     )
     if make_default:
-        repo_key = repo_identity_key(resolved_location)
         if not repo_key:
             fail(
                 code="repo_unresolved",
@@ -184,7 +183,7 @@ def register_repo_source(
         "location": resolved_location,
         "pot_id": pot_id,
         "repo_default_set": repo_default_set,
-        **({"repo_key": repo_key} if repo_key else {}),
+        "repo_key": repo_key,
         "registration_only": True,
     }
 
@@ -225,6 +224,7 @@ def pot_create(
             )
             payload["source"] = source
             payload["repo_default_set"] = source["repo_default_set"]
+            payload["repo_key"] = source["repo_key"]
             human = (
                 f"{human}\n"
                 f"registered source {source['kind']}:{source['name']} "
