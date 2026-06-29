@@ -16,12 +16,18 @@ from rich.markup import escape
 import click
 
 from adapters.inbound.cli.auth.atlassian_auth import run_atlassian_api_token_auth
+from adapters.inbound.cli.auth.bitbucket_auth import run_bitbucket_login as run_bitbucket_auth_flow
 from adapters.inbound.cli.auth.atlassian_read import (
     AtlassianReadError,
     fetch_confluence_spaces_sample,
     fetch_jira_projects,
     run_confluence_use_flow,
     run_jira_use_flow,
+)
+from adapters.inbound.cli.auth.bitbucket_read import (
+    BitbucketReadError,
+    fetch_bitbucket_workspaces,
+    run_bitbucket_use_flow,
 )
 from adapters.outbound.cli_auth.linear_read_client import (
     LinearReadError,
@@ -78,9 +84,16 @@ auth_app = typer.Typer(
 linear_app = typer.Typer(help="Linear integration.")
 jira_app = typer.Typer(help="Jira integration and read.")
 confluence_app = typer.Typer(help="Confluence integration and read.")
+bitbucket_app = typer.Typer(help="Bitbucket integration and read.")
 
 _OAUTH_CALLBACK_TIMEOUT = 300.0
-_ALL_PROVIDERS: tuple[Provider, ...] = ("github", "linear", "jira", "confluence")
+_ALL_PROVIDERS: tuple[Provider, ...] = (
+    "github",
+    "linear",
+    "jira",
+    "confluence",
+    "bitbucket",
+)
 IntegrationAuthProvider = Literal["linear", "atlassian", "jira", "confluence"]
 
 
@@ -794,6 +807,20 @@ def _print_linear_issue_row(row: dict[str, Any]) -> None:
         _print_remote_line(f"  URL: {_esc(row.get('url'))}")
 
 
+def _print_bitbucket_pull_request_row(row: dict[str, Any]) -> None:
+    identifier = _esc(row.get("id"))
+    title = _esc(row.get("title"))
+    _print_remote_line(f"\nPR {identifier}  {title}".rstrip())
+    if row.get("state"):
+        _print_remote_line(f"  State: {_esc(row.get('state'))}")
+    if row.get("author"):
+        _print_remote_line(f"  Author: {_esc(row.get('author'))}")
+    if row.get("updated"):
+        _print_remote_line(f"  Updated: {_esc(row.get('updated'))}")
+    if row.get("url"):
+        _print_remote_line(f"  URL: {_esc(row.get('url'))}")
+
+
 def _build_auth_compat_linear() -> typer.Typer:
     app = typer.Typer(help="[Deprecated] use `potpie linear`.")
     app.command("login")(linear_login)
@@ -821,6 +848,15 @@ def _build_auth_compat_confluence() -> typer.Typer:
     return app
 
 
+def _build_auth_compat_bitbucket() -> typer.Typer:
+    app = typer.Typer(help="[Deprecated] use `potpie bitbucket`.")
+    app.command("login")(bitbucket_login)
+    app.command("logout")(bitbucket_logout)
+    app.command("ls")(bitbucket_ls)
+    app.command("select")(bitbucket_select)
+    return app
+
+
 def _register_auth_compat_providers() -> None:
     """Mount deprecated ``potpie auth <provider>`` mirrors on ``auth_app``."""
     from adapters.inbound.cli.auth.github_commands import (
@@ -831,6 +867,7 @@ def _register_auth_compat_providers() -> None:
     register_provider_app("linear", _build_auth_compat_linear())
     register_provider_app("jira", _build_auth_compat_jira())
     register_provider_app("confluence", _build_auth_compat_confluence())
+    register_provider_app("bitbucket", _build_auth_compat_bitbucket())
 
 
 def register_integration_commands(root: typer.Typer) -> None:
@@ -845,6 +882,7 @@ def register_integration_commands(root: typer.Typer) -> None:
     root.add_typer(linear_app, name="linear")
     root.add_typer(jira_app, name="jira")
     root.add_typer(confluence_app, name="confluence")
+    root.add_typer(bitbucket_app, name="bitbucket")
     root.add_typer(auth_app, name="auth")
 
 
@@ -933,12 +971,19 @@ def _run_product_use_result(
             f"{product_label} team: {_esc(result.get('team_key'))} "
             f"({_esc(result.get('team_name'))})",
         )
+    if result.get("product") == "bitbucket" and result.get("repo_key"):
+        _print_remote_line(
+            f"{product_label} repository: {_esc(result.get('repo_key'))} "
+            f"({_esc(result.get('repo_name'))})",
+        )
     print_plain_line(f"{len(rows)} item(s):", as_json=False)
     for row in rows:
         if result["product"] == "jira":
             _print_jira_issue_row(row)
         elif result["product"] == "linear":
             _print_linear_issue_row(row)
+        elif result["product"] == "bitbucket":
+            _print_bitbucket_pull_request_row(row)
         else:
             _print_wiki_row(row, pages=True)
 
@@ -1143,6 +1188,115 @@ def confluence_select(
         emit_error("Confluence fetch failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
     _run_product_use_result(result, product_label="Confluence")
+
+
+@bitbucket_app.command("login")
+def bitbucket_login(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Re-authenticate even if Bitbucket is already connected.",
+    ),
+    email: str | None = typer.Option(
+        None,
+        "--email",
+        help="Bitbucket account email (non-interactive login).",
+    ),
+    api_token: str | None = typer.Option(
+        None,
+        "--api-token",
+        help="Bitbucket API token (non-interactive login).",
+    ),
+) -> None:
+    """Connect Bitbucket Cloud with an API token."""
+
+    def _run() -> None:
+        load_cli_env()
+        j, _ = _flags()
+        run_bitbucket_auth_flow(
+            force=force,
+            as_json=j,
+            email=email,
+            bitbucket_api_token=api_token,
+        )
+
+    _run_tracked_integration_login(
+        "bitbucket",
+        entrypoint="direct_integration_auth",
+        runner=_run,
+    )
+
+
+@bitbucket_app.command("logout")
+def bitbucket_logout() -> None:
+    """Remove stored Bitbucket credentials."""
+    auth_logout("bitbucket")
+
+
+@bitbucket_app.command("ls")
+def bitbucket_ls(
+    limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
+) -> None:
+    """List Bitbucket workspaces you can access."""
+    load_cli_env()
+    j, v = _flags()
+    try:
+        rows = fetch_bitbucket_workspaces(limit=limit)
+    except BitbucketReadError as exc:
+        emit_error("Bitbucket workspace list failed", str(exc), verbose=v)
+        raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
+    capture_usage_command_succeeded(
+        command="bitbucket ls",
+        result_kind="provider_list",
+        item_count=len(rows),
+        provider="bitbucket",
+    )
+    if j:
+        print_json_blob(
+            {"ok": True, "provider": "bitbucket", "workspaces": rows},
+            as_json=True,
+        )
+        return
+    print_plain_line("Bitbucket workspaces:", as_json=False)
+    if not rows:
+        print_plain_line("  (none)", as_json=False)
+        return
+    for row in rows:
+        _print_remote_line(
+            f"  {_esc(row.get('key'))}\t{_esc(row.get('name'))}\t{_esc(row.get('type'))}",
+        )
+    print_plain_line("\nFetch pull requests: potpie bitbucket select", as_json=False)
+
+
+@bitbucket_app.command("select")
+def bitbucket_select(
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help="Bitbucket workspace slug.",
+    ),
+    repo: str | None = typer.Option(
+        None,
+        "--repo",
+        "-r",
+        help="Bitbucket repository slug.",
+    ),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
+) -> None:
+    """Select a Bitbucket workspace and repository, then fetch pull requests."""
+    load_cli_env()
+    j, v = _flags()
+    try:
+        result = run_bitbucket_use_flow(
+            workspace_key=workspace,
+            repo_slug=repo,
+            limit=limit,
+        )
+    except BitbucketReadError as exc:
+        emit_error("Bitbucket fetch failed", str(exc), verbose=v)
+        raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
+    _run_product_use_result(result, product_label="Bitbucket")
 
 
 _register_auth_compat_providers()

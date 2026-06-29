@@ -109,6 +109,52 @@ def test_clear_active_pot_id_removes_file_when_only_pot(
     assert not cs.credentials_path().is_file()
 
 
+def test_bitbucket_credentials_roundtrip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    cs.save_bitbucket_credentials(
+        {
+            "email": "user@example.com",
+            "api_token": "bb-token",
+            "account_name": "Bitbucket User",
+        }
+    )
+
+    creds = cs.get_bitbucket_credentials()
+    status = cs.get_integration_status("bitbucket")
+
+    assert creds["api_token"] == "bb-token"
+    assert status["authenticated"] is True
+    assert status["email"] == "user@example.com"
+    assert status["login"] == "Bitbucket User"
+    assert cs._read_integration_secrets_file()["bitbucket_api_token"] == "bb-token"
+
+
+def test_clear_atlassian_suite_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.save_jira_credentials({"email": "u@example.com", "api_token": "jira-token"})
+    cs.save_confluence_credentials(
+        {"email": "u@example.com", "api_token": "conf-token"}
+    )
+    cs.save_bitbucket_credentials({"email": "u@example.com", "api_token": "bb-token"})
+    cs.save_atlassian_credentials(
+        {"email": "u@example.com", "api_token": "legacy-token"}
+    )
+
+    cs.clear_atlassian_suite_credentials()
+
+    assert cs.get_jira_credentials() == {}
+    assert cs.get_confluence_credentials() == {}
+    assert cs.get_bitbucket_credentials() == {}
+    assert cs.get_atlassian_credentials() == {}
+
+
 def test_register_and_resolve_pot_alias(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

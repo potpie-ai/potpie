@@ -167,6 +167,16 @@ class InMemoryCredentialStore:
                 "email": account_dict.get("email"),
                 "expires_at": credentials.get("expires_at"),
             }
+        if provider in {"jira", "confluence", "bitbucket", "atlassian"}:
+            credentials = self.atlassian.get(provider, {})
+            return {
+                "provider": provider,
+                "authenticated": bool(credentials.get("api_token")),
+                "email": credentials.get("email"),
+                "login": credentials.get("account_name"),
+                "site_url": credentials.get("site_url"),
+                "cloud_id": credentials.get("cloud_id"),
+            }
         tokens = self.integrations.get(provider, {})
         authenticated = bool(tokens.get("access_token") or tokens.get("api_token"))
         return {
@@ -176,7 +186,7 @@ class InMemoryCredentialStore:
         }
 
     def list_integration_providers(self) -> list[str]:
-        return sorted(self.integrations)
+        return sorted(set(self.integrations) | set(self.atlassian))
 
     # --- Atlassian product credentials + workspace prefs -----------------
     def get_jira_credentials(self) -> dict[str, Any]:
@@ -197,6 +207,15 @@ class InMemoryCredentialStore:
     def clear_confluence_credentials(self) -> None:
         self.atlassian.pop("confluence", None)
 
+    def get_bitbucket_credentials(self) -> dict[str, Any]:
+        return dict(self.atlassian.get("bitbucket", {}))
+
+    def save_bitbucket_credentials(self, credentials: dict[str, Any]) -> None:
+        self.atlassian["bitbucket"] = dict(credentials)
+
+    def clear_bitbucket_credentials(self) -> None:
+        self.atlassian.pop("bitbucket", None)
+
     def get_atlassian_credentials(self) -> dict[str, Any]:
         return dict(self.atlassian.get("atlassian", {}))
 
@@ -206,11 +225,23 @@ class InMemoryCredentialStore:
     def clear_atlassian_credentials(self) -> None:
         self.atlassian.pop("atlassian", None)
 
+    def clear_atlassian_suite_credentials(self) -> None:
+        for key in ("jira", "confluence", "bitbucket", "atlassian"):
+            self.atlassian.pop(key, None)
+
     def save_jira_workspace_prefs(self, *, project_key: str) -> None:
         self.workspace_prefs["jira"] = {"project_key": project_key}
 
     def save_confluence_workspace_prefs(self, *, space_key: str) -> None:
         self.workspace_prefs["confluence"] = {"space_key": space_key}
+
+    def save_bitbucket_workspace_prefs(
+        self, *, workspace_key: str, repo_slug: str
+    ) -> None:
+        self.workspace_prefs["bitbucket"] = {
+            "workspace_key": workspace_key,
+            "repo_slug": repo_slug,
+        }
 
 
 __all__ = ["FakeAuthHttpClient", "InMemoryCredentialStore"]

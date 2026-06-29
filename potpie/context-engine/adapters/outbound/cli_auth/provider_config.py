@@ -9,8 +9,15 @@ from urllib.parse import urlparse
 from adapters.outbound.cli_auth._oauth_client_ids import (
     LINEAR_CLIENT_ID as PACKAGE_LINEAR_CLIENT_ID,
 )
+Provider = Literal[
+    "linear",
+    "github",
+    "atlassian",
+    "jira",
+    "confluence",
+    "bitbucket",
+]
 
-Provider = Literal["linear", "github", "atlassian", "jira", "confluence"]
 OAuthProvider = Literal["linear"]
 AtlassianProduct = Literal["jira", "confluence"]
 
@@ -30,6 +37,10 @@ ATLASSIAN_API_GATEWAY = "https://api.atlassian.com"
 ATLASSIAN_ACCESSIBLE_RESOURCES_URL = (
     f"{ATLASSIAN_API_GATEWAY}/oauth/token/accessible-resources"
 )
+BITBUCKET_API_BASE = "https://api.bitbucket.org/2.0"
+# Bitbucket scoped API tokens are created on the Atlassian account security page.
+BITBUCKET_API_TOKEN_PAGE = ATLASSIAN_API_TOKEN_PAGE
+BITBUCKET_USER_WORKSPACES_PATH = "/user/workspaces"
 
 
 def get_redirect_uri() -> str:
