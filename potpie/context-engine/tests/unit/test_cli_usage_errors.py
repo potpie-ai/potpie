@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
+import click
 import pytest
 import typer
+from typer._click.exceptions import Abort as TyperAbort
 from typer.testing import CliRunner
 
 from adapters.inbound.cli import host_cli
@@ -86,3 +89,26 @@ def test_bootstrap_output_flags_ignore_positional_after_double_dash() -> None:
     )
     assert not _common.is_json()
     assert not _common.is_verbose()
+
+
+@pytest.mark.parametrize("abort_exc", [TyperAbort(), click.Abort()])
+def test_run_cli_abort_exits_cleanly(
+    abort_exc: BaseException,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch.object(host_cli, "app", side_effect=abort_exc):
+        with pytest.raises(typer.Exit) as exc_info:
+            host_cli.run_cli(["pot", "list"])
+
+    assert exc_info.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_main_converts_abort_to_system_exit() -> None:
+    with patch.object(host_cli, "app", side_effect=TyperAbort()):
+        with pytest.raises(SystemExit) as exc_info:
+            host_cli.main()
+
+    assert exc_info.value.code == 1

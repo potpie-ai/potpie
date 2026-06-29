@@ -136,6 +136,7 @@ def _click_error_message(exc: Exception) -> str:
 
 def run_cli(argv: list[str] | None = None) -> None:
     """Invoke the Typer app with the documented parse-error contract."""
+    import click
     from typer._click.exceptions import Abort, ClickException
 
     from adapters.inbound.cli.ui.output import configure_cli_logging, configure_error_output
@@ -148,9 +149,9 @@ def run_cli(argv: list[str] | None = None) -> None:
 
     try:
         app(args, standalone_mode=False)
+    except (Abort, click.Abort):
+        raise typer.Exit(code=1) from None
     except ClickException as exc:
-        if isinstance(exc, Abort):
-            raise
         if is_json():
             fail(
                 code="usage_error",
