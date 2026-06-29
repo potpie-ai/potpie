@@ -2,10 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertNoCliArgs,
   isAddressInUse,
   portRange,
   startServerInRange,
 } from "./dev-port.mjs";
+
+test("assertNoCliArgs accepts the plain dev command", () => {
+  assert.doesNotThrow(() => assertNoCliArgs([]));
+});
+
+test("assertNoCliArgs rejects ignored Vite CLI flags loudly", () => {
+  assert.throws(
+    () => assertNoCliArgs(["--host", "0.0.0.0"]),
+    (error) => {
+      assert.equal(error.code, "POTPIE_UI_DEV_UNSUPPORTED_ARGS");
+      assert.match(error.message, /--host 0\.0\.0\.0/);
+      return true;
+    },
+  );
+});
 
 test("portRange returns an inclusive ordered TCP range", () => {
   assert.deepEqual(portRange(3000, 3003), [3000, 3001, 3002, 3003]);

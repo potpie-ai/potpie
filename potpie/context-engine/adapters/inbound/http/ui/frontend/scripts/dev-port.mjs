@@ -1,6 +1,25 @@
 export const DEV_PORT_MIN = 3000;
 export const DEV_PORT_MAX = 3099;
 
+export function assertNoCliArgs(args) {
+  if (!Array.isArray(args)) {
+    throw new TypeError("dev server CLI args must be an array");
+  }
+  if (args.length === 0) {
+    return;
+  }
+
+  const error = new Error(
+    [
+      "Potpie UI dev server does not accept extra Vite CLI flags.",
+      `Unsupported argument(s): ${args.join(" ")}`,
+      "Run `npm run dev` without extra arguments; the launcher owns the 3000-3099 port policy.",
+    ].join("\n"),
+  );
+  error.code = "POTPIE_UI_DEV_UNSUPPORTED_ARGS";
+  throw error;
+}
+
 export function portRange(minPort = DEV_PORT_MIN, maxPort = DEV_PORT_MAX) {
   if (!Number.isInteger(minPort) || !Number.isInteger(maxPort)) {
     throw new TypeError("dev server port bounds must be integers");
@@ -20,6 +39,8 @@ export function isAddressInUse(error) {
     if (current && current.code === "EADDRINUSE") {
       return true;
     }
+    // Vite v5 strictPort wraps the underlying bind failure with this message
+    // instead of preserving EADDRINUSE on the public error object.
     if (
       current &&
       typeof current.message === "string" &&

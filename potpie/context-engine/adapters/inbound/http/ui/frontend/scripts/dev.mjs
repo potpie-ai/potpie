@@ -3,12 +3,14 @@
 import { createServer } from "vite";
 
 import {
+  assertNoCliArgs,
   DEV_PORT_MAX,
   DEV_PORT_MIN,
   startServerInRange,
 } from "./dev-port.mjs";
 
 try {
+  assertNoCliArgs(process.argv.slice(2));
   const { port, server } = await startServerInRange({ createServer });
   console.log(
     `Potpie UI dev server selected port ${port} (range ${DEV_PORT_MIN}-${DEV_PORT_MAX}).`,
@@ -26,6 +28,9 @@ function formatDevServerError(error) {
       error.message,
       "Free one of those ports, or change DEV_PORT_MIN/DEV_PORT_MAX in scripts/dev-port.mjs.",
     ].join("\n");
+  }
+  if (error && error.code === "POTPIE_UI_DEV_UNSUPPORTED_ARGS") {
+    return error.message;
   }
   return error && error.stack ? error.stack : String(error);
 }
