@@ -15,6 +15,9 @@ from adapters.inbound.cli.commands._common import (
     fail,
     get_host,
     pot_scope_info,
+    repo_default_mismatch_warning,
+    repo_effective_pot_human,
+    repo_effective_pot_info,
     repo_pot_candidates,
     resolve_pot_id,
 )
@@ -101,13 +104,23 @@ def pot_list(
 @pot_app.command("info")
 def pot_info() -> None:
     with contract():
-        active = get_host().pots.active_pot()
-        if active is None:
-            emit({"active_pot": None}, human="(no active pot)")
-            return
+        host = get_host()
+        active = host.pots.active_pot()
+        routing = repo_effective_pot_info(host)
+        active_payload = (
+            {"id": active.pot_id, "name": active.name} if active is not None else None
+        )
+        lines = [
+            f"active: {active.name} ({active.pot_id})"
+            if active is not None
+            else "(no active pot)"
+        ]
+        routing_line = repo_effective_pot_human(routing)
+        if routing_line:
+            lines.append(routing_line)
         emit(
-            {"active_pot": {"id": active.pot_id, "name": active.name}},
-            human=f"active: {active.name} ({active.pot_id})",
+            {"active_pot": active_payload, "current_repo": routing},
+            human="\n".join(lines),
         )
 
 
@@ -149,18 +162,59 @@ def pot_create(
 
 
 @pot_app.command("use")
-def pot_use(ref: str) -> None:
+def pot_use(
+    ref: str,
+    also_default_for_current_repo: bool = typer.Option(
+        False,
+        "--also-default-for-current-repo",
+        help="Also set the current repo's local default pot to this pot.",
+    ),
+) -> None:
     with contract():
-        pot = get_host().pots.use_pot(ref=ref)
-        emit({"id": pot.pot_id, "name": pot.name}, human=f"active pot → {pot.name}")
+        host = get_host()
+        repo_key = (
+            _repo_key_from_option("current") if also_default_for_current_repo else None
+        )
+        pot = host.pots.use_pot(ref=ref)
+        repo_default_set = False
+        if repo_key:
+            host.pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
+            repo_default_set = True
+        routing = repo_effective_pot_info(host)
+        warnings = []
+        warning = repo_default_mismatch_warning(host, routing, selected_pot_id=pot.pot_id)
+        if warning:
+            warnings.append(warning)
+        lines = [f"active pot → {pot.name}"]
+        if repo_default_set:
+            lines.append(f"repo {repo_key} default → {pot.name} ({pot.pot_id})")
+        lines.extend(f"warning: {item}" for item in warnings)
+        emit(
+            {
+                "id": pot.pot_id,
+                "name": pot.name,
+                "repo_default_set": repo_default_set,
+                "current_repo": routing,
+                "warnings": warnings,
+            },
+            human="\n".join(lines),
+        )
 
 
 @pot_app.command("linked")
-def pot_linked(repo: str = typer.Option("current", "--repo")) -> None:
+def pot_linked(
+    repo: str = typer.Option("current", "--repo"),
+    summary: bool = typer.Option(
+        False,
+        "--summary",
+        help="Skip per-pot graph counts for a faster repo routing summary.",
+    ),
+) -> None:
     """Show pots linked to a repo source and the local default, if any."""
     with contract():
         host = get_host()
-        linked = repo_pot_candidates(host, repo)
+        linked = repo_pot_candidates(host, repo, include_counts=not summary)
+        linked["counts_included"] = not summary
         candidates = list(linked.get("candidates", ()))
         repo_key = linked.get("repo")
         lines = [f"repo {repo_key or '(unknown)'}"]
@@ -186,14 +240,22 @@ def pot_linked(repo: str = typer.Option("current", "--repo")) -> None:
                     if enabled
                 ]
                 suffix = f"  {', '.join(markers)}" if markers else ""
+                count_text = (
+                    f" claims={counts.get('claims', 0)} "
+                    f"entities={counts.get('entities', 0)}"
+                    if not summary
+                    else ""
+                )
                 lines.append(
                     f"  {row.get('name')} ({row.get('pot_id')}) "
-                    f"sources={row.get('source_count', 0)} "
-                    f"claims={counts.get('claims', 0)} entities={counts.get('entities', 0)}"
+                    f"sources={row.get('source_count', 0)}"
+                    f"{count_text}"
                     f"{suffix}"
                 )
         else:
             lines.append("  (no linked pots)")
+        if summary:
+            lines.append("counts omitted; rerun without --summary for graph counts")
         emit(linked, human="\n".join(lines))
 
 

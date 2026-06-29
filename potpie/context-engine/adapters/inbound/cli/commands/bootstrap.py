@@ -14,9 +14,12 @@ import typer
 from adapters.inbound.cli.commands._common import (
     EXIT_DEGRADED,
     contract,
+    current_repo_identity_for_cli,
     emit,
     get_host,
     is_json,
+    repo_default_mismatch_warning,
+    repo_effective_pot_info,
     resolve_pot_id,
 )
 from adapters.inbound.cli.telemetry.onboarding_events import (
@@ -317,6 +320,11 @@ def register(root: typer.Typer) -> None:
         managed: bool = typer.Option(
             False, "--managed", help="Select a managed-origin pot."
         ),
+        also_default_for_current_repo: bool = typer.Option(
+            False,
+            "--also-default-for-current-repo",
+            help="Also set the current repo's local default pot to this pot.",
+        ),
     ) -> None:
         """Select the active pot by name/id (top-level alias for `pot use`)."""
         with contract():
@@ -326,10 +334,38 @@ def register(root: typer.Typer) -> None:
                     detail="managed pot routing is not implemented",
                     recommended_next_action="select a local pot; managed routing lands in HU3",
                 )
-            pot = get_host().pots.use_pot(ref=ref)
+            host = get_host()
+            repo_key = None
+            if also_default_for_current_repo:
+                repo_key = current_repo_identity_for_cli()
+                if not repo_key:
+                    raise ValueError("--also-default-for-current-repo requires a repo")
+            pot = host.pots.use_pot(ref=ref)
+            repo_default_set = False
+            if repo_key:
+                host.pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
+                repo_default_set = True
+            routing = repo_effective_pot_info(host)
+            warnings = []
+            warning = repo_default_mismatch_warning(
+                host, routing, selected_pot_id=pot.pot_id
+            )
+            if warning:
+                warnings.append(warning)
+            lines = [f"active pot → {pot.name} (local)"]
+            if repo_default_set:
+                lines.append(f"repo {repo_key} default → {pot.name} ({pot.pot_id})")
+            lines.extend(f"warning: {item}" for item in warnings)
             emit(
-                {"id": pot.pot_id, "name": pot.name, "origin": "local"},
-                human=f"active pot → {pot.name} (local)",
+                {
+                    "id": pot.pot_id,
+                    "name": pot.name,
+                    "origin": "local",
+                    "repo_default_set": repo_default_set,
+                    "current_repo": routing,
+                    "warnings": warnings,
+                },
+                human="\n".join(lines),
             )
 
     config_app = typer.Typer(
