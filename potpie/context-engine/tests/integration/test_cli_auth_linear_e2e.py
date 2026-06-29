@@ -101,7 +101,7 @@ def isolated_cli_env(
 ) -> Iterator[dict[str, str]]:
     """Isolated credentials dir + dev-only repo .env merge via runtime settings."""
     _require_e2e_enabled()
-    import adapters.outbound.cli_auth.env_bootstrap as env_bootstrap
+    import bootstrap.env_bootstrap as env_bootstrap
 
     saved_loaded = env_bootstrap._loaded
     saved_environ = os.environ.copy()

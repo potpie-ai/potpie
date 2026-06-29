@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
-from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+from bootstrap.env_bootstrap import load_cli_env
 
 _CODE_DEFAULT_ENVIRONMENT: Final[str] = "dev"
 _CODE_DEFAULT_API_URL: Final[str] = "http://localhost:8001"

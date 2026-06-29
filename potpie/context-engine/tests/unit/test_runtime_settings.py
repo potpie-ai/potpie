@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from adapters.outbound.cli_auth import env_bootstrap
+from bootstrap import env_bootstrap
 from bootstrap.runtime_settings import (
     RuntimeSettings,
     ensure_runtime_environment_loaded,

@@ -17,10 +17,6 @@ DISTRIBUTION_DEFAULT_INPUT_NAMES_BY_FIELD = {
     "linear_client_id": "LINEAR_CLIENT_ID",
     "github_client_id": "POTPIE_GITHUB_CLIENT_ID",
 }
-DISTRIBUTION_DEFAULT_INPUT_NAMES = tuple(
-    DISTRIBUTION_DEFAULT_INPUT_NAMES_BY_FIELD.values()
-)
-BUILD_INFO_INPUT_NAMES = ("POTPIE_BUILD_GIT_SHA", "GITHUB_SHA", "POTPIE_BUILD_TIME")
 BUILD_INFO_INPUT_NAMES_BY_FIELD = {
     "GIT_SHA": ("POTPIE_BUILD_GIT_SHA", "GITHUB_SHA"),
     "BUILD_TIME": ("POTPIE_BUILD_TIME",),
@@ -137,21 +133,6 @@ def prefer_existing_distribution_default_values(
     return merged
 
 
-def prefer_existing_config_values(
-    path: Path,
-    values: Mapping[str, str],
-) -> dict[str, str]:
-    """Keep generated sdist constant values when a wheel build lacks build inputs."""
-    existing = _read_python_constants(path)
-    if not existing:
-        return dict(values)
-    merged = dict(values)
-    for name in values:
-        if name in existing:
-            merged[name] = existing[name]
-    return merged
-
-
 def prefer_existing_build_info_values(
     path: Path,
     values: Mapping[str, str],
@@ -172,21 +153,6 @@ def prefer_existing_build_info_values(
         ):
             merged[name] = existing[name]
     return merged
-
-
-def has_build_config_inputs(
-    names: tuple[str, ...],
-    environ: Mapping[str, str] | None = None,
-    *,
-    dotenv_start: Path | None = None,
-) -> bool:
-    source = os.environ if environ is None else environ
-    if any(name in source for name in names):
-        return True
-    if environ is not None and dotenv_start is None:
-        return False
-    dotenv = _read_nearest_dotenv(dotenv_start or _DOTENV_SEARCH_START)
-    return any(name in dotenv for name in names)
 
 
 def _env(name: str, environ: Mapping[str, str] | None = None) -> str:

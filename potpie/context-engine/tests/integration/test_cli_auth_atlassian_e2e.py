@@ -68,7 +68,7 @@ def _atlassian_site_subdomain() -> str:
 
 
 def _reset_cli_env_loader() -> None:
-    import adapters.outbound.cli_auth.env_bootstrap as env_bootstrap
+    import bootstrap.env_bootstrap as env_bootstrap
 
     env_bootstrap._loaded = False
 
