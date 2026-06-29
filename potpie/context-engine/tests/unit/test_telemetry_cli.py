@@ -7,29 +7,18 @@ from typer.testing import CliRunner
 
 from adapters.inbound.cli import host_cli
 from adapters.inbound.cli.commands import telemetry as telemetry_cmd
-from adapters.inbound.cli.telemetry import _build_defaults as build_defaults
-from adapters.inbound.cli.telemetry.identity_store import identity_path
+from adapters.inbound.cli.telemetry import sentry_runtime
 from adapters.inbound.cli.telemetry.preferences import (
     load_preferences,
     preferences_path,
 )
+from bootstrap import runtime_settings
 
 _TELEMETRY_ENV_NAMES = (
+    "POTPIE_ENVIRONMENT",
     "POTPIE_TELEMETRY_DISABLED",
     "POTPIE_SENTRY_ENABLED",
     "POTPIE_SENTRY_DSN",
-    "SENTRY_DSN",
-    "POTPIE_POSTHOG_ENABLED",
-    "POTPIE_PRODUCT_ANALYTICS_ENABLED",
-    "POTPIE_POSTHOG_API_KEY",
-    "POTPIE_POSTHOG_HOST",
-)
-
-_BUILD_DEFAULT_NAMES = (
-    "POTPIE_TELEMETRY_DISABLED",
-    "POTPIE_SENTRY_ENABLED",
-    "POTPIE_SENTRY_DSN",
-    "POTPIE_POSTHOG_ENABLED",
     "POTPIE_PRODUCT_ANALYTICS_ENABLED",
     "POTPIE_POSTHOG_API_KEY",
     "POTPIE_POSTHOG_HOST",
@@ -37,11 +26,13 @@ _BUILD_DEFAULT_NAMES = (
 
 
 @pytest.fixture(autouse=True)
-def _clear_telemetry_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clear_telemetry_config(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     for name in _TELEMETRY_ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
-    for name in _BUILD_DEFAULT_NAMES:
-        monkeypatch.setattr(build_defaults, name, "")
+    monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
+    monkeypatch.setattr(runtime_settings, "load_distribution_defaults", lambda: {})
+    monkeypatch.setattr(sentry_runtime, "configure_cli_sentry", lambda settings: None)
 
 
 def _enable_all_sinks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,8 +52,9 @@ def test_telemetry_status_defaults_to_enabled_without_configured_sinks(
     assert "Potpie CLI telemetry: enabled" in result.stdout
     assert "Crash reports: disabled" in result.stdout
     assert "Analytics: disabled" in result.stdout
-    assert "Install ID: install_" in result.stdout
-    assert "Identity path:" in result.stdout
+    assert "Install ID:" not in result.stdout
+    assert "Identity path:" not in result.stdout
+    assert "install_" not in result.stdout
     assert not preferences_path().exists()
 
 
@@ -79,9 +71,9 @@ def test_telemetry_status_reports_enabled_details_for_active_sinks(
     assert "Potpie CLI telemetry: enabled" in result.stdout
     assert "Crash reports: anonymous" in result.stdout
     assert "Analytics: anonymous" in result.stdout
-    assert "Install ID: install_" in result.stdout
-    assert "Identity path:" in result.stdout
-    assert identity_path().name in result.stdout
+    assert "Install ID:" not in result.stdout
+    assert "Identity path:" not in result.stdout
+    assert "install_" not in result.stdout
     assert not preferences_path().exists()
 
 
@@ -190,8 +182,7 @@ def test_telemetry_status_json(monkeypatch, tmp_path) -> None:
     assert payload["telemetry"] == "enabled"
     assert payload["crash_reports"] == "anonymous"
     assert payload["analytics"] == "anonymous"
-    assert payload["install_id"].startswith("install_")
-    assert payload["identity_path"] == str(identity_path())
+    assert set(payload) == {"telemetry", "crash_reports", "analytics"}
 
 
 @pytest.mark.parametrize(
@@ -237,7 +228,7 @@ def test_telemetry_status_json(monkeypatch, tmp_path) -> None:
             {
                 "POTPIE_SENTRY_DSN": "https://public@example.invalid/1",
                 "POTPIE_POSTHOG_API_KEY": "phc_test",
-                "POTPIE_POSTHOG_ENABLED": "0",
+                "POTPIE_PRODUCT_ANALYTICS_ENABLED": "0",
             },
             {
                 "telemetry": "enabled",
@@ -278,13 +269,7 @@ def test_telemetry_status_json_reflects_effective_sink_gates(
         "crash_reports": payload["crash_reports"],
         "analytics": payload["analytics"],
     } == expected
-    assert set(payload) == {
-        "telemetry",
-        "crash_reports",
-        "analytics",
-        "install_id",
-        "identity_path",
-    }
+    assert set(payload) == {"telemetry", "crash_reports", "analytics"}
 
 
 def test_telemetry_preference_write_failure_uses_error_contract_without_refresh(

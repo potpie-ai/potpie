@@ -21,8 +21,8 @@ runner = CliRunner()
 @pytest.fixture(autouse=True)
 def _github_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
     # The device flow requires POTPIE_GITHUB_CLIENT_ID (no hardcoded default).
+    monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
     monkeypatch.setenv("POTPIE_GITHUB_CLIENT_ID", "Iv1.testclientid")
-    monkeypatch.setattr(gh_auth, "load_cli_env", lambda: None)
 
 
 class FakeClient:

@@ -17,6 +17,7 @@ import sys
 import time
 
 from adapters.outbound.daemon_process.pidfile import read_pid_file
+from bootstrap.runtime_settings import load_runtime_settings, project_child_environment
 
 
 class DaemonStartError(Exception):
@@ -56,6 +57,14 @@ def start_detached(
                 pid_file.unlink()  # stale
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fp = log_path.open("a")
+    child_env = project_child_environment(
+        load_runtime_settings(),
+        os.environ,
+        overrides={
+            "CONTEXT_ENGINE_HOME": str(home),
+            **({"CONTEXT_ENGINE_BACKEND": backend} if backend else {}),
+        },
+    )
     try:
         proc = subprocess.Popen(
             [sys.executable, "-m", "host.daemon_main"],
@@ -63,11 +72,7 @@ def start_detached(
             stderr=subprocess.STDOUT,
             start_new_session=True,
             close_fds=True,
-            env={
-                **os.environ,
-                "CONTEXT_ENGINE_HOME": str(home),
-                **({"CONTEXT_ENGINE_BACKEND": backend} if backend else {}),
-            },
+            env=child_env,
         )
     finally:
         log_fp.close()

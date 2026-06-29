@@ -6,6 +6,7 @@ import os
 import time
 from dataclasses import dataclass
 
+from bootstrap.runtime_settings import load_runtime_settings
 from adapters.outbound.cli_auth.firebase_session import (
     FirebaseSessionError,
     FirebaseSession,
@@ -23,8 +24,6 @@ from adapters.outbound.cli_auth.credentials_store import (
     update_potpie_firebase_refresh_token,
 )
 
-_DEFAULT_API_URL = "http://localhost:8001"
-
 
 @dataclass(frozen=True)
 class PotpieAuthConfig:
@@ -34,24 +33,14 @@ class PotpieAuthConfig:
 
 def resolve_potpie_api_base_url() -> str:
     """Base URL only (no path), no trailing slash."""
-    u = (
-        os.getenv("POTPIE_API_URL")
-        or os.getenv("POTPIE_BASE_URL")
-        or os.getenv("POTPIE_CLI_API_BASE_URL")
-        or os.getenv("POTPIE_CLI_BASE_URL")
-        or get_stored_api_base_url()
-        or ""
-    ).strip()
-    port = (os.getenv("POTPIE_PORT") or os.getenv("POTPIE_API_PORT") or "").strip()
-    if not u and port:
-        u = f"http://127.0.0.1:{port}"
+    settings = load_runtime_settings()
+    u = os.getenv("POTPIE_API_URL", "").strip() or get_stored_api_base_url() or ""
     if not u:
-        u = _DEFAULT_API_URL
+        u = settings.potpie_api_url
     u = u.rstrip("/")
     if not u:
         raise ValueError(
-            "Potpie API base URL missing. Set POTPIE_API_URL or POTPIE_BASE_URL, "
-            "or set POTPIE_PORT for http://127.0.0.1:<port>."
+            "Potpie API base URL missing. Set POTPIE_API_URL or run `potpie login`."
         )
     return u
 

@@ -4,10 +4,6 @@ import typer
 
 from adapters.inbound.cli.commands._common import EXIT_UNAVAILABLE, emit, fail
 from adapters.inbound.cli.telemetry import sentry_runtime, settings
-from adapters.inbound.cli.telemetry.identity_store import (
-    identity_path,
-    load_or_create_identity,
-)
 from adapters.inbound.cli.telemetry.preferences import (
     TelemetryPreferenceWriteError,
     TelemetryPreferences,
@@ -42,14 +38,10 @@ def disable() -> None:
 
 def _emit_status() -> None:
     status = settings.load_telemetry_status()
-    identity = load_or_create_identity()
-    path = identity_path()
     payload = {
         "telemetry": status.telemetry,
         "crash_reports": status.crash_reports,
         "analytics": status.analytics,
-        "install_id": identity.anonymous_install_id,
-        "identity_path": str(path),
     }
     emit(payload, human=_human_status(payload))
 
@@ -81,8 +73,6 @@ def _human_status(payload: dict[str, str]) -> str:
             "",
             f"Crash reports: {payload['crash_reports']}",
             f"Analytics: {payload['analytics']}",
-            f"Install ID: {payload['install_id']}",
-            f"Identity path: {payload['identity_path']}",
         ]
     )
     return "\n".join(lines)
