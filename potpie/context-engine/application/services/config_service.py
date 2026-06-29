@@ -39,9 +39,22 @@ _SECRET_KEY_MARKERS: tuple[str, ...] = (
 _REDACTED = "<redacted>"
 
 
+def _normalize_secret_key_fragment(text: str) -> str:
+    """Lowercase and strip common separators for marker matching."""
+    normalized = text.lower()
+    for separator in ("_", "-", ".", " "):
+        normalized = normalized.replace(separator, "")
+    return normalized
+
+
+_NORMALIZED_SECRET_MARKERS: tuple[str, ...] = tuple(
+    _normalize_secret_key_fragment(marker) for marker in _SECRET_KEY_MARKERS
+)
+
+
 def is_secret_config_key(key: str) -> bool:
-    lowered = key.lower()
-    return any(marker in lowered for marker in _SECRET_KEY_MARKERS)
+    normalized = _normalize_secret_key_fragment(key)
+    return any(marker in normalized for marker in _NORMALIZED_SECRET_MARKERS)
 
 
 def public_config_value(key: str, value: Any) -> str | None:

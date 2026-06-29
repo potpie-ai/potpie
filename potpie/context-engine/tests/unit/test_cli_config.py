@@ -157,3 +157,39 @@ def test_local_config_service_list_public_redacts_secrets(tmp_path) -> None:
     assert public["profile"] == "local"
     assert public["backend"] == "falkordb"
     assert public["custom_password"] == "<redacted>"
+
+
+@pytest.mark.parametrize(
+    ("key", "secret"),
+    [
+        ("api_key", True),
+        ("apiKey", True),
+        ("apikey", True),
+        ("service.apiKey", True),
+        ("ledger.api_key", True),
+        ("github_token", True),
+        ("profile", False),
+        ("backend", False),
+        ("ledger.binding", False),
+        ("oauth.proxy_url", False),
+    ],
+)
+def test_is_secret_config_key_handles_camelcase_and_separators(
+    key: str, secret: bool
+) -> None:
+    from application.services.config_service import is_secret_config_key
+
+    assert is_secret_config_key(key) is secret
+
+
+def test_config_get_redacts_camelcase_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_host(_FakeConfig({"service.apiKey": "sk-live-secret"}), monkeypatch)
+    from adapters.inbound.cli.commands import _common
+
+    _common.set_json(True)
+
+    result = runner.invoke(cli_main.app, ["--json", "config", "get", "service.apiKey"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["service.apiKey"] == "<redacted>"
