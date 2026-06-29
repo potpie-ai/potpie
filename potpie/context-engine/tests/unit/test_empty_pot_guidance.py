@@ -117,3 +117,30 @@ def test_pot_create_emits_empty_pot_guidance(monkeypatch) -> None:
     payload = json.loads(result.output)
     assert payload["warnings"]
     assert "0 claims" in payload["recommended_next_action"]
+
+
+def test_empty_pot_guidance_skips_when_graph_status_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+
+    class _UnavailableGraph:
+        def data_plane_status(self, pot_id: str):
+            raise RuntimeError("graph offline")
+
+    host = _Host()
+    host.graph = _UnavailableGraph()
+
+    assert _common.empty_pot_guidance(host, "p1") == ()
+    assert _common.empty_pot_warnings(host, "p1") == ()
+
+
+def test_empty_pot_guidance_skips_when_host_has_no_graph(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    host = _Host()
+    host.graph = None
+
+    assert _common.empty_pot_guidance(host, "p1") == ()
+    assert _common.empty_pot_warnings(host, "p1") == ()

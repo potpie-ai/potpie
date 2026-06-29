@@ -425,25 +425,36 @@ def pot_scope_human(host: Any, pot_id: str) -> str:
     )
 
 
+def _known_claims_count(counts: dict[str, int]) -> int | None:
+    if "claims" not in counts:
+        return None
+    return int(counts["claims"])
+
+
+def _pot_claims_count(host: Any, pot_id: str) -> int | None:
+    return _known_claims_count(pot_graph_counts(host, pot_id))
+
+
 def empty_pot_warnings(host: Any, pot_id: str) -> tuple[str, ...]:
-    counts = pot_graph_counts(host, pot_id)
-    if int(counts.get("claims", 0) or 0) != 0:
+    claims = _pot_claims_count(host, pot_id)
+    if claims is None or claims != 0:
         return ()
     linked = repo_pot_candidates(host)
     alternatives = [
         row
         for row in linked.get("candidates", ())
         if row.get("pot_id") != pot_id
-        and int((row.get("counts") or {}).get("claims", 0) or 0) > 0
+        and (alt_claims := _known_claims_count(row.get("counts") or {})) is not None
+        and alt_claims > 0
     ]
     if not alternatives:
         return ()
     best = sorted(
         alternatives,
-        key=lambda row: int((row.get("counts") or {}).get("claims", 0) or 0),
+        key=lambda row: _known_claims_count(row.get("counts") or {}) or 0,
         reverse=True,
     )[0]
-    claims = int((best.get("counts") or {}).get("claims", 0) or 0)
+    claims = _known_claims_count(best.get("counts") or {}) or 0
     return (
         (
             f"current pot has 0 claims; repo {linked.get('repo')} also links to "
@@ -457,7 +468,8 @@ def empty_pot_warnings(host: Any, pot_id: str) -> tuple[str, ...]:
 def empty_pot_guidance(host: Any, pot_id: str) -> tuple[str, ...]:
     """Recovery hints when a pot has no graph claims yet."""
     warnings = list(empty_pot_warnings(host, pot_id))
-    if int((pot_graph_counts(host, pot_id).get("claims") or 0)) != 0:
+    claims = _pot_claims_count(host, pot_id)
+    if claims is None or claims != 0:
         return tuple(warnings)
     if pot_source_count(host, pot_id) > 0:
         warnings.append(
