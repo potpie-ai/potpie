@@ -11,6 +11,7 @@ downstream step. The real config layer may add schema/validation behind the same
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -38,23 +39,48 @@ _SECRET_KEY_MARKERS: tuple[str, ...] = (
 
 _REDACTED = "<redacted>"
 
-
-def _normalize_secret_key_fragment(text: str) -> str:
-    """Lowercase and strip common separators for marker matching."""
-    normalized = text.lower()
-    for separator in ("_", "-", ".", " "):
-        normalized = normalized.replace(separator, "")
-    return normalized
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_SEPARATOR_RE = re.compile(r"[_\-.\s]+")
 
 
-_NORMALIZED_SECRET_MARKERS: tuple[str, ...] = tuple(
-    _normalize_secret_key_fragment(marker) for marker in _SECRET_KEY_MARKERS
+def _segment_key_words(text: str) -> list[str]:
+    """Break a config key into lowercase word segments.
+
+    Splits on separators (``_ - . space``) and camelCase boundaries so the
+    matcher can compare whole words instead of raw substrings (avoids false
+    positives like ``max_tokens`` or ``tokenizer``).
+    """
+    spaced = _SEPARATOR_RE.sub(" ", text)
+    spaced = _CAMEL_BOUNDARY_RE.sub(" ", spaced)
+    return [word for word in spaced.lower().split() if word]
+
+
+_MARKER_WORD_SEQUENCES: tuple[tuple[str, ...], ...] = tuple(
+    dict.fromkeys(
+        tuple(_segment_key_words(marker))
+        for marker in _SECRET_KEY_MARKERS
+        if _segment_key_words(marker)
+    )
+)
+
+# Single-word markers (e.g. ``token``) match on whole-word boundaries so
+# ``tokenizer``/``max_tokens`` are not false positives. Compound markers
+# (e.g. ``api_key`` → ``apikey``) match the joined key so separator-less
+# variants like ``apikey`` are still caught.
+_SINGLE_WORD_SECRET_MARKERS: frozenset[str] = frozenset(
+    seq[0] for seq in _MARKER_WORD_SEQUENCES if len(seq) == 1
+)
+_COMPOUND_SECRET_MARKERS: tuple[str, ...] = tuple(
+    dict.fromkeys("".join(seq) for seq in _MARKER_WORD_SEQUENCES if len(seq) > 1)
 )
 
 
 def is_secret_config_key(key: str) -> bool:
-    normalized = _normalize_secret_key_fragment(key)
-    return any(marker in normalized for marker in _NORMALIZED_SECRET_MARKERS)
+    words = _segment_key_words(key)
+    if any(word in _SINGLE_WORD_SECRET_MARKERS for word in words):
+        return True
+    joined = "".join(words)
+    return any(compound in joined for compound in _COMPOUND_SECRET_MARKERS)
 
 
 def public_config_value(key: str, value: Any) -> str | None:
