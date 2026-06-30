@@ -84,6 +84,7 @@ class _Host:
     def __init__(self, pots_service, daemon=None) -> None:
         self.pots = pots_service
         self.daemon = daemon
+        self.graph = None
 
 
 class _Daemon:
@@ -92,6 +93,19 @@ class _Daemon:
 
     def discovery(self):
         return {"base_url": "http://127.0.0.1:8765"}
+
+
+class _GraphStatus:
+    def __init__(self, counts) -> None:
+        self.counts = counts
+
+
+class _Graph:
+    def __init__(self, counts_by_pot) -> None:
+        self._counts_by_pot = counts_by_pot
+
+    def data_plane_status(self, pot_id):
+        return _GraphStatus(self._counts_by_pot.get(pot_id, {}))
 
 
 # --- source add repo . / current --------------------------------------------
@@ -159,6 +173,51 @@ def test_source_add_repo_no_default_skips_repo_default(monkeypatch) -> None:
     payload = json.loads(result.output)
     assert payload["repo_default_set"] is False
     assert pots_service.repo_defaults == {}
+
+
+def test_source_add_repo_plain_output_shows_next_action_for_empty_pot(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    pots_service = _Pots(
+        [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
+    )
+    host = _Host(pots_service)
+    host.graph = _Graph({"p1": {"claims": 0, "entities": 0}})
+    _common.set_host(host)
+
+    result = CliRunner().invoke(pots.source_app, ["add", "repo", "."])
+
+    assert result.exit_code == 0, result.output
+    assert "no ingestion or scan started" in result.output
+    assert "next actions:" in result.output
+    assert "check linked pots:" in result.output
+    assert "switch if one is already populated:" in result.output
+    assert "potpie graph mutation-template --kind repo-baseline" in result.output
+
+
+def test_source_add_repo_json_omits_next_action_when_pot_has_claims(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    pots_service = _Pots(
+        [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
+    )
+    host = _Host(pots_service)
+    host.graph = _Graph({"p1": {"claims": 12, "entities": 4}})
+    _common.set_host(host)
+    _common.set_json(True)
+
+    result = CliRunner().invoke(pots.source_app, ["add", "repo", "."])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["registration_only"] is True
+    assert "recommended_next_action" not in payload
 
 
 def test_source_list_includes_location() -> None:

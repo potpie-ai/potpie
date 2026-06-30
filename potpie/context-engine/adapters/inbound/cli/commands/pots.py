@@ -11,6 +11,7 @@ import typer
 from adapters.inbound.cli.commands._common import (
     contract,
     current_repo_identity_for_cli,
+    empty_pot_warnings,
     emit,
     fail,
     get_host,
@@ -132,6 +133,43 @@ def _repo_key_from_option(repo: str) -> str:
     if not repo_key:
         raise ValueError("--repo must resolve to a git remote or path")
     return repo_key
+
+
+def _source_add_next_action(
+    host: object,
+    *,
+    source_kind: str,
+    location: str,
+    pot_id: str,
+) -> str | None:
+    if source_kind.lower() != "repo":
+        return None
+    pot_info = pot_scope_info(host, pot_id)
+    counts = pot_info.get("counts") or {}
+    if "claims" not in counts:
+        return None
+    if int(counts.get("claims", 0) or 0) != 0:
+        return None
+    warnings = empty_pot_warnings(host, pot_id)
+    if warnings:
+        return warnings[0]
+    repo_ref = location or "current"
+    return (
+        f"pot {pot_info.get('name')} ({pot_id}) is still empty after source registration. "
+        f"Next: inspect linked pots with `potpie pot linked --repo {repo_ref}`, "
+        "switch to a populated pot, or start a graph mutation workflow with "
+        "`potpie graph mutation-template --kind repo-baseline`."
+    )
+
+
+def _source_add_next_block(*, recommended_next_action: str, repo_ref: str) -> str:
+    return (
+        "next actions:\n"
+        f"- check linked pots: potpie pot linked --repo {repo_ref}\n"
+        "- switch if one is already populated: potpie pot use <id-or-name>\n"
+        "- if this pot should be filled manually, start with:\n"
+        "  potpie graph mutation-template --kind repo-baseline"
+    )
 
 
 @pot_app.command("create")
@@ -439,9 +477,7 @@ def source_add(
         # Registration establishes the repo→pot mapping, so the target is the
         # explicit/active pot — never inferred from existing registrations.
         pot_id = resolve_pot_id(host, pot, infer_from_repo=False)
-        resolved_location = (
-            resolve_repo_location(location) if is_repo else location
-        )
+        resolved_location = resolve_repo_location(location) if is_repo else location
         started_ms = now_ms()
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_started",
@@ -495,21 +531,35 @@ def source_add(
                 "duration_ms": elapsed_ms(started_ms),
             },
         )
+        recommended_next_action = _source_add_next_action(
+            host,
+            source_kind=src.kind,
+            location=resolved_location,
+            pot_id=pot_id,
+        )
+        payload = {
+            "source_id": src.source_id,
+            "kind": src.kind,
+            "name": src.name,
+            "location": resolved_location,
+            "pot_id": pot_id,
+            "repo_default_set": repo_default_set,
+            "registration_only": True,
+        }
+        if recommended_next_action:
+            payload["recommended_next_action"] = recommended_next_action
         emit(
-            {
-                "source_id": src.source_id,
-                "kind": src.kind,
-                "name": src.name,
-                "location": resolved_location,
-                "pot_id": pot_id,
-                "repo_default_set": repo_default_set,
-                "registration_only": True,
-            },
+            payload,
             human=(
                 f"registered source {src.kind}:{src.name} ({src.source_id}) "
                 f"at {resolved_location} in pot {pot_id}\n"
                 + (f"set repo default -> {pot_id}\n" if repo_default_set else "")
                 + "no ingestion or scan started"
+                + (
+                    f"\n{_source_add_next_block(recommended_next_action=recommended_next_action, repo_ref=resolved_location)}"
+                    if recommended_next_action
+                    else ""
+                )
             ),
         )
 

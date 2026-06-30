@@ -47,6 +47,20 @@ class _Pots:
 @dataclass
 class _Host:
     pots: _Pots
+    graph: object | None = None
+
+
+@dataclass
+class _GraphStatus:
+    counts: dict[str, int]
+
+
+@dataclass
+class _Graph:
+    counts_by_pot: dict[str, dict[str, int]]
+
+    def data_plane_status(self, pot_id: str) -> _GraphStatus:
+        return _GraphStatus(counts=self.counts_by_pot.get(pot_id, {}))
 
 
 def test_source_add_plain_output_is_registration_only() -> None:
@@ -119,3 +133,26 @@ def test_source_add_repo_default_reports_unavailable_host() -> None:
     emitted = json.loads(result.output)
     assert emitted["code"] == "repo_default_unavailable"
     assert fake_pots.calls == []
+
+
+def test_source_add_json_includes_next_action_for_empty_repo_pot() -> None:
+    fake_pots = _Pots()
+    host = _Host(
+        pots=fake_pots,
+        graph=_Graph(counts_by_pot={"pot-1": {"claims": 0, "entities": 0}}),
+    )
+    _common.set_host(host)
+    _common.set_json(True)
+
+    result = CliRunner().invoke(
+        pots.source_app,
+        ["add", "repo", "owner/repo", "--pot", "pot-1", "--no-default"],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    assert emitted["registration_only"] is True
+    assert "recommended_next_action" in emitted
+    assert "pot linked --repo owner/repo" in emitted["recommended_next_action"]
+    assert "switch to a populated pot" in emitted["recommended_next_action"]
+    assert "repo-baseline" in emitted["recommended_next_action"]
