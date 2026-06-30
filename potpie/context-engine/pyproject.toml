@@ -1,0 +1,165 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.hooks.custom]
+path = "distribution_defaults_hook.py"
+
+[project]
+name = "potpie-context-engine"
+version = "0.1.0b3"
+description = "Context graph API, webhooks, CLI, and MCP."
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    "keyring>=25.0.0",
+    "mcp>=1.0.0",
+    "pillow>=10.0.0",
+    "rich>=13.0",
+    "typer>=0.15.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.0",
+    "sentry-sdk>=2.61.1,<3.0.0",
+    # Default CLI backend is FalkorDBLite on Python 3.12+.
+    "falkordblite>=0.10.0; python_version >= '3.12'",
+    # redis 8 enables maintenance notifications that break FalkorDBLite's
+    # hostless embedded connection; keep the bound wherever falkordblite ships.
+    "redis>=7.1,<8; python_version >= '3.12'",
+]
+
+[project.optional-dependencies]
+postgres = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+]
+benchmarks = [
+    "pyyaml>=6.0",
+    "openai>=1.50.0",
+]
+graph = [
+    "neo4j>=5.28.0",
+]
+falkordb = [
+    "falkordb>=1.6.1",
+    # Keep this marker for dependency metadata consumers even though Potpie
+    # itself supports Python 3.12+.
+    "falkordblite>=0.10.0; python_version >= '3.12'",
+    "redis>=7.1,<8",
+]
+embeddings = [
+    "sentence-transformers>=5.1.2",
+]
+github = [
+    "pygithub>=2.8.0",
+]
+reconciliation-agent = [
+    "pydantic-deep>=0.3.0",
+]
+hatchet = [
+    "hatchet-sdk>=1.29.0",
+]
+observability = [
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+    "opentelemetry-instrumentation-openai>=0.40b0",
+]
+all = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "neo4j>=5.28.0",
+    "falkordb>=1.6.1",
+    "falkordblite>=0.10.0; python_version >= '3.12'",
+    "redis>=7.1,<8",
+    "sentence-transformers>=5.1.2",
+    "pygithub>=2.8.0",
+    "pydantic-deep>=0.3.0",
+    "hatchet-sdk>=1.29.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+    "opentelemetry-instrumentation-openai>=0.40b0",
+]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+]
+
+[tool.hatch.build.force-include]
+"adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "adapters/inbound/cli/ui/assets/potpie-logo-static.json"
+"adapters/inbound/cli/ui/assets/potpie.png" = "adapters/inbound/cli/ui/assets/potpie.png"
+"adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
+"adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json"
+"adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json" = "adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json"
+
+[tool.hatch.build.targets.wheel]
+packages = ["domain", "application", "adapters", "bootstrap", "benchmarks", "host"]
+include = [
+    "domain/playbooks/**/*.md",
+    "adapters/inbound/cli/templates/**/*.md",
+    "adapters/inbound/cli/templates/**/*.yaml",
+    "adapters/inbound/cli/ui/assets/**/*.json",
+    "adapters/inbound/cli/ui/assets/**/*.png",
+    "adapters/inbound/cli/ui/assets/**/*.svg",
+    "scripts/**/*.py",
+    "scripts/**/*.json",
+    "scripts/**/*.mjs",
+    "benchmarks/use_cases/**/*.yaml",
+    "benchmarks/fixtures/raw_events/**/*.json",
+    "benchmarks/_legacy/data/**/*.json",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "build_config_values.py",
+    "distribution_defaults_hook.py",
+    "domain",
+    "domain/playbooks/**/*.md",
+    "application",
+    "adapters",
+    "bootstrap",
+    "benchmarks",
+    "host",
+    "domain/playbooks/**/*.md",
+    "adapters/inbound/cli/templates/**/*.md",
+    "adapters/inbound/cli/templates/**/*.yaml",
+    "adapters/inbound/cli/ui/assets/**/*.json",
+    "adapters/inbound/cli/ui/assets/**/*.png",
+    "adapters/inbound/cli/ui/assets/**/*.svg",
+    "scripts/**/*.py",
+    "scripts/**/*.json",
+    "scripts/**/*.mjs",
+]
+
+[tool.ruff]
+target-version = "py310"
+src = [".", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+markers = [
+    "unit: unit tests",
+    "integration: integration tests (no external services required, but exercise real third-party libs)",
+    "cli_auth_e2e: opt-in live CLI auth tests (Linear/Jira/Confluence); requires RUN_CLI_AUTH_E2E=1",
+    "premerge_journey: dedicated pre-merge CLI journey test (Rust required; run in premerge-cli-journey job only)",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.1.0",
+]
+
+[tool.uv]
+constraint-dependencies = [
+    "aiohttp>=3.14.1",
+    "cryptography>=48.0.1",
+    "idna>=3.15",
+    "pyjwt>=2.13.0",
+    "pydantic-settings>=2.14.2",
+    "python-multipart>=0.0.28",
+    "starlette>=1.3.1",
+    "urllib3>=2.7.0",
+]

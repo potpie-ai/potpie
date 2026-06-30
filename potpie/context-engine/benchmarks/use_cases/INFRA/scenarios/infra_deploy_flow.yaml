@@ -1,0 +1,115 @@
+id: infra_deploy_flow
+use_case: INFRA
+tier: quick
+difficulty: medium
+source_mix: dual
+universe: acme
+
+description: |
+  An SRE asks "how does a change to checkout-api actually reach prod?" The
+  agent must reconstruct the full deploy pipeline and the prod promotion
+  gate from the architecture/env docs plus the recorded deploy events.
+
+  Ground-truth (from `universe/acme/11-environments-secrets.json` plus the
+  two deploy fixtures of revision r7a3f0c1):
+    - Path: GitHub → GitHub Actions (build + push image to ECR) → ArgoCD
+      (auto-syncs on a Helm value bump in `acme/platform-infra`) → k8s
+      cluster `acme-<env>`.
+    - Prod sync is GATED on a passing staging deploy of the SAME revision.
+    - Observed in this scenario: staging deploy of rev r7a3f0c1 succeeds
+      first (argocd app `checkout-api-staging`), and ~90 minutes later the
+      same revision is promoted to prod (argocd app `checkout-api-prod`).
+      The baseline prod deploy (rev f1e2d3c4, seed) predates both.
+    - ArgoCD apps follow the `<service>-<env>` naming convention; the prod
+      app for checkout-api is `checkout-api-prod`.
+
+  Why it's hard: it's easy to describe a generic CI/CD pipeline; the agent
+  must name the *specific* Acme path (GHA→ECR→ArgoCD→k8s `acme-<env>`),
+  the auto-sync-on-Helm-bump trigger, and — most importantly — the
+  staging-gates-prod rule, evidencing it with the same-revision staging→
+  prod promotion in the deploy events.
+
+  NOTE (read-layer gating): the live snapshot read surfaces only topology
+  entities (Service / DataStore + DEPENDS_ON / USES). Deployments and the
+  promotion gate are NOT structurally returned; they are graded in the
+  synthesis judge. We anchor the structural floor on the canonical Service
+  set and forbid Service nodes minted from environment/argocd-app names.
+
+ingest:
+  - { event: deploy/checkout_staging_deploy_r7a3.json, at: "-6d", tags: [signal] }
+  - { event: deploy/checkout_prod_deploy_r7a3.json, at: "-6d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/github_chore_noise_template.json, at: "-45d..-3d", count: 12 }
+  - { event: noise/alerting_noise_template.json, at: "-30d..-2d", count: 6 }
+
+post_ingest_assertions:
+  graph_must_contain_entities:
+    - { label: Service, min_count: 7 }
+    - { label: Service, key_pattern: "service:.*checkout-api", min_count: 1 }
+  graph_must_not_contain:
+    - { label: Service, key_pattern: "(?i)(staging|prod|argocd|checkout-api-prod|checkout-api-staging)", max_count: 0 }
+    - { label: Service, key_pattern: "type:chore", max_count: 0 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: operations
+  scope: { service: checkout-api }
+  include: [infra_topology, owners, docs]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [infra_topology]
+  source_refs_min: 2
+  must_cite_event_id:
+    - universe/acme/11-environments-secrets.json
+    - deploy/checkout_prod_deploy_r7a3.json
+  must_not_cite_event_id:
+    - noise/github_chore_noise_template.json
+    - noise/alerting_noise_template.json
+
+judge:
+  pass_score: 65
+  criteria:
+    - name: pipeline_path
+      weight: 32
+      pass_threshold: 4
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer name the specific Acme deploy path — GitHub →
+        GitHub Actions (build + push image to ECR) → ArgoCD (auto-sync on a
+        Helm value bump in `acme/platform-infra`) → k8s cluster
+        `acme-<env>`? A purely generic "CI builds and deploys" with none of
+        these named stages fails this.
+    - name: staging_gates_prod
+      weight: 30
+      pass_threshold: 4
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer state that prod is GATED on a passing staging
+        deploy of the SAME revision, and ideally evidence it with the
+        observed staging→prod promotion of revision r7a3f0c1 (staging
+        first, then the same revision to prod)? Saying prod deploys
+        directly from a merge with no staging gate fails this.
+    - name: argocd_app_naming
+      weight: 20
+      pass_threshold: 3
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer correctly name the ArgoCD application for the
+        checkout-api prod deploy as `checkout-api-prod` (and follow the
+        `<service>-<env>` convention, e.g. `checkout-api-staging`)?
+    - name: no_invented_services
+      weight: 18
+      pass_threshold: 5
+      dimensions: [INFRA]
+      prompt: |
+        Are all services named drawn from the canonical Acme service list
+        (checkout-api, inventory-svc, payments-svc, notifications-svc,
+        auth-svc, web-app, analytics-pipeline)? Treating an environment
+        name (staging/prod), an ArgoCD app, or a tool (GHA, ECR, ArgoCD,
+        k8s) as if it were one of Acme's own services fails this.

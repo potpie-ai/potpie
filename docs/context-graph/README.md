@@ -1,109 +1,124 @@
 # Context Graph Docs
 
-The canonical combined context graph architecture is:
+Last reviewed: 2026-06-08.
 
-- [Context Graph Architecture](graph.md)
-- [Context Graph Features And Functionalities](features-and-functionalities.md)
-- [Context Graph Feature / Test Matrix](feature-test-matrix.md)
-- [Unified Graphiti Application Architecture](unified-graphiti-application-architecture.md)
-- [Context Graph Implementation Next Steps](implementation-next-steps.md)
-- [Context Graph Planning Next Steps](planning-next-steps.md)
-- [Timeline Subgraph](timeline.md)
-- [Context Engine Test Harness And Findings](testing-and-bugs.md)
+The Context Graph is Potpie's project-context layer for agents. Users and agents
+talk to the `potpie` CLI. Graph V1 is the current implementation target: keep
+the existing v1 compatibility surface, move intelligence into the user's harness
+through skills, and adopt the forward-compatible ontology/truth/evidence model.
+Graph V2 is the later workbench surface that exposes those internals through
+`potpie graph ...`. The same Pot Management, Graph Service, and Skill Manager
+modules run inside either a local daemon or a managed backend API. Graph state
+stays local by default unless the user logs in to a managed backend and selects a
+managed pot, or explicitly runs cloud graph sync.
 
-`graph.md` remains the canonical product architecture. The unified Graphiti application doc is the focused implementation plan for collapsing the application layer onto one Graphiti-backed graph port. `implementation-next-steps.md` is the current code-reviewed migration plan and should be treated as the priority list when implementation and older planning docs disagree.
+```mermaid
+flowchart TB
+  cg_cli["potpie CLI"]
 
-The architecture set now combines:
+  subgraph cg_local_profile["Local profile"]
+    direction TB
+    cg_local_daemon["local daemon"]
+    cg_local_services["same service modules"]
+    cg_local_store[("local stores")]
+    cg_local_daemon --> cg_local_services --> cg_local_store
+  end
 
-- the original `docs/context-graph/graph.md` architecture
-- the pot, context-wrap, source-reference, and agent-integration requirements
-- the minimal agent context port: `context_resolve`, `context_search`, `context_record`, and `context_status`
-- the current `app/src/context-engine` implementation review
-- the gap analysis and recommended next steps
+  subgraph cg_managed_profile["Managed backend"]
+    direction TB
+    cg_managed_api["managed backend API"]
+    cg_managed_services["same service modules"]
+    cg_hosted_store[("hosted stores")]
+    cg_managed_api --> cg_managed_services --> cg_hosted_store
+  end
 
-Keep product-level architecture updates in `docs/context-graph/graph.md`. Keep implementation migration details for the one-port Graphiti application layer in `docs/context-graph/unified-graphiti-application-architecture.md` and the current code-backed priority order in `docs/context-graph/implementation-next-steps.md`.
+  subgraph cg_event_ledger["Event Ledger"]
+    direction TB
+    cg_ledger["managed or self-hosted<br/>webhooks + query/filter + replay tokens"]
+  end
 
-Use `docs/context-graph/planning-next-steps.md` for API/product-surface grouping. Use `implementation-next-steps.md` for the current engineering direction: remove compatibility graph write branches, collapse reads and writes behind the Graphiti-backed graph layer, deepen the ingestion agent, and expose provenance/freshness/conflict state to consumers.
-
-## Benchmarks
-
-Comprehensive benchmark support lives under
-`app/src/context-engine/benchmarks/`. The script entrypoint is:
-
-```bash
-uv run python app/src/context-engine/scripts/benchmark_context_engine.py http-e2e
+  cg_cli --> cg_local_daemon
+  cg_cli -. "login / managed pot / cloud sync" .-> cg_managed_api
+  cg_cli -. "ledger config/pull" .-> cg_ledger
+  cg_local_services -. "pull events" .-> cg_ledger
+  cg_managed_services -. "consume events" .-> cg_ledger
 ```
 
-The benchmark dataset models the intended product contract, including PR data
-as it arrives through `SourceControlPort` (PR metadata, changed files, commits,
-review comments, issue comments, linked issues, and bounded diff snippets) and
-agent recipes expressed through `context_resolve` parameters. Reports include
-scenario scores, assertion details, latency percentiles, source/fallback checks,
-and optional baseline regression detection.
+## Start Here
 
-## Implementation Status
+| Doc | What it answers |
+|---|---|
+| [`vision.md`](./vision.md) | What are we building, and what are the product constraints? |
+| [`architecture.md`](./architecture.md) | What are the pieces, runtime flows, graph workbench contract, extension points, and implementation rules? |
+| [`graphv1.md`](./graphv1.md) | What is the desired architecture for the current implementation, including harness-owned intelligence and V2-compatible ontology? |
+| [`graphv2.md`](./graphv2.md) | What is the future graph workbench surface, read-view model, and explicit proposal/commit flow? |
+| [`workbench-ontology.md`](./workbench-ontology.md) | What is the detailed Graph V2 command contract, seed ontology, subgraph/view map, mutation DSL, and ontology evolution process? |
+| [`graphv2-implementation-plan.md`](./graphv2-implementation-plan.md) | What code changes should move the current V1.5 implementation to the V2 workbench surface? |
+| [`cli-flow.md`](./cli-flow.md) | What should the shared CLI journey and command contract look like across local and managed profiles? |
+| [`observability.md`](./observability.md) | What should logs, traces, metrics, and readiness report? |
+| [`bench-plan.md`](./bench-plan.md) | How do we validate graph quality across backends? |
 
-Phase 1, the canonical ontology foundation, is implemented in:
+## Target OSS Default
 
-- [`app/src/context-engine/domain/ontology.py`](../../app/src/context-engine/domain/ontology.py)
-- [`app/src/context-engine/application/use_cases/reconciliation_validation.py`](../../app/src/context-engine/application/use_cases/reconciliation_validation.py)
+```bash
+pip install potpie
+potpie setup --repo . --agent claude
+potpie status
+```
 
-The ontology module is the code-level catalog for public canonical labels, edge types, allowed relationships, required properties, lifecycle/status validation, and the current ontology version. Generic structural reconciliation mutations are validated against this catalog before they can be applied.
+`potpie setup` installs/starts the daemon service. The daemon-hosted setup flow
+then provisions local config, local graph/storage dependencies, the active local
+`default` pot, repo source registration, and optional skills. There is no local
+working-tree scan in setup. Users only pass `--pot <name>` when the first local
+pot should have a different name.
 
-Phase 2, source references, freshness, and verification metadata, is implemented in:
+Managed backend access is opt-in and visibly scoped:
 
-- [`app/src/context-engine/domain/source_references.py`](../../app/src/context-engine/domain/source_references.py)
-- [`app/src/context-engine/domain/intelligence_models.py`](../../app/src/context-engine/domain/intelligence_models.py)
-- [`app/src/context-engine/application/services/context_resolution.py`](../../app/src/context-engine/application/services/context_resolution.py)
-- [`app/src/context-engine/adapters/inbound/http/api/v1/context/router.py`](../../app/src/context-engine/adapters/inbound/http/api/v1/context/router.py)
-- [`app/src/context-engine/adapters/inbound/mcp/server.py`](../../app/src/context-engine/adapters/inbound/mcp/server.py)
+```bash
+potpie login
+potpie pot list --managed
+potpie use <managed-pot-name> --managed
+```
 
-The resolver still exposes source behavior through `context_resolve`, not a separate source tool. Requests can now pass `mode`, `source_policy`, `include`, `exclude`, and scoped `source_refs`. Responses include normalized `source_refs`, a `freshness` report, explicit `fallbacks`, and recommended verification actions when source-backed context is missing or unverified.
+`potpie config set cloud.backend_url <url>` points login at Potpie managed or a
+compatible self-hosted backend. A local pot and a managed pot use the same CLI
+surface; `--local` and `--managed` flags filter or disambiguate when needed.
 
-Phase 3, the minimal agent context port, is implemented in:
+### FalkorDB (lightweight local backend) — wiring pending
 
-- [`app/src/context-engine/domain/agent_context_port.py`](../../app/src/context-engine/domain/agent_context_port.py)
-- [`app/src/context-engine/domain/intelligence_policy.py`](../../app/src/context-engine/domain/intelligence_policy.py)
-- [`app/src/context-engine/application/services/context_resolution.py`](../../app/src/context-engine/application/services/context_resolution.py)
-- [`app/src/context-engine/adapters/inbound/http/api/v1/context/router.py`](../../app/src/context-engine/adapters/inbound/http/api/v1/context/router.py)
-- [`app/src/context-engine/adapters/inbound/mcp/server.py`](../../app/src/context-engine/adapters/inbound/mcp/server.py)
+`GRAPH_DB_BACKEND=falkordb` selects the embedded FalkorDBLite backend
+(`pip install "context-engine[falkordb]"`). The reader/writer modules live at
+`adapters/outbound/graph/falkordb_{reader,writer}.py`, but they are not yet
+wrapped behind the `GraphBackend` port — selecting `falkordb` currently raises
+`NotImplementedError` in the ingestion server. Use the default `neo4j` until a
+`FalkorDBGraphBackend` adapter lands.
 
-The agent-facing MCP surface is now the four-tool port: `context_resolve`, `context_search`, `context_record`, and `context_status`. Specialized structural reads remain available as internal HTTP query endpoints for compatibility, but they are no longer registered as separate MCP tools. `context_resolve` now accepts richer scope fields, `budget`, and `as_of`, and returns the common agent envelope with `answer`, `facts`, `evidence`, `source_refs`, `coverage`, `freshness`, `fallbacks`, and `recommended_next_actions`.
+Managed or self-hosted integration events are also opt-in:
 
-Phase 4, project map expansion, is implemented as the first canonical project-map read path in:
+```bash
+potpie login
+potpie ledger use managed
+potpie ledger pull --source <id>
+```
 
-- [`app/src/context-engine/domain/intelligence_models.py`](../../app/src/context-engine/domain/intelligence_models.py)
-- [`app/src/context-engine/domain/intelligence_policy.py`](../../app/src/context-engine/domain/intelligence_policy.py)
-- [`app/src/context-engine/domain/ports/intelligence_provider.py`](../../app/src/context-engine/domain/ports/intelligence_provider.py)
-- [`app/src/context-engine/adapters/outbound/intelligence/hybrid_graph.py`](../../app/src/context-engine/adapters/outbound/intelligence/hybrid_graph.py)
-- [`app/src/context-engine/adapters/outbound/neo4j/structural.py`](../../app/src/context-engine/adapters/outbound/neo4j/structural.py)
+This inspects managed Event Ledger history without writing to the local graph.
 
-`context_resolve` now plans and returns a `project_map` family for project-wide orientation: purpose, repositories, services, components, features, docs, deployments, runbooks, local workflows, scripts, config references, preferences, and agent instructions. This is exposed through existing `intent`, `scope`, and `include` parameters rather than new public tools. The structural adapter reads compact canonical nodes and relationship references only; full source payloads remain behind source refs and external resolvers.
+## Vocabulary
 
-Phase 5, debugging memory and prior fixes, is implemented as the first reusable debugging read path in:
+| Term | Meaning |
+|---|---|
+| **Pot** | Workspace/tenant boundary. Every query, source, inbox item, claim, semantic mutation, and graph operation is scoped to one pot. A pot can be local or managed; the active pot determines routing. |
+| **Daemon shell** | Local background process for lifecycle, auth, IPC, health, logs, service hosting, and local dependency setup. It hosts setup services; it is not the business layer. |
+| **Pot Management Service** | Control plane for pots, active pot, source registry, graph readiness, lifecycle, and export/import metadata. |
+| **Graph Service** | Data plane for Graph V1 compatibility wrappers and the future Graph V2 workbench: status, read views, semantic mutation validation, commit, history, inbox, and projection maintenance. |
+| **GraphBackend** | Swappable graph capability bundle: mutation, claim query, semantic search, inspection, analytics, snapshot. |
+| **Skill Manager Service** | CLI-managed skill catalog and installation layer for agent harnesses. Skills teach agents how to use the CLI; they are not graph facts or new tools. |
+| **Event Ledger** | Separate managed or self-hostable source-event service for webhooks, integration polling, event history, query/filter, provider-side cursors, and event-page replay tokens. Graph consumers store their own cursor, retry state, and applied position; graph state is not stored in the ledger. |
 
-- [`app/src/context-engine/domain/intelligence_models.py`](../../app/src/context-engine/domain/intelligence_models.py)
-- [`app/src/context-engine/domain/intelligence_policy.py`](../../app/src/context-engine/domain/intelligence_policy.py)
-- [`app/src/context-engine/adapters/outbound/intelligence/hybrid_graph.py`](../../app/src/context-engine/adapters/outbound/intelligence/hybrid_graph.py)
-- [`app/src/context-engine/adapters/outbound/neo4j/structural.py`](../../app/src/context-engine/adapters/outbound/neo4j/structural.py)
-
-`context_resolve` now plans and returns `debugging_memory` for `prior_fixes`, `diagnostic_signals`, `incidents`, and `alerts`. It reads compact canonical `Fix`, `BugPattern`, `Investigation`, `DiagnosticSignal`, `Incident`, and `Alert` records plus relationship references for affected scope, signals, and related changes. `context_record` accepts debugging-oriented record types such as `fix`, `bug_pattern`, `investigation`, `diagnostic_signal`, and `incident_summary`; reconciliation is responsible for turning those records into canonical graph mutations.
-
-Phase 6, agent instructions, skills, and operating workflows, is implemented in:
-
-- [`app/src/context-engine/domain/agent_context_port.py`](../../app/src/context-engine/domain/agent_context_port.py)
-- [`app/src/context-engine/adapters/inbound/http/api/v1/context/router.py`](../../app/src/context-engine/adapters/inbound/http/api/v1/context/router.py)
-- [`app/src/context-engine/adapters/inbound/mcp/server.py`](../../app/src/context-engine/adapters/inbound/mcp/server.py)
-- [`app/src/context-engine/adapters/inbound/cli/templates/agent_bundle/AGENTS.md`](../../app/src/context-engine/adapters/inbound/cli/templates/agent_bundle/AGENTS.md)
-- [`app/src/context-engine/adapters/inbound/cli/templates/agent_bundle/.agents/skills/potpie-agent-context/SKILL.md`](../../app/src/context-engine/adapters/inbound/cli/templates/agent_bundle/.agents/skills/potpie-agent-context/SKILL.md)
-
-The code now exposes a stable agent port manifest and `context_resolve` recipes for feature, debugging, review, operations, docs, and onboarding workflows. `context_status` returns the manifest and recommended recipe for an optional intent, MCP tool descriptions steer agents to the four-tool port, and generated `AGENTS.md` plus repo-local skills explain how to gather bounded context without introducing one-off tools for every context type.
-
-Phase 7, quality, drift management, and scale, is implemented as the first graph-quality policy and response layer in:
-
-- [`app/src/context-engine/domain/graph_quality.py`](../../app/src/context-engine/domain/graph_quality.py)
-- [`app/src/context-engine/domain/source_references.py`](../../app/src/context-engine/domain/source_references.py)
-- [`app/src/context-engine/domain/ontology.py`](../../app/src/context-engine/domain/ontology.py)
-- [`app/src/context-engine/application/services/context_resolution.py`](../../app/src/context-engine/application/services/context_resolution.py)
-
-`context_resolve` and `context_status` now return a `quality` report with freshness/source-sync metrics, quality issues, source-of-truth policy, freshness TTL policy, and recommended maintenance jobs such as `verify_entity`, `refresh_scope`, `resync_source_scope`, and `expire_stale_facts`. The ontology includes first-pass `QualityIssue`, `MaintenanceJob`, and `MaterializedAccessPath` entities plus edges for `FLAGS`, `REPAIRS`, and `MATERIALIZES`, so future drift and housekeeping workflows can write canonical graph quality state instead of burying it in logs.
+The active package currently lives under
+[`potpie/context-engine/`](../../potpie/context-engine/). If docs conflict,
+prefer this order for current implementation work: `graphv1.md`, `vision.md`,
+`architecture.md`, then the operational docs. Use `graphv2.md` and
+`workbench-ontology.md` for the later workbench surface. Older references to
+`resolve` / `search` / `record` / `context_*` should be treated as V1
+compatibility wrappers, not as the long-term product contract.

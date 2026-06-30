@@ -743,8 +743,10 @@ Local Daytona development notes:
   - Container registry UI: `http://localhost:5100`
   - MinIO console: `http://localhost:9001` (`minioadmin` / `minioadmin`)
   - MailDev: `http://localhost:1080`
-- Defaults to the Daytona checkout at `/Users/nandan/Desktop/Dev/daytona`;
-  override with `DAYTONA_REPO_PATH=/path/to/daytona`.
+- Uses the Daytona compose stack vendored in-repo at
+  `app/src/sandbox/daytona/` by default (no external clone needed). To build
+  Daytona images from source instead, point at a clone with
+  `DAYTONA_REPO_PATH=/path/to/daytona`.
 - Do not pass `--project-directory` to docker compose. Volume binds in the
   Daytona compose file are relative to the compose file's own directory and
   silently auto-create stub directories at the wrong location otherwise.

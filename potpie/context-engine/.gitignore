@@ -1,0 +1,3 @@
+# Distribution defaults and build metadata generated at wheel build time.
+bootstrap/_distribution_defaults.py
+bootstrap/_build_info.py

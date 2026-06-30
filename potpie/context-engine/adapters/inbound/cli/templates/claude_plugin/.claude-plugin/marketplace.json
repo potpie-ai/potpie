@@ -1,0 +1,13 @@
+{
+  "name": "potpie",
+  "owner": {
+    "name": "Potpie"
+  },
+  "plugins": [
+    {
+      "name": "potpie",
+      "source": "./",
+      "description": "Project-memory context engine: model-free nudges surface graph context, while the in-session harness decides and records durable semantic memory."
+    }
+  ]
+}

@@ -1,114 +1,82 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
 [project]
 name = "potpie"
-version = "0.1.0"
-description = "Add your description here"
+version = "2.0.0b3"
+description = "Potpie context engine"
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.12,<3.15"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Potpie AI", email = "engineering@potpie.ai" }]
+maintainers = [{ name = "Potpie AI", email = "engineering@potpie.ai" }]
+keywords = ["ai", "agents", "code-intelligence", "knowledge-graph", "developer-tools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development",
+]
 dependencies = [
-    "context-engine[all]",
-    "potpie-integrations",
-    "aiohttp>=3.13.4",
-    "alembic>=1.17.1",
-    "anthropic>=0.72.0",
-    "logfire[litellm]>=3.2.0",
-    "asyncpg>=0.30.0",
-    "authlib>=1.6.11",
-    "boto3>=1.40.67",
-    "celery>=5.5.3",
-    "chardet>=5.2.0",
-    "cryptography>=46.0.7",
-    "email-inspector>=0.1.4",
-    "fastapi>=0.121.0",
-    "firebase-admin>=7.1.0",
-    "firecrawl-py>=4.6.0",
-    "flower>=2.0.1",
-    "gitpython>=3.1.50",
-    "google-cloud-secret-manager>=2.25.0",
-    "google-cloud-storage>=3.5.0",
-    "grep-ast>=0.6.0",
-    "gunicorn>=23.0.0",
-    "httpx>=0.28.1",
-    "instructor>=1.15.0",
-    "jiter>=0.11.1",
-    "joblib>=1.5.2",
-    "kombu>=5.5.4",
-    "langchain>=1.0.3",
-    "langchain-core>=1.3.3",
-    "langsmith>=0.8.0",
-    "langgraph>=1.0.10",
-    "litellm>=1.83.10,<1.84.0",
-    "loguru>=0.7.3",
-    "neo4j>=5.28.2",
-    "networkx>=3.4.2",
-    "newrelic>=11.2.0",
-    "nltk>=3.9.4",
-    "openai>=2.7.1",
-    "pathspec>=0.12.1",
-    "pillow>=12.2.0",
-    "postgres>=4.0",
-    "posthog>=6.9.0",
-    "protobuf>=6.33.5",
-    "psycopg-binary>=3.2.12",
-    "pydantic-ai-slim[ag-ui,anthropic,bedrock,cli,cohere,evals,fastmcp,google,groq,huggingface,logfire,mcp,openai,retries,spec,temporal,ui,vertexai,xai]>=1.74.0",
-    "pydantic-ai-todo>=0.1.6",
-    "pydantic[email]>=2.12.4",
-    "qdrant-client>=1.12.0",
-    "pygithub>=2.8.1",
-    "pygments>=2.20.0",
-    "pyjwt>=2.12.1",
-    "pynacl>=1.6.2",
-    "python-dotenv>=1.2.2",
-    "pyasn1>=0.6.3",
-    "python-multipart>=0.0.27",
-    "redis>=7.0.1",
-    "python-socketio>=5.11.0",
-    "requests>=2.33.1",
-    "resend>=2.19.0",
-    "scikit-learn>=1.7.2",
-    "sentence-transformers>=5.1.2",
-    "sentry-sdk[fastapi]>=2.43.0",
-    "sqlalchemy>=2.0.44",
-    "tiktoken>=0.12.0",
-    "tqdm>=4.67.1",
-    "transformers>=4.57.1",
-    "tree-sitter>=0.20.4",
-    "tree-sitter-language-pack>=0.13.0",
-    "mako>=1.3.12",
-    "fastmcp>=3.2.0",
-    "lupa>=2.7",
-    "tornado>=6.5.5",
-    "urllib3>=2.7.0",
-    "uuid6>=2025.0.1",
-    "uvicorn>=0.38.0",
-    "greenlet>=3.3.0",
-    "graphiti-core>=0.28.2",
-    "griffe>=2.0.1",
-    "tldextract>=5.3.1",
-    "hatchet-sdk>=1.29.0",
-    "typer>=0.15.0",
-    "parsing",
-    "potpie-sandbox",
-    "daytona>=0.134.0",
+    "potpie-context-engine[all]==0.1.0b3",
+]
+
+[project.scripts]
+potpie = "adapters.inbound.cli.host_cli:main"
+potpie-mcp = "adapters.inbound.mcp.server:main"
+potpie-daemon = "host.daemon_main:main"
+
+[project.urls]
+Homepage = "https://potpie.ai"
+Documentation = "https://docs.potpie.ai"
+Source = "https://github.com/potpie-ai/potpie"
+Issues = "https://github.com/potpie-ai/potpie/issues"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/LICENSE",
+    "/README.md",
+    "/pyproject.toml",
+]
+exclude = [
+    "/.gitignore",
 ]
 
 [tool.uv]
 # litellm>=1.83.10 clears CVE-2026-40217 (<1.83.10) but pins openai==2.24.0, which conflicts with
-# pydantic-ai + context-engine; override to the root stack. litellm still declares python-dotenv==1.0.1.
-# Root uses pydantic-ai-slim without the mistral extra so mistralai is not pulled (fixes universal lock on 3.13).
-override-dependencies = ["python-dotenv>=1.2.2", "openai>=2.7.1"]
+# pydantic-ai + context-engine; override to the root stack.
+override-dependencies = [
+    "python-dotenv>=1.2.2",
+    "openai>=2.7.1",
+    "idna>=3.15",
+    "cryptography>=48.0.1",
+    "aiohttp>=3.14.1",
+    "starlette>=1.3.1",
+    "pyjwt>=2.13.0",
+    "pydantic-settings>=2.14.2",
+    # torch 2.12.0 is flagged vulnerable; no stable patch yet — cap below 2.12 for releases.
+    "torch>=2.11.0,<2.12.0",
+]
+
+[tool.uv.workspace]
+members = ["potpie/*"]
 
 [tool.uv.sources]
-parsing = { path = "app/src/parsing" }
-context-engine = { path = "app/src/context-engine", editable = true }
-potpie-integrations = { path = "app/src/integrations", editable = true }
-potpie-sandbox = { path = "app/src/sandbox", editable = true }
-
-[project.scripts]
-potpie-seed = "seed.cli:main"
+potpie-context-engine = { workspace = true, editable = true }
 
 [dependency-groups]
 dev = [
-    "bandit>=1.8.6",
     "black>=26.3.1",
     "isort>=7.0.0",
     "pre-commit>=4.3.0",
@@ -119,172 +87,5 @@ dev = [
     "ruff>=0.14.3",
 ]
 
-[tool.setuptools.packages.find]
-include = ["potpie*", "app*", "seed*"]
-
-[tool.bandit]
-exclude_dirs = ["tests", "app/alembic"]
-skips = ["B101", "B601"]                # Skip assert_used and shell injection warnings
-
-[tool.ruff]
-exclude = ["tests", "app/alembic"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-markers = [
-    "unit: Unit tests",
-    "integration: Integration tests",
-    "asyncio: Async tests",
-    "github_live: marks tests that hit the live GitHub API",
-    "stress: Stress tests (exclude with -m 'not stress')",
-    "real_parse: Real parsing tests requiring Postgres + Neo4j (exclude with -m 'not real_parse')",
-]
-asyncio_mode = "auto"
-addopts = "-v --strict-markers --tb=short --disable-warnings -ra --durations=5"
-
-[tool.coverage.run]
-source = ["app"]
-# Exclude migrations, tests, and entrypoints not run by pytest.
-# Also exclude very large, hard-to-unit-test modules (agent/parsing internals) so coverage % reflects testable surface.
-omit = [
-    "app/alembic/*",
-    "*/tests/*",
-    "app/celery/worker.py",  # Celery worker process entrypoint (never run in pytest)
-    "app/modules/intelligence/agents/chat_agents/tool_helpers.py",
-    "app/modules/parsing/graph_construction/parsing_helper.py",
-    "app/modules/intelligence/agents/chat_agents/multi_agent/stream_processor.py",
-    "app/modules/intelligence/tools/code_changes_manager/tool_functions.py",
-    "app/modules/parsing/knowledge_graph/inference_service.py",
-    "app/src/integrations/integrations/application/integrations_service.py",
-    "app/modules/repo_manager/repo_manager.py",
-    "app/modules/parsing/graph_construction/parsing_repomap.py",
-    "app/modules/intelligence/tools/jira_tools/jira_client.py",
-    "app/modules/intelligence/tools/local_search_tools/tunnel_utils.py",
-    "app/modules/intelligence/tools/code_changes_manager/routing.py",
-    "app/modules/repo_manager/sync_helper.py",
-    "app/modules/tunnel/tunnel_service.py",
-    "app/modules/tunnel/socket_server.py",
-    "app/modules/tunnel/socket_service.py",
-    "app/modules/intelligence/provider/provider_service.py",
-    "app/modules/intelligence/agents/chat_agents/pydantic_agent.py",
-    "app/modules/intelligence/agents/custom_agents/custom_agents_service.py",
-    "app/modules/media/media_service.py",
-    "app/modules/intelligence/tools/change_detection/change_detection_tool.py",
-    "app/modules/intelligence/agents/chat_agents/multi_agent/delegation_streamer.py",
-    "app/modules/intelligence/tools/code_changes_manager/manager.py",
-    "app/modules/intelligence/tools/code_query_tools/create_pr_workflow_tool.py",
-    "app/modules/intelligence/agents/chat_agents/message_compressor.py",
-    "app/modules/intelligence/tools/code_query_tools/code_analysis.py",
-    "app/modules/intelligence/tools/code_changes_manager/git_ops.py",
-    "app/modules/utils/gvisor_runner.py",
-    "app/modules/utils/install_gvisor.py",
-    "app/modules/utils/email_helper.py",
-    "app/src/integrations/integrations/adapters/inbound/http/integrations_router.py",
-    "app/modules/utils/firebase_setup.py",
-    "app/modules/code_provider/github/github_service.py",
-    "app/modules/code_provider/github/github_provider.py",
-    "app/modules/conversations/conversation/conversation_service.py",
-    "app/modules/knowledge_graph/knowledge_graph_router.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/blast_radius_agent.py",
-    "app/modules/intelligence/tools/kg_based_tools/ask_knowledge_graph_queries_tool.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/specgen/spec_gen_agent.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/specgen/research_agent.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/specgen/architecture_agent.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/specgen/assembler_agent.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/specgen/technical_design_agent.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/specgen/requirements_agent.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/specgen/validator_agent.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/specgen/enrichment_agent.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/specgen/spec_models.py",
-    "app/modules/intelligence/tools/local_search_tools/search_semantic_tool.py",
-    "app/modules/intelligence/agents/chat_agents/multi_agent/delegation_manager.py",
-    "app/modules/intelligence/agents/chat_agents/history_processor.py",
-    "app/modules/intelligence/agents/chat_agents/pydantic_multi_agent.py",
-    "app/modules/intelligence/agents/agents_service.py",
-    "app/modules/intelligence/agents/agents_controller.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/code_gen_agent.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/debug_agent.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/sweb_debug_agent.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/low_level_design_agent.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/qna_agent.py",
-    "app/modules/intelligence/tools/tool_service.py",
-    "app/modules/intelligence/tools/code_query_tools/bash_command_tool.py",
-    "app/modules/intelligence/tools/code_query_tools/git_push_tool.py",
-    "app/modules/intelligence/tools/code_query_tools/get_code_file_structure.py",
-    "app/modules/intelligence/tools/code_query_tools/get_code_graph_from_node_id_tool.py",
-    "app/modules/intelligence/tools/code_query_tools/get_node_neighbours_from_node_id_tool.py",
-    "app/modules/intelligence/tools/code_query_tools/intelligent_code_graph_tool.py",
-    "app/modules/intelligence/tools/web_tools/code_provider_add_pr_comment.py",
-    "app/modules/intelligence/tools/local_search_tools/search_workspace_symbols_tool.py",
-    "app/modules/intelligence/tools/local_search_tools/search_definitions_tool.py",
-    "app/modules/intelligence/tools/kg_based_tools/get_code_from_node_id_tool.py",
-    "app/modules/intelligence/tools/jira_tools/create_jira_issue_tool.py",
-    "app/modules/intelligence/tools/jira_tools/update_jira_issue_tool.py",
-    "app/modules/intelligence/tools/jira_tools/add_jira_comment_tool.py",
-    "app/modules/intelligence/tools/confluence_tools/get_confluence_page_tool.py",
-    "app/modules/intelligence/tools/linear_tools/get_linear_issue_tool.py",
-    "app/modules/parsing/graph_construction/parsing_service.py",
-    "app/modules/parsing/graph_construction/parsing_controller.py",
-    "app/modules/parsing/graph_construction/parsing_validator.py",
-    "app/modules/intelligence/memory/chat_history_service.py",
-    "app/modules/intelligence/prompts/prompt_service.py",
-    "app/modules/intelligence/tracing/logfire_tracer.py",
-    "app/modules/auth/sso_providers/google_provider.py",
-    "app/modules/conversations/utils/conversation_routing.py",
-    "app/modules/parsing/services/inference_cache_service.py",
-    "app/modules/parsing/utils/encoding_detector.py",
-    "app/modules/intelligence/tools/registry/resolver.py",
-    "app/modules/intelligence/tools/registry/annotation_logging.py",
-    "app/modules/intelligence/agents/chat_agents/multi_agent/utils/multimodal_utils.py",
-    "app/modules/intelligence/agents/chat_agents/multi_agent/utils/message_history_utils.py",
-    "app/modules/code_provider/github/github_router.py",
-    "app/modules/event_bus/celery_bus.py",
-    "app/main.py",
-    "app/modules/intelligence/prompts/prompt_model.py",
-    "app/modules/intelligence/context_config.py",
-    "app/modules/intelligence/agents/multi_agent_config.py",
-    "app/modules/intelligence/tools/registry/exceptions.py",
-    "app/modules/intelligence/tools/code_changes_manager/constants.py",
-    "app/core/base_store.py",
-    "app/modules/parsing/knowledge_graph/inference_schema.py",
-    "app/modules/intelligence/tools/code_changes_manager/__init__.py",
-    "app/modules/intelligence/provider/exceptions.py",
-    "app/modules/intelligence/agents/custom_agents/custom_agent_model.py",
-    "app/modules/intelligence/agents/chat_agents/system_agents/specgen/__init__.py",
-    "app/modules/intelligence/agents/chat_agents/multi_agent/agent_factory.py",
-    "app/modules/intelligence/agents/chat_agents/multi_agent/execution_flows.py",
-    "app/modules/intelligence/agents/chat_agents/multi_agent/utils/tool_utils.py",
-    "app/modules/intelligence/agents/chat_agents/multi_agent/utils/tool_call_stream_manager.py",
-    "app/modules/auth/unified_auth_service.py",
-    "app/modules/code_provider/repo_manager_wrapper.py",
-    "app/modules/code_provider/provider_factory.py",
-    "app/modules/code_provider/code_provider_service.py",
-    "app/modules/conversations/conversations_router.py",
-    "app/modules/auth/auth_router.py",
-    "app/api/router.py",
-    "app/modules/conversations/conversation/conversation_controller.py",
-    "app/modules/conversations/access/access_service.py",
-    "app/modules/code_provider/code_provider_controller.py",
-    "app/modules/intelligence/agents/chat_agents/multi_agent/agent_instructions.py",
-    "app/modules/intelligence/tools/code_query_tools/get_file_content_by_path.py",
-    "app/modules/intelligence/tools/code_query_tools/apply_changes_tool.py",
-    "app/modules/intelligence/tools/code_query_tools/checkout_worktree_branch_tool.py",
-    "app/modules/intelligence/tools/code_query_tools/git_commit_tool.py",
-    "app/celery/celery_app.py",
-    "app/celery/tasks/agent_tasks.py",
-    "app/celery/tasks/parsing_tasks.py",
-    "app/celery/tasks/base_task.py",
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-]
-show_missing = true
-# Enforce minimum coverage on PRs: full run (unit+integration) must be >= 49%.
-# Unit-only phase ~30%; run_tests.py passes --cov-fail-under=0 for non-final phases.
-fail_under = 49
+[tool.ruff.lint]
+extend-select = ["S"]

@@ -1,0 +1,99 @@
+# Prometheus alert rules for context-engine observability.
+#
+# OTLP→Prometheus naming: ``ce.batch.reaped_total`` becomes
+# ``ce_batch_reaped_total``; histograms expose ``_bucket/_sum/_count``.
+# Load via Prometheus ``rule_files:`` (or Grafana Mimir/Alerting).
+
+groups:
+  - name: context-engine
+    rules:
+      # The ONLY true dead-letter in the pipeline. Every firing is a
+      # lost/stuck batch a worker never finished. Page on it.
+      - alert: ContextEngineStaleBatchReaped
+        expr: increase(ce_batch_reaped_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: page
+        annotations:
+          summary: "Stale batch reaped (pot {{ $labels.pot_id }})"
+          description: >
+            reap_stale_batches failed an in-flight batch — a worker is
+            presumed dead and there is no broker redelivery. Investigate
+            the worker before backlog grows.
+
+      # Windowed-5min ingestion canary. Sustained high time-in-pending
+      # means the windowed flusher is wedged (events never get enqueued).
+      - alert: ContextEngineIngestionStalled
+        expr: >
+          histogram_quantile(0.95,
+            sum by (le) (rate(ce_batch_time_in_pending_ms_bucket[15m]))
+          ) > 600000
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "Ingestion p95 time-in-pending > 10m"
+          description: >
+            Events are sitting in pending batches far past the 5-minute
+            window. Check the windowed flush beat task and the worker pool.
+
+      - alert: ContextEngineAgentTimeouts
+        expr: increase(ce_agent_timeout_total[30m]) > 0
+        for: 0m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Reconciliation agent run timed out (pot {{ $labels.pot_id }})"
+          description: >
+            agent.run() hit CONTEXT_ENGINE_AGENT_RUN_TIMEOUT_SECS. Repeated
+            timeouts mean batches are too large or the model is degraded.
+
+      - alert: ContextEngineReconcileFailureRate
+        expr: >
+          sum(rate(ce_events_failed_total[30m]))
+            /
+          clamp_min(
+            sum(rate(ce_events_failed_total[30m]))
+              + sum(rate(ce_events_reconciled_total[30m])), 1)
+          > 0.2
+        for: 15m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Event reconcile failure rate > 20% (30m)"
+          description: "More than 1 in 5 events are failing reconciliation."
+
+      - alert: ContextEngineDependencyDown
+        expr: ce_dependency_up == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "Dependency {{ $labels.dependency }} unreachable"
+          description: "GET /ready reports {{ $labels.dependency }} down."
+
+      - alert: ContextEngineResolveLatencyHigh
+        expr: >
+          histogram_quantile(0.95,
+            sum by (le) (rate(ce_resolve_latency_ms_bucket[10m]))
+          ) > 8000
+        for: 10m
+        labels:
+          severity: warn
+        annotations:
+          summary: "context_resolve p95 latency > 8s"
+          description: "The read path is slow; check readers and Neo4j."
+
+      # LLM cost spike — token burn rate jumped vs. the trailing day.
+      - alert: ContextEngineLLMCostSpike
+        expr: >
+          sum(rate(ce_llm_tokens_total[1h]))
+          > 3 * sum(rate(ce_llm_tokens_total[1d] offset 1d))
+        for: 30m
+        labels:
+          severity: warn
+        annotations:
+          summary: "LLM token rate 3x the trailing-day baseline"
+          description: >
+            Includes the previously-invisible extraction/embedding
+            calls. Check for a backfill storm or a prompt regression.

@@ -1,0 +1,61 @@
+# Use an official Python runtime as a parent image
+FROM python:3.12-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y git procps supervisor curl ca-certificates build-essential && rm -rf /var/lib/apt/lists/*
+
+# Install Rust toolchain for local PyO3/maturin path dependencies
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Ensure Rust tooling is available while building Python dependencies
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:0.9.6 /uv /uvx /bin/
+
+# Copy dependency metadata first for better layer caching
+COPY pyproject.toml uv.lock ./
+COPY legacy/pyproject.toml ./legacy/pyproject.toml
+COPY potpie/context-engine ./potpie/context-engine
+COPY potpie/integrations ./potpie/integrations
+COPY potpie/parsing ./potpie/parsing
+COPY potpie/sandbox ./potpie/sandbox
+
+# Install dependency layers first, including the local Rust extension
+RUN uv sync --frozen --all-packages --no-install-project
+
+# Ensure the virtual environment binaries are on PATH
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+
+# Copy the entire project directory into the container
+COPY . .
+
+# Install the project after the full source tree is available
+RUN uv sync --frozen --all-packages
+
+# Env path for newrelic.ini
+ENV NEW_RELIC_CONFIG_FILE=/app/newrelic.ini
+
+# Install the Supervisor config from the source tree copied by `COPY . .`
+# above. A dedicated `COPY <conf> /etc/...` instruction has repeatedly been
+# served from a stale Docker layer cache on the build node (shipping an old
+# single-program conf under a correct commit tag). `RUN cp` depends on the
+# `COPY . .` layer, which busts whenever any file in the context changes, so
+# /etc always matches the committed conf regardless of build-cache state.
+RUN cp /app/legacy/deployment/stage/celery/celery-api-supervisord.conf /etc/supervisor/conf.d/celery-api-supervisord.conf
+
+# Expose the port that the app runs on
+EXPOSE 8001
+
+# Expose the port for Flower
+EXPOSE 5555
+
+# Define environment variable
+ENV PYTHONUNBUFFERED=1
+
+# Run Supervisor when the container launches, but start only Celery and Flower
+CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/celery-api-supervisord.conf"]

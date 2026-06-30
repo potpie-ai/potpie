@@ -1,0 +1,72 @@
+# Promtail config: tail Docker container stdout/stderr, parse our JSONL log
+# lines into labels Loki/Grafana can query.
+#
+# The legacy app emits one JSON object per line to stdout with at
+# least these keys: timestamp, level, logger, function, line, message — plus
+# any flattened obs_fields / obs_context (request_id, conversation_id, user_id,
+# task_id, run_id, ...).
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: potpie-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          # Only tail containers tagged with our project label so we don't pick
+          # up unrelated containers on the same daemon.
+          - name: label
+            values: ["potpie.observability=true"]
+    relabel_configs:
+      # Promote a few container metadata fields to Loki labels (low-cardinality
+      # only — keep labels small or Loki indexes blow up).
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: container
+      - source_labels: ["__meta_docker_container_label_potpie_service"]
+        target_label: service
+      - source_labels: ["__meta_docker_container_label_potpie_env"]
+        target_label: env
+
+    pipeline_stages:
+      # Parse the JSONL line and lift high-value fields into labels / structured
+      # metadata. Keep label cardinality low: only level + service + env stay
+      # as labels; high-cardinality ids (request_id, conversation_id, ...) stay
+      # in the parsed payload, which Loki indexes via structured metadata
+      # rather than labels.
+      - json:
+          expressions:
+            level:
+            logger:
+            request_id:
+            conversation_id:
+            run_id:
+            user_id:
+            task_id:
+            project_id:
+      - labels:
+          level:
+      - structured_metadata:
+          logger:
+          request_id:
+          conversation_id:
+          run_id:
+          user_id:
+          task_id:
+          project_id:
+      # Use the log line's own timestamp instead of the ingestion clock.
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+          fallback_formats:
+            - "2006-01-02T15:04:05.000000Z07:00"
+            - "2006-01-02T15:04:05Z07:00"

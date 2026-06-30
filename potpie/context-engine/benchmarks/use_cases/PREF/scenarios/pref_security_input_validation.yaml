@@ -1,0 +1,147 @@
+id: pref_security_input_validation
+use_case: PREF
+tier: quick
+difficulty: hard
+source_mix: full
+universe: acme
+
+description: |
+  An engineer is adding a new external, auth-touching endpoint to
+  auth-svc (`POST /auth/api-tokens`) and asks the agent for the security
+  rules that apply before opening the PR. Three sources across three
+  connectors reinforce the same security posture:
+
+    - ADR-031 (`docs/adr/031-input-validation-and-authz.md`) — the
+      canonical decision: validate at the boundary with Pydantic v2;
+      authn-then-authz in middleware (15-min JWTs verified against
+      `JWT_PUBLIC_KEY`, scopes via `@requires_scope(...)`); no secrets
+      or PII in logs/errors/responses (`acme.security.Secret` renders
+      `***`, PII only as salted hash, ACME031); parameterised SQL only
+      (ACME030); output encoding for user-controlled strings.
+    - A Notion "Security Review Checklist" page that operationalises
+      ADR-031 into a per-PR checklist for auth-touching/external
+      endpoints, naming bench-user-14 (auth lead) as the default
+      security reviewer.
+    - A Slack #security thread where bench-user-16 asks about this exact
+      endpoint and bench-user-14 + bench-user-4 answer: Pydantic model at
+      the signature (not a raw dict), `@requires_scope` + middleware JWT,
+      Secret-wrap the returned token (never log it, not even at info),
+      parameterised lookup query, tag the PR intent=security.
+
+  Ground truth the answer must cover for this endpoint: (1) boundary
+  validation — parse the request body into a Pydantic v2 model at the
+  handler signature, constraints via `Field(...)`; (2) middleware authz —
+  `@requires_scope("tokens:create")` with JWT verified in middleware
+  before the handler, 15-min expiry; (3) no secrets in logs — wrap the
+  minted token in `acme.security.Secret`, never log it; (4) parameterised
+  SQL for the token lookup (ACME030); and route the PR as intent=security
+  to bench-user-14.
+
+  Why it's hard: three connectors (repo_docs + notion + slack) must be
+  fused into one coherent security answer; the three sources overlap but
+  none is complete alone (the Slack thread has the endpoint-specific
+  guidance, the ADR has the full rule set, the Notion page has the
+  reviewer/process). The judge checks each pillar independently so an
+  answer strong on validation but silent on the no-secrets-in-logs rule
+  scores low.
+
+ingest:
+  - { event: notion/pref_security_review_auth_endpoint.json, at: "-21d", tags: [signal] }
+  - { event: slack/security_thread__auth_endpoint_validation.json, at: "-20d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/github_chore_noise_template.json, at: "-44d..-3d", count: 30 }
+  - { event: noise/slack_chatter_noise_template.json, at: "-44d..-3d", count: 12 }
+  - { event: noise/linear_issue_noise_template.json, at: "-44d..-3d", count: 10 }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): ADR-031 (Document/Decision), the Notion
+  # checklist page, and the Slack thread are reconciled, but the topology
+  # read path surfaces only Service/DataStore + DEPENDS_ON/USES — not
+  # Document/Decision/Person/Discussion nodes. We anchor the structural
+  # floor on the auth-svc Service the endpoint targets and grade the
+  # security posture via retrieval + judge. graph_must_not_contain holds
+  # precision against the heavy multi-connector distractor noise.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*auth-svc", min_count: 1 }
+  graph_must_not_contain:
+    - { label: Issue, key_pattern: "NOISE-.*", max_count: 0 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: security
+  scope: { service: auth-svc }
+  include: [coding_preferences, decisions, docs]
+  mode: deep
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [coding_preferences]
+  source_refs_min: 2
+  must_cite_event_id:
+    - universe/acme/24-adr-031-security-input-validation.json
+    - notion/pref_security_review_auth_endpoint.json
+  must_not_cite_event_id:
+    - noise/github_chore_noise_template.json
+    - noise/slack_chatter_noise_template.json
+    - noise/linear_issue_noise_template.json
+  forbid_in_answer:
+    - "I don't have information"
+    - "no security conventions"
+
+judge:
+  pass_score: 55
+  criteria:
+    - name: boundary_validation
+      weight: 25
+      pass_threshold: 4
+      dimensions: [PREF]
+      prompt: |
+        Does the answer require boundary input validation — parse the
+        request body into a Pydantic v2 model at the handler signature
+        (no raw `dict`/`Request` indexing), with constraints via
+        `Field(...)`, citing ADR-031 §1? A generic "validate input"
+        without the boundary-Pydantic specifics scores partial.
+    - name: middleware_authz
+      weight: 25
+      pass_threshold: 3
+      dimensions: [PREF]
+      prompt: |
+        Does the answer require authn-then-authz in middleware — JWT
+        (15-min, verified against `JWT_PUBLIC_KEY`) checked in middleware
+        before the handler, scope enforced via `@requires_scope(...)`,
+        never inside business logic (ADR-031 §2)? Mentioning the concrete
+        scope (e.g. `tokens:create`) from the Slack thread is a bonus.
+    - name: no_secrets_in_logs
+      weight: 25
+      pass_threshold: 4
+      dimensions: [PREF]
+      prompt: |
+        Does the answer require that the freshly minted token (and any
+        secret/PII) is never logged — wrapped in `acme.security.Secret`
+        which renders `***`, PII only as salted hash (ACME031), and a 500
+        never echoing tokens/DB URLs (ADR-031 §3/§6)? This is the most
+        commonly missed pillar; an answer silent on it must not pass this
+        criterion.
+    - name: parameterised_sql
+      weight: 10
+      pass_threshold: 2
+      dimensions: [PREF]
+      prompt: |
+        Does the answer require parameterised SQL for the token lookup
+        (no f-string/`%`-formatted SQL, ACME030)? Bonus for noting the
+        PR should be tagged intent=security and routed to bench-user-14.
+    - name: no_invented_rules
+      weight: 15
+      pass_threshold: 5
+      dimensions: [PREF]
+      prompt: |
+        Does every cited rule map to ADR-031, the Notion security
+        checklist, or the #security Slack thread? Valid identifiers:
+        ADR-031, ACME030, ACME031, acme.security.Secret, @requires_scope,
+        JWT_PUBLIC_KEY, 15-minute JWT, auth-svc, bench-user-14,
+        bench-user-4, bench-user-16. Any other rule code, ADR, decorator,
+        or invented constraint must fail this criterion.
