@@ -26,6 +26,7 @@ from adapters.inbound.cli.commands import (
     ledger,
     pots,
     service,
+    telemetry,
 )
 from adapters.inbound.cli.commands import query as query_cmds
 from adapters.inbound.cli.commands import skills as skills_cmds
@@ -112,6 +113,7 @@ def build_app() -> typer.Typer:
     app.add_typer(graph.backend_app, name="backend")
     app.add_typer(skills_cmds.skills_app, name="skills")
     app.add_typer(cloud.cloud_app, name="cloud")
+    app.add_typer(telemetry.telemetry_app, name="telemetry")
 
     return app
 

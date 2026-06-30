@@ -17,7 +17,7 @@ import sys
 import time
 
 from adapters.outbound.daemon_process.pidfile import read_pid_file
-from bootstrap.runtime_settings import load_runtime_settings, project_child_environment
+from bootstrap.runtime_settings import RuntimeSettings, project_child_environment
 
 
 class DaemonStartError(Exception):
@@ -58,7 +58,7 @@ def start_detached(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fp = log_path.open("a")
     child_env = project_child_environment(
-        load_runtime_settings(),
+        _load_daemon_child_runtime_settings(),
         os.environ,
         overrides={
             "CONTEXT_ENGINE_HOME": str(home),
@@ -137,3 +137,9 @@ def _unlink(path: pathlib.Path) -> None:
         path.unlink()
     except FileNotFoundError:
         pass
+
+
+def _load_daemon_child_runtime_settings() -> RuntimeSettings:
+    from adapters.inbound.cli.telemetry.settings import load_cli_runtime_settings
+
+    return load_cli_runtime_settings()

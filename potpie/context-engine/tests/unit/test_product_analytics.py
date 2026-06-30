@@ -27,7 +27,11 @@ _PRODUCT_ANALYTICS_ENV_NAMES = (
 
 
 @pytest.fixture(autouse=True)
-def _clear_product_analytics_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clear_product_analytics_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     for name in _PRODUCT_ANALYTICS_ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("POTPIE_ENVIRONMENT", "test")
@@ -75,6 +79,39 @@ def test_product_analytics_settings_respect_kill_switch(monkeypatch) -> None:
     assert settings.api_key == "phc_test"
 
 
+def test_product_analytics_settings_respect_persisted_telemetry_disable(
+    monkeypatch,
+) -> None:
+    from adapters.inbound.cli.telemetry.preferences import (
+        TelemetryPreferences,
+        save_preferences,
+    )
+
+    monkeypatch.setenv("POTPIE_POSTHOG_API_KEY", "phc_test")
+    save_preferences(TelemetryPreferences(enabled=False))
+
+    settings = load_product_analytics_settings()
+
+    assert settings.enabled is False
+    assert settings.api_key == "phc_test"
+
+
+def test_product_analytics_settings_persisted_enable_preserves_existing_gates(
+    monkeypatch,
+) -> None:
+    from adapters.inbound.cli.telemetry.preferences import (
+        TelemetryPreferences,
+        save_preferences,
+    )
+
+    monkeypatch.setenv("POTPIE_POSTHOG_API_KEY", "phc_test")
+    save_preferences(TelemetryPreferences(enabled=True))
+
+    settings = load_product_analytics_settings()
+
+    assert settings.enabled is True
+
+
 def test_product_analytics_settings_use_distribution_defaults_without_runtime_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -96,7 +133,7 @@ def test_product_analytics_settings_use_distribution_defaults_without_runtime_en
     assert settings.host == "https://dist.invalid"
 
 
-def test_product_analytics_runtime_env_overrides_baked_config(
+def test_product_analytics_runtime_env_overrides_distribution_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -124,7 +161,7 @@ def test_product_analytics_runtime_env_overrides_baked_config(
         ("POTPIE_PRODUCT_ANALYTICS_ENABLED", "0"),
     ],
 )
-def test_product_analytics_runtime_opt_out_overrides_baked_enablement(
+def test_product_analytics_runtime_opt_out_overrides_distribution_enablement(
     monkeypatch: pytest.MonkeyPatch,
     env_name: str,
     env_value: str,
