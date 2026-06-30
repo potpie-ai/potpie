@@ -11,7 +11,6 @@ from typing import NoReturn
 import typer
 from click.exceptions import Abort
 
-from bootstrap.runtime_settings import ensure_runtime_environment_loaded
 from adapters.outbound.cli_auth.github import (
     GitHubDeviceFlowError,
     build_provider_credentials,
@@ -20,6 +19,7 @@ from adapters.outbound.cli_auth.github import (
     request_device_code,
     verify_account,
 )
+from potpie.runtime.settings import ensure_runtime_environment_loaded
 from potpie.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
 from adapters.outbound.cli_auth.credentials_store import (
     CredentialStoreError,
@@ -268,7 +268,12 @@ def github_login_impl() -> None:
         )
         return
 
-    assert account is not None and payload is not None
+    if account is None or payload is None:
+        _capture_unexpected_auth_error(
+            RuntimeError("GitHub login completed without account credentials."),
+            title="GitHub login failed",
+            verbose=v,
+        )
     stored = store.get_provider_credentials("github")
     login = str(stored.get("account", {}).get("login") or account.login)
     email = str(stored.get("account", {}).get("email") or account.email or "")

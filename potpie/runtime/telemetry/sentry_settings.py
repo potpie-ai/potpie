@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from importlib import metadata
 from typing import ClassVar
 
-from potpie.runtime.settings import build_git_sha, load_runtime_settings
+from potpie.runtime.settings import RuntimeSettings, build_git_sha, load_runtime_settings
 
 
 @dataclass(frozen=True)
@@ -26,7 +26,10 @@ class SentrySettings:
 
 
 def load_sentry_settings() -> SentrySettings:
-    settings = load_runtime_settings()
+    return sentry_settings_from_runtime(load_runtime_settings())
+
+
+def sentry_settings_from_runtime(settings: RuntimeSettings) -> SentrySettings:
     return SentrySettings(
         enabled=(
             settings.sentry_dsn is not None
@@ -69,5 +72,6 @@ __all__ = [
     "SentrySettings",
     "default_cli_release",
     "load_sentry_settings",
+    "sentry_settings_from_runtime",
     "telemetry_environment",
 ]

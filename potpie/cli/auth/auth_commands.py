@@ -38,11 +38,11 @@ from adapters.outbound.cli_auth.credentials_store import (
     get_integration_status,
     get_integration_tokens,
 )
-from bootstrap.runtime_settings import ensure_runtime_environment_loaded
 from adapters.outbound.cli_auth.integration_session import (
     ensure_valid_integration_tokens,
     token_needs_refresh,
 )
+from potpie.runtime.settings import ensure_runtime_environment_loaded
 from adapters.outbound.cli_auth.integration_verify import verify_integration_access
 from potpie.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
 from potpie.cli.telemetry.onboarding_events import (

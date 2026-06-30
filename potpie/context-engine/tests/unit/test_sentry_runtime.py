@@ -120,6 +120,39 @@ def test_configure_cli_sentry_disabled_does_not_import(monkeypatch) -> None:
     assert "sentry_sdk" not in sys.modules
 
 
+def test_configure_cli_sentry_disabled_only_resets_cli_capture_runtime(
+    monkeypatch,
+) -> None:
+    fake = _FakeSentry()
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
+    enabled = SentrySettings(
+        enabled=True,
+        dsn="https://public@example.invalid/1",
+        environment="staging",
+        release="potpie-cli@test",
+        dist=None,
+    )
+    disabled = SentrySettings(
+        enabled=False,
+        dsn="https://public@example.invalid/1",
+        environment="staging",
+        release="potpie-cli@test",
+        dist=None,
+    )
+
+    configure_cli_sentry(enabled)
+    configure_cli_sentry(disabled)
+    capture_unexpected_cli_error(
+        RuntimeError("boom"),
+        error_code="unexpected_cli_error",
+        error_kind="unexpected",
+    )
+
+    assert sentry_runtime._configured is False
+    assert sentry_metrics_runtime.metrics_configured() is True
+    assert fake.captured == []
+
+
 def test_capture_unexpected_cli_error_sets_allowlisted_scope(monkeypatch) -> None:
     fake = _FakeSentry()
     monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
