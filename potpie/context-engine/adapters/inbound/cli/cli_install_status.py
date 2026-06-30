@@ -100,7 +100,7 @@ def _python_from_script(script_path: str | None) -> str | None:
     try:
         with open(script_path, encoding="utf-8") as handle:
             first = handle.readline().strip()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     if first.startswith("#!"):
         return first[2:].strip() or None

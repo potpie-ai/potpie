@@ -46,6 +46,7 @@ def test_collect_cli_install_status_from_uv_tool(monkeypatch: pytest.MonkeyPatch
     assert status["on_path"] is True
     assert status["primary_path"] == "/Users/me/.local/bin/potpie"
     assert status["uv_tool_installed"] is True
+    assert status["uv_tool_version"] == "0.1.0"
     assert status["install_method"] == "uv_tool"
     assert status["python_version"] == "3.12.12"
     assert "uv tool list" in status["diagnostic_commands"]
@@ -57,6 +58,12 @@ def test_cli_install_human_when_missing_from_path() -> None:
     human = cis.cli_install_human({"on_path": False})
     assert "NOT on PATH" in human
     assert "make cli-install" in human
+
+
+def test_python_from_script_ignores_binary_executable(tmp_path) -> None:
+    binary = tmp_path / "potpie"
+    binary.write_bytes(b"\xff\xfe\xfd\xfc")
+    assert cis._python_from_script(str(binary)) is None
 
 
 def test_doctor_includes_cli_install(monkeypatch: pytest.MonkeyPatch) -> None:
