@@ -103,9 +103,6 @@ def _embedded_graph_profile(name: str) -> str | None:
     normalized = _normalize_service_name(name)
     if normalized in _EMBEDDED_GRAPH_PROFILES:
         return normalized
-    active = _normalize_service_name(getattr(get_host().backend, "profile", "") or "")
-    if normalized == active and active in _EMBEDDED_GRAPH_PROFILES:
-        return active
     return None
 
 
