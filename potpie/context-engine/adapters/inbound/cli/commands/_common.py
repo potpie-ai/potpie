@@ -331,22 +331,25 @@ def _cli_metric_attributes(
     return attributes
 
 
-def resolve_pot_id(
+def resolve_pot_scope(
     host: Any, explicit: str | None = None, *, infer_from_repo: bool = True
-) -> str:
-    """Resolve ``--pot`` ref → id, else current-repo pot, else active pot.
+) -> tuple[str, str]:
+    """Resolve pot id and how it was chosen for CLI scope hints.
 
-    ``infer_from_repo=False`` skips current-repo inference and goes straight to
-    the active pot. Source registration uses this: ``source add repo .`` is the
-    command that *establishes* the repo→pot mapping, so inferring its target
-    from existing registrations would route the new source to the wrong pot
-    (or fail as ambiguous when other pots already track the same repo).
+  ``resolved_via`` is one of ``explicit``, ``repo_default``, ``linked_repo``, or
+  ``active_pot``. See :func:`resolve_pot_id` for resolution order.
+
+  ``infer_from_repo=False`` skips current-repo inference and goes straight to
+  the active pot. Source registration uses this: ``source add repo .`` is the
+  command that *establishes* the repo→pot mapping, so inferring its target
+  from existing registrations would route the new source to the wrong pot
+  (or fail as ambiguous when other pots already track the same repo).
     """
     pots = host.pots
     if explicit:
         for pot in pots.list_pots():
             if explicit in (pot.pot_id, pot.name):
-                return pot.pot_id
+                return pot.pot_id, "explicit"
         fail(
             code="pot_not_found",
             message=f"No pot matching '{explicit}'.",
@@ -355,14 +358,14 @@ def resolve_pot_id(
     repo_identity = _current_repo_identity() if infer_from_repo else None
     default_pot = _repo_default_pot_id(host, repo_identity)
     if default_pot:
-        return default_pot
+        return default_pot, "repo_default"
     matches = _pots_matching_current_repo(host) if infer_from_repo else []
     active = pots.active_pot()
     if len(matches) == 1:
-        return matches[0][0]
+        return matches[0][0], "linked_repo"
     if len(matches) > 1:
         if active is not None and any(active.pot_id == pid for pid, _ in matches):
-            return active.pot_id
+            return active.pot_id, "active_pot"
         names = ", ".join(f"{name} ({pid})" for pid, name in matches)
         fail(
             code="ambiguous_pot",
@@ -375,7 +378,15 @@ def resolve_pot_id(
             message="No active pot, and the current repo is not registered as a source in any pot.",
             next_action="run 'potpie setup', or create a pot with 'potpie pot create <name> --use' and register this repo with 'potpie source add repo .'",
         )
-    return active.pot_id
+    return active.pot_id, "active_pot"
+
+
+def resolve_pot_id(
+    host: Any, explicit: str | None = None, *, infer_from_repo: bool = True
+) -> str:
+    """Resolve ``--pot`` ref → id, else current-repo pot, else active pot."""
+    pot_id, _ = resolve_pot_scope(host, explicit, infer_from_repo=infer_from_repo)
+    return pot_id
 
 
 def current_repo_identity_for_cli() -> str | None:
@@ -428,15 +439,38 @@ def pot_scope_info(host: Any, pot_id: str) -> dict[str, Any]:
     }
 
 
-def pot_scope_human(host: Any, pot_id: str) -> str:
+def pot_scope_resolution_human(
+    resolved_via: str, *, repo: str | None = None
+) -> str:
+    if resolved_via == "explicit":
+        return "via --pot"
+    if resolved_via == "repo_default":
+        return (
+            f"via repo default for {repo}" if repo else "via repo default"
+        )
+    if resolved_via == "linked_repo":
+        return f"via linked repo {repo}" if repo else "via linked repo"
+    return "via active pot"
+
+
+def pot_scope_human(
+    host: Any,
+    pot_id: str,
+    *,
+    resolved_via: str | None = None,
+    repo: str | None = None,
+) -> str:
     info = pot_scope_info(host, pot_id)
     counts = info.get("counts") or {}
     claims = counts.get("claims", 0)
     entities = counts.get("entities", 0)
-    return (
+    scope = (
         f"pot={info.get('name')} ({pot_id}) "
         f"sources={info.get('source_count', 0)} claims={claims} entities={entities}"
     )
+    if resolved_via:
+        scope += f" {pot_scope_resolution_human(resolved_via, repo=repo)}"
+    return scope
 
 
 def empty_pot_warnings(host: Any, pot_id: str) -> tuple[str, ...]:
@@ -644,9 +678,11 @@ __all__ = [
     "pot_graph_counts",
     "pot_scope_human",
     "pot_scope_info",
+    "pot_scope_resolution_human",
     "pot_source_count",
     "repo_pot_candidates",
     "resolve_pot_id",
+    "resolve_pot_scope",
     "set_host",
     "set_store",
     "set_json",
