@@ -1,8 +1,8 @@
 """``CredentialStore`` — the credential-persistence port for the CLI auth subsystem.
 
 A core-owned driven port: the inbound CLI auth commands depend on this contract,
-and outbound adapters implement it (the keychain-backed
-``adapters.outbound.cli_auth.credentials.KeyringCredentialStore`` in production; an
+and outbound adapters implement it (the file-backed
+``adapters.outbound.cli_auth.credentials.FileCredentialStore`` in production; an
 in-memory fake in tests). The concrete is built at the composition root
 (``bootstrap.cli_auth_wiring.build_credential_store``), so no inbound code
 constructs an adapter directly.

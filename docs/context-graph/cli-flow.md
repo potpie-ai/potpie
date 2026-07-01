@@ -177,8 +177,20 @@ control plane, Graph Service data plane, GraphBackend capabilities/projections,
 Event Ledger binding and consumer backlog, Skill Manager drift, login state when
 relevant, and next action.
 
-`doctor` is local-profile diagnostics: paths, logs, auth/socket state,
-migrations, and skill drift.
+`doctor` is local-profile diagnostics: daemon/backend readiness, CLI install
+facts (uv tool env, PATH, python shebang), and recommended follow-up commands.
+Do not use `python -m pip show potpie-context-engine` for local dev installs —
+the package lives in the uv tool environment. Prefer `uv tool list`,
+`which -a potpie`, and `make cli-status`.
+
+```bash
+uv tool list
+which -a potpie
+head -n 1 "$(command -v potpie)"
+make cli-status
+potpie doctor
+potpie --json doctor
+```
 
 ### Local Daemon Admin
 
@@ -350,7 +362,9 @@ skills directory:
 | Codex | `$HOME/.agents/skills/<skill>/SKILL.md` |
 
 Use `--scope project --path .` when a repo-local install should be committed or
-shared with the repository.
+shared with the repository. Instruction files such as `AGENTS.md` and
+`CLAUDE.md` are merged through Potpie managed blocks; existing user-authored
+content is preserved and Potpie only appends or updates its marked section.
 
 ## Output Contract
 

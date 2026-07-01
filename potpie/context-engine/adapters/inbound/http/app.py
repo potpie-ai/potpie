@@ -12,7 +12,7 @@ from adapters.inbound.http.webhooks.router import webhooks_router
 from bootstrap.logging_setup import configure_logging
 
 try:
-    __version__ = importlib.metadata.version("context-engine")
+    __version__ = importlib.metadata.version("potpie-context-engine")
 except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 

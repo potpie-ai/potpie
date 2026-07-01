@@ -5,13 +5,10 @@ from __future__ import annotations
 import json
 import os
 import stat
-import sys
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Optional
-
-import keyring
-from keyring.errors import KeyringError
 
 from adapters.outbound.cli_auth.errors import CliAuthError
 
@@ -19,7 +16,6 @@ _CREDENTIALS_FILENAME = "credentials.json"
 _INTEGRATION_SECRETS_FILENAME = "integration_secrets.json"
 _CONFIG_DIR_NAME = "potpie"
 _LEGACY_CONFIG_DIR_NAME = "context-engine"
-_KEYRING_SERVICE = "potpie"
 _POTPIE_API_KEY_SECRET = "potpie_api_key"
 _POTPIE_FIREBASE_ID_TOKEN_SECRET = "potpie_firebase_id_token"
 _POTPIE_FIREBASE_REFRESH_TOKEN_SECRET = "potpie_firebase_refresh_token"
@@ -63,17 +59,17 @@ def credentials_path() -> Path:
 
 
 def integration_secrets_path() -> Path:
-    """Linux integration token store (GitHub, Linear, Jira, Confluence)."""
+    """Local file-backed secret store for Potpie and integration tokens."""
     return config_dir() / _INTEGRATION_SECRETS_FILENAME
 
 
 def integration_token_storage() -> str:
-    """Return metadata token_storage value for CLI integrations on this platform."""
-    return "file" if sys.platform == "linux" else "keychain"
+    """Return metadata token_storage value for CLI integrations."""
+    return "file"
 
 
-def _storage_label(token_storage: str | None) -> str:
-    return "local credentials file" if token_storage == "file" else "system keychain"
+def _storage_label(_token_storage: str | None) -> str:
+    return "local credentials file"
 
 
 def _integration_secret_store_label() -> str:
@@ -116,8 +112,27 @@ def _write_payload(payload: dict[str, Any]) -> None:
 
 def _write_payload_to_path(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    body = json.dumps(payload, indent=2) + "\n"
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp:
+            temp_path = Path(temp.name)
+            temp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+            temp.write(body)
+            temp.flush()
+            os.fsync(temp.fileno())
+        os.replace(temp_path, path)
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
 
 
 def _norm_secret_name(name: str) -> str:
@@ -125,27 +140,6 @@ def _norm_secret_name(name: str) -> str:
     if not key:
         raise ValueError("secret name must be non-empty")
     return key
-
-
-def _is_integration_secret_name(name: str) -> bool:
-    """Secret keys used by GitHub, Linear, Jira, and Confluence CLI integrations."""
-    key = _norm_secret_name(name)
-    if key in {
-        _GITHUB_TOKEN_SECRET,
-        _LINEAR_ACCESS_TOKEN_SECRET,
-        _LINEAR_REFRESH_TOKEN_SECRET,
-        _JIRA_TOKEN_SECRET,
-        _CONFLUENCE_TOKEN_SECRET,
-        _ATLASSIAN_LEGACY_TOKEN_SECRET,
-    }:
-        return True
-    return key.startswith("linear_access_token_") or key.startswith(
-        "linear_refresh_token_"
-    )
-
-
-def _uses_linux_integration_file_storage(name: str) -> bool:
-    return sys.platform == "linux" and _is_integration_secret_name(name)
 
 
 def _read_integration_secrets_file() -> dict[str, str]:
@@ -200,7 +194,7 @@ def _load_integration_file_secret(name: str) -> str:
     return _read_integration_secrets_file().get(key, "")
 
 
-def _delete_integration_file_secret(name: str) -> None:
+def _delete_integration_file_secret(name: str, *, label: str | None = None) -> None:
     key = _norm_secret_name(name)
     secrets = _read_integration_secrets_file()
     if key not in secrets:
@@ -210,52 +204,32 @@ def _delete_integration_file_secret(name: str) -> None:
         _write_integration_secrets_file(secrets)
     except OSError as exc:
         raise CredentialStoreError(
-            f"Failed to remove {key} from local credentials file: {exc}"
+            f"Failed to remove {label or key} from local credentials file: {exc}"
         ) from exc
 
 
 def store_secure_secret(name: str, secret: str, *, label: str | None = None) -> None:
-    """Store a secret in the system keychain under the Potpie CLI service."""
+    """Store a secret in the local file-backed secret store."""
     key = _norm_secret_name(name)
     try:
-        keyring.set_password(_KEYRING_SERVICE, key, secret)
-    except KeyringError as exc:
-        raise CredentialStoreError(
-            f"Failed to store {label or key} in system keychain: {exc}"
-        ) from exc
-    except Exception as exc:
-        raise CredentialStoreError(
-            f"Failed to store {label or key} in system keychain: {exc}"
-        ) from exc
+        _store_integration_file_secret(key, secret, label=label)
+    except CredentialStoreError:
+        raise
 
 
 def load_secure_secret(name: str, *, label: str | None = None) -> str:
-    """Load a secret from the system keychain, returning an empty string if absent."""
+    """Load a secret from the local file-backed secret store."""
     key = _norm_secret_name(name)
-    try:
-        secret = keyring.get_password(_KEYRING_SERVICE, key)
-    except KeyringError as exc:
-        raise CredentialStoreError(
-            f"Failed to read {label or key} from system keychain: {exc}"
-        ) from exc
-    except Exception as exc:
-        raise CredentialStoreError(
-            f"Failed to read {label or key} from system keychain: {exc}"
-        ) from exc
-    return secret or ""
+    return _load_integration_file_secret(key)
 
 
 def delete_secure_secret(name: str, *, label: str | None = None) -> None:
-    """Remove a secret from the system keychain if the backend permits it."""
+    """Remove a secret from the local file-backed secret store."""
     key = _norm_secret_name(name)
     try:
-        keyring.delete_password(_KEYRING_SERVICE, key)
-    except KeyringError:
-        pass
-    except Exception as exc:
-        raise CredentialStoreError(
-            f"Failed to remove {label or key} from system keychain: {exc}"
-        ) from exc
+        _delete_integration_file_secret(key, label=label)
+    except CredentialStoreError:
+        raise
 
 
 def _norm_integration_key(provider: str) -> str:
@@ -320,12 +294,12 @@ def list_integration_metadata() -> dict[str, dict[str, Any]]:
 
 def get_stored_api_key() -> str:
     try:
-        from_keychain = load_secure_secret(
+        from_secret_store = load_secure_secret(
             _POTPIE_API_KEY_SECRET,
             label="Potpie API key",
         )
-        if from_keychain.strip():
-            return from_keychain.strip()
+        if from_secret_store.strip():
+            return from_secret_store.strip()
     except CredentialStoreError:
         pass
     v = read_credentials().get("api_key")
@@ -378,7 +352,7 @@ def write_potpie_auth_metadata(
         "potpie",
         {
             "auth_type": auth_type,
-            "token_storage": "keychain",
+            "token_storage": "file",
             "created_at": created_at,
         },
     )
@@ -464,12 +438,12 @@ def get_potpie_firebase_id_token() -> str:
 
 
 def get_potpie_firebase_api_key() -> str:
-    from_keychain = load_secure_secret(
+    from_secret_store = load_secure_secret(
         _POTPIE_FIREBASE_API_KEY_SECRET,
         label="Potpie Firebase API key",
     )
-    if from_keychain.strip():
-        return from_keychain.strip()
+    if from_secret_store.strip():
+        return from_secret_store.strip()
     metadata = get_integration_metadata("potpie")
     return str(metadata.get("firebase_api_key") or "").strip()
 
@@ -610,15 +584,6 @@ def register_pot_alias(name: str, pot_id: str) -> None:
 
 
 def _get_secret_or_empty(name: str, *, label: str) -> str:
-    if _uses_linux_integration_file_storage(name):
-        value = _load_integration_file_secret(name)
-        if value:
-            return value
-        try:
-            legacy = load_secure_secret(name, label=label)
-        except CredentialStoreError as exc:
-            raise ProviderCredentialError(str(exc)) from exc
-        return legacy
     try:
         return load_secure_secret(name, label=label)
     except CredentialStoreError as exc:
@@ -626,45 +591,29 @@ def _get_secret_or_empty(name: str, *, label: str) -> str:
 
 
 def _store_secret(name: str, secret: str, *, label: str) -> str:
-    if _uses_linux_integration_file_storage(name):
-        try:
-            _store_integration_file_secret(name, secret, label=label)
-        except CredentialStoreError as exc:
-            raise ProviderCredentialError(str(exc)) from exc
-        return "file"
     try:
         store_secure_secret(name, secret, label=label)
-        return "keychain"
+        return "file"
     except CredentialStoreError as exc:
         raise ProviderCredentialError(str(exc)) from exc
 
 
 def _delete_secret(name: str, *, label: str) -> None:
-    if _uses_linux_integration_file_storage(name):
-        try:
-            _delete_integration_file_secret(name)
-        except CredentialStoreError as exc:
-            raise ProviderCredentialError(str(exc)) from exc
-        try:
-            delete_secure_secret(name, label=label)
-        except CredentialStoreError as exc:
-            raise ProviderCredentialError(str(exc)) from exc
-        return
     try:
         delete_secure_secret(name, label=label)
     except CredentialStoreError as exc:
         raise ProviderCredentialError(str(exc)) from exc
 
 
-def _store_keychain_secret(label: str, username: str, secret: str) -> str:
+def _store_file_secret(label: str, username: str, secret: str) -> str:
     return _store_secret(username, secret, label=label)
 
 
-def _load_keychain_secret(label: str, username: str) -> str:
+def _load_file_secret(label: str, username: str) -> str:
     return _get_secret_or_empty(username, label=label)
 
 
-def _delete_keychain_secret(label: str, username: str) -> None:
+def _delete_file_secret(label: str, username: str) -> None:
     _delete_secret(username, label=label)
 
 
@@ -794,15 +743,15 @@ def save_linear_organization_tokens(
     orgs = dict(prior.get("organizations") or {})
     access_token = str(tokens.get("access_token") or "").strip()
     refresh_token = str(tokens.get("refresh_token") or "").strip()
-    token_storage = "keychain"
+    token_storage = "file"
     if access_token:
-        token_storage = _store_keychain_secret(
+        token_storage = _store_file_secret(
             "Linear access token",
             _linear_access_token_secret(org_id),
             access_token,
         )
     if refresh_token:
-        refresh_token_storage = _store_keychain_secret(
+        refresh_token_storage = _store_file_secret(
             "Linear refresh token",
             _linear_refresh_token_secret(org_id),
             refresh_token,
@@ -862,23 +811,23 @@ def get_linear_tokens(organization_id: str | None = None) -> dict[str, Any]:
     org_entry = orgs.get(org_id)
     if not isinstance(org_entry, dict):
         return {}
-    access_token = _load_keychain_secret(
+    access_token = _load_file_secret(
         "Linear access token",
         _linear_access_token_secret(org_id),
     )
     if not access_token:
-        access_token = _load_keychain_secret(
+        access_token = _load_file_secret(
             "Linear access token",
             _LINEAR_ACCESS_TOKEN_SECRET,
         )
     if not access_token:
         return {}
-    refresh_token = _load_keychain_secret(
+    refresh_token = _load_file_secret(
         "Linear refresh token",
         _linear_refresh_token_secret(org_id),
     )
     if not refresh_token:
-        refresh_token = _load_keychain_secret(
+        refresh_token = _load_file_secret(
             "Linear refresh token",
             _LINEAR_REFRESH_TOKEN_SECRET,
         )
@@ -899,7 +848,7 @@ def get_linear_tokens(organization_id: str | None = None) -> dict[str, Any]:
 
 
 def save_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
-    """Store Linear OAuth tokens in keychain and metadata on disk."""
+    """Store Linear OAuth tokens in the local file store and metadata on disk."""
     key = _norm_integration_key(provider)
     if key != _LINEAR_CREDENTIALS_KEY:
         raise ValueError(f"{provider!r} does not use OAuth token storage.")
@@ -994,7 +943,7 @@ def _save_atlassian_product_credentials(
     if not api_token:
         raise ProviderCredentialError(f"{key.capitalize()} API token is required.")
 
-    token_storage = _store_keychain_secret(label, secret_name, api_token)
+    token_storage = _store_file_secret(label, secret_name, api_token)
     prior = _read_metadata_entry(_product_metadata_key(key))
     merged = {**prior, **credentials}
     site = atlassian_site_from_entry(merged)
@@ -1016,9 +965,9 @@ def _get_atlassian_product_credentials(product: str) -> dict[str, Any]:
         return {}
 
     secret_name, label = _product_secret_name(key)
-    api_token = _load_keychain_secret(label, secret_name)
+    api_token = _load_file_secret(label, secret_name)
     if not api_token:
-        api_token = _load_keychain_secret(
+        api_token = _load_file_secret(
             "Atlassian API token",
             _ATLASSIAN_LEGACY_TOKEN_SECRET,
         )
@@ -1028,15 +977,15 @@ def _get_atlassian_product_credentials(product: str) -> dict[str, Any]:
 
 
 def _clear_shared_atlassian_legacy_credentials() -> None:
-    """Remove legacy shared Atlassian keychain secret and metadata (both products)."""
-    _delete_keychain_secret("Atlassian API token", _ATLASSIAN_LEGACY_TOKEN_SECRET)
+    """Remove legacy shared Atlassian secret and metadata (both products)."""
+    _delete_file_secret("Atlassian API token", _ATLASSIAN_LEGACY_TOKEN_SECRET)
     _clear_metadata_entries(_ATLASSIAN_CREDENTIALS_KEY)
 
 
 def _clear_atlassian_product_credentials(product: str) -> None:
     key = _norm_atlassian_product(product)
     secret_name, label = _product_secret_name(key)
-    _delete_keychain_secret(label, secret_name)
+    _delete_file_secret(label, secret_name)
     _clear_metadata_entries(_product_metadata_key(key))
 
 
@@ -1050,7 +999,7 @@ def save_atlassian_credentials(credentials: dict[str, Any]) -> None:
     api_token = str(credentials.get("api_token") or "").strip()
     if not api_token:
         raise ProviderCredentialError("Atlassian API token is required.")
-    token_storage = _store_keychain_secret(
+    token_storage = _store_file_secret(
         "Atlassian API token",
         _ATLASSIAN_LEGACY_TOKEN_SECRET,
         api_token,
@@ -1076,7 +1025,7 @@ def get_atlassian_credentials() -> dict[str, Any]:
     metadata = _legacy_atlassian_metadata()
     if not metadata:
         return {}
-    api_token = _load_keychain_secret(
+    api_token = _load_file_secret(
         "Atlassian API token",
         _ATLASSIAN_LEGACY_TOKEN_SECRET,
     )
@@ -1087,8 +1036,8 @@ def get_atlassian_credentials() -> dict[str, Any]:
 
 def clear_atlassian_credentials() -> None:
     _clear_shared_atlassian_legacy_credentials()
-    _delete_keychain_secret("Jira API token", _JIRA_TOKEN_SECRET)
-    _delete_keychain_secret("Confluence API token", _CONFLUENCE_TOKEN_SECRET)
+    _delete_file_secret("Jira API token", _JIRA_TOKEN_SECRET)
+    _delete_file_secret("Confluence API token", _CONFLUENCE_TOKEN_SECRET)
     _clear_metadata_entries(
         _JIRA_CREDENTIALS_KEY,
         _CONFLUENCE_CREDENTIALS_KEY,
@@ -1156,7 +1105,7 @@ def save_atlassian_workspace_prefs(
 
 
 def get_integration_tokens(provider: str) -> dict[str, Any]:
-    """Return integration credentials with secrets loaded from keychain."""
+    """Return integration credentials with secrets loaded from the local file store."""
     key = _norm_integration_key(provider)
     if key == _LINEAR_CREDENTIALS_KEY:
         return get_linear_tokens()
@@ -1184,16 +1133,16 @@ def clear_integration_tokens(provider: str) -> None:
         orgs = meta.get("organizations")
         if isinstance(orgs, dict):
             for org_id in orgs:
-                _delete_keychain_secret(
+                _delete_file_secret(
                     "Linear access token",
                     _linear_access_token_secret(org_id),
                 )
-                _delete_keychain_secret(
+                _delete_file_secret(
                     "Linear refresh token",
                     _linear_refresh_token_secret(org_id),
                 )
-        _delete_keychain_secret("Linear access token", _LINEAR_ACCESS_TOKEN_SECRET)
-        _delete_keychain_secret("Linear refresh token", _LINEAR_REFRESH_TOKEN_SECRET)
+        _delete_file_secret("Linear access token", _LINEAR_ACCESS_TOKEN_SECRET)
+        _delete_file_secret("Linear refresh token", _LINEAR_REFRESH_TOKEN_SECRET)
         _clear_metadata_entries(_LINEAR_CREDENTIALS_KEY)
         return
     if key == _JIRA_CREDENTIALS_KEY:
@@ -1235,7 +1184,7 @@ def get_integration_status(provider: str) -> dict[str, Any]:
         meta = _read_linear_metadata()
         orgs = meta.get("organizations")
         if not isinstance(orgs, dict) or not orgs:
-            legacy = _load_keychain_secret(
+            legacy = _load_file_secret(
                 "Linear access token",
                 _LINEAR_ACCESS_TOKEN_SECRET,
             )
@@ -1277,7 +1226,7 @@ def get_integration_status(provider: str) -> dict[str, Any]:
         entry = _read_metadata_entry("github")
         if not entry:
             return {"provider": key, "authenticated": False, "auth_type": "oauth"}
-        token = _load_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
+        token = _load_file_secret("GitHub token", _GITHUB_TOKEN_SECRET)
         if not token:
             return {"provider": key, "authenticated": False, "auth_type": "oauth"}
         account = entry.get("account")
@@ -1377,11 +1326,11 @@ def write_provider_credentials(provider: str, payload: dict[str, Any]) -> None:
         raise ProviderCredentialError("GitHub access token is required.")
     previous_metadata = get_integration_metadata(key)
     previous_token = (
-        _load_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
+        _load_file_secret("GitHub token", _GITHUB_TOKEN_SECRET)
         if previous_metadata
         else ""
     )
-    stored_payload["token_storage"] = _store_keychain_secret(
+    stored_payload["token_storage"] = _store_file_secret(
         "GitHub token",
         _GITHUB_TOKEN_SECRET,
         access_token,
@@ -1391,20 +1340,20 @@ def write_provider_credentials(provider: str, payload: dict[str, Any]) -> None:
     except Exception:
         try:
             if previous_metadata and previous_token:
-                _store_keychain_secret(
+                _store_file_secret(
                     "GitHub token",
                     _GITHUB_TOKEN_SECRET,
                     previous_token,
                 )
             else:
-                _delete_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
+                _delete_file_secret("GitHub token", _GITHUB_TOKEN_SECRET)
         except Exception:
             pass
         raise
 
 
 def get_provider_credentials(provider: str) -> dict[str, Any]:
-    """Return provider metadata merged with secrets from keychain."""
+    """Return provider metadata merged with secrets from the local file store."""
     key = _norm_integration_key(provider)
     if key != "github":
         return {}
@@ -1412,7 +1361,7 @@ def get_provider_credentials(provider: str) -> dict[str, Any]:
     if not metadata:
         return {}
     result = dict(metadata)
-    token = _load_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
+    token = _load_file_secret("GitHub token", _GITHUB_TOKEN_SECRET)
     if not token:
         token_storage = str(result.get("token_storage") or "").strip()
         raise ProviderCredentialError(
@@ -1424,9 +1373,9 @@ def get_provider_credentials(provider: str) -> dict[str, Any]:
 
 
 def clear_provider_credentials(provider: str) -> None:
-    """Remove provider secrets from keychain and drop integration metadata."""
+    """Remove provider secrets from the local file store and drop integration metadata."""
     key = _norm_integration_key(provider)
     if key != "github":
         raise ValueError(f"Unsupported provider {provider!r}; expected 'github'.")
-    _delete_keychain_secret("GitHub token", _GITHUB_TOKEN_SECRET)
+    _delete_file_secret("GitHub token", _GITHUB_TOKEN_SECRET)
     clear_integration_metadata(key)

@@ -134,7 +134,6 @@ def test_standalone_container_delegates_to_ingestion_server_build(
         lambda: None,
     )
     monkeypatch.delenv("CONTEXT_ENGINE_GITHUB_TOKEN", raising=False)
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.setattr(standalone_container, "build_ingestion_server", build)
 
     built = standalone_container.build_standalone_context_engine_container()

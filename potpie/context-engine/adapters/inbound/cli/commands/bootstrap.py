@@ -11,6 +11,10 @@ from pathlib import Path
 
 import typer
 
+from adapters.inbound.cli.cli_install_status import (
+    cli_install_human,
+    collect_cli_install_status,
+)
 from adapters.inbound.cli.commands._common import (
     EXIT_DEGRADED,
     contract,
@@ -275,9 +279,11 @@ def register(root: typer.Typer) -> None:
                 default_pot_id or pot_id or None if repo_identity else None
             )
 
+            cli_install = collect_cli_install_status()
             emit(
                 {
                     "daemon": daemon_status,
+                    "cli_install": cli_install,
                     "backend_profile": host.backend.profile,
                     "backend_ready": readiness.ready,
                     "backend_readiness": {
@@ -300,6 +306,7 @@ def register(root: typer.Typer) -> None:
                 },
                 human=(
                     f"daemon: {daemon_status['mode']} (up={daemon_status.get('up')})\n"
+                    f"{cli_install_human(cli_install)}\n"
                     f"backend: {host.backend.profile} ready={readiness.ready} "
                     f"caps={', '.join(caps.implemented())}\n"
                     f"ledger: {host.ledger.status().binding} "

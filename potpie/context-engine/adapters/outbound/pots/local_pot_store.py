@@ -71,6 +71,8 @@ class LocalPotStore:
     def create(
         self, *, name: str, repo: str | None = None, use: bool = False
     ) -> dict[str, Any]:
+        """Create a pot. Repo registration belongs on ``add_source`` via the CLI."""
+        _ = repo
         state = self._load()
         # Reuse an existing pot by name (idempotent setup).
         for pid, row in state.get("pots", {}).items():
@@ -82,14 +84,6 @@ class LocalPotStore:
         pot_id = f"pot_{uuid.uuid4().hex[:12]}"
         row = {"pot_id": pot_id, "name": name, "archived": False}
         state.setdefault("pots", {})[pot_id] = row
-        if repo:
-            state.setdefault("sources", {}).setdefault(pot_id, []).append(
-                {
-                    "source_id": f"src_{uuid.uuid4().hex[:8]}",
-                    "kind": "repo",
-                    "name": repo,
-                }
-            )
         if use or state.get("active") is None:
             state["active"] = pot_id
         self._save(state)
