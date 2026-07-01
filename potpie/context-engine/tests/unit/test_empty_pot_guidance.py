@@ -129,7 +129,7 @@ def test_pot_create_uses_repo_option_for_sibling_guidance(monkeypatch) -> None:
 
     result = CliRunner().invoke(
         pots.pot_app,
-        ["create", "fresh", "--use", "--repo", "github.com/acme/shop"],
+        ["create", "fresh", "--use", "--repo", "github.com/acme/shop", "--no-default"],
     )
 
     assert result.exit_code == 0, result.output
