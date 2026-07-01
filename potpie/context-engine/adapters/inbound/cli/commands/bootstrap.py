@@ -35,6 +35,7 @@ from adapters.inbound.cli.telemetry.onboarding_events import (
     now_ms,
 )
 from adapters.inbound.cli.ui import setup_ux
+from application.services.config_service import KNOWN_CONFIG_KEYS, public_config_value
 from bootstrap import sentry_metrics_runtime
 from domain.errors import CapabilityNotImplemented
 from domain.lifecycle import SetupPlan, SetupReport
@@ -340,13 +341,47 @@ def register(root: typer.Typer) -> None:
             )
 
     config_app = typer.Typer(
-        help="Local config get/set (persisted to <home>/config.json)."
+        help=(
+            "Local config get/set/list (persisted to <home>/config.json). "
+            f"Known keys: {', '.join(KNOWN_CONFIG_KEYS)}."
+        )
     )
 
-    @config_app.command("get")
-    def config_get(key: str) -> None:
+    def _emit_config_list() -> None:
+        config = get_host().config.list_public()
+        payload = {
+            "config": config,
+            "known_keys": list(KNOWN_CONFIG_KEYS),
+        }
+        if not config:
+            human = "config: (empty)"
+        else:
+            lines = [f"{key}={value}" for key, value in config.items()]
+            human = "\n".join(lines)
+        emit(payload, human=human)
+
+    @config_app.command("list")
+    def config_list() -> None:
+        """List all non-secret config entries."""
         with contract():
+            _emit_config_list()
+
+    @config_app.command("get")
+    def config_get(
+        key: str | None = typer.Argument(
+            None,
+            help=(
+                "Config key to read. Omit to list all non-secret entries "
+                "(same as `potpie config list`)."
+            ),
+        ),
+    ) -> None:
+        with contract():
+            if key is None:
+                _emit_config_list()
+                return
             value = get_host().config.get(key)
+            value = public_config_value(key, value)
             emit({key: value}, human=f"{key}={value}")
 
     @config_app.command("set")
