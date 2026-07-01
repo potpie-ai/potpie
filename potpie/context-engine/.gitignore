@@ -1,2 +1,4 @@
 # OAuth client IDs generated at wheel build time (see oauth_client_id_injection_hook.py)
 adapters/outbound/cli_auth/_build_config.py
+# Telemetry defaults generated at wheel build time (see oauth_client_id_injection_hook.py)
+adapters/inbound/cli/telemetry/_build_config.py
