@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import typer
 
 from adapters.inbound.cli.commands._common import (
@@ -90,7 +91,7 @@ def _managed_service_names() -> set[str] | None:
         with client_for(_home()) as client:
             response = client.get("/admin/services")
             response.raise_for_status()
-    except RuntimeError:
+    except (RuntimeError, httpx.HTTPError):
         return None
     return {
         str(service.get("name") or "")
