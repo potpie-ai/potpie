@@ -189,16 +189,14 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
         ("Active pot (`pot use`)", data.active_pot_id or "(unset)"),
         ("POTPIE_API_KEY in env", str(data.potpie_api_key_env)),
         ("Stored token (login)", str(data.potpie_stored_token)),
-        ("Potpie base URL", data.potpie_base_url or "(unset)"),
+        ("Potpie API URL", data.potpie_base_url or "(unset)"),
     ]
-    if data.potpie_port_hint:
-        pot_rows.append(("POTPIE_PORT hint", data.potpie_port_hint))
     _out.print(key_value_panel("Pot scope (CLI)", pot_rows))
 
     other_rows: list[tuple[str, str]] = [
         ("Postgres URL env (local / other tools)", str(data.database_url_set)),
         (
-            "GITHUB_TOKEN / CONTEXT_ENGINE_GITHUB_TOKEN",
+            "CONTEXT_ENGINE_GITHUB_TOKEN",
             str(data.github_token_set),
         ),
     ]

@@ -25,7 +25,7 @@ help: ## Show this help
 
 ##@ Context Engine CLI (potpie)
 
-# The `potpie` CLI lives in $(CE_DIR) and installs as a uv tool in EDITABLE mode:
+# The `potpie` CLI installs from the root distribution in EDITABLE mode:
 # the global `potpie` / `potpie-mcp` on your PATH run straight from the repo
 # source, so code changes — including the in-process daemon — are live on the
 # next invocation with no reinstall. The CLI also auto-loads this repo's .env
@@ -34,21 +34,21 @@ help: ## Show this help
 # `make cli-install` only when dependencies or entry points change.
 CE_DIR := potpie/context-engine
 UI_FRONTEND_DIR := $(CE_DIR)/adapters/inbound/http/ui/frontend
-CLI_TOOL := potpie-context-engine
+CLI_TOOL := potpie
 CLI_PYTHON ?= >=3.12,<3.14
 
 ui-build: ## Build the graph-explorer SPA (npm install + vite) into frontend/dist
 	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not installed — see https://nodejs.org/"; exit 1; }
 	cd $(UI_FRONTEND_DIR) && npm install && npm run build
 
-cli-install: ui-build ## Install potpie + potpie-mcp globally (editable, all extras). Re-run after dep/entrypoint changes.
+cli-install: ui-build ## Install potpie + potpie-mcp globally from the root package. Re-run after dep/entrypoint changes.
 	@command -v uv >/dev/null 2>&1 || { echo "❌ uv not installed — see https://docs.astral.sh/uv/"; exit 1; }
 	@# Drop the pre-rename "context-engine" tool if a stale copy is lingering.
 	-@uv tool uninstall context-engine >/dev/null 2>&1 || true
 	@# Stop any old detached daemon before replacing the tool env; otherwise the
 	@# fresh CLI can still talk to a daemon running the previous Python/backend.
 	-@if command -v potpie >/dev/null 2>&1; then potpie daemon stop >/dev/null 2>&1; fi
-	uv tool install --python '$(CLI_PYTHON)' --force --editable "./$(CE_DIR)[all]"
+	uv tool install --python '$(CLI_PYTHON)' --force --editable "."
 	@case ":$$PATH:" in \
 	  *":$$HOME/.local/bin:"*) echo "✓ potpie installed (editable). Try: potpie --help";; \
 	  *) echo "✓ installed, but $$HOME/.local/bin is not on PATH — run: uv tool update-shell, then restart your shell";; \

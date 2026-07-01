@@ -16,9 +16,8 @@ from urllib.parse import urlencode, urlparse
 
 from adapters.outbound.cli_auth.errors import CliAuthError
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from bootstrap.runtime_settings import load_runtime_settings
 
-_DEFAULT_UI_URL = "http://localhost:3000"
-_DEFAULT_API_URL = "http://localhost:8001"
 _DEFAULT_PORT_MIN = 9000
 _DEFAULT_PORT_MAX = 9999
 _DEFAULT_TIMEOUT_SECONDS = 300.0
@@ -35,43 +34,16 @@ class CliCallbackResult:
 
 
 def resolve_potpie_ui_url() -> str:
-    url = (
-        (
-            os.getenv("POTPIE_UI_URL")
-            or os.getenv("POTPIE_CLI_UI_BASE_URL")
-            or os.getenv("POTPIE_CLI_APP_BASE_URL")
-            or _DEFAULT_UI_URL
-        )
-        .strip()
-        .rstrip("/")
-    )
+    url = load_runtime_settings().potpie_ui_url
     if not url:
         raise PotpieCliAuthError(
-            "Potpie UI URL is not set. "
-            "Example: POTPIE_CLI_UI_BASE_URL=http://localhost:3000"
+            "Potpie UI URL is not set. Example: POTPIE_UI_URL=http://localhost:3000"
         )
     return url
 
 
 def resolve_potpie_api_url_for_auth() -> str:
-    url = (
-        (
-            os.getenv("POTPIE_API_URL")
-            or os.getenv("POTPIE_BASE_URL")
-            or os.getenv("POTPIE_CLI_API_BASE_URL")
-            or os.getenv("POTPIE_CLI_BASE_URL")
-            or ""
-        )
-        .strip()
-        .rstrip("/")
-    )
-    if not url:
-        port = (os.getenv("POTPIE_PORT") or os.getenv("POTPIE_API_PORT") or "").strip()
-        if port:
-            url = f"http://127.0.0.1:{port}"
-    if not url:
-        url = _DEFAULT_API_URL
-    return url.rstrip("/")
+    return load_runtime_settings().potpie_api_url
 
 
 def _callback_port_bounds() -> tuple[int, int]:

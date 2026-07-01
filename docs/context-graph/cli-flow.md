@@ -177,8 +177,20 @@ control plane, Graph Service data plane, GraphBackend capabilities/projections,
 Event Ledger binding and consumer backlog, Skill Manager drift, login state when
 relevant, and next action.
 
-`doctor` is local-profile diagnostics: paths, logs, auth/socket state,
-migrations, and skill drift.
+`doctor` is local-profile diagnostics: daemon/backend readiness, CLI install
+facts (uv tool env, PATH, python shebang), and recommended follow-up commands.
+Do not use `python -m pip show potpie-context-engine` for local dev installs —
+the package lives in the uv tool environment. Prefer `uv tool list`,
+`which -a potpie`, and `make cli-status`.
+
+```bash
+uv tool list
+which -a potpie
+head -n 1 "$(command -v potpie)"
+make cli-status
+potpie doctor
+potpie --json doctor
+```
 
 ### Local Daemon Admin
 
