@@ -52,6 +52,9 @@ class _Pots:
     def list_sources(self, *, pot_id: str):
         return [_Source(f"src_{pot_id}")]
 
+    def add_source(self, *, pot_id: str, kind: str, location: str, name=None):
+        return _Source(f"src_{pot_id}")
+
     def create_pot(self, *, name: str, repo=None, use: bool = False):
         pot = _Pot("p-new", name, active=use)
         if use:
@@ -86,6 +89,52 @@ def test_empty_pot_guidance_suggests_populated_sibling_pot(monkeypatch) -> None:
     warnings = _common.empty_pot_guidance(host, "p1")
     assert any("p2" in warning and "82 claims" in warning for warning in warnings)
     assert any("harness-led ingestion" in warning for warning in warnings)
+
+
+def test_empty_pot_guidance_uses_explicit_repo_not_cwd(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/other"
+    )
+    host = _Host()
+    warnings = _common.empty_pot_guidance(host, "p1")
+    assert not any("p2" in warning for warning in warnings)
+
+    warnings = _common.empty_pot_guidance(host, "p1", repo="github.com/acme/shop")
+    assert any("p2" in warning and "82 claims" in warning for warning in warnings)
+
+
+def test_source_add_uses_registered_repo_for_sibling_guidance(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/other"
+    )
+    _common.set_json(True)
+    _common.set_host(_Host())
+
+    result = CliRunner().invoke(
+        pots.source_app,
+        ["add", "repo", "github.com/acme/shop", "--pot", "p1", "--no-default"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert any("p2" in warning for warning in payload.get("warnings", ()))
+
+
+def test_pot_create_uses_repo_option_for_sibling_guidance(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/other"
+    )
+    _common.set_json(True)
+    _common.set_host(_Host())
+
+    result = CliRunner().invoke(
+        pots.pot_app,
+        ["create", "fresh", "--use", "--repo", "github.com/acme/shop"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert any("p2" in warning for warning in payload.get("warnings", ()))
 
 
 def test_source_list_emits_empty_pot_guidance_json(monkeypatch) -> None:

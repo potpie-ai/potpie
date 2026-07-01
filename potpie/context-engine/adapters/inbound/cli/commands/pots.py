@@ -152,6 +152,7 @@ def pot_create(
                 f"created pot '{pot.name}' ({pot.pot_id})"
                 f"{' [active]' if pot.active else ''}"
             ),
+            repo=repo,
         )
         emit(payload, human=human)
 
@@ -528,6 +529,7 @@ def source_add(
                 + (f"set repo default -> {pot_id}\n" if repo_default_set else "")
                 + "no ingestion or scan started"
             ),
+            repo=resolved_location if is_repo else None,
         )
         emit(payload, human=human)
 

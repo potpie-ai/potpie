@@ -435,11 +435,13 @@ def _pot_claims_count(host: Any, pot_id: str) -> int | None:
     return _known_claims_count(pot_graph_counts(host, pot_id))
 
 
-def empty_pot_warnings(host: Any, pot_id: str) -> tuple[str, ...]:
+def empty_pot_warnings(
+    host: Any, pot_id: str, repo: str | None = None
+) -> tuple[str, ...]:
     claims = _pot_claims_count(host, pot_id)
     if claims is None or claims != 0:
         return ()
-    linked = repo_pot_candidates(host)
+    linked = repo_pot_candidates(host, repo)
     alternatives = [
         row
         for row in linked.get("candidates", ())
@@ -465,9 +467,11 @@ def empty_pot_warnings(host: Any, pot_id: str) -> tuple[str, ...]:
     )
 
 
-def empty_pot_guidance(host: Any, pot_id: str) -> tuple[str, ...]:
+def empty_pot_guidance(
+    host: Any, pot_id: str, repo: str | None = None
+) -> tuple[str, ...]:
     """Recovery hints when a pot has no graph claims yet."""
-    warnings = list(empty_pot_warnings(host, pot_id))
+    warnings = list(empty_pot_warnings(host, pot_id, repo))
     claims = _pot_claims_count(host, pot_id)
     if claims is None or claims != 0:
         return tuple(warnings)
@@ -492,8 +496,9 @@ def enrich_with_pot_guidance(
     payload: dict[str, Any],
     *,
     human: str,
+    repo: str | None = None,
 ) -> tuple[dict[str, Any], str]:
-    warnings = empty_pot_guidance(host, pot_id)
+    warnings = empty_pot_guidance(host, pot_id, repo)
     if not warnings:
         return payload, human
     return (
