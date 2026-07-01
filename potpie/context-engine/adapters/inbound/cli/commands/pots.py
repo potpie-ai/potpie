@@ -16,8 +16,10 @@ from adapters.inbound.cli.commands._common import (
     fail,
     get_host,
     pot_scope_info,
+    pot_scope_resolution_human,
     repo_pot_candidates,
     resolve_pot_id,
+    resolve_pot_scope,
 )
 from adapters.inbound.cli.telemetry.onboarding_events import (
     capture_project_binding_event,
@@ -538,16 +540,31 @@ def source_add(
 def source_list(pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
         host = get_host()
-        pot_id = resolve_pot_id(host, pot)
+        pot_id, resolved_via = resolve_pot_scope(host, pot)
         sources = host.pots.list_sources(pot_id=pot_id)
         pot_info = pot_scope_info(host, pot_id)
+        repo = (
+            current_repo_identity_for_cli()
+            if resolved_via in {"repo_default", "linked_repo"}
+            else None
+        )
+        counts = pot_info.get("counts") or {}
+        header = "\n".join(
+            [
+                (
+                    f"pot={pot_info['name']} ({pot_id}) "
+                    f"{pot_scope_resolution_human(resolved_via, repo=repo)}"
+                ),
+                (
+                    f"sources={len(sources)} claims={counts.get('claims', 0)} "
+                    f"entities={counts.get('entities', 0)}"
+                ),
+            ]
+        )
         human = (
             "\n".join(
                 [
-                    (
-                        f"pot={pot_info['name']} ({pot_id}) "
-                        f"sources={len(sources)} claims={(pot_info.get('counts') or {}).get('claims', 0)}"
-                    ),
+                    header,
                     *(
                         f"  {s.kind}: {getattr(s, 'location', s.name)} ({s.source_id})"
                         for s in sources
@@ -555,17 +572,15 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
                 ]
             )
             if sources
-            else (
-                f"pot={pot_info['name']} ({pot_id}) "
-                f"sources=0 claims={(pot_info.get('counts') or {}).get('claims', 0)}\n"
-                "(no sources)"
-            )
+            else f"{header}\n(no sources)"
         )
         payload, human = enrich_with_pot_guidance(
             host,
             pot_id,
             {
                 "pot_id": pot_id,
+                "resolved_via": resolved_via,
+                "repo": repo,
                 "pot": pot_info,
                 "source_count": len(sources),
                 "sources": [
@@ -579,6 +594,7 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
                 ],
             },
             human=human,
+            repo=repo,
         )
         emit(payload, human=human)
 
