@@ -15,9 +15,23 @@ import typer
 from adapters.inbound.cli.commands._common import contract
 from domain.errors import CapabilityNotImplemented
 
-cloud_app = typer.Typer(help="Managed profile + sync (TODO).")
-skills_app = typer.Typer(help="Managed skill catalog sync (TODO).")
+cloud_app = typer.Typer(help="Managed profile + sync (TODO).", invoke_without_command=True)
+skills_app = typer.Typer(help="Managed skill catalog sync (TODO).", invoke_without_command=True)
 cloud_app.add_typer(skills_app, name="skills")
+
+
+@cloud_app.callback()
+def _cloud_callback(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        with contract():
+            _todo("cloud")
+
+
+@skills_app.callback()
+def _skills_callback(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        with contract():
+            _todo("skills")
 
 
 def _todo(op: str) -> None:

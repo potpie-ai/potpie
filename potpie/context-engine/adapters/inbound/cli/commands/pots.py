@@ -15,6 +15,7 @@ from adapters.inbound.cli.commands._common import (
     emit,
     fail,
     get_host,
+    is_json,
     pot_scope_info,
     pot_scope_resolution_human,
     repo_pot_candidates,
@@ -327,26 +328,41 @@ def pot_linked(repo: str = typer.Option("current", "--repo")) -> None:
 
 
 @default_app.command("show")
-def pot_default_show(repo: str = typer.Option("current", "--repo")) -> None:
+def pot_default_show(
+    repo: str = typer.Option("current", "--repo"),
+    with_candidates: bool = typer.Option(
+        False,
+        "--with-candidates",
+        help="Include the full candidates list (see `pot linked` for details).",
+    ),
+) -> None:
+    """Show the repo-local default pot. Use --with-candidates for the full list."""
     with contract():
         host = get_host()
         linked = repo_pot_candidates(host, repo)
         default_id = linked.get("default_pot_id")
-        payload = {
-            "repo": linked.get("repo"),
+        repo_key = linked.get("repo")
+        payload: dict = {
+            "repo": repo_key,
             "default_pot_id": default_id,
-            "candidates": linked.get("candidates", ()),
         }
+        if with_candidates:
+            payload["candidates"] = linked.get("candidates", ())
         if not default_id:
+            if not with_candidates:
+                payload["hint"] = "run `potpie pot linked` to see all candidates"
             emit(
                 payload,
-                human=f"repo {linked.get('repo') or '(unknown)'} default: (unset)",
+                human=f"repo {repo_key or '(unknown)'} default: (unset)",
             )
             return
         info = pot_scope_info(host, default_id)
+        payload["default_pot"] = info
+        if not with_candidates:
+            payload["hint"] = "run `potpie pot linked` to see all candidates"
         emit(
-            {**payload, "default_pot": info},
-            human=f"repo {linked.get('repo')} default: {info['name']} ({default_id})",
+            payload,
+            human=f"repo {repo_key} default: {info['name']} ({default_id})",
         )
 
 
