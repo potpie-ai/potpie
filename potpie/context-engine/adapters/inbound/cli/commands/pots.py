@@ -135,6 +135,36 @@ def _repo_key_from_option(repo: str) -> str:
     return repo_key
 
 
+def _matching_repo_source(
+    host: Any,
+    *,
+    pot_id: str,
+    resolved_location: str,
+    repo_key: str | None,
+) -> Any | None:
+    list_sources = getattr(host.pots, "list_sources", None)
+    if not callable(list_sources):
+        return None
+    try:
+        sources = list_sources(pot_id=pot_id)
+    except Exception:  # noqa: BLE001 - duplicate detection must not block registration
+        return None
+    for source in sources or []:
+        if getattr(source, "kind", None) != "repo":
+            continue
+        refs = (
+            str(getattr(source, "location", "") or "").strip(),
+            str(getattr(source, "name", "") or "").strip(),
+        )
+        if repo_key:
+            if any(repo_identity_key(ref) == repo_key for ref in refs if ref):
+                return source
+            continue
+        if resolved_location in refs:
+            return source
+    return None
+
+
 def register_repo_source(
     host: Any,
     *,
@@ -161,12 +191,21 @@ def register_repo_source(
                 message="This host does not support repo default bindings.",
                 next_action="upgrade the local context-engine host",
             )
-    src = host.pots.add_source(
+    existing = _matching_repo_source(
+        host,
         pot_id=pot_id,
-        kind="repo",
-        location=resolved_location,
-        name=name,
+        resolved_location=resolved_location,
+        repo_key=repo_key,
     )
+    if existing is not None:
+        src = existing
+    else:
+        src = host.pots.add_source(
+            pot_id=pot_id,
+            kind="repo",
+            location=resolved_location,
+            name=name,
+        )
     if make_default:
         if not repo_key:
             fail(
