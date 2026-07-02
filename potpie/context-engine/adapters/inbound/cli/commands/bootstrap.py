@@ -22,7 +22,6 @@ from adapters.inbound.cli.commands._common import (
     contract,
     current_repo_identity_for_cli,
     emit,
-    enrich_with_pot_guidance,
     fail,
     get_host,
     is_json,
@@ -70,9 +69,7 @@ def _effective_current_repo_pot_id(
         return str(effective_id)
     if routing.get("status") == "ambiguous":
         candidate_ids = {
-            str(row.get("id"))
-            for row in routing.get("candidates", ())
-            if row.get("id")
+            str(row.get("id")) for row in routing.get("candidates", ()) if row.get("id")
         }
         return active_pot_id if active_pot_id in candidate_ids else None
     return active_pot_id
@@ -126,9 +123,7 @@ def register(root: typer.Typer) -> None:
                 and not yes
             )
             use_live = (
-                human_output
-                and setup_ux.rich_enabled(as_json=json_output)
-                and not yes
+                human_output and setup_ux.rich_enabled(as_json=json_output) and not yes
             )
             stream_plain_progress = human_output and not use_live
             selected_embeddings = _setup_embeddings_choice(embeddings)
@@ -158,7 +153,12 @@ def register(root: typer.Typer) -> None:
             # --backend selects the storage profile for this run. Backend
             # selection happens at wiring time, so rebuild the host on the chosen
             # profile when it differs from the active one (keeps the report honest).
-            if not use_live and in_process and backend and backend != host.backend.profile:
+            if (
+                not use_live
+                and in_process
+                and backend
+                and backend != host.backend.profile
+            ):
                 from adapters.inbound.cli.commands._common import set_host
                 from adapters.outbound.graph.backends import build_backend
                 from bootstrap.host_wiring import build_host_shell

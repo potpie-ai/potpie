@@ -153,7 +153,9 @@ class FalkorDBClaimQueryStore:
         try:
             vector_params = {
                 **dict(params),
-                "embedding": [float(x) for x in self._embedder.embed(filter_.fact_query)],
+                "embedding": [
+                    float(x) for x in self._embedder.embed(filter_.fact_query)
+                ],
                 "k": max(limit * 5, 50),
                 "limit": limit,
             }

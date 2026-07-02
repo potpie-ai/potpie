@@ -510,6 +510,7 @@ def test_doctor_json_effective_prefers_single_linked_repo_pot_over_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When exactly one linked repo pot exists, doctor matches CLI resolution."""
+
     class _NamedPot:
         def __init__(self, pid: str, name: str) -> None:
             self.pot_id = pid

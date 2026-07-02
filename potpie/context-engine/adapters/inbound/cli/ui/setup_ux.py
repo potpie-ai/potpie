@@ -99,7 +99,9 @@ def interactive_onboarding_enabled(*, as_json: bool) -> bool:
 
 class _CompositeSetupObserver:
     def __init__(self, *observers: SetupObserver | None) -> None:
-        self._observers = tuple(observer for observer in observers if observer is not None)
+        self._observers = tuple(
+            observer for observer in observers if observer is not None
+        )
 
     def step_started(self, *, step: str, hard: bool) -> None:
         for observer in self._observers:

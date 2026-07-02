@@ -429,9 +429,10 @@ def test_pot_use_warns_when_repo_default_differs(monkeypatch) -> None:
     assert payload["id"] == "p1"
     assert payload["current_repo"]["effective_pot"]["id"] == "p2"
     assert payload["warnings"]
-    assert "repo github.com/acme/shop default remains repo-default (p2)" in payload[
-        "warnings"
-    ][0]
+    assert (
+        "repo github.com/acme/shop default remains repo-default (p2)"
+        in payload["warnings"][0]
+    )
     assert payload["recommended_next_action"] == payload["warnings"][0]
 
 

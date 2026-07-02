@@ -271,10 +271,7 @@ def _quiet_transformer_progress() -> Iterator[None]:
             enable_hf = getattr(hf_utils, "enable_progress_bars", None)
             if callable(enable_hf):
                 enable_hf()
-        if (
-            transformers_logging is not None
-            and transformers_progress_enabled is True
-        ):
+        if transformers_logging is not None and transformers_progress_enabled is True:
             enable_transformers = getattr(
                 transformers_logging, "enable_progress_bar", None
             )
