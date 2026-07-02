@@ -13,6 +13,9 @@ ordinary project-memory context, prefer the relevant use-case skill first.
 ```bash
 potpie doctor
 potpie --json doctor
+make cli-status
+uv tool list
+which -a potpie
 potpie login <api-key> --url <host>
 potpie pot list
 potpie pot use <pot-id-or-alias>
@@ -74,6 +77,8 @@ written with graph workbench mutations. Do not use pot-level connector queueing 
 deterministic local code scans as the agent ingestion path.
 Do not use scanner-driven graph updates.
 
-For CLI failures, stay in this skill: run `potpie doctor`, inspect JSON output
-when useful, check API URL/key config, confirm pot scope, and verify source
+For CLI failures, stay in this skill: run `potpie doctor`, `make cli-status`, or
+`uv tool list` for install facts. Do not use `python -m pip show
+potpie-context-engine` for local uv-tool installs. Inspect JSON output when
+useful, check API URL/key config, confirm pot scope, and verify source
 registration before changing project code.
