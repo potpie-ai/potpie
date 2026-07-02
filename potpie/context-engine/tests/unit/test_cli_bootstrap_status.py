@@ -13,10 +13,18 @@ import pytest
 from typer.testing import CliRunner
 
 from adapters.inbound.cli import host_cli as cli_main
-from adapters.inbound.cli.commands import bootstrap
+from adapters.inbound.cli.commands import _common, bootstrap
 from adapters.inbound.cli.commands._common import EXIT_DEGRADED
 from bootstrap.host_wiring import default_host_mode
-from domain.lifecycle import DONE, FAILED, SetupPlan, SetupReport, StepResult
+from domain.lifecycle import (
+    DONE,
+    FAILED,
+    PlannedSetupStep,
+    SetupPlan,
+    SetupPreview,
+    SetupReport,
+    StepResult,
+)
 from domain.ports.agent_context import StatusReport, StatusRequest
 from domain.ports.graph.backend import BackendCapabilities
 from domain.ports.graph.mutation import BackendReadiness
@@ -41,6 +49,25 @@ class _FakeSetupMetrics:
         attributes: dict[str, Union[str, bool]] | None = None,
     ) -> None:
         self.calls.append(_MetricCall(name, {} if attributes is None else attributes))
+
+
+def _patch_local_setup_host(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_host: MagicMock,
+) -> None:
+    monkeypatch.delenv("CONTEXT_ENGINE_EMBEDDER", raising=False)
+    monkeypatch.delenv("CONTEXT_ENGINE_EMBEDDING_MODEL", raising=False)
+    monkeypatch.setattr(
+        bootstrap,
+        "_build_local_setup_host",
+        lambda **_kwargs: (
+            mock_host,
+            mock_host.backend.profile,
+            mock_host.daemon.in_process,
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "configured_embedder_choice", lambda: "local")
+    monkeypatch.setattr(bootstrap, "configured_embedding_model", lambda: "test-model")
 
 
 def test_root_version_option_exits_with_cli_and_python_details() -> None:
@@ -218,16 +245,25 @@ def test_default_host_mode_rejects_invalid_env(monkeypatch: pytest.MonkeyPatch) 
 
 def test_setup_dry_run_preview(monkeypatch: pytest.MonkeyPatch) -> None:
     metrics = _FakeSetupMetrics()
-    preview = MagicMock()
-    preview.to_dict.return_value = {"steps": [{"name": "config", "status": "pending"}]}
 
     mock_host = MagicMock()
     mock_host.profile = "local"
     mock_host.backend.profile = "falkordb"
     mock_host.daemon.in_process = True
+    preview = SetupPreview(
+        plan=SetupPlan(mode="local", host_mode="in_process", backend="falkordb"),
+        steps=(
+            PlannedSetupStep(
+                "config",
+                hard=True,
+                owner="config",
+                action="write config",
+            ),
+        ),
+    )
     mock_host.setup.preview.return_value = preview
 
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _patch_local_setup_host(monkeypatch, mock_host)
     monkeypatch.setattr(
         "adapters.inbound.cli.ui.setup_ux.rich_enabled",
         lambda **_k: False,
@@ -258,29 +294,21 @@ def test_setup_success_emits_run_and_step_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     metrics = _FakeSetupMetrics()
-    plan = SetupPlan(
-        mode="local",
-        host_mode="daemon",
-        backend="falkordb",
-        repo="/private/project",
-        pot="customer-pot",
-        agent="gpt-9",
-        scan=True,
-    )
-    report = SetupReport(
-        plan=plan,
-        steps=(
-            StepResult("config", DONE, hard=True),
-            StepResult("source", DONE, hard=False),
-        ),
+    steps = (
+        StepResult("config", DONE, hard=True),
+        StepResult("source", DONE, hard=False),
     )
     mock_host = MagicMock()
     mock_host.profile = "local"
     mock_host.backend.profile = "falkordb"
     mock_host.daemon.in_process = False
-    mock_host.setup.run.return_value = report
 
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _patch_local_setup_host(monkeypatch, mock_host)
+    monkeypatch.setattr(
+        bootstrap.setup_ux,
+        "run_setup_plain",
+        lambda _setup, plan, **_kwargs: SetupReport(plan=plan, steps=steps),
+    )
     monkeypatch.setattr(
         "adapters.inbound.cli.ui.setup_ux.rich_enabled",
         lambda **_k: False,
@@ -336,19 +364,20 @@ def test_setup_degraded_report_preserves_exit_code_and_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     metrics = _FakeSetupMetrics()
-    plan = SetupPlan(mode="local", host_mode="daemon", backend="falkordb")
-    report = SetupReport(
-        plan=plan,
-        steps=(StepResult("backend.provision", FAILED, hard=True),),
-    )
+    steps = (StepResult("backend.provision", FAILED, hard=True),)
+    report = SetupReport(plan=SetupPlan(), steps=steps)
     assert not report.ok
     mock_host = MagicMock()
     mock_host.profile = "local"
     mock_host.backend.profile = "falkordb"
     mock_host.daemon.in_process = False
-    mock_host.setup.run.return_value = report
 
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _patch_local_setup_host(monkeypatch, mock_host)
+    monkeypatch.setattr(
+        bootstrap.setup_ux,
+        "run_setup_plain",
+        lambda _setup, plan, **_kwargs: SetupReport(plan=plan, steps=steps),
+    )
     monkeypatch.setattr(
         "adapters.inbound.cli.ui.setup_ux.rich_enabled",
         lambda **_k: False,
@@ -481,22 +510,36 @@ def test_doctor_json_effective_prefers_single_linked_repo_pot_over_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When exactly one linked repo pot exists, doctor matches CLI resolution."""
+    class _NamedPot:
+        def __init__(self, pid: str, name: str) -> None:
+            self.pot_id = pid
+            self.name = name
+
+    class _RepoSource:
+        kind = "repo"
+        name = "github.com/acme/shop"
+        location = "github.com/acme/shop"
+
     mock_host = _make_doctor_host(
         active_pot_id="pot-active",
         repo_default=None,
+    )
+    mock_host.graph.data_plane_status.side_effect = AssertionError(
+        "doctor effective-pot lookup should not fetch graph counts"
+    )
+    mock_host.pots.list_pots.return_value = [
+        _NamedPot("pot-active", "active"),
+        _NamedPot("pot-linked", "linked"),
+    ]
+    mock_host.pots.list_sources.side_effect = lambda *, pot_id: (
+        [_RepoSource()] if pot_id == "pot-linked" else []
     )
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
         bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
     )
     monkeypatch.setattr(
-        bootstrap,
-        "repo_pot_candidates",
-        lambda _host: {
-            "repo": "github.com/acme/shop",
-            "default_pot_id": None,
-            "candidates": [{"pot_id": "pot-linked", "name": "linked"}],
-        },
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
     )
 
     result = runner.invoke(cli_main.app, ["--json", "doctor"])

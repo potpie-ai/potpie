@@ -96,11 +96,14 @@ class InMemoryClaimQueryStore:
     # ------------------------------------------------------------------
     def _semantic_rank(self, candidates: list[ClaimRow], query: str) -> list[ClaimRow]:
         if self.embedder is not None:
-            qvec = self.embedder.embed(query)
-            scored = [
-                (row, cosine_similarity(qvec, self._row_vector(row)))
-                for row in candidates
-            ]
+            try:
+                qvec = self.embedder.embed(query)
+                scored = [
+                    (row, cosine_similarity(qvec, self._row_vector(row)))
+                    for row in candidates
+                ]
+            except Exception:  # noqa: BLE001 - fall back to labeled lexical search.
+                scored = [(row, embedding_score(row.fact, query)) for row in candidates]
         else:
             scored = [(row, embedding_score(row.fact, query)) for row in candidates]
         scored.sort(key=lambda pair: pair[1], reverse=True)

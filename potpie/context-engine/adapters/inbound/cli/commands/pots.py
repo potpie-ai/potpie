@@ -21,9 +21,12 @@ from adapters.inbound.cli.commands._common import (
     pot_scope_info,
     pot_scope_resolution_human,
     repo_default_matches,
+    repo_effective_pot_human,
+    repo_effective_pot_info,
     repo_pot_candidates,
     resolve_pot_id,
     resolve_pot_scope,
+    use_pot_selection,
 )
 from adapters.inbound.cli.telemetry.onboarding_events import (
     capture_project_binding_event,
@@ -108,13 +111,23 @@ def pot_list(
 @pot_app.command("info")
 def pot_info() -> None:
     with contract():
-        active = get_host().pots.active_pot()
-        if active is None:
-            emit({"active_pot": None}, human="(no active pot)")
-            return
+        host = get_host()
+        active = host.pots.active_pot()
+        routing = repo_effective_pot_info(host)
+        active_payload = (
+            {"id": active.pot_id, "name": active.name} if active is not None else None
+        )
+        lines = [
+            f"active: {active.name} ({active.pot_id})"
+            if active is not None
+            else "(no active pot)"
+        ]
+        routing_line = repo_effective_pot_human(routing)
+        if routing_line:
+            lines.append(routing_line)
         emit(
-            {"active_pot": {"id": active.pot_id, "name": active.name}},
-            human=f"active: {active.name} ({active.pot_id})",
+            {"active_pot": active_payload, "current_repo": routing},
+            human="\n".join(lines),
         )
 
 
@@ -291,25 +304,38 @@ def pot_create(
 
 
 @pot_app.command("use")
-def pot_use(ref: str) -> None:
+def pot_use(
+    ref: str,
+    also_default_for_current_repo: bool = typer.Option(
+        False,
+        "--also-default-for-current-repo",
+        help="Also set the current repo's local default pot to this pot.",
+    ),
+) -> None:
     with contract():
         host = get_host()
-        pot = host.pots.use_pot(ref=ref)
-        payload, human = enrich_with_pot_guidance(
+        payload, human = use_pot_selection(
             host,
-            pot.pot_id,
-            {"id": pot.pot_id, "name": pot.name},
-            human=f"active pot → {pot.name}",
+            ref,
+            also_default_for_current_repo=also_default_for_current_repo,
         )
         emit(payload, human=human)
 
 
 @pot_app.command("linked")
-def pot_linked(repo: str = typer.Option("current", "--repo")) -> None:
+def pot_linked(
+    repo: str = typer.Option("current", "--repo"),
+    summary: bool = typer.Option(
+        False,
+        "--summary",
+        help="Skip per-pot graph counts for a faster repo routing summary.",
+    ),
+) -> None:
     """Show pots linked to a repo source and the local default, if any."""
     with contract():
         host = get_host()
-        linked = repo_pot_candidates(host, repo)
+        linked = repo_pot_candidates(host, repo, include_counts=not summary)
+        linked["counts_included"] = not summary
         candidates = list(linked.get("candidates", ()))
         repo_key = linked.get("repo")
         lines = [f"repo {repo_key or '(unknown)'}"]
@@ -335,14 +361,22 @@ def pot_linked(repo: str = typer.Option("current", "--repo")) -> None:
                     if enabled
                 ]
                 suffix = f"  {', '.join(markers)}" if markers else ""
+                count_text = (
+                    f" claims={counts.get('claims', 0)} "
+                    f"entities={counts.get('entities', 0)}"
+                    if not summary
+                    else ""
+                )
                 lines.append(
                     f"  {row.get('name')} ({row.get('pot_id')}) "
-                    f"sources={row.get('source_count', 0)} "
-                    f"claims={counts.get('claims', 0)} entities={counts.get('entities', 0)}"
+                    f"sources={row.get('source_count', 0)}"
+                    f"{count_text}"
                     f"{suffix}"
                 )
         else:
             lines.append("  (no linked pots)")
+        if summary:
+            lines.append("counts omitted; rerun without --summary for graph counts")
         emit(linked, human="\n".join(lines))
 
 

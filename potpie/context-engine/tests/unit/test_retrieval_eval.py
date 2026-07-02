@@ -9,13 +9,17 @@ from __future__ import annotations
 import pytest
 
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.intelligence.local_embedder import build_embedder
+from adapters.outbound.intelligence.local_embedder import HashingEmbedder
 from application.services.graph_service import DefaultGraphService
 from benchmarks.retrieval_eval import evaluate, seed_golden
 
 pytestmark = pytest.mark.unit
 
 POT = "eval/pot"
+
+
+def _local_embedder() -> HashingEmbedder:
+    return HashingEmbedder()
 
 
 def _report(embedder):
@@ -25,7 +29,7 @@ def _report(embedder):
 
 
 def test_vector_mode_meets_recall_floor() -> None:
-    report = _report(build_embedder())
+    report = _report(_local_embedder())
     # Paraphrase recall: the right claim is in the top-5 for most cases, and
     # usually #1. These are CI floors — a regression in the embedder trips them.
     assert report.recall_at_5 >= 0.8, report.to_dict()
@@ -33,7 +37,7 @@ def test_vector_mode_meets_recall_floor() -> None:
 
 
 def test_vector_is_never_worse_than_lexical() -> None:
-    vector = _report(build_embedder())
+    vector = _report(_local_embedder())
     lexical = _report(None)  # no embedder → labeled Jaccard fallback
     # The bundled local embedder must never regress below the lexical floor.
     assert vector.recall_at_5 >= lexical.recall_at_5
@@ -98,4 +102,4 @@ def test_vector_recovers_morphological_variants_lexical_misses() -> None:
         )
         return rows[0].subject_key if rows else None
 
-    assert rank_first_key(build_embedder()) == "preference:memoize"
+    assert rank_first_key(_local_embedder()) == "preference:memoize"

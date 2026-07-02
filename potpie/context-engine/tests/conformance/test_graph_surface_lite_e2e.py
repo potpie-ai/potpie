@@ -11,7 +11,7 @@ import pytest
 
 from adapters.outbound.graph.backends.embedded_backend import EmbeddedGraphBackend
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.intelligence.local_embedder import build_embedder
+from adapters.outbound.intelligence.local_embedder import HashingEmbedder
 from application.services.graph_service import DefaultGraphService
 from domain.ports.agent_context import RecordRequest, ResolveRequest
 from domain.ports.claim_query import ClaimQueryFilter
@@ -28,7 +28,7 @@ POT = "local/default"
 
 
 def _service(embedder=True) -> DefaultGraphService:
-    be = InMemoryGraphBackend(embedder=build_embedder() if embedder else None)
+    be = InMemoryGraphBackend(embedder=HashingEmbedder() if embedder else None)
     return DefaultGraphService(backend=be)
 
 
@@ -218,13 +218,13 @@ def test_record_and_graph_mutate_produce_same_metadata() -> None:
 # 9. embedded backend persists V1.5 metadata across CLI processes
 def test_embedded_persists_metadata_across_processes(tmp_path) -> None:
     # Process 1: write through a fresh embedded backend.
-    be1 = EmbeddedGraphBackend(home=tmp_path, embedder=build_embedder())
+    be1 = EmbeddedGraphBackend(home=tmp_path, embedder=HashingEmbedder())
     svc1 = DefaultGraphService(backend=be1)
     res = svc1.mutate(SemanticMutationRequest.parse(_link_payload()))
     assert res.status == "applied"
 
     # Process 2: a brand-new backend instance reads from the same JSON file.
-    be2 = EmbeddedGraphBackend(home=tmp_path, embedder=build_embedder())
+    be2 = EmbeddedGraphBackend(home=tmp_path, embedder=HashingEmbedder())
     svc2 = DefaultGraphService(backend=be2)
     rows = svc2.backend.claim_query.find_claims(
         ClaimQueryFilter(pot_id=POT, predicate_in=("DEPENDS_ON",))

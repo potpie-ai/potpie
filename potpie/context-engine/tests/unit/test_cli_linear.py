@@ -14,6 +14,7 @@ from adapters.outbound.cli_auth.callback_server import (
     OAuthCallbackResult,
     _first,
     _oauth_callback_failure_html,
+    start_oauth_callback_server,
     wait_for_oauth_callback,
 )
 import base64
@@ -24,6 +25,10 @@ from adapters.outbound.cli_auth import token_exchange as tx
 from adapters.outbound.cli_auth import integration_session as session
 import typer
 from adapters.inbound.cli.auth import auth_commands
+from adapters.outbound.cli_auth.provider_config import (
+    DEFAULT_CALLBACK_PORT,
+    DEFAULT_FALLBACK_CALLBACK_PORTS,
+)
 import json
 # --- test_callback_server.py ---
 
@@ -104,6 +109,24 @@ def test_wait_for_oauth_callback_error_query() -> None:
 
     assert result.ok is False
     assert result.error == "access_denied"
+
+
+def test_start_oauth_callback_server_uses_fallback_port() -> None:
+    primary = _free_port()
+    fallback = _free_port()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
+        occupied.bind(("127.0.0.1", primary))
+        occupied.listen(1)
+        server = start_oauth_callback_server(
+            host="127.0.0.1",
+            port=primary,
+            path="/callback",
+            fallback_ports=(fallback,),
+        )
+    try:
+        assert server.port == fallback
+    finally:
+        server.close()
 
 
 def test_wait_for_oauth_callback_wrong_path_returns_404() -> None:
@@ -402,16 +425,59 @@ def test_ensure_valid_linear_returns_tokens_when_not_due(
 # --- test_auth_commands_linear_oauth.py ---
 
 
-class _ImmediateThread:
-    def __init__(self, target=None, daemon=None) -> None:
-        self._target = target
+class _FakeCallbackServer:
+    def __init__(
+        self,
+        *,
+        result: OAuthCallbackResult | None = None,
+        port: int = DEFAULT_CALLBACK_PORT,
+        wait_exc: BaseException | None = None,
+    ) -> None:
+        self.host = "localhost"
+        self.port = port
+        self.path = "/callback"
+        self.result = result or OAuthCallbackResult(code="auth-code", state="state-xyz")
+        self.wait_exc = wait_exc
+        self.closed = False
+        self.start_calls: list[dict[str, object]] = []
 
-    def start(self) -> None:
-        if self._target:
-            self._target()
+    def wait(self, *, timeout: float = 300.0) -> OAuthCallbackResult:
+        if self.wait_exc is not None:
+            raise self.wait_exc
+        return self.result
 
-    def join(self, timeout=None) -> None:
-        return None
+    def close(self) -> None:
+        self.closed = True
+
+
+def _stub_callback_server(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    result: OAuthCallbackResult | None = None,
+    port: int = DEFAULT_CALLBACK_PORT,
+    start_exc: BaseException | None = None,
+    wait_exc: BaseException | None = None,
+) -> _FakeCallbackServer:
+    server = _FakeCallbackServer(result=result, port=port, wait_exc=wait_exc)
+
+    def _start(**kwargs: object) -> _FakeCallbackServer:
+        server.start_calls.append(kwargs)
+        if start_exc is not None:
+            raise start_exc
+        return server
+
+    monkeypatch.setattr(auth_commands, "start_oauth_callback_server", _start)
+    monkeypatch.setattr(
+        auth_commands,
+        "get_callback_port_candidates",
+        lambda: (DEFAULT_CALLBACK_PORT, *DEFAULT_FALLBACK_CALLBACK_PORTS),
+    )
+    monkeypatch.setattr(
+        auth_commands,
+        "get_redirect_uri_for_port",
+        lambda actual_port: f"http://localhost:{actual_port}/callback",
+    )
+    return server
 
 
 def test_run_linear_oauth_flow_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -436,10 +502,6 @@ def test_run_linear_oauth_flow_success(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _p: next(status_reads),
     )
     monkeypatch.setattr(auth_commands, "get_client_id", lambda _p: "client-id")
-    monkeypatch.setattr(
-        auth_commands, "get_redirect_uri", lambda: "http://localhost:8080/callback"
-    )
-    monkeypatch.setattr(auth_commands, "get_callback_port", lambda: 8080)
     monkeypatch.setattr(auth_commands, "get_callback_host", lambda: "localhost")
     monkeypatch.setattr(auth_commands, "get_callback_path", lambda: "/callback")
     monkeypatch.setattr(auth_commands.secrets, "token_urlsafe", lambda _n: "state-xyz")
@@ -449,12 +511,7 @@ def test_run_linear_oauth_flow_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         auth_commands, "webbrowser", MagicMock(open=MagicMock(return_value=True))
     )
-    monkeypatch.setattr(auth_commands.threading, "Thread", _ImmediateThread)
-    monkeypatch.setattr(
-        auth_commands,
-        "_wait_for_callback",
-        lambda **_kwargs: OAuthCallbackResult(code="auth-code", state="state-xyz"),
-    )
+    callback_server = _stub_callback_server(monkeypatch)
     monkeypatch.setattr(
         auth_commands,
         "exchange_authorization_code",
@@ -477,6 +534,14 @@ def test_run_linear_oauth_flow_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert store.get_integration_tokens("linear").get("access_token") == "access"
     assert printed and printed[-1].get("ok") is True
+    assert callback_server.start_calls == [
+        {
+            "host": "localhost",
+            "port": DEFAULT_CALLBACK_PORT,
+            "path": "/callback",
+            "fallback_ports": DEFAULT_FALLBACK_CALLBACK_PORTS,
+        }
+    ]
 
 
 def test_run_linear_oauth_flow_already_connected(
@@ -548,20 +613,14 @@ def test_run_linear_oauth_flow_expired_reauth_message(
     monkeypatch.setattr(auth_commands, "token_needs_refresh", lambda _x: True)
     monkeypatch.setattr(auth_commands, "_try_refresh_linear_session", lambda: False)
     monkeypatch.setattr(auth_commands, "get_client_id", lambda _p: "client-id")
-    monkeypatch.setattr(
-        auth_commands, "get_redirect_uri", lambda: "http://localhost:8080/callback"
-    )
-    monkeypatch.setattr(auth_commands, "get_callback_port", lambda: 8080)
     monkeypatch.setattr(auth_commands, "get_callback_host", lambda: "localhost")
     monkeypatch.setattr(auth_commands, "get_callback_path", lambda: "/callback")
     monkeypatch.setattr(auth_commands.secrets, "token_urlsafe", lambda _n: "state-xyz")
     monkeypatch.setattr(auth_commands, "generate_pkce_pair", lambda: ("v", "c"))
     monkeypatch.setattr(auth_commands, "webbrowser", MagicMock())
-    monkeypatch.setattr(auth_commands.threading, "Thread", _ImmediateThread)
-    monkeypatch.setattr(
-        auth_commands,
-        "_wait_for_callback",
-        lambda **_kwargs: OAuthCallbackResult(code="c", state="state-xyz"),
+    _stub_callback_server(
+        monkeypatch,
+        result=OAuthCallbackResult(code="c", state="state-xyz"),
     )
     monkeypatch.setattr(
         auth_commands,
@@ -582,9 +641,11 @@ def test_run_linear_oauth_flow_expired_reauth_message(
     monkeypatch.setattr(
         auth_commands,
         "get_integration_status",
-        lambda _p: status_queue.pop(0)
-        if status_queue
-        else {"authenticated": True, "login": "Ada", "auth_type": "oauth"},
+        lambda _p: (
+            status_queue.pop(0)
+            if status_queue
+            else {"authenticated": True, "login": "Ada", "auth_type": "oauth"}
+        ),
     )
 
     auth_commands._run_linear_oauth_flow()
@@ -603,10 +664,6 @@ def test_run_linear_oauth_flow_state_mismatch(monkeypatch: pytest.MonkeyPatch) -
         lambda _p: {"authenticated": False},
     )
     monkeypatch.setattr(auth_commands, "get_client_id", lambda _p: "client-id")
-    monkeypatch.setattr(
-        auth_commands, "get_redirect_uri", lambda: "http://localhost:8080/callback"
-    )
-    monkeypatch.setattr(auth_commands, "get_callback_port", lambda: 8080)
     monkeypatch.setattr(auth_commands, "get_callback_host", lambda: "localhost")
     monkeypatch.setattr(auth_commands, "get_callback_path", lambda: "/callback")
     monkeypatch.setattr(
@@ -614,11 +671,9 @@ def test_run_linear_oauth_flow_state_mismatch(monkeypatch: pytest.MonkeyPatch) -
     )
     monkeypatch.setattr(auth_commands, "generate_pkce_pair", lambda: ("v", "c"))
     monkeypatch.setattr(auth_commands, "webbrowser", MagicMock())
-    monkeypatch.setattr(auth_commands.threading, "Thread", _ImmediateThread)
-    monkeypatch.setattr(
-        auth_commands,
-        "_wait_for_callback",
-        lambda **_kwargs: OAuthCallbackResult(code="c", state="wrong-state"),
+    _stub_callback_server(
+        monkeypatch,
+        result=OAuthCallbackResult(code="c", state="wrong-state"),
     )
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -644,20 +699,14 @@ def test_run_linear_oauth_flow_missing_code(monkeypatch: pytest.MonkeyPatch) -> 
         lambda _p: {"authenticated": False},
     )
     monkeypatch.setattr(auth_commands, "get_client_id", lambda _p: "client-id")
-    monkeypatch.setattr(
-        auth_commands, "get_redirect_uri", lambda: "http://localhost:8080/callback"
-    )
-    monkeypatch.setattr(auth_commands, "get_callback_port", lambda: 8080)
     monkeypatch.setattr(auth_commands, "get_callback_host", lambda: "localhost")
     monkeypatch.setattr(auth_commands, "get_callback_path", lambda: "/callback")
     monkeypatch.setattr(auth_commands.secrets, "token_urlsafe", lambda _n: "state-xyz")
     monkeypatch.setattr(auth_commands, "generate_pkce_pair", lambda: ("v", "c"))
     monkeypatch.setattr(auth_commands, "webbrowser", MagicMock())
-    monkeypatch.setattr(auth_commands.threading, "Thread", _ImmediateThread)
-    monkeypatch.setattr(
-        auth_commands,
-        "_wait_for_callback",
-        lambda **_kwargs: OAuthCallbackResult(state="state-xyz"),
+    _stub_callback_server(
+        monkeypatch,
+        result=OAuthCallbackResult(state="state-xyz"),
     )
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -683,20 +732,14 @@ def test_run_linear_oauth_flow_oauth_error(monkeypatch: pytest.MonkeyPatch) -> N
         lambda _p: {"authenticated": False},
     )
     monkeypatch.setattr(auth_commands, "get_client_id", lambda _p: "client-id")
-    monkeypatch.setattr(
-        auth_commands, "get_redirect_uri", lambda: "http://localhost:8080/callback"
-    )
-    monkeypatch.setattr(auth_commands, "get_callback_port", lambda: 8080)
     monkeypatch.setattr(auth_commands, "get_callback_host", lambda: "localhost")
     monkeypatch.setattr(auth_commands, "get_callback_path", lambda: "/callback")
     monkeypatch.setattr(auth_commands.secrets, "token_urlsafe", lambda _n: "state-xyz")
     monkeypatch.setattr(auth_commands, "generate_pkce_pair", lambda: ("v", "c"))
     monkeypatch.setattr(auth_commands, "webbrowser", MagicMock())
-    monkeypatch.setattr(auth_commands.threading, "Thread", _ImmediateThread)
-    monkeypatch.setattr(
-        auth_commands,
-        "_wait_for_callback",
-        lambda **_kwargs: OAuthCallbackResult(
+    _stub_callback_server(
+        monkeypatch,
+        result=OAuthCallbackResult(
             error="access_denied",
             error_description="user denied",
             state="state-xyz",
@@ -729,20 +772,14 @@ def test_run_linear_oauth_flow_exchange_failure(
         lambda _p: {"authenticated": False},
     )
     monkeypatch.setattr(auth_commands, "get_client_id", lambda _p: "client-id")
-    monkeypatch.setattr(
-        auth_commands, "get_redirect_uri", lambda: "http://localhost:8080/callback"
-    )
-    monkeypatch.setattr(auth_commands, "get_callback_port", lambda: 8080)
     monkeypatch.setattr(auth_commands, "get_callback_host", lambda: "localhost")
     monkeypatch.setattr(auth_commands, "get_callback_path", lambda: "/callback")
     monkeypatch.setattr(auth_commands.secrets, "token_urlsafe", lambda _n: "state-xyz")
     monkeypatch.setattr(auth_commands, "generate_pkce_pair", lambda: ("v", "c"))
     monkeypatch.setattr(auth_commands, "webbrowser", MagicMock())
-    monkeypatch.setattr(auth_commands.threading, "Thread", _ImmediateThread)
-    monkeypatch.setattr(
-        auth_commands,
-        "_wait_for_callback",
-        lambda **_kwargs: OAuthCallbackResult(code="code", state="state-xyz"),
+    _stub_callback_server(
+        monkeypatch,
+        result=OAuthCallbackResult(code="code", state="state-xyz"),
     )
     monkeypatch.setattr(
         auth_commands,
@@ -773,15 +810,10 @@ def _oauth_setup(monkeypatch: pytest.MonkeyPatch, *, json_mode: bool = False) ->
         lambda _p: {"authenticated": False},
     )
     monkeypatch.setattr(auth_commands, "get_client_id", lambda _p: "client-id")
-    monkeypatch.setattr(
-        auth_commands, "get_redirect_uri", lambda: "http://localhost:8080/callback"
-    )
-    monkeypatch.setattr(auth_commands, "get_callback_port", lambda: 8080)
     monkeypatch.setattr(auth_commands, "get_callback_host", lambda: "localhost")
     monkeypatch.setattr(auth_commands, "get_callback_path", lambda: "/callback")
     monkeypatch.setattr(auth_commands.secrets, "token_urlsafe", lambda _n: "state-xyz")
     monkeypatch.setattr(auth_commands, "generate_pkce_pair", lambda: ("v", "c"))
-    monkeypatch.setattr(auth_commands.time, "sleep", lambda _s: None)
 
 
 def test_run_linear_oauth_flow_callback_start_failure(
@@ -789,12 +821,7 @@ def test_run_linear_oauth_flow_callback_start_failure(
 ) -> None:
     _oauth_setup(monkeypatch)
     monkeypatch.setattr(auth_commands, "webbrowser", MagicMock())
-    monkeypatch.setattr(auth_commands.threading, "Thread", _ImmediateThread)
-
-    def _boom(**_kwargs: object) -> OAuthCallbackResult:
-        raise RuntimeError("port in use")
-
-    monkeypatch.setattr(auth_commands, "_wait_for_callback", _boom)
+    _stub_callback_server(monkeypatch, start_exc=OSError("port in use"))
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
         auth_commands,
@@ -815,12 +842,7 @@ def test_run_linear_oauth_flow_callback_timeout_after_join(
     _oauth_setup(monkeypatch)
     browser = MagicMock()
     monkeypatch.setattr(auth_commands, "webbrowser", browser)
-    monkeypatch.setattr(auth_commands.threading, "Thread", _ImmediateThread)
-
-    def _timeout(**_kwargs: object) -> OAuthCallbackResult:
-        raise TimeoutError("timed out waiting")
-
-    monkeypatch.setattr(auth_commands, "_wait_for_callback", _timeout)
+    _stub_callback_server(monkeypatch, wait_exc=TimeoutError("timed out waiting"))
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
         auth_commands,
@@ -834,25 +856,47 @@ def test_run_linear_oauth_flow_callback_timeout_after_join(
     assert any("timed out" in msg.lower() for _t, msg in captured)
 
 
-def test_run_linear_oauth_flow_callback_none_result(
+def test_run_linear_oauth_flow_fallback_port_updates_redirect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _oauth_setup(monkeypatch)
-    monkeypatch.setattr(auth_commands, "webbrowser", MagicMock())
-    monkeypatch.setattr(auth_commands.threading, "Thread", _ImmediateThread)
-    monkeypatch.setattr(auth_commands, "_wait_for_callback", lambda **_kwargs: None)
-    captured: list[tuple[str, str]] = []
+    fallback_port = DEFAULT_FALLBACK_CALLBACK_PORTS[0]
+    browser = MagicMock()
+    browser.open.return_value = True
+    monkeypatch.setattr(auth_commands, "webbrowser", browser)
+    _stub_callback_server(
+        monkeypatch,
+        port=fallback_port,
+        result=OAuthCallbackResult(code="c", state="state-xyz"),
+    )
+    exchanged: list[str] = []
     monkeypatch.setattr(
         auth_commands,
-        "emit_error",
-        lambda title, message, **kwargs: captured.append((title, message)),
+        "exchange_authorization_code",
+        lambda *_a, **kwargs: (
+            exchanged.append(kwargs["redirect_uri"])
+            or {"access_token": "a", "expires_at": 9999999999.0}
+        ),
+    )
+    set_store(InMemoryCredentialStore())
+    lines: list[str] = []
+    monkeypatch.setattr(
+        auth_commands,
+        "print_plain_line",
+        lambda message, **kwargs: lines.append(message),
+    )
+    monkeypatch.setattr(
+        auth_commands,
+        "get_integration_status",
+        lambda _p: {"authenticated": True, "login": "Ada", "auth_type": "oauth"},
     )
 
-    with pytest.raises(typer.Exit):
-        auth_commands._run_linear_oauth_flow(force=True)
+    auth_commands._run_linear_oauth_flow(force=True)
 
-    assert captured
-    assert any("timed out" in title.lower() for title, _msg in captured)
+    assert any(f"using {fallback_port}" in line for line in lines)
+    assert exchanged == [f"http://localhost:{fallback_port}/callback"]
+    browser.open.assert_called_once()
+    assert f"localhost%3A{fallback_port}" in browser.open.call_args.args[0]
 
 
 def test_run_linear_oauth_flow_webbrowser_not_opened(
@@ -862,11 +906,9 @@ def test_run_linear_oauth_flow_webbrowser_not_opened(
     browser = MagicMock()
     browser.open.return_value = False
     monkeypatch.setattr(auth_commands, "webbrowser", browser)
-    monkeypatch.setattr(auth_commands.threading, "Thread", _ImmediateThread)
-    monkeypatch.setattr(
-        auth_commands,
-        "_wait_for_callback",
-        lambda **_kwargs: OAuthCallbackResult(code="c", state="state-xyz"),
+    _stub_callback_server(
+        monkeypatch,
+        result=OAuthCallbackResult(code="c", state="state-xyz"),
     )
     monkeypatch.setattr(
         auth_commands,
@@ -891,6 +933,21 @@ def test_run_linear_oauth_flow_webbrowser_not_opened(
     assert any("Could not open a browser" in line for line in lines)
 
 
+def test_run_linear_oauth_flow_closes_callback_server_when_browser_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _oauth_setup(monkeypatch)
+    browser = MagicMock()
+    browser.open.side_effect = RuntimeError("browser unavailable")
+    monkeypatch.setattr(auth_commands, "webbrowser", browser)
+    server = _stub_callback_server(monkeypatch)
+
+    with pytest.raises(typer.Exit):
+        auth_commands._run_linear_oauth_flow(force=True)
+
+    assert server.closed is True
+
+
 def test_run_linear_oauth_flow_invalid_redirect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -905,10 +962,10 @@ def test_run_linear_oauth_flow_invalid_redirect(
     )
     monkeypatch.setattr(auth_commands, "get_client_id", lambda _p: "client-id")
 
-    def _bad_redirect() -> str:
+    def _bad_redirect() -> tuple[int, ...]:
         raise ValueError("bad redirect")
 
-    monkeypatch.setattr(auth_commands, "get_redirect_uri", _bad_redirect)
+    monkeypatch.setattr(auth_commands, "get_callback_port_candidates", _bad_redirect)
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
         auth_commands,

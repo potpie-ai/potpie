@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.intelligence.local_embedder import build_embedder
+from adapters.outbound.intelligence.local_embedder import HashingEmbedder
 from adapters.outbound.session.injection_ledger import InMemoryInjectionLedger
 from application.services.graph_service import DefaultGraphService
 from application.services.nudge_service import NudgeService
@@ -26,7 +26,7 @@ POT = "local/default"
 
 
 def _stack() -> tuple[NudgeService, DefaultGraphService]:
-    backend = InMemoryGraphBackend(embedder=build_embedder())
+    backend = InMemoryGraphBackend(embedder=HashingEmbedder())
     svc = DefaultGraphService(backend=backend)
     nudge = NudgeService(graph=svc, ledger=InMemoryInjectionLedger())
     return nudge, svc
@@ -125,7 +125,7 @@ def test_loop_runs_without_any_api_key(monkeypatch) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert agent_planner_enabled() is False  # LLM reconciliation parked
-    embedder = build_embedder()
+    embedder = HashingEmbedder()
     assert embedder is not None
     assert embedder.name == "local-hashing-v1"  # bundled, dependency-free
 
