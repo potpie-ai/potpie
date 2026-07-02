@@ -109,6 +109,42 @@ class _FakeSetup:
         )
 
 
+class _FailingObserver:
+    def step_started(self, *, step: str, hard: bool) -> None:
+        del step, hard
+        raise RuntimeError("observer failed")
+
+    def step_completed(self, *, result: StepResult, duration_ms: int) -> None:
+        del result, duration_ms
+        raise RuntimeError("observer failed")
+
+
+class _RecordingObserver:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def step_started(self, *, step: str, hard: bool) -> None:
+        del hard
+        self.calls.append(("started", step))
+
+    def step_completed(self, *, result: StepResult, duration_ms: int) -> None:
+        del duration_ms
+        self.calls.append(("completed", result.step))
+
+
+def test_composite_setup_observer_isolates_callback_failures() -> None:
+    recorder = _RecordingObserver()
+    observer = setup_ux._CompositeSetupObserver(_FailingObserver(), recorder)
+
+    observer.step_started(step="config", hard=True)
+    observer.step_completed(
+        result=StepResult("config", DONE, "config ready", hard=True),
+        duration_ms=1,
+    )
+
+    assert recorder.calls == [("started", "config"), ("completed", "config")]
+
+
 def test_live_setup_marks_embedding_step_running_before_completion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -39,6 +39,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
+from domain.embedding_modes import (
+    AUTO_SENTENCE_TRANSFORMER_ALIASES,
+    DISABLED_EMBEDDER_ALIASES,
+    EXPLICIT_SENTENCE_TRANSFORMER_ALIASES,
+    HASHING_EMBEDDER_ALIASES,
+    SEMANTIC_EMBEDDER_ALIASES,
+    normalize_embedding_mode,
+)
 from domain.ports.embedder import EmbedderPort
 
 _DEFAULT_DIMENSIONS = 256
@@ -286,23 +294,16 @@ def build_embedder() -> EmbedderPort | None:
     ``CONTEXT_ENGINE_EMBEDDING_MODEL`` overrides the SentenceTransformer model
     name when the legacy embedder is selected.
     """
-    choice = (configured_embedder_choice() or "local").strip().lower()
-    if choice in ("none", "off", "lexical", "disabled", "0", "false"):
+    choice = normalize_embedding_mode(configured_embedder_choice() or "local")
+    if choice in DISABLED_EMBEDDER_ALIASES:
         return None
-    if choice in ("", "local", "hashing", "default", "on", "1", "true"):
+    if choice in HASHING_EMBEDDER_ALIASES:
         return HashingEmbedder()
-    if choice in ("auto", "best", "semantic"):
+    if choice in AUTO_SENTENCE_TRANSFORMER_ALIASES:
         if _sentence_transformers_installed():
             return _sentence_transformer_embedder()
         return HashingEmbedder()
-    if choice in (
-        "legacy",
-        "sentence-transformers",
-        "sentence_transformers",
-        "sbert",
-        "minilm",
-        "all-minilm-l6-v2",
-    ):
+    if choice in EXPLICIT_SENTENCE_TRANSFORMER_ALIASES:
         if not _sentence_transformers_installed():
             logger.warning(
                 "sentence-transformers is not installed; using local hashing embedder"
@@ -398,6 +399,7 @@ def _default_home() -> Path:
 __all__ = [
     "DEFAULT_SENTENCE_TRANSFORMER_MODEL",
     "HashingEmbedder",
+    "SEMANTIC_EMBEDDER_ALIASES",
     "SentenceTransformerEmbedder",
     "build_embedder",
     "configured_embedder_choice",

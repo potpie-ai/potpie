@@ -24,6 +24,11 @@ from typing import Callable
 from urllib.parse import urlparse
 
 from domain.errors import CapabilityNotImplemented
+from domain.embedding_modes import (
+    EMBEDDING_MODEL_PREP_SKIPPED_ALIASES,
+    SEMANTIC_EMBEDDER_ALIASES,
+    normalize_embedding_mode,
+)
 from domain.lifecycle import (
     DONE,
     FAILED,
@@ -105,17 +110,11 @@ def _skip_reason(step: str, plan: SetupPlan) -> str | None:
         return "named in post-setup wizard"
     if step == "skills" and plan.defer_skills:
         return "chosen in post-setup wizard"
-    if step == "embeddings.model" and plan.embeddings.strip().lower() in {
-        "none",
-        "off",
-        "lexical",
-        "disabled",
-        "0",
-        "false",
-        "local",
-        "hashing",
-        "default",
-    }:
+    if (
+        step == "embeddings.model"
+        and normalize_embedding_mode(plan.embeddings)
+        in EMBEDDING_MODEL_PREP_SKIPPED_ALIASES
+    ):
         return f"embedding mode is {plan.embeddings}"
     return None
 
@@ -290,18 +289,8 @@ class DefaultSetupOrchestrator:
         return f"active pot '{pot.name}' ({pot.pot_id})"
 
     def _embedding_model(self, plan: SetupPlan) -> StepResult:
-        mode = plan.embeddings.strip().lower()
-        if mode in {
-            "none",
-            "off",
-            "lexical",
-            "disabled",
-            "0",
-            "false",
-            "local",
-            "hashing",
-            "default",
-        }:
+        mode = normalize_embedding_mode(plan.embeddings)
+        if mode in EMBEDDING_MODEL_PREP_SKIPPED_ALIASES:
             return StepResult(
                 "embeddings.model",
                 SKIPPED,
@@ -311,7 +300,7 @@ class DefaultSetupOrchestrator:
         embedder = getattr(self.backend, "embedder", None)
         prepare = getattr(embedder, "prepare", None)
         if embedder is None or not callable(prepare):
-            if mode in {"sentence-transformers", "sentence_transformers", "legacy"} and (
+            if mode in SEMANTIC_EMBEDDER_ALIASES and (
                 getattr(embedder, "name", None) == "local-hashing-v1"
             ):
                 return StepResult(
@@ -350,7 +339,7 @@ class DefaultSetupOrchestrator:
             "embeddings.model",
             DONE,
             detail,
-            metadata={"mode": plan.embeddings, "model": model, **metadata},
+            metadata={**metadata, "mode": plan.embeddings, "model": model},
         )
 
     def _source(self, plan: SetupPlan) -> StepResult:

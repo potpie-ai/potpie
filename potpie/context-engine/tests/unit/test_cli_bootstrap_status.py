@@ -55,6 +55,8 @@ def _patch_local_setup_host(
     monkeypatch: pytest.MonkeyPatch,
     mock_host: MagicMock,
 ) -> None:
+    monkeypatch.delenv("CONTEXT_ENGINE_EMBEDDER", raising=False)
+    monkeypatch.delenv("CONTEXT_ENGINE_EMBEDDING_MODEL", raising=False)
     monkeypatch.setattr(
         bootstrap,
         "_build_local_setup_host",

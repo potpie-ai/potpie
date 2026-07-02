@@ -103,11 +103,17 @@ class _CompositeSetupObserver:
 
     def step_started(self, *, step: str, hard: bool) -> None:
         for observer in self._observers:
-            observer.step_started(step=step, hard=hard)
+            try:
+                observer.step_started(step=step, hard=hard)
+            except Exception:  # noqa: BLE001 - one observer must not block another.
+                continue
 
     def step_completed(self, *, result: Any, duration_ms: int) -> None:
         for observer in self._observers:
-            observer.step_completed(result=result, duration_ms=duration_ms)
+            try:
+                observer.step_completed(result=result, duration_ms=duration_ms)
+            except Exception:  # noqa: BLE001 - one observer must not block another.
+                continue
 
 
 class _WizardSetupObserver:

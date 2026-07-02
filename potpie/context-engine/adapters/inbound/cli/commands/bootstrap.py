@@ -44,6 +44,7 @@ from adapters.outbound.intelligence.local_embedder import (
 )
 from application.services.config_service import KNOWN_CONFIG_KEYS, public_config_value
 from bootstrap import sentry_metrics_runtime
+from domain.embedding_modes import normalize_embedding_mode
 from domain.errors import CapabilityNotImplemented
 from domain.lifecycle import SetupPlan, SetupReport
 from domain.ports.agent_context import StatusRequest
@@ -205,17 +206,8 @@ def register(root: typer.Typer) -> None:
                 host.daemon.ensure(plan)
                 daemon_status = host.daemon.status()
                 running_backend = daemon_status.get("backend")
-                if backend and not isinstance(running_backend, str):
-                    raise ValueError(
-                        "daemon is running but its backend could not be verified; "
-                        "stop it with 'potpie daemon stop' before changing backend"
-                    )
-                if backend and running_backend != backend:
-                    raise ValueError(
-                        "daemon is already running with backend "
-                        f"{running_backend!r}; stop it with 'potpie daemon stop' "
-                        f"before running setup with backend {backend!r}"
-                    )
+                if backend:
+                    _raise_if_backend_mismatch(running_backend, backend)
 
             if not in_process and human_output:
                 _validate_existing_daemon_backend(host, requested_backend=backend)
@@ -561,12 +553,10 @@ def _emit_setup_step_metrics(report: SetupReport) -> None:
 
 def _setup_embeddings_choice(raw: str | None) -> str:
     if raw is not None:
-        choice = raw.strip().lower().replace("_", "-")
+        choice = normalize_embedding_mode(raw)
     else:
         configured = configured_embedder_choice()
-        choice = (configured or "sentence-transformers").strip().lower().replace(
-            "_", "-"
-        )
+        choice = normalize_embedding_mode(configured or "sentence-transformers")
     aliases = {
         "legacy": "sentence-transformers",
         "sbert": "sentence-transformers",
@@ -633,6 +623,10 @@ def _validate_existing_daemon_backend(host, *, requested_backend: str | None) ->
     if not daemon_status.get("up"):
         return
     running_backend = daemon_status.get("backend")
+    _raise_if_backend_mismatch(running_backend, requested_backend)
+
+
+def _raise_if_backend_mismatch(running_backend: object, requested_backend: str) -> None:
     if not isinstance(running_backend, str):
         raise ValueError(
             "daemon is running but its backend could not be verified; "

@@ -62,6 +62,17 @@ class _FakeEmbedder:
         return [self.embed(t) for t in texts]
 
 
+class _FailingEmbedder:
+    name = "failing-embedder"
+    dimensions = 384
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        raise RuntimeError("model unavailable")
+
+    def embed_many(self, texts):
+        raise RuntimeError("model unavailable")
+
+
 def test_row_parsing_maps_reserved_and_extras() -> None:
     row = _row_from_record(
         _rec(
@@ -247,6 +258,38 @@ def test_fact_query_uses_native_relationship_vector_index_when_embedder_present(
     assert params["k"] == 50
     assert rows[0].subject_key == "a"
     assert rows[0].properties["semantic_similarity"] == pytest.approx(0.91)
+
+
+def test_fact_query_falls_back_to_lexical_when_embedder_fails() -> None:
+    driver = _FakeDriver(
+        [
+            _rec(
+                group_id="p1",
+                name="X",
+                subject_key="a",
+                object_key="b",
+                fact="connection pool exhausted in checkout",
+            ),
+            _rec(
+                group_id="p1",
+                name="X",
+                subject_key="c",
+                object_key="d",
+                fact="unrelated note about logging",
+            ),
+        ]
+    )
+    store = Neo4jClaimQueryStore(
+        settings=object(), driver=driver, embedder=_FailingEmbedder()
+    )  # type: ignore[arg-type]
+
+    rows = store.find_claims(
+        ClaimQueryFilter(pot_id="p1", fact_query="connection pool exhausted")
+    )
+
+    assert "db.index.vector.queryRelationships" not in driver.captured[0][0]
+    assert rows[0].subject_key == "a"
+    assert rows[0].properties["semantic_similarity"] > 0
 
 
 def test_limit_truncates() -> None:

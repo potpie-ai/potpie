@@ -8,6 +8,7 @@ import os
 import sys
 import types
 import warnings
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,7 +18,8 @@ from adapters.outbound.intelligence.local_embedder import (
     SentenceTransformerEmbedder,
 )
 from application.services.config_service import LocalConfigService
-from domain.lifecycle import SetupPlan
+from application.services.setup_orchestrator import DefaultSetupOrchestrator
+from domain.lifecycle import DONE, FAILED, SetupPlan
 
 pytestmark = pytest.mark.unit
 
@@ -67,6 +69,33 @@ def test_build_embedder_reads_setup_sentence_transformer_config(
     assert isinstance(embedder, SentenceTransformerEmbedder)
     assert embedder.model_name == "all-MiniLM-L6-v2"
     assert embedder.cache_folder == str(cache)
+
+
+@pytest.mark.parametrize(
+    "choice",
+    [
+        "auto",
+        "best",
+        "semantic",
+        "legacy",
+        "sentence-transformers",
+        "sentence_transformers",
+        "sbert",
+        "minilm",
+        "all-minilm-l6-v2",
+    ],
+)
+def test_semantic_embedder_aliases_fall_back_to_hashing_when_unavailable(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, choice: str
+) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    _clear_embedding_env(monkeypatch)
+    monkeypatch.setenv("CONTEXT_ENGINE_EMBEDDER", choice)
+    monkeypatch.setattr(local_embedder, "_sentence_transformers_installed", lambda: False)
+
+    embedder = local_embedder.build_embedder()
+
+    assert isinstance(embedder, HashingEmbedder)
 
 
 def test_known_sentence_transformer_dimension_does_not_load_model(
@@ -166,3 +195,47 @@ def test_setup_config_persists_embedding_defaults(tmp_path) -> None:
     assert data["embedder"] == "sentence-transformers"
     assert data["embedding_model"] == "all-MiniLM-L6-v2"
     assert data["embedding_cache"] == str(tmp_path / "models" / "sentence-transformers")
+
+
+def test_setup_reports_semantic_alias_hashing_fallback() -> None:
+    orchestrator = _setup_orchestrator_with_embedder(HashingEmbedder())
+
+    step = orchestrator._embedding_model(SetupPlan(embeddings="auto"))  # noqa: SLF001
+
+    assert step.state == FAILED
+    assert step.detail == "sentence-transformers is unavailable; using local-hashing-v1"
+    assert step.metadata["fallback"] == "local-hashing-v1"
+
+
+def test_setup_embedding_model_metadata_preserves_resolved_model() -> None:
+    class _PreparedEmbedder:
+        name = "prepared-embedder"
+
+        def prepare(self) -> dict[str, object]:
+            return {"model": "", "cache_folder": None}
+
+    orchestrator = _setup_orchestrator_with_embedder(_PreparedEmbedder())
+
+    step = orchestrator._embedding_model(  # noqa: SLF001
+        SetupPlan(embeddings="sentence-transformers", embedding_model="fallback-model")
+    )
+
+    assert step.state == DONE
+    assert step.detail == "fallback-model ready"
+    assert step.metadata["model"] == "fallback-model"
+
+
+def _setup_orchestrator_with_embedder(embedder: object) -> DefaultSetupOrchestrator:
+    backend = MagicMock()
+    backend.embedder = embedder
+    return DefaultSetupOrchestrator(
+        config=MagicMock(),
+        installer=MagicMock(),
+        backend=backend,
+        pots=MagicMock(),
+        state_store=MagicMock(),
+        migrator=MagicMock(),
+        daemon=MagicMock(),
+        auth=MagicMock(),
+        skills=MagicMock(),
+    )
