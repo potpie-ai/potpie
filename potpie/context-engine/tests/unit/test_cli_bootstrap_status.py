@@ -441,7 +441,9 @@ def test_doctor_json_includes_effective_and_default_repo_pot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """doctor JSON includes effective_current_repo_pot and repo_default_pot."""
-    mock_host = _make_doctor_host(active_pot_id="pot-active", repo_default="pot-default")
+    mock_host = _make_doctor_host(
+        active_pot_id="pot-active", repo_default="pot-default"
+    )
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
         bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
@@ -526,7 +528,9 @@ def test_doctor_human_output_includes_repo_line_when_in_repo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Plain-text doctor output includes a repo → effective-pot line."""
-    mock_host = _make_doctor_host(active_pot_id="pot-active", repo_default="pot-default")
+    mock_host = _make_doctor_host(
+        active_pot_id="pot-active", repo_default="pot-default"
+    )
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
         bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"

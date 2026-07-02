@@ -1535,9 +1535,7 @@ def test_graph_read_missing_required_scope_result_is_error_envelope() -> None:
     _assert_graph_envelope(emitted, "graph.read", ok=False)
     assert emitted["error"]["code"] == "missing_required_scope"
     assert emitted["unsupported"][0]["reason"] == "missing_required_scope"
-    assert (
-        emitted["error"]["detail"]["quality"]["reason"] == "missing_required_scope"
-    )
+    assert emitted["error"]["detail"]["quality"]["reason"] == "missing_required_scope"
 
 
 def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:

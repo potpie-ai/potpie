@@ -78,7 +78,12 @@ def test_file_path_and_command_accessors_tolerate_shapes() -> None:
 
 @pytest.mark.parametrize(
     "command",
-    ["kubectl apply -f deploy.yaml", "helm upgrade api ./chart", "terraform apply", "fly deploy"],
+    [
+        "kubectl apply -f deploy.yaml",
+        "helm upgrade api ./chart",
+        "terraform apply",
+        "fly deploy",
+    ],
 )
 def test_is_deploy_command_true(command: str) -> None:
     assert adapter.is_deploy_command(command) is True
@@ -131,14 +136,20 @@ def test_test_outcome_ambiguous_or_interrupted_is_none() -> None:
         ("Tests: 42 passed, 0 failed, 42 total", "pass"),  # jest
         ("ok\tgithub.com/acme/x\t0.012s", "pass"),  # go (tab-separated ok line)
         ("ok github.com/acme/errors 0.01s\nPASS", "pass"),  # 'errors' in pkg path
-        ("test_error_handling PASSED\n1 passed in 0.1s", "pass"),  # 'error' in test name
+        (
+            "test_error_handling PASSED\n1 passed in 0.1s",
+            "pass",
+        ),  # 'error' in test name
         ("42 passing (1s)", "pass"),  # mocha
         # red runs → fail
         ("Tests: 3 failed, 39 passed, 42 total", "fail"),  # jest
         ("test result: FAILED. 10 passed; 2 failed", "fail"),  # cargo
         ("1 failed, 2 passed in 0.5s", "fail"),  # pytest
         ("3 failing\n  1) settles deadlock", "fail"),  # mocha
-        ("Traceback (most recent call last):\nAssertionError: boom", "fail"),  # no count
+        (
+            "Traceback (most recent call last):\nAssertionError: boom",
+            "fail",
+        ),  # no count
         ("--- FAIL: TestSettle (0.00s)\nFAIL", "fail"),  # go -v
     ],
 )
@@ -156,7 +167,8 @@ def test_resolve_session_start_and_stop() -> None:
 
 def test_resolve_pre_edit_carries_path() -> None:
     ev, fields = adapter.resolve_nudge_event(
-        "pre_edit", {"tool_name": "Edit", "tool_input": {"file_path": "src/payments/client.py"}}
+        "pre_edit",
+        {"tool_name": "Edit", "tool_input": {"file_path": "src/payments/client.py"}},
     )
     assert ev == "pre_edit"
     assert fields["path"] == "src/payments/client.py"
@@ -164,7 +176,8 @@ def test_resolve_pre_edit_carries_path() -> None:
 
 def test_direct_dash_event_alias_is_canonicalized() -> None:
     ev, fields = adapter.resolve_nudge_event(
-        "pre-edit", {"tool_name": "Edit", "tool_input": {"file_path": "src/payments/client.py"}}
+        "pre-edit",
+        {"tool_name": "Edit", "tool_input": {"file_path": "src/payments/client.py"}},
     )
     assert ev == "pre_edit"
     assert fields == {"path": "src/payments/client.py", "query": None}
@@ -176,7 +189,9 @@ def test_resolve_bash_pre_deploy_vs_skip() -> None:
     )
     assert ev == "pre_deploy" and "kubectl apply" in fields["query"]
     # Non-deploy bash must NOT nudge (noise control).
-    assert adapter.resolve_nudge_event("bash_pre", {"tool_input": {"command": "ls"}}) == (
+    assert adapter.resolve_nudge_event(
+        "bash_pre", {"tool_input": {"command": "ls"}}
+    ) == (
         None,
         {},
     )
@@ -187,7 +202,10 @@ def test_resolve_bash_post_test_failed_extracts_symptom() -> None:
         "bash_post",
         {
             "tool_input": {"command": "pytest -q tests/test_settle.py"},
-            "tool_response": {"exit_code": 1, "stderr": "E   AssertionError: deadlock on settle"},
+            "tool_response": {
+                "exit_code": 1,
+                "stderr": "E   AssertionError: deadlock on settle",
+            },
         },
     )
     assert ev == "test_failed"
@@ -197,7 +215,10 @@ def test_resolve_bash_post_test_failed_extracts_symptom() -> None:
 def test_resolve_bash_post_test_passed() -> None:
     ev, fields = adapter.resolve_nudge_event(
         "bash_post",
-        {"tool_input": {"command": "pytest -q"}, "tool_response": {"exit_code": 0, "stdout": "5 passed"}},
+        {
+            "tool_input": {"command": "pytest -q"},
+            "tool_response": {"exit_code": 0, "stdout": "5 passed"},
+        },
     )
     assert ev == "test_passed"
     assert fields["query"] == "pytest -q"
@@ -205,11 +226,16 @@ def test_resolve_bash_post_test_passed() -> None:
 
 def test_resolve_bash_post_non_test_and_ambiguous_skip() -> None:
     assert adapter.resolve_nudge_event(
-        "bash_post", {"tool_input": {"command": "ls"}, "tool_response": {"exit_code": 0}}
+        "bash_post",
+        {"tool_input": {"command": "ls"}, "tool_response": {"exit_code": 0}},
     ) == (None, {})
     # A test command with no determinable outcome stays silent rather than nudging.
     assert adapter.resolve_nudge_event(
-        "bash_post", {"tool_input": {"command": "pytest"}, "tool_response": {"stdout": "collecting"}}
+        "bash_post",
+        {
+            "tool_input": {"command": "pytest"},
+            "tool_response": {"stdout": "collecting"},
+        },
     ) == (None, {})
 
 
@@ -222,7 +248,13 @@ def test_resolve_unknown_hint_is_silent() -> None:
 
 def test_build_argv_shape() -> None:
     argv = adapter.build_argv(
-        "potpie", "pre_edit", "sess-1", path="a.py", query="q", pot="local/default", limit=5
+        "potpie",
+        "pre_edit",
+        "sess-1",
+        path="a.py",
+        query="q",
+        pot="local/default",
+        limit=5,
     )
     assert argv[:5] == ["potpie", "--json", "graph", "nudge", "--event"]
     assert "pre_edit" in argv and "--session" in argv and "sess-1" in argv
@@ -238,14 +270,17 @@ def test_build_argv_omits_absent_optionals() -> None:
 
 def test_render_output_silent_and_not_ok_emit_nothing() -> None:
     assert adapter.render_output("PreToolUse", {"ok": True, "silent": True}) == ("", 0)
-    assert adapter.render_output("PreToolUse", {"ok": False, "inject_context": "x"}) == ("", 0)
+    assert adapter.render_output(
+        "PreToolUse", {"ok": False, "inject_context": "x"}
+    ) == ("", 0)
     assert adapter.render_output("PreToolUse", {"ok": True, "silent": False}) == ("", 0)
     assert adapter.render_output("PreToolUse", "not-a-dict") == ("", 0)
 
 
 def test_render_output_injects_context_envelope() -> None:
     out, code = adapter.render_output(
-        "PreToolUse", {"ok": True, "silent": False, "inject_context": "PREF: use tenacity"}
+        "PreToolUse",
+        {"ok": True, "silent": False, "inject_context": "PREF: use tenacity"},
     )
     assert code == 0
     parsed = json.loads(out)
@@ -257,7 +292,9 @@ def test_render_output_instruction_used_when_no_context() -> None:
     out, _ = adapter.render_output(
         "PostToolUse", {"ok": True, "silent": False, "instruction": "record the fix"}
     )
-    assert "record the fix" in json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert (
+        "record the fix" in json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    )
 
 
 def test_render_output_stop_uses_system_message() -> None:
@@ -270,7 +307,10 @@ def test_render_output_stop_uses_system_message() -> None:
 
 
 def test_hook_event_name_authoritative_then_fallback() -> None:
-    assert adapter.hook_event_name_of({"hook_event_name": "PreToolUse"}, "pre_edit") == "PreToolUse"
+    assert (
+        adapter.hook_event_name_of({"hook_event_name": "PreToolUse"}, "pre_edit")
+        == "PreToolUse"
+    )
     assert adapter.hook_event_name_of({}, "session_start") == "SessionStart"
     assert adapter.hook_event_name_of({}, "stop") == "Stop"
     assert adapter.hook_event_name_of({}, "test_failed") == "PostToolUse"
@@ -305,7 +345,13 @@ def _fake_potpie(tmp_path: Path, body: str) -> dict[str, str]:
 def test_subprocess_injects_when_fake_potpie_returns_context(tmp_path: Path) -> None:
     env = _fake_potpie(
         tmp_path,
-        json.dumps({"ok": True, "silent": False, "inject_context": "PREF: wrap calls in tenacity"}),
+        json.dumps(
+            {
+                "ok": True,
+                "silent": False,
+                "inject_context": "PREF: wrap calls in tenacity",
+            }
+        ),
     )
     proc = _run_adapter(
         ["--harness", "claude", "--event", "pre_edit"],
@@ -357,7 +403,9 @@ def test_subprocess_broken_potpie_output_is_failsafe(tmp_path: Path) -> None:
 
 def test_subprocess_non_deploy_bash_does_not_call_potpie(tmp_path: Path) -> None:
     # If the adapter wrongly called potpie, the fake would inject; assert it does not.
-    env = _fake_potpie(tmp_path, json.dumps({"ok": True, "inject_context": "SHOULD-NOT-APPEAR"}))
+    env = _fake_potpie(
+        tmp_path, json.dumps({"ok": True, "inject_context": "SHOULD-NOT-APPEAR"})
+    )
     proc = _run_adapter(
         ["--event", "bash_pre"],
         stdin=json.dumps({"tool_input": {"command": "ls -la"}}),

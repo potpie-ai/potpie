@@ -17,7 +17,9 @@ def test_all_intents_have_explicit_recipes() -> None:
     """Every intent in CONTEXT_INTENTS must have a curated CONTEXT_RESOLVE_RECIPES entry."""
     for intent in CONTEXT_INTENTS:
         recipe = CONTEXT_RESOLVE_RECIPES.get(intent)
-        assert recipe is not None, f"intent '{intent}' missing from CONTEXT_RESOLVE_RECIPES"
+        assert recipe is not None, (
+            f"intent '{intent}' missing from CONTEXT_RESOLVE_RECIPES"
+        )
         assert recipe["intent"] == intent
 
 
@@ -26,7 +28,9 @@ def test_context_recipe_for_intent_returns_curated_not_generic() -> None:
     for intent in CONTEXT_INTENTS:
         recipe = context_recipe_for_intent(intent)
         curated = CONTEXT_RESOLVE_RECIPES.get(intent)
-        assert curated is not None, f"intent '{intent}' missing from CONTEXT_RESOLVE_RECIPES"
+        assert curated is not None, (
+            f"intent '{intent}' missing from CONTEXT_RESOLVE_RECIPES"
+        )
         assert recipe["intent"] == curated["intent"]
         assert recipe["mode"] == curated["mode"]
         assert recipe["source_policy"] == curated["source_policy"]

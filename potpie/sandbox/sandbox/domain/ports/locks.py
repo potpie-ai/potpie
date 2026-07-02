@@ -8,6 +8,4 @@ from typing import AsyncIterator, Protocol
 
 class LockManager(Protocol):
     @asynccontextmanager
-    async def lock(self, key: str) -> AsyncIterator[None]:
-        ...
-
+    async def lock(self, key: str) -> AsyncIterator[None]: ...

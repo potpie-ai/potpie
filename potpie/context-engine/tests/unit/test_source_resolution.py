@@ -43,9 +43,7 @@ def test_clamp_text_handles_none_and_zero() -> None:
 
 def test_source_resolution_result_extend_and_total_chars() -> None:
     a = SourceResolutionResult(
-        summaries=[
-            ResolvedSummary(ref="r1", source_type="pr", summary="hi there")
-        ]
+        summaries=[ResolvedSummary(ref="r1", source_type="pr", summary="hi there")]
     )
     b = SourceResolutionResult(
         snippets=[ResolvedSnippet(ref="r2", source_type="doc", snippet="body")]

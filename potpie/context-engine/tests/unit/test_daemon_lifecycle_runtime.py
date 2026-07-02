@@ -83,7 +83,9 @@ def test_remote_host_runs_setup_inside_daemon(tmp_path: Path, monkeypatch) -> No
         )
 
         assert report.ok
-        assert any(step.step == "daemon" and step.state == SKIPPED for step in report.steps)
+        assert any(
+            step.step == "daemon" and step.state == SKIPPED for step in report.steps
+        )
         active = host.pots.active_pot()
         assert active is not None
         assert active.name == "default"

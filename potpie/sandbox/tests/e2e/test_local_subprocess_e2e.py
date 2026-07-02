@@ -18,7 +18,9 @@ import pytest
 
 from sandbox.adapters.outbound.file.json_store import JsonSandboxStore
 from sandbox.adapters.outbound.local.git_workspace import LocalGitWorkspaceProvider
-from sandbox.adapters.outbound.local.subprocess_runtime import LocalSubprocessRuntimeProvider
+from sandbox.adapters.outbound.local.subprocess_runtime import (
+    LocalSubprocessRuntimeProvider,
+)
 from sandbox.adapters.outbound.memory.locks import InMemoryLockManager
 from sandbox.application.services.sandbox_service import SandboxService
 from sandbox.domain.errors import RuntimeCommandRejected, WorkspaceNotFound
@@ -52,7 +54,8 @@ async def test_full_flow_create_exec_mutate_destroy(
     workspace = await local_service.get_or_create_workspace(_edit_request(source_repo))
 
     read = await local_service.exec(
-        workspace.id, ExecRequest(cmd=("cat", "README.md"), command_kind=CommandKind.READ)
+        workspace.id,
+        ExecRequest(cmd=("cat", "README.md"), command_kind=CommandKind.READ),
     )
     assert read.exit_code == 0
     assert read.stdout == b"hello e2e\n"
@@ -124,7 +127,8 @@ async def test_runtime_lifecycle_hibernate_then_resume(
     assert stopped.state is RuntimeState.STOPPED
 
     result = await local_service.exec(
-        workspace.id, ExecRequest(cmd=("cat", "README.md"), command_kind=CommandKind.READ)
+        workspace.id,
+        ExecRequest(cmd=("cat", "README.md"), command_kind=CommandKind.READ),
     )
     assert result.exit_code == 0
 
@@ -175,7 +179,8 @@ async def test_readonly_runtime_blocks_writes(
     )
 
     ok = await service.exec(
-        workspace.id, ExecRequest(cmd=("cat", "README.md"), command_kind=CommandKind.READ)
+        workspace.id,
+        ExecRequest(cmd=("cat", "README.md"), command_kind=CommandKind.READ),
     )
     assert ok.exit_code == 0
 

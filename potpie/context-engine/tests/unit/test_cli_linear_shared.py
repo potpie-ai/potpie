@@ -104,7 +104,9 @@ def test_esc_handles_none_and_markup() -> None:
 
 
 def test_auth_status_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(
         auth_commands,
         "get_integration_status",
@@ -126,7 +128,9 @@ def test_auth_status_json(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auth_status_json_keeps_provider_errors_per_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
 
     def _status(provider: str) -> dict[str, object]:
         if provider == "linear":
@@ -144,15 +148,15 @@ def test_auth_status_json_keeps_provider_errors_per_row(
 
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
-    linear = next(
-        row for row in payload["integrations"] if row["provider"] == "linear"
-    )
+    linear = next(row for row in payload["integrations"] if row["provider"] == "linear")
     assert linear["authenticated"] is False
     assert linear["status_error"] == "keychain locked"
 
 
 def test_auth_logout_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -182,7 +186,9 @@ def test_token_is_expired_invalid_expires_at() -> None:
 
 
 def test_auth_logout_not_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -204,7 +210,9 @@ def test_auth_logout_not_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
     monkeypatch.setattr(
         auth_commands,
@@ -222,7 +230,9 @@ def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from adapters.outbound.cli_auth.credentials_store import ProviderCredentialError
 
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, True))
     monkeypatch.setattr(
         auth_commands,
@@ -249,7 +259,9 @@ runner = CliRunner()
 
 
 def _mock_cli(monkeypatch: pytest.MonkeyPatch, *, json_mode: bool = False) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (json_mode, False))
 
 
@@ -365,7 +377,9 @@ runner = CliRunner()
 
 
 def test_auth_status_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -389,7 +403,9 @@ def test_auth_status_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auth_status_includes_github_authenticated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -410,7 +426,9 @@ def test_auth_status_includes_github_authenticated(
 
 
 def test_linear_ls_lists_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -433,7 +451,9 @@ def test_linear_ls_lists_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_linear_select_fetches_issues(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -469,7 +489,9 @@ def test_linear_select_fetches_issues(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auth_status_verify_linear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
     monkeypatch.setattr(
         auth_commands,
@@ -501,7 +523,9 @@ def test_auth_status_verify_linear(
 def test_auth_status_verify_linear_refresh_error_stays_in_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
     linear_status_calls = 0
 
@@ -539,16 +563,16 @@ def test_auth_status_verify_linear_refresh_error_stays_in_row(
 
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
-    linear = next(
-        row for row in payload["integrations"] if row["provider"] == "linear"
-    )
+    linear = next(row for row in payload["integrations"] if row["provider"] == "linear")
     assert linear["verified"] is False
     assert linear["verify_message"] == "keychain locked"
     assert linear_status_calls == 2
 
 
 def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -584,7 +608,9 @@ def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_auth_status_human_verify_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -936,15 +962,22 @@ def test_get_integration_status_unknown_provider(
 
 
 def test_get_integration_status_github_unauthenticated(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     status = cs.get_integration_status("github")
-    assert status == {"provider": "github", "authenticated": False, "auth_type": "oauth"}
+    assert status == {
+        "provider": "github",
+        "authenticated": False,
+        "auth_type": "oauth",
+    }
 
 
 def test_get_integration_status_github_authenticated(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, keychain: dict[tuple[str, str], str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    keychain: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.write_provider_credentials(

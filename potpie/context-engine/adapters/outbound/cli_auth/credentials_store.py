@@ -669,7 +669,9 @@ def _normalize_linear_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 
 
 def _read_linear_metadata() -> dict[str, Any]:
-    return _normalize_linear_metadata(_read_metadata_entry(_LINEAR_CREDENTIALS_KEY) or {})
+    return _normalize_linear_metadata(
+        _read_metadata_entry(_LINEAR_CREDENTIALS_KEY) or {}
+    )
 
 
 def get_active_linear_organization_id() -> str | None:
@@ -1047,9 +1049,7 @@ def clear_atlassian_credentials() -> None:
 def save_jira_workspace_prefs(*, project_key: str) -> None:
     prior = get_jira_credentials()
     if not prior.get("api_token"):
-        raise ProviderCredentialError(
-            "Jira is not connected. Run: potpie jira login"
-        )
+        raise ProviderCredentialError("Jira is not connected. Run: potpie jira login")
     workspaces = dict(prior.get("workspaces") or {})
     workspaces["jira_project"] = project_key.strip().upper()
     save_jira_credentials({**prior, "workspaces": workspaces})
@@ -1090,7 +1090,9 @@ def save_linear_workspace_prefs(
     workspaces["linear_team"] = team_key.strip().upper()
     if team_id:
         workspaces["linear_team_id"] = team_id.strip()
-    _write_metadata_entry(_LINEAR_CREDENTIALS_KEY, {**metadata, "workspaces": workspaces})
+    _write_metadata_entry(
+        _LINEAR_CREDENTIALS_KEY, {**metadata, "workspaces": workspaces}
+    )
 
 
 def save_atlassian_workspace_prefs(

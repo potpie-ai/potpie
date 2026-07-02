@@ -12,7 +12,12 @@ def test_hard_reset_success() -> None:
         "pot_id": "pot-1",
         "ok": True,
         "episodic": {"ok": True},
-        "structural": {"ok": True, "entity_deleted": 1, "file_deleted": 0, "node_deleted": 0},
+        "structural": {
+            "ok": True,
+            "entity_deleted": 1,
+            "file_deleted": 0,
+            "node_deleted": 0,
+        },
     }
     parent.attach_mock(context_graph, "context_graph")
     ledger = MagicMock()
@@ -23,14 +28,18 @@ def test_hard_reset_success() -> None:
 
     assert out["ok"] is True
     assert out["ledger_rows_deleted"] == 3
-    assert parent.mock_calls.index(call.ledger.delete_all_for_pot("pot-1")) < parent.mock_calls.index(
-        call.context_graph.reset_pot("pot-1")
-    )
+    assert parent.mock_calls.index(
+        call.ledger.delete_all_for_pot("pot-1")
+    ) < parent.mock_calls.index(call.context_graph.reset_pot("pot-1"))
 
 
 def test_hard_reset_returns_graph_failure() -> None:
     context_graph = MagicMock()
-    context_graph.reset_pot.return_value = {"pot_id": "pot-1", "ok": False, "error": "bad"}
+    context_graph.reset_pot.return_value = {
+        "pot_id": "pot-1",
+        "ok": False,
+        "error": "bad",
+    }
     ledger = MagicMock()
 
     out = hard_reset_pot(context_graph, "pot-1", ledger=ledger)

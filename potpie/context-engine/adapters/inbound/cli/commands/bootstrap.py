@@ -21,6 +21,7 @@ from adapters.inbound.cli.commands._common import (
     contract,
     current_repo_identity_for_cli,
     emit,
+    enrich_with_pot_guidance,
     fail,
     get_host,
     is_json,

@@ -13,7 +13,10 @@ from adapters.inbound.cli.ui.brand import (
     UI_FOCUS_STYLE,
     UI_MUTED_STYLE,
 )
-from adapters.inbound.cli.ui.potpie_logo_anim import content_width_for_panel, panel_width_for_console
+from adapters.inbound.cli.ui.potpie_logo_anim import (
+    content_width_for_panel,
+    panel_width_for_console,
+)
 from adapters.inbound.cli.ui.setup_wizard_ui import is_interactive_tty
 
 _SUBTLE_SEPARATOR_CHAR = "─"
@@ -161,7 +164,11 @@ def prompt_yes_no(
     console.print()
     console.print(message)
     _draw_options(
-        console, selected=selected, yes_label=yes_label, no_label=no_label, repaint=False
+        console,
+        selected=selected,
+        yes_label=yes_label,
+        no_label=no_label,
+        repaint=False,
     )
 
     try:
@@ -261,7 +268,9 @@ def prompt_multi_checkbox(
 
         selected: list[str] = []
         for option_id, label in options:
-            if typer.confirm(f"{label}?", default=option_id in (default_checked or frozenset())):
+            if typer.confirm(
+                f"{label}?", default=option_id in (default_checked or frozenset())
+            ):
                 selected.append(option_id)
         return selected
 
@@ -272,7 +281,7 @@ def prompt_multi_checkbox(
     console.print()
     console.print(message)
     console.print(
-                Text("↑/↓ move · Space/x to select · Enter to continue", style=UI_MUTED_STYLE)
+        Text("↑/↓ move · Space/x to select · Enter to continue", style=UI_MUTED_STYLE)
     )
     _draw_checkboxes(
         console,
@@ -373,4 +382,9 @@ def prompt_first_pot_name(*, default: str = "foo-pot") -> str:
     return typer.prompt("  Pot name", default=default or None)
 
 
-__all__ = ["prompt_yes_no", "prompt_multi_checkbox", "prompt_text", "prompt_first_pot_name"]
+__all__ = [
+    "prompt_yes_no",
+    "prompt_multi_checkbox",
+    "prompt_text",
+    "prompt_first_pot_name",
+]

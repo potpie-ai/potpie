@@ -65,7 +65,9 @@ def create_graph(repo_dir):
             if not is_text_file(file_path):
                 continue
 
-            logger.info(f"\nProcessing file: {file_rel_path}", file_rel_path=file_rel_path)
+            logger.info(
+                f"\nProcessing file: {file_rel_path}", file_rel_path=file_rel_path
+            )
 
             # Add file node
             file_node_name = file_rel_path
@@ -356,7 +358,11 @@ def read_text(fname):
             with open(fname, "r", encoding=encoding) as f:
                 content = f.read()
                 if encoding != "utf-8":
-                    logger.info(f"Read {fname} using {encoding} encoding", fname=fname, encoding=encoding)
+                    logger.info(
+                        f"Read {fname} using {encoding} encoding",
+                        fname=fname,
+                        encoding=encoding,
+                    )
                 return content
         except (UnicodeDecodeError, UnicodeError):
             continue
@@ -365,8 +371,9 @@ def read_text(fname):
             return ""
 
     logger.warning(
-        f"Could not read {fname} with any supported encoding. Skipping this file."
-    , fname=fname)
+        f"Could not read {fname} with any supported encoding. Skipping this file.",
+        fname=fname,
+    )
     return ""
 
 
@@ -408,7 +415,9 @@ def get_tags_raw(fname, rel_fname):
                 for node in nodes:
                     captures.append((node, capture_name))
     except Exception as e:
-        logger.warning(f"Failed to execute query matches for {fname}: {e}", fname=fname, e=e)
+        logger.warning(
+            f"Failed to execute query matches for {fname}: {e}", fname=fname, e=e
+        )
         return
 
     saw = set()

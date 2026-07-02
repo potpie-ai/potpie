@@ -24,7 +24,8 @@ def test_install_agents_to_repo_writes_claude_bundle(tmp_path: Path) -> None:
 
 
 def test_maybe_prompt_agent_skills_installs_selected(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -81,7 +82,8 @@ def test_agent_usage_hint_formats_installed_harnesses() -> None:
 
 
 def test_post_setup_wizard_runs_skills_after_integrations(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

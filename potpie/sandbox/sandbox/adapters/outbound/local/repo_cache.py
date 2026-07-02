@@ -83,9 +83,7 @@ class LocalRepoCacheProvider:
         validate_ref(request.base_ref)
 
         bare_path = self.bare_path(request.repo.repo_name)
-        repo_url = request.repo.repo_url or default_github_url(
-            request.repo.repo_name
-        )
+        repo_url = request.repo.repo_url or default_github_url(request.repo.repo_name)
         token = request.auth_token or resolve_token(
             repo_name=request.repo.repo_name, user_id=request.user_id
         )

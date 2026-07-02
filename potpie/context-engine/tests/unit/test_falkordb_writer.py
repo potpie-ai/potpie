@@ -170,9 +170,7 @@ async def test_ensure_indexes_uses_unnamed_form() -> None:
 
 async def test_ensure_indexes_creates_falkordb_vector_index_with_embedder_dim() -> None:
     graph = _FakeGraph()
-    w = FalkorDBGraphWriter(
-        _FakeSettings(), graph=graph, embedder=_FakeEmbedder()
-    )
+    w = FalkorDBGraphWriter(_FakeSettings(), graph=graph, embedder=_FakeEmbedder())
     await w.ensure_indexes()
     vector_qs = [q for q, _ in graph.queries if "CREATE VECTOR INDEX" in q]
     assert len(vector_qs) == 1
@@ -207,9 +205,7 @@ async def test_upsert_entities_empty_is_noop() -> None:
 
 async def test_upsert_edges_writes_falkordb_vecf32_embedding() -> None:
     graph = _FakeGraph()
-    w = FalkorDBGraphWriter(
-        _FakeSettings(), graph=graph, embedder=_FakeEmbedder()
-    )
+    w = FalkorDBGraphWriter(_FakeSettings(), graph=graph, embedder=_FakeEmbedder())
     prov = ProvenanceRef(pot_id="p1", source_event_id="e1")
     n = await w.upsert_edges(
         "p1",

@@ -114,7 +114,10 @@ class SandboxService:
         key = request.key()
         async with self._locks.lock(f"repo_cache:{key}"):
             existing = await self._store.find_repo_cache_by_key(key)
-            if existing is not None and existing.backend_kind == self._repo_cache_provider.kind:
+            if (
+                existing is not None
+                and existing.backend_kind == self._repo_cache_provider.kind
+            ):
                 existing.last_used_at = utc_now()
                 existing.updated_at = utc_now()
                 await self._store.save_repo_cache(existing)
@@ -205,9 +208,7 @@ class SandboxService:
             )
         return await self.get_or_create_workspace(request)
 
-    async def create_pull_request(
-        self, request: PullRequestRequest
-    ) -> PullRequest:
+    async def create_pull_request(self, request: PullRequestRequest) -> PullRequest:
         """Open a PR via the configured ``GitPlatformProvider``.
 
         Workspace-side: the caller is expected to have already pushed
@@ -310,9 +311,7 @@ class SandboxService:
             return None
         return await native(runtime, path)
 
-    async def fs_write_file(
-        self, workspace_id: str, path: str, content: bytes
-    ) -> bool:
+    async def fs_write_file(self, workspace_id: str, path: str, content: bytes) -> bool:
         """Write via runtime native fs if exposed; return False otherwise.
 
         Returning a flag (rather than raising) lets the caller branch on

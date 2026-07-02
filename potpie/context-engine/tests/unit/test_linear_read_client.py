@@ -10,7 +10,9 @@ from adapters.outbound.cli_auth.http import AuthHttpError
 from adapters.outbound.cli_auth import linear_read_client as lrc
 
 
-def test_fetch_linear_workspaces_from_organizations(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_linear_workspaces_from_organizations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         lrc,
         "list_linear_organizations",

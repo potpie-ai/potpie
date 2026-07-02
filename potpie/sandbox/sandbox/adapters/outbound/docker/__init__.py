@@ -1,2 +1,1 @@
 """Docker runtime adapter."""
-

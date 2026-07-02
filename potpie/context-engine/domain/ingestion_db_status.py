@@ -34,7 +34,9 @@ def canonical_status_to_db(status: IngestionEventStatus) -> str:
     }[status]
 
 
-def canonical_statuses_to_db_filters(statuses: tuple[IngestionEventStatus, ...]) -> frozenset[str]:
+def canonical_statuses_to_db_filters(
+    statuses: tuple[IngestionEventStatus, ...],
+) -> frozenset[str]:
     """Expand canonical filters to the set of legacy DB strings to match."""
     out: set[str] = set()
     for s in statuses:

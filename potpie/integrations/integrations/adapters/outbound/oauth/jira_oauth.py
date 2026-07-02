@@ -81,7 +81,11 @@ class JiraOAuth(AtlassianOAuthBase):
 
         # Log the payload we are about to send for diagnostics
         try:
-            logger.info(f"Creating Jira webhook for site {cloud_id} -> {webhook_url}", cloud_id=cloud_id, webhook_url=webhook_url)
+            logger.info(
+                f"Creating Jira webhook for site {cloud_id} -> {webhook_url}",
+                cloud_id=cloud_id,
+                webhook_url=webhook_url,
+            )
             logger.info(f"Jira create_webhook payload: {payload}", payload=payload)
         except Exception:
             # best-effort logging; don't fail the request because logging failed
@@ -92,8 +96,10 @@ class JiraOAuth(AtlassianOAuthBase):
 
         # Log the response for debugging
         logger.info(
-            f"Webhook creation response status: {response.status_code}, body: {response.text}"
-        , response_status_code=response.status_code, response_text=response.text)
+            f"Webhook creation response status: {response.status_code}, body: {response.text}",
+            response_status_code=response.status_code,
+            response_text=response.text,
+        )
 
         if response.status_code not in (200, 201):
             raise Exception(
@@ -141,5 +147,9 @@ class JiraOAuth(AtlassianOAuthBase):
             )
             return False
 
-        logger.info(f"Successfully deleted webhook {webhook_id} for site {cloud_id}", webhook_id=webhook_id, cloud_id=cloud_id)
+        logger.info(
+            f"Successfully deleted webhook {webhook_id} for site {cloud_id}",
+            webhook_id=webhook_id,
+            cloud_id=cloud_id,
+        )
         return True

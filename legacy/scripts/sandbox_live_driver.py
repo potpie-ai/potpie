@@ -161,7 +161,7 @@ async def _drive(tmp_root: Path) -> None:
     res = await by_name["sandbox_shell"].func(command="ls -1 | head -5")
     print(
         f"  exit={res.get('exit_code')} "
-        f"stdout={res.get('stdout','').strip().splitlines()[:5]}"
+        f"stdout={res.get('stdout', '').strip().splitlines()[:5]}"
     )
 
     _section("sandbox_git status (after edits)")

@@ -22,7 +22,9 @@ def host(tmp_path, monkeypatch):
 
 
 def test_maybe_prompt_first_pot_creates_and_registers_repo(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, host,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    host,
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

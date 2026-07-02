@@ -100,7 +100,11 @@ class LinearIssueTrackerAdapter:
                     except ValueError:
                         updated = None
                 if updated_after and updated:
-                    ua = updated_after if updated_after.tzinfo else updated_after.replace(tzinfo=updated.tzinfo)
+                    ua = (
+                        updated_after
+                        if updated_after.tzinfo
+                        else updated_after.replace(tzinfo=updated.tzinfo)
+                    )
                     if updated <= ua:
                         continue
                 node_id = n.get("id")

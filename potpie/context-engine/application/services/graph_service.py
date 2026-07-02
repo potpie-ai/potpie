@@ -246,17 +246,13 @@ class DefaultGraphService:
                 coverage=(
                     {
                         "include": spec.v1_include,
-                        "status": "unsupported"
-                        if unsupported or missing
-                        else "empty",
+                        "status": "unsupported" if unsupported or missing else "empty",
                         "candidate_pool": 0,
                     },
                 ),
                 freshness=_read_freshness(None, backend_freshness={}),
                 quality={
-                    "status": "unsupported"
-                    if unsupported or missing
-                    else "empty",
+                    "status": "unsupported" if unsupported or missing else "empty",
                     "reason": quality_reason,
                 },
                 source_refs=(),

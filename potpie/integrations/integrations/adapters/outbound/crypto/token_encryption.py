@@ -36,8 +36,9 @@ class TokenEncryption:
                     :8
                 ]
                 logger.debug(
-                    f"Generated encryption key for development (fingerprint: {key_fingerprint})"
-                , key_fingerprint=key_fingerprint)
+                    f"Generated encryption key for development (fingerprint: {key_fingerprint})",
+                    key_fingerprint=key_fingerprint,
+                )
                 logger.warning(
                     "IMPORTANT: Set ENCRYPTION_KEY environment variable in production!"
                 )

@@ -699,7 +699,10 @@ def test_run_atlassian_auth_opens_token_page_after_enter(
     run_atlassian_api_token_auth(product, force=True)
 
     out = capsys.readouterr().out
-    assert "Jira login — Atlassian API token" in out or "Confluence login — Atlassian API token" in out
+    assert (
+        "Jira login — Atlassian API token" in out
+        or "Confluence login — Atlassian API token" in out
+    )
     assert "  • One token works for both Jira and Confluence" in out
     assert "Press Enter to open the page" in out
     assert "Opening id.atlassian.com ..." in out
