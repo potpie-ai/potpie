@@ -171,7 +171,7 @@ def fail(
     *,
     code: str,
     message: str,
-    detail: str | None = None,
+    detail: Any = None,
     next_action: str | None = None,
     exit_code: int = EXIT_VALIDATION,
 ) -> NoReturn:
@@ -198,7 +198,9 @@ def fail(
         print_structured_error(
             title=message,
             message=message,
-            hint=detail,
+            # Structured (mapping) detail is for the JSON envelope; the human
+            # message already carries the guidance in prose.
+            hint=detail if isinstance(detail, str) else None,
             next_action=next_action,
         )
     raise typer.Exit(code=exit_code)
@@ -247,7 +249,15 @@ def contract() -> Iterator[None]:
     except ValueError as exc:
         result = "validation_error"
         error_code = "validation_error"
-        fail(code="validation_error", message=str(exc), exit_code=EXIT_VALIDATION)
+        # Domain errors may carry structured guidance (e.g. UnknownGraphViewError's
+        # detail.did_you_mean) for the JSON envelope.
+        fail(
+            code="validation_error",
+            message=str(exc),
+            detail=getattr(exc, "detail", None),
+            next_action=getattr(exc, "recommended_next_action", None),
+            exit_code=EXIT_VALIDATION,
+        )
     except typer.Exit:
         result = "exit"
         error_code = "exit"

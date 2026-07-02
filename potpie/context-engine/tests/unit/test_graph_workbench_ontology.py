@@ -37,6 +37,39 @@ def test_describe_contract_teaches_backed_view_usage() -> None:
     assert payload["view"]["examples"][0]["command"].startswith("potpie graph read")
 
 
+def test_describe_unknown_subgraph_suggests_view_for_include_guess() -> None:
+    # Audit item 17: `graph describe docs` guesses the include family.
+    with pytest.raises(ValueError, match="knowledge.document_context") as e:
+        describe_contract(subgraph="docs")
+    err = e.value
+    assert err.detail["did_you_mean"]["matched_include"] == "docs"
+    assert err.recommended_next_action == (
+        "potpie graph describe knowledge --view document_context"
+    )
+
+
+def test_describe_unknown_view_suggests_include_guess() -> None:
+    with pytest.raises(ValueError, match="knowledge.document_context") as e:
+        describe_contract(subgraph="knowledge", view="docs")
+    assert e.value.detail["did_you_mean"]["view"] == "knowledge.document_context"
+
+
+def test_describe_unknown_subgraph_without_guidance_stays_plain() -> None:
+    with pytest.raises(ValueError, match="unknown graph subgraph") as e:
+        describe_contract(subgraph="nope")
+    assert getattr(e.value, "detail", None) is None
+
+
+def test_describe_view_typo_under_valid_subgraph_stays_plain() -> None:
+    # 'decisions' is both a subgraph and an include family; a near-miss view
+    # under the VALID subgraph must not be redirected to the include family's
+    # view (a confidently-wrong recommended_next_action is worse than none).
+    with pytest.raises(ValueError, match="unknown graph view") as e:
+        describe_contract(subgraph="decisions", view="preferences_for_scop")
+    assert getattr(e.value, "detail", None) is None
+    assert getattr(e.value, "recommended_next_action", None) is None
+
+
 def test_task_ranking_prioritizes_debugging_workflow_context() -> None:
     ranking = rank_views_for_task("debug staging timeout after deployment")
 

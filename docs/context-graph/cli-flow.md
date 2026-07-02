@@ -356,7 +356,9 @@ potpie graph search-entities [<query> | --query <text>] \
   output (including `--profile read`); `--subgraph` filters, `--profile full|read`
   and `--format auto|table` shape output. See [ontology.md](./ontology.md) for the
   catalog itself.
-- **`graph describe`** runs in-process (`describe_contract()`), not a host call.
+- **`graph describe`** routes through `GraphService.describe` like every other
+  workbench command, so the ontology it reports is the serving host's build (the
+  daemon's, in the default host mode), not the CLI binary's.
 - **`graph read`** is the **Retrieve** axis — resolves a named `<subgraph>.<view>`
   (one of the 9 views), validates required scope/filters, then routes through the one
   read trunk to an `AgentEnvelope` of ranked evidence. There is **no server-side
