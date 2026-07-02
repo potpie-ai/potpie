@@ -12,7 +12,6 @@ from unittest.mock import MagicMock, patch
 import json
 import stat
 from pathlib import Path
-from keyring.errors import KeyringError
 from adapters.outbound.cli_auth import credentials_store as cs
 from adapters.outbound.cli_auth.integration_profile import (
     build_linear_integration_record,
@@ -40,11 +39,6 @@ from adapters.outbound.cli_auth.provider_config import (
 # --- test_auth_commands.py ---
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def _default_linux_platform(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cs.sys, "platform", "linux")
 
 
 @pytest.fixture(autouse=True)
@@ -110,7 +104,7 @@ def test_esc_handles_none_and_markup() -> None:
 
 
 def test_auth_status_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(
         auth_commands,
         "get_integration_status",
@@ -132,7 +126,7 @@ def test_auth_status_json(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auth_status_json_keeps_provider_errors_per_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
 
     def _status(provider: str) -> dict[str, object]:
         if provider == "linear":
@@ -158,7 +152,7 @@ def test_auth_status_json_keeps_provider_errors_per_row(
 
 
 def test_auth_logout_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -188,7 +182,7 @@ def test_token_is_expired_invalid_expires_at() -> None:
 
 
 def test_auth_logout_not_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -210,7 +204,7 @@ def test_auth_logout_not_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
     monkeypatch.setattr(
         auth_commands,
@@ -228,7 +222,7 @@ def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from adapters.outbound.cli_auth.credentials_store import ProviderCredentialError
 
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, True))
     monkeypatch.setattr(
         auth_commands,
@@ -255,7 +249,7 @@ runner = CliRunner()
 
 
 def _mock_cli(monkeypatch: pytest.MonkeyPatch, *, json_mode: bool = False) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (json_mode, False))
 
 
@@ -371,7 +365,7 @@ runner = CliRunner()
 
 
 def test_auth_status_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -395,7 +389,7 @@ def test_auth_status_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auth_status_includes_github_authenticated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -416,7 +410,7 @@ def test_auth_status_includes_github_authenticated(
 
 
 def test_linear_ls_lists_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -439,7 +433,7 @@ def test_linear_ls_lists_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_linear_select_fetches_issues(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -475,7 +469,7 @@ def test_linear_select_fetches_issues(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auth_status_verify_linear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
     monkeypatch.setattr(
         auth_commands,
@@ -504,8 +498,57 @@ def test_auth_status_verify_linear(
     assert '"verified": true' in result.stdout
 
 
+def test_auth_status_verify_linear_refresh_error_stays_in_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
+    linear_status_calls = 0
+
+    def _status(provider: str) -> dict[str, object]:
+        nonlocal linear_status_calls
+        if provider != "linear":
+            return {
+                "provider": provider,
+                "authenticated": False,
+                "auth_type": "oauth",
+            }
+        linear_status_calls += 1
+        if linear_status_calls == 2:
+            raise cs.ProviderCredentialError("keychain locked")
+        return {
+            "provider": provider,
+            "authenticated": True,
+            "auth_type": "oauth",
+            "expires_at": 9999999999.0,
+        }
+
+    monkeypatch.setattr(auth_commands, "get_integration_status", _status)
+    monkeypatch.setattr(
+        auth_commands,
+        "ensure_valid_integration_tokens",
+        lambda _provider: {"access_token": "tok", "expires_at": 9999999999.0},
+    )
+    monkeypatch.setattr(
+        auth_commands,
+        "verify_integration_access",
+        lambda _provider, _creds: (True, "ok (Ada)"),
+    )
+
+    result = runner.invoke(auth_commands.auth_app, ["status", "--verify"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    linear = next(
+        row for row in payload["integrations"] if row["provider"] == "linear"
+    )
+    assert linear["verified"] is False
+    assert linear["verify_message"] == "keychain locked"
+    assert linear_status_calls == 2
+
+
 def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -541,7 +584,7 @@ def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_auth_status_human_verify_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -716,22 +759,7 @@ def test_integration_metadata_rejects_empty_provider() -> None:
         cs.get_integration_metadata(" ")
 
 
-def test_secure_secret_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
-    stored: dict[tuple[str, str], str] = {}
-
-    def set_password(service: str, username: str, password: str) -> None:
-        stored[(service, username)] = password
-
-    def get_password(service: str, username: str) -> str | None:
-        return stored.get((service, username))
-
-    def delete_password(service: str, username: str) -> None:
-        stored.pop((service, username), None)
-
-    monkeypatch.setattr(cs.keyring, "set_password", set_password)
-    monkeypatch.setattr(cs.keyring, "get_password", get_password)
-    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
-
+def test_secure_secret_roundtrip() -> None:
     cs.store_secure_secret("example_access_token", "secret-token")
     assert cs.load_secure_secret("example_access_token") == "secret-token"
     cs.delete_secure_secret("example_access_token")
@@ -744,45 +772,34 @@ def test_secure_secret_rejects_empty_name() -> None:
 
 
 def test_secure_secret_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
-    def set_password(service: str, username: str, password: str) -> None:
-        raise KeyringError("backend unavailable")
+    def fail_write(_secrets: dict[str, str]) -> None:
+        raise OSError("permission denied")
 
-    monkeypatch.setattr(cs.keyring, "set_password", set_password)
+    monkeypatch.setattr(cs, "_write_integration_secrets_file", fail_write)
 
     with pytest.raises(cs.CredentialStoreError, match="Failed to store Example token"):
         cs.store_secure_secret("example_token", "secret", label="Example token")
 
 
-def test_secure_secret_read_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
-    def get_password(service: str, username: str) -> str | None:
-        raise KeyringError("backend unavailable")
-
-    monkeypatch.setattr(cs.keyring, "get_password", get_password)
-
-    with pytest.raises(cs.CredentialStoreError, match="Failed to read Example token"):
-        cs.load_secure_secret("example_token", label="Example token")
+def test_secure_secret_missing_read_returns_empty() -> None:
+    assert cs.load_secure_secret("example_token", label="Example token") == ""
 
 
 def test_secure_secret_delete_unexpected_errors_are_wrapped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def delete_password(service: str, username: str) -> None:
-        raise RuntimeError("backend unavailable")
+    cs.store_secure_secret("example_token", "secret")
 
-    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
+    def fail_write(_secrets: dict[str, str]) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(cs, "_write_integration_secrets_file", fail_write)
 
     with pytest.raises(cs.CredentialStoreError, match="Failed to remove Example token"):
         cs.delete_secure_secret("example_token", label="Example token")
 
 
-def test_secure_secret_delete_keyring_error_is_ignored(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def delete_password(service: str, username: str) -> None:
-        raise KeyringError("not found")
-
-    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
-
+def test_secure_secret_delete_missing_is_ignored() -> None:
     cs.delete_secure_secret("example_token")
 
 
@@ -810,22 +827,8 @@ def test_resolve_cli_pot_ref_uuid_normalizes() -> None:
 
 
 @pytest.fixture
-def keychain(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
-    stored: dict[tuple[str, str], str] = {}
-
-    def set_password(service: str, username: str, password: str) -> None:
-        stored[(service, username)] = password
-
-    def get_password(service: str, username: str) -> str | None:
-        return stored.get((service, username))
-
-    def delete_password(service: str, username: str) -> None:
-        stored.pop((service, username), None)
-
-    monkeypatch.setattr(cs.keyring, "set_password", set_password)
-    monkeypatch.setattr(cs.keyring, "get_password", get_password)
-    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
-    return stored
+def keychain() -> dict[tuple[str, str], str]:
+    return {}
 
 
 def _linear_viewer_stub(**org_overrides: object) -> dict[str, object]:
@@ -994,23 +997,16 @@ def test_linear_status_includes_org_and_scope_string(
 def test_store_secure_secret_generic_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def set_password(service: str, username: str, password: str) -> None:
-        raise RuntimeError("unexpected")
+    def fail_write(_secrets: dict[str, str]) -> None:
+        raise OSError("unexpected")
 
-    monkeypatch.setattr(cs.keyring, "set_password", set_password)
-    with pytest.raises(cs.CredentialStoreError, match="keychain"):
+    monkeypatch.setattr(cs, "_write_integration_secrets_file", fail_write)
+    with pytest.raises(cs.CredentialStoreError, match="local credentials file"):
         cs.store_secure_secret("name", "secret")
 
 
-def test_load_secure_secret_generic_exception(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def get_password(service: str, username: str) -> str | None:
-        raise RuntimeError("unexpected")
-
-    monkeypatch.setattr(cs.keyring, "get_password", get_password)
-    with pytest.raises(cs.CredentialStoreError, match="keychain"):
-        cs.load_secure_secret("name")
+def test_load_secure_secret_missing_returns_empty() -> None:
+    assert cs.load_secure_secret("name") == ""
 
 
 # --- test_integration_profile.py ---
@@ -1064,7 +1060,7 @@ def test_save_integration_tokens_writes_account_metadata(
 ) -> None:
     cred_path = tmp_path / "credentials.json"
     monkeypatch.setattr(cs, "credentials_path", lambda: cred_path)
-    monkeypatch.setattr(cs, "_store_keychain_secret", lambda *a, **k: None)
+    monkeypatch.setattr(cs, "_store_file_secret", lambda *a, **k: None)
     viewer = {
         "account": {"id": "u1", "name": "Ada", "email": "ada@example.com"},
         "organization": {"id": "org-acme", "name": "Acme", "url_key": "acme"},
@@ -1090,7 +1086,7 @@ def test_get_integration_status_linear_requires_keychain_token(
 ) -> None:
     cred_path = tmp_path / "credentials.json"
     monkeypatch.setattr(cs, "credentials_path", lambda: cred_path)
-    monkeypatch.setattr(cs, "_load_keychain_secret", lambda *_a, **_k: "")
+    monkeypatch.setattr(cs, "_load_file_secret", lambda *_a, **_k: "")
     cs._write_payload(
         {
             "integrations": {

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import platform
+import sys
 from typing import Union
 from unittest.mock import MagicMock
 
@@ -39,6 +41,15 @@ class _FakeSetupMetrics:
         attributes: dict[str, Union[str, bool]] | None = None,
     ) -> None:
         self.calls.append(_MetricCall(name, {} if attributes is None else attributes))
+
+
+def test_root_version_option_exits_with_cli_and_python_details() -> None:
+    result = runner.invoke(cli_main.app, ["--version"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "potpie-context-engine " in result.stdout
+    assert f"python {platform.python_version()}" in result.stdout
+    assert sys.executable in result.stdout
 
 
 def test_status_default_emits_host_report(monkeypatch: pytest.MonkeyPatch) -> None:

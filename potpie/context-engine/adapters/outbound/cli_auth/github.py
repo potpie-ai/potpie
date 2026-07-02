@@ -1,19 +1,15 @@
 from __future__ import annotations
 
-import os
 import time
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
-from adapters.outbound.cli_auth._oauth_client_ids import (
-    POTPIE_GITHUB_CLIENT_ID as PACKAGE_GITHUB_CLIENT_ID,
-)
-from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
 from adapters.outbound.cli_auth.oauth_client_id_messages import (
     missing_github_client_id_message,
 )
+from bootstrap.runtime_settings import load_runtime_settings
 from adapters.outbound.cli_auth.errors import CliAuthError
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 from adapters.outbound.cli_auth.models import (
@@ -23,7 +19,6 @@ from adapters.outbound.cli_auth.models import (
     ProviderCredentials,
 )
 
-GITHUB_CLIENT_ID_ENV = "POTPIE_GITHUB_CLIENT_ID"
 GITHUB_SCOPES = ("repo", "read:org", "read:user", "user:email")
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -44,10 +39,9 @@ def get_github_client_id() -> str:
 
     Precedence:
     1. ``POTPIE_GITHUB_CLIENT_ID`` environment variable (runtime override / local dev)
-    2. Value shipped with the package at build time
+    2. GitHub client ID shipped in distribution defaults
     """
-    load_cli_env()
-    client_id = os.getenv(GITHUB_CLIENT_ID_ENV, "").strip() or PACKAGE_GITHUB_CLIENT_ID
+    client_id = load_runtime_settings().github_client_id
     if not client_id:
         raise GitHubDeviceFlowError(missing_github_client_id_message())
     return client_id
@@ -329,5 +323,5 @@ def build_provider_credentials(
             "auth_flow": "device",
             "verification_uri": verification_uri,
         },
-        token_storage="keychain",
+        token_storage="file",
     )

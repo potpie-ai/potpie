@@ -5,14 +5,8 @@ import stat
 from pathlib import Path
 
 import pytest
-from keyring.errors import KeyringError
 
 from adapters.outbound.cli_auth import credentials_store as cs
-
-
-@pytest.fixture(autouse=True)
-def _default_linux_platform(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cs.sys, "platform", "linux")
 
 
 def test_config_dir_respects_xdg(
@@ -34,6 +28,33 @@ def test_write_read_roundtrip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     assert data["api_base_url"] == "http://localhost:9999"
     assert cs.get_stored_api_key() == "secret-token"
     assert cs.get_stored_api_base_url() == "http://localhost:9999"
+
+
+def test_write_payload_uses_private_temp_file_before_atomic_replace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    original_replace = cs.os.replace
+    seen: dict[str, object] = {}
+
+    def assert_secure_replace(src: str | Path, dst: str | Path) -> None:
+        source = Path(src)
+        destination = Path(dst)
+        seen["called"] = True
+        seen["source_mode"] = stat.S_IMODE(source.stat().st_mode)
+        seen["destination_exists_before_replace"] = destination.exists()
+        original_replace(src, dst)
+
+    monkeypatch.setattr(cs.os, "replace", assert_secure_replace)
+
+    cs.write_credentials(api_key="secret-token")
+
+    assert seen == {
+        "called": True,
+        "source_mode": 0o600,
+        "destination_exists_before_replace": False,
+    }
+    assert stat.S_IMODE(cs.credentials_path().stat().st_mode) == 0o600
 
 
 def test_write_preserves_base_url_when_url_not_passed(
@@ -133,15 +154,15 @@ def test_integration_metadata_roundtrip(
     cs.write_credentials(api_key="secret")
     cs.write_integration_metadata(
         "Example",
-        {"auth_type": "oauth", "token_storage": "keychain"},
+        {"auth_type": "oauth", "token_storage": "file"},
     )
     assert cs.get_stored_api_key() == "secret"
     assert cs.get_integration_metadata("example") == {
         "auth_type": "oauth",
-        "token_storage": "keychain",
+        "token_storage": "file",
     }
     assert cs.list_integration_metadata() == {
-        "example": {"auth_type": "oauth", "token_storage": "keychain"}
+        "example": {"auth_type": "oauth", "token_storage": "file"}
     }
 
 
@@ -170,22 +191,10 @@ def test_integration_metadata_rejects_empty_provider() -> None:
         cs.get_integration_metadata(" ")
 
 
-def test_secure_secret_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
-    stored: dict[tuple[str, str], str] = {}
-
-    def set_password(service: str, username: str, password: str) -> None:
-        stored[(service, username)] = password
-
-    def get_password(service: str, username: str) -> str | None:
-        return stored.get((service, username))
-
-    def delete_password(service: str, username: str) -> None:
-        stored.pop((service, username), None)
-
-    monkeypatch.setattr(cs.keyring, "set_password", set_password)
-    monkeypatch.setattr(cs.keyring, "get_password", get_password)
-    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
-
+def test_secure_secret_roundtrip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.store_secure_secret("example_access_token", "secret-token")
     assert cs.load_secure_secret("example_access_token") == "secret-token"
     cs.delete_secure_secret("example_access_token")
@@ -198,45 +207,41 @@ def test_secure_secret_rejects_empty_name() -> None:
 
 
 def test_secure_secret_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
-    def set_password(service: str, username: str, password: str) -> None:
-        raise KeyringError("backend unavailable")
+    def fail_write(_secrets: dict[str, str]) -> None:
+        raise OSError("permission denied")
 
-    monkeypatch.setattr(cs.keyring, "set_password", set_password)
+    monkeypatch.setattr(cs, "_write_integration_secrets_file", fail_write)
 
     with pytest.raises(cs.CredentialStoreError, match="Failed to store Example token"):
         cs.store_secure_secret("example_token", "secret", label="Example token")
 
 
-def test_secure_secret_read_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
-    def get_password(service: str, username: str) -> str | None:
-        raise KeyringError("backend unavailable")
-
-    monkeypatch.setattr(cs.keyring, "get_password", get_password)
-
-    with pytest.raises(cs.CredentialStoreError, match="Failed to read Example token"):
-        cs.load_secure_secret("example_token", label="Example token")
+def test_secure_secret_missing_read_returns_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert cs.load_secure_secret("example_token", label="Example token") == ""
 
 
 def test_secure_secret_delete_unexpected_errors_are_wrapped(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def delete_password(service: str, username: str) -> None:
-        raise RuntimeError("backend unavailable")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.store_secure_secret("example_token", "secret")
 
-    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
+    def fail_write(_secrets: dict[str, str]) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(cs, "_write_integration_secrets_file", fail_write)
 
     with pytest.raises(cs.CredentialStoreError, match="Failed to remove Example token"):
         cs.delete_secure_secret("example_token", label="Example token")
 
 
-def test_secure_secret_delete_keyring_error_is_ignored(
-    monkeypatch: pytest.MonkeyPatch,
+def test_secure_secret_delete_missing_is_ignored(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def delete_password(service: str, username: str) -> None:
-        raise KeyringError("not found")
-
-    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
-
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.delete_secure_secret("example_token")
 
 
@@ -247,29 +252,9 @@ def test_resolve_cli_pot_ref_uuid_normalizes() -> None:
     assert got == "550e8400-e29b-41d4-a716-446655440000"
 
 
-@pytest.fixture
-def fake_keyring(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
-    stored: dict[tuple[str, str], str] = {}
-
-    def set_password(service: str, username: str, password: str) -> None:
-        stored[(service, username)] = password
-
-    def get_password(service: str, username: str) -> str | None:
-        return stored.get((service, username))
-
-    def delete_password(service: str, username: str) -> None:
-        stored.pop((service, username), None)
-
-    monkeypatch.setattr(cs.keyring, "set_password", set_password)
-    monkeypatch.setattr(cs.keyring, "get_password", get_password)
-    monkeypatch.setattr(cs.keyring, "delete_password", delete_password)
-    return stored
-
-
 def test_store_potpie_api_key_metadata_only(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.write_credentials(
@@ -278,7 +263,8 @@ def test_store_potpie_api_key_metadata_only(
 
     cs.store_potpie_api_key("sk-chain-key", created_at="2026-05-29T12:00:00+00:00")
 
-    assert fake_keyring[("potpie", "potpie_api_key")] == "sk-chain-key"
+    secrets = json.loads(cs.integration_secrets_path().read_text(encoding="utf-8"))
+    assert secrets["potpie_api_key"] == "sk-chain-key"
     assert cs.get_stored_api_key() == "sk-chain-key"
 
     data = cs.read_credentials()
@@ -286,7 +272,7 @@ def test_store_potpie_api_key_metadata_only(
     assert data["api_base_url"] == "http://localhost:8000"
     assert data["integrations"]["potpie"] == {
         "auth_type": "api_key",
-        "token_storage": "keychain",
+        "token_storage": "file",
         "created_at": "2026-05-29T12:00:00+00:00",
     }
     assert "sk-chain-key" not in json.dumps(data)
@@ -295,7 +281,6 @@ def test_store_potpie_api_key_metadata_only(
 def test_store_potpie_firebase_refresh_token_metadata_only(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.write_credentials(api_key="legacy-file-key")
@@ -306,15 +291,16 @@ def test_store_potpie_firebase_refresh_token_metadata_only(
         firebase_api_key="firebase-key",
     )
 
-    assert fake_keyring[("potpie", "potpie_firebase_refresh_token")] == "refresh-token"
-    assert fake_keyring[("potpie", "potpie_firebase_api_key")] == "firebase-key"
+    secrets = json.loads(cs.integration_secrets_path().read_text(encoding="utf-8"))
+    assert secrets["potpie_firebase_refresh_token"] == "refresh-token"
+    assert secrets["potpie_firebase_api_key"] == "firebase-key"
     assert cs.get_potpie_auth_type() == "potpie"
     assert cs.get_potpie_firebase_refresh_token() == "refresh-token"
     assert cs.get_potpie_firebase_api_key() == "firebase-key"
 
     data = cs.read_credentials()
     assert data["api_key"] == "legacy-file-key"
-    assert data["integrations"]["potpie"]["token_storage"] == "keychain"
+    assert data["integrations"]["potpie"]["token_storage"] == "file"
     assert "refresh-token" not in json.dumps(data)
     assert "firebase-key" not in json.dumps(data)
 
@@ -322,7 +308,6 @@ def test_store_potpie_firebase_refresh_token_metadata_only(
 def test_update_potpie_firebase_refresh_token_keeps_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.store_potpie_firebase_refresh_token(
@@ -338,16 +323,16 @@ def test_update_potpie_firebase_refresh_token_keeps_metadata(
     )
 
 
-def test_store_potpie_firebase_id_token_uses_keyring(
+def test_store_potpie_firebase_id_token_uses_file_store(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
     cs.store_potpie_firebase_id_token("id-token")
 
-    assert fake_keyring[("potpie", "potpie_firebase_id_token")] == "id-token"
+    secrets = json.loads(cs.integration_secrets_path().read_text(encoding="utf-8"))
+    assert secrets["potpie_firebase_id_token"] == "id-token"
     assert cs.get_potpie_firebase_id_token() == "id-token"
     assert cs.read_credentials() == {}
 
@@ -355,7 +340,6 @@ def test_store_potpie_firebase_id_token_uses_keyring(
 def test_clear_potpie_auth_preserves_api_key_by_default(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.write_credentials(
@@ -378,7 +362,6 @@ def test_clear_potpie_auth_preserves_api_key_by_default(
 def test_clear_potpie_auth_can_clear_api_key(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.write_credentials(
@@ -396,7 +379,6 @@ def test_clear_potpie_auth_can_clear_api_key(
 def test_write_provider_credentials_preserves_existing_fields(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.write_credentials(api_key="secret-token", api_base_url="http://localhost:9999")
@@ -430,14 +412,12 @@ def test_write_provider_credentials_preserves_existing_fields(
     assert data["integrations"]["github"]["token_storage"] == "file"
     secrets = json.loads(cs.integration_secrets_path().read_text(encoding="utf-8"))
     assert secrets["github_token"] == "plaintext-token"
-    assert ("potpie", "github_token") not in fake_keyring
     assert cs.get_provider_credentials("github")["access_token"] == "plaintext-token"
 
 
 def test_get_provider_credentials_reads_from_integration_secrets_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.write_provider_credentials(
@@ -461,13 +441,11 @@ def test_get_provider_credentials_reads_from_integration_secrets_file(
     assert cs.get_provider_credentials("github")["access_token"] == "from-file"
 
 
-def test_github_status_detects_keyring_credentials(
+def test_github_status_detects_file_credentials(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(cs.sys, "platform", "darwin")
     cs.write_provider_credentials(
         "github",
         {
@@ -484,7 +462,7 @@ def test_github_status_detects_keyring_credentials(
     assert status["authenticated"] is True
     assert status["login"] == "octocat"
     assert status["email"] == "octo@example.com"
-    assert status["token_storage"] == "keychain"
+    assert status["token_storage"] == "file"
 
 
 def test_get_provider_credentials_raises_when_integration_secret_missing(
@@ -501,7 +479,6 @@ def test_get_provider_credentials_raises_when_integration_secret_missing(
             "account": {"login": "octocat", "id": 1},
         },
     )
-    monkeypatch.setattr(cs.keyring, "get_password", lambda _service, _username: None)
 
     with pytest.raises(cs.ProviderCredentialError) as exc:
         cs.get_provider_credentials("github")
@@ -511,17 +488,16 @@ def test_get_provider_credentials_raises_when_integration_secret_missing(
     )
 
 
-def test_write_provider_credentials_raises_on_keychain_failure(
+def test_write_provider_credentials_raises_on_file_store_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(cs.sys, "platform", "darwin")
 
-    def _fail(_service: str, _username: str, _password: str) -> None:
-        raise KeyringError("backend unavailable")
+    def _fail(_secrets: dict[str, str]) -> None:
+        raise OSError("permission denied")
 
-    monkeypatch.setattr(cs.keyring, "set_password", _fail)
+    monkeypatch.setattr(cs, "_write_integration_secrets_file", _fail)
 
     with pytest.raises(cs.ProviderCredentialError) as exc:
         cs.write_provider_credentials(
@@ -540,16 +516,14 @@ def test_write_provider_credentials_raises_on_keychain_failure(
             },
         )
 
-    assert "Failed to store GitHub token in system keychain" in str(exc.value)
+    assert "Failed to store GitHub token in local credentials file" in str(exc.value)
 
 
-def test_write_provider_credentials_rolls_back_keyring_token_on_metadata_failure(
+def test_write_provider_credentials_rolls_back_file_token_on_metadata_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(cs.sys, "platform", "darwin")
 
     def _fail_metadata(_provider: str, _metadata: dict[str, object]) -> None:
         raise OSError("metadata write failed")
@@ -567,16 +541,14 @@ def test_write_provider_credentials_rolls_back_keyring_token_on_metadata_failure
             },
         )
 
-    assert ("potpie", "github_token") not in fake_keyring
+    assert not cs.integration_secrets_path().is_file()
 
 
 def test_write_provider_credentials_restores_existing_token_on_metadata_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(cs.sys, "platform", "darwin")
     cs.write_provider_credentials(
         "github",
         {
@@ -603,7 +575,8 @@ def test_write_provider_credentials_restores_existing_token_on_metadata_failure(
             },
         )
 
-    assert fake_keyring[("potpie", "github_token")] == "old-token"
+    secrets = json.loads(cs.integration_secrets_path().read_text(encoding="utf-8"))
+    assert secrets["github_token"] == "old-token"
     assert cs.get_provider_credentials("github")["access_token"] == "old-token"
 
 
@@ -624,7 +597,7 @@ def test_write_provider_credentials_preserves_metadata_error_when_cleanup_fails(
         raise cs.ProviderCredentialError("cleanup failed")
 
     monkeypatch.setattr(cs, "write_integration_metadata", _fail_metadata)
-    monkeypatch.setattr(cs, "_delete_keychain_secret", _fail_cleanup)
+    monkeypatch.setattr(cs, "_delete_file_secret", _fail_cleanup)
 
     with pytest.raises(OSError, match="metadata write failed"):
         cs.write_provider_credentials(
@@ -640,10 +613,9 @@ def test_write_provider_credentials_preserves_metadata_error_when_cleanup_fails(
     assert cleanup_calls == 1
 
 
-def test_linux_integration_secrets_stored_in_json_file(
+def test_integration_secrets_stored_in_json_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
@@ -667,19 +639,17 @@ def test_linux_integration_secrets_stored_in_json_file(
     assert secrets_path.is_file()
     secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
     assert secrets["github_token"] == "linux-file-token"
-    assert ("potpie", "github_token") not in fake_keyring
 
     metadata = json.loads(cs.credentials_path().read_text(encoding="utf-8"))
     assert metadata["integrations"]["github"]["token_storage"] == "file"
     assert cs.get_provider_credentials("github")["access_token"] == "linux-file-token"
 
 
-def test_github_status_detects_linux_file_credentials(
+def test_github_status_detects_file_credentials_on_any_platform(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(cs.sys, "platform", "linux")
     cs.write_provider_credentials(
         "github",
         {
@@ -699,52 +669,24 @@ def test_github_status_detects_linux_file_credentials(
     assert status["token_storage"] == "file"
 
 
-def test_write_provider_credentials_rolls_back_linux_file_token_on_metadata_failure(
+def test_potpie_api_key_uses_file_secret_store(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(cs.sys, "platform", "linux")
 
-    def _fail_metadata(_provider: str, _metadata: dict[str, object]) -> None:
-        raise OSError("metadata write failed")
+    cs.store_potpie_api_key("sk-test-file-store", created_at="2026-01-01T00:00:00Z")
 
-    monkeypatch.setattr(cs, "write_integration_metadata", _fail_metadata)
-
-    with pytest.raises(OSError, match="metadata write failed"):
-        cs.write_provider_credentials(
-            "github",
-            {
-                "provider": "github",
-                "provider_host": "github.com",
-                "access_token": "linux-file-token",
-                "account": {"login": "octocat", "id": 1},
-            },
-        )
-
-    assert not cs.integration_secrets_path().is_file()
+    secrets = json.loads(cs.integration_secrets_path().read_text(encoding="utf-8"))
+    assert secrets["potpie_api_key"] == "sk-test-file-store"
+    assert cs.get_stored_api_key() == "sk-test-file-store"
 
 
-def test_linux_potpie_api_key_still_uses_keyring(
+def test_integration_secret_ignores_keychain_metadata_without_file_secret(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-
-    cs.store_potpie_api_key("sk-test-linux-keyring", created_at="2026-01-01T00:00:00Z")
-
-    assert fake_keyring[("potpie", "potpie_api_key")] == "sk-test-linux-keyring"
-    assert not cs.integration_secrets_path().is_file()
-
-
-def test_linux_integration_secret_falls_back_to_keyring(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
-) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    fake_keyring[("potpie", "github_token")] = "legacy-keyring-token"
     cs.write_integration_metadata(
         "github",
         {
@@ -755,13 +697,14 @@ def test_linux_integration_secret_falls_back_to_keyring(
         },
     )
 
-    assert cs.get_provider_credentials("github")["access_token"] == "legacy-keyring-token"
+    with pytest.raises(cs.ProviderCredentialError) as exc:
+        cs.get_provider_credentials("github")
+    assert "local credentials file" in str(exc.value)
 
 
-def test_linux_integration_secret_uses_file_even_when_keyring_is_available(
+def test_integration_secret_uses_file_store(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
@@ -781,7 +724,6 @@ def test_linux_integration_secret_uses_file_even_when_keyring_is_available(
         },
     )
 
-    assert ("potpie", "github_token") not in fake_keyring
     assert cs.integration_secrets_path().is_file()
 
     metadata = json.loads(cs.credentials_path().read_text(encoding="utf-8"))
@@ -789,14 +731,11 @@ def test_linux_integration_secret_uses_file_even_when_keyring_is_available(
     assert cs.get_provider_credentials("github")["access_token"] == "linux-file-token"
 
 
-def test_github_status_detects_linux_legacy_keyring_credentials(
+def test_github_status_ignores_keychain_metadata_without_file_secret(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(cs.sys, "platform", "linux")
-    fake_keyring[("potpie", "github_token")] = "legacy-keyring-token"
     cs.write_integration_metadata(
         "github",
         {
@@ -809,16 +748,13 @@ def test_github_status_detects_linux_legacy_keyring_credentials(
 
     status = cs.get_integration_status("github")
 
-    assert status["authenticated"] is True
-    assert status["login"] == "octocat"
-    assert status["email"] == "octo@example.com"
-    assert status["token_storage"] == "keychain"
+    assert status["authenticated"] is False
+    assert status["auth_type"] == "oauth"
 
 
-def test_linux_delete_integration_secret_surfaces_provider_error(
+def test_delete_integration_secret_surfaces_provider_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    fake_keyring: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.write_provider_credentials(
@@ -845,6 +781,6 @@ def test_linux_delete_integration_secret_surfaces_provider_error(
     with pytest.raises(cs.ProviderCredentialError) as exc:
         cs.clear_provider_credentials("github")
 
-    assert "Failed to remove github_token from local credentials file" in str(
+    assert "Failed to remove GitHub token from local credentials file" in str(
         exc.value
     )

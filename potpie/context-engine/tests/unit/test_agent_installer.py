@@ -6,12 +6,14 @@ from pathlib import Path
 
 import pytest
 
+import adapters.outbound.skills.agent_installer as agent_installer
 from adapters.outbound.skills.agent_installer import (
     install_global_agent_instructions,
     install_agent_bundle,
     install_skill_bundle,
     iter_template_files,
     resolve_install_root,
+    validate_packaged_skill_command_snippets,
 )
 from adapters.outbound.skills.claude_target import FileBackedAgentTarget
 from application.services.skill_manager import DefaultSkillManager
@@ -65,6 +67,36 @@ def test_install_skill_bundle_writes_to_global_root(tmp_path: Path) -> None:
     assert {path.name for path in root.iterdir()} == {"potpie-cli"}
 
 
+def test_packaged_skill_command_snippets_match_cli_surface() -> None:
+    validate_packaged_skill_command_snippets()
+
+
+def test_install_skill_bundle_rejects_invalid_potpie_snippet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bad_skill = """---
+name: potpie-cli
+description: bad snippet
+---
+
+```bash
+potpie search "query" --node-labels PullRequest,Decision
+```
+"""
+
+    def fake_bundle_files(bundle_name: str):
+        if bundle_name != "agent_bundle":
+            return []
+        return [(Path(".agents/skills/potpie-cli/SKILL.md"), bad_skill)]
+
+    monkeypatch.setattr(agent_installer, "_iter_bundle_files", fake_bundle_files)
+
+    with pytest.raises(ValueError, match="unsupported option --node-labels"):
+        install_skill_bundle(tmp_path, skill_ids=("potpie-cli",))
+
+    assert not (tmp_path / "potpie-cli" / "SKILL.md").exists()
+
+
 def test_install_global_agent_instructions_merges_compact_agents_md(
     tmp_path: Path,
 ) -> None:
@@ -79,7 +111,7 @@ def test_install_global_agent_instructions_merges_compact_agents_md(
     managed = text.split("<!-- potpie-start -->", 1)[1].split(
         "<!-- potpie-end -->", 1
     )[0]
-    assert result.created == ["AGENTS.md"]
+    assert result.updated == ["AGENTS.md"]
     assert "# Personal defaults" in text
     assert "Potpie is durable project memory" in text
     assert "potpie --json source list" in text
@@ -158,7 +190,7 @@ def test_skill_manager_repairs_support_files_when_skill_is_current(
     assert calls == [None]
 
 
-def test_install_agent_bundle_skips_conflicting_files_without_force(
+def test_install_agent_bundle_merges_existing_agents_md_without_force(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -169,11 +201,16 @@ def test_install_agent_bundle_skips_conflicting_files_without_force(
 
     result = install_agent_bundle(repo)
 
-    assert "AGENTS.md" in result.skipped
-    assert target.read_text(encoding="utf-8") == "local edits\n"
+    text = target.read_text(encoding="utf-8")
+    assert "AGENTS.md" in result.updated
+    assert "local edits" in text
+    assert "<!-- potpie-start -->" in text
+    assert "# Context Engine" in text
 
 
-def test_install_agent_bundle_overwrites_with_force(tmp_path: Path) -> None:
+def test_install_agent_bundle_does_not_overwrite_agents_md_with_force(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".git").mkdir()
@@ -182,8 +219,97 @@ def test_install_agent_bundle_overwrites_with_force(tmp_path: Path) -> None:
 
     result = install_agent_bundle(repo, force=True)
 
+    text = target.read_text(encoding="utf-8")
     assert "AGENTS.md" in result.updated
-    assert "# Context Engine" in target.read_text(encoding="utf-8")
+    assert "local edits" in text
+    assert "<!-- potpie-start -->" in text
+    assert "# Context Engine" in text
+
+
+def test_install_agent_bundle_wraps_old_unmarked_agents_md(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    target = repo / "AGENTS.md"
+    marked_template = next(
+        content
+        for rel, content in iter_template_files()
+        if rel.as_posix() == "AGENTS.md"
+    )
+    old_unmarked = (
+        marked_template.split("\n", 1)[1]
+        .rsplit("\n<!-- potpie-end -->", 1)[0]
+        .strip()
+        + "\n"
+    )
+    target.write_text(old_unmarked, encoding="utf-8")
+
+    result = install_agent_bundle(repo, force=True)
+
+    text = target.read_text(encoding="utf-8")
+    assert "AGENTS.md" in result.updated
+    assert text.count("# Context Engine") == 1
+    assert "<!-- potpie-start -->" in text
+
+
+def test_install_agent_bundle_replaces_embedded_unmarked_agents_md(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    target = repo / "AGENTS.md"
+    marked_template = next(
+        content
+        for rel, content in iter_template_files()
+        if rel.as_posix() == "AGENTS.md"
+    )
+    old_unmarked = (
+        marked_template.split("\n", 1)[1]
+        .rsplit("\n<!-- potpie-end -->", 1)[0]
+        .strip()
+    )
+    target.write_text(
+        "# My notes\n\nSome custom project instructions.\n\n"
+        f"{old_unmarked}\n\n"
+        "## Team notes\n\nKeep these too.\n",
+        encoding="utf-8",
+    )
+
+    result = install_agent_bundle(repo)
+
+    text = target.read_text(encoding="utf-8")
+    assert "AGENTS.md" in result.updated
+    assert "# My notes" in text
+    assert "Some custom project instructions." in text
+    assert "## Team notes" in text
+    assert "Keep these too." in text
+    assert text.count("# Context Engine") == 1
+    assert text.count("<!-- potpie-start -->") == 1
+    assert text.count("<!-- potpie-end -->") == 1
+
+
+def test_install_agent_bundle_updates_marked_agents_md_without_force(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    target = repo / "AGENTS.md"
+    target.write_text(
+        "# Local Setup\n\n<!-- potpie-start -->\nstale\n<!-- potpie-end -->\n\nKeep me.\n",
+        encoding="utf-8",
+    )
+
+    result = install_agent_bundle(repo)
+
+    text = target.read_text(encoding="utf-8")
+    assert "AGENTS.md" in result.updated
+    assert "# Local Setup" in text
+    assert "Keep me." in text
+    assert "stale" not in text
+    assert "# Context Engine" in text
+    assert text.count("<!-- potpie-start -->") == 1
 
 
 # --- Claude bundle tests ---
@@ -217,7 +343,7 @@ def test_install_agent_bundle_claude_merges_into_existing_claude_md(
 
     result = install_agent_bundle(repo, agent="claude")
 
-    assert "CLAUDE.md" in result.created
+    assert "CLAUDE.md" in result.updated
     content = (repo / "CLAUDE.md").read_text(encoding="utf-8")
     assert "# My Project" in content
     assert "Existing content." in content
@@ -254,20 +380,25 @@ def test_install_agent_bundle_claude_updates_section_with_force(tmp_path: Path) 
     assert "# Project" in content
 
 
-def test_install_agent_bundle_claude_skips_changed_section_without_force(
+def test_install_agent_bundle_claude_updates_changed_section_without_force(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".git").mkdir()
     (repo / "CLAUDE.md").write_text(
-        "<!-- potpie-start -->\nCUSTOM\n<!-- potpie-end -->\n",
+        "# Project\n\n<!-- potpie-start -->\nCUSTOM\n<!-- potpie-end -->\n\nKeep me.\n",
         encoding="utf-8",
     )
 
     result = install_agent_bundle(repo, agent="claude")
 
-    assert "CLAUDE.md" in result.skipped
+    content = (repo / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "CLAUDE.md" in result.updated
+    assert "# Project" in content
+    assert "Keep me." in content
+    assert "CUSTOM" not in content
+    assert "context_resolve" in content
 
 
 def test_install_agent_bundle_claude_plugin_lays_out_plugin_dir(tmp_path: Path) -> None:

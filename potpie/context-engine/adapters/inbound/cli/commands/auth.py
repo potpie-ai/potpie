@@ -8,7 +8,7 @@ root app:
 - top-level ``potpie login`` / ``potpie logout`` — Potpie account (Firebase/API key);
 - ``potpie auth …`` — deprecated aliases for the provider commands above.
 
-These flows are inbound-adapter credential acquisition (OAuth/device-flow/keyring),
+These flows are inbound-adapter credential acquisition (OAuth/device-flow/local files),
 so they do NOT route through ``HostShell``; they read the shared ``--json`` /
 ``--verbose`` state from ``commands/_common`` like every other command.
 """
@@ -51,7 +51,7 @@ def register(root: typer.Typer) -> None:
 
     @root.command("logout")
     def logout() -> None:
-        """Remove Potpie account auth from the system keychain."""
+        """Remove Potpie account auth from local credential files."""
         from adapters.inbound.cli.auth._login_impl import potpie_logout_impl
 
         potpie_logout_impl()

@@ -91,6 +91,32 @@ def test_usage_event_uses_identity_without_onboarding_fields(
     assert "entrypoint" not in event.properties
 
 
+def test_usage_event_accepts_extra_low_cardinality_properties(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_usage_command_succeeded(
+        command="graph.read",
+        result_kind="graph_command",
+        properties={
+            "command": "callsite",
+            "result_kind": "callsite_kind",
+            "command_family": "read",
+            "duration_ms": 12.5,
+            "subgraph": "recent_changes",
+            "view": "recent_changes.timeline",
+        },
+    )
+
+    event = fake_sink.events[0]
+    assert event.name == "cli_usage_command_succeeded"
+    assert event.properties["command"] == "graph.read"
+    assert event.properties["result_kind"] == "graph_command"
+    assert event.properties["command_family"] == "read"
+    assert event.properties["duration_ms"] == 12.5
+    assert event.properties["subgraph"] == "recent_changes"
+    assert event.properties["view"] == "recent_changes.timeline"
+
+
 def test_context_activation_also_records_usage(fake_sink: _FakeSink) -> None:
     query._capture_context_activation(command="search", item_count=2)
 
@@ -117,7 +143,9 @@ def test_github_repos_records_usage_after_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(github_commands, "get_store", lambda: _FakeGitHubStore())
-    monkeypatch.setattr(github_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        github_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(
         github_commands,
         "list_user_owned_repositories",
@@ -153,7 +181,9 @@ def test_provider_list_commands_record_usage_after_success(
     runner_name: str,
     fetch_name: str,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(
         auth_commands,
         fetch_name,

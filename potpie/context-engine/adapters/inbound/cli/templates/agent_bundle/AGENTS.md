@@ -1,3 +1,4 @@
+<!-- potpie-start -->
 # Context Engine
 
 This project uses Potpie for project memory. Before non-trivial work, read the
@@ -211,3 +212,4 @@ Use these repo-local skills under `.agents/skills/`:
   propose/commit/history, inbox, quality, and nudge handling.
 - `potpie-cli` - CLI setup, pot/source commands, graph commands, and
   troubleshooting, including pot scope and setup failures.
+<!-- potpie-end -->

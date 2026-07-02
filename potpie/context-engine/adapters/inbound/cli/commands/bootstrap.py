@@ -11,10 +11,15 @@ from pathlib import Path
 
 import typer
 
+from adapters.inbound.cli.cli_install_status import (
+    cli_install_human,
+    collect_cli_install_status,
+)
 from adapters.inbound.cli.commands._common import (
     EXIT_DEGRADED,
     EXIT_VALIDATION,
     contract,
+    enrich_with_pot_guidance,
     emit,
     fail,
     get_host,
@@ -33,6 +38,7 @@ from adapters.inbound.cli.telemetry.onboarding_events import (
     now_ms,
 )
 from adapters.inbound.cli.ui import setup_ux
+from application.services.config_service import KNOWN_CONFIG_KEYS, public_config_value
 from bootstrap import sentry_metrics_runtime
 from domain.errors import CapabilityNotImplemented
 from domain.lifecycle import SetupPlan, SetupReport
@@ -271,9 +277,11 @@ def register(root: typer.Typer) -> None:
             pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
             readiness = host.backend.mutation.readiness(pot_id)
             daemon_status = host.daemon.status()
+            cli_install = collect_cli_install_status()
             emit(
                 {
                     "daemon": daemon_status,
+                    "cli_install": cli_install,
                     "backend_profile": host.backend.profile,
                     "backend_ready": readiness.ready,
                     "backend_readiness": {
@@ -294,6 +302,7 @@ def register(root: typer.Typer) -> None:
                 },
                 human=(
                     f"daemon: {daemon_status['mode']} (up={daemon_status.get('up')})\n"
+                    f"{cli_install_human(cli_install)}\n"
                     f"backend: {host.backend.profile} ready={readiness.ready} "
                     f"caps={', '.join(caps.implemented())}\n"
                     f"ledger: {host.ledger.status().binding} "
@@ -331,20 +340,58 @@ def register(root: typer.Typer) -> None:
                     detail="managed pot routing is not implemented",
                     recommended_next_action="select a local pot; managed routing lands in HU3",
                 )
-            pot = get_host().pots.use_pot(ref=ref)
-            emit(
+            host = get_host()
+            pot = host.pots.use_pot(ref=ref)
+            payload, human = enrich_with_pot_guidance(
+                host,
+                pot.pot_id,
                 {"id": pot.pot_id, "name": pot.name, "origin": "local"},
                 human=f"active pot → {pot.name} (local)",
             )
+            emit(payload, human=human)
 
     config_app = typer.Typer(
-        help="Local config get/set (persisted to <home>/config.json)."
+        help=(
+            "Local config get/set/list (persisted to <home>/config.json). "
+            f"Known keys: {', '.join(KNOWN_CONFIG_KEYS)}."
+        )
     )
 
-    @config_app.command("get")
-    def config_get(key: str) -> None:
+    def _emit_config_list() -> None:
+        config = get_host().config.list_public()
+        payload = {
+            "config": config,
+            "known_keys": list(KNOWN_CONFIG_KEYS),
+        }
+        if not config:
+            human = "config: (empty)"
+        else:
+            lines = [f"{key}={value}" for key, value in config.items()]
+            human = "\n".join(lines)
+        emit(payload, human=human)
+
+    @config_app.command("list")
+    def config_list() -> None:
+        """List all non-secret config entries."""
         with contract():
+            _emit_config_list()
+
+    @config_app.command("get")
+    def config_get(
+        key: str | None = typer.Argument(
+            None,
+            help=(
+                "Config key to read. Omit to list all non-secret entries "
+                "(same as `potpie config list`)."
+            ),
+        ),
+    ) -> None:
+        with contract():
+            if key is None:
+                _emit_config_list()
+                return
             value = get_host().config.get(key)
+            value = public_config_value(key, value)
             emit({key: value}, human=f"{key}={value}")
 
     @config_app.command("set")

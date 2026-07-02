@@ -19,7 +19,7 @@ import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Final, Iterator, NoReturn
+from typing import Any, Callable, Final, Iterator, NoReturn, Sequence
 
 import click
 import typer
@@ -72,6 +72,20 @@ def is_json() -> bool:
     return bool(_state["json"])
 
 
+def bootstrap_output_flags_from_argv(argv: Sequence[str] | None = None) -> None:
+    """Apply ``--json`` / ``--verbose`` before Typer finishes parsing.
+
+    The root callback only runs after a command line parses successfully. Early
+    bootstrap keeps parse-time failures on the documented JSON error contract.
+    """
+    args = tuple(argv or ())
+    scan_args = args
+    if "--" in args:
+        scan_args = args[: args.index("--")]
+    set_json("--json" in scan_args)
+    set_verbose("--verbose" in scan_args or "-v" in scan_args)
+
+
 def set_verbose(value: bool) -> None:
     _state["verbose"] = bool(value)
 
@@ -111,7 +125,7 @@ def get_store() -> CredentialStore:
     The auth/credential subsystem persists through this domain port; the concrete
     is chosen at the composition root (``bootstrap.cli_auth_wiring``), so this
     inbound module never imports an adapter. The default is the real
-    keychain-backed store; tests inject an in-memory fake via ``set_store``.
+    file-backed store; tests inject an in-memory fake via ``set_store``.
     """
     if _state["store"] is None:
         from bootstrap.cli_auth_wiring import build_credential_store
@@ -317,10 +331,13 @@ def _cli_metric_attributes(
     return attributes
 
 
-def resolve_pot_id(
+def resolve_pot_scope(
     host: Any, explicit: str | None = None, *, infer_from_repo: bool = True
-) -> str:
-    """Resolve ``--pot`` ref → id, else current-repo pot, else active pot.
+) -> tuple[str, str]:
+    """Resolve pot id and how it was chosen for CLI scope hints.
+
+    ``resolved_via`` is one of ``explicit``, ``repo_default``, ``linked_repo``, or
+    ``active_pot``. See :func:`resolve_pot_id` for resolution order.
 
     ``infer_from_repo=False`` skips current-repo inference and goes straight to
     the active pot. Source registration uses this: ``source add repo .`` is the
@@ -332,7 +349,7 @@ def resolve_pot_id(
     if explicit:
         for pot in pots.list_pots():
             if explicit in (pot.pot_id, pot.name):
-                return pot.pot_id
+                return pot.pot_id, "explicit"
         fail(
             code="pot_not_found",
             message=f"No pot matching '{explicit}'.",
@@ -341,14 +358,14 @@ def resolve_pot_id(
     repo_identity = _current_repo_identity() if infer_from_repo else None
     default_pot = _repo_default_pot_id(host, repo_identity)
     if default_pot:
-        return default_pot
+        return default_pot, "repo_default"
     matches = _pots_matching_current_repo(host) if infer_from_repo else []
     active = pots.active_pot()
     if len(matches) == 1:
-        return matches[0][0]
+        return matches[0][0], "linked_repo"
     if len(matches) > 1:
         if active is not None and any(active.pot_id == pid for pid, _ in matches):
-            return active.pot_id
+            return active.pot_id, "active_pot"
         names = ", ".join(f"{name} ({pid})" for pid, name in matches)
         fail(
             code="ambiguous_pot",
@@ -361,7 +378,15 @@ def resolve_pot_id(
             message="No active pot, and the current repo is not registered as a source in any pot.",
             next_action="run 'potpie setup', or create a pot with 'potpie pot create <name> --use' and register this repo with 'potpie source add repo .'",
         )
-    return active.pot_id
+    return active.pot_id, "active_pot"
+
+
+def resolve_pot_id(
+    host: Any, explicit: str | None = None, *, infer_from_repo: bool = True
+) -> str:
+    """Resolve ``--pot`` ref → id, else current-repo pot, else active pot."""
+    pot_id, _ = resolve_pot_scope(host, explicit, infer_from_repo=infer_from_repo)
+    return pot_id
 
 
 def current_repo_identity_for_cli() -> str | None:
@@ -414,36 +439,72 @@ def pot_scope_info(host: Any, pot_id: str) -> dict[str, Any]:
     }
 
 
-def pot_scope_human(host: Any, pot_id: str) -> str:
+def pot_scope_resolution_human(
+    resolved_via: str, *, repo: str | None = None
+) -> str:
+    if resolved_via == "explicit":
+        return "via --pot"
+    if resolved_via == "repo_default":
+        return (
+            f"via repo default for {repo}" if repo else "via repo default"
+        )
+    if resolved_via == "linked_repo":
+        return f"via linked repo {repo}" if repo else "via linked repo"
+    return "via active pot"
+
+
+def pot_scope_human(
+    host: Any,
+    pot_id: str,
+    *,
+    resolved_via: str | None = None,
+    repo: str | None = None,
+) -> str:
     info = pot_scope_info(host, pot_id)
     counts = info.get("counts") or {}
     claims = counts.get("claims", 0)
     entities = counts.get("entities", 0)
-    return (
+    scope = (
         f"pot={info.get('name')} ({pot_id}) "
         f"sources={info.get('source_count', 0)} claims={claims} entities={entities}"
     )
+    if resolved_via:
+        scope += f" {pot_scope_resolution_human(resolved_via, repo=repo)}"
+    return scope
 
 
-def empty_pot_warnings(host: Any, pot_id: str) -> tuple[str, ...]:
-    counts = pot_graph_counts(host, pot_id)
-    if int(counts.get("claims", 0) or 0) != 0:
+def _known_claims_count(counts: dict[str, int]) -> int | None:
+    if "claims" not in counts:
+        return None
+    return int(counts["claims"])
+
+
+def _pot_claims_count(host: Any, pot_id: str) -> int | None:
+    return _known_claims_count(pot_graph_counts(host, pot_id))
+
+
+def empty_pot_warnings(
+    host: Any, pot_id: str, repo: str | None = None
+) -> tuple[str, ...]:
+    claims = _pot_claims_count(host, pot_id)
+    if claims is None or claims != 0:
         return ()
-    linked = repo_pot_candidates(host)
+    linked = repo_pot_candidates(host, repo)
     alternatives = [
         row
         for row in linked.get("candidates", ())
         if row.get("pot_id") != pot_id
-        and int((row.get("counts") or {}).get("claims", 0) or 0) > 0
+        and (alt_claims := _known_claims_count(row.get("counts") or {})) is not None
+        and alt_claims > 0
     ]
     if not alternatives:
         return ()
     best = sorted(
         alternatives,
-        key=lambda row: int((row.get("counts") or {}).get("claims", 0) or 0),
+        key=lambda row: _known_claims_count(row.get("counts") or {}) or 0,
         reverse=True,
     )[0]
-    claims = int((best.get("counts") or {}).get("claims", 0) or 0)
+    claims = _known_claims_count(best.get("counts") or {}) or 0
     return (
         (
             f"current pot has 0 claims; repo {linked.get('repo')} also links to "
@@ -451,6 +512,50 @@ def empty_pot_warnings(host: Any, pot_id: str) -> tuple[str, ...]:
             f"Retry with --pot {best.get('pot_id')} or run "
             f"`potpie pot default set --repo current {best.get('pot_id')}`."
         ),
+    )
+
+
+def empty_pot_guidance(
+    host: Any, pot_id: str, repo: str | None = None
+) -> tuple[str, ...]:
+    """Recovery hints when a pot has no graph claims yet."""
+    warnings = list(empty_pot_warnings(host, pot_id, repo))
+    claims = _pot_claims_count(host, pot_id)
+    if claims is None or claims != 0:
+        return tuple(warnings)
+    if pot_source_count(host, pot_id) > 0:
+        warnings.append(
+            "pot has registered sources but 0 claims; next: run harness-led ingestion "
+            "(agent skills + `potpie graph propose/commit`), switch with "
+            "`potpie pot use <id>` or inspect `potpie pot linked --repo current`, "
+            "or keep this empty pot intentionally."
+        )
+    elif not warnings:
+        warnings.append(
+            "pot has 0 claims and no sources; next: `potpie source add repo .` "
+            "then harness-led ingestion, or keep this empty pot intentionally."
+        )
+    return tuple(warnings)
+
+
+def enrich_with_pot_guidance(
+    host: Any,
+    pot_id: str,
+    payload: dict[str, Any],
+    *,
+    human: str,
+    repo: str | None = None,
+) -> tuple[dict[str, Any], str]:
+    warnings = empty_pot_guidance(host, pot_id, repo)
+    if not warnings:
+        return payload, human
+    return (
+        {
+            **payload,
+            "warnings": list(warnings),
+            "recommended_next_action": warnings[0],
+        },
+        "\n".join([human, *(f"! {warning}" for warning in warnings)]),
     )
 
 
@@ -617,21 +722,26 @@ __all__ = [
     "EXIT_OK",
     "EXIT_UNAVAILABLE",
     "EXIT_VALIDATION",
+    "bootstrap_output_flags_from_argv",
     "contract",
     "emit",
     "fail",
     "get_host",
     "get_store",
     "current_repo_identity_for_cli",
+    "empty_pot_guidance",
     "empty_pot_warnings",
+    "enrich_with_pot_guidance",
     "is_json",
     "is_verbose",
     "pot_graph_counts",
     "pot_scope_human",
     "pot_scope_info",
+    "pot_scope_resolution_human",
     "pot_source_count",
     "repo_pot_candidates",
     "resolve_pot_id",
+    "resolve_pot_scope",
     "set_host",
     "set_store",
     "set_json",

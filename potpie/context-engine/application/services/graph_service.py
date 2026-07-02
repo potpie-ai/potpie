@@ -220,38 +220,44 @@ class DefaultGraphService:
         unsupported = _unsupported_read_filters(request, contract)
         missing = _missing_required_read_scope(request, contract)
         if unsupported or missing:
-            unsupported_items = tuple(
-                [*unsupported]
-                + [
-                    {
-                        "name": contract.name,
-                        "reason": "missing_required_scope",
-                        "detail": {
-                            "required_scope": list(contract.required_scope),
-                            "required_any_scope": list(contract.required_any_scope),
-                        },
-                    }
-                ]
-                if missing
-                else unsupported
+            missing_item = {
+                "name": contract.name,
+                "reason": "missing_required_scope",
+                "detail": {
+                    "required_scope": list(contract.required_scope),
+                    "required_any_scope": list(contract.required_any_scope),
+                },
+            }
+            unsupported_items = (
+                tuple([*unsupported, missing_item]) if missing else unsupported
+            )
+            quality_reason = (
+                "missing_required_scope" if missing else "unsupported_filter"
             )
             return GraphReadResult(
                 view=contract.name,
                 subgraph=contract.subgraph,
+                ok=not missing,
+                status="missing_required_scope" if missing else None,
+                message=(
+                    _missing_required_scope_message(contract) if missing else None
+                ),
                 items=(),
                 coverage=(
                     {
                         "include": spec.v1_include,
-                        "status": "unsupported" if unsupported else "empty",
+                        "status": "unsupported"
+                        if unsupported or missing
+                        else "empty",
                         "candidate_pool": 0,
                     },
                 ),
                 freshness=_read_freshness(None, backend_freshness={}),
                 quality={
-                    "status": "unsupported" if unsupported else "empty",
-                    "reason": "unsupported_filter"
-                    if unsupported
-                    else "missing_required_scope",
+                    "status": "unsupported"
+                    if unsupported or missing
+                    else "empty",
+                    "reason": quality_reason,
                 },
                 source_refs=(),
                 match_mode=self._match_mode(),
@@ -636,6 +642,16 @@ def _missing_required_read_scope(
             _read_scope_has(request, key) for key in contract.required_any_scope
         )
     )
+
+
+def _missing_required_scope_message(contract: ViewContract) -> str:
+    requirements: list[str] = []
+    if contract.required_scope:
+        requirements.append("all of " + ", ".join(contract.required_scope))
+    if contract.required_any_scope:
+        requirements.append("one of " + ", ".join(contract.required_any_scope))
+    required = "; ".join(requirements) or "a required scope"
+    return f"graph read view {contract.name!r} requires {required}"
 
 
 def _read_scope_has(request: GraphReadRequest, key: str) -> bool:

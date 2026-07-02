@@ -2,7 +2,6 @@
 set -e
 
 LEGACY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-REPO_ROOT="$(cd "$LEGACY_ROOT/.." && pwd)"
 cd "$LEGACY_ROOT"
 
 source .env
@@ -42,14 +41,14 @@ fi
 
 # Synchronize and create the managed virtual environment if needed
 echo "Syncing Python environment with uv..."
-if ! (cd "$REPO_ROOT" && uv sync --all-packages); then
+if ! uv sync; then
   echo "Error: Failed to synchronize Python dependencies"
   exit 1
 fi
 
 # Install gVisor (optional, for command isolation)
 echo "Installing gVisor (optional, for command isolation)..."
-if (cd "$REPO_ROOT" && uv run --project "$LEGACY_ROOT" python scripts/install_gvisor.py) 2>/dev/null; then
+if uv run python scripts/install_gvisor.py 2>/dev/null; then
   echo "gVisor installed successfully"
 else
   echo "Note: gVisor installation skipped or failed (this is optional)"
@@ -81,9 +80,7 @@ if [[ "$OSTYPE" == "darwin"* ]] || [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == 
   fi
 fi
 
-cd "$REPO_ROOT"
 source .venv/bin/activate
-cd "$LEGACY_ROOT"
 
 alembic -c alembic.ini upgrade heads
 
