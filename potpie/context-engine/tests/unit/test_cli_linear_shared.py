@@ -20,6 +20,7 @@ from adapters.outbound.cli_auth.integration_profile import (
 from adapters.outbound.cli_auth.http import AuthHttpError
 from adapters.inbound.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
+from adapters.outbound.cli_auth import provider_config
 from adapters.outbound.cli_auth.integration_verify import (
     _verify_linear,
     verify_integration_access,
@@ -1232,9 +1233,14 @@ def test_verify_integration_access_unknown_provider() -> None:
 # --- test_provider_config.py ---
 
 
-def test_get_client_id_requires_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_client_id_uses_packaged_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LINEAR_CLIENT_ID", raising=False)
-    assert get_client_id("linear") == ""
+    monkeypatch.setattr(
+        provider_config,
+        "PACKAGE_LINEAR_CLIENT_ID",
+        "packaged-linear-client-id",
+    )
+    assert get_client_id("linear") == "packaged-linear-client-id"
 
 
 def test_get_client_id_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:

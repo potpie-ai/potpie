@@ -439,6 +439,7 @@ class _FakeCallbackServer:
         self.result = result or OAuthCallbackResult(code="auth-code", state="state-xyz")
         self.wait_exc = wait_exc
         self.closed = False
+        self.start_calls: list[dict[str, object]] = []
 
     def wait(self, *, timeout: float = 300.0) -> OAuthCallbackResult:
         if self.wait_exc is not None:
@@ -459,7 +460,8 @@ def _stub_callback_server(
 ) -> _FakeCallbackServer:
     server = _FakeCallbackServer(result=result, port=port, wait_exc=wait_exc)
 
-    def _start(**_kwargs: object) -> _FakeCallbackServer:
+    def _start(**kwargs: object) -> _FakeCallbackServer:
+        server.start_calls.append(kwargs)
         if start_exc is not None:
             raise start_exc
         return server
@@ -507,7 +509,7 @@ def test_run_linear_oauth_flow_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         auth_commands, "webbrowser", MagicMock(open=MagicMock(return_value=True))
     )
-    _stub_callback_server(monkeypatch)
+    callback_server = _stub_callback_server(monkeypatch)
     monkeypatch.setattr(
         auth_commands,
         "exchange_authorization_code",
@@ -530,6 +532,14 @@ def test_run_linear_oauth_flow_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert store.get_integration_tokens("linear").get("access_token") == "access"
     assert printed and printed[-1].get("ok") is True
+    assert callback_server.start_calls == [
+        {
+            "host": "localhost",
+            "port": DEFAULT_CALLBACK_PORT,
+            "path": "/callback",
+            "fallback_ports": DEFAULT_FALLBACK_CALLBACK_PORTS,
+        }
+    ]
 
 
 def test_run_linear_oauth_flow_already_connected(
@@ -623,9 +633,11 @@ def test_run_linear_oauth_flow_expired_reauth_message(
     monkeypatch.setattr(
         auth_commands,
         "get_integration_status",
-        lambda _p: status_queue.pop(0)
-        if status_queue
-        else {"authenticated": True, "login": "Ada", "auth_type": "oauth"},
+        lambda _p: (
+            status_queue.pop(0)
+            if status_queue
+            else {"authenticated": True, "login": "Ada", "auth_type": "oauth"}
+        ),
     )
 
     auth_commands._run_linear_oauth_flow()
@@ -843,8 +855,10 @@ def test_run_linear_oauth_flow_fallback_port_updates_redirect(
     monkeypatch.setattr(
         auth_commands,
         "exchange_authorization_code",
-        lambda *_a, **kwargs: exchanged.append(kwargs["redirect_uri"])
-        or {"access_token": "a", "expires_at": 9999999999.0},
+        lambda *_a, **kwargs: (
+            exchanged.append(kwargs["redirect_uri"])
+            or {"access_token": "a", "expires_at": 9999999999.0}
+        ),
     )
     set_store(InMemoryCredentialStore())
     lines: list[str] = []
