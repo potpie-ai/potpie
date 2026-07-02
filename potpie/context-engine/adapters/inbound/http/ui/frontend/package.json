@@ -7,6 +7,7 @@
     "dev": "node scripts/dev.mjs",
     "test": "npm run test:dev-port",
     "test:dev-port": "node --test scripts/dev-port.test.mjs",
+    "audit": "npm audit --audit-level=moderate",
     "build": "npm run test:dev-port && tsc -b && vite build",
     "preview": "vite preview"
   },
@@ -21,5 +22,9 @@
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.6.3",
     "vite": "^6.4.3"
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "fsevents": true
   }
 }
