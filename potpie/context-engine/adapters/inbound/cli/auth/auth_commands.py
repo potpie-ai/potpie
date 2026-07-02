@@ -38,7 +38,7 @@ from adapters.outbound.cli_auth.credentials_store import (
     get_integration_status,
     get_integration_tokens,
 )
-from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+from bootstrap.runtime_settings import ensure_runtime_environment_loaded
 from adapters.outbound.cli_auth.integration_session import (
     ensure_valid_integration_tokens,
     token_needs_refresh,
@@ -236,7 +236,7 @@ def _print_linear_login_success(
 
 
 def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     store = get_store()
 
@@ -470,7 +470,7 @@ def run_integration_login(provider: str, *, force: bool = False) -> None:
         if key == "linear":
             _run_linear_oauth_flow(force=force)
             return
-        load_cli_env()
+        ensure_runtime_environment_loaded()
         j, v = _flags()
         run_atlassian_api_token_auth(key, force=force, as_json=j, verbose=v)
 
@@ -485,7 +485,7 @@ def integration_status(
     verify: bool = False,
 ) -> None:
     """Show local integration auth status."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, _ = _flags()
     rows: list[dict[str, Any]] = []
 
@@ -560,7 +560,7 @@ def auth_status(
 
 def linear_logout_impl() -> None:
     """Remove stored Linear credentials with workspace-aware messaging."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     store = get_store()
     existing = get_integration_status("linear")
@@ -598,7 +598,7 @@ def linear_logout_impl() -> None:
 
 def auth_logout(provider: str) -> None:
     """Remove locally stored credentials for a provider."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     key = provider.strip().lower()
     if key in {"wiki", "conf"}:
@@ -719,7 +719,7 @@ def linear_ls(
     limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
 ) -> None:
     """List Linear workspaces connected to this CLI."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         rows = fetch_linear_workspaces(limit=limit)
@@ -766,7 +766,7 @@ def linear_select(
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
 ) -> None:
     """Select a Linear workspace and team, then fetch issues in the terminal."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         result = run_linear_use_flow(org_key=org, team_key=key, limit=limit)
@@ -908,7 +908,7 @@ def _run_product_use_result(
     *,
     product_label: str,
 ) -> None:
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, _ = _flags()
     provider = _canonical_provider_for_json(str(result.get("product") or ""))
     rows = result.get("items") or []
@@ -969,7 +969,7 @@ def jira_login(
     """Connect Jira with an Atlassian API token (Jira access only)."""
 
     def _run() -> None:
-        load_cli_env()
+        ensure_runtime_environment_loaded()
         j, v = _flags()
         run_atlassian_api_token_auth(
             "jira",
@@ -999,7 +999,7 @@ def jira_ls(
     limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
 ) -> None:
     """List Jira projects you can access."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         rows = fetch_jira_projects(limit=limit)
@@ -1035,7 +1035,7 @@ def jira_select(
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
 ) -> None:
     """Select a Jira project and fetch issues in the terminal."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         result = run_jira_use_flow(workspace_key=key, limit=limit)
@@ -1071,7 +1071,7 @@ def confluence_login(
     """Connect Confluence with an Atlassian API token (Confluence access only)."""
 
     def _run() -> None:
-        load_cli_env()
+        ensure_runtime_environment_loaded()
         j, v = _flags()
         run_atlassian_api_token_auth(
             "confluence",
@@ -1101,7 +1101,7 @@ def confluence_ls(
     limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
 ) -> None:
     """List Confluence spaces you can access."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         rows = fetch_confluence_spaces_sample(limit=limit)
@@ -1135,7 +1135,7 @@ def confluence_select(
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
 ) -> None:
     """Select a Confluence space and fetch pages in the terminal."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         result = run_confluence_use_flow(workspace_key=key, limit=limit)

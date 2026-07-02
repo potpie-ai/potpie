@@ -92,7 +92,39 @@ jobs:
         env:
           POSTGRES_SERVER: "postgresql://postgres:postgres@localhost:5432/postgres"
           ENV: "development"
-        run: uv run --project . pytest tests
+        run: uv run --project . pytest tests -m "not premerge_journey"
+
+  premerge-cli-journey:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.7"
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-packages --no-cache
+
+      - name: Run pre-merge CLI journey test
+        env:
+          PREMERGE_JOURNEY_REQUIRED: "1"
+        run: uv run --project potpie/context-engine pytest potpie/context-engine/tests/integration/test_premerge_cli_journey.py -v
 
   potpie-sandbox:
     runs-on: ubuntu-latest
