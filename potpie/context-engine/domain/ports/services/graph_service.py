@@ -69,6 +69,19 @@ class GraphCatalogRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class GraphDescribeRequest:
+    """``graph describe`` — the executable contract for a subgraph or view.
+
+    Routed through the service (not answered CLI-side) so the contract always
+    reflects the daemon's ontology build, like every other graph command.
+    """
+
+    subgraph: str
+    view: str | None = None
+    include_examples: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class GraphCatalogResult:
     """The static contract a harness needs to use the graph without docs."""
 
@@ -284,6 +297,10 @@ class GraphService(Protocol):
         """Return the V1.5 graph contract (versions, views, ops, ontology)."""
         ...
 
+    def describe(self, request: GraphDescribeRequest) -> dict[str, Any]:
+        """Executable contract for one subgraph or view (``describe_contract``)."""
+        ...
+
     def read(self, request: GraphReadRequest) -> GraphReadResult:
         """V2-style read over a named view, routed through the read trunk."""
         ...
@@ -393,6 +410,7 @@ __all__ = [
     "DataPlaneStatus",
     "GraphCatalogRequest",
     "GraphCatalogResult",
+    "GraphDescribeRequest",
     "GraphEntityCandidate",
     "GraphEntitySearchRequest",
     "GraphEntitySearchResult",

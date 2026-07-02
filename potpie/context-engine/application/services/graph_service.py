@@ -53,7 +53,11 @@ from domain.graph_views import (
     view_spec,
     views_for_catalog,
 )
-from domain.graph_workbench_ontology import ViewContract, ontology_contract
+from domain.graph_workbench_ontology import (
+    ViewContract,
+    describe_contract,
+    ontology_contract,
+)
 from domain.ontology import EDGE_TYPES, ENTITY_TYPES, canonical_entity_labels
 from domain.ports.agent_context import (
     RecordReceipt,
@@ -67,6 +71,7 @@ from domain.ports.services.graph_service import (
     DataPlaneStatus,
     GraphCatalogRequest,
     GraphCatalogResult,
+    GraphDescribeRequest,
     GraphEntityCandidate,
     GraphEntitySearchRequest,
     GraphEntitySearchResult,
@@ -208,6 +213,16 @@ class DefaultGraphService:
             predicates=tuple(_catalog_predicates()),
             match_mode=self._match_mode(),
             source_authorities=tuple(sorted(SOURCE_AUTHORITIES)),
+        )
+
+    def describe(self, request: GraphDescribeRequest) -> dict[str, Any]:
+        # Service-routed (not CLI-local) so the answer always reflects this
+        # build's ontology and errors cross the RPC boundary like every other
+        # graph command.
+        return describe_contract(
+            subgraph=request.subgraph,
+            view=request.view,
+            include_examples=request.include_examples,
         )
 
     def read(self, request: GraphReadRequest) -> GraphReadResult:

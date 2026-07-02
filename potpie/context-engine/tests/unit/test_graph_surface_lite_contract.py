@@ -685,6 +685,22 @@ def test_read_missing_required_scope_is_validation_failure(service) -> None:
     assert env.quality["reason"] == "missing_required_scope"
 
 
+def test_describe_routes_through_service(service) -> None:
+    # `graph describe` must answer from the service (daemon-side ontology),
+    # not a CLI-local contract lookup — same routing as every graph command.
+    from domain.ports.services.graph_service import GraphDescribeRequest
+
+    payload = service.describe(
+        GraphDescribeRequest(subgraph="debugging", view="prior_occurrences")
+    )
+    assert payload["contract_kind"] == "graph_workbench_ontology"
+    assert payload["view"]["name"] == "debugging.prior_occurrences"
+
+    with pytest.raises(ValueError, match="knowledge.document_context") as e:
+        service.describe(GraphDescribeRequest(subgraph="docs"))
+    assert e.value.detail["did_you_mean"]["matched_include"] == "docs"
+
+
 def test_read_unknown_view_suggests_canonical_view_for_include_guess(service) -> None:
     # Audit item 17: `--subgraph docs` guesses the include family; the error
     # must return migration guidance, never accept the legacy name as input.

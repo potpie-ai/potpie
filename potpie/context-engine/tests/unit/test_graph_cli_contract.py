@@ -76,6 +76,17 @@ class _Graph:
         self.read_request = None
         self.search_request = None
 
+    def describe(self, request):
+        # Delegate to the real domain contract so payload assertions stay
+        # meaningful; the stub only stands in for the transport.
+        from domain.graph_workbench_ontology import describe_contract
+
+        return describe_contract(
+            subgraph=request.subgraph,
+            view=request.view,
+            include_examples=request.include_examples,
+        )
+
     def catalog(self, _request):
         if self.catalog_error is not None:
             raise self.catalog_error

@@ -55,7 +55,6 @@ from domain.graph_workbench import (
 )
 from domain.ports.observability import SPAN_KIND_INTERNAL
 from domain.graph_views import INCLUDE_TO_VIEW
-from domain.graph_workbench_ontology import describe_contract
 from domain.nudge import NUDGE_EVENT_HELP
 
 graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
@@ -1335,11 +1334,15 @@ def graph_describe(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.describe") as ctx:
+        from domain.ports.services.graph_service import GraphDescribeRequest
+
         _set_optional_pot(ctx, pot)
-        payload = describe_contract(
-            subgraph=subgraph,
-            view=view,
-            include_examples=examples,
+        payload = get_host().graph.describe(
+            GraphDescribeRequest(
+                subgraph=subgraph,
+                view=view,
+                include_examples=examples,
+            )
         )
         subgraph_name = payload["subgraph"]["name"]
         described = payload["view"]["name"] if view else subgraph_name
