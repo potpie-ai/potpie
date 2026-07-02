@@ -336,14 +336,14 @@ def resolve_pot_scope(
 ) -> tuple[str, str]:
     """Resolve pot id and how it was chosen for CLI scope hints.
 
-  ``resolved_via`` is one of ``explicit``, ``repo_default``, ``linked_repo``, or
-  ``active_pot``. See :func:`resolve_pot_id` for resolution order.
+    ``resolved_via`` is one of ``explicit``, ``repo_default``, ``linked_repo``, or
+    ``active_pot``. See :func:`resolve_pot_id` for resolution order.
 
-  ``infer_from_repo=False`` skips current-repo inference and goes straight to
-  the active pot. Source registration uses this: ``source add repo .`` is the
-  command that *establishes* the repo→pot mapping, so inferring its target
-  from existing registrations would route the new source to the wrong pot
-  (or fail as ambiguous when other pots already track the same repo).
+    ``infer_from_repo=False`` skips current-repo inference and goes straight to
+    the active pot. Source registration uses this: ``source add repo .`` is the
+    command that *establishes* the repo→pot mapping, so inferring its target
+    from existing registrations would route the new source to the wrong pot
+    (or fail as ambiguous when other pots already track the same repo).
     """
     pots = host.pots
     if explicit:
@@ -473,25 +473,38 @@ def pot_scope_human(
     return scope
 
 
-def empty_pot_warnings(host: Any, pot_id: str) -> tuple[str, ...]:
-    counts = pot_graph_counts(host, pot_id)
-    if int(counts.get("claims", 0) or 0) != 0:
+def _known_claims_count(counts: dict[str, int]) -> int | None:
+    if "claims" not in counts:
+        return None
+    return int(counts["claims"])
+
+
+def _pot_claims_count(host: Any, pot_id: str) -> int | None:
+    return _known_claims_count(pot_graph_counts(host, pot_id))
+
+
+def empty_pot_warnings(
+    host: Any, pot_id: str, repo: str | None = None
+) -> tuple[str, ...]:
+    claims = _pot_claims_count(host, pot_id)
+    if claims is None or claims != 0:
         return ()
-    linked = repo_pot_candidates(host)
+    linked = repo_pot_candidates(host, repo)
     alternatives = [
         row
         for row in linked.get("candidates", ())
         if row.get("pot_id") != pot_id
-        and int((row.get("counts") or {}).get("claims", 0) or 0) > 0
+        and (alt_claims := _known_claims_count(row.get("counts") or {})) is not None
+        and alt_claims > 0
     ]
     if not alternatives:
         return ()
     best = sorted(
         alternatives,
-        key=lambda row: int((row.get("counts") or {}).get("claims", 0) or 0),
+        key=lambda row: _known_claims_count(row.get("counts") or {}) or 0,
         reverse=True,
     )[0]
-    claims = int((best.get("counts") or {}).get("claims", 0) or 0)
+    claims = _known_claims_count(best.get("counts") or {}) or 0
     return (
         (
             f"current pot has 0 claims; repo {linked.get('repo')} also links to "
@@ -499,6 +512,50 @@ def empty_pot_warnings(host: Any, pot_id: str) -> tuple[str, ...]:
             f"Retry with --pot {best.get('pot_id')} or run "
             f"`potpie pot default set --repo current {best.get('pot_id')}`."
         ),
+    )
+
+
+def empty_pot_guidance(
+    host: Any, pot_id: str, repo: str | None = None
+) -> tuple[str, ...]:
+    """Recovery hints when a pot has no graph claims yet."""
+    warnings = list(empty_pot_warnings(host, pot_id, repo))
+    claims = _pot_claims_count(host, pot_id)
+    if claims is None or claims != 0:
+        return tuple(warnings)
+    if pot_source_count(host, pot_id) > 0:
+        warnings.append(
+            "pot has registered sources but 0 claims; next: run harness-led ingestion "
+            "(agent skills + `potpie graph propose/commit`), switch with "
+            "`potpie pot use <id>` or inspect `potpie pot linked --repo current`, "
+            "or keep this empty pot intentionally."
+        )
+    elif not warnings:
+        warnings.append(
+            "pot has 0 claims and no sources; next: `potpie source add repo .` "
+            "then harness-led ingestion, or keep this empty pot intentionally."
+        )
+    return tuple(warnings)
+
+
+def enrich_with_pot_guidance(
+    host: Any,
+    pot_id: str,
+    payload: dict[str, Any],
+    *,
+    human: str,
+    repo: str | None = None,
+) -> tuple[dict[str, Any], str]:
+    warnings = empty_pot_guidance(host, pot_id, repo)
+    if not warnings:
+        return payload, human
+    return (
+        {
+            **payload,
+            "warnings": list(warnings),
+            "recommended_next_action": warnings[0],
+        },
+        "\n".join([human, *(f"! {warning}" for warning in warnings)]),
     )
 
 
@@ -683,7 +740,9 @@ __all__ = [
     "get_host",
     "get_store",
     "current_repo_identity_for_cli",
+    "empty_pot_guidance",
     "empty_pot_warnings",
+    "enrich_with_pot_guidance",
     "is_json",
     "is_verbose",
     "pot_graph_counts",

@@ -29,6 +29,10 @@ class ConfigService(Protocol):
 
     def get(self, key: str) -> str | None: ...
 
+    def list_public(self) -> Mapping[str, str | None]:
+        """Return all config entries with secret-like keys redacted."""
+        ...
+
     def set(self, key: str, value: str) -> None: ...
 
     def probe(self) -> Mapping[str, Any]:

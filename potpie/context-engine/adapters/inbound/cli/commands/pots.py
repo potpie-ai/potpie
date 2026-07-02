@@ -17,6 +17,10 @@ from adapters.inbound.cli.commands._common import (
     fail,
     get_host,
     pot_graph_counts,
+    enrich_with_pot_guidance,
+    fail,
+    get_host,
+    is_json,
     pot_scope_info,
     repo_default_matches,
     repo_pot_candidates,
@@ -258,6 +262,7 @@ def pot_create(
             f"created pot '{pot.name}' ({pot.pot_id})"
             f"{' [active]' if pot.active else ''}"
         )
+        guidance_repo: str | None = repo
         if repo is not None:
             source = register_repo_source(
                 host,
@@ -268,6 +273,7 @@ def pot_create(
             payload["source"] = source
             payload["repo_default_set"] = source["repo_default_set"]
             payload["repo_key"] = source["repo_key"]
+            guidance_repo = str(source["location"])
             human = (
                 f"{human}\n"
                 f"registered source {source['kind']}:{source['name']} "
@@ -276,14 +282,28 @@ def pot_create(
             if source["repo_default_set"]:
                 human = f"{human}\nset repo default -> {pot.pot_id}"
             human = f"{human}\nno ingestion or scan started"
+        payload, human = enrich_with_pot_guidance(
+            host,
+            pot.pot_id,
+            payload,
+            human=human,
+            repo=guidance_repo,
+        )
         emit(payload, human=human)
 
 
 @pot_app.command("use")
 def pot_use(ref: str) -> None:
     with contract():
-        pot = get_host().pots.use_pot(ref=ref)
-        emit({"id": pot.pot_id, "name": pot.name}, human=f"active pot → {pot.name}")
+        host = get_host()
+        pot = host.pots.use_pot(ref=ref)
+        payload, human = enrich_with_pot_guidance(
+            host,
+            pot.pot_id,
+            {"id": pot.pot_id, "name": pot.name},
+            human=f"active pot → {pot.name}",
+        )
+        emit(payload, human=human)
 
 
 @pot_app.command("linked")
@@ -329,26 +349,41 @@ def pot_linked(repo: str = typer.Option("current", "--repo")) -> None:
 
 
 @default_app.command("show")
-def pot_default_show(repo: str = typer.Option("current", "--repo")) -> None:
+def pot_default_show(
+    repo: str = typer.Option("current", "--repo"),
+    with_candidates: bool = typer.Option(
+        False,
+        "--with-candidates",
+        help="Include the full candidates list (see `pot linked` for details).",
+    ),
+) -> None:
+    """Show the repo-local default pot. Use --with-candidates for the full list."""
     with contract():
         host = get_host()
         linked = repo_pot_candidates(host, repo)
         default_id = linked.get("default_pot_id")
-        payload = {
-            "repo": linked.get("repo"),
+        repo_key = linked.get("repo")
+        payload: dict = {
+            "repo": repo_key,
             "default_pot_id": default_id,
-            "candidates": linked.get("candidates", ()),
         }
+        if with_candidates:
+            payload["candidates"] = linked.get("candidates", ())
         if not default_id:
+            if not with_candidates:
+                payload["hint"] = "run `potpie pot linked` to see all candidates"
             emit(
                 payload,
-                human=f"repo {linked.get('repo') or '(unknown)'} default: (unset)",
+                human=f"repo {repo_key or '(unknown)'} default: (unset)",
             )
             return
         info = pot_scope_info(host, default_id)
+        payload["default_pot"] = info
+        if not with_candidates:
+            payload["hint"] = "run `potpie pot linked` to see all candidates"
         emit(
-            {**payload, "default_pot": info},
-            human=f"repo {linked.get('repo')} default: {info['name']} ({default_id})",
+            payload,
+            human=f"repo {repo_key} default: {info['name']} ({default_id})",
         )
 
 
@@ -623,15 +658,19 @@ def source_add(
         )
         resolved_location = payload.get("location", location)
         repo_default_set = bool(payload.get("repo_default_set"))
-        emit(
-            payload,
+        payload, human = enrich_with_pot_guidance(
+            host,
+            pot_id,
+            dict(payload),
             human=(
                 f"registered source {payload['kind']}:{payload['name']} "
                 f"({payload['source_id']}) at {resolved_location} in pot {pot_id}\n"
                 + (f"set repo default -> {pot_id}\n" if repo_default_set else "")
                 + "no ingestion or scan started"
             ),
+            repo=str(resolved_location) if is_repo else None,
         )
+        emit(payload, human=human)
 
 
 @source_app.command("list")
@@ -659,7 +698,22 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
                 ),
             ]
         )
-        emit(
+        human = (
+            "\n".join(
+                [
+                    header,
+                    *(
+                        f"  {s.kind}: {getattr(s, 'location', s.name)} ({s.source_id})"
+                        for s in sources
+                    ),
+                ]
+            )
+            if sources
+            else f"{header}\n(no sources)"
+        )
+        payload, human = enrich_with_pot_guidance(
+            host,
+            pot_id,
             {
                 "pot_id": pot_id,
                 "resolved_via": resolved_via,
@@ -676,18 +730,10 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
                     for s in sources
                 ],
             },
-            human="\n".join(
-                [
-                    header,
-                    *(
-                        f"  {s.kind}: {getattr(s, 'location', s.name)} ({s.source_id})"
-                        for s in sources
-                    ),
-                ]
-            )
-            if sources
-            else f"{header}\n(no sources)",
+            human=human,
+            repo=repo,
         )
+        emit(payload, human=human)
 
 
 def _enrich_source(host, src, pot_id: str) -> dict:
