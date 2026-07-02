@@ -631,19 +631,72 @@ def enrich_with_pot_guidance(
     repo: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     warnings = empty_pot_guidance(host, pot_id, repo)
-    if not warnings:
-        return payload, human
     existing = payload.get("warnings") or []
     existing_warnings = [existing] if isinstance(existing, str) else list(existing)
     combined_warnings = [*existing_warnings, *warnings]
+    if not combined_warnings:
+        return payload, human
+    human_lines = [human, *(f"! {warning}" for warning in warnings)]
     return (
         {
             **payload,
             "warnings": combined_warnings,
             "recommended_next_action": payload.get("recommended_next_action")
-            or warnings[0],
+            or combined_warnings[0],
         },
-        "\n".join([human, *(f"! {warning}" for warning in warnings)]),
+        "\n".join(human_lines),
+    )
+
+
+def use_pot_selection(
+    host: Any,
+    ref: str,
+    *,
+    also_default_for_current_repo: bool = False,
+    origin: str | None = None,
+) -> tuple[dict[str, Any], str]:
+    repo_key = None
+    if also_default_for_current_repo:
+        repo_key = current_repo_identity_for_cli()
+        if not repo_key:
+            raise ValueError("--also-default-for-current-repo requires a repo")
+
+    pot = host.pots.use_pot(ref=ref)
+    repo_default_set = False
+    if repo_key:
+        host.pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
+        repo_default_set = True
+
+    routing = repo_effective_pot_info(host)
+    warnings = []
+    warning = repo_default_mismatch_warning(host, routing, selected_pot_id=pot.pot_id)
+    if warning:
+        warnings.append(warning)
+
+    active_line = f"active pot → {pot.name}"
+    if origin:
+        active_line = f"{active_line} ({origin})"
+    lines = [active_line]
+    if repo_default_set:
+        lines.append(f"repo {repo_key} default → {pot.name} ({pot.pot_id})")
+    lines.extend(f"warning: {item}" for item in warnings)
+
+    payload: dict[str, Any] = {
+        "id": pot.pot_id,
+        "name": pot.name,
+        "repo_default_set": repo_default_set,
+        "current_repo": routing,
+        "warnings": warnings,
+    }
+    if origin:
+        payload["origin"] = origin
+
+    return enrich_with_pot_guidance(
+        host,
+        pot.pot_id,
+        payload,
+        human="\n".join(lines),
+        repo=repo_key,
     )
 
 
@@ -877,4 +930,5 @@ __all__ = [
     "set_store",
     "set_json",
     "set_verbose",
+    "use_pot_selection",
 ]

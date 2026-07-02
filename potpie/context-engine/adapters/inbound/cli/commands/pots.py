@@ -21,12 +21,12 @@ from adapters.inbound.cli.commands._common import (
     pot_scope_info,
     pot_scope_resolution_human,
     repo_default_matches,
-    repo_default_mismatch_warning,
     repo_effective_pot_human,
     repo_effective_pot_info,
     repo_pot_candidates,
     resolve_pot_id,
     resolve_pot_scope,
+    use_pot_selection,
 )
 from adapters.inbound.cli.telemetry.onboarding_events import (
     capture_project_binding_event,
@@ -314,35 +314,10 @@ def pot_use(
 ) -> None:
     with contract():
         host = get_host()
-        repo_key = (
-            _repo_key_from_option("current") if also_default_for_current_repo else None
-        )
-        pot = host.pots.use_pot(ref=ref)
-        repo_default_set = False
-        if repo_key:
-            host.pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
-            repo_default_set = True
-        routing = repo_effective_pot_info(host)
-        warnings = []
-        warning = repo_default_mismatch_warning(host, routing, selected_pot_id=pot.pot_id)
-        if warning:
-            warnings.append(warning)
-        lines = [f"active pot → {pot.name}"]
-        if repo_default_set:
-            lines.append(f"repo {repo_key} default → {pot.name} ({pot.pot_id})")
-        lines.extend(f"warning: {item}" for item in warnings)
-        payload, human = enrich_with_pot_guidance(
+        payload, human = use_pot_selection(
             host,
-            pot.pot_id,
-            {
-                "id": pot.pot_id,
-                "name": pot.name,
-                "repo_default_set": repo_default_set,
-                "current_repo": routing,
-                "warnings": warnings,
-            },
-            human="\n".join(lines),
-            repo=repo_key,
+            ref,
+            also_default_for_current_repo=also_default_for_current_repo,
         )
         emit(payload, human=human)
 

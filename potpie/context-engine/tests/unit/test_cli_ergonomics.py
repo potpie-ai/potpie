@@ -432,6 +432,7 @@ def test_pot_use_warns_when_repo_default_differs(monkeypatch) -> None:
     assert "repo github.com/acme/shop default remains repo-default (p2)" in payload[
         "warnings"
     ][0]
+    assert payload["recommended_next_action"] == payload["warnings"][0]
 
 
 def test_top_level_use_alias_warns_when_repo_default_differs(monkeypatch) -> None:
@@ -457,6 +458,7 @@ def test_top_level_use_alias_warns_when_repo_default_differs(monkeypatch) -> Non
     assert payload["id"] == "p1"
     assert payload["origin"] == "local"
     assert payload["warnings"]
+    assert payload["recommended_next_action"] == payload["warnings"][0]
 
 
 def test_pot_use_can_also_set_current_repo_default(monkeypatch) -> None:
@@ -483,6 +485,23 @@ def test_pot_use_can_also_set_current_repo_default(monkeypatch) -> None:
     assert payload["warnings"] == []
     assert pots_service.repo_defaults == {"github.com/acme/shop": "p1"}
     assert payload["current_repo"]["effective_pot"]["id"] == "p1"
+
+
+def test_pot_use_also_default_requires_current_repo(monkeypatch) -> None:
+    monkeypatch.setattr(_common, "_current_repo_identity", lambda: None)
+    pots_service = _Pots([_Pot("p1", "fresh")], {}, active=None)
+    _common.set_host(_Host(pots_service))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(
+        pots.pot_app, ["use", "p1", "--also-default-for-current-repo"]
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["code"] == "validation_error"
+    assert "--also-default-for-current-repo requires a repo" in payload["message"]
+    assert pots_service._active is None
 
 
 def test_pot_linked_summary_skips_graph_counts(monkeypatch) -> None:

@@ -21,15 +21,13 @@ from adapters.inbound.cli.commands._common import (
     contract,
     current_repo_identity_for_cli,
     emit,
-    enrich_with_pot_guidance,
     fail,
     get_host,
     is_json,
-    repo_default_mismatch_warning,
     repo_default_pot_id,
     repo_effective_pot_info,
-    repo_pot_candidates,
     resolve_pot_id,
+    use_pot_selection,
 )
 from adapters.inbound.cli.telemetry.onboarding_events import (
     CliSetupAnalyticsObserver,
@@ -57,15 +55,17 @@ def _effective_current_repo_pot_id(
     if not repo_identity:
         return None
 
-    default_pot_id = repo_default_pot_id(host, repo_identity)
-    if default_pot_id:
-        return default_pot_id
-
-    candidates = repo_pot_candidates(host).get("candidates", ())
-    candidate_ids = [str(row.get("pot_id")) for row in candidates if row.get("pot_id")]
-    if len(candidate_ids) == 1:
-        return candidate_ids[0]
-    if len(candidate_ids) > 1:
+    routing = repo_effective_pot_info(host)
+    effective = routing.get("effective_pot") or {}
+    effective_id = effective.get("id")
+    if effective_id:
+        return str(effective_id)
+    if routing.get("status") == "ambiguous":
+        candidate_ids = {
+            str(row.get("id"))
+            for row in routing.get("candidates", ())
+            if row.get("id")
+        }
         return active_pot_id if active_pot_id in candidate_ids else None
     return active_pot_id
 
@@ -392,40 +392,11 @@ def register(root: typer.Typer) -> None:
                     recommended_next_action="select a local pot; managed routing lands in HU3",
                 )
             host = get_host()
-            repo_key = None
-            if also_default_for_current_repo:
-                repo_key = current_repo_identity_for_cli()
-                if not repo_key:
-                    raise ValueError("--also-default-for-current-repo requires a repo")
-            pot = host.pots.use_pot(ref=ref)
-            repo_default_set = False
-            if repo_key:
-                host.pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
-                repo_default_set = True
-            routing = repo_effective_pot_info(host)
-            warnings = []
-            warning = repo_default_mismatch_warning(
-                host, routing, selected_pot_id=pot.pot_id
-            )
-            if warning:
-                warnings.append(warning)
-            lines = [f"active pot → {pot.name} (local)"]
-            if repo_default_set:
-                lines.append(f"repo {repo_key} default → {pot.name} ({pot.pot_id})")
-            lines.extend(f"warning: {item}" for item in warnings)
-            payload, human = enrich_with_pot_guidance(
+            payload, human = use_pot_selection(
                 host,
-                pot.pot_id,
-                {
-                    "id": pot.pot_id,
-                    "name": pot.name,
-                    "origin": "local",
-                    "repo_default_set": repo_default_set,
-                    "current_repo": routing,
-                    "warnings": warnings,
-                },
-                human="\n".join(lines),
-                repo=repo_key,
+                ref,
+                also_default_for_current_repo=also_default_for_current_repo,
+                origin="local",
             )
             emit(payload, human=human)
 
