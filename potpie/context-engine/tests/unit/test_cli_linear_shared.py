@@ -50,10 +50,12 @@ def test_auth_help_is_wired_into_main_cli() -> None:
     result = runner.invoke(cli_main.app, ["auth", "--help"])
 
     assert result.exit_code == 0, result.stdout
-    assert "Deprecated" in result.stdout
+    assert "Integration auth status" in result.stdout
 
 
-def test_status_routes_to_integration_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auth_status_routes_to_integration_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     called: list[bool] = []
 
     def _integration_status(*, verify: bool = False) -> None:
@@ -65,11 +67,11 @@ def test_status_routes_to_integration_auth(monkeypatch: pytest.MonkeyPatch) -> N
         _integration_status,
     )
 
-    result = runner.invoke(cli_main.app, ["status"])
+    result = runner.invoke(cli_main.app, ["auth", "status"])
     assert result.exit_code == 0, result.stdout
     assert called == [False]
 
-    result = runner.invoke(cli_main.app, ["status", "--verify"])
+    result = runner.invoke(cli_main.app, ["auth", "status", "--verify"])
     assert result.exit_code == 0, result.stdout
     assert called == [False, True]
 
@@ -119,6 +121,34 @@ def test_auth_status_json(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0, result.stdout
     assert '"integrations"' in result.stdout
     assert '"linear"' in result.stdout
+
+
+def test_auth_status_json_keeps_provider_errors_per_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+
+    def _status(provider: str) -> dict[str, object]:
+        if provider == "linear":
+            raise cs.ProviderCredentialError("keychain locked")
+        return {
+            "provider": provider,
+            "authenticated": False,
+            "auth_type": "oauth",
+        }
+
+    monkeypatch.setattr(auth_commands, "get_integration_status", _status)
+    monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
+
+    result = runner.invoke(auth_commands.auth_app, ["status"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    linear = next(
+        row for row in payload["integrations"] if row["provider"] == "linear"
+    )
+    assert linear["authenticated"] is False
+    assert linear["status_error"] == "keychain locked"
 
 
 def test_auth_logout_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -466,6 +496,55 @@ def test_auth_status_verify_linear(
 
     assert result.exit_code == 0, result.stdout
     assert '"verified": true' in result.stdout
+
+
+def test_auth_status_verify_linear_refresh_error_stays_in_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
+    monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
+    linear_status_calls = 0
+
+    def _status(provider: str) -> dict[str, object]:
+        nonlocal linear_status_calls
+        if provider != "linear":
+            return {
+                "provider": provider,
+                "authenticated": False,
+                "auth_type": "oauth",
+            }
+        linear_status_calls += 1
+        if linear_status_calls == 2:
+            raise cs.ProviderCredentialError("keychain locked")
+        return {
+            "provider": provider,
+            "authenticated": True,
+            "auth_type": "oauth",
+            "expires_at": 9999999999.0,
+        }
+
+    monkeypatch.setattr(auth_commands, "get_integration_status", _status)
+    monkeypatch.setattr(
+        auth_commands,
+        "ensure_valid_integration_tokens",
+        lambda _provider: {"access_token": "tok", "expires_at": 9999999999.0},
+    )
+    monkeypatch.setattr(
+        auth_commands,
+        "verify_integration_access",
+        lambda _provider, _creds: (True, "ok (Ada)"),
+    )
+
+    result = runner.invoke(auth_commands.auth_app, ["status", "--verify"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    linear = next(
+        row for row in payload["integrations"] if row["provider"] == "linear"
+    )
+    assert linear["verified"] is False
+    assert linear["verify_message"] == "keychain locked"
+    assert linear_status_calls == 2
 
 
 def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> None:
