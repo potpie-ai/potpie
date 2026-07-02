@@ -1,148 +1,119 @@
 name: Bug Report
-description: Report a bug or unexpected behavior
+description: Report a problem with the Potpie CLI or local context graph
 title: "[Bug]: "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report a bug! Please fill out the form below to help us understand and fix the issue.
+        Thanks for reporting a bug. Please include the command or workflow that failed and the output you saw.
 
   - type: dropdown
-    id: component
+    id: area
     attributes:
-      label: Component/Module
-      description: Which part of Potpie is affected?
+      label: Area
+      description: Which part of the current Potpie CLI is affected?
       options:
-        - Auth
-        - Code Provider (GitHub/GitBucket/Local)
-        - Conversations
-        - Intelligence (Agents/Tools/Prompts)
-        - Integrations (Jira/Linear/Confluence/Sentry/GitHub)
-        - Parsing
-        - Projects
-        - Search
-        - Media
-        - API
-        - UI
-        - Deployment/Docker
+        - Install or upgrade
+        - Setup wizard (potpie setup)
+        - Login or auth
+        - Integration auth/status
+        - Daemon or local services
+        - Pot/source registration
+        - Context graph, resolve, or search
+        - Agent skills or harness setup
+        - Web UI (potpie ui)
+        - Packaging or release
         - Other
     validations:
       required: true
 
-  - type: dropdown
-    id: environment
+  - type: input
+    id: version
     attributes:
-      label: Environment
-      description: Where is this bug occurring?
-      options:
-        - Development (isDevelopmentMode=enabled)
-        - Production
-        - Both
+      label: Potpie version
+      description: Run `potpie --version` if the CLI starts. If not, say that here.
+      placeholder: "potpie 2.0.0b3"
     validations:
       required: true
 
   - type: dropdown
-    id: severity
+    id: install_source
     attributes:
-      label: Severity
-      description: How severe is this bug?
+      label: Install source
+      description: How are you running Potpie locally?
       options:
-        - Critical (Service down/Data loss)
-        - High (Major feature broken)
-        - Medium (Feature partially broken)
-        - Low (Minor issue/Cosmetic)
+        - uv tool install potpie
+        - pip or pipx from PyPI
+        - Source checkout
+        - Editable/local build
+        - Other
     validations:
       required: true
 
   - type: input
-    id: os
+    id: system
     attributes:
-      label: Operating System
-      description: Your operating system (e.g., macOS, Linux, Windows)
-      placeholder: "e.g., macOS 14.0, Ubuntu 22.04, Windows 11"
+      label: System
+      description: Share your operating system and Python version.
+      placeholder: "macOS 15.5, Python 3.13.5"
     validations:
       required: true
 
-  - type: textarea
-    id: environment_info
+  - type: input
+    id: agent_model
     attributes:
-      label: Environment Information
-      description: |
-        Please provide relevant environment details:
-        - Python version
-        - Docker version (if applicable)
-        - uv version
-        - Any relevant environment variables (sanitize sensitive data)
-      placeholder: |
-        Python: 3.12.5
-        Docker: 24.0.0
-        uv: 0.1.0
-        ENV: development
-        isDevelopmentMode: enabled
-    validations:
-      required: true
-
-  - type: textarea
-    id: description
-    attributes:
-      label: Description
-      description: What happened?
-      placeholder: A clear and concise description of what the bug is.
-    validations:
-      required: true
-
-  - type: textarea
-    id: expected
-    attributes:
-      label: Expected Behavior
-      description: What should have happened?
-      placeholder: A clear and concise description of what you expected to happen.
-    validations:
-      required: true
-
-  - type: textarea
-    id: actual
-    attributes:
-      label: Actual Behavior
-      description: What actually happened?
-      placeholder: A clear and concise description of what actually happened.
+      label: Coding agent and model
+      description: If a coding agent was involved, tell us which one and which model it used.
+      placeholder: "Codex with GPT-5, Claude Code with Sonnet, Cursor, OpenCode, etc."
     validations:
       required: false
 
   - type: textarea
-    id: steps
+    id: workflow
     attributes:
-      label: Steps to Reproduce
-      description: Please provide numbered steps to reproduce the issue
+      label: Command or workflow
+      description: What command or CLI workflow were you running?
       placeholder: |
-        1. Go to '...'
-        2. Click on '...'
-        3. Scroll down to '...'
-        4. See error
+        potpie setup --repo . --agent claude
+        potpie status
+        potpie graph status --json
+    validations:
+      required: true
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe what failed or looked wrong. Include what you expected if it is not obvious.
+      placeholder: "The command failed with ..., but I expected ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: source_details
+    attributes:
+      label: Source or build details
+      description: If you are using a source checkout or editable build, share the branch, commit, package manager, and relevant local changes.
+      placeholder: |
+        branch:
+        commit:
+        package manager:
+        local changes:
     validations:
       required: false
 
   - type: textarea
     id: logs
     attributes:
-      label: Relevant Logs/Error Messages
+      label: Output or logs
       description: |
-        Please paste any relevant error messages, stack traces, or logs.
+        Paste the relevant command output, error message, or stack trace.
         Wrap code blocks with triple backticks (```).
       placeholder: |
         ```
-        Paste error messages or logs here
+        Paste output here
         ```
-    validations:
-      required: false
       render: shell
-
-  - type: textarea
-    id: additional
-    attributes:
-      label: Additional Context
-      description: Any other context, screenshots, or information about the problem
-      placeholder: Add any other context about the problem here.
     validations:
       required: false
