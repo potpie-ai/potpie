@@ -220,8 +220,9 @@ Post-Workstream 3 implementation review:
 
 Examples found during review:
 
-- CLI docs describe `potpie status` as context status, but live `potpie status`
-  defaults to integration auth unless `--host` or non-default options are used.
+- Historical status drift: CLI docs described `potpie status` as context status
+  while live behavior defaulted to integration auth unless `--host` or
+  non-default options were used. Keep this covered by live CLI tests.
 - The installed `potpie-cli` skill advertises `potpie --json search "query" -n
   15`, but top-level `search` does not support `-n`.
 - Nudge instructions still mention `graph mutate`, while the graph workbench now
@@ -625,8 +626,7 @@ Scope:
   match through provider-family inference, not only through exact `--source-ref`.
 - Replace `graph mutate` references in nudge instructions with
   `graph propose` / `graph commit`.
-- Update `potpie status` docs to either use `--host` or change the default
-  command behavior.
+- Keep `potpie status` docs and live default command behavior aligned.
 - Fix the installed `potpie-cli` search example that uses unsupported `-n`.
 
 Acceptance:

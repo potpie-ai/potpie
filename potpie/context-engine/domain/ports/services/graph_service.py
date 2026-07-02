@@ -136,6 +136,9 @@ class GraphReadResult:
 
     view: str
     subgraph: str
+    ok: bool = True
+    status: str | None = None
+    message: str | None = None
     items: tuple[Mapping[str, Any], ...] = ()
     coverage: tuple[Mapping[str, Any], ...] = ()
     freshness: Mapping[str, Any] = field(default_factory=dict)
@@ -158,8 +161,8 @@ class GraphReadResult:
     def to_dict(self) -> dict[str, Any]:
         detail = _normalize_read_detail(self.detail)
         relations = _normalize_read_relations(self.relations)
-        return {
-            "ok": True,
+        out = {
+            "ok": self.ok,
             "graph_contract_version": self.graph_contract_version,
             "ontology_version": self.ontology_version,
             "view": self.view,
@@ -184,6 +187,11 @@ class GraphReadResult:
             "warnings": list(self.warnings),
             "as_of": self.as_of.isoformat() if self.as_of else None,
         }
+        if self.status:
+            out["status"] = self.status
+        if self.message:
+            out["message"] = self.message
+        return out
 
 
 @dataclass(frozen=True, slots=True)

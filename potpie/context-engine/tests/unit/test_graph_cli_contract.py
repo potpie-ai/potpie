@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+import re
 
 import pytest
 from typer.testing import CliRunner
@@ -37,6 +38,12 @@ from domain.ports.graph.analytics import RepairReport
 from domain.ports.graph.backend import BackendCapabilities
 
 pytestmark = pytest.mark.unit
+
+_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _plain_cli_output(output: str) -> str:
+    return _ANSI_RE.sub("", output)
 
 
 @pytest.fixture(autouse=True)
@@ -704,6 +711,57 @@ def test_graph_repair_accepts_entity_summaries_target() -> None:
     assert result.exit_code == 0, result.output
     assert backend.analytics.calls == [("p", ("entity_summaries",))]
     assert "repaired 2 entity summaries" in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "required_marker", "optional_marker", "missing_message"),
+    [
+        (
+            "neighborhood",
+            "--entity",
+            None,
+            "Missing option '--entity'",
+        ),
+        (
+            "inspect",
+            "ENTITY_KEY",
+            "[ENTITY_KEY]",
+            "Missing argument 'ENTITY_KEY'",
+        ),
+        (
+            "export",
+            "FILE",
+            "[FILE]",
+            "Missing argument 'FILE'",
+        ),
+        (
+            "import",
+            "FILE",
+            "[FILE]",
+            "Missing argument 'FILE'",
+        ),
+    ],
+)
+def test_graph_required_inputs_are_declared_in_help(
+    command: str,
+    required_marker: str,
+    optional_marker: str | None,
+    missing_message: str,
+) -> None:
+    help_result = CliRunner().invoke(graph.graph_app, [command, "--help"])
+
+    assert help_result.exit_code == 0, help_result.output
+    help_output = _plain_cli_output(help_result.output)
+    assert required_marker in help_output
+    assert "[required]" in help_output
+    if optional_marker is not None:
+        assert optional_marker not in help_output
+
+    missing_result = CliRunner().invoke(graph.graph_app, [command])
+    missing_output = _plain_cli_output(missing_result.output)
+
+    assert missing_result.exit_code == 2
+    assert missing_message in missing_output
 
 
 @pytest.mark.parametrize(
@@ -1432,6 +1490,54 @@ def test_graph_read_unknown_view_uses_error_envelope() -> None:
     _assert_graph_envelope(emitted, "graph.read", ok=False)
     assert emitted["error"]["code"] == "validation_error"
     assert "unknown graph view" in emitted["error"]["message"]
+
+
+def test_graph_read_missing_required_scope_result_is_error_envelope() -> None:
+    _common.set_json(True)
+    graph_service = _Graph(
+        read_result=GraphReadResult(
+            graph_contract_version="v1.5",
+            ontology_version="2026-06-graph",
+            view="features.feature_context",
+            subgraph="features",
+            ok=False,
+            status="missing_required_scope",
+            message=(
+                "graph read view 'features.feature_context' requires one of "
+                "scope, service, repo, anchor_entity_key, query"
+            ),
+            coverage=(
+                {
+                    "include": "features",
+                    "status": "unsupported",
+                    "candidate_pool": 0,
+                },
+            ),
+            quality={"status": "unsupported", "reason": "missing_required_scope"},
+            unsupported=(
+                {
+                    "name": "features.feature_context",
+                    "reason": "missing_required_scope",
+                },
+            ),
+        )
+    )
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["read", "--subgraph", "features", "--view", "feature_context"],
+    )
+
+    assert result.exit_code == 1
+    assert graph_service.read_called is True
+    emitted = json.loads(result.output)
+    _assert_graph_envelope(emitted, "graph.read", ok=False)
+    assert emitted["error"]["code"] == "missing_required_scope"
+    assert emitted["unsupported"][0]["reason"] == "missing_required_scope"
+    assert (
+        emitted["error"]["detail"]["quality"]["reason"] == "missing_required_scope"
+    )
 
 
 def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:

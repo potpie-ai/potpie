@@ -26,7 +26,7 @@ def test_catalog_fields_are_populated_from_skill_front_matter() -> None:
     catalog = catalog_by_id()
     cli = catalog["potpie-cli"]
     assert cli.title == "Potpie CLI"
-    assert cli.version == "1"
+    assert cli.version == "2"
     assert "Potpie CLI" in cli.description or "potpie" in cli.description.lower()
 
     graph = catalog["potpie-graph"]

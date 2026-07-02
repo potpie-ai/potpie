@@ -766,7 +766,8 @@ def _current_repo_identity() -> str | None:
     return _current_git_remote(cwd) or str(cwd)
 
 
-def _repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
+def repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
+    """Return the locally persisted default pot id for a repo identity, if valid."""
     if not repo_identity:
         return None
     getter = getattr(host.pots, "repo_default", None)
@@ -777,6 +778,16 @@ def _repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
         return None
     pot_id = str(pot_id)
     return pot_id if _pot_for_id(host, pot_id) is not None else None
+
+
+def repo_default_matches(host: Any, repo_key: str | None, pot_id: str) -> bool:
+    """True when ``repo_key``'s repo default is set to ``pot_id``."""
+    default_pot = repo_default_pot_id(host, repo_key)
+    return bool(default_pot and default_pot == pot_id)
+
+
+def _repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
+    return repo_default_pot_id(host, repo_identity)
 
 
 def _pot_for_id(host: Any, pot_id: str):
@@ -854,7 +865,9 @@ __all__ = [
     "pot_scope_info",
     "pot_scope_resolution_human",
     "pot_source_count",
+    "repo_default_matches",
     "repo_default_mismatch_warning",
+    "repo_default_pot_id",
     "repo_effective_pot_human",
     "repo_effective_pot_info",
     "repo_pot_candidates",

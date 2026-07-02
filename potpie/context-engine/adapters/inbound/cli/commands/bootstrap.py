@@ -17,14 +17,18 @@ from adapters.inbound.cli.cli_install_status import (
 )
 from adapters.inbound.cli.commands._common import (
     EXIT_DEGRADED,
+    EXIT_VALIDATION,
     contract,
     current_repo_identity_for_cli,
     emit,
     enrich_with_pot_guidance,
+    fail,
     get_host,
     is_json,
     repo_default_mismatch_warning,
+    repo_default_pot_id,
     repo_effective_pot_info,
+    repo_pot_candidates,
     resolve_pot_id,
 )
 from adapters.inbound.cli.telemetry.onboarding_events import (
@@ -44,6 +48,26 @@ from bootstrap import sentry_metrics_runtime
 from domain.errors import CapabilityNotImplemented
 from domain.lifecycle import SetupPlan, SetupReport
 from domain.ports.agent_context import StatusRequest
+
+
+def _effective_current_repo_pot_id(
+    host, *, repo_identity: str | None, active_pot_id: str | None
+) -> str | None:
+    """Mirror CLI repo-pot resolution without raising structured command errors."""
+    if not repo_identity:
+        return None
+
+    default_pot_id = repo_default_pot_id(host, repo_identity)
+    if default_pot_id:
+        return default_pot_id
+
+    candidates = repo_pot_candidates(host).get("candidates", ())
+    candidate_ids = [str(row.get("pot_id")) for row in candidates if row.get("pot_id")]
+    if len(candidate_ids) == 1:
+        return candidate_ids[0]
+    if len(candidate_ids) > 1:
+        return active_pot_id if active_pot_id in candidate_ids else None
+    return active_pot_id
 
 
 def register(root: typer.Typer) -> None:
@@ -211,12 +235,12 @@ def register(root: typer.Typer) -> None:
         verify: bool = typer.Option(
             False,
             "--verify",
-            help="Verify integration credentials with a lightweight API check.",
+            help="Moved to `potpie auth status --verify`.",
         ),
         host: bool = typer.Option(
             False,
             "--host",
-            help="Show host/pot readiness instead of integration auth status.",
+            help="Deprecated no-op; status reports host/pot readiness by default.",
         ),
         intent: str = typer.Option(
             "feature",
@@ -234,15 +258,18 @@ def register(root: typer.Typer) -> None:
             help="Pot for host status (use with --host or non-default intent/harness).",
         ),
     ) -> None:
-        """Integration auth status by default; use --host for daemon/pot readiness."""
-        host_status = (
-            host or pot is not None or intent != "feature" or harness != "claude"
-        )
-        if not host_status:
-            from adapters.inbound.cli.auth.auth_commands import integration_status
-
-            integration_status(verify=verify)
-            return
+        """context_status — host, pot, backend, and skill readiness."""
+        _ = host  # Backward-compatible flag; readiness is now the default.
+        if verify:
+            fail(
+                code="validation_error",
+                message="`--verify` moved to `potpie auth status --verify`.",
+                next_action=(
+                    "Run `potpie auth status --verify` for integration auth status, "
+                    "or `potpie status` for context readiness."
+                ),
+                exit_code=EXIT_VALIDATION,
+            )
 
         with contract():
             shell = get_host()
@@ -275,6 +302,15 @@ def register(root: typer.Typer) -> None:
             pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
             readiness = host.backend.mutation.readiness(pot_id)
             daemon_status = host.daemon.status()
+
+            repo_identity = current_repo_identity_for_cli()
+            effective_current_repo_pot = _effective_current_repo_pot_id(
+                host,
+                repo_identity=repo_identity,
+                active_pot_id=pot_id or None,
+            )
+            default_pot_id = repo_default_pot_id(host, repo_identity)
+
             cli_install = collect_cli_install_status()
             emit(
                 {
@@ -290,6 +326,8 @@ def register(root: typer.Typer) -> None:
                     },
                     "backend_capabilities": list(caps.implemented()),
                     "active_pot": pot_id or None,
+                    "effective_current_repo_pot": effective_current_repo_pot,
+                    "repo_default_pot": default_pot_id,
                     "recommended_next_action": None
                     if readiness.ready
                     else "Run `potpie backend doctor` or inspect `potpie graph status --json`.",
@@ -305,6 +343,16 @@ def register(root: typer.Typer) -> None:
                     f"caps={', '.join(caps.implemented())}\n"
                     f"ledger: {host.ledger.status().binding} "
                     f"available={host.ledger.status().available}"
+                    + (
+                        f"\nrepo: {repo_identity} → {effective_current_repo_pot}"
+                        + (
+                            f" (default={default_pot_id})"
+                            if default_pot_id
+                            else " (no repo default set)"
+                        )
+                        if repo_identity
+                        else ""
+                    )
                 ),
             )
 
@@ -568,6 +616,6 @@ def _step_state(report, step_id: str) -> str | None:
 
 def _capture_host_status_activation() -> None:
     capture_activation_succeeded(
-        command="status --host",
+        command="status",
         result_kind="status_result",
     )

@@ -52,7 +52,7 @@ def test_root_version_option_exits_with_cli_and_python_details() -> None:
     assert sys.executable in result.stdout
 
 
-def test_status_host_path_emits_report(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_status_default_emits_host_report(monkeypatch: pytest.MonkeyPatch) -> None:
     report = StatusReport(
         pot_id="foo-pot",
         profile="local",
@@ -70,7 +70,7 @@ def test_status_host_path_emits_report(monkeypatch: pytest.MonkeyPatch) -> None:
         bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
     )
 
-    result = runner.invoke(cli_main.app, ["status", "--host"])
+    result = runner.invoke(cli_main.app, ["status"])
 
     assert result.exit_code == 0, result.stdout
     assert "profile=local" in result.stdout
@@ -81,6 +81,29 @@ def test_status_host_path_emits_report(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(req, StatusRequest)
     assert req.intent == "feature"
     assert req.harness == "claude"
+
+
+def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) -> None:
+    report = StatusReport(
+        pot_id="foo-pot",
+        profile="local",
+        daemon_up=True,
+        active_pot="foo-pot",
+        backend_ready=True,
+    )
+    mock_host = MagicMock()
+    mock_host.agent_context.status.return_value = report
+
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(
+        bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
+    )
+
+    result = runner.invoke(cli_main.app, ["status", "--host"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "profile=local" in result.stdout
+    mock_host.agent_context.status.assert_called_once()
 
 
 def test_status_non_default_pot_triggers_host_path(
@@ -131,11 +154,20 @@ def test_status_host_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(bootstrap, "resolve_pot_id", lambda _host, pot: "foo-pot")
 
-    result = runner.invoke(cli_main.app, ["--json", "status", "--host"])
+    result = runner.invoke(cli_main.app, ["--json", "status"])
 
     assert result.exit_code == 0, result.stdout
     assert '"profile": "managed"' in result.stdout
     assert '"daemon_up": true' in result.stdout
+
+
+def test_status_verify_points_to_auth_status() -> None:
+    result = runner.invoke(cli_main.app, ["--json", "status", "--verify"])
+
+    assert result.exit_code == 1, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "validation_error"
+    assert "potpie auth status --verify" in payload["recommended_next_action"]
 
 
 def test_doctor_json_includes_backend_readiness(
@@ -366,3 +398,142 @@ def test_doctor_emits_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0, result.stdout
     assert "falkordb" in result.stdout
     assert "graph.read" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# doctor — audit-26: effective repo pot fields
+# ---------------------------------------------------------------------------
+
+
+def _make_doctor_host(
+    *,
+    active_pot_id: str | None,
+    repo_default: str | None,
+) -> MagicMock:
+    class _Pot:
+        def __init__(self, pid: str) -> None:
+            self.pot_id = pid
+
+    class _LedgerStatus:
+        available = True
+        binding = "none"
+
+    mock_host = MagicMock()
+    mock_host.backend.profile = "memory"
+    mock_host.backend.capabilities.return_value = BackendCapabilities(
+        profile="memory", mutation=True, claim_query=True
+    )
+    mock_host.backend.mutation.readiness.return_value = BackendReadiness(
+        profile="memory", ready=True, capability_ready={"mutation": True}
+    )
+    mock_host.daemon.status.return_value = {"mode": "in_process", "up": True}
+    mock_host.ledger.status.return_value = _LedgerStatus()
+    mock_host.pots.active_pot.return_value = (
+        _Pot(active_pot_id) if active_pot_id else None
+    )
+    mock_host.pots.repo_default.return_value = repo_default
+    known_pot_ids = {pid for pid in (active_pot_id, repo_default) if pid}
+    mock_host.pots.list_pots.return_value = [_Pot(pid) for pid in sorted(known_pot_ids)]
+    return mock_host
+
+
+def test_doctor_json_includes_effective_and_default_repo_pot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """doctor JSON includes effective_current_repo_pot and repo_default_pot."""
+    mock_host = _make_doctor_host(active_pot_id="pot-active", repo_default="pot-default")
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(
+        bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
+    )
+
+    result = runner.invoke(cli_main.app, ["--json", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["active_pot"] == "pot-active"
+    assert payload["repo_default_pot"] == "pot-default"
+    # effective uses repo default when set
+    assert payload["effective_current_repo_pot"] == "pot-default"
+
+
+def test_doctor_json_effective_falls_back_to_active_when_no_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When no repo default is set, effective_current_repo_pot equals active_pot."""
+    mock_host = _make_doctor_host(active_pot_id="pot-active", repo_default=None)
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(
+        bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
+    )
+
+    result = runner.invoke(cli_main.app, ["--json", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["repo_default_pot"] is None
+    assert payload["effective_current_repo_pot"] == "pot-active"
+
+
+def test_doctor_json_effective_prefers_single_linked_repo_pot_over_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When exactly one linked repo pot exists, doctor matches CLI resolution."""
+    mock_host = _make_doctor_host(
+        active_pot_id="pot-active",
+        repo_default=None,
+    )
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(
+        bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "repo_pot_candidates",
+        lambda _host: {
+            "repo": "github.com/acme/shop",
+            "default_pot_id": None,
+            "candidates": [{"pot_id": "pot-linked", "name": "linked"}],
+        },
+    )
+
+    result = runner.invoke(cli_main.app, ["--json", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["repo_default_pot"] is None
+    assert payload["active_pot"] == "pot-active"
+    assert payload["effective_current_repo_pot"] == "pot-linked"
+
+
+def test_doctor_json_no_repo_identity_leaves_effective_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Outside a git repo, effective_current_repo_pot and repo_default_pot are None."""
+    mock_host = _make_doctor_host(active_pot_id="pot-active", repo_default=None)
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(bootstrap, "current_repo_identity_for_cli", lambda: None)
+
+    result = runner.invoke(cli_main.app, ["--json", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["repo_default_pot"] is None
+    assert payload["effective_current_repo_pot"] is None
+
+
+def test_doctor_human_output_includes_repo_line_when_in_repo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plain-text doctor output includes a repo → effective-pot line."""
+    mock_host = _make_doctor_host(active_pot_id="pot-active", repo_default="pot-default")
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(
+        bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
+    )
+
+    result = runner.invoke(cli_main.app, ["doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "github.com/acme/shop" in result.stdout
+    assert "pot-default" in result.stdout

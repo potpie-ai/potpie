@@ -441,6 +441,8 @@ def _error_code_from_result(payload: Mapping[str, Any]) -> str:
 
 
 def _error_message_from_result(payload: Mapping[str, Any]) -> str:
+    if payload.get("message"):
+        return str(payload["message"])
     if payload.get("detail"):
         return str(payload["detail"])
     issues = payload.get("issues")
@@ -1355,7 +1357,7 @@ def graph_describe(
 
 @graph_app.command("neighborhood")
 def graph_neighborhood(
-    entity: str = typer.Option(None, "--entity"),
+    entity: str = typer.Option(..., "--entity"),
     predicate: str = typer.Option(None, "--predicate"),
     depth: int = typer.Option(2, "--depth"),
     direction: str = typer.Option("both", "--direction"),
@@ -1364,8 +1366,6 @@ def graph_neighborhood(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.neighborhood") as ctx:
-        if not entity:
-            raise ValueError("--entity is required")
         normalized_direction = (direction or "both").strip().lower()
         if normalized_direction not in {"out", "in", "both"}:
             raise ValueError("--direction must be one of: out, in, both")
@@ -2004,13 +2004,11 @@ def _run_quality_report(
 
 @graph_app.command("inspect")
 def graph_inspect(
-    entity_key: str = typer.Argument(None),
+    entity_key: str = typer.Argument(...),
     depth: int = typer.Option(2, "--depth"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.inspect") as ctx:
-        if not entity_key:
-            raise ValueError("entity_key is required")
         host = get_host()
         _require_backend_capability(
             host,
@@ -2040,11 +2038,9 @@ def graph_inspect(
 
 @graph_app.command("export")
 def graph_export(
-    file: str = typer.Argument(None), pot: str = typer.Option(None, "--pot")
+    file: str = typer.Argument(...), pot: str = typer.Option(None, "--pot")
 ) -> None:
     with _graph_command("graph.export") as ctx:
-        if not file:
-            raise ValueError("file is required")
         host = get_host()
         _require_backend_capability(
             host,
@@ -2064,11 +2060,9 @@ def graph_export(
 
 @graph_app.command("import")
 def graph_import(
-    file: str = typer.Argument(None), pot: str = typer.Option(None, "--pot")
+    file: str = typer.Argument(...), pot: str = typer.Option(None, "--pot")
 ) -> None:
     with _graph_command("graph.import") as ctx:
-        if not file:
-            raise ValueError("file is required")
         host = get_host()
         _require_backend_capability(
             host,
@@ -2903,6 +2897,21 @@ def _emit_graph_read(
     human_prefix: str | None = None,
     warnings: tuple[str, ...] = (),
 ) -> None:
+    normalized_format = _effective_read_format(result, format_)
+    payload = _read_payload(
+        result,
+        format_="raw" if normalized_format == "jsonl" else normalized_format,
+        sort=sort,
+        dedupe=dedupe,
+        event_limit=event_limit,
+    )
+    if payload.get("ok", True) is False:
+        human = _error_message_from_result(payload)
+        if human_prefix:
+            human = "\n".join((human_prefix, human))
+        _emit_graph_result(ctx, payload, human=human, warnings=warnings)
+        raise typer.Exit(code=EXIT_VALIDATION)
+
     if not is_json():
         _emit_read(
             result,
@@ -2915,7 +2924,6 @@ def _emit_graph_read(
         )
         return
 
-    normalized_format = _effective_read_format(result, format_)
     if normalized_format == "jsonl":
         rows = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
         if not rows:
