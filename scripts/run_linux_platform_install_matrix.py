@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Linux platform install smoke tests for the published Potpie CLI.
+"""Run Linux platform install smoke tests for the Potpie CLI.
 
 This script is intentionally separate from ``run_test_plan.py``. It tests the
 package as a user would install it on Linux architectures, while the workbook
@@ -17,6 +17,10 @@ Requirements:
 Use ``--install-build-deps`` as a diagnostic when a dependency falls back to a
 source build on clean Linux images. The default intentionally does not install
 compilers, because that is the realistic end-user install smoke.
+
+Use ``--local-dist dist`` after ``uv build potpie/context-engine`` and
+``uv build .`` to test freshly built local wheels instead of resolving Potpie
+packages from the package index.
 """
 
 from __future__ import annotations
@@ -58,6 +62,13 @@ class Result:
         return self.exit_code == 0
 
 
+@dataclass(frozen=True)
+class LocalWheels:
+    dist: Path
+    potpie: str
+    context_engine: str
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     cases = [
@@ -90,7 +101,19 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--package",
         default="potpie",
-        help="Package spec to install, e.g. 'potpie' or 'potpie==2.0.0b3'.",
+        help=(
+            "Package spec to install from indexes, e.g. 'potpie' or "
+            "'potpie==2.0.0b3'. Ignored when --local-dist is set."
+        ),
+    )
+    parser.add_argument(
+        "--local-dist",
+        default=None,
+        help=(
+            "Directory containing freshly built local wheels. The runner expects "
+            "both potpie-*.whl and potpie_context_engine-*.whl and mounts the "
+            "directory into Docker as /wheelhouse."
+        ),
     )
     parser.add_argument(
         "--image",
@@ -156,7 +179,26 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     args.platform = tuple(args.platform or DEFAULT_PLATFORMS)
     args.installer = tuple(args.installer or DEFAULT_INSTALLERS)
+    args.local_wheels = discover_local_wheels(args.local_dist) if args.local_dist else None
     return args
+
+
+def discover_local_wheels(local_dist: str) -> LocalWheels:
+    dist = Path(local_dist).expanduser().resolve()
+    if not dist.is_dir():
+        raise SystemExit(f"--local-dist does not exist or is not a directory: {dist}")
+    return LocalWheels(
+        dist=dist,
+        potpie=_latest_wheel(dist, "potpie-*.whl"),
+        context_engine=_latest_wheel(dist, "potpie_context_engine-*.whl"),
+    )
+
+
+def _latest_wheel(dist: Path, pattern: str) -> str:
+    matches = sorted(dist.glob(pattern), key=lambda path: path.stat().st_mtime, reverse=True)
+    if not matches:
+        raise SystemExit(f"--local-dist missing wheel matching {pattern}: {dist}")
+    return matches[0].name
 
 
 def run_case(case: Case, args: argparse.Namespace) -> Result:
@@ -165,6 +207,7 @@ def run_case(case: Case, args: argparse.Namespace) -> Result:
         installer=case.installer,
         smoke=args.smoke,
         install_build_deps=args.install_build_deps,
+        local_wheels=args.local_wheels,
     )
     command = [
         "docker",
@@ -177,6 +220,8 @@ def run_case(case: Case, args: argparse.Namespace) -> Result:
     ]
     if args.pull:
         command.extend(["--pull", "always"])
+    if args.local_wheels:
+        command.extend(["-v", f"{args.local_wheels.dist}:/wheelhouse:ro"])
     command.extend([args.image, "bash", "-lc", script])
 
     try:
@@ -218,8 +263,14 @@ def container_script(
     installer: str,
     smoke: str,
     install_build_deps: bool,
+    local_wheels: LocalWheels | None,
 ) -> str:
     package_q = shlex.quote(package)
+    local_potpie_q = ""
+    local_context_q = ""
+    if local_wheels:
+        local_potpie_q = shlex.quote(f"/wheelhouse/{local_wheels.potpie}")
+        local_context_q = shlex.quote(f"/wheelhouse/{local_wheels.context_engine}")
     build_deps = ""
     if install_build_deps:
         build_deps = (
@@ -229,19 +280,39 @@ def container_script(
         )
 
     if installer == "uv":
-        install = (
-            f"uv tool install {package_q} --force\n"
-            "export PATH=\"$HOME/.local/bin:$PATH\"\n"
-            "POTPIE_BIN=\"potpie\"\n"
-        )
+        if local_wheels:
+            install = (
+                f"test -f {local_potpie_q}\n"
+                f"test -f {local_context_q}\n"
+                f"uv tool install {local_potpie_q} --with {local_context_q} --force\n"
+                "export PATH=\"$HOME/.local/bin:$PATH\"\n"
+                "POTPIE_BIN=\"potpie\"\n"
+            )
+        else:
+            install = (
+                f"uv tool install {package_q} --force\n"
+                "export PATH=\"$HOME/.local/bin:$PATH\"\n"
+                "POTPIE_BIN=\"potpie\"\n"
+            )
     elif installer == "pip":
-        install = (
-            "PIP_VENV=\"$(mktemp -d)/venv\"\n"
-            "python -m venv \"$PIP_VENV\"\n"
-            "\"$PIP_VENV/bin/python\" -m pip install --upgrade pip\n"
-            f"\"$PIP_VENV/bin/python\" -m pip install {package_q}\n"
-            "POTPIE_BIN=\"$PIP_VENV/bin/potpie\"\n"
-        )
+        if local_wheels:
+            install = (
+                f"test -f {local_potpie_q}\n"
+                f"test -f {local_context_q}\n"
+                "PIP_VENV=\"$(mktemp -d)/venv\"\n"
+                "python -m venv \"$PIP_VENV\"\n"
+                "\"$PIP_VENV/bin/python\" -m pip install --upgrade pip\n"
+                f"\"$PIP_VENV/bin/python\" -m pip install {local_context_q} {local_potpie_q}\n"
+                "POTPIE_BIN=\"$PIP_VENV/bin/potpie\"\n"
+            )
+        else:
+            install = (
+                "PIP_VENV=\"$(mktemp -d)/venv\"\n"
+                "python -m venv \"$PIP_VENV\"\n"
+                "\"$PIP_VENV/bin/python\" -m pip install --upgrade pip\n"
+                f"\"$PIP_VENV/bin/python\" -m pip install {package_q}\n"
+                "POTPIE_BIN=\"$PIP_VENV/bin/potpie\"\n"
+            )
     else:  # pragma: no cover - argparse choices guard this.
         raise ValueError(f"unknown installer: {installer}")
 
