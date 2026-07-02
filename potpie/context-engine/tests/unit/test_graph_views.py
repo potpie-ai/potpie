@@ -57,12 +57,16 @@ def test_use_case_views_are_backed() -> None:
 
 def test_traversal_flag_only_on_neighborhood_views() -> None:
     traversal = {v.name for v in GRAPH_VIEWS.values() if v.traversal}
-    assert traversal == {"infra_topology.service_neighborhood", "features.feature_context"}
+    assert traversal == {
+        "infra_topology.service_neighborhood",
+        "features.feature_context",
+    }
 
 
 def test_neighborhood_declares_depth_direction_environment() -> None:
     spec = view_spec("infra_topology.service_neighborhood")
     assert {"depth", "direction", "environment"} <= set(spec.inputs)
+    assert "PROVIDES" not in spec.inline_relations
 
 
 def test_neighborhood_documents_environment_filter_rule() -> None:

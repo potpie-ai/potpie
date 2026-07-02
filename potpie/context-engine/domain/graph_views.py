@@ -159,7 +159,6 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
             "DEFINED_IN",
             "HOSTED_ON",
             "OWNED_BY",
-            "PROVIDES",
             "EXPOSES",
         ),
         traversal=True,
