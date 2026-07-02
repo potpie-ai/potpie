@@ -1,6 +1,6 @@
 # Potpie CLI Flow & Command Reference
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
+> Status: reflects code on `main` @ `49e12528`, last reviewed 2026-07-02.
 
 This is the **command reference** for the `potpie` CLI — the full, grouped surface
 with flags, the shared plumbing every command goes through, and the canonical
@@ -79,7 +79,7 @@ and `add_typer` sub-apps. Note the corrections vs older docs: there is **no
 
 | Group / commands | Code slot | Routes to |
 |---|---|---|
-| `resolve` `search` `record` `status` | `commands/query.py` | `HostShell.agent_context` (V1 4-tool wrappers; `status` default = integration auth) |
+| `resolve` `search` `record` `status` | `commands/query.py` | `HostShell.agent_context` (V1 4-tool wrappers; `status` = host/pot readiness) |
 | `setup` `doctor` `whoami` `use` `config` | `commands/bootstrap.py` | `HostShell` (setup bootstraps daemon → `SetupOrchestrator`) |
 | `login` `logout` + provider groups (`github`/`git`/`linear`/`jira`/`confluence`/`auth`) | `commands/auth.py` | local Firebase/API-key auth + integration read clients (**not** via HostShell) |
 | `ui` | `commands/ui.py` | ensures daemon, opens read-only graph explorer |
@@ -109,7 +109,7 @@ graph internals as the workbench; they are not a "legacy V1 surface waiting on V
 potpie resolve <task> [--intent feature] [--include <csv>] [--mode fast|balanced|verify|deep] [--pot <ref>]
 potpie search  <query> [--include <csv>] [--pot <ref>]
 potpie record  --type <kind> --summary <text> [--scope <k:v>] [--pot <ref>]
-potpie status  [--verify] [--host] [--intent <name>] [--harness claude] [--pot <ref>]
+potpie status  [--intent <name>] [--harness claude] [--pot <ref>]
 
 potpie setup   [--repo .] [--pot default] [--agent claude] [--backend <profile>] \
                [--scan] [--dry-run] [--yes/-y] [--daemon | --in-process]
@@ -128,10 +128,10 @@ potpie ui      [--open/--no-open] [--pot <ref>]
   fix/verification/decision) plus free-form; it goes through semantic validation and
   the record→semantic bridge ([writing.md](./writing.md)). `--mode`/`--include` ride
   in metadata only — they do not change the read path in V1.5 ([querying.md](./querying.md)).
-- **`status`** — default behavior is **integration auth status** (delegates to
-  `auth_commands.integration_status`). It switches to host/pot **readiness**
-  (`agent_context.status`) only when `--host` is passed **or** a non-default
-  `--intent`/`--harness`/`--pot` is given. `--verify` deepens the readiness probe.
+- **`status`** — host/pot **readiness** (`agent_context.status`): daemon, backend,
+  pot, and skill state. `--host` is a deprecated no-op (readiness is the default).
+  `--verify` is rejected here — it moved to `potpie auth status --verify`, the
+  explicit integration-auth report.
 - **`setup`** — idempotent first-run that builds a `SetupPlan`
   (config/storage/daemon/active `default` pot/source registration/skills). `--backend`
   picks the GraphBackend profile (default `falkordb_lite`); `--scan` is an **opt-in**
@@ -161,11 +161,12 @@ potpie github  login | logout | repos
 potpie linear  login | logout | ls | select
 potpie jira     login | logout | ls | select
 potpie confluence login | logout | ls | select
-potpie auth     status | logout            # deprecated mirror of the above
+potpie auth     status [--verify] | logout # integration auth report + logout
 ```
 
-`git` is a hidden alias group. `auth` is a deprecated group (status/logout + hidden
-`revoke` + provider mirrors).
+`git` is a hidden alias group. `auth status [--verify]` is the explicit local
+integration-auth report (`--verify` runs a lightweight API check); the rest of
+the `auth` group is deprecated (logout + hidden `revoke` + provider mirrors).
 
 ---
 
@@ -502,7 +503,7 @@ Backend precedence: `CONTEXT_ENGINE_BACKEND` > `GRAPH_DB_BACKEND` >
 ```mermaid
 flowchart LR
   cf_setup["setup --repo . --agent claude"]
-  cf_status["status --host"]
+  cf_status["status"]
   cf_read["graph catalog → graph read / search-entities"]
   cf_write["graph propose → graph commit --verify"]
   cf_nudge["graph nudge (zero-token hook)"]
@@ -518,7 +519,7 @@ during setup):
 ```bash
 pip install potpie
 potpie setup --repo . --agent claude
-potpie status --host
+potpie status
 
 # read the contract, then the graph
 potpie graph catalog --profile read

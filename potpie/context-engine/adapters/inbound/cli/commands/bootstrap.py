@@ -17,9 +17,11 @@ from adapters.inbound.cli.cli_install_status import (
 )
 from adapters.inbound.cli.commands._common import (
     EXIT_DEGRADED,
+    EXIT_VALIDATION,
     contract,
     enrich_with_pot_guidance,
     emit,
+    fail,
     get_host,
     is_json,
     resolve_pot_id,
@@ -208,12 +210,12 @@ def register(root: typer.Typer) -> None:
         verify: bool = typer.Option(
             False,
             "--verify",
-            help="Verify integration credentials with a lightweight API check.",
+            help="Moved to `potpie auth status --verify`.",
         ),
         host: bool = typer.Option(
             False,
             "--host",
-            help="Show host/pot readiness instead of integration auth status.",
+            help="Deprecated no-op; status reports host/pot readiness by default.",
         ),
         intent: str = typer.Option(
             "feature",
@@ -231,15 +233,18 @@ def register(root: typer.Typer) -> None:
             help="Pot for host status (use with --host or non-default intent/harness).",
         ),
     ) -> None:
-        """Integration auth status by default; use --host for daemon/pot readiness."""
-        host_status = (
-            host or pot is not None or intent != "feature" or harness != "claude"
-        )
-        if not host_status:
-            from adapters.inbound.cli.auth.auth_commands import integration_status
-
-            integration_status(verify=verify)
-            return
+        """context_status — host, pot, backend, and skill readiness."""
+        _ = host  # Backward-compatible flag; readiness is now the default.
+        if verify:
+            fail(
+                code="validation_error",
+                message="`--verify` moved to `potpie auth status --verify`.",
+                next_action=(
+                    "Run `potpie auth status --verify` for integration auth status, "
+                    "or `potpie status` for context readiness."
+                ),
+                exit_code=EXIT_VALIDATION,
+            )
 
         with contract():
             shell = get_host()
@@ -532,6 +537,6 @@ def _step_state(report, step_id: str) -> str | None:
 
 def _capture_host_status_activation() -> None:
     capture_activation_succeeded(
-        command="status --host",
+        command="status",
         result_kind="status_result",
     )
