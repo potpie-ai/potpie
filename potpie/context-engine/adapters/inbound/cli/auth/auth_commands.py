@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import secrets
-import threading
 import time
 import urllib.parse
 import webbrowser
@@ -30,6 +29,7 @@ from adapters.outbound.cli_auth.linear_read_client import (
 from adapters.inbound.cli.auth.linear_read import run_linear_use_flow
 from adapters.outbound.cli_auth.callback_server import (
     OAuthCallbackResult,
+    start_oauth_callback_server,
     wait_for_oauth_callback,
 )
 from adapters.outbound.cli_auth.credentials_store import (
@@ -65,15 +65,18 @@ from adapters.outbound.cli_auth.provider_config import (
     authorization_url,
     get_callback_host,
     get_callback_path,
-    get_callback_port,
+    get_callback_port_candidates,
     get_client_id,
-    get_redirect_uri,
+    get_redirect_uri_for_port,
     get_scopes,
 )
 from adapters.outbound.cli_auth.token_exchange import exchange_authorization_code
 
 auth_app = typer.Typer(
-    help="[Deprecated] Use `potpie <provider>` and `potpie status` instead.",
+    help=(
+        "Integration auth status and deprecated provider aliases. "
+        "Use `potpie <provider>` for provider login/logout."
+    ),
 )
 linear_app = typer.Typer(help="Linear integration.")
 jira_app = typer.Typer(help="Jira integration and read.")
@@ -298,92 +301,82 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
         raise typer.Exit(code=1)
 
     try:
-        redirect_uri = get_redirect_uri()
-        port = get_callback_port()
+        port_candidates = get_callback_port_candidates()
         host = get_callback_host()
         callback_path = get_callback_path()
     except ValueError as exc:
         emit_error("Linear OAuth redirect is invalid", str(exc), verbose=v)
         raise typer.Exit(code=1) from exc
-    state = secrets.token_urlsafe(24)
-    code_verifier, code_challenge = generate_pkce_pair()
-    auth_url = _build_linear_authorization_url(
-        redirect_uri=redirect_uri,
-        state=state,
-        code_challenge=code_challenge,
-    )
 
-    callback_result: OAuthCallbackResult | None = None
-    callback_error: BaseException | None = None
-
-    def _capture_callback() -> None:
-        nonlocal callback_result, callback_error
-        try:
-            callback_result = _wait_for_callback(
-                host=host,
-                port=port,
-                path=callback_path,
-            )
-        except BaseException as exc:
-            callback_error = exc
-
-    server_thread = threading.Thread(target=_capture_callback, daemon=True)
-    server_thread.start()
-    time.sleep(0.15)
-    if callback_error is not None:
+    primary_port = port_candidates[0]
+    try:
+        callback_server = start_oauth_callback_server(
+            host=host,
+            port=primary_port,
+            path=callback_path,
+            fallback_ports=port_candidates[1:],
+        )
+    except OSError as exc:
         emit_error(
             "OAuth callback failed to start",
-            str(callback_error),
+            str(exc),
             verbose=v,
-            exc=callback_error if v else None,
+            exc=exc if v else None,
         )
-        raise typer.Exit(code=EXIT_AUTH) from callback_error
+        raise typer.Exit(code=EXIT_AUTH) from exc
 
-    if not j:
-        print_plain_line(
-            "Opening browser for Linear authentication...",
-            as_json=False,
+    try:
+        redirect_uri = get_redirect_uri_for_port(callback_server.port)
+        state = secrets.token_urlsafe(24)
+        code_verifier, code_challenge = generate_pkce_pair()
+        auth_url = _build_linear_authorization_url(
+            redirect_uri=redirect_uri,
+            state=state,
+            code_challenge=code_challenge,
         )
-        if add:
+
+        if not j:
+            if callback_server.port != primary_port:
+                print_plain_line(
+                    f"Port {primary_port} is busy; using {callback_server.port} for OAuth callback.",
+                    as_json=False,
+                )
             print_plain_line(
-                "Choose the Linear workspace to connect in the browser.",
+                "Opening browser for Linear authentication...",
                 as_json=False,
             )
-        print_plain_line(
-            f"If the browser does not open, visit:\n{auth_url}",
-            as_json=False,
-        )
-
-    opened = webbrowser.open(auth_url, new=1)
-    if not opened and not j:
-        print_plain_line(
-            "Could not open a browser automatically; use the URL above.",
-            as_json=False,
-        )
-
-    server_thread.join(timeout=_OAUTH_CALLBACK_TIMEOUT + 5.0)
-
-    if callback_error is not None:
-        if isinstance(callback_error, TimeoutError):
-            emit_error("OAuth callback timed out", str(callback_error), verbose=v)
-        else:
-            emit_error(
-                "OAuth callback failed",
-                str(callback_error),
-                verbose=v,
-                exc=callback_error if v else None,
+            if add:
+                print_plain_line(
+                    "Choose the Linear workspace to connect in the browser.",
+                    as_json=False,
+                )
+            print_plain_line(
+                f"If the browser does not open, visit:\n{auth_url}",
+                as_json=False,
             )
-        raise typer.Exit(code=EXIT_AUTH) from callback_error
 
-    if callback_result is None:
+        opened = webbrowser.open(auth_url, new=1)
+        if not opened and not j:
+            print_plain_line(
+                "Could not open a browser automatically; use the URL above.",
+                as_json=False,
+            )
+
+        callback = callback_server.wait(timeout=_OAUTH_CALLBACK_TIMEOUT)
+    except TimeoutError as exc:
+        emit_error("OAuth callback timed out", str(exc), verbose=v)
+        raise typer.Exit(code=EXIT_AUTH) from exc
+    except Exception as exc:
         emit_error(
-            "OAuth callback timed out",
-            f"No response on {redirect_uri} within {_OAUTH_CALLBACK_TIMEOUT:.0f}s.",
+            "OAuth callback failed",
+            str(exc),
             verbose=v,
+            exc=exc if v else None,
         )
-        raise typer.Exit(code=EXIT_AUTH)
+        raise typer.Exit(code=EXIT_AUTH) from exc
+    finally:
+        callback_server.close()
 
-    callback = callback_result
     if callback.error:
         msg = callback.error
         if callback.error_description:
@@ -490,7 +483,17 @@ def integration_status(
     rows: list[dict[str, Any]] = []
 
     for provider in _ALL_PROVIDERS:
-        meta = get_integration_status(provider)
+        try:
+            meta = get_integration_status(provider)
+        except ProviderCredentialError as exc:
+            rows.append(
+                {
+                    "provider": provider,
+                    "authenticated": False,
+                    "status_error": str(exc),
+                }
+            )
+            continue
         row = dict(meta)
         if verify and meta.get("authenticated"):
             try:
@@ -508,8 +511,13 @@ def integration_status(
                 row["verified"] = ok
                 row["verify_message"] = message
                 if provider == "linear":
-                    refreshed = get_integration_status(provider)
-                    row["expires_at"] = refreshed.get("expires_at")
+                    try:
+                        refreshed = get_integration_status(provider)
+                    except ProviderCredentialError as exc:
+                        row["verified"] = False
+                        row["verify_message"] = str(exc)
+                    else:
+                        row["expires_at"] = refreshed.get("expires_at")
         rows.append(row)
 
     if j:
@@ -518,6 +526,11 @@ def integration_status(
 
     for row in rows:
         provider = row["provider"]
+        if row.get("status_error"):
+            _print_remote_line(
+                f"{provider}: status unavailable ({_esc(row['status_error'])})"
+            )
+            continue
         if not row.get("authenticated"):
             print_plain_line(f"{provider}: not authenticated", as_json=False)
             continue
@@ -554,7 +567,7 @@ def auth_status(
         help="Run a lightweight read-only API check for authenticated providers.",
     ),
 ) -> None:
-    """Deprecated: use ``potpie status``."""
+    """Show local integration auth status."""
     integration_status(verify=verify)
 
 

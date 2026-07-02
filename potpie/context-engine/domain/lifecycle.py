@@ -46,6 +46,8 @@ class SetupPlan:
     assume_yes: bool = False
     defer_default_pot: bool = False
     defer_skills: bool = False
+    embeddings: str = "sentence-transformers"
+    embedding_model: str = "all-MiniLM-L6-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +165,8 @@ def _plan_dict(plan: SetupPlan) -> dict[str, Any]:
         "scan": plan.scan,
         "defer_default_pot": plan.defer_default_pot,
         "defer_skills": plan.defer_skills,
+        "embeddings": plan.embeddings,
+        "embedding_model": plan.embedding_model,
     }
 
 

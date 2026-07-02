@@ -50,6 +50,17 @@ class _FakeEmbedder:
         return [self.embed(t) for t in texts]
 
 
+class _FailingEmbedder:
+    name = "failing-embedder"
+    dimensions = 384
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        raise RuntimeError("model unavailable")
+
+    def embed_many(self, texts):
+        raise RuntimeError("model unavailable")
+
+
 def test_find_claims_builds_params_and_parses_rows() -> None:
     graph = _props_graph(
         {
@@ -195,6 +206,36 @@ def test_fact_query_uses_native_relationship_vector_index_when_embedder_present(
     assert params["k"] == 50
     assert rows[0].subject_key == "a"
     assert rows[0].properties["semantic_similarity"] == pytest.approx(0.88)
+
+
+def test_fact_query_falls_back_to_lexical_when_embedder_fails() -> None:
+    graph = _props_graph(
+        {
+            "group_id": "p1",
+            "name": "X",
+            "subject_key": "a",
+            "object_key": "b",
+            "fact": "connection pool exhausted in checkout",
+        },
+        {
+            "group_id": "p1",
+            "name": "X",
+            "subject_key": "c",
+            "object_key": "d",
+            "fact": "unrelated note about logging",
+        },
+    )
+    store = FalkorDBClaimQueryStore(
+        settings=object(), graph=graph, embedder=_FailingEmbedder()
+    )  # type: ignore[arg-type]
+
+    rows = store.find_claims(
+        ClaimQueryFilter(pot_id="p1", fact_query="connection pool exhausted")
+    )
+
+    assert "db.idx.vector.queryRelationships" not in graph.captured[0][0]
+    assert rows[0].subject_key == "a"
+    assert rows[0].properties["semantic_similarity"] > 0
 
 
 def test_limit_truncates() -> None:

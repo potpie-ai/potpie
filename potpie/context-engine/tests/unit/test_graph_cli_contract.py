@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+import re
 
 import pytest
 from typer.testing import CliRunner
@@ -37,6 +38,12 @@ from domain.ports.graph.analytics import RepairReport
 from domain.ports.graph.backend import BackendCapabilities
 
 pytestmark = pytest.mark.unit
+
+_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _plain_cli_output(output: str) -> str:
+    return _ANSI_RE.sub("", output)
 
 
 @pytest.fixture(autouse=True)
@@ -717,6 +724,57 @@ def test_graph_repair_accepts_entity_summaries_target() -> None:
     assert result.exit_code == 0, result.output
     assert backend.analytics.calls == [("p", ("entity_summaries",))]
     assert "repaired 2 entity summaries" in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "required_marker", "optional_marker", "missing_message"),
+    [
+        (
+            "neighborhood",
+            "--entity",
+            None,
+            "Missing option '--entity'",
+        ),
+        (
+            "inspect",
+            "ENTITY_KEY",
+            "[ENTITY_KEY]",
+            "Missing argument 'ENTITY_KEY'",
+        ),
+        (
+            "export",
+            "FILE",
+            "[FILE]",
+            "Missing argument 'FILE'",
+        ),
+        (
+            "import",
+            "FILE",
+            "[FILE]",
+            "Missing argument 'FILE'",
+        ),
+    ],
+)
+def test_graph_required_inputs_are_declared_in_help(
+    command: str,
+    required_marker: str,
+    optional_marker: str | None,
+    missing_message: str,
+) -> None:
+    help_result = CliRunner().invoke(graph.graph_app, [command, "--help"])
+
+    assert help_result.exit_code == 0, help_result.output
+    help_output = _plain_cli_output(help_result.output)
+    assert required_marker in help_output
+    assert "[required]" in help_output
+    if optional_marker is not None:
+        assert optional_marker not in help_output
+
+    missing_result = CliRunner().invoke(graph.graph_app, [command])
+    missing_output = _plain_cli_output(missing_result.output)
+
+    assert missing_result.exit_code == 2
+    assert missing_message in missing_output
 
 
 @pytest.mark.parametrize(
