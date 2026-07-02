@@ -2,26 +2,15 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from types import ModuleType
 
 import pytest
 
-from adapters.inbound.cli.telemetry.settings import SentrySettings
 from adapters.outbound.graph import Neo4jGraphWriter
 from application.services.source_connector_registry import SourceConnectorRegistry
-from bootstrap import ingestion_server, sentry_metrics_runtime, standalone_container
+from bootstrap import ingestion_server, standalone_container
 from bootstrap.http_projects import ExplicitPotResolution
 from domain.ports.observability import NoOpObservability
 from domain.ports.telemetry import NoOpTelemetry
-
-
-class _FakeSentry(ModuleType):
-    def __init__(self) -> None:
-        super().__init__("sentry_sdk")
-        self.init_calls: list[dict[str, str | bool | None]] = []
-
-    def init(self, **kwargs: str | bool | None) -> None:
-        self.init_calls.append(dict(kwargs))
 
 
 @dataclass(frozen=True)
@@ -69,28 +58,12 @@ class _ContextGraph:
     backed_includes: frozenset[str] = frozenset()
 
 
-@pytest.fixture(autouse=True)
-def reset_metrics_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delitem(sys.modules, "sentry_sdk", raising=False)
-    monkeypatch.setattr(sentry_metrics_runtime, "_enabled", False)
-    monkeypatch.setattr(sentry_metrics_runtime, "_configured", False)
-    monkeypatch.setattr(sentry_metrics_runtime, "_sentry_sdk", None)
-
-
-def test_build_ingestion_server_configures_sentry_metrics_once_when_repeated(
+def test_build_ingestion_server_does_not_configure_product_sentry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake = _FakeSentry()
-    settings = SentrySettings(
-        enabled=True,
-        dsn="https://public@example.invalid/1",
-        environment="worker-test",
-        release="potpie-worker@test",
-        dist=None,
+    monkeypatch.delitem(
+        sys.modules, "potpie.runtime.telemetry.sentry_metrics", raising=False
     )
-
-    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
-    monkeypatch.setattr(ingestion_server, "load_sentry_settings", lambda: settings)
     _patch_container_graph(monkeypatch)
 
     for _ in range(2):
@@ -102,8 +75,7 @@ def test_build_ingestion_server_configures_sentry_metrics_once_when_repeated(
             observability=NoOpObservability(),
         )
 
-    assert len(fake.init_calls) == 1
-    assert fake.init_calls[0]["environment"] == "worker-test"
+    assert "potpie.runtime.telemetry.sentry_metrics" not in sys.modules
 
 
 def test_standalone_container_delegates_to_ingestion_server_build(

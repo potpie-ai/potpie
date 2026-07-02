@@ -61,9 +61,6 @@ def test_distribution_defaults_use_internal_field_names() -> None:
     values = build_config_values.distribution_default_values(
         {
             "POTPIE_ENVIRONMENT": "prod_oss",
-            "POTPIE_SENTRY_DSN": "https://sentry.example.invalid/1",
-            "POTPIE_POSTHOG_API_KEY": "phc_public",
-            "POTPIE_POSTHOG_HOST": "https://posthog.invalid",
             "LINEAR_CLIENT_ID": "linear-client",
             "POTPIE_GITHUB_CLIENT_ID": "github-client",
         }
@@ -71,9 +68,6 @@ def test_distribution_defaults_use_internal_field_names() -> None:
 
     assert values == {
         "environment": "prod_oss",
-        "sentry_dsn": "https://sentry.example.invalid/1",
-        "posthog_api_key": "phc_public",
-        "posthog_host": "https://posthog.invalid",
         "linear_client_id": "linear-client",
         "github_client_id": "github-client",
     }
@@ -101,9 +95,6 @@ def test_distribution_defaults_load_nearest_dotenv(tmp_path: Path) -> None:
         "\n".join(
             [
                 "POTPIE_ENVIRONMENT=prod_oss",
-                "POTPIE_SENTRY_DSN=file-sentry",
-                "POTPIE_POSTHOG_API_KEY=file-posthog",
-                "POTPIE_POSTHOG_HOST=https://posthog.invalid",
                 "LINEAR_CLIENT_ID=file-linear",
                 "export POTPIE_GITHUB_CLIENT_ID='file-github'",
             ]
@@ -117,9 +108,6 @@ def test_distribution_defaults_load_nearest_dotenv(tmp_path: Path) -> None:
 
     assert values == {
         "environment": "prod_oss",
-        "sentry_dsn": "file-sentry",
-        "posthog_api_key": "file-posthog",
-        "posthog_host": "https://posthog.invalid",
         "linear_client_id": "file-linear",
         "github_client_id": "file-github",
     }
@@ -130,8 +118,6 @@ def test_build_config_environ_overrides_dotenv(tmp_path: Path) -> None:
     env_file.write_text(
         "\n".join(
             [
-                "POTPIE_SENTRY_DSN=file-sentry",
-                "POTPIE_POSTHOG_API_KEY=file-posthog",
                 "LINEAR_CLIENT_ID=file-linear",
                 "POTPIE_GITHUB_CLIENT_ID=file-github",
             ]
@@ -141,16 +127,12 @@ def test_build_config_environ_overrides_dotenv(tmp_path: Path) -> None:
 
     values = build_config_values.distribution_default_values(
         {
-            "POTPIE_SENTRY_DSN": "env-sentry",
-            "POTPIE_POSTHOG_API_KEY": "env-posthog",
             "LINEAR_CLIENT_ID": "env-linear",
             "POTPIE_GITHUB_CLIENT_ID": "env-github",
         },
         dotenv_start=tmp_path,
     )
 
-    assert values["sentry_dsn"] == "env-sentry"
-    assert values["posthog_api_key"] == "env-posthog"
     assert values["linear_client_id"] == "env-linear"
     assert values["github_client_id"] == "env-github"
 
@@ -158,10 +140,11 @@ def test_build_config_environ_overrides_dotenv(tmp_path: Path) -> None:
 def test_distribution_defaults_have_safe_public_defaults() -> None:
     values = build_config_values.distribution_default_values({})
 
-    assert values["environment"] == "prod_oss"
-    assert values["posthog_host"] == "https://us.i.posthog.com"
-    assert values["sentry_dsn"] == ""
-    assert values["posthog_api_key"] == ""
+    assert values == {
+        "environment": "prod_oss",
+        "linear_client_id": "",
+        "github_client_id": "",
+    }
 
 
 def test_build_info_defaults_git_sha_to_github_sha() -> None:
@@ -178,13 +161,13 @@ def test_write_distribution_mapping_does_not_emit_env_var_constants(tmp_path) ->
     build_config_values.write_python_mapping(
         out,
         "DISTRIBUTION_DEFAULTS",
-        {"environment": "prod_oss", "sentry_dsn": ""},
+        {"environment": "prod_oss", "linear_client_id": ""},
     )
 
     text = out.read_text(encoding="utf-8")
     assert "DISTRIBUTION_DEFAULTS = {" in text
     assert "'environment': 'prod_oss'" in text
-    assert "POTPIE_SENTRY_DSN =" not in text
+    assert "POTPIE_ENVIRONMENT =" not in text
     assert "LINEAR_CLIENT_ID =" not in text
 
 
@@ -209,9 +192,6 @@ def test_prefer_existing_distribution_defaults_preserves_missing_field_inputs(
         "DISTRIBUTION_DEFAULTS",
         {
             "environment": "prod_oss",
-            "sentry_dsn": "old-sentry",
-            "posthog_api_key": "old-posthog",
-            "posthog_host": "https://old.posthog.invalid",
             "linear_client_id": "old-linear",
             "github_client_id": "old-github",
         },
@@ -220,16 +200,13 @@ def test_prefer_existing_distribution_defaults_preserves_missing_field_inputs(
     values = build_config_values.prefer_existing_distribution_default_values(
         out,
         build_config_values.distribution_default_values(
-            {"POTPIE_ENVIRONMENT": "staging", "POTPIE_SENTRY_DSN": " "}
+            {"POTPIE_ENVIRONMENT": "staging", "LINEAR_CLIENT_ID": " "}
         ),
-        environ={"POTPIE_ENVIRONMENT": "staging", "POTPIE_SENTRY_DSN": " "},
+        environ={"POTPIE_ENVIRONMENT": "staging", "LINEAR_CLIENT_ID": " "},
     )
 
     assert values == {
         "environment": "staging",
-        "sentry_dsn": "old-sentry",
-        "posthog_api_key": "old-posthog",
-        "posthog_host": "https://old.posthog.invalid",
         "linear_client_id": "old-linear",
         "github_client_id": "old-github",
     }
@@ -247,9 +224,6 @@ def test_distribution_defaults_hook_uses_field_aware_preservation(
         "DISTRIBUTION_DEFAULTS",
         {
             "environment": "prod_oss",
-            "sentry_dsn": "old-sentry",
-            "posthog_api_key": "old-posthog",
-            "posthog_host": "https://old.posthog.invalid",
             "linear_client_id": "old-linear",
             "github_client_id": "old-github",
         },
@@ -258,9 +232,6 @@ def test_distribution_defaults_hook_uses_field_aware_preservation(
     monkeypatch.setenv("POTPIE_ENVIRONMENT", "staging")
     _hide_build_env(
         monkeypatch,
-        "POTPIE_SENTRY_DSN",
-        "POTPIE_POSTHOG_API_KEY",
-        "POTPIE_POSTHOG_HOST",
         "LINEAR_CLIENT_ID",
         "POTPIE_GITHUB_CLIENT_ID",
     )
@@ -280,9 +251,6 @@ def test_distribution_defaults_hook_uses_field_aware_preservation(
     )
     assert generated == {
         "environment": "staging",
-        "sentry_dsn": "old-sentry",
-        "posthog_api_key": "old-posthog",
-        "posthog_host": "https://old.posthog.invalid",
         "linear_client_id": "old-linear",
         "github_client_id": "old-github",
     }
@@ -435,14 +403,11 @@ def test_prefer_existing_build_info_preserves_missing_field_inputs(
 
 
 def test_release_validation_fails_when_required_defaults_are_missing() -> None:
-    with pytest.raises(RuntimeError, match="sentry_dsn"):
+    with pytest.raises(RuntimeError, match="linear_client_id"):
         build_config_values.validate_distribution_defaults(
             {
                 "environment": "prod_oss",
-                "sentry_dsn": "",
-                "posthog_api_key": "phc_public",
-                "posthog_host": "https://us.i.posthog.com",
-                "linear_client_id": "linear-client",
+                "linear_client_id": "",
                 "github_client_id": "github-client",
             }
         )
@@ -452,9 +417,6 @@ def test_release_validation_passes_when_required_defaults_are_present() -> None:
     build_config_values.validate_distribution_defaults(
         {
             "environment": "prod_oss",
-            "sentry_dsn": "https://sentry.example.invalid/1",
-            "posthog_api_key": "phc_public",
-            "posthog_host": "https://us.i.posthog.com",
             "linear_client_id": "linear-client",
             "github_client_id": "github-client",
         }
@@ -465,7 +427,7 @@ def test_local_build_without_validation_does_not_fail() -> None:
     values = build_config_values.distribution_default_values({})
 
     assert build_config_values.should_validate_distribution_defaults({}) is False
-    assert values["sentry_dsn"] == ""
+    assert values["linear_client_id"] == ""
 
 
 def test_explicit_validation_flag_is_required() -> None:

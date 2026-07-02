@@ -15,7 +15,11 @@ from adapters.outbound.skills.agent_installer import (
     install_skill_bundle,
     project_skill_path,
 )
-from adapters.outbound.skills.bundle_catalog import RECOMMENDED_SKILL_IDS
+from adapters.outbound.skills.bundle_catalog import recommended_skill_ids
+from adapters.outbound.skills.template_resources import (
+    NO_TEMPLATE_RESOURCES,
+    TemplateResourceProvider,
+)
 
 
 @dataclass(slots=True)
@@ -26,6 +30,7 @@ class FileBackedAgentTarget:
     skills_root: Path
     instructions_root: Path | None = None
     instructions_agent: str | None = None
+    template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES
     home: Path = field(default_factory=default_home)
     scope: str = "global"
 
@@ -52,14 +57,19 @@ class FileBackedAgentTarget:
     def installed(self) -> Mapping[str, str]:
         manifest = self._load()
         installed: dict[str, str] = {}
-        for sid in RECOMMENDED_SKILL_IDS:
+        for sid in recommended_skill_ids(template_resources=self.template_resources):
             if self._skill_file(sid).exists():
                 installed[sid] = manifest.get(sid, "unknown")
         return installed
 
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         root = Path(path).expanduser() if path else self.skills_root
-        install_skill_bundle(root, skill_ids=(skill_id,), force=True)
+        install_skill_bundle(
+            root,
+            skill_ids=(skill_id,),
+            template_resources=self.template_resources,
+            force=True,
+        )
         data = self._load()
         if (root / skill_id / "SKILL.md").exists():
             data[skill_id] = version
@@ -72,6 +82,7 @@ class FileBackedAgentTarget:
         install_global_agent_instructions(
             self.instructions_root,
             agent=self.instructions_agent or self.agent,
+            template_resources=self.template_resources,
             force=True,
         )
 
@@ -88,6 +99,7 @@ class ProjectAgentTarget:
 
     agent: str = "claude"
     path: Path = Path(".")
+    template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES
     home: Path = field(default_factory=default_home)
     scope: str = "project"
 
@@ -110,14 +122,20 @@ class ProjectAgentTarget:
     def installed(self) -> Mapping[str, str]:
         manifest = self._load()
         installed: dict[str, str] = {}
-        for sid in RECOMMENDED_SKILL_IDS:
+        for sid in recommended_skill_ids(template_resources=self.template_resources):
             if project_skill_path(self.path, agent=self.agent, skill_id=sid).exists():
                 installed[sid] = manifest.get(sid, "unknown")
         return installed
 
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         root = Path(path) if path else self.path
-        install_agent_bundle(root, agent=self.agent, skill_ids=(skill_id,), force=True)
+        install_agent_bundle(
+            root,
+            agent=self.agent,
+            skill_ids=(skill_id,),
+            template_resources=self.template_resources,
+            force=True,
+        )
         data = self._load()
         if project_skill_path(root, agent=self.agent, skill_id=skill_id).exists():
             data[skill_id] = version
@@ -125,7 +143,13 @@ class ProjectAgentTarget:
 
     def install_support_files(self, *, path: str | None = None) -> None:
         root = Path(path) if path else self.path
-        install_agent_bundle(root, agent=self.agent, skill_ids=(), force=True)
+        install_agent_bundle(
+            root,
+            agent=self.agent,
+            skill_ids=(),
+            template_resources=self.template_resources,
+            force=True,
+        )
 
     def remove(self, *, skill_id: str) -> None:
         shutil.rmtree(
@@ -138,45 +162,69 @@ class ProjectAgentTarget:
 
 
 class CursorAgentTarget(FileBackedAgentTarget):
-    def __init__(self, *, home: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        home: Path | None = None,
+        template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES,
+    ) -> None:
         kwargs = {"home": home} if home is not None else {}
         super().__init__(
             agent="cursor",
             skills_root=Path.home() / ".cursor" / "skills",
+            template_resources=template_resources,
             **kwargs,
         )
 
 
 class ClaudeAgentTarget(FileBackedAgentTarget):
-    def __init__(self, *, home: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        home: Path | None = None,
+        template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES,
+    ) -> None:
         kwargs = {"home": home} if home is not None else {}
         super().__init__(
             agent="claude",
             skills_root=Path.home() / ".claude" / "skills",
             instructions_root=Path.home() / ".claude",
             instructions_agent="claude",
+            template_resources=template_resources,
             **kwargs,
         )
 
 
 class OpenCodeAgentTarget(FileBackedAgentTarget):
-    def __init__(self, *, home: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        home: Path | None = None,
+        template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES,
+    ) -> None:
         kwargs = {"home": home} if home is not None else {}
         super().__init__(
             agent="opencode",
             skills_root=Path.home() / ".config" / "opencode" / "skills",
+            template_resources=template_resources,
             **kwargs,
         )
 
 
 class CodexAgentTarget(FileBackedAgentTarget):
-    def __init__(self, *, home: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        home: Path | None = None,
+        template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES,
+    ) -> None:
         kwargs = {"home": home} if home is not None else {}
         super().__init__(
             agent="codex",
             skills_root=Path.home() / ".agents" / "skills",
             instructions_root=Path.home() / ".codex",
             instructions_agent="codex",
+            template_resources=template_resources,
             **kwargs,
         )
 

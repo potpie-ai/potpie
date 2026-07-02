@@ -25,9 +25,15 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, SupportsIndex, SupportsInt, TypedDict
 
-from bootstrap import sentry_metrics_runtime
+from adapters.outbound.reconciliation.context_graph_tools import (
+    build_initial_context_snapshot,
+)
+from adapters.outbound.reconciliation.llm_plan_convert import (
+    llm_plan_to_reconciliation_plan,
+)
+from adapters.outbound.reconciliation.llm_plan_schema import LlmReconciliationPlan
 from domain.context_events import ContextEvent, EventRef
 from domain.event_playbooks import (
     EventPlaybook,
@@ -37,9 +43,12 @@ from domain.event_playbooks import (
     render_playbooks_section,
 )
 from domain.graph_mutations import ProvenanceContext
+from domain.llm_reconciliation import ReconciliationRequest
 from domain.ports.agent_checkpoint_store import AgentCheckpointStorePort
 from domain.ports.agent_execution_log import (
     AgentExecutionLogPort,
+    ExecutionRecordType,
+    ModelPartRecordType,
     NoOpAgentExecutionLog,
 )
 from domain.ports.context_graph import ContextGraphPort
@@ -47,18 +56,9 @@ from domain.ports.event_stream import (
     EventStreamPublisherPort,
     NoOpEventStreamPublisher,
 )
-from domain.llm_reconciliation import ReconciliationRequest
 from domain.ports.reconciliation_tools import ReconciliationToolsPort
 from domain.ports.telemetry import CostEvent, NoOpTelemetry, TelemetryPort
 from domain.reconciliation_batch import BatchAgentContext, BatchAgentOutcome
-
-from adapters.outbound.reconciliation.context_graph_tools import (
-    build_initial_context_snapshot,
-)
-from adapters.outbound.reconciliation.llm_plan_convert import (
-    llm_plan_to_reconciliation_plan,
-)
-from adapters.outbound.reconciliation.llm_plan_schema import LlmReconciliationPlan
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
@@ -320,7 +320,7 @@ class _ExecutionLogSink:
 
     def emit(
         self,
-        record_type: str,
+        record_type: ExecutionRecordType,
         payload: dict[str, Any],
         *,
         event_id: str | None = None,
@@ -329,7 +329,7 @@ class _ExecutionLogSink:
             self._log.append(
                 batch_id=self._batch_id,
                 seq=self._seq.next(),
-                record_type=record_type,  # type: ignore[arg-type]
+                record_type=record_type,
                 payload=payload,
                 event_id=event_id,
             )
@@ -344,7 +344,7 @@ class _ExecutionLogSink:
     def upsert_part(
         self,
         *,
-        record_type: str,
+        record_type: ModelPartRecordType,
         part_id: str,
         content: str,
         done: bool,
@@ -353,7 +353,7 @@ class _ExecutionLogSink:
             self._log.upsert_part(
                 batch_id=self._batch_id,
                 seq=self._seq.next(),
-                record_type=record_type,  # type: ignore[arg-type]
+                record_type=record_type,
                 part_id=part_id,
                 content=content,
                 done=done,
@@ -364,6 +364,12 @@ class _ExecutionLogSink:
                 self._batch_id,
                 exc_info=True,
             )
+
+
+class _StreamPartSlot(TypedDict):
+    buf: str
+    last_flush: float
+    rtype: ModelPartRecordType
 
 
 # How often a still-streaming model part is durably flushed. Deltas always
@@ -395,6 +401,17 @@ def _coerce_text(value: Any) -> str:
         return str(value)
 
 
+def _load_tool_class() -> type[Any]:
+    try:
+        from pydantic_ai import Tool as pydantic_ai_tool
+
+        return pydantic_ai_tool
+    except Exception:
+        from pydantic_deep import Tool as pydantic_deep_tool
+
+        return pydantic_deep_tool
+
+
 def _make_event_stream_handler(
     sink: _ExecutionLogSink,
 ) -> Callable[[Any, Any], Any]:
@@ -411,7 +428,7 @@ def _make_event_stream_handler(
     """
 
     # part_id -> {"buf": str, "last_flush": float, "rtype": "text"|"thinking"}
-    parts: dict[str, dict[str, Any]] = {}
+    parts: dict[str, _StreamPartSlot] = {}
     # pydantic-ai resets part ``index`` per model response; bump a response
     # counter on each index==0 start so part_ids stay unique across the run.
     state = {"resp": 0}
@@ -438,23 +455,23 @@ def _make_event_stream_handler(
                     if event.index == 0:
                         state["resp"] += 1
                     part = event.part
-                    rtype: str | None = None
+                    part_record_type: ModelPartRecordType | None = None
                     if isinstance(part, TextPart):
-                        rtype = "text"
+                        part_record_type = "text"
                     elif isinstance(part, ThinkingPart):
-                        rtype = "thinking"
-                    if rtype is None:
+                        part_record_type = "thinking"
+                    if part_record_type is None:
                         continue
                     pid = _part_id(event.index)
                     initial = getattr(part, "content", "") or ""
                     parts[pid] = {
                         "buf": initial,
                         "last_flush": time.monotonic(),
-                        "rtype": rtype,
+                        "rtype": part_record_type,
                     }
                     await asyncio.to_thread(
                         sink.upsert_part,
-                        record_type=rtype,
+                        record_type=part_record_type,
                         part_id=pid,
                         content=initial,
                         done=False,
@@ -467,7 +484,7 @@ def _make_event_stream_handler(
                         slot = parts.get(pid)
                         if slot is None:
                             # Delta before start (rare) — open lazily.
-                            rtype = (
+                            lazy_record_type: ModelPartRecordType = (
                                 "thinking"
                                 if isinstance(delta, ThinkingPartDelta)
                                 else "text"
@@ -475,7 +492,7 @@ def _make_event_stream_handler(
                             slot = parts[pid] = {
                                 "buf": "",
                                 "last_flush": 0.0,
-                                "rtype": rtype,
+                                "rtype": lazy_record_type,
                             }
                         slot["buf"] += delta.content_delta or ""
                         now = time.monotonic()
@@ -493,14 +510,17 @@ def _make_event_stream_handler(
                     part = event.part
                     if isinstance(part, (TextPart, ThinkingPart)):
                         pid = _part_id(event.index)
-                        rtype = "thinking" if isinstance(part, ThinkingPart) else "text"
+                        final_record_type: ModelPartRecordType = (
+                            "thinking" if isinstance(part, ThinkingPart) else "text"
+                        )
+                        slot = parts.get(pid)
                         content = getattr(part, "content", "") or (
-                            parts.get(pid, {}).get("buf", "")
+                            slot["buf"] if slot is not None else ""
                         )
                         parts.pop(pid, None)
                         await asyncio.to_thread(
                             sink.upsert_part,
-                            record_type=rtype,
+                            record_type=final_record_type,
                             part_id=pid,
                             content=content,
                             done=True,
@@ -721,7 +741,8 @@ class PydanticDeepReconciliationAgent:
         # it (message history + completion bookkeeping in one store).
         del checkpoints
         agent_name, agent_version, toolset_version = self._agent_identity()
-        if self._context_graph is None:
+        context_graph = self._context_graph
+        if context_graph is None:
             return BatchAgentOutcome(
                 ok=False,
                 error="context_graph_unavailable",
@@ -738,7 +759,13 @@ class PydanticDeepReconciliationAgent:
             )
 
         try:
-            return asyncio.run(self._run_batch_async(ctx, execution_log=execution_log))
+            return asyncio.run(
+                self._run_batch_async(
+                    ctx,
+                    execution_log=execution_log,
+                    context_graph=context_graph,
+                )
+            )
         except Exception as exc:
             logger.exception("batch agent run crashed for batch %s", ctx.batch_id)
             return BatchAgentOutcome(
@@ -754,6 +781,7 @@ class PydanticDeepReconciliationAgent:
         ctx: BatchAgentContext,
         *,
         execution_log: AgentExecutionLogPort | None,
+        context_graph: ContextGraphPort,
     ) -> BatchAgentOutcome:
         from pydantic_deep import (
             CheckpointMiddleware,
@@ -769,7 +797,7 @@ class PydanticDeepReconciliationAgent:
             pot_id=ctx.pot_id,
             repo_name=ctx.repo_name,
             events_by_id={ev.event_id: ev for ev in ctx.events},
-            context_graph=self._context_graph,  # type: ignore[arg-type]
+            context_graph=context_graph,
             sink=sink,
         )
         # A resumed run already finished these events — seed them so the
@@ -814,7 +842,7 @@ class PydanticDeepReconciliationAgent:
         )
         capabilities: list[Any] = [
             CheckpointMiddleware(
-                store=bridge,  # type: ignore[arg-type]
+                store=bridge,
                 frequency="every_tool",
                 max_checkpoints=1,
             )
@@ -928,11 +956,6 @@ class PydanticDeepReconciliationAgent:
                 )
             except Exception:  # noqa: BLE001 — never break failure handling
                 pass
-            sentry_metrics_runtime.count(
-                "ce.agent.timeout_total",
-                1,
-                attributes={"result": "timeout"},
-            )
             logger.error(
                 "agent.run() timed out after %.0fs for batch %s",
                 run_timeout,
@@ -1127,7 +1150,7 @@ class PydanticDeepReconciliationAgent:
         return "\n\n".join(sections) + "\n"
 
     def _build_prompt(self, ctx: BatchAgentContext) -> str:
-        body = {
+        body: dict[str, Any] = {
             "pot_id": ctx.pot_id,
             "repo_name": ctx.repo_name,
             "batch_id": ctx.batch_id,
@@ -1170,20 +1193,19 @@ class PydanticDeepReconciliationAgent:
         if self._tools_port is None:
             return []
         try:
-            from pydantic_ai import Tool  # type: ignore[import-not-found]
+            tool_cls = _load_tool_class()
         except Exception:
-            try:
-                from pydantic_deep import Tool  # type: ignore[import-not-found, no-redef]
-            except Exception:
-                logger.warning("pydantic-ai/pydantic-deep Tool not importable")
-                return []
+            logger.warning("pydantic-ai/pydantic-deep Tool not importable")
+            return []
 
         tools_port = self._tools_port
         request = _request_for_first_event(ctx)
         descriptors = tools_port.list_tools(request)
         built: list[Any] = []
 
-        def _make_handler(name: str):
+        def _make_handler(
+            name: str,
+        ) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
             def _handler(arguments: dict[str, Any] | None = None) -> dict[str, Any]:
                 return tools_port.execute_read_tool(request, name, arguments or {})
 
@@ -1193,16 +1215,13 @@ class PydanticDeepReconciliationAgent:
         for desc in descriptors:
             try:
                 fn = _make_handler(desc.name)
-                built.append(Tool(fn, name=desc.name, description=desc.description))
+                built.append(tool_cls(fn, name=desc.name, description=desc.description))
             except Exception:
                 logger.exception("failed to build read tool %s", desc.name)
         return built
 
     def _build_mutation_tools(self, state: _BatchRunState) -> list[Any]:
-        try:
-            from pydantic_ai import Tool  # type: ignore[import-not-found]
-        except Exception:
-            from pydantic_deep import Tool  # type: ignore[import-not-found, no-redef]
+        tool_cls = _load_tool_class()
 
         agent_name = "pydantic-deep"
 
@@ -1309,7 +1328,7 @@ class PydanticDeepReconciliationAgent:
             }
 
         return [
-            Tool(
+            tool_cls(
                 apply_graph_mutations,
                 name="apply_graph_mutations",
                 description=(
@@ -1321,10 +1340,7 @@ class PydanticDeepReconciliationAgent:
         ]
 
     def _build_control_tools(self, state: _BatchRunState) -> list[Any]:
-        try:
-            from pydantic_ai import Tool  # type: ignore[import-not-found]
-        except Exception:
-            from pydantic_deep import Tool  # type: ignore[import-not-found, no-redef]
+        tool_cls = _load_tool_class()
 
         def mark_events_processed(event_ids: list[str], summary: str) -> dict[str, Any]:
             """Mark MANY events fully reconciled in one call.
@@ -1376,7 +1392,7 @@ class PydanticDeepReconciliationAgent:
             }
 
         return [
-            Tool(
+            tool_cls(
                 mark_events_processed,
                 name="mark_events_processed",
                 description=(
@@ -1385,7 +1401,7 @@ class PydanticDeepReconciliationAgent:
                     "mark_event_processed once per event. Idempotent."
                 ),
             ),
-            Tool(
+            tool_cls(
                 mark_event_processed,
                 name="mark_event_processed",
                 description=(
@@ -1393,7 +1409,7 @@ class PydanticDeepReconciliationAgent:
                     "mutations. Use mark_events_processed for more than one."
                 ),
             ),
-            Tool(
+            tool_cls(
                 finish_batch,
                 name="finish_batch",
                 description=(
@@ -1432,8 +1448,12 @@ def _request_for_first_event(ctx: BatchAgentContext) -> ReconciliationRequest:
 def _int_or_none(value: object) -> int | None:
     if value is None:
         return None
+    if not isinstance(
+        value, (str, bytes, bytearray, memoryview, SupportsInt, SupportsIndex)
+    ):
+        return None
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(value)
     except (TypeError, ValueError):
         return None
 

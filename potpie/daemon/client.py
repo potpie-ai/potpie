@@ -1,0 +1,164 @@
+"""Daemon-backed ``HostShell`` client for the CLI."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+import httpx
+
+from adapters.outbound.pots.local_pot_store import default_home
+from domain.errors import CapabilityNotImplemented, ContextEngineDisabled, PotNotFound
+from domain.ports.daemon.lifecycle import DaemonDiscovery
+from potpie.daemon.lifecycle import Daemon
+from potpie.daemon.rpc import (
+    decode,
+    encode,
+    is_rpc_attr_allowed,
+    is_rpc_method_allowed,
+    rpc_child_surface,
+)
+
+
+@dataclass(slots=True)
+class DaemonRpcClient:
+    """Small local HTTP client that calls operations inside the daemon."""
+
+    daemon: Daemon = field(
+        default_factory=lambda: Daemon(home=default_home(), in_process=False)
+    )
+    timeout_s: float = 30.0
+
+    def call(self, surface: str, method: str, *args: Any, **kwargs: Any) -> Any:
+        discovery = self._rpc_discovery()
+        url = f"{discovery['base_url'].rstrip('/')}/rpc"
+        payload = {
+            "surface": surface,
+            "method": method,
+            "args": encode(args),
+            "kwargs": encode(kwargs),
+        }
+        try:
+            response = httpx.post(
+                url,
+                json=payload,
+                headers={"Authorization": f"Bearer {discovery['token']}"},
+                timeout=self.timeout_s,
+            )
+        except httpx.RequestError as exc:
+            raise ContextEngineDisabled(f"Potpie daemon is unavailable: {exc}") from exc
+        data = _response_json(response)
+        if response.status_code >= 400 or not data.get("ok", False):
+            _raise_remote_error(data)
+        return decode(data.get("result"))
+
+    def attr(self, surface: str, name: str) -> Any:
+        discovery = self._rpc_discovery()
+        url = f"{discovery['base_url'].rstrip('/')}/attr"
+        try:
+            response = httpx.post(
+                url,
+                json={"surface": surface, "name": name},
+                headers={"Authorization": f"Bearer {discovery['token']}"},
+                timeout=self.timeout_s,
+            )
+        except httpx.RequestError as exc:
+            raise ContextEngineDisabled(f"Potpie daemon is unavailable: {exc}") from exc
+        data = _response_json(response)
+        if response.status_code >= 400 or not data.get("ok", False):
+            _raise_remote_error(data)
+        return decode(data.get("result"))
+
+    def _rpc_discovery(self) -> DaemonDiscovery:
+        discovery = self.daemon.discovery()
+        if discovery is None:
+            raise ContextEngineDisabled(
+                "Potpie daemon is not running. Run 'potpie setup' to start it."
+            )
+        if not discovery.get("base_url") or not discovery.get("token"):
+            raise ContextEngineDisabled(
+                "Potpie daemon is running but does not expose the CLI RPC surface. "
+                "Run 'potpie daemon restart'."
+            )
+        return discovery
+
+
+class RemoteSurface:
+    """Dynamic proxy for a ``HostShell`` surface or nested capability port."""
+
+    def __init__(self, client: DaemonRpcClient, path: str) -> None:
+        self._client = client
+        self._path = path
+
+    def __getattr__(self, name: str) -> Any:
+        child_surface = rpc_child_surface(self._path, name)
+        if child_surface is not None:
+            return RemoteSurface(self._client, child_surface)
+        if is_rpc_attr_allowed(self._path, name):
+            return self._client.attr(self._path, name)
+        if not is_rpc_method_allowed(self._path, name):
+            raise AttributeError(
+                f"Remote surface {self._path!r} has no RPC member {name!r}"
+            )
+
+        def _call(*args: Any, **kwargs: Any) -> Any:
+            return self._client.call(self._path, name, *args, **kwargs)
+
+        return _call
+
+
+@dataclass
+class RemoteHostShell:
+    """CLI facade whose service calls are executed inside the daemon."""
+
+    rpc: DaemonRpcClient = field(default_factory=DaemonRpcClient)
+    profile: str = "local"
+
+    def __post_init__(self) -> None:
+        self.daemon = self.rpc.daemon
+        self.agent_context = RemoteSurface(self.rpc, "agent_context")
+        self.graph = RemoteSurface(self.rpc, "graph")
+        self.graph_workbench = RemoteSurface(self.rpc, "graph_workbench")
+        self.pots = RemoteSurface(self.rpc, "pots")
+        self.skills = RemoteSurface(self.rpc, "skills")
+        self.backend = RemoteSurface(self.rpc, "backend")
+        self.ledger = RemoteSurface(self.rpc, "ledger")
+        self.nudge = RemoteSurface(self.rpc, "nudge")
+        self.config = RemoteSurface(self.rpc, "config")
+        self.installer = RemoteSurface(self.rpc, "installer")
+        self.auth = RemoteSurface(self.rpc, "auth")
+        self.setup = RemoteSurface(self.rpc, "setup")
+
+
+def _response_json(response: httpx.Response) -> dict[str, Any]:
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise ContextEngineDisabled(
+            f"Potpie daemon returned a non-JSON response ({response.status_code})."
+        ) from exc
+    if not isinstance(data, dict):
+        raise ContextEngineDisabled("Potpie daemon returned an invalid response.")
+    return data
+
+
+def _raise_remote_error(data: dict[str, Any]) -> None:
+    error = data.get("error") or {}
+    code = str(error.get("code") or "daemon_error")
+    message = str(error.get("message") or "Potpie daemon request failed.")
+    detail = error.get("detail")
+    next_action = error.get("recommended_next_action")
+    if code == "not_implemented":
+        raise CapabilityNotImplemented(
+            str(error.get("capability") or message),
+            detail=detail,
+            recommended_next_action=next_action,
+        )
+    if code == "pot_not_found":
+        raise PotNotFound(message)
+    if code in {"validation_error", "value_error"}:
+        raise ValueError(message)
+    raise ContextEngineDisabled(message)
+
+
+__all__ = ["DaemonRpcClient", "RemoteHostShell", "RemoteSurface"]

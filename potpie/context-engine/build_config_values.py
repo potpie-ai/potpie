@@ -11,9 +11,6 @@ DISTRIBUTION_DEFAULTS_OUT = Path("bootstrap/_distribution_defaults.py")
 BUILD_INFO_OUT = Path("bootstrap/_build_info.py")
 DISTRIBUTION_DEFAULT_INPUT_NAMES_BY_FIELD = {
     "environment": "POTPIE_ENVIRONMENT",
-    "sentry_dsn": "POTPIE_SENTRY_DSN",
-    "posthog_api_key": "POTPIE_POSTHOG_API_KEY",
-    "posthog_host": "POTPIE_POSTHOG_HOST",
     "linear_client_id": "LINEAR_CLIENT_ID",
     "github_client_id": "POTPIE_GITHUB_CLIENT_ID",
 }
@@ -28,12 +25,8 @@ HEADER = """\
 """
 
 DEFAULT_DISTRIBUTION_ENVIRONMENT = "prod_oss"
-DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com"
 REQUIRED_DISTRIBUTION_DEFAULTS = (
     "environment",
-    "sentry_dsn",
-    "posthog_api_key",
-    "posthog_host",
     "linear_client_id",
     "github_client_id",
 )
@@ -49,11 +42,6 @@ def distribution_default_values(
     return {
         "environment": _env_or_default(
             "POTPIE_ENVIRONMENT", DEFAULT_DISTRIBUTION_ENVIRONMENT, source
-        ),
-        "sentry_dsn": _env("POTPIE_SENTRY_DSN", source),
-        "posthog_api_key": _env("POTPIE_POSTHOG_API_KEY", source),
-        "posthog_host": _env_or_default(
-            "POTPIE_POSTHOG_HOST", DEFAULT_POSTHOG_HOST, source
         ),
         "linear_client_id": _env("LINEAR_CLIENT_ID", source),
         "github_client_id": _env("POTPIE_GITHUB_CLIENT_ID", source),
@@ -107,6 +95,7 @@ def write_python_mapping(path: Path, name: str, values: Mapping[str, str]) -> No
 
 
 def write_python_constants(path: Path, values: Mapping[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         HEADER + "".join(f"{name} = {value!r}\n" for name, value in values.items()),
         encoding="utf-8",
@@ -263,11 +252,15 @@ def _read_python_mapping(path: Path, mapping_name: str) -> dict[str, str]:
             continue
         try:
             raw = ast.literal_eval(node.value)
-        except (ValueError, SyntaxError):
+        except (SyntaxError, ValueError):
             return {}
         if not isinstance(raw, dict):
             return {}
-        return {str(key): _clean(value) for key, value in raw.items()}
+        return {
+            str(key): str(value)
+            for key, value in raw.items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
     return {}
 
 

@@ -1,5 +1,9 @@
 """SQLAlchemy models for context graph ledger tables (shared schema with Potpie)."""
 
+from datetime import datetime
+from decimal import Decimal
+from typing import Any
+
 from sqlalchemy import (
     TIMESTAMP,
     BigInteger,
@@ -33,15 +37,15 @@ class ContextSyncState(Base):
     )
     repo_name: Mapped[str] = mapped_column(Text, nullable=False)
     source_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    last_synced_at: Mapped[object | None] = mapped_column(
+    last_synced_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="idle")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
-    updated_at: Mapped[object] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
@@ -77,11 +81,11 @@ class ContextEventModel(Base):
     action: Mapped[str] = mapped_column(String(128), nullable=False)
     source_id: Mapped[str] = mapped_column(String(255), nullable=False)
     source_event_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    occurred_at: Mapped[object | None] = mapped_column(
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    occurred_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
-    received_at: Mapped[object] = mapped_column(
+    received_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="received")
@@ -103,14 +107,14 @@ class ContextEventModel(Base):
     step_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     step_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     step_error: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    started_at: Mapped[object | None] = mapped_column(
+    started_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
-    completed_at: Mapped[object | None] = mapped_column(
+    completed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
     event_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    event_metadata: Mapped[dict] = mapped_column(
+    event_metadata: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
 
@@ -123,7 +127,7 @@ class ContextEventModel(Base):
     bridge_touched_by: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bridge_modified_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bridge_has_decision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    raw_processed_at: Mapped[object | None] = mapped_column(
+    raw_processed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
 
@@ -166,20 +170,20 @@ class ContextReconciliationBatchModel(Base):
     # ``next_ready_at`` is a legacy column from the debounced-dispatcher era;
     # the migration ``ctx_drop_debounce_20260512`` made it nullable. Kept on
     # the model for rollback safety; not read or written by application code.
-    next_ready_at: Mapped[object | None] = mapped_column(
+    next_ready_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
     attempt_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
-    claimed_at: Mapped[object | None] = mapped_column(
+    claimed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
-    completed_at: Mapped[object | None] = mapped_column(
+    completed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
 
@@ -214,10 +218,10 @@ class ContextReconciliationBatchEventModel(Base):
         primary_key=True,
         index=True,
     )
-    added_at: Mapped[object] = mapped_column(
+    added_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
-    processed_at: Mapped[object | None] = mapped_column(
+    processed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
 
@@ -244,7 +248,7 @@ class ContextPotIngestionConfigModel(Base):
     )
     # NULL = no early-flush trigger (only the time window applies).
     min_batch_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    updated_at: Mapped[object] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
         nullable=False,
@@ -262,7 +266,7 @@ class ContextAgentCheckpointModel(Base):
         ForeignKey("context_reconciliation_batches.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    messages_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    messages_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     tool_call_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
@@ -271,7 +275,7 @@ class ContextAgentCheckpointModel(Base):
     # already finished; ``last_seq`` continues the append-only execution log
     # without colliding with already-streamed records; ``chunk_index`` is the
     # 0-based chunk the crashed run was on (chunked batches).
-    completed_event_ids: Mapped[list] = mapped_column(
+    completed_event_ids: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     last_seq: Mapped[int] = mapped_column(
@@ -280,7 +284,7 @@ class ContextAgentCheckpointModel(Base):
     chunk_index: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
-    updated_at: Mapped[object] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
 
@@ -318,10 +322,10 @@ class ContextAgentExecutionLogModel(Base):
     # event (mutation_applied / event_processed) so the per-event stream can
     # project it.
     event_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    payload: Mapped[dict] = mapped_column(
+    payload: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
-    created_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
 
@@ -365,13 +369,13 @@ class ContextReconciliationRun(Base):
     entity_mutation_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     edge_mutation_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[object | None] = mapped_column(
+    started_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=True
     )
-    completed_at: Mapped[object | None] = mapped_column(
+    completed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
-    plan_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    plan_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     __table_args__ = (
         UniqueConstraint(
@@ -404,10 +408,10 @@ class ContextReconciliationWorkEvent(Base):
     event_kind: Mapped[str] = mapped_column(String(64), nullable=False)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
-    payload: Mapped[dict] = mapped_column(
+    payload: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
-    created_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
 
@@ -440,11 +444,11 @@ class ContextEngineCostEvent(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     batch_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     event_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    cost_usd: Mapped[object | None] = mapped_column(Numeric(12, 6), nullable=True)
-    occurred_at: Mapped[object] = mapped_column(
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False, index=True
     )
-    metadata_json: Mapped[dict] = mapped_column(
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
 
@@ -479,10 +483,10 @@ class ContextEngineDriftSnapshot(Base):
     open_conflicts_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )
-    captured_at: Mapped[object] = mapped_column(
+    captured_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False, index=True
     )
-    metadata_json: Mapped[dict] = mapped_column(
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
 

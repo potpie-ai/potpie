@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from adapters.outbound.daemon_lifecycle import InProcessDaemonLifecycle
 from adapters.outbound.graph.backends import build_backend
 from adapters.outbound.graph.inbox_stores import LocalJsonGraphInboxStore
 from adapters.outbound.graph.plan_stores import LocalJsonGraphPlanStore
@@ -36,6 +37,10 @@ from adapters.outbound.skills.claude_target import (
     CursorAgentTarget,
     OpenCodeAgentTarget,
 )
+from adapters.outbound.skills.template_resources import (
+    TemplateResourceProvider,
+    resolve_template_resources,
+)
 from application.services.agent_context import AgentContextService
 from application.services.auth_service import LocalAuthService
 from application.services.config_service import LocalConfigService
@@ -50,10 +55,10 @@ from bootstrap.observability_context import correlation_scope
 from bootstrap.observability_runtime import set_observability
 from bootstrap.observability_wiring import default_observability
 from domain.coherence import assert_runtime_coherence
+from domain.ports.daemon.lifecycle import DaemonLifecyclePort
 from domain.ports.graph.backend import GraphBackend
 from domain.ports.ledger.client import EventLedgerClientPort
 from domain.ports.observability import ObservabilityPort
-from host.daemon import Daemon
 from host.shell import HostShell, LedgerFacade
 
 
@@ -84,6 +89,8 @@ def build_host_shell(
     ledger_client: EventLedgerClientPort | None = None,
     observability: ObservabilityPort | None = None,
     settings: Any = None,
+    daemon_lifecycle: DaemonLifecyclePort | None = None,
+    template_resources: TemplateResourceProvider | None = None,
 ) -> HostShell:
     """Compose a ``HostShell`` from the default local services + adapters.
 
@@ -94,6 +101,7 @@ def build_host_shell(
     configure_logging()
     set_observability(observability or default_observability())
     with correlation_scope(source="host_shell"):
+        template_resources = resolve_template_resources(template_resources)
         backend = backend or build_backend(default_backend_profile(), settings=settings)
         pot_store = LocalPotStore()
 
@@ -107,11 +115,12 @@ def build_host_shell(
         pots = LocalPotManagementService(store=pot_store, backend=backend)
         skills = DefaultSkillManager(
             targets={
-                "claude": ClaudeAgentTarget(),
-                "codex": CodexAgentTarget(),
-                "cursor": CursorAgentTarget(),
-                "opencode": OpenCodeAgentTarget(),
-            }
+                "claude": ClaudeAgentTarget(template_resources=template_resources),
+                "codex": CodexAgentTarget(template_resources=template_resources),
+                "cursor": CursorAgentTarget(template_resources=template_resources),
+                "opencode": OpenCodeAgentTarget(template_resources=template_resources),
+            },
+            template_resources=template_resources,
         )
         agent_context = AgentContextService(
             graph=graph, pots=pots, skills=skills, profile=profile
@@ -127,7 +136,7 @@ def build_host_shell(
         nudge = NudgeService(graph=graph, ledger=LocalInjectionLedger())
 
         # Lifecycle components (each independently ownable; see the setup orchestrator).
-        daemon = Daemon(in_process=(default_host_mode() != "daemon"))
+        daemon = daemon_lifecycle or InProcessDaemonLifecycle()
         config = LocalConfigService()
         installer = LocalInstaller()
         auth = LocalAuthService()

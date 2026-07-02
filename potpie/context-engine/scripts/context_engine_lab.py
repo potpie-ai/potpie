@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -31,11 +32,6 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 from adapters.inbound.http.api.v1.context.router import create_context_router  # noqa: E402
-from adapters.outbound.cli_auth.credentials_store import get_active_pot_id  # noqa: E402
-from adapters.outbound.cli_auth.potpie_api_config import (  # noqa: E402
-    resolve_potpie_api_base_url,
-    resolve_potpie_api_key,
-)
 from adapters.outbound.http.potpie_context_api_client import (  # noqa: E402
     IngestRejectedError,
     PotpieContextApiClient,
@@ -81,6 +77,8 @@ def main() -> int:
         "api-smoke", help="Run smoke tests against Potpie /api/v2/context."
     )
     api.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    api.add_argument("--api-url", default=None)
+    api.add_argument("--api-key", default=None)
     api.add_argument("--pot-id", default=None)
     api.add_argument("--repo-name", default=None)
     api.add_argument(
@@ -317,14 +315,21 @@ def _http_e2e(data: dict[str, Any]) -> dict[str, Any]:
 
 def _run_api_smoke(args: argparse.Namespace) -> int:
     data = _load_data(args.data)
-    pot_id = args.pot_id or get_active_pot_id() or data.get("pot_id")
+    pot_id = args.pot_id or data.get("pot_id")
     if not pot_id:
-        raise SystemExit("pot_id missing: pass --pot-id or run `potpie pot use`")
-    repo_name = args.repo_name or data.get("repo_name")
-    client = PotpieContextApiClient(
-        resolve_potpie_api_base_url(),
-        resolve_potpie_api_key(),
+        raise SystemExit("pot_id missing: pass --pot-id or set pot_id in the data file")
+    api_url = _require_api_smoke_value(
+        args.api_url,
+        env_name="POTPIE_API_URL",
+        flag_name="--api-url",
     )
+    api_key = _require_api_smoke_value(
+        args.api_key,
+        env_name="POTPIE_API_KEY",
+        flag_name="--api-key",
+    )
+    repo_name = args.repo_name or data.get("repo_name")
+    client = PotpieContextApiClient(api_url.rstrip("/"), api_key)
     result = {
         "ok": True,
         "mode": "api-smoke",
@@ -430,6 +435,18 @@ def _run_api_smoke(args: argparse.Namespace) -> int:
         _print_summary(result)
         print(f"report={args.report}")
     return 0 if result["ok"] else 1
+
+
+def _require_api_smoke_value(
+    explicit: str | None,
+    *,
+    env_name: str,
+    flag_name: str,
+) -> str:
+    value = (explicit or os.getenv(env_name) or "").strip()
+    if value:
+        return value
+    raise SystemExit(f"{env_name} missing: pass {flag_name} or set {env_name}")
 
 
 def _build_in_process_client(pot_id: str, repo_name: str) -> TestClient:

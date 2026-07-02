@@ -7,9 +7,29 @@ import pytest
 
 from application.use_cases import context_graph_jobs
 from bootstrap.ingestion_server import IngestionServerContainer
-from bootstrap import sentry_metrics_runtime
+from domain.ports.observability import NoOpObservability
 
 pytestmark = pytest.mark.unit
+
+
+class _RecordingObservability(NoOpObservability):
+    def __init__(self) -> None:
+        self.counter_calls: list[tuple[str, int, dict[str, object]]] = []
+        self.histogram_calls: list[tuple[str, float, dict[str, object]]] = []
+
+    def counter(
+        self, name: str, value: int = 1, *, attributes: dict[str, object] | None = None
+    ) -> None:
+        self.counter_calls.append((name, value, dict(attributes or {})))
+
+    def histogram(
+        self,
+        name: str,
+        value: float,
+        *,
+        attributes: dict[str, object] | None = None,
+    ) -> None:
+        self.histogram_calls.append((name, value, dict(attributes or {})))
 
 
 def _batch() -> MagicMock:
@@ -41,17 +61,11 @@ def _container(
     return container
 
 
-def test_skipped_jobs_mirror_finished_sentry_metrics(
+def test_skipped_jobs_emit_finished_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    counts: list[tuple[str, int, dict[str, str]]] = []
-    monkeypatch.setattr(
-        sentry_metrics_runtime,
-        "count",
-        lambda name, value=1, *, attributes=None, unit=None: counts.append(
-            (name, value, dict(attributes or {}))
-        ),
-    )
+    obs = _RecordingObservability()
+    monkeypatch.setattr(context_graph_jobs, "get_observability", lambda: obs)
 
     no_agent = _container(reconciliation_agent=None, batch=_batch())
     not_pending = _container(reconciliation_agent=object(), batch=None)
@@ -71,33 +85,19 @@ def test_skipped_jobs_mirror_finished_sentry_metrics(
         "ce.batch.finished_total",
         1,
         {"result": "skipped_no_reconciliation_agent"},
-    ) in counts
+    ) in obs.counter_calls
     assert (
         "ce.batch.finished_total",
         1,
         {"result": "skipped_not_pending"},
-    ) in counts
+    ) in obs.counter_calls
 
 
-def test_claimed_job_mirrors_batch_lifecycle_sentry_metrics(
+def test_claimed_job_emits_batch_lifecycle_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    counts: list[tuple[str, int, dict[str, str]]] = []
-    distributions: list[tuple[str, float, str | None, dict[str, str]]] = []
-    monkeypatch.setattr(
-        sentry_metrics_runtime,
-        "count",
-        lambda name, value=1, *, attributes=None, unit=None: counts.append(
-            (name, value, dict(attributes or {}))
-        ),
-    )
-    monkeypatch.setattr(
-        sentry_metrics_runtime,
-        "distribution",
-        lambda name, value, *, attributes=None, unit=None: distributions.append(
-            (name, value, unit, dict(attributes or {}))
-        ),
-    )
+    obs = _RecordingObservability()
+    monkeypatch.setattr(context_graph_jobs, "get_observability", lambda: obs)
     monkeypatch.setattr(
         context_graph_jobs,
         "process_batch",
@@ -118,11 +118,18 @@ def test_claimed_job_mirrors_batch_lifecycle_sentry_metrics(
         build_ingestion_server=lambda _db: container,
     )
 
-    assert ("ce.batch.started_total", 1, {"result": "started"}) in counts
-    assert ("ce.batch.finished_total", 1, {"result": "ok"}) in counts
+    assert (
+        "ce.batch.started_total",
+        1,
+        {"pot_id": "pot-1", "result": "started"},
+    ) in obs.counter_calls
+    assert (
+        "ce.batch.finished_total",
+        1,
+        {"pot_id": "pot-1", "result": "ok"},
+    ) in obs.counter_calls
     assert (
         "ce.batch.time_in_pending_ms",
         2000.0,
-        "millisecond",
-        {"result": "started"},
-    ) in distributions
+        {"pot_id": "pot-1", "result": "started"},
+    ) in obs.histogram_calls

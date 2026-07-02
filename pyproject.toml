@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "potpie"
 version = "2.0.0b3"
-description = "Potpie context engine"
+description = "Potpie product runtime package."
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 license = "Apache-2.0"
@@ -26,13 +26,19 @@ classifiers = [
     "Topic :: Software Development",
 ]
 dependencies = [
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    "keyring>=25.0.0",
     "potpie-context-engine[all]==0.1.0b3",
+    "rich>=13.0",
+    "sentry-sdk>=2.61.1,<3.0.0",
+    "typer>=0.15.0",
+    "uvicorn[standard]>=0.32.0",
 ]
 
 [project.scripts]
-potpie = "adapters.inbound.cli.host_cli:main"
-potpie-mcp = "adapters.inbound.mcp.server:main"
-potpie-daemon = "host.daemon_main:main"
+potpie = "potpie.cli.main:main"
+potpie-daemon = "potpie.daemon.main:main"
 
 [project.urls]
 Homepage = "https://potpie.ai"
@@ -40,17 +46,41 @@ Documentation = "https://docs.potpie.ai"
 Source = "https://github.com/potpie-ai/potpie"
 Issues = "https://github.com/potpie-ai/potpie/issues"
 
+[tool.hatch.build.hooks.custom]
+path = "telemetry_build_hook.py"
+
 [tool.hatch.build.targets.wheel]
-bypass-selection = true
+packages = ["potpie"]
+include = [
+    "potpie/cli/templates/**/*",
+    "potpie/cli/ui/assets/**/*",
+]
+exclude = [
+    "/potpie/context-engine",
+    "/potpie/integrations",
+    "/potpie/parsing",
+    "/potpie/sandbox",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "/LICENSE",
     "/README.md",
     "/pyproject.toml",
+    "/scripts/generate-potpie-ascii.mjs",
+    "/telemetry_build_config_values.py",
+    "/telemetry_build_hook.py",
+    "/potpie/__init__.py",
+    "/potpie/cli",
+    "/potpie/daemon",
+    "/potpie/runtime",
 ]
 exclude = [
     "/.gitignore",
+    "/potpie/context-engine",
+    "/potpie/integrations",
+    "/potpie/parsing",
+    "/potpie/sandbox",
 ]
 
 [tool.uv]
@@ -70,7 +100,12 @@ override-dependencies = [
 ]
 
 [tool.uv.workspace]
-members = ["potpie/*"]
+members = [
+    "potpie/context-engine",
+    "potpie/integrations",
+    "potpie/parsing",
+    "potpie/sandbox",
+]
 
 [tool.uv.sources]
 potpie-context-engine = { workspace = true, editable = true }
@@ -79,6 +114,7 @@ potpie-context-engine = { workspace = true, editable = true }
 dev = [
     "black>=26.3.1",
     "isort>=7.0.0",
+    "mypy>=1.19.0",
     "pre-commit>=4.3.0",
     "pylint>=4.0.2",
     "pytest>=9.0.3",
@@ -89,3 +125,56 @@ dev = [
 
 [tool.ruff.lint]
 extend-select = ["S"]
+
+[tool.ruff.lint.per-file-ignores]
+"potpie/cli/auth/credentials_store.py" = ["S105", "S110"]
+"potpie/cli/auth/github.py" = ["S105", "S106"]
+"potpie/cli/auth/models.py" = ["S105"]
+"potpie/cli/auth/provider_config.py" = ["S105"]
+"potpie/cli/commands/_common.py" = ["S110", "S112"]
+"potpie/cli/commands/graph.py" = ["S110", "S607"]
+"potpie/cli/commands/ui.py" = ["S110"]
+"potpie/cli/repo_location.py" = ["S603", "S607"]
+"potpie/cli/templates/claude_plugin/hooks/potpie_nudge.py" = ["S603"]
+"tests/**/*.py" = ["S101", "S102", "S105", "S106", "S108", "S310", "S603", "S607"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+markers = [
+    "unit: unit tests",
+    "integration: integration tests",
+    "cli_auth_e2e: opt-in live CLI auth tests",
+    "premerge_journey: dedicated pre-merge CLI journey test",
+]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "potpie/context-engine"
+files = [
+    "potpie/runtime",
+    "potpie/daemon/lifecycle.py",
+    "potpie/daemon/rpc.py",
+    "potpie/daemon/client.py",
+    "potpie/daemon/main.py",
+    "potpie/daemon/process/ipc_client.py",
+    "potpie/daemon/process/launcher.py",
+    "potpie/daemon/process/pidfile.py",
+    "potpie/daemon/telemetry/sentry_runtime.py",
+    "potpie/cli/main.py",
+    "potpie/cli/commands/graph_bulk.py",
+    "potpie/cli/commands/graph_common.py",
+    "potpie/cli/commands/graph_read.py",
+    "potpie/cli/commands/graph_render.py",
+    "potpie/cli/commands/graph_runtime.py",
+    "potpie/cli/commands/graph_templates.py",
+    "potpie/cli/telemetry/sentry_runtime.py",
+]
+check_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+pretty = true
+show_error_codes = true
+warn_redundant_casts = true
+warn_unused_ignores = true

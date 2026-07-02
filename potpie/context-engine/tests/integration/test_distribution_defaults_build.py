@@ -46,9 +46,6 @@ def _build_smoke_env() -> dict[str, str]:
         {
             "POTPIE_VALIDATE_DISTRIBUTION_DEFAULTS": "1",
             "POTPIE_ENVIRONMENT": "prod_oss",
-            "POTPIE_SENTRY_DSN": "https://sentry.example.invalid/1",
-            "POTPIE_POSTHOG_API_KEY": "phc_public_smoke",
-            "POTPIE_POSTHOG_HOST": "https://posthog.example.invalid",
             "LINEAR_CLIENT_ID": "linear-smoke-client",
             "POTPIE_GITHUB_CLIENT_ID": "github-smoke-client",
             "POTPIE_BUILD_GIT_SHA": "smoke-sha",
@@ -85,15 +82,10 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
         build_info = _archive_text(artifact, "bootstrap/_build_info.py")
         assert "DISTRIBUTION_DEFAULTS = {" in distribution_defaults
         assert "'environment': 'prod_oss'" in distribution_defaults
-        assert "'sentry_dsn': 'https://sentry.example.invalid/1'" in (
-            distribution_defaults
-        )
-        assert "'posthog_api_key': 'phc_public_smoke'" in distribution_defaults
-        assert "'posthog_host': 'https://posthog.example.invalid'" in (
-            distribution_defaults
-        )
         assert "'linear_client_id': 'linear-smoke-client'" in distribution_defaults
         assert "'github_client_id': 'github-smoke-client'" in distribution_defaults
+        assert "sentry" not in distribution_defaults.lower()
+        assert "posthog" not in distribution_defaults.lower()
         assert "GIT_SHA = 'smoke-sha'" in build_info
         assert "BUILD_TIME = '2026-06-28T00:00:00Z'" in build_info
     assert not (context_engine / "bootstrap" / "_distribution_defaults.py").exists()

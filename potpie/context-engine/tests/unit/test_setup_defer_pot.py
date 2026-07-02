@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from adapters.outbound.skills.template_resources import PackageTemplateResources
 from application.services import setup_orchestrator
 from bootstrap.host_wiring import build_host_shell
 from domain.lifecycle import SKIPPED, SetupPlan
@@ -14,7 +15,10 @@ from domain.lifecycle import SKIPPED, SetupPlan
 def host(tmp_path, monkeypatch):
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    return build_host_shell(backend=InMemoryGraphBackend())
+    return build_host_shell(
+        backend=InMemoryGraphBackend(),
+        template_resources=PackageTemplateResources("potpie.cli"),
+    )
 
 
 def test_setup_run_skips_pot_default_when_deferred(host) -> None:

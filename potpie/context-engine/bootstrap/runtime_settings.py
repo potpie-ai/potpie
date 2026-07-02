@@ -11,16 +11,8 @@ from bootstrap import env_bootstrap
 _CODE_DEFAULT_ENVIRONMENT: Final[str] = "dev"
 _CODE_DEFAULT_API_URL: Final[str] = "http://localhost:8001"
 _CODE_DEFAULT_UI_URL: Final[str] = "http://localhost:3000"
-_CODE_DEFAULT_POSTHOG_HOST: Final[str] = "https://us.i.posthog.com"
-_FALSE_VALUES: Final[frozenset[str]] = frozenset({"0", "false", "no", "off"})
-_TRUE_VALUES: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
 _DEPRECATED_CHILD_ENV_KEYS: Final[frozenset[str]] = frozenset(
     {
-        "SENTRY_DSN",
-        "SENTRY_ENVIRONMENT",
-        "SENTRY_RELEASE",
-        "SENTRY_DIST",
-        "POTPIE_POSTHOG_ENABLED",
         "POTPIE_BASE_URL",
         "POTPIE_CLI_API_BASE_URL",
         "POTPIE_CLI_BASE_URL",
@@ -39,12 +31,6 @@ class RuntimeSettings:
     potpie_api_url: str
     potpie_ui_url: str
     potpie_api_key: str | None
-    telemetry_disabled: bool
-    sentry_enabled: bool
-    sentry_dsn: str | None
-    product_analytics_enabled: bool
-    posthog_api_key: str | None
-    posthog_host: str
     linear_client_id: str | None
     github_client_id: str | None
     context_engine_github_token: str | None
@@ -80,30 +66,6 @@ def load_runtime_settings(
             "/"
         ),
         potpie_api_key=_env(environ, "POTPIE_API_KEY"),
-        telemetry_disabled=_flag(
-            _env(environ, "POTPIE_TELEMETRY_DISABLED")
-            or _default(defaults, "telemetry_disabled")
-            or "0"
-        ),
-        sentry_enabled=_flag(
-            _env(environ, "POTPIE_SENTRY_ENABLED")
-            or _default(defaults, "sentry_enabled")
-            or "1"
-        ),
-        sentry_dsn=_env(environ, "POTPIE_SENTRY_DSN")
-        or _default(defaults, "sentry_dsn"),
-        product_analytics_enabled=_flag(
-            _env(environ, "POTPIE_PRODUCT_ANALYTICS_ENABLED")
-            or _default(defaults, "product_analytics_enabled")
-            or "1"
-        ),
-        posthog_api_key=_env(environ, "POTPIE_POSTHOG_API_KEY")
-        or _default(defaults, "posthog_api_key"),
-        posthog_host=(
-            _env(environ, "POTPIE_POSTHOG_HOST")
-            or _default(defaults, "posthog_host")
-            or _CODE_DEFAULT_POSTHOG_HOST
-        ).rstrip("/"),
         linear_client_id=_env(environ, "LINEAR_CLIENT_ID")
         or _default(defaults, "linear_client_id"),
         github_client_id=_env(environ, "POTPIE_GITHUB_CLIENT_ID")
@@ -152,17 +114,9 @@ def project_child_environment(
             "POTPIE_ENVIRONMENT": settings.environment,
             "POTPIE_API_URL": settings.potpie_api_url,
             "POTPIE_UI_URL": settings.potpie_ui_url,
-            "POTPIE_TELEMETRY_DISABLED": _bool_env(settings.telemetry_disabled),
-            "POTPIE_SENTRY_ENABLED": _bool_env(settings.sentry_enabled),
-            "POTPIE_PRODUCT_ANALYTICS_ENABLED": _bool_env(
-                settings.product_analytics_enabled
-            ),
-            "POTPIE_POSTHOG_HOST": settings.posthog_host,
         }
     )
     _set_if_present(child, "POTPIE_API_KEY", settings.potpie_api_key)
-    _set_if_present(child, "POTPIE_SENTRY_DSN", settings.sentry_dsn)
-    _set_if_present(child, "POTPIE_POSTHOG_API_KEY", settings.posthog_api_key)
     _set_if_present(child, "LINEAR_CLIENT_ID", settings.linear_client_id)
     _set_if_present(child, "POTPIE_GITHUB_CLIENT_ID", settings.github_client_id)
     _set_if_present(
@@ -219,19 +173,6 @@ def _clean(value: object) -> str | None:
         return None
     cleaned = str(value).strip()
     return cleaned or None
-
-
-def _flag(value: str) -> bool:
-    lowered = value.strip().lower()
-    if lowered in _FALSE_VALUES:
-        return False
-    if lowered in _TRUE_VALUES:
-        return True
-    return bool(lowered)
-
-
-def _bool_env(value: bool) -> str:
-    return "1" if value else "0"
 
 
 def _set_if_present(target: dict[str, str], name: str, value: str | None) -> None:

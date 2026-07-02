@@ -1,0 +1,38 @@
+{
+  "pot_id": "lab-pot",
+  "repo_name": "context-engine",
+  "queries": [
+    {
+      "name": "debugging-timeout",
+      "intent": "debugging",
+      "query": "Why did repository ingestion timeout?"
+    },
+    {
+      "name": "implementation-plan",
+      "intent": "implementation",
+      "query": "What should change before implementing the graph retry path?"
+    }
+  ],
+  "records": [
+    {
+      "type": "decision",
+      "summary": "Keep CLI product auth outside the reusable context engine.",
+      "rationale": "CLI credential files, OAuth browser callbacks, and local secret storage are product runtime concerns.",
+      "source_refs": ["lab:decision:cli-auth-boundary"]
+    },
+    {
+      "type": "fix",
+      "summary": "Retry repository ingestion after transient timeout.",
+      "steps": ["detect timeout", "retry with bounded backoff"],
+      "source_refs": ["lab:fix:repo-timeout"]
+    }
+  ],
+  "episodes": [
+    {
+      "name": "repo-timeout-fix",
+      "body": "Repository ingestion timed out once and succeeded after a bounded retry.",
+      "source": "context-engine lab fixture",
+      "idempotency_key": "lab:episode:repo-timeout-fix"
+    }
+  ]
+}

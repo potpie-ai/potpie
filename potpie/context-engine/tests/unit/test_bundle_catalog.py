@@ -2,28 +2,50 @@
 
 from __future__ import annotations
 
+import pytest
+
 from adapters.outbound.skills.agent_installer import iter_template_files
 from adapters.outbound.skills.bundle_catalog import (
     catalog_by_id,
     load_bundle_skills,
     recommended_skill_ids,
 )
+from adapters.outbound.skills.template_resources import PackageTemplateResources
+from domain.errors import CapabilityNotImplemented
+
+TEMPLATE_RESOURCES = PackageTemplateResources("potpie.cli")
+
+
+def _iter_template_files():
+    return iter_template_files(template_resources=TEMPLATE_RESOURCES)
+
+
+def _load_bundle_skills():
+    return load_bundle_skills(template_resources=TEMPLATE_RESOURCES)
+
+
+def _catalog_by_id():
+    return catalog_by_id(template_resources=TEMPLATE_RESOURCES)
+
+
+def _recommended_skill_ids():
+    return recommended_skill_ids(template_resources=TEMPLATE_RESOURCES)
 
 
 def test_load_bundle_skills_matches_template_directories() -> None:
     skill_dirs = {
         rel_path.parent.name
-        for rel_path, _ in iter_template_files()
+        for rel_path, _ in _iter_template_files()
         if rel_path.name == "SKILL.md"
     }
-    loaded = load_bundle_skills()
+    loaded = _load_bundle_skills()
     assert {skill.id for skill in loaded} == skill_dirs
     assert "potpie-graph" in skill_dirs
     assert len(loaded) == len(skill_dirs)
 
 
 def test_catalog_fields_are_populated_from_skill_front_matter() -> None:
-    catalog = catalog_by_id()
+    catalog = _catalog_by_id()
     cli = catalog["potpie-cli"]
     assert cli.title == "Potpie CLI"
     assert cli.version == "2"
@@ -35,4 +57,11 @@ def test_catalog_fields_are_populated_from_skill_front_matter() -> None:
 
 
 def test_recommended_skill_ids_matches_loaded_catalog() -> None:
-    assert recommended_skill_ids() == tuple(skill.id for skill in load_bundle_skills())
+    assert _recommended_skill_ids() == tuple(
+        skill.id for skill in _load_bundle_skills()
+    )
+
+
+def test_bundle_catalog_requires_explicit_template_resources() -> None:
+    with pytest.raises(CapabilityNotImplemented, match="skills.template_resources"):
+        load_bundle_skills()

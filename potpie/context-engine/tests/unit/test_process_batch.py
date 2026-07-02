@@ -7,11 +7,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import application.use_cases.process_batch as process_batch_module
 from adapters.outbound.reconciliation.noop_agent import NoOpReconciliationAgent
-from bootstrap import sentry_metrics_runtime
 from application.use_cases.process_batch import process_batch
-from domain.ports.reconciliation_ledger import ContextEventRow
+from domain.ports.observability import NoOpObservability
 from domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
+from domain.ports.reconciliation_ledger import ContextEventRow
 from domain.reconciliation_batch import (
     BATCH_STATUS_DONE,
     BATCH_STATUS_PENDING,
@@ -20,6 +21,26 @@ from domain.reconciliation_batch import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+class _RecordingObservability(NoOpObservability):
+    def __init__(self) -> None:
+        self.counter_calls: list[tuple[str, int, dict[str, object]]] = []
+        self.histogram_calls: list[tuple[str, float, dict[str, object]]] = []
+
+    def counter(
+        self, name: str, value: int = 1, *, attributes: dict[str, object] | None = None
+    ) -> None:
+        self.counter_calls.append((name, value, dict(attributes or {})))
+
+    def histogram(
+        self,
+        name: str,
+        value: float,
+        *,
+        attributes: dict[str, object] | None = None,
+    ) -> None:
+        self.histogram_calls.append((name, value, dict(attributes or {})))
 
 
 def _now() -> datetime:
@@ -112,25 +133,11 @@ def test_processes_pending_events_and_marks_batch_done() -> None:
     # that contract is covered in test_agent_execution_log.py.
 
 
-def test_success_mirrors_agent_and_event_sentry_metrics(
+def test_success_emits_agent_and_event_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    counts: list[tuple[str, int, dict[str, str]]] = []
-    distributions: list[tuple[str, float, str | None, dict[str, str]]] = []
-    monkeypatch.setattr(
-        sentry_metrics_runtime,
-        "count",
-        lambda name, value=1, *, attributes=None, unit=None: counts.append(
-            (name, value, dict(attributes or {}))
-        ),
-    )
-    monkeypatch.setattr(
-        sentry_metrics_runtime,
-        "distribution",
-        lambda name, value, *, attributes=None, unit=None: distributions.append(
-            (name, value, unit, dict(attributes or {}))
-        ),
-    )
+    obs = _RecordingObservability()
+    monkeypatch.setattr(process_batch_module, "get_observability", lambda: obs)
     batches = MagicMock()
     batches.list_events_for_batch.return_value = [
         BatchEventRef(event_id="e1", added_at=_now()),
@@ -148,8 +155,16 @@ def test_success_mirrors_agent_and_event_sentry_metrics(
         pots=_pots(),
     )
 
-    assert ("ce.events.reconciled_total", 1, {"result": "reconciled"}) in counts
-    assert ("ce.agent.tool_calls", 0, None, {"result": "ok"}) in distributions
+    assert (
+        "ce.events.reconciled_total",
+        1,
+        {"pot_id": "pot-1", "result": "reconciled"},
+    ) in obs.counter_calls
+    assert (
+        "ce.agent.tool_calls",
+        0,
+        {"pot_id": "pot-1", "result": "ok"},
+    ) in obs.histogram_calls
 
 
 def test_skips_already_processed_events() -> None:
@@ -252,25 +267,11 @@ def test_agent_exception_marks_batch_failed_and_events_failed() -> None:
     assert sorted(failed_ids) == ["e1"]
 
 
-def test_failure_mirrors_agent_and_event_sentry_metrics(
+def test_failure_emits_agent_and_event_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    counts: list[tuple[str, int, dict[str, str]]] = []
-    distributions: list[tuple[str, float, str | None, dict[str, str]]] = []
-    monkeypatch.setattr(
-        sentry_metrics_runtime,
-        "count",
-        lambda name, value=1, *, attributes=None, unit=None: counts.append(
-            (name, value, dict(attributes or {}))
-        ),
-    )
-    monkeypatch.setattr(
-        sentry_metrics_runtime,
-        "distribution",
-        lambda name, value, *, attributes=None, unit=None: distributions.append(
-            (name, value, unit, dict(attributes or {}))
-        ),
-    )
+    obs = _RecordingObservability()
+    monkeypatch.setattr(process_batch_module, "get_observability", lambda: obs)
     batches = MagicMock()
     batches.list_events_for_batch.return_value = [
         BatchEventRef(event_id="e1", added_at=_now()),
@@ -296,8 +297,16 @@ def test_failure_mirrors_agent_and_event_sentry_metrics(
         pots=_pots(),
     )
 
-    assert ("ce.events.failed_total", 1, {"result": "failed"}) in counts
-    assert ("ce.agent.tool_calls", 0, None, {"result": "failed"}) in distributions
+    assert (
+        "ce.events.failed_total",
+        1,
+        {"pot_id": "pot-1", "result": "failed"},
+    ) in obs.counter_calls
+    assert (
+        "ce.agent.tool_calls",
+        0,
+        {"pot_id": "pot-1", "result": "failed"},
+    ) in obs.histogram_calls
 
 
 def test_opens_runs_and_fans_work_events_across_events() -> None:

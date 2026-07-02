@@ -19,6 +19,7 @@ import pytest
 
 from application.services.event_admission import admit_event
 from application.use_cases.flush_windowed_batches import (
+    ForceFlushQueueUnavailable,
     flush_ready_windowed_pots,
     force_flush_pot,
 )
@@ -278,6 +279,18 @@ class TestForceFlushPot:
         out = force_flush_pot(pot_id="p1", batches=batches, jobs=jobs)
         assert out is None
         jobs.enqueue_batch.assert_not_called()
+
+    def test_returns_none_when_no_pending_batch_without_queue(self) -> None:
+        batches = MagicMock()
+        batches.get_open_batch_id_for_pot.return_value = None
+        out = force_flush_pot(pot_id="p1", batches=batches, jobs=None)
+        assert out is None
+
+    def test_raises_when_open_batch_has_no_queue(self) -> None:
+        batches = MagicMock()
+        batches.get_open_batch_id_for_pot.return_value = "batch-1"
+        with pytest.raises(ForceFlushQueueUnavailable):
+            force_flush_pot(pot_id="p1", batches=batches, jobs=None)
 
     def test_enqueue_failure_still_returns_batch_id(self) -> None:
         # The DB batch is durable; the user sees the batch_id so they can

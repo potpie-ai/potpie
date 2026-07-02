@@ -17,7 +17,7 @@ venv/
 # Vendored Daytona local-dev stack (config bound into the compose containers)
 !potpie/sandbox/daytona/**/*.json
 # Potpie CLI setup-wizard logo (generated asset, must ship in the package)
-!potpie/context-engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json
+!potpie/cli/ui/assets/potpie-logo-static.json
 .momentum
 db
 cli/momentum_cli/.momentum

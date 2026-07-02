@@ -7,15 +7,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import application.services.ingestion_submission_service as submission_service
 from application.services.event_admission import admit_event
 from application.services.ingestion_submission_service import (
     DefaultIngestionSubmissionService,
 )
-from bootstrap import sentry_metrics_runtime
 from domain.actor import Actor
 from domain.context_events import ContextEvent, EventScope
-from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
 from domain.ingestion_event_models import IngestionEvent, IngestionSubmissionRequest
+from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
+from domain.ports.observability import NoOpObservability
 from domain.ports.pot_resolution import single_github_repo_pot
 
 pytestmark = pytest.mark.unit
@@ -102,78 +103,61 @@ def test_enqueue_failure_does_not_raise() -> None:
     jobs.enqueue_batch.assert_called_once_with("batch-abc")
 
 
-def test_submission_service_mirrors_inserted_admission_to_sentry_metrics(
+class _RecordingObservability(NoOpObservability):
+    def __init__(self) -> None:
+        self.counter_calls: list[tuple[str, int, dict[str, object]]] = []
+
+    def counter(
+        self, name: str, value: int = 1, *, attributes: dict[str, object] | None = None
+    ) -> None:
+        self.counter_calls.append((name, value, dict(attributes or {})))
+
+
+def test_submission_service_emits_inserted_admission_metric(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    metric_calls: list[tuple[str, int, dict[str, str]]] = []
-
-    def record_count(
-        name: str,
-        value: int = 1,
-        *,
-        attributes: dict[str, str] | None = None,
-    ) -> None:
-        metric_calls.append((name, value, {} if attributes is None else attributes))
-
-    monkeypatch.setattr(sentry_metrics_runtime, "count", record_count)
+    obs = _RecordingObservability()
+    monkeypatch.setattr(submission_service, "get_observability", lambda: obs)
     service = _submission_service(inserted=True)
 
     receipt = service.submit(_submission_request())
 
     assert receipt.event_id == "evt-1"
     assert receipt.status == "queued"
-    assert metric_calls == [
+    assert obs.counter_calls == [
         (
             "ce.ingest.events_total",
             1,
-            {"result": "inserted"},
+            {"source": "github", "result": "inserted"},
         )
     ]
 
 
-def test_submission_service_mirrors_duplicate_admission_to_sentry_metrics(
+def test_submission_service_emits_duplicate_admission_metric(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    metric_calls: list[tuple[str, int, dict[str, str]]] = []
-
-    def record_count(
-        name: str,
-        value: int = 1,
-        *,
-        attributes: dict[str, str] | None = None,
-    ) -> None:
-        metric_calls.append((name, value, {} if attributes is None else attributes))
-
-    monkeypatch.setattr(sentry_metrics_runtime, "count", record_count)
+    obs = _RecordingObservability()
+    monkeypatch.setattr(submission_service, "get_observability", lambda: obs)
     service = _submission_service(inserted=False)
 
     receipt = service.submit(_submission_request())
 
     assert receipt.event_id == "evt-1"
     assert receipt.duplicate is True
-    assert metric_calls == [
+    assert obs.counter_calls == [
         (
             "ce.ingest.dedup_total",
             1,
-            {"result": "duplicate"},
+            {"source": "github", "result": "duplicate"},
         )
     ]
 
 
-def test_submission_service_does_not_export_request_taxonomy_to_sentry_metrics(
+def test_submission_service_emits_source_to_neutral_observability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    metric_calls: list[tuple[str, int, dict[str, str]]] = []
-
-    def record_count(
-        name: str,
-        value: int = 1,
-        *,
-        attributes: dict[str, str] | None = None,
-    ) -> None:
-        metric_calls.append((name, value, {} if attributes is None else attributes))
-
-    monkeypatch.setattr(sentry_metrics_runtime, "count", record_count)
+    obs = _RecordingObservability()
+    monkeypatch.setattr(submission_service, "get_observability", lambda: obs)
     service = _submission_service(inserted=True)
 
     service.submit(
@@ -184,11 +168,11 @@ def test_submission_service_does_not_export_request_taxonomy_to_sentry_metrics(
         )
     )
 
-    assert metric_calls == [
+    assert obs.counter_calls == [
         (
             "ce.ingest.events_total",
             1,
-            {"result": "inserted"},
+            {"source": "github:user@example.com", "result": "inserted"},
         )
     ]
 

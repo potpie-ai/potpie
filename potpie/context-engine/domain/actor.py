@@ -18,7 +18,22 @@ external provider; ``system`` is internal jobs (backfills, workers)."""
 ActorAuthMethod = Literal["api_key", "session", "webhook_signature", "system"]
 
 
-VALID_SURFACES: frozenset[str] = frozenset({"cli", "mcp", "http", "webhook", "system"})
+_ACTOR_SURFACE_BY_VALUE: dict[str, ActorSurface] = {
+    "cli": "cli",
+    "mcp": "mcp",
+    "http": "http",
+    "webhook": "webhook",
+    "system": "system",
+}
+
+_ACTOR_AUTH_METHOD_BY_VALUE: dict[str, ActorAuthMethod] = {
+    "api_key": "api_key",
+    "session": "session",
+    "webhook_signature": "webhook_signature",
+    "system": "system",
+}
+
+VALID_SURFACES: frozenset[str] = frozenset(_ACTOR_SURFACE_BY_VALUE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,9 +77,15 @@ def normalize_surface(value: str | None) -> ActorSurface | None:
     if not value:
         return None
     v = value.strip().lower()
-    if v in VALID_SURFACES:
-        return v  # type: ignore[return-value]
-    return None
+    return _ACTOR_SURFACE_BY_VALUE.get(v)
+
+
+def normalize_auth_method(value: str | None) -> ActorAuthMethod | None:
+    """Case-insensitive normalization; returns None for invalid/empty input."""
+    if not value:
+        return None
+    v = value.strip().lower()
+    return _ACTOR_AUTH_METHOD_BY_VALUE.get(v)
 
 
 SYSTEM_ACTOR: Actor = Actor(

@@ -15,23 +15,22 @@ from uuid import uuid4
 
 from application.services.event_admission import admit_event
 from application.services.ingestion_wait import wait_for_terminal_ingestion_event
-from bootstrap import sentry_metrics_runtime
 from bootstrap.observability_context import bind_correlation, correlation_scope
 from bootstrap.observability_runtime import get_observability
-from domain.ports.observability import SPAN_KIND_SERVER
 from domain.context_events import (
     ContextEvent,
     EventScope,
     event_scope_from_resolved_pot,
 )
-from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
 from domain.ingestion_event_models import EventReceipt, IngestionSubmissionRequest
+from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
 from domain.ports.agent_context import RecordRequest
 from domain.ports.batch_repository import BatchRepositoryPort
 from domain.ports.context_graph_job_queue import ContextGraphJobQueuePort
 from domain.ports.ingestion_config import IngestionConfigPort
 from domain.ports.ingestion_event_store import IngestionEventStore
 from domain.ports.ingestion_submission import IngestionSubmissionService
+from domain.ports.observability import SPAN_KIND_SERVER
 from domain.ports.pot_resolution import PotResolutionPort, resolve_write_repo
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.reconciliation_ledger import ReconciliationLedgerPort
@@ -211,18 +210,18 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
                     "observability: persist trace correlation failed",
                     exc_info=True,
                 )
-            obs.counter("ce.ingest.events_total", 1, attributes=metric_attrs)
-            sentry_metrics_runtime.count(
+            obs.counter(
                 "ce.ingest.events_total",
-                attributes={"result": "inserted"},
+                1,
+                attributes={**metric_attrs, "result": "inserted"},
             )
             if outcome.batch_id:
                 bind_correlation(batch_id=outcome.batch_id)
         else:
-            obs.counter("ce.ingest.dedup_total", 1, attributes=metric_attrs)
-            sentry_metrics_runtime.count(
+            obs.counter(
                 "ce.ingest.dedup_total",
-                attributes={"result": "duplicate"},
+                1,
+                attributes={**metric_attrs, "result": "duplicate"},
             )
 
         if not outcome.inserted:

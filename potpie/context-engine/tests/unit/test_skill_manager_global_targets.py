@@ -7,8 +7,22 @@ from pathlib import Path
 import pytest
 
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.skills.bundle_catalog import RECOMMENDED_SKILL_IDS
+from adapters.outbound.skills.bundle_catalog import recommended_skill_ids
+from adapters.outbound.skills.template_resources import PackageTemplateResources
 from bootstrap.host_wiring import build_host_shell
+
+TEMPLATE_RESOURCES = PackageTemplateResources("potpie.cli")
+
+
+def _build_host_shell():
+    return build_host_shell(
+        backend=InMemoryGraphBackend(),
+        template_resources=TEMPLATE_RESOURCES,
+    )
+
+
+def _recommended_skill_ids():
+    return recommended_skill_ids(template_resources=TEMPLATE_RESOURCES)
 
 
 def test_skill_manager_installs_global_harness_targets(
@@ -18,7 +32,7 @@ def test_skill_manager_installs_global_harness_targets(
     potpie_home = tmp_path / "potpie"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(potpie_home))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _build_host_shell()
 
     expected = {
         "claude": home / ".claude" / "skills" / "potpie-cli" / "SKILL.md",
@@ -60,7 +74,7 @@ def test_global_harness_target_paths(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _build_host_shell()
 
     assert host.skills.targets["cursor"].skills_root == home / ".cursor" / "skills"
     assert host.skills.targets["claude"].skills_root == home / ".claude" / "skills"
@@ -73,7 +87,7 @@ def test_global_harness_target_paths(monkeypatch, tmp_path: Path) -> None:
 
 def test_skill_manager_installs_project_scope(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _build_host_shell()
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".git").mkdir()
@@ -103,7 +117,7 @@ def test_project_scope_install_preserves_existing_agents_md(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _build_host_shell()
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".git").mkdir()
@@ -132,24 +146,25 @@ def test_skill_manager_removes_all_global_harness_skills(
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _build_host_shell()
 
+    expected_skill_ids = _recommended_skill_ids()
     install_result = host.skills.install(agent="codex")
-    assert set(install_result.changed) == set(RECOMMENDED_SKILL_IDS)
+    assert set(install_result.changed) == set(expected_skill_ids)
 
     skills_root = home / ".agents" / "skills"
     assert all(
         (skills_root / skill_id / "SKILL.md").exists()
-        for skill_id in RECOMMENDED_SKILL_IDS
+        for skill_id in expected_skill_ids
     )
 
     remove_result = host.skills.remove(agent="codex", all_=True)
 
     assert remove_result.metadata["scope"] == "global"
-    assert set(remove_result.changed) == set(RECOMMENDED_SKILL_IDS)
+    assert set(remove_result.changed) == set(expected_skill_ids)
     assert all(
         not (skills_root / skill_id / "SKILL.md").exists()
-        for skill_id in RECOMMENDED_SKILL_IDS
+        for skill_id in expected_skill_ids
     )
     assert host.skills.status(agent="codex").installed == ()
 
@@ -161,7 +176,7 @@ def test_remove_uninstalled_skill_reports_no_change(
     # when it was never installed, reporting false removals in CLI/API output.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _build_host_shell()
 
     result = host.skills.remove(agent="codex", skill_id="potpie-cli")
     assert result.changed == ()
@@ -170,7 +185,7 @@ def test_remove_uninstalled_skill_reports_no_change(
 def test_skill_manager_rejects_ambiguous_remove(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _build_host_shell()
 
     with pytest.raises(ValueError, match="either a skill id or --all"):
         host.skills.remove(agent="codex", skill_id="potpie-cli", all_=True)

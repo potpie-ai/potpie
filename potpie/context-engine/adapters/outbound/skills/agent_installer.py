@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import re
 import shlex
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
-from importlib import resources
 from pathlib import Path
 from typing import Iterable
+
+from adapters.outbound.skills.template_resources import (
+    NO_TEMPLATE_RESOURCES,
+    TemplateResourceProvider,
+)
+from domain.errors import CapabilityNotImplemented
 
 _MANAGED_MARKER_RE = re.compile(
     r"<!-- (?:context-engine|potpie)-start -->.*?<!-- (?:context-engine|potpie)-end -->",
@@ -24,6 +30,10 @@ _SOURCE_SKILLS_PREFIX = ".agents/skills/"
 # The Claude Code plugin installs as a self-contained directory so its
 # ``.claude-plugin/plugin.json`` stays the plugin root for ``/plugin marketplace add``.
 _CLAUDE_PLUGIN_PREFIX = ".claude/potpie-plugin"
+
+
+def _template_files_root(template_resources: TemplateResourceProvider):
+    return template_resources.files_root()
 
 
 @dataclass
@@ -51,9 +61,13 @@ def resolve_install_root(path: str | Path) -> Path:
     return target
 
 
-def _iter_bundle_files(bundle_name: str) -> list[tuple[Path, str]]:
+def _iter_bundle_files(
+    bundle_name: str,
+    *,
+    template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES,
+) -> list[tuple[Path, str]]:
     """Return packaged template files from the named bundle as (repo-relative path, UTF-8 text)."""
-    root = resources.files("adapters.inbound.cli").joinpath("templates", bundle_name)
+    root = _template_files_root(template_resources).joinpath("templates", bundle_name)
     out: list[tuple[Path, str]] = []
     stack = [(root, Path("."))]
     while stack:
@@ -73,9 +87,11 @@ def _iter_bundle_files(bundle_name: str) -> list[tuple[Path, str]]:
     return sorted(out, key=lambda item: item[0].as_posix())
 
 
-def iter_template_files() -> list[tuple[Path, str]]:
+def iter_template_files(
+    *, template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES
+) -> list[tuple[Path, str]]:
     """Return agent_bundle template files (default / codex path)."""
-    return _iter_bundle_files("agent_bundle")
+    return _iter_bundle_files("agent_bundle", template_resources=template_resources)
 
 
 def _merge_managed_markdown(existing: str, section: str) -> tuple[str, str]:
@@ -164,7 +180,9 @@ def _include_selected_skills(
 
 
 def validate_packaged_skill_command_snippets(
-    *, skill_ids: Iterable[str] | None = None
+    *,
+    skill_ids: Iterable[str] | None = None,
+    template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES,
 ) -> None:
     """Validate packaged Potpie CLI snippets before install/update.
 
@@ -173,7 +191,9 @@ def validate_packaged_skill_command_snippets(
     """
     selected = _normalize_skill_ids(skill_ids)
     for bundle_name in ("agent_bundle", "claude_plugin"):
-        for rel_path, content in _iter_bundle_files(bundle_name):
+        for rel_path, content in _iter_bundle_files(
+            bundle_name, template_resources=template_resources
+        ):
             if not _is_skill_markdown(rel_path):
                 continue
             if not _selected_skill_matches(rel_path, selected):
@@ -260,21 +280,32 @@ def _option_name(token: str) -> str:
 
 @lru_cache(maxsize=1)
 def _potpie_command_option_specs() -> dict[tuple[str, ...], frozenset[str]]:
-    from adapters.inbound.cli.host_cli import app
-
     specs: dict[tuple[str, ...], frozenset[str]] = {}
-    _collect_typer_command_specs(app, path=(), out=specs)
+    _collect_typer_command_specs(_potpie_cli_app(), path=(), out=specs)
     return specs
 
 
 @lru_cache(maxsize=1)
 def _potpie_root_options() -> frozenset[str]:
-    from adapters.inbound.cli.host_cli import app
-
+    app = _potpie_cli_app()
     callback = app.registered_callback
     if callback is None or callback.callback is None:
         return frozenset()
     return _callback_option_decls(callback.callback)
+
+
+def _potpie_cli_app():
+    try:
+        module = importlib.import_module("potpie" + ".cli.main")
+    except ModuleNotFoundError as exc:
+        raise CapabilityNotImplemented(
+            "skills.cli_command_specs",
+            detail="Potpie CLI command metadata is unavailable in this runtime.",
+            recommended_next_action=(
+                "run skill installation through the root 'potpie' CLI package"
+            ),
+        ) from exc
+    return module.app
 
 
 def _collect_typer_command_specs(
@@ -354,12 +385,15 @@ def _install_bundle(
     bundle_name: str,
     result: InstallResult,
     *,
+    template_resources: TemplateResourceProvider,
     force: bool,
     include: Callable[[Path], bool] | None = None,
     remap: Callable[[Path], Path | None] | None = None,
     merge_files: frozenset[str] = _DEFAULT_MERGE_FILES,
 ) -> None:
-    for rel_path, content in _iter_bundle_files(bundle_name):
+    for rel_path, content in _iter_bundle_files(
+        bundle_name, template_resources=template_resources
+    ):
         if include is not None and not include(rel_path):
             continue
         if _is_skill_markdown(rel_path):
@@ -420,6 +454,7 @@ def install_skill_bundle(
     skills_root: str | Path,
     *,
     skill_ids: Iterable[str] | None = None,
+    template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES,
     force: bool = False,
 ) -> InstallResult:
     """Install selected packaged skills directly into a skills root.
@@ -434,6 +469,7 @@ def install_skill_bundle(
         root,
         "agent_bundle",
         result,
+        template_resources=template_resources,
         force=force,
         include=lambda rel: _include_selected_skills(rel, selected),
         remap=lambda rel: Path(rel.as_posix()[len(_SOURCE_SKILLS_PREFIX) :]),
@@ -445,6 +481,7 @@ def install_global_agent_instructions(
     root: str | Path,
     *,
     agent: str = "default",
+    template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES,
     force: bool = True,
 ) -> InstallResult:
     """Install compact global instructions for harnesses with file-based rules.
@@ -466,6 +503,7 @@ def install_global_agent_instructions(
         install_root,
         "global_agent_bundle",
         result,
+        template_resources=template_resources,
         force=force,
         include=lambda rel: rel.as_posix() == filename,
         merge_files=frozenset({filename}),
@@ -477,6 +515,7 @@ def install_agent_bundle(
     path: str | Path = ".",
     *,
     agent: str = "default",
+    template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES,
     force: bool = False,
     skill_ids: Iterable[str] | None = None,
 ) -> InstallResult:
@@ -499,11 +538,18 @@ def install_agent_bundle(
         )
 
     if normalized == "claude":
-        _install_bundle(root, "claude_bundle", result, force=force)
+        _install_bundle(
+            root,
+            "claude_bundle",
+            result,
+            template_resources=template_resources,
+            force=force,
+        )
         _install_bundle(
             root,
             "agent_bundle",
             result,
+            template_resources=template_resources,
             force=force,
             include=lambda rel: _include_selected_skills(rel, selected),
             remap=_claude_skills_bundle_remap,
@@ -513,6 +559,7 @@ def install_agent_bundle(
             root,
             "claude_plugin",
             result,
+            template_resources=template_resources,
             force=force,
             remap=_claude_plugin_remap,
         )
@@ -521,9 +568,11 @@ def install_agent_bundle(
             root,
             "agent_bundle",
             result,
+            template_resources=template_resources,
             force=force,
-            include=lambda rel: rel.as_posix() == "AGENTS.md"
-            or _include_selected_skills(rel, selected),
+            include=lambda rel: (
+                rel.as_posix() == "AGENTS.md" or _include_selected_skills(rel, selected)
+            ),
             remap=_cursor_bundle_remap,
         )
     elif normalized == "opencode":
@@ -531,6 +580,7 @@ def install_agent_bundle(
             root,
             "agent_bundle",
             result,
+            template_resources=template_resources,
             force=force,
             include=lambda rel: _include_selected_skills(rel, selected),
             remap=_opencode_bundle_remap,
@@ -540,9 +590,11 @@ def install_agent_bundle(
             root,
             "agent_bundle",
             result,
+            template_resources=template_resources,
             force=force,
-            include=lambda rel: rel.as_posix() == "AGENTS.md"
-            or _include_selected_skills(rel, selected),
+            include=lambda rel: (
+                rel.as_posix() == "AGENTS.md" or _include_selected_skills(rel, selected)
+            ),
         )
 
     return result

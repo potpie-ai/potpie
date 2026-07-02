@@ -8,19 +8,15 @@ path = "distribution_defaults_hook.py"
 [project]
 name = "potpie-context-engine"
 version = "0.1.0b3"
-description = "Context graph API, webhooks, CLI, and MCP."
+description = "Reusable context graph engine library, HTTP API, webhooks, and MCP."
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
-    "keyring>=25.0.0",
     "mcp>=1.0.0",
     "pillow>=10.0.0",
-    "rich>=13.0",
-    "typer>=0.15.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.0",
-    "sentry-sdk>=2.61.1,<3.0.0",
     # Default CLI backend is FalkorDBLite on Python 3.12+.
     "falkordblite>=0.10.0; python_version >= '3.12'",
     # redis 8 enables maintenance notifications that break FalkorDBLite's
@@ -85,22 +81,25 @@ dev = [
     "ruff>=0.8.0",
 ]
 
-[tool.hatch.build.force-include]
-"adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "adapters/inbound/cli/ui/assets/potpie-logo-static.json"
-"adapters/inbound/cli/ui/assets/potpie.png" = "adapters/inbound/cli/ui/assets/potpie.png"
-"adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
-"adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json"
-"adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json" = "adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json"
+[project.scripts]
+potpie-mcp = "adapters.inbound.mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["domain", "application", "adapters", "bootstrap", "benchmarks", "host"]
+exclude = [
+    "adapters/inbound/cli/**",
+    "adapters/inbound/daemon_http/**",
+    "adapters/inbound/http/ui/**",
+    "adapters/outbound/daemon_process/**",
+    "adapters/outbound/managed_services/**",
+    "host/daemon_runtime/**",
+    "host/daemon.py",
+    "host/daemon_client.py",
+    "host/daemon_main.py",
+    "host/daemon_rpc.py",
+]
 include = [
     "domain/playbooks/**/*.md",
-    "adapters/inbound/cli/templates/**/*.md",
-    "adapters/inbound/cli/templates/**/*.yaml",
-    "adapters/inbound/cli/ui/assets/**/*.json",
-    "adapters/inbound/cli/ui/assets/**/*.png",
-    "adapters/inbound/cli/ui/assets/**/*.svg",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
@@ -121,14 +120,21 @@ include = [
     "benchmarks",
     "host",
     "domain/playbooks/**/*.md",
-    "adapters/inbound/cli/templates/**/*.md",
-    "adapters/inbound/cli/templates/**/*.yaml",
-    "adapters/inbound/cli/ui/assets/**/*.json",
-    "adapters/inbound/cli/ui/assets/**/*.png",
-    "adapters/inbound/cli/ui/assets/**/*.svg",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
+]
+exclude = [
+    "adapters/inbound/cli/**",
+    "adapters/inbound/daemon_http/**",
+    "adapters/inbound/http/ui/**",
+    "adapters/outbound/daemon_process/**",
+    "adapters/outbound/managed_services/**",
+    "host/daemon_runtime/**",
+    "host/daemon.py",
+    "host/daemon_client.py",
+    "host/daemon_main.py",
+    "host/daemon_rpc.py",
 ]
 
 [tool.ruff]
@@ -143,12 +149,12 @@ asyncio_mode = "auto"
 markers = [
     "unit: unit tests",
     "integration: integration tests (no external services required, but exercise real third-party libs)",
-    "cli_auth_e2e: opt-in live CLI auth tests (Linear/Jira/Confluence); requires RUN_CLI_AUTH_E2E=1",
     "premerge_journey: dedicated pre-merge CLI journey test (Rust required; run in premerge-cli-journey job only)",
 ]
 
 [dependency-groups]
 dev = [
+    "mypy>=1.19.0",
     "pytest-cov>=7.1.0",
 ]
 
@@ -163,3 +169,35 @@ constraint-dependencies = [
     "starlette>=1.3.1",
     "urllib3>=2.7.0",
 ]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "."
+files = [
+    "domain/actor.py",
+    "domain/semantic_mutations.py",
+    "domain/ports/agent_execution_log.py",
+    "domain/ports/daemon/shell.py",
+    "domain/ports/daemon/rpc_contract.py",
+    "domain/ports/ingestion_config.py",
+    "application/use_cases/record_durable_context.py",
+    "application/use_cases/process_batch.py",
+    "adapters/inbound/http/api/v1/context/router.py",
+    "adapters/outbound/graph/backends/embedded_backend.py",
+    "adapters/outbound/graph/backends/neo4j_backend.py",
+    "adapters/outbound/daemon_lifecycle.py",
+    "adapters/outbound/postgres/agent_execution_log.py",
+    "adapters/outbound/postgres/batch_repository.py",
+    "adapters/outbound/postgres/ingestion_config.py",
+    "adapters/outbound/postgres/ingestion_event_store.py",
+    "adapters/outbound/postgres/models.py",
+    "adapters/outbound/reconciliation/pydantic_deep_agent.py",
+]
+check_untyped_defs = true
+disallow_incomplete_defs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+pretty = true
+show_error_codes = true
+warn_redundant_casts = true
+warn_unused_ignores = true

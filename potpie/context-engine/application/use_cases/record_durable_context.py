@@ -9,7 +9,7 @@ reconciliation pipeline.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Mapping
 
@@ -32,7 +32,7 @@ from domain.ports.ingestion_submission import IngestionSubmissionService
 class DurableContextPayload:
     record_type: str
     summary: str
-    details: Mapping[str, Any] = ()  # type: ignore[assignment]
+    details: Mapping[str, Any] = field(default_factory=dict)
     source_refs: tuple[str, ...] = ()
     confidence: float = 0.7
     visibility: str = "project"

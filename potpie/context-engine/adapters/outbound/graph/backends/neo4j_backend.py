@@ -21,13 +21,15 @@ is actually selected.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Coroutine, Mapping, Sequence, TypeVar
 
 from adapters.outbound.graph.backends._unimplemented import (
     UnimplementedInspection,
     UnimplementedSnapshot,
 )
-from adapters.outbound.graph.backends.claim_query_semantic import ClaimQuerySemanticSearch
+from adapters.outbound.graph.backends.claim_query_semantic import (
+    ClaimQuerySemanticSearch,
+)
 from adapters.outbound.graph.backends.claim_query_analytics import ClaimQueryAnalytics
 from adapters.outbound.graph.cypher import _coerce_props_for_neo4j
 from adapters.outbound.graph.entity_summary_repair import (
@@ -36,17 +38,25 @@ from adapters.outbound.graph.entity_summary_repair import (
     ENTITY_SUMMARY_UPDATE_CYPHER,
     repaired_entity_properties,
 )
+from adapters.outbound.graph.writer_port import GraphWriterPort
 from domain.graph_mutations import ProvenanceContext
 from domain.lifecycle import SetupPlan, StepResult
 from domain.ports.claim_query import ClaimQueryPort
+from domain.ports.embedder import EmbedderPort
+from domain.ports.graph.analytics import GraphAnalyticsPort
 from domain.ports.graph.backend import BackendCapabilities
-from domain.ports.graph.mutation import BackendReadiness
+from domain.ports.graph.inspection import GraphInspectionPort
+from domain.ports.graph.mutation import BackendReadiness, GraphMutationPort
+from domain.ports.graph.semantic import SemanticSearchPort
+from domain.ports.graph.snapshot import GraphSnapshotPort
+from domain.ports.settings import ContextEngineSettingsPort
 from domain.reconciliation import MutationBatch, MutationResult
 
 _PROFILE = "neo4j"
+_T = TypeVar("_T")
 
 
-def _run_sync(coro: Any) -> Any:
+def _run_sync(coro: Coroutine[Any, Any, _T]) -> _T:
     """Drive a coroutine from a *sync* port entry (CLI/tests).
 
     Loop-aware: outside a running loop we run it with ``asyncio.run``; inside one
@@ -78,11 +88,11 @@ class _Neo4jMutation:
     production ``ContextGraphService`` uses with one long-lived writer).
     """
 
-    settings: Any
-    writer: Any = None  # injected (shared) or lazily created on first use
-    embedder: Any = None
+    settings: ContextEngineSettingsPort
+    writer: GraphWriterPort | None = None  # injected or lazily created on first use
+    embedder: EmbedderPort | None = None
 
-    def _get_writer(self) -> Any:
+    def _get_writer(self) -> GraphWriterPort:
         if self.writer is None:
             from adapters.outbound.graph import Neo4jGraphWriter
 
@@ -121,7 +131,7 @@ class _Neo4jMutation:
         )
 
     def invalidate(
-        self, *, pot_id: str, claim_keys: Any, reason: str | None = None
+        self, *, pot_id: str, claim_keys: Sequence[str], reason: str | None = None
     ) -> int:
         # TODO(stage-N): cypher invalidation by claim key.
         from domain.errors import CapabilityNotImplemented
@@ -155,9 +165,9 @@ class _Neo4jMutation:
 class Neo4jGraphBackend:
     """Neo4j-backed ``GraphBackend`` (shape-first; projections are TODO)."""
 
-    settings: Any
-    writer: Any = None  # optional shared Neo4jGraphWriter; reused by the mutation
-    embedder: Any = None
+    settings: ContextEngineSettingsPort
+    writer: GraphWriterPort | None = None  # optional shared writer; reused by mutation
+    embedder: EmbedderPort | None = None
     _claim_query: ClaimQueryPort = field(init=False)
     _mutation: _Neo4jMutation = field(init=False)
     _semantic: ClaimQuerySemanticSearch = field(init=False)
@@ -166,9 +176,7 @@ class Neo4jGraphBackend:
         # Lazy: only touch neo4j when this profile is selected.
         from adapters.outbound.graph.neo4j_reader import Neo4jClaimQueryStore
 
-        self._claim_query = Neo4jClaimQueryStore(
-            self.settings, embedder=self.embedder
-        )
+        self._claim_query = Neo4jClaimQueryStore(self.settings, embedder=self.embedder)
         self._mutation = _Neo4jMutation(
             self.settings, writer=self.writer, embedder=self.embedder
         )
@@ -178,15 +186,14 @@ class Neo4jGraphBackend:
     def enabled(self) -> bool:
         # Cheap config probe (no driver build): graph availability for policy and
         # ContextGraphService.enabled. Mirrors Neo4jGraphWriter.enabled.
-        is_enabled = getattr(self.settings, "is_enabled", None)
-        return bool(is_enabled()) if callable(is_enabled) else True
+        return self.settings.is_enabled()
 
     @property
     def profile(self) -> str:
         return _PROFILE
 
     @property
-    def graph_writer(self) -> Any:
+    def graph_writer(self) -> GraphWriterPort:
         """Compatibility alias for old ingestion paths that seed via writer."""
         return self._mutation._get_writer()
 
@@ -195,19 +202,19 @@ class Neo4jGraphBackend:
         return self._claim_query
 
     @property
-    def mutation(self) -> _Neo4jMutation:
+    def mutation(self) -> GraphMutationPort:
         return self._mutation
 
     @property
-    def semantic(self) -> ClaimQuerySemanticSearch:
+    def semantic(self) -> SemanticSearchPort:
         return self._semantic
 
     @property
-    def inspection(self) -> UnimplementedInspection:
+    def inspection(self) -> GraphInspectionPort:
         return UnimplementedInspection(_PROFILE)
 
     @property
-    def analytics(self) -> ClaimQueryAnalytics:
+    def analytics(self) -> GraphAnalyticsPort:
         # Real: counts/freshness/quality are computed from the canonical
         # claim store, which this profile already serves.
         return ClaimQueryAnalytics(
@@ -216,7 +223,7 @@ class Neo4jGraphBackend:
         )
 
     @property
-    def snapshot(self) -> UnimplementedSnapshot:
+    def snapshot(self) -> GraphSnapshotPort:
         return UnimplementedSnapshot(_PROFILE)
 
     def capabilities(self) -> BackendCapabilities:

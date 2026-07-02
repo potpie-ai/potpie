@@ -29,8 +29,14 @@ from adapters.outbound.graph.backends.in_memory_backend import (
 from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
 from adapters.outbound.pots.local_pot_store import default_home
 from domain.lifecycle import DONE, SetupPlan, StepResult
+from domain.ports.claim_query import ClaimQueryPort
 from domain.ports.embedder import EmbedderPort
+from domain.ports.graph.analytics import GraphAnalyticsPort
 from domain.ports.graph.backend import BackendCapabilities
+from domain.ports.graph.inspection import GraphInspectionPort
+from domain.ports.graph.mutation import GraphMutationPort
+from domain.ports.graph.semantic import SemanticSearchPort
+from domain.ports.graph.snapshot import GraphSnapshotPort
 
 _PROFILE = "embedded"
 
@@ -82,27 +88,27 @@ class EmbeddedGraphBackend:
         return _PROFILE
 
     @property
-    def claim_query(self):
+    def claim_query(self) -> ClaimQueryPort:
         return self._inner.claim_query
 
     @property
-    def mutation(self):
+    def mutation(self) -> GraphMutationPort:
         return self._inner.mutation
 
     @property
-    def semantic(self):
+    def semantic(self) -> SemanticSearchPort:
         return self._inner.semantic
 
     @property
-    def inspection(self):
+    def inspection(self) -> GraphInspectionPort:
         return self._inner.inspection
 
     @property
-    def analytics(self):
+    def analytics(self) -> GraphAnalyticsPort:
         return self._inner.analytics
 
     @property
-    def snapshot(self):
+    def snapshot(self) -> GraphSnapshotPort:
         return self._inner.snapshot
 
     def capabilities(self) -> BackendCapabilities:

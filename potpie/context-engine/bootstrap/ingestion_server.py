@@ -15,23 +15,20 @@ from typing import Callable
 
 from sqlalchemy.orm import Session
 
+from adapters.outbound.connectors._bench_stubs import register_bench_stubs
 from adapters.outbound.connectors.github import (
     GitHubConnector,
     GitHubReadPort,
     PyGithubSourceControl,
 )
-from adapters.outbound.connectors._bench_stubs import register_bench_stubs
 from adapters.outbound.connectors.notion import NotionConnector
 from adapters.outbound.graph import GraphWriterPort
 from adapters.outbound.graph import Neo4jGraphWriter as _Neo4jGraphWriter
+from adapters.outbound.graph.backends import build_backend
 from adapters.outbound.graph.backends.neo4j_backend import (
     Neo4jGraphBackend as _Neo4jGraphBackend,
 )
-from adapters.outbound.graph.backends import build_backend
 from adapters.outbound.graph.context_graph_service import ContextGraphService
-from adapters.outbound.reconciliation.context_graph_tools import (
-    ContextGraphReconciliationTools,
-)
 from adapters.outbound.policy import DefaultPolicyAdapter
 from adapters.outbound.postgres.agent_checkpoint_store import (
     SqlAlchemyAgentCheckpointStore,
@@ -40,10 +37,10 @@ from adapters.outbound.postgres.agent_execution_log import (
     PostgresAgentExecutionLog,
 )
 from adapters.outbound.postgres.batch_repository import SqlAlchemyBatchRepository
-from adapters.outbound.postgres.ingestion_config import SqlAlchemyIngestionConfig
 from adapters.outbound.postgres.delegating_event_query_service import (
     DelegatingEventQueryService,
 )
+from adapters.outbound.postgres.ingestion_config import SqlAlchemyIngestionConfig
 from adapters.outbound.postgres.ingestion_event_store import (
     SqlAlchemyIngestionEventStore,
 )
@@ -51,35 +48,38 @@ from adapters.outbound.postgres.ledger import SqlAlchemyIngestionLedger
 from adapters.outbound.postgres.reconciliation_ledger import (
     SqlAlchemyReconciliationLedger,
 )
+from adapters.outbound.reconciliation.context_graph_tools import (
+    ContextGraphReconciliationTools,
+)
 from adapters.outbound.settings_env import EnvContextEngineSettings
 from application.services.graph_service import DefaultGraphService
 from application.services.source_connector_registry import SourceConnectorRegistry
-from bootstrap.sentry_metrics_runtime import configure_metrics
-from bootstrap.sentry_settings import load_sentry_settings
+from bootstrap.observability_wiring import (
+    default_observability as _shared_default_observability,
+)
+from bootstrap.observability_wiring import (
+    observability_enabled as _shared_observability_enabled,
+)
+from domain.ports.context_graph import ContextGraphPort
+from domain.ports.context_graph_job_queue import (
+    ContextGraphJobQueuePort,
+    NoOpContextGraphJobQueue,
+)
 from domain.ports.event_query_service import EventQueryService
 from domain.ports.event_stream import (
     EventStreamPublisherPort,
     NoOpEventStreamPublisher,
 )
-from domain.ports.ingestion_config import IngestionConfigPort
-from domain.ports.context_graph import ContextGraphPort
 from domain.ports.graph.backend import GraphBackend
+from domain.ports.ingestion_config import IngestionConfigPort
 from domain.ports.ingestion_submission import IngestionSubmissionService
-from domain.ports.context_graph_job_queue import (
-    ContextGraphJobQueuePort,
-    NoOpContextGraphJobQueue,
-)
+from domain.ports.observability import NoOpObservability, ObservabilityPort
 from domain.ports.policy import PolicyPort
 from domain.ports.pot_resolution import PotResolutionPort
 from domain.ports.pot_source_listing import PotSourceListingPort
-from domain.ports.observability import NoOpObservability, ObservabilityPort
-from bootstrap.observability_wiring import (
-    default_observability as _shared_default_observability,
-    observability_enabled as _shared_observability_enabled,
-)
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
-from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.services.graph_service import GraphService
+from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.telemetry import TelemetryPort
 from domain.source_references import SourceReferenceRecord
 
@@ -223,7 +223,6 @@ def build_ingestion_server(
     event_stream_publisher: EventStreamPublisherPort | None = None,
 ) -> IngestionServerContainer:
     s = settings or EnvContextEngineSettings()
-    configure_metrics(load_sentry_settings())
     telemetry_sink = telemetry or _default_telemetry()
     observability_sink = observability or _default_observability()
     # Publish to the process-global accessor so middleware / the Celery

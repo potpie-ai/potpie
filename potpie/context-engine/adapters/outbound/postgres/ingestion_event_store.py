@@ -11,7 +11,7 @@ from sqlalchemy import and_, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from adapters.outbound.postgres.models import ContextEventModel
-from domain.actor import Actor, normalize_surface
+from domain.actor import Actor, normalize_auth_method, normalize_surface
 from domain.ingestion_db_status import (
     canonical_status_to_db,
     canonical_statuses_to_db_filters,
@@ -322,13 +322,11 @@ def _row_to_actor(row: ContextEventModel) -> Actor | None:
     uid = getattr(row, "actor_user_id", None)
     if not uid:
         return None
-    surface = normalize_surface(getattr(row, "actor_surface", None)) or "http"
-    auth = getattr(row, "actor_auth_method", None) or "api_key"
-    if auth not in ("api_key", "session", "webhook_signature", "system"):
-        auth = "api_key"
+    surface = normalize_surface(row.actor_surface) or "http"
+    auth = normalize_auth_method(row.actor_auth_method) or "api_key"
     return Actor(
         user_id=str(uid),
         surface=surface,
         client_name=getattr(row, "actor_client_name", None),
-        auth_method=auth,  # type: ignore[arg-type]
+        auth_method=auth,
     )
