@@ -35,9 +35,9 @@ from potpie.cli.commands._common import set_json, set_verbose
 from potpie.cli.telemetry.context import bind_telemetry_context
 
 
-def _package_version() -> str:
+def _distribution_version(name: str) -> str:
     try:
-        return metadata.version("potpie-context-engine")
+        return metadata.version(name)
     except metadata.PackageNotFoundError:
         return "0.1.0"
 
@@ -45,7 +45,10 @@ def _package_version() -> str:
 def _version_callback(value: bool) -> None:
     if not value:
         return
-    typer.echo(f"potpie-context-engine {_package_version()}")
+    typer.echo(f"potpie {_distribution_version('potpie')}")
+    typer.echo(
+        f"potpie-context-engine {_distribution_version('potpie-context-engine')}"
+    )
     typer.echo(f"python {platform.python_version()} ({sys.executable})")
     raise typer.Exit()
 
@@ -82,7 +85,6 @@ def build_app() -> typer.Typer:
             configure_error_output,
         )
         from potpie.runtime.settings import ensure_runtime_environment_loaded
-        from potpie.runtime.telemetry import sentry_metrics
 
         set_json(json_)
         set_verbose(verbose)
@@ -93,7 +95,6 @@ def build_app() -> typer.Typer:
         bind_telemetry_context(ctx, json_output=json_)
         sentry_settings = settings.load_sentry_settings()
         sentry_runtime.configure_cli_sentry(sentry_settings)
-        sentry_metrics.configure_metrics(sentry_settings)
         configure_product_analytics(settings.load_product_analytics_settings())
 
     # Top-level commands (the four-tool surface + bootstrap + auth/login).

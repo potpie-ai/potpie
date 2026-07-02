@@ -49,10 +49,6 @@ Issues = "https://github.com/potpie-ai/potpie/issues"
 [tool.hatch.build.hooks.custom]
 path = "telemetry_build_hook.py"
 
-[tool.hatch.build.force-include]
-"potpie/cli/telemetry/_build_config.py" = "potpie/cli/telemetry/_build_config.py"
-"potpie/runtime/telemetry/_build_config.py" = "potpie/runtime/telemetry/_build_config.py"
-
 [tool.hatch.build.targets.wheel]
 packages = ["potpie"]
 include = [
@@ -115,6 +111,7 @@ potpie-context-engine = { workspace = true, editable = true }
 dev = [
     "black>=26.3.1",
     "isort>=7.0.0",
+    "mypy>=1.19.0",
     "pre-commit>=4.3.0",
     "pylint>=4.0.2",
     "pytest>=9.0.3",
@@ -125,3 +122,56 @@ dev = [
 
 [tool.ruff.lint]
 extend-select = ["S"]
+
+[tool.ruff.lint.per-file-ignores]
+"potpie/cli/auth/credentials_store.py" = ["S105", "S110"]
+"potpie/cli/auth/github.py" = ["S105", "S106"]
+"potpie/cli/auth/models.py" = ["S105"]
+"potpie/cli/auth/provider_config.py" = ["S105"]
+"potpie/cli/commands/_common.py" = ["S110", "S112"]
+"potpie/cli/commands/graph.py" = ["S110", "S607"]
+"potpie/cli/commands/ui.py" = ["S110"]
+"potpie/cli/repo_location.py" = ["S603", "S607"]
+"potpie/cli/templates/claude_plugin/hooks/potpie_nudge.py" = ["S603"]
+"tests/**/*.py" = ["S101", "S102", "S105", "S106", "S108", "S310", "S603", "S607"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+markers = [
+    "unit: unit tests",
+    "integration: integration tests",
+    "cli_auth_e2e: opt-in live CLI auth tests",
+    "premerge_journey: dedicated pre-merge CLI journey test",
+]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "potpie/context-engine"
+files = [
+    "potpie/runtime",
+    "potpie/daemon/lifecycle.py",
+    "potpie/daemon/rpc.py",
+    "potpie/daemon/client.py",
+    "potpie/daemon/main.py",
+    "potpie/daemon/process/ipc_client.py",
+    "potpie/daemon/process/launcher.py",
+    "potpie/daemon/process/pidfile.py",
+    "potpie/daemon/telemetry/sentry_runtime.py",
+    "potpie/cli/main.py",
+    "potpie/cli/commands/graph_bulk.py",
+    "potpie/cli/commands/graph_common.py",
+    "potpie/cli/commands/graph_read.py",
+    "potpie/cli/commands/graph_render.py",
+    "potpie/cli/commands/graph_runtime.py",
+    "potpie/cli/commands/graph_templates.py",
+    "potpie/cli/telemetry/sentry_runtime.py",
+]
+check_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+pretty = true
+show_error_codes = true
+warn_redundant_casts = true
+warn_unused_ignores = true

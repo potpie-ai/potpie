@@ -7,21 +7,31 @@ to empty strings.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 DEFAULT_POTPIE_SENTRY_ENVIRONMENT = "prod_oss"
 
-try:
-    from potpie.runtime.telemetry._build_config import (
-        POTPIE_SENTRY_DIST,
-        POTPIE_SENTRY_DSN,
-        POTPIE_SENTRY_ENABLED,
-        POTPIE_SENTRY_ENVIRONMENT,
-        POTPIE_SENTRY_RELEASE,
-        POTPIE_TELEMETRY_DISABLED,
-    )
-except ImportError:
+if TYPE_CHECKING:
     POTPIE_TELEMETRY_DISABLED = ""
     POTPIE_SENTRY_ENABLED = ""
     POTPIE_SENTRY_DSN = ""
     POTPIE_SENTRY_ENVIRONMENT = ""
     POTPIE_SENTRY_RELEASE = ""
     POTPIE_SENTRY_DIST = ""
+else:
+    try:
+        from potpie.runtime.telemetry._build_config import (
+            POTPIE_SENTRY_DIST,
+            POTPIE_SENTRY_DSN,
+            POTPIE_SENTRY_ENABLED,
+            POTPIE_SENTRY_ENVIRONMENT,
+            POTPIE_SENTRY_RELEASE,
+            POTPIE_TELEMETRY_DISABLED,
+        )
+    except ImportError:
+        POTPIE_TELEMETRY_DISABLED = ""
+        POTPIE_SENTRY_ENABLED = ""
+        POTPIE_SENTRY_DSN = ""
+        POTPIE_SENTRY_ENVIRONMENT = ""
+        POTPIE_SENTRY_RELEASE = ""
+        POTPIE_SENTRY_DIST = ""

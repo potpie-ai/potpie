@@ -234,7 +234,7 @@ class SqlAlchemyBatchRepository(BatchRepositoryPort):
         self._db.commit()
 
     def get_open_batch_id_for_pot(self, pot_id: str) -> str | None:
-        row_id = self._db.scalar(
+        row_id = self._db.execute(
             select(ContextReconciliationBatchModel.id)
             .where(
                 ContextReconciliationBatchModel.pot_id == pot_id,
@@ -243,7 +243,7 @@ class SqlAlchemyBatchRepository(BatchRepositoryPort):
             .order_by(ContextReconciliationBatchModel.created_at.asc())
             .limit(1)
         )
-        return row_id  # type: ignore[return-value]
+        return row_id.scalar_one_or_none()
 
     def get_latest_batch_id_for_event(self, event_id: str) -> str | None:
         """Most-recent batch this event belongs to (for the activity stream).
@@ -251,7 +251,7 @@ class SqlAlchemyBatchRepository(BatchRepositoryPort):
         An event is re-added to a fresh open batch on retry, so we want the
         newest membership — that's the run the user is watching.
         """
-        row_id = self._db.scalar(
+        row_id = self._db.execute(
             select(ContextReconciliationBatchEventModel.batch_id)
             .join(
                 ContextReconciliationBatchModel,
@@ -262,7 +262,7 @@ class SqlAlchemyBatchRepository(BatchRepositoryPort):
             .order_by(ContextReconciliationBatchModel.created_at.desc())
             .limit(1)
         )
-        return row_id  # type: ignore[return-value]
+        return row_id.scalar_one_or_none()
 
     def mark_batch_failed(self, batch_id: str, error: str) -> None:
         self._db.execute(

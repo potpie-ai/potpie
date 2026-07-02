@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from importlib import metadata
 from typing import ClassVar
 
-from potpie.runtime.settings import RuntimeSettings, build_git_sha, load_runtime_settings
+from potpie.runtime.env import env_value
+from potpie.runtime.settings import (
+    RuntimeSettings,
+    build_git_sha,
+    load_runtime_settings,
+)
 
 
 @dataclass(frozen=True)
@@ -61,11 +66,7 @@ def telemetry_environment() -> str:
 
 
 def _env(name: str) -> str | None:
-    value = os.getenv(name)
-    if value is None:
-        return None
-    stripped = value.strip()
-    return stripped or None
+    return env_value(os.environ, name)
 
 
 __all__ = [

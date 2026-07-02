@@ -17,12 +17,16 @@ parse boundary and normalized into ``operations=[...]`` immediately.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from domain.graph_contract import (
     GRAPH_CONTRACT_VERSION,
     ONTOLOGY_VERSION,
 )
+
+if TYPE_CHECKING:
+    from domain.graph_mutations import ProvenanceContext
+    from domain.reconciliation import MutationBatch
 
 
 class SemanticMutationParseError(ValueError):
@@ -64,7 +68,9 @@ class GraphEntityRef:
             raise SemanticMutationParseError("entity ref is missing 'key'")
         props = raw.get("properties") or {}
         if not isinstance(props, Mapping):
-            raise SemanticMutationParseError("entity ref 'properties' must be an object")
+            raise SemanticMutationParseError(
+                "entity ref 'properties' must be an object"
+            )
         return cls(
             key=key,
             type=_opt_str(raw.get("type")),
@@ -361,10 +367,11 @@ class SemanticMutationPlan:
     accepted_ops: tuple[LoweredOperation, ...] = ()
     review_required_ops: tuple[LoweredOperation, ...] = ()
     deferred_ops: tuple[LoweredOperation, ...] = ()
-    # The lowered internal batch, set only when there is at least one applicable
-    # op. Typed as Any to avoid importing the write tier into this DTO module.
-    batch: Any = None
-    provenance: Any = None
+    # The lowered internal batch/provenance are set only when there is at least
+    # one applicable op. Imports stay type-checking-only so this DTO module does
+    # not create runtime coupling to the write tier.
+    batch: MutationBatch | None = None
+    provenance: ProvenanceContext | None = None
     warnings: tuple[str, ...] = ()
 
     @property

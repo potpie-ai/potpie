@@ -129,3 +129,22 @@ class TestForceFlush:
         assert body["batch_id"] is None
         assert body["status"] == "no_pending_batch"
         container.jobs.enqueue_batch.assert_not_called()
+
+    def test_returns_none_status_when_nothing_pending_without_queue(self) -> None:
+        container = _build_container()
+        container.batch_repository.return_value.get_open_batch_id_for_pot.return_value = None
+        container.jobs = None
+        client = _client(container)
+        r = client.post("/api/v1/context/pots/p1/ingest/flush")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["batch_id"] is None
+        assert body["status"] == "no_pending_batch"
+
+    def test_returns_503_when_open_batch_has_no_queue(self) -> None:
+        container = _build_container()
+        container.jobs = None
+        client = _client(container)
+        r = client.post("/api/v1/context/pots/p1/ingest/flush")
+        assert r.status_code == 503
+        assert r.json()["detail"] == "Context graph job queue is not configured."

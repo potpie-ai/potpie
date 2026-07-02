@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
 import pytest
@@ -60,10 +61,8 @@ class _ContextGraph:
 def test_build_ingestion_server_does_not_configure_product_sentry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[object] = []
-    monkeypatch.setattr(
-        "potpie.runtime.telemetry.sentry_metrics.configure_metrics",
-        lambda settings: calls.append(settings),
+    monkeypatch.delitem(
+        sys.modules, "potpie.runtime.telemetry.sentry_metrics", raising=False
     )
     _patch_container_graph(monkeypatch)
 
@@ -76,7 +75,7 @@ def test_build_ingestion_server_does_not_configure_product_sentry(
             observability=NoOpObservability(),
         )
 
-    assert calls == []
+    assert "potpie.runtime.telemetry.sentry_metrics" not in sys.modules
 
 
 def test_standalone_container_delegates_to_ingestion_server_build(

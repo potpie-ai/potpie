@@ -9,15 +9,24 @@ import httpx
 
 from adapters.outbound.pots.local_pot_store import default_home
 from domain.errors import CapabilityNotImplemented, ContextEngineDisabled, PotNotFound
+from domain.ports.daemon.lifecycle import DaemonDiscovery
 from potpie.daemon.lifecycle import Daemon
-from potpie.daemon.rpc import decode, encode
+from potpie.daemon.rpc import (
+    decode,
+    encode,
+    is_rpc_attr_allowed,
+    is_rpc_method_allowed,
+    rpc_child_surface,
+)
 
 
 @dataclass(slots=True)
 class DaemonRpcClient:
     """Small local HTTP client that calls operations inside the daemon."""
 
-    daemon: Daemon = field(default_factory=lambda: Daemon(home=default_home(), in_process=False))
+    daemon: Daemon = field(
+        default_factory=lambda: Daemon(home=default_home(), in_process=False)
+    )
     timeout_s: float = 30.0
 
     def call(self, surface: str, method: str, *args: Any, **kwargs: Any) -> Any:
@@ -37,9 +46,7 @@ class DaemonRpcClient:
                 timeout=self.timeout_s,
             )
         except httpx.RequestError as exc:
-            raise ContextEngineDisabled(
-                f"Potpie daemon is unavailable: {exc}"
-            ) from exc
+            raise ContextEngineDisabled(f"Potpie daemon is unavailable: {exc}") from exc
         data = _response_json(response)
         if response.status_code >= 400 or not data.get("ok", False):
             _raise_remote_error(data)
@@ -56,15 +63,13 @@ class DaemonRpcClient:
                 timeout=self.timeout_s,
             )
         except httpx.RequestError as exc:
-            raise ContextEngineDisabled(
-                f"Potpie daemon is unavailable: {exc}"
-            ) from exc
+            raise ContextEngineDisabled(f"Potpie daemon is unavailable: {exc}") from exc
         data = _response_json(response)
         if response.status_code >= 400 or not data.get("ok", False):
             _raise_remote_error(data)
         return decode(data.get("result"))
 
-    def _rpc_discovery(self) -> dict[str, str]:
+    def _rpc_discovery(self) -> DaemonDiscovery:
         discovery = self.daemon.discovery()
         if discovery is None:
             raise ContextEngineDisabled(
@@ -81,27 +86,20 @@ class DaemonRpcClient:
 class RemoteSurface:
     """Dynamic proxy for a ``HostShell`` surface or nested capability port."""
 
-    _NESTED = frozenset(
-        {
-            "mutation",
-            "claim_query",
-            "semantic",
-            "inspection",
-            "analytics",
-            "snapshot",
-        }
-    )
-    _REMOTE_ATTRS = frozenset({"profile"})
-
     def __init__(self, client: DaemonRpcClient, path: str) -> None:
         self._client = client
         self._path = path
 
     def __getattr__(self, name: str) -> Any:
-        if name in self._NESTED:
-            return RemoteSurface(self._client, f"{self._path}.{name}")
-        if name in self._REMOTE_ATTRS:
+        child_surface = rpc_child_surface(self._path, name)
+        if child_surface is not None:
+            return RemoteSurface(self._client, child_surface)
+        if is_rpc_attr_allowed(self._path, name):
             return self._client.attr(self._path, name)
+        if not is_rpc_method_allowed(self._path, name):
+            raise AttributeError(
+                f"Remote surface {self._path!r} has no RPC member {name!r}"
+            )
 
         def _call(*args: Any, **kwargs: Any) -> Any:
             return self._client.call(self._path, name, *args, **kwargs)

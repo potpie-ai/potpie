@@ -6,8 +6,8 @@ import sys
 from typing import Any
 
 from potpie.cli.auth.atlassian_read import _prompt_workspace
-from adapters.outbound.cli_auth.credentials_store import save_linear_workspace_prefs
-from adapters.outbound.cli_auth.linear_read_client import (
+from potpie.cli.auth.credentials_store import save_linear_workspace_prefs
+from potpie.cli.auth.linear_read_client import (
     LinearReadError,
     activate_linear_organization,
     fetch_linear_issues_in_team,

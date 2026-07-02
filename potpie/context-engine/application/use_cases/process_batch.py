@@ -31,6 +31,7 @@ from domain.context_events import ContextEvent
 from domain.ports.agent_checkpoint_store import AgentCheckpointStorePort
 from domain.ports.agent_execution_log import (
     AgentExecutionLogPort,
+    ExecutionRecordType,
     NoOpAgentExecutionLog,
 )
 from domain.ports.batch_repository import BatchRepositoryPort
@@ -133,7 +134,7 @@ def process_batch(
     _seq = [resume.last_seq if resume else 0]
 
     def _emit(
-        record_type: str,
+        record_type: ExecutionRecordType,
         payload: dict[str, Any],
         *,
         event_id: str | None = None,
@@ -143,7 +144,7 @@ def process_batch(
             exec_log.append(
                 batch_id=batch.id,
                 seq=_seq[0],
-                record_type=record_type,  # type: ignore[arg-type]
+                record_type=record_type,
                 payload=payload,
                 event_id=event_id,
             )

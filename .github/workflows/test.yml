@@ -87,6 +87,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --all-packages --no-cache
 
+      - name: Run root runtime scoped type checks
+        run: uv run --project . mypy
+
+      - name: Run context-engine scoped type checks
+        working-directory: potpie/context-engine
+        run: uv run --project . mypy
+
       - name: Run context-engine package tests
         working-directory: potpie/context-engine
         env:

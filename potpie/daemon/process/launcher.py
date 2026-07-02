@@ -16,7 +16,9 @@ import subprocess
 import sys
 import time
 
+from potpie.daemon.process.ipc_client import parse_discovery
 from potpie.daemon.process.pidfile import read_pid_file
+from domain.ports.daemon.lifecycle import DaemonStartResult
 from potpie.runtime.settings import RuntimeSettings, project_child_environment
 
 
@@ -36,7 +38,7 @@ def start_detached(
     *,
     ready_timeout_s: float = 60.0,
     backend: str | None = None,
-) -> dict:
+) -> DaemonStartResult:
     """Start the daemon detached for ``home`` and block until it is fully serving.
 
     Returns discovery metadata once the daemon signals readiness (discovery file
@@ -80,18 +82,26 @@ def start_detached(
     while time.time() < deadline:
         if disc_file.exists():
             try:
-                disc = json.loads(disc_file.read_text())
+                raw_discovery = json.loads(disc_file.read_text())
             except (OSError, json.JSONDecodeError):
-                disc = {}
-            bind = disc.get("bind", "")
-            base_url = disc.get("base_url", "")
-            socket_path = bind[len("unix:") :] if bind.startswith("unix:") else bind
-            return {
+                raw_discovery = {}
+            discovery = (
+                parse_discovery(raw_discovery)
+                if isinstance(raw_discovery, dict)
+                else None
+            )
+            if not discovery or not discovery.get("base_url"):
+                time.sleep(0.1)
+                continue
+            result: DaemonStartResult = {
                 "pid": proc.pid,
-                "socket": socket_path,
-                "bind": bind,
-                "url": base_url,
+                "url": discovery["base_url"],
             }
+            if "backend" in discovery:
+                result["backend"] = discovery["backend"]
+            if "log_file" in discovery:
+                result["log_file"] = discovery["log_file"]
+            return result
         if proc.poll() is not None:
             raise DaemonStartError(
                 f"daemon failed to start (exit {proc.returncode})", log_path=log_path
@@ -140,6 +150,8 @@ def _unlink(path: pathlib.Path) -> None:
 
 
 def _load_daemon_child_runtime_settings() -> RuntimeSettings:
-    from potpie.cli.telemetry.settings import load_cli_runtime_settings
+    from potpie.runtime.telemetry.preferences import (
+        load_runtime_settings_with_telemetry_preference,
+    )
 
-    return load_cli_runtime_settings()
+    return load_runtime_settings_with_telemetry_preference().runtime

@@ -28,7 +28,7 @@ from domain.errors import (
     ContextEngineDisabled,
     PotNotFound,
 )
-from domain.ports.cli_auth.credentials import CredentialStore
+from potpie.cli.auth.credentials import CredentialStore
 
 from potpie.cli.repo_location import (
     current_git_remote as shared_current_git_remote,
@@ -113,12 +113,12 @@ def get_store() -> CredentialStore:
     """Return the process-wide ``CredentialStore`` (built lazily).
 
     The auth/credential subsystem persists through this domain port; the concrete
-    is chosen at the composition root (``bootstrap.cli_auth_wiring``), so this
+    is chosen at the composition root (``potpie.cli.auth.wiring``), so this
     inbound module never imports an adapter. The default is the real
     file-backed store; tests inject an in-memory fake via ``set_store``.
     """
     if _state["store"] is None:
-        from bootstrap.cli_auth_wiring import build_credential_store
+        from potpie.cli.auth.wiring import build_credential_store
 
         _state["store"] = build_credential_store()
     return _state["store"]

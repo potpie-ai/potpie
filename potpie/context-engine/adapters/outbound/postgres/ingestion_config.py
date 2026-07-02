@@ -12,13 +12,14 @@ from domain.ports.ingestion_config import (
     IngestionConfig,
     IngestionConfigPort,
     IngestionMode,
+    parse_ingestion_mode,
 )
 
 
 def _to_config(row: ContextPotIngestionConfigModel) -> IngestionConfig:
     return IngestionConfig(
         pot_id=row.pot_id,
-        mode=row.mode,  # type: ignore[arg-type]
+        mode=parse_ingestion_mode(row.mode),
         window_minutes=row.window_minutes,
         min_batch_size=row.min_batch_size,
     )
@@ -123,7 +124,7 @@ class SqlAlchemyIngestionConfig(IngestionConfigPort):
         return [
             IngestionConfig(
                 pot_id=r.pot_id,
-                mode=r.mode,
+                mode=parse_ingestion_mode(r.mode),
                 window_minutes=r.window_minutes,
                 min_batch_size=r.min_batch_size,
             )

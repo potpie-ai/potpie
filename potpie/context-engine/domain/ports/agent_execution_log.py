@@ -48,6 +48,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
+ModelPartRecordType = Literal["text", "thinking"]
+
 ExecutionRecordType = Literal[
     "run_started",
     "chunk_marker",
@@ -109,7 +111,7 @@ class AgentExecutionLogPort(Protocol):
         *,
         batch_id: str,
         seq: int,
-        record_type: Literal["text", "thinking"],
+        record_type: ModelPartRecordType,
         part_id: str,
         content: str,
         done: bool,
@@ -192,7 +194,7 @@ class NoOpAgentExecutionLog:
         *,
         batch_id: str,
         seq: int,
-        record_type: Literal["text", "thinking"],
+        record_type: ModelPartRecordType,
         part_id: str,
         content: str,
         done: bool,
@@ -239,6 +241,7 @@ class NoOpAgentExecutionLog:
 __all__ = [
     "AgentExecutionLogPort",
     "ExecutionRecordType",
+    "ModelPartRecordType",
     "NoOpAgentExecutionLog",
     "ResumeState",
     "TERMINAL_RECORD_TYPES",

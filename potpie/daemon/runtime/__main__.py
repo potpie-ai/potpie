@@ -1,9 +1,8 @@
-"""Detached daemon child entrypoint: ``python -m potpie.daemon.runtime run --home <home>``.
+"""Legacy operation-runtime entrypoint.
 
-Invoked by ``potpie.daemon.process.launcher.start_detached`` (never a public
-CLI command). Builds an in-process ``HostShell``, derives the daemon manifest in code,
-and runs the ``DaemonRuntime`` — exposing the host's services over the socket — until a
-SIGTERM/SIGINT stops it.
+The public CLI daemon is ``python -m potpie.daemon.main`` and advertises the
+HTTP/RPC ``discovery.json`` contract. This module remains only for direct tests
+and experiments around the older operation-registry transport.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ def _serve(home: pathlib.Path) -> None:
     host = build_potpie_host_shell()
     cfg = build_daemon_config(home)
     pid_file = home / "daemon.pid"
-    disc_file = home / "discovery.json"
+    disc_file = home / "legacy-runtime-discovery.json"
 
     write_pid_file(pid_file, os.getpid())
     http_t = next((t for t in cfg.transports if t.type == "http"), None)

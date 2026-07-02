@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from bootstrap.host_wiring import build_host_shell, default_host_mode
+from adapters.outbound.skills.template_resources import (
+    PackageTemplateResources,
+    TemplateResourceProvider,
+)
 from domain.ports.daemon.lifecycle import DaemonLifecyclePort
 from domain.ports.graph.backend import GraphBackend
 from domain.ports.ledger.client import EventLedgerClientPort
@@ -22,9 +26,9 @@ def build_potpie_host_shell(
     observability: ObservabilityPort | None = None,
     settings: Any = None,
     daemon_lifecycle: DaemonLifecyclePort | None = None,
+    template_resources: TemplateResourceProvider | None = None,
 ) -> HostShell:
     """Build the product host shell with the root-owned daemon lifecycle."""
-    _configure_cli_template_resources()
     daemon_lifecycle = daemon_lifecycle or Daemon(
         in_process=(default_host_mode() != "daemon")
     )
@@ -35,14 +39,14 @@ def build_potpie_host_shell(
         observability=observability,
         settings=settings,
         daemon_lifecycle=daemon_lifecycle,
+        template_resources=template_resources or cli_template_resources(),
     )
 
 
-def _configure_cli_template_resources() -> None:
-    from adapters.outbound.skills import agent_installer, bundle_catalog
+def cli_template_resources() -> TemplateResourceProvider:
+    """Root product templates packaged under ``potpie.cli``."""
 
-    agent_installer.configure_template_package("potpie.cli")
-    bundle_catalog.configure_template_package("potpie.cli")
+    return PackageTemplateResources("potpie.cli")
 
 
-__all__ = ["build_potpie_host_shell"]
+__all__ = ["build_potpie_host_shell", "cli_template_resources"]

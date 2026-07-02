@@ -24,7 +24,7 @@ from potpie.cli.telemetry.onboarding_events import (
     now_ms,
     sanitized_failure_kind,
 )
-from adapters.outbound.cli_auth.potpie_api_config import (
+from potpie.cli.auth.potpie_api_config import (
     resolve_potpie_api_base_url,
     resolve_potpie_auth_config,
 )

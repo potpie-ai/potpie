@@ -4,11 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from adapters.outbound.pots.local_pot_store import default_home
 from domain.errors import CapabilityNotImplemented
 from domain.lifecycle import SKIPPED, SetupPlan, StepResult
+from domain.ports.daemon.lifecycle import (
+    DaemonDiscovery,
+    DaemonHealth,
+    DaemonInstallResult,
+    DaemonRestartResult,
+    DaemonStartResult,
+    DaemonStatus,
+    DaemonStopResult,
+)
 
 
 @dataclass(slots=True)
@@ -18,10 +26,10 @@ class InProcessDaemonLifecycle:
     home: Path = field(default_factory=default_home)
     in_process: bool = True
 
-    def discovery(self) -> dict[str, str] | None:
+    def discovery(self) -> DaemonDiscovery | None:
         return None
 
-    def status(self) -> dict[str, Any]:
+    def status(self) -> DaemonStatus:
         return {
             "up": True,
             "mode": "in_process",
@@ -29,10 +37,10 @@ class InProcessDaemonLifecycle:
             "detail": "in-process host; detached daemon is owned by root potpie",
         }
 
-    def health(self) -> dict[str, Any]:
+    def health(self) -> DaemonHealth:
         return {"live": True, "mode": "in_process"}
 
-    def logs(self, *, follow: bool = False) -> list[str]:
+    def logs(self) -> list[str]:
         return []
 
     def ensure(self, plan: SetupPlan | None = None) -> StepResult:
@@ -43,27 +51,27 @@ class InProcessDaemonLifecycle:
             metadata={"mode": "in_process"},
         )
 
-    def install(self) -> dict[str, Any]:
+    def install(self) -> DaemonInstallResult:
         return {
             "installed": False,
             "detail": "detached daemon installation is owned by root potpie",
         }
 
-    def start(self, *, backend: str | None = None) -> dict[str, Any]:
+    def start(self, *, backend: str | None = None) -> DaemonStartResult:
         raise CapabilityNotImplemented(
             "daemon.start",
             detail="potpie-context-engine does not own the detached daemon",
             recommended_next_action="run this command through the root 'potpie' CLI",
         )
 
-    def stop(self) -> dict[str, Any]:
+    def stop(self) -> DaemonStopResult:
         raise CapabilityNotImplemented(
             "daemon.stop",
             detail="potpie-context-engine does not own the detached daemon",
             recommended_next_action="run this command through the root 'potpie' CLI",
         )
 
-    def restart(self) -> dict[str, Any]:
+    def restart(self) -> DaemonRestartResult:
         raise CapabilityNotImplemented(
             "daemon.restart",
             detail="potpie-context-engine does not own the detached daemon",

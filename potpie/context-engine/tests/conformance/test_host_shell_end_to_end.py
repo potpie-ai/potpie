@@ -12,6 +12,7 @@ import pytest
 
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from adapters.outbound.ledger.self_hosted_client import FixtureEventLedgerClient
+from adapters.outbound.skills.template_resources import PackageTemplateResources
 from bootstrap.host_wiring import build_host_shell
 from domain.context_records import ContextRecordValidationError
 from domain.lifecycle import (
@@ -37,7 +38,10 @@ def host(tmp_path, monkeypatch):
     # so record→resolve round-trips within the test process.
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    return build_host_shell(backend=InMemoryGraphBackend())
+    return build_host_shell(
+        backend=InMemoryGraphBackend(),
+        template_resources=PackageTemplateResources("potpie.cli"),
+    )
 
 
 def test_setup_record_resolve_status_journey(host):

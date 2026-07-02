@@ -23,6 +23,19 @@ from typing import Literal, Protocol
 
 IngestionMode = Literal["immediate", "windowed"]
 
+_INGESTION_MODE_BY_VALUE: dict[str, IngestionMode] = {
+    "immediate": "immediate",
+    "windowed": "windowed",
+}
+
+
+def parse_ingestion_mode(value: str) -> IngestionMode:
+    """Parse a stored/configured mode into the domain Literal."""
+    try:
+        return _INGESTION_MODE_BY_VALUE[value.strip().lower()]
+    except KeyError as exc:
+        raise ValueError(f"unknown ingestion mode: {value}") from exc
+
 
 @dataclass(slots=True, frozen=True)
 class IngestionConfig:
@@ -140,4 +153,5 @@ __all__ = [
     "IngestionConfigPort",
     "IngestionMode",
     "InMemoryIngestionConfig",
+    "parse_ingestion_mode",
 ]

@@ -1,4 +1,8 @@
-"""HTTP client for the running daemon (UDS-preferred)."""
+"""Discovery helpers for the root HTTP/RPC daemon.
+
+The legacy UDS operation transport still has a test-only client below, but the
+active CLI daemon path uses ``base_url`` + bearer token discovery exclusively.
+"""
 
 from __future__ import annotations
 
@@ -7,12 +11,14 @@ import pathlib
 
 import httpx
 
+from domain.ports.daemon.lifecycle import DaemonDiscovery
+
 
 def discovery_path(home: pathlib.Path) -> pathlib.Path:
     return home / "discovery.json"
 
 
-def load_discovery(home: pathlib.Path) -> dict[str, str] | None:
+def load_discovery(home: pathlib.Path) -> DaemonDiscovery | None:
     p = discovery_path(home)
     if not p.exists():
         return None
@@ -22,7 +28,46 @@ def load_discovery(home: pathlib.Path) -> dict[str, str] | None:
         return None
     if not isinstance(raw, dict):
         return None
-    return {str(key): str(value) for key, value in raw.items()}
+    return parse_discovery(raw)
+
+
+def parse_discovery(raw: dict[object, object]) -> DaemonDiscovery | None:
+    """Parse active daemon discovery JSON without flattening typed fields to strings."""
+    discovery: DaemonDiscovery = {}
+    transport = raw.get("transport")
+    if isinstance(transport, str):
+        discovery["transport"] = transport
+    base_url = raw.get("base_url")
+    if isinstance(base_url, str):
+        discovery["base_url"] = base_url
+    token = raw.get("token")
+    if isinstance(token, str):
+        discovery["token"] = token
+    log_file = raw.get("log_file")
+    if isinstance(log_file, str):
+        discovery["log_file"] = log_file
+    backend = raw.get("backend")
+    if isinstance(backend, str):
+        discovery["backend"] = backend
+    pid = raw.get("pid")
+    if isinstance(pid, int):
+        discovery["pid"] = pid
+    elif isinstance(pid, str):
+        try:
+            discovery["pid"] = int(pid)
+        except ValueError:
+            pass
+    return discovery
+
+
+def legacy_client_for(home: pathlib.Path) -> httpx.Client:
+    """Return a client for the legacy UDS/TCP operation runtime.
+
+    This is intentionally not used by the public CLI daemon commands. It remains
+    for direct tests of the legacy operation transport while the active daemon
+    contract is HTTP/RPC discovery.
+    """
+    return _legacy_client_for(home)
 
 
 def _tcp_base_url(bind: str) -> str:
@@ -41,13 +86,17 @@ def _tcp_base_url(bind: str) -> str:
     return f"http://{host}:{port}"
 
 
-def client_for(home: pathlib.Path) -> httpx.Client:
-    """Return an httpx.Client connected to the running daemon. The caller owns and must close it
-    (use `with client_for(home) as c:`)."""
-    d = load_discovery(home)
-    if not d:
+def _legacy_client_for(home: pathlib.Path) -> httpx.Client:
+    path = discovery_path(home)
+    if not path.exists():
         raise RuntimeError("daemon not running (no discovery file)")
-    bind = d.get("bind")
+    try:
+        raw = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        raise RuntimeError("daemon not running (invalid discovery file)")
+    if not isinstance(raw, dict):
+        raise RuntimeError("daemon not running (invalid discovery file)")
+    bind = raw.get("bind")
     if not isinstance(bind, str) or not bind:
         raise RuntimeError("discovery file missing 'bind' field")
     if bind.startswith("unix:"):

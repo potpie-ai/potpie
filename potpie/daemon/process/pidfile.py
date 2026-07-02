@@ -51,13 +51,16 @@ def remove_pid_file(path: pathlib.Path) -> None:
         pass
 
 
-def write_discovery(path: pathlib.Path, **fields) -> None:
+def write_discovery(path: pathlib.Path, **fields: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_private_text(path, json.dumps(fields))
 
 
-def read_discovery(path: pathlib.Path) -> dict:
-    return json.loads(path.read_text())
+def read_discovery(path: pathlib.Path) -> dict[str, object]:
+    payload = json.loads(path.read_text())
+    if not isinstance(payload, dict):
+        raise ValueError("daemon discovery file must contain a JSON object")
+    return payload
 
 
 def _write_private_text(path: pathlib.Path, data: str) -> None:

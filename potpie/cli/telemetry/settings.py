@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+import os
+from dataclasses import dataclass
 from typing import ClassVar, Literal
 
-from potpie.cli.telemetry.preferences import telemetry_enabled_by_preference
-from potpie.runtime.settings import RuntimeSettings, load_runtime_settings
+from potpie.runtime.env import clean_env_value, env_value, flag_value
+from potpie.runtime.settings import RuntimeSettings
+from potpie.runtime.telemetry.preferences import (
+    TelemetryState,
+    load_runtime_settings_with_telemetry_preference,
+)
 from potpie.runtime.telemetry.sentry_settings import (
     SentrySettings,
     default_cli_release,
@@ -12,8 +17,8 @@ from potpie.runtime.telemetry.sentry_settings import (
     telemetry_environment,
 )
 
-TelemetryState = Literal["blocked", "disabled", "enabled"]
 TelemetrySinkStatus = Literal["anonymous", "blocked", "disabled"]
+_CODE_DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com"
 
 
 @dataclass(frozen=True)
@@ -54,14 +59,10 @@ class ProductAnalyticsSettings:
 
 
 def load_telemetry_resolution() -> TelemetryResolution:
-    runtime = load_runtime_settings()
-    if runtime.telemetry_disabled:
-        return TelemetryResolution(runtime=runtime, telemetry="blocked")
-    if telemetry_enabled_by_preference():
-        return TelemetryResolution(runtime=runtime, telemetry="enabled")
+    resolution = load_runtime_settings_with_telemetry_preference()
     return TelemetryResolution(
-        runtime=replace(runtime, telemetry_disabled=True),
-        telemetry="disabled",
+        runtime=resolution.runtime,
+        telemetry=resolution.telemetry,
     )
 
 
@@ -91,20 +92,34 @@ def load_telemetry_status() -> TelemetryStatus:
 def _product_analytics_settings_from_runtime(
     settings: RuntimeSettings,
 ) -> ProductAnalyticsSettings:
+    defaults = _load_product_analytics_defaults()
+    posthog_enabled = _flag(
+        _env("POTPIE_POSTHOG_ENABLED") or defaults.get("posthog_enabled") or "1"
+    )
+    product_analytics_enabled = _flag(
+        _env("POTPIE_PRODUCT_ANALYTICS_ENABLED")
+        or defaults.get("product_analytics_enabled")
+        or "1"
+    )
+    api_key = _env("POTPIE_POSTHOG_API_KEY") or defaults.get("posthog_api_key")
+    host = (
+        _env("POTPIE_POSTHOG_HOST")
+        or defaults.get("posthog_host")
+        or _CODE_DEFAULT_POSTHOG_HOST
+    ).rstrip("/")
     return ProductAnalyticsSettings(
         enabled=(
-            settings.posthog_api_key is not None
-            and settings.product_analytics_enabled
+            api_key is not None
+            and posthog_enabled
+            and product_analytics_enabled
             and not settings.telemetry_disabled
         ),
-        api_key=settings.posthog_api_key,
-        host=settings.posthog_host,
+        api_key=api_key,
+        host=host,
     )
 
 
-def _sink_status(
-    enabled: bool, telemetry: TelemetryState
-) -> TelemetrySinkStatus:
+def _sink_status(enabled: bool, telemetry: TelemetryState) -> TelemetrySinkStatus:
     if telemetry == "blocked":
         return "blocked"
     if telemetry == "disabled":
@@ -112,6 +127,57 @@ def _sink_status(
     if enabled:
         return "anonymous"
     return "disabled"
+
+
+def _load_product_analytics_defaults() -> dict[str, str]:
+    defaults: dict[str, str] = {}
+    try:
+        from potpie.cli.telemetry import _build_config as posthog_defaults
+    except ImportError:
+        return defaults
+    _copy_constant(
+        defaults,
+        "posthog_enabled",
+        posthog_defaults,
+        "POTPIE_POSTHOG_ENABLED",
+    )
+    _copy_constant(
+        defaults,
+        "product_analytics_enabled",
+        posthog_defaults,
+        "POTPIE_PRODUCT_ANALYTICS_ENABLED",
+    )
+    _copy_constant(
+        defaults,
+        "posthog_api_key",
+        posthog_defaults,
+        "POTPIE_POSTHOG_API_KEY",
+    )
+    _copy_constant(defaults, "posthog_host", posthog_defaults, "POTPIE_POSTHOG_HOST")
+    return defaults
+
+
+def _copy_constant(
+    target: dict[str, str],
+    key: str,
+    source: object,
+    name: str,
+) -> None:
+    value = _clean(getattr(source, name, None))
+    if value is not None:
+        target[key] = value
+
+
+def _env(name: str) -> str | None:
+    return env_value(os.environ, name)
+
+
+def _clean(value: object) -> str | None:
+    return clean_env_value(value)
+
+
+def _flag(value: str) -> bool:
+    return flag_value(value)
 
 
 __all__ = [

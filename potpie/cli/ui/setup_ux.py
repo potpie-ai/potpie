@@ -183,13 +183,24 @@ def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any
         AGENT_TYPES,
         install_agent_bundle,
     )
+    from potpie.runtime import cli_template_resources
 
     results: list[tuple[str, Any]] = []
+    template_resources = cli_template_resources()
     for agent in agents:
         key = agent.strip().lower()
         if key not in AGENT_TYPES:
             continue
-        results.append((key, install_agent_bundle(repo, agent=key)))
+        results.append(
+            (
+                key,
+                install_agent_bundle(
+                    repo,
+                    agent=key,
+                    template_resources=template_resources,
+                ),
+            )
+        )
     return results
 
 

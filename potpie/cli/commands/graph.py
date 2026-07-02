@@ -8,53 +8,79 @@ that lack them) surface as the structured not-implemented contract.
 from __future__ import annotations
 
 import json
-import re
-import sys
-import time
-from collections.abc import Mapping
-from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import typer
 from application.services.graph_workbench import (
-    graph_error_envelope,
-    graph_not_implemented_envelope,
     graph_success_envelope,
-    new_graph_request_id,
     normalize_catalog_result,
-    normalize_workbench_result,
 )
-from bootstrap.observability_runtime import get_observability
 from domain.errors import CapabilityNotImplemented
-from domain.graph_contract import GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION
-from domain.graph_contract import ONTOLOGY_VERSION
-from domain.graph_workbench import (
-    GRAPH_WORKBENCH_COMMANDS,
-    GraphUnsupported,
-    GraphWorkbenchStatus,
-)
 from domain.graph_workbench_ontology import describe_contract
 from domain.nudge import NUDGE_EVENT_HELP
-from domain.ports.observability import SPAN_KIND_INTERNAL
 
 from potpie.cli.commands._common import (
-    EXIT_UNAVAILABLE,
     EXIT_VALIDATION,
     contract,
     emit,
     empty_pot_warnings,
     fail,
     get_host,
-    is_json,
-    json_error_formatter,
     pot_scope_human,
-    pot_scope_info,
     resolve_pot_id,
 )
-from potpie.cli.telemetry.product_analytics import AnalyticsValue
-from potpie.cli.telemetry.usage_events import (
-    capture_usage_command_succeeded,
+from potpie.cli.commands.graph_bulk import (
+    _bulk_commit_summary,
+    _bulk_chunk_entry,
+    _bulk_human,
+    _bulk_issues_from_proposal,
+    _bulk_next_action,
+    _bulk_proposal_summary,
+    _bulk_run_status,
+    _build_bulk_chunks,
+    _bulk_skipped_chunk,
+    _load_bulk_mutation_payloads,
+    _load_json,
+    _new_bulk_run_payload,
+    _write_bulk_manifest,
+)
+from potpie.cli.commands.graph_common import (
+    _parse_created_by,
+    _parse_predicates,
+    _parse_scope,
+    _parse_ttl_seconds,
+    _resolve_repo_scope,
+    _safe,
+)
+from potpie.cli.commands.graph_read import (
+    _effective_requested_format,
+    _emit_read,
+    _is_timeline_view,
+    _resolve_time_bounds,
+    _service_limit_for_read,
+    _with_read_context,
+)
+from potpie.cli.commands.graph_runtime import (
+    _emit_graph_read,
+    _emit_graph_result,
+    _emit_inbox_result,
+    _emit_quality_result,
+    _graph_command,
+    _legacy_warning,
+)
+from potpie.cli.commands.graph_templates import _MUTATION_TEMPLATES
+from potpie.cli.commands.graph_render import (
+    _catalog_human,
+    _catalog_payload_for_profile,
+    _commit_human,
+    _data_plane_status_payload,
+    _describe_human,
+    _graph_status_payload,
+    _history_human,
+    _neighborhood_human,
+    _neighborhood_relation,
+    _nudge_human,
+    _proposal_human,
 )
 
 graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
@@ -69,393 +95,20 @@ graph_app.add_typer(quality_app, name="quality")
 graph_app.add_typer(bulk_app, name="bulk")
 
 
-class _GraphCliCommandContext:
-    def __init__(self, command: str) -> None:
-        self.command = command
-        self.request_id = new_graph_request_id()
-        self.pot_id: str | None = None
-        self.subgraph_versions: dict[str, int] = {}
-        self.telemetry_result = "ok"
-        self.telemetry_error_code = "none"
-        self.telemetry_attributes: dict[str, str] = {}
-
-    def set_pot_id(self, pot_id: str | None) -> None:
-        self.pot_id = pot_id
-
-    def set_subgraph_versions(self, versions: Mapping[str, Any] | None) -> None:
-        if not versions:
-            return
-        clean: dict[str, int] = {}
-        for key, value in versions.items():
-            try:
-                clean[str(key)] = int(value)
-            except (TypeError, ValueError):
-                continue
-        self.subgraph_versions = clean
-
-    def format_error(self, payload: dict[str, Any]) -> dict[str, Any]:
-        code = str(payload.get("code") or "error")
-        self.mark_result(result=code, error_code=code)
-        return graph_error_envelope(
-            command=self.command,
-            request_id=self.request_id,
-            pot_id=self.pot_id,
-            code=code,
-            message=str(payload.get("message") or "Graph command failed."),
-            detail=payload.get("detail"),
-            subgraph_versions=self.subgraph_versions,
-            recommended_next_action=payload.get("recommended_next_action"),
-        ).to_dict()
-
-    def mark_result(
-        self,
-        *,
-        result: str,
-        error_code: str = "none",
-        attributes: Mapping[str, Any] | None = None,
-    ) -> None:
-        self.telemetry_result = result
-        self.telemetry_error_code = error_code
-        if attributes:
-            for key, value in attributes.items():
-                if value is None:
-                    continue
-                self.telemetry_attributes[str(key)] = str(value)
 
 
-@contextmanager
-def _graph_command(command: str):
-    ctx = _GraphCliCommandContext(command)
-    obs = get_observability()
-    span_name, base_attrs = _graph_telemetry_shape(command)
-    started_at = time.perf_counter()
-    with obs.span(
-        span_name,
-        kind=SPAN_KIND_INTERNAL,
-        attributes={
-            **base_attrs,
-            "command": command,
-            "request_id": ctx.request_id,
-        },
-    ) as span:
-        try:
-            with json_error_formatter(ctx.format_error):
-                with contract():
-                    yield ctx
-        except BaseException as exc:
-            if ctx.telemetry_error_code == "none":
-                if isinstance(exc, typer.Exit):
-                    result = "ok" if (exc.exit_code in (None, 0)) else "exit"
-                    ctx.mark_result(result=result, error_code="exit")
-                else:
-                    ctx.mark_result(
-                        result="unexpected",
-                        error_code=exc.__class__.__name__,
-                    )
-                    span.record_exception(exc)
-                    span.set_error(repr(exc))
-            raise
-        finally:
-            duration_ms = max((time.perf_counter() - started_at) * 1000.0, 0.0)
-            attrs = {
-                **base_attrs,
-                **ctx.telemetry_attributes,
-                "command": command,
-                "request_id": ctx.request_id,
-                "result": ctx.telemetry_result,
-                "error_code": ctx.telemetry_error_code,
-            }
-            if ctx.pot_id:
-                attrs["pot_id"] = ctx.pot_id
-            span.set_attributes(attrs)
-            if ctx.telemetry_error_code != "none":
-                span.set_error(ctx.telemetry_error_code)
-            _record_graph_command_telemetry(
-                obs,
-                command=command,
-                duration_ms=duration_ms,
-                attributes=attrs,
-            )
-            _record_graph_command_usage_event(
-                command=command,
-                duration_ms=duration_ms,
-                result=ctx.telemetry_result,
-                error_code=ctx.telemetry_error_code,
-                attributes=attrs,
-            )
 
 
-def _graph_telemetry_shape(command: str) -> tuple[str, dict[str, str]]:
-    raw = command.removeprefix("graph.").replace("-", "_")
-    parts = raw.split(".")
-    if not parts:
-        return "graph.unknown", {}
-    if parts[0] == "inbox":
-        attrs = {"operation": parts[1] if len(parts) > 1 else "unknown"}
-        return "graph.inbox", attrs
-    if parts[0] == "quality":
-        attrs = {"report": parts[1] if len(parts) > 1 else "summary"}
-        return "graph.quality", attrs
-    return f"graph.{parts[0]}", {}
 
 
-def _record_graph_command_telemetry(
-    obs,
-    *,
-    command: str,
-    duration_ms: float,
-    attributes: Mapping[str, str],
-) -> None:
-    _span_name, base_attrs = _graph_telemetry_shape(command)
-    raw = command.removeprefix("graph.").replace("-", "_")
-    root = raw.split(".", 1)[0] if raw else "unknown"
-    metric_root = root
-    metric_attrs = dict(base_attrs)
-    metric_attrs.update(
-        {
-            key: value
-            for key, value in attributes.items()
-            if key
-            in {
-                "result",
-                "error_code",
-                "pot_id",
-                "subgraph",
-                "view",
-                "risk",
-                "status",
-                "operation",
-                "report",
-                "backend_profile",
-                "match_mode",
-            }
-        }
-    )
-    try:
-        obs.counter(f"ce.graph.{metric_root}_total", 1, attributes=metric_attrs)
-        obs.histogram(
-            f"ce.graph.{metric_root}_ms",
-            duration_ms,
-            attributes=metric_attrs,
-        )
-    except Exception:  # noqa: BLE001 - observability must never fail a command
-        pass
-    try:
-        from potpie.runtime.telemetry import sentry_metrics
-
-        sentry_metrics.count(
-            f"ce.graph.{metric_root}_total",
-            attributes=metric_attrs,
-        )
-        sentry_metrics.distribution(
-            f"ce.graph.{metric_root}_ms",
-            duration_ms,
-            unit="millisecond",
-            attributes=metric_attrs,
-        )
-        sentry_metrics.flush(timeout=2.0)
-    except Exception:  # noqa: BLE001 - Sentry metrics must never fail a command
-        pass
 
 
-_GRAPH_USAGE_ATTRIBUTE_KEYS: frozenset[str] = frozenset(
-    {
-        "backend_profile",
-        "backend_ready",
-        "match_mode",
-        "operation",
-        "report",
-        "risk",
-        "status",
-        "subgraph",
-        "view",
-    }
-)
 
 
-def _record_graph_command_usage_event(
-    *,
-    command: str,
-    duration_ms: float,
-    result: str,
-    error_code: str,
-    attributes: Mapping[str, Any],
-) -> None:
-    if result != "ok" or error_code != "none":
-        return
-    props: dict[str, AnalyticsValue] = {
-        "command_family": _graph_command_family(command),
-        "duration_ms": round(duration_ms, 3),
-        "error_code": error_code,
-        "result": result,
-    }
-    for key in sorted(_GRAPH_USAGE_ATTRIBUTE_KEYS):
-        value = attributes.get(key)
-        if value is None:
-            continue
-        if isinstance(value, (bool, int, float, str)):
-            props[key] = value
-        else:
-            props[key] = str(value)
-    capture_usage_command_succeeded(
-        command=command,
-        result_kind="graph_command",
-        properties=props,
-    )
 
 
-def _graph_command_family(command: str) -> str:
-    raw = command.removeprefix("graph.").replace("-", "_")
-    return raw.split(".", 1)[0] if raw else "unknown"
 
 
-def _graph_telemetry_attributes(result: Mapping[str, Any]) -> dict[str, str]:
-    attrs: dict[str, str] = {}
-    for key in (
-        "subgraph",
-        "view",
-        "risk",
-        "status",
-        "report",
-        "action",
-        "backend_profile",
-        "match_mode",
-    ):
-        value = result.get(key)
-        if value is not None:
-            target = "operation" if key == "action" else key
-            attrs[target] = str(value)
-    backend = result.get("backend")
-    if isinstance(backend, Mapping):
-        if backend.get("profile") is not None:
-            attrs["backend_profile"] = str(backend["profile"])
-        if backend.get("ready") is not None:
-            attrs["backend_ready"] = str(bool(backend["ready"])).lower()
-    graph_service = result.get("graph_service")
-    if (
-        isinstance(graph_service, Mapping)
-        and graph_service.get("match_mode") is not None
-    ):
-        attrs["match_mode"] = str(graph_service["match_mode"])
-    return attrs
-
-
-def _emit_graph_result(
-    ctx: _GraphCliCommandContext,
-    payload: Mapping[str, Any],
-    *,
-    human: str,
-    warnings: tuple[str, ...] = (),
-    unsupported: tuple[GraphUnsupported, ...] = (),
-    recommended_next_action: str | None = None,
-) -> None:
-    result, versions, payload_warnings, payload_unsupported = (
-        normalize_workbench_result(payload)
-    )
-    if versions:
-        ctx.set_subgraph_versions(versions)
-    merged_warnings = tuple(warnings) + payload_warnings
-    merged_unsupported = tuple(unsupported) + payload_unsupported
-    result_label = "ok"
-    error_code = "none"
-    if payload.get("ok", True) is False:
-        result_label = str(payload.get("status") or _error_code_from_result(payload))
-        error_code = _error_code_from_result(payload)
-    ctx.mark_result(
-        result=result_label,
-        error_code=error_code,
-        attributes=_graph_telemetry_attributes(result),
-    )
-
-    if payload.get("ok", True) is False:
-        env = graph_error_envelope(
-            command=ctx.command,
-            request_id=ctx.request_id,
-            pot_id=ctx.pot_id,
-            code=_error_code_from_result(payload),
-            message=_error_message_from_result(payload),
-            detail=result or None,
-            subgraph_versions=ctx.subgraph_versions,
-            warnings=merged_warnings,
-            unsupported=merged_unsupported,
-            recommended_next_action=recommended_next_action
-            or payload.get("recommended_next_action"),
-        )
-    else:
-        env = graph_success_envelope(
-            command=ctx.command,
-            request_id=ctx.request_id,
-            pot_id=ctx.pot_id,
-            result=result,
-            subgraph_versions=ctx.subgraph_versions,
-            warnings=merged_warnings,
-            unsupported=merged_unsupported,
-            recommended_next_action=recommended_next_action
-            or payload.get("recommended_next_action"),
-        )
-    emit(env.to_dict(), human=_with_graph_warnings(human, merged_warnings))
-
-
-def _with_graph_warnings(human: str, warnings: tuple[str, ...]) -> str:
-    if not warnings:
-        return human
-    return "\n".join([human, *(f"! {warning}" for warning in warnings)])
-
-
-def _emit_inbox_result(ctx: _GraphCliCommandContext, result) -> None:
-    _emit_graph_result(ctx, result.to_dict(), human=_inbox_human(result))
-    if not result.ok:
-        raise typer.Exit(code=EXIT_VALIDATION)
-
-
-def _emit_quality_result(ctx: _GraphCliCommandContext, result) -> None:
-    _emit_graph_result(ctx, result.to_dict(), human=_quality_human(result))
-    if not result.ok:
-        raise typer.Exit(code=EXIT_VALIDATION)
-
-
-def _emit_graph_not_implemented(
-    ctx: _GraphCliCommandContext,
-    *,
-    detail: str | None = None,
-    recommended_next_action: str | None = None,
-) -> None:
-    env = graph_not_implemented_envelope(
-        command=ctx.command,
-        request_id=ctx.request_id,
-        pot_id=ctx.pot_id,
-        detail=detail,
-        recommended_next_action=recommended_next_action,
-    )
-    emit(env.to_dict(), human=detail or f"{ctx.command} is not implemented yet")
-    raise typer.Exit(code=EXIT_UNAVAILABLE)
-
-
-def _error_code_from_result(payload: Mapping[str, Any]) -> str:
-    issues = payload.get("issues")
-    if isinstance(issues, list) and issues:
-        first = issues[0]
-        if isinstance(first, Mapping) and first.get("code"):
-            return str(first["code"])
-    return str(payload.get("status") or "graph_command_failed")
-
-
-def _error_message_from_result(payload: Mapping[str, Any]) -> str:
-    if payload.get("detail"):
-        return str(payload["detail"])
-    issues = payload.get("issues")
-    if isinstance(issues, list) and issues:
-        first = issues[0]
-        if isinstance(first, Mapping) and first.get("message"):
-            return str(first["message"])
-    status = payload.get("status")
-    return f"Graph command failed with status {status!r}."
-
-
-def _legacy_warning(command: str, replacement: str) -> tuple[str, ...]:
-    return (
-        f"{command} is a legacy transition command and is not part of the canonical V2 workbench command set; use {replacement}.",
-    )
 
 
 # --- Graph Surface Lite (V1.5) ----------------------------------------------
@@ -847,350 +500,6 @@ def graph_mutate(
         )
         if not result.ok:
             raise typer.Exit(code=EXIT_VALIDATION)
-
-
-# Static, schema-only mutation skeletons (Stage 5 ergonomics). These are
-# helpers for harnesses writing mutation JSON by hand — placeholders only,
-# never values read from the repo. Keys reference the canonical ontology so
-# the contract tests can pin them against ENTITY_TYPES / EDGE_TYPES.
-_MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
-    "repo-baseline": {
-        "pot_id": "<pot-id>",
-        "idempotency_key": "baseline:<owner>/<repo>:v1",
-        "created_by": {"surface": "cli", "harness": "<harness>"},
-        "operations": [
-            {
-                "op": "upsert_entity",
-                "subject": {
-                    "key": "repo:<host>/<owner>/<repo>",
-                    "type": "Repository",
-                    "name": "<repo>",
-                    "summary": "<one-line repo purpose>",
-                    "description": "<retrieval card: what the repo is, app type, synonyms a searcher would type>",
-                },
-            },
-            {
-                "op": "assert_claim",
-                "subject": {"key": "repo:<host>/<owner>/<repo>", "type": "Repository"},
-                "predicate": "PROVIDES",
-                "object": {
-                    "key": "feature:<feature-slug>",
-                    "type": "Feature",
-                    "name": "<feature name>",
-                    "summary": "<one-line capability>",
-                    "description": "<retrieval card: what it does, user-facing synonyms, scope>",
-                },
-                "truth": "source_observation",
-                "confidence": 0.9,
-                "description": "<where the source says this — e.g. README features section>",
-                "evidence": [
-                    {
-                        "source_ref": "repo:<owner>/<repo>#README",
-                        "authority": "repository_metadata",
-                    }
-                ],
-            },
-            {
-                "op": "link_entities",
-                "subject": {"key": "service:<service-slug>", "type": "Service"},
-                "predicate": "DEFINED_IN",
-                "object": {"key": "repo:<host>/<owner>/<repo>", "type": "Repository"},
-                "truth": "source_observation",
-                "confidence": 0.9,
-                "description": "<which manifest/workflow defines the service>",
-                "evidence": [
-                    {
-                        "source_ref": "repo:<owner>/<repo>#package.json",
-                        "authority": "repository_metadata",
-                    }
-                ],
-            },
-        ],
-    },
-    "feature": {
-        "pot_id": "<pot-id>",
-        "operations": [
-            {
-                "op": "assert_claim",
-                "subject": {"key": "service:<service-slug>", "type": "Service"},
-                "predicate": "PROVIDES",
-                "object": {
-                    "key": "feature:<feature-slug>",
-                    "type": "Feature",
-                    "name": "<feature name>",
-                    "summary": "<one-line capability>",
-                    "description": "<retrieval card with synonyms and scope>",
-                },
-                "truth": "source_observation",
-                "confidence": 0.9,
-                "description": "<evidence summary>",
-                "evidence": [
-                    {"source_ref": "<ref>", "authority": "repository_metadata"}
-                ],
-            }
-        ],
-    },
-    "preference": {
-        "pot_id": "<pot-id>",
-        "idempotency_key": "preference:<owner>/<repo>:<preference-slug>",
-        "created_by": {"surface": "cli", "harness": "<harness>"},
-        "operations": [
-            {
-                "op": "assert_claim",
-                "subject": {
-                    "key": "preference:<preference-slug>",
-                    "type": "Preference",
-                    "name": "<short preference name>",
-                    "summary": "<one-line prescription>",
-                    "description": "<retrieval card: when it applies, synonyms, scope>",
-                    "properties": {
-                        "policy_kind": "<error_handling|logging|testing|library_choice|file_structure>",
-                        "prescription": "<specific guidance an agent should follow>",
-                        "strength": "<hard|strong|normal|weak>",
-                        "audience": "<repo|service|path|language>",
-                    },
-                },
-                "predicate": "POLICY_APPLIES_TO",
-                "object": {"key": "repo:<host>/<owner>/<repo>", "type": "Repository"},
-                "truth": "preference",
-                "confidence": 0.9,
-                "description": "<where the preference is stated>",
-                "extra": {
-                    "repo": "<host>/<owner>/<repo>",
-                    "service": "<service-slug>",
-                    "file_path": "<optional/path/or/directory>",
-                    "language": "<language>",
-                },
-                "evidence": [{"source_ref": "<ref>", "authority": "user_statement"}],
-            }
-        ],
-    },
-    "preference-policy": {
-        "pot_id": "<pot-id>",
-        "idempotency_key": "preference:<owner>/<repo>:<preference-slug>",
-        "created_by": {"surface": "cli", "harness": "<harness>"},
-        "operations": [
-            {
-                "op": "assert_claim",
-                "subject": {
-                    "key": "preference:<preference-slug>",
-                    "type": "Preference",
-                    "name": "<short preference name>",
-                    "summary": "<one-line prescription>",
-                    "description": "<retrieval card: task words, scope, synonyms>",
-                    "properties": {
-                        "policy_kind": "<error_handling|logging|testing|library_choice|file_structure>",
-                        "prescription": "<specific guidance an agent should follow>",
-                        "strength": "<hard|strong|normal|weak>",
-                        "audience": "<repo|service|path|language>",
-                    },
-                },
-                "predicate": "POLICY_APPLIES_TO",
-                "object": {
-                    "key": "code:<repo-or-service>:<path-or-symbol>",
-                    "type": "CodeAsset",
-                },
-                "truth": "preference",
-                "confidence": 0.9,
-                "description": "<evidence summary and why this policy applies to this scope>",
-                "extra": {
-                    "repo": "<host>/<owner>/<repo>",
-                    "service": "<service-slug>",
-                    "file_path": "<path/or/directory>",
-                    "language": "<language>",
-                },
-                "evidence": [{"source_ref": "<ref>", "authority": "user_statement"}],
-            }
-        ],
-    },
-    "infra-snapshot": {
-        "pot_id": "<pot-id>",
-        "idempotency_key": "infra:<owner>/<repo>:<service-slug>:<environment>",
-        "created_by": {"surface": "cli", "harness": "<harness>"},
-        "operations": [
-            {
-                "op": "link_entities",
-                "subject": {"key": "service:<service-slug>", "type": "Service"},
-                "predicate": "DEPLOYED_TO",
-                "object": {"key": "environment:<environment>", "type": "Environment"},
-                "truth": "source_observation",
-                "confidence": 0.95,
-                "environment": "<environment>",
-                "description": "<source showing service runs in this environment>",
-                "evidence": [
-                    {"source_ref": "<ref>", "authority": "repository_metadata"}
-                ],
-            },
-            {
-                "op": "link_entities",
-                "subject": {"key": "service:<service-slug>", "type": "Service"},
-                "predicate": "USES_ADAPTER",
-                "object": {
-                    "key": "adapter:<domain>:<adapter-slug>",
-                    "type": "Adapter",
-                    "summary": "<adapter/provider selected in this env>",
-                    "description": "<retrieval card: adapter, provider, backend, env>",
-                },
-                "truth": "source_observation",
-                "confidence": 0.9,
-                "environment": "<environment>",
-                "description": "<source showing which adapter/backend is selected>",
-                "evidence": [
-                    {"source_ref": "<ref>", "authority": "repository_metadata"}
-                ],
-            },
-            {
-                "op": "link_entities",
-                "subject": {"key": "service:<service-slug>", "type": "Service"},
-                "predicate": "DEPLOYED_WITH",
-                "object": {
-                    "key": "deployment_target:<environment>:<target-slug>",
-                    "type": "DeploymentTarget",
-                    "summary": "<deployment target/mechanism>",
-                    "description": "<retrieval card: platform, workload, deploy mechanism>",
-                },
-                "truth": "source_observation",
-                "confidence": 0.9,
-                "environment": "<environment>",
-                "description": "<source showing deployment target/mechanism>",
-                "evidence": [
-                    {"source_ref": "<ref>", "authority": "repository_metadata"}
-                ],
-            },
-            {
-                "op": "link_entities",
-                "subject": {"key": "service:<service-slug>", "type": "Service"},
-                "predicate": "CONFIGURES",
-                "object": {
-                    "key": "config:<service-or-env>:<config-name>",
-                    "type": "ConfigVariable",
-                    "summary": "<config variable>",
-                    "description": "<retrieval card: env var/config key and behavior it selects>",
-                },
-                "truth": "source_observation",
-                "confidence": 0.8,
-                "environment": "<environment>",
-                "description": "<source showing this config affects the service/adapter>",
-                "evidence": [
-                    {"source_ref": "<ref>", "authority": "repository_metadata"}
-                ],
-            },
-        ],
-    },
-    "bug-fix": {
-        "pot_id": "<pot-id>",
-        "idempotency_key": "bug-fix:<bug-slug>:<fix-hash>",
-        "created_by": {"surface": "cli", "harness": "<harness>"},
-        "operations": [
-            {
-                "op": "assert_claim",
-                "subject": {
-                    "key": "bug_pattern:<bug-slug>",
-                    "type": "BugPattern",
-                    "name": "<symptom name>",
-                    "summary": "<one-line symptom>",
-                    "description": "<retrieval card: error text, symptoms, synonyms, where it shows up>",
-                    "properties": {
-                        "symptom_signature": "<stable symptom/error signature>",
-                    },
-                },
-                "predicate": "REPRODUCES",
-                "object": {"key": "service:<service-slug>", "type": "Service"},
-                "truth": "agent_claim",
-                "confidence": 0.8,
-                "description": "<how the bug manifests>",
-            },
-            {
-                "op": "assert_claim",
-                "subject": {
-                    "key": "fix:<fix-hash>",
-                    "type": "Fix",
-                    "summary": "<one-line fix>",
-                    "description": "<retrieval card: what fixed it, files touched, verification>",
-                    "properties": {
-                        "fix_steps": "<what changed or what to do>",
-                        "verification_status": "<verified|unverified|failed>",
-                    },
-                },
-                "predicate": "RESOLVED",
-                "object": {"key": "bug_pattern:<bug-slug>", "type": "BugPattern"},
-                "truth": "agent_claim",
-                "confidence": 0.8,
-                "description": "<fix summary + verification status>",
-            },
-            {
-                "op": "assert_claim",
-                "subject": {
-                    "key": "activity:<source>:<verification-id>",
-                    "type": "Activity",
-                },
-                "predicate": "VERIFIED",
-                "object": {"key": "fix:<fix-hash>", "type": "Fix"},
-                "truth": "agent_claim",
-                "confidence": 0.8,
-                "description": "<how the fix was verified, or what remains unverified>",
-            },
-        ],
-    },
-    "decision": {
-        "pot_id": "<pot-id>",
-        "operations": [
-            {
-                "op": "assert_claim",
-                "subject": {
-                    "key": "decision:<decision-hash>",
-                    "type": "Decision",
-                    "name": "<decision title>",
-                    "summary": "<one-line decision>",
-                    "description": "<retrieval card: rationale, alternatives rejected, synonyms>",
-                },
-                "predicate": "DECIDED",
-                "object": {"key": "repo:<host>/<owner>/<repo>", "type": "Repository"},
-                "truth": "user_decision",
-                "confidence": 1.0,
-                "description": "<who decided and why>",
-                "evidence": [{"source_ref": "<ref>", "authority": "user_statement"}],
-            }
-        ],
-    },
-    "timeline-event": {
-        "pot_id": "<pot-id>",
-        "operations": [
-            {
-                "op": "append_event",
-                "verb": "<verb e.g. merged_pr|deployed|decided>",
-                "occurred_at": "<ISO-8601 timestamp>",
-                "description": "<what happened, written for timeline recall>",
-                "actor": {"key": "person:<handle>", "type": "Person"},
-                "targets": [{"key": "service:<service-slug>", "type": "Service"}],
-                "evidence": [{"source_ref": "<ref>", "authority": "external_system"}],
-            }
-        ],
-    },
-    "timeline-change": {
-        "pot_id": "<pot-id>",
-        "idempotency_key": "timeline:<source>:<id>",
-        "created_by": {"surface": "cli", "harness": "<harness>"},
-        "operations": [
-            {
-                "op": "append_event",
-                "verb": "<verb e.g. merged_pr|linear_done|deployed|incident>",
-                "occurred_at": "<ISO-8601 timestamp>",
-                "description": "<what changed, source title, affected behavior, regression keywords>",
-                "actor": {"key": "person:<handle>", "type": "Person"},
-                "targets": [
-                    {"key": "service:<service-slug>", "type": "Service"},
-                    {
-                        "key": "code:<repo-or-service>:<path-or-symbol>",
-                        "type": "CodeAsset",
-                    },
-                ],
-                "mentions": [{"key": "feature:<feature-slug>", "type": "Feature"}],
-                "evidence": [{"source_ref": "<ref>", "authority": "external_system"}],
-            }
-        ],
-    },
-}
 
 
 @graph_app.command("mutation-template")
@@ -2167,7 +1476,7 @@ def backend_doctor() -> None:
 # --- Graph Surface Lite helpers ---------------------------------------------
 
 
-def _set_optional_pot(ctx: _GraphCliCommandContext, pot: str | None) -> None:
+def _set_optional_pot(ctx: Any, pot: str | None) -> None:
     host = get_host()
     if pot:
         ctx.set_pot_id(resolve_pot_id(host, pot))
@@ -2177,160 +1486,14 @@ def _set_optional_pot(ctx: _GraphCliCommandContext, pot: str | None) -> None:
         ctx.set_pot_id(getattr(active, "pot_id", None))
 
 
-def _graph_status_payload(host: Any, pot_id: str, dp) -> dict[str, Any]:
-    caps = _safe(lambda: host.backend.capabilities(), None)
-    implemented = list(caps.implemented()) if caps is not None else []
-    pot_info = pot_scope_info(host, pot_id)
-    quality_summary = _graph_status_quality_summary(host, pot_id, dp)
-    health_status = str(quality_summary.get("health_status") or "unknown")
-    status = GraphWorkbenchStatus(
-        host={
-            "kind": getattr(host, "profile", "local"),
-            "liveness": "ok",
-        },
-        pot={
-            "id": pot_id,
-            "name": pot_info.get("name"),
-            "source_count": pot_info.get("source_count", 0),
-            "selected_backend": dp.backend_profile,
-        },
-        graph_service={
-            "graph_contract_version": "v2",
-            "data_plane_graph_contract_version": DATA_PLANE_CONTRACT_VERSION,
-            "ontology_version": ONTOLOGY_VERSION,
-            "supported_commands": list(GRAPH_WORKBENCH_COMMANDS),
-            "reader_backed_includes": list(dp.reader_backed_includes),
-            "validator_ready": True,
-            "match_mode": dp.match_mode,
-        },
-        backend={
-            "profile": dp.backend_profile,
-            "ready": dp.backend_ready,
-            "detail": dp.detail,
-            "readiness_command": "potpie backend doctor",
-            "recommended_next_action": (
-                (
-                    "Run `potpie backend doctor` to inspect graph backend readiness "
-                    "and capability-specific failures."
-                )
-                if not dp.backend_ready
-                else None
-            ),
-            "implemented_capabilities": implemented,
-            "counts": dict(dp.counts),
-            "freshness": dict(dp.freshness),
-        },
-        ledger={"status": "not_inspected"},
-        skills={"status": "not_inspected"},
-        quality=quality_summary,
-    )
-    payload = status.to_dict()
-    payload["health_status"] = health_status
-    return payload
 
 
-def _graph_status_quality_summary(host: Any, pot_id: str, dp) -> dict[str, Any]:
-    fallback = _data_plane_quality_summary(dp)
-    workbench = getattr(host, "graph_workbench", None)
-    if workbench is None or not getattr(workbench, "quality", None):
-        return fallback
-    try:
-        result = workbench.quality(
-            pot_id=pot_id,
-            report="summary",
-            subgraph=None,
-            limit=20,
-            confidence_threshold=0.5,
-        )
-    except CapabilityNotImplemented as exc:
-        fallback["health_status"] = "unavailable"
-        fallback["status"] = "unavailable"
-        fallback["detail"] = str(exc)
-        return fallback
-    except Exception as exc:
-        fallback["health_status"] = "unavailable"
-        fallback["status"] = "unavailable"
-        fallback["detail"] = f"quality summary unavailable: {exc}"
-        return fallback
-
-    body = result.to_dict()
-    metrics = dict(body.get("metrics") or {})
-    reports = dict(metrics.get("quality_reports") or {})
-    compact_reports = {
-        name: {
-            "status": report.get("status"),
-            "finding_count": report.get("finding_count", 0),
-            "severity_counts": dict(report.get("severity_counts") or {}),
-        }
-        for name, report in reports.items()
-        if isinstance(report, Mapping)
-    }
-    counts = metrics.get("counts") if isinstance(metrics.get("counts"), Mapping) else {}
-    out = {
-        "status": body.get("status"),
-        "health_status": body.get("status"),
-        "source": "quality_summary",
-        "claim_count": counts.get("claims", dict(dp.counts).get("claims")),
-        "quality_counts": dict(metrics.get("quality_counts") or {}),
-        "total_findings": metrics.get("total_findings", body.get("finding_count", 0)),
-        "reports": compact_reports,
-    }
-    if body.get("recommended_next_action"):
-        out["recommended_next_action"] = body["recommended_next_action"]
-    return out
 
 
-def _data_plane_quality_summary(dp) -> dict[str, Any]:
-    quality = dict(getattr(dp, "quality", {}) or {})
-    status = str(quality.get("status") or "unknown")
-    claim_count = quality.get(
-        "claim_count", dict(getattr(dp, "counts", {}) or {}).get("claims")
-    )
-    return {
-        **quality,
-        "status": status,
-        "health_status": status,
-        "source": "data_plane",
-        "claim_count": claim_count,
-        "quality_counts": {},
-        "reports": {},
-        "total_findings": quality.get("open_conflicts", 0),
-    }
 
 
-def _describe_human(payload: Mapping[str, Any]) -> str:
-    subgraph = payload.get("subgraph")
-    if not isinstance(subgraph, Mapping):
-        return "graph contract"
-    view = payload.get("view")
-    if isinstance(view, Mapping):
-        filters = ", ".join(str(v) for v in view.get("supported_filters", ())) or "-"
-        relations = ", ".join(str(v) for v in view.get("inline_relations", ())) or "-"
-        return (
-            f"{view.get('name')} ({view.get('result_shape')})\n"
-            f"purpose: {view.get('purpose')}\n"
-            f"filters: {filters}\n"
-            f"relations: {relations}"
-        )
-    views = subgraph.get("views", ())
-    view_names = ", ".join(str(v.get("name")) for v in views if isinstance(v, Mapping))
-    relation_names = ", ".join(
-        str(r.get("name"))
-        for r in subgraph.get("relation_types", ())
-        if isinstance(r, Mapping)
-    )
-    return (
-        f"{subgraph.get('name')}: {subgraph.get('purpose')}\n"
-        f"views: {view_names}\n"
-        f"relations: {relation_names}"
-    )
 
 
-def _safe(fn, default):
-    try:
-        return fn()
-    except Exception:  # noqa: BLE001
-        return default
 
 
 def _require_backend_capability(
@@ -2354,1216 +1517,140 @@ def _require_backend_capability(
     )
 
 
-def _parse_scope(scope: str | None) -> dict[str, str]:
-    if not scope:
-        return {}
-    out: dict[str, str] = {}
-    for pair in scope.split(","):
-        pair = pair.strip()
-        if not pair:
-            continue
-        if ":" not in pair:
-            raise ValueError(
-                f"invalid --scope entry {pair!r}; expected key:value pairs"
-            )
-        key, value = pair.split(":", 1)
-        key = key.strip()
-        if not key:
-            raise ValueError(
-                f"invalid --scope entry {pair!r}; scope keys must not be empty"
-            )
-        value = value.strip()
-        if not value:
-            raise ValueError(
-                f"invalid --scope entry {pair!r}; scope values must not be empty"
-            )
-        out[key] = value
-    return out
-
-
-def _parse_created_by(value: str | None) -> dict[str, Any]:
-    clean = value.strip() if isinstance(value, str) else ""
-    if not clean:
-        return {"surface": "cli"}
-    if clean.startswith("{"):
-        try:
-            parsed = json.loads(clean)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid --created-by JSON: {exc}") from exc
-        if not isinstance(parsed, dict):
-            raise ValueError("--created-by JSON must be an object")
-        parsed.setdefault("surface", "cli")
-        return parsed
-    return {"surface": "cli", "actor": clean}
-
-
-def _parse_predicates(predicate: str | None) -> tuple[str, ...]:
-    if not predicate:
-        return ()
-    out: list[str] = []
-    for raw in predicate.split(","):
-        value = raw.strip().upper()
-        if value:
-            out.append(value)
-    return tuple(dict.fromkeys(out))
-
-
-def _load_json(file: str | None) -> dict:
-    """Load a mutation payload from a file or stdin."""
-    raw = _read_payload_text(file)
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid JSON in mutation payload: {exc}") from exc
-
-
-def _read_payload_text(file: str | None) -> str:
-    if file:
-        try:
-            with open(file, encoding="utf-8") as fh:
-                raw = fh.read()
-        except OSError as exc:
-            raise ValueError(f"cannot read mutation file {file!r}: {exc}") from exc
-    else:
-        raw = sys.stdin.read()
-    if not raw.strip():
-        raise ValueError(
-            "empty mutation payload (provide --file or pipe JSON on stdin)"
-        )
-    return raw
-
-
-def _load_bulk_mutation_payloads(file: str | None) -> list[dict[str, Any]]:
-    raw = _read_payload_text(file)
-    stripped = raw.strip()
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
-        return _load_bulk_ndjson(stripped)
-    return [_normalize_bulk_payload(parsed, context="mutation payload")]
-
-
-def _load_bulk_ndjson(raw: str) -> list[dict[str, Any]]:
-    payloads: list[dict[str, Any]] = []
-    pending_ops: list[Mapping[str, Any]] = []
-    for line_no, line in enumerate(raw.splitlines(), start=1):
-        clean = line.strip()
-        if not clean or clean.startswith("#"):
-            continue
-        try:
-            parsed = json.loads(clean)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid JSON on NDJSON line {line_no}: {exc}") from exc
-        if _is_batch_payload(parsed):
-            if pending_ops:
-                payloads.append({"operations": list(pending_ops)})
-                pending_ops = []
-            payloads.append(
-                _normalize_bulk_payload(parsed, context=f"NDJSON line {line_no}")
-            )
-            continue
-        if not isinstance(parsed, Mapping):
-            raise ValueError(f"NDJSON line {line_no} must be a JSON object")
-        pending_ops.append(dict(parsed))
-    if pending_ops:
-        payloads.append({"operations": list(pending_ops)})
-    if not payloads:
-        raise ValueError("bulk mutation input did not contain any operations")
-    return payloads
-
-
-def _normalize_bulk_payload(value: Any, *, context: str) -> dict[str, Any]:
-    if isinstance(value, list):
-        operations = value
-        metadata: dict[str, Any] = {}
-    elif isinstance(value, Mapping):
-        if "operations" not in value:
-            operations = [dict(value)]
-            metadata = {}
-        else:
-            raw_ops = value.get("operations")
-            if not isinstance(raw_ops, list):
-                raise ValueError(f"{context} field 'operations' must be a list")
-            operations = raw_ops
-            metadata = {str(k): v for k, v in value.items() if k != "operations"}
-    else:
-        raise ValueError(f"{context} must be a JSON object or array")
-
-    if not operations:
-        raise ValueError(f"{context} contains no operations")
-    clean_ops: list[dict[str, Any]] = []
-    for index, op in enumerate(operations, start=1):
-        if not isinstance(op, Mapping):
-            raise ValueError(f"{context} operation {index} must be a JSON object")
-        clean_ops.append(dict(op))
-    metadata["operations"] = clean_ops
-    return metadata
-
-
-def _is_batch_payload(value: Any) -> bool:
-    return isinstance(value, Mapping) and isinstance(value.get("operations"), list)
-
-
-def _build_bulk_chunks(
-    payloads: list[dict[str, Any]],
-    *,
-    chunk_size: int,
-    idempotency_key: str | None,
-) -> list[dict[str, Any]]:
-    chunks: list[dict[str, Any]] = []
-    chunk_index = 1
-    for payload_index, payload in enumerate(payloads, start=1):
-        metadata = {k: v for k, v in payload.items() if k != "operations"}
-        operations = list(payload["operations"])
-        chunk_count = (len(operations) + chunk_size - 1) // chunk_size
-        base_idempotency = (
-            idempotency_key
-            or str(metadata.get("idempotency_key") or "").strip()
-            or None
-        )
-        for offset in range(0, len(operations), chunk_size):
-            ops = operations[offset : offset + chunk_size]
-            chunk_payload = dict(metadata)
-            if base_idempotency:
-                if chunk_count > 1 or len(payloads) > 1:
-                    chunk_payload["idempotency_key"] = (
-                        f"{base_idempotency}:chunk-{chunk_index:04d}"
-                    )
-                else:
-                    chunk_payload["idempotency_key"] = base_idempotency
-            chunk_payload["operations"] = ops
-            chunks.append(
-                {
-                    "index": chunk_index,
-                    "source_payload_index": payload_index,
-                    "operation_count": len(ops),
-                    "operations": ops,
-                    "idempotency_key": chunk_payload.get("idempotency_key"),
-                    "payload": chunk_payload,
-                }
-            )
-            chunk_index += 1
-    if not chunks:
-        raise ValueError("bulk mutation input did not contain any operations")
-    return chunks
-
-
-def _new_bulk_run_payload(
-    *,
-    pot_id: str,
-    chunks_total: int,
-    operations_total: int,
-    chunk_size: int,
-    dry_run: bool,
-    start_chunk: int,
-    manifest: str | None,
-) -> dict[str, Any]:
-    return {
-        "ok": True,
-        "status": "running",
-        "pot_id": pot_id,
-        "chunks_total": chunks_total,
-        "chunks_attempted": 0,
-        "chunks_validated": 0,
-        "chunks_committed": 0,
-        "operations_total": operations_total,
-        "operations_attempted": 0,
-        "operations_validated": 0,
-        "operations_committed": 0,
-        "chunk_size": chunk_size,
-        "dry_run": dry_run,
-        "start_chunk": start_chunk,
-        "manifest": manifest,
-        "chunks": [],
-        "issues": [],
-    }
-
-
-def _bulk_skipped_chunk(chunk: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "index": chunk["index"],
-        "source_payload_index": chunk["source_payload_index"],
-        "operation_count": chunk["operation_count"],
-        "idempotency_key": chunk.get("idempotency_key"),
-        "ok": True,
-        "status": "skipped",
-    }
-
-
-def _bulk_chunk_entry(chunk: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "index": chunk["index"],
-        "source_payload_index": chunk["source_payload_index"],
-        "operation_count": chunk["operation_count"],
-        "idempotency_key": chunk.get("idempotency_key"),
-        "ok": False,
-        "status": "pending",
-    }
-
-
-def _bulk_proposal_summary(result) -> dict[str, Any]:
-    out = {
-        "ok": result.ok,
-        "plan_id": result.plan_id,
-        "status": result.status,
-        "risk": result.risk,
-        "auto_applicable": result.auto_applicable,
-        "issues": list(result.issues),
-        "rejected_operations": list(result.rejected_operations),
-        "review_required_operations": list(result.review_required_operations),
-        "claim_keys": list(result.claim_keys),
-    }
-    if result.diff:
-        out["diff"] = result.diff.to_dict()
-    return out
-
-
-def _bulk_commit_summary(result) -> dict[str, Any]:
-    out = {
-        "ok": result.ok,
-        "plan_id": result.plan_id,
-        "status": result.status,
-        "risk": result.risk,
-        "mutation_id": result.mutation_id,
-        "detail": result.detail,
-        "claim_keys": list(result.claim_keys),
-    }
-    if result.diff:
-        out["diff"] = result.diff.to_dict()
-    return out
-
-
-def _bulk_issues_from_proposal(result, chunk_index: int) -> list[dict[str, Any]]:
-    issues: list[dict[str, Any]] = []
-    for issue in result.issues or ():
-        if isinstance(issue, Mapping):
-            item = dict(issue)
-        else:
-            item = {"code": "proposal_issue", "message": str(issue)}
-        item.setdefault("severity", "error")
-        item["chunk"] = chunk_index
-        issues.append(item)
-    if not issues:
-        issues.append(
-            {
-                "code": str(result.status or "proposal_failed"),
-                "message": "chunk proposal failed",
-                "severity": "error",
-                "chunk": chunk_index,
-            }
-        )
-    return issues
-
-
-def _bulk_run_status(
-    run: Mapping[str, Any],
-    *,
-    dry_run: bool,
-    ok: bool,
-) -> str:
-    if not ok:
-        if run.get("chunks_committed") or run.get("chunks_validated"):
-            return "partial"
-        return "failed"
-    return "validated" if dry_run else "committed"
-
-
-def _bulk_next_action(run: Mapping[str, Any]) -> str | None:
-    if run.get("ok"):
-        if run.get("dry_run"):
-            return "Rerun without --dry-run to commit the proposed chunks."
-        return None
-    for issue in run.get("issues") or ():
-        if isinstance(issue, Mapping) and issue.get("code") == "approval_required":
-            return "Review the chunk plan, then rerun with --approved-by when policy allows."
-    return "Inspect the failed chunk, fix the mutation input, and rerun with --start-chunk if earlier chunks succeeded."
-
-
-def _bulk_human(run: Mapping[str, Any]) -> str:
-    status = run.get("status")
-    attempted = run.get("chunks_attempted", 0)
-    total = run.get("chunks_total", 0)
-    committed = run.get("chunks_committed", 0)
-    validated = run.get("chunks_validated", 0)
-    ops_committed = run.get("operations_committed", 0)
-    ops_validated = run.get("operations_validated", 0)
-    lines = [
-        (
-            f"{status}: chunks={attempted}/{total} committed={committed} "
-            f"validated={validated} ops_committed={ops_committed} "
-            f"ops_validated={ops_validated}"
-        )
-    ]
-    for issue in list(run.get("issues") or ())[:5]:
-        if isinstance(issue, Mapping):
-            lines.append(
-                f"  [issue chunk={issue.get('chunk')}] "
-                f"{issue.get('code')}: {issue.get('message')}"
-            )
-    return "\n".join(lines)
-
-
-def _write_bulk_manifest(path: str | None, payload: Mapping[str, Any]) -> None:
-    if not path:
-        return
-    try:
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2, sort_keys=True)
-            fh.write("\n")
-    except OSError as exc:
-        raise ValueError(f"cannot write bulk manifest {path!r}: {exc}") from exc
-
-
-def _data_plane_status_payload(status) -> dict[str, Any]:
-    return {
-        "pot_id": status.pot_id,
-        "backend_profile": status.backend_profile,
-        "backend_ready": status.backend_ready,
-        "reader_backed_includes": list(status.reader_backed_includes),
-        "counts": dict(status.counts),
-        "freshness": dict(status.freshness),
-        "quality": dict(status.quality),
-        "match_mode": status.match_mode,
-        "detail": status.detail,
-    }
-
-
-def _neighborhood_relation(edge) -> dict[str, Any]:
-    props = dict(edge.properties or {})
-    source_refs = _string_list(props.get("source_refs"))
-    if not source_refs and props.get("source_ref"):
-        source_refs = [_str(props.get("source_ref"))]
-    score = props.get("semantic_similarity")
-    if score is None:
-        score = props.get("score")
-    return {
-        "predicate": edge.predicate,
-        "from": edge.from_key,
-        "to": edge.to_key,
-        "from_key": edge.from_key,
-        "to_key": edge.to_key,
-        "fact": _str(
-            props.get("fact") or props.get("description") or props.get("summary")
-        ),
-        "source_refs": source_refs,
-        "truth": _str(props.get("truth")),
-        "environment": _str(props.get("environment")),
-        "score": float(score) if isinstance(score, (int, float)) else None,
-        "claim_key": _str(props.get("claim_key")),
-        "source_system": _str(props.get("source_system")),
-    }
-
-
-def _neighborhood_human(payload: Mapping[str, Any]) -> str:
-    relations = payload.get("relations") or ()
-    lines = [
-        (
-            f"entity={payload.get('entity_key')} relations={len(relations)} "
-            f"nodes={payload.get('node_count')} detail={payload.get('detail')}"
-        )
-    ]
-    for rel in list(relations)[:20]:
-        if not isinstance(rel, Mapping):
-            continue
-        refs = ", ".join(_string_list(rel.get("source_refs"))) or "no-source-ref"
-        fact = rel.get("fact") or f"{rel.get('from')} -> {rel.get('to')}"
-        lines.append(f"  • {rel.get('predicate')} [{refs}] {fact}")
-    return "\n".join(lines)
-
-
-def _catalog_payload_for_profile(
-    payload: Mapping[str, Any], *, profile: str
-) -> dict[str, Any]:
-    mode = (profile or "full").strip().lower()
-    if mode not in {"full", "read"}:
-        raise ValueError("--profile must be one of: full, read")
-    result = dict(payload)
-    result["profile"] = mode
-    if mode == "full":
-        return result
-
-    read_commands = [
-        command
-        for command in result.get("commands", ())
-        if command
-        in {
-            "status",
-            "catalog",
-            "describe",
-            "search-entities",
-            "read",
-            "neighborhood",
-        }
-    ]
-    result["commands"] = read_commands
-    result["views"] = [_compact_catalog_view(view) for view in result.get("views", ())]
-    if "task_ranking" in result:
-        result["task_ranking"] = [
-            _compact_catalog_ranking(entry, rank=index + 1)
-            for index, entry in enumerate(result.get("task_ranking", ()))
-        ]
-    for key in (
-        "admin_commands",
-        "legacy_commands",
-        "mutation_operations",
-        "review_required_operations",
-        "deferred_operations",
-        "entity_types",
-        "predicates",
-        "transition",
-    ):
-        result.pop(key, None)
-    return result
-
-
-def _compact_catalog_view(view: Mapping[str, Any]) -> dict[str, Any]:
-    out = {
-        key: view[key]
-        for key in (
-            "name",
-            "subgraph",
-            "view",
-            "backed",
-            "description",
-            "result_shape",
-            "required_scope",
-            "required_any_scope",
-            "supported_filters",
-        )
-        if key in view
-    }
-    if "subgraph" in out and "view" in out:
-        out["next_read"] = (
-            f"potpie graph read --subgraph {out['subgraph']} --view {out['view']}"
-        )
-    return out
-
-
-def _compact_catalog_ranking(entry: Mapping[str, Any], *, rank: int) -> dict[str, Any]:
-    out: dict[str, Any] = {"rank": rank}
-    for key in ("view", "subgraph", "score", "matched_terms"):
-        if key in entry:
-            out[key] = entry[key]
-    reason = entry.get("reason") or entry.get("why")
-    if reason:
-        out["reason"] = reason
-    return out
-
-
-def _catalog_human(payload: Mapping[str, Any], *, format_: str) -> str:
-    mode = (format_ or "auto").strip().lower()
-    if mode not in {"auto", "table"}:
-        raise ValueError("--format must be one of: auto, table")
-    if mode == "table" or payload.get("profile") == "read":
-        lines = [
-            f"graph catalog profile={payload.get('profile', 'full')} "
-            f"match={payload.get('match_mode')}"
-        ]
-        task = payload.get("task")
-        if task:
-            lines.append(f"task={task}")
-        rankings = payload.get("task_ranking") or ()
-        if rankings:
-            lines.append("rank | score | view | reason")
-            lines.append("--- | --- | --- | ---")
-            for entry in rankings[:8]:
-                reason = str(entry.get("reason") or "")
-                lines.append(
-                    f"{entry.get('rank')} | {entry.get('score')} | "
-                    f"{entry.get('view')} | {reason}"
-                )
-        lines.append("view | backed | filters")
-        lines.append("--- | --- | ---")
-        for view in payload.get("views", ()):
-            filters = ", ".join(view.get("supported_filters") or ()) or "-"
-            lines.append(
-                f"{view.get('name')} | {str(bool(view.get('backed'))).lower()} | {filters}"
-            )
-        return "\n".join(lines)
-
-    return (
-        f"graph contract v2 / ontology {ONTOLOGY_VERSION} "
-        f"(data-plane={payload['data_plane_graph_contract_version']}, match={payload['match_mode']})\n"
-        f"commands: {', '.join(payload['commands'])}\n"
-        f"views: {', '.join(v['name'] for v in payload['views'])}\n"
-        f"mutation ops: {', '.join(payload['mutation_operations'])}\n"
-        f"review-required: {', '.join(payload['review_required_operations'])}\n"
-        f"deferred: {', '.join(payload['deferred_operations'])}"
-    )
-
-
-def _emit_graph_read(
-    ctx: _GraphCliCommandContext,
-    result,
-    *,
-    format_: str,
-    sort: str,
-    dedupe: str,
-    event_limit: int | None = None,
-    human_prefix: str | None = None,
-    warnings: tuple[str, ...] = (),
-) -> None:
-    if not is_json():
-        _emit_read(
-            result,
-            format_=format_,
-            sort=sort,
-            dedupe=dedupe,
-            event_limit=event_limit,
-            human_prefix=human_prefix,
-            warnings=warnings,
-        )
-        return
-
-    normalized_format = _effective_read_format(result, format_)
-    if normalized_format == "jsonl":
-        rows = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
-        if not rows:
-            rows = _raw_item_rows(result)
-        payload = _read_payload(
-            result,
-            format_="raw",
-            sort=sort,
-            dedupe=dedupe,
-            event_limit=event_limit,
-        )
-        if payload.get("detail") != "full":
-            payload.pop("items", None)
-        payload["read_shape"] = "jsonl"
-        payload["rows"] = rows
-        payload["row_count"] = len(rows)
-    else:
-        payload = _read_payload(
-            result,
-            format_=normalized_format,
-            sort=sort,
-            dedupe=dedupe,
-            event_limit=event_limit,
-        )
-    _emit_graph_result(
-        ctx,
-        payload,
-        human=_with_read_context(
-            _read_human(
-                result,
-                format_=normalized_format,
-                sort=sort,
-                dedupe=dedupe,
-                event_limit=event_limit,
-            ),
-            human_prefix=human_prefix,
-            warnings=warnings,
-        ),
-        warnings=warnings,
-    )
-
-
-def _emit_read(
-    result,
-    *,
-    format_: str,
-    sort: str,
-    dedupe: str,
-    event_limit: int | None = None,
-    human_prefix: str | None = None,
-    warnings: tuple[str, ...] = (),
-) -> None:
-    normalized_format = _effective_read_format(result, format_)
-    if normalized_format == "jsonl":
-        rows = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
-        if not rows:
-            rows = _raw_item_rows(result)
-        for row in rows:
-            typer.echo(json.dumps(row, default=str))
-        return
-    payload = _read_payload(
-        result,
-        format_=normalized_format,
-        sort=sort,
-        dedupe=dedupe,
-        event_limit=event_limit,
-    )
-    emit(
-        payload,
-        human=_with_read_context(
-            _read_human(
-                result,
-                format_=normalized_format,
-                sort=sort,
-                dedupe=dedupe,
-                event_limit=event_limit,
-            ),
-            human_prefix=human_prefix,
-            warnings=warnings,
-        ),
-    )
-
-
-def _with_read_context(
-    human: str, *, human_prefix: str | None, warnings: tuple[str, ...]
-) -> str:
-    lines: list[str] = []
-    if human_prefix:
-        lines.append(human_prefix)
-    lines.append(human)
-    lines.extend(f"! {warning}" for warning in warnings)
-    return "\n".join(lines)
-
-
-def _read_payload(
-    result,
-    *,
-    format_: str = "raw",
-    sort: str = "auto",
-    dedupe: str = "auto",
-    event_limit: int | None = None,
-) -> dict:
-    payload = result.to_dict()
-    if format_ in ("events", "table"):
-        events = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
-        if payload.get("detail") != "full":
-            payload.pop("items", None)
-        payload["read_shape"] = "events"
-        payload["events"] = events
-        payload["event_count"] = len(events)
-        payload["freshness"] = _timeline_freshness(events)
-    return payload
-
-
-def _read_human(
-    result,
-    *,
-    format_: str = "raw",
-    sort: str = "auto",
-    dedupe: str = "auto",
-    event_limit: int | None = None,
-) -> str:
-    if format_ in ("events", "table"):
-        return _timeline_human(
-            result, sort=sort, dedupe=dedupe, event_limit=event_limit
-        )
-    payload = result.to_dict()
-    items = payload.get("items", [])
-    lines = [
-        f"view={payload.get('view')} backed={payload.get('backed')} "
-        f"items={len(items)} quality={payload.get('quality', {}).get('status')}"
-    ]
-    for item in items[:10]:
-        fact = item.get("summary") or item.get("entity_key") or ""
-        lines.append(f"  • [{item.get('entity_type') or '?'}] {fact}")
-    return "\n".join(lines)
-
-
-def _raw_item_rows(result) -> list[dict[str, Any]]:
-    return list(result.to_dict().get("items", []))
-
-
-def _effective_read_format(result, requested: str) -> str:
-    value = (requested or "auto").strip().lower()
-    if value not in {"auto", "raw", "events", "table", "jsonl"}:
-        raise ValueError("--format must be one of: auto, raw, events, table, jsonl")
-    if value == "auto":
-        return "events" if _is_timeline_view(result.to_dict().get("view")) else "raw"
-    return value
-
-
-def _effective_requested_format(*, subgraph: str, view: str, requested: str) -> str:
-    value = (requested or "auto").strip().lower()
-    if value == "auto":
-        return "events" if _is_timeline_view(f"{subgraph}.{view}") else "raw"
-    return value
-
-
-def _service_limit_for_read(
-    *, subgraph: str, view: str, format_: str, requested_limit: int
-) -> int:
-    if _is_timeline_view(f"{subgraph}.{view}") and format_ in {
-        "events",
-        "table",
-        "jsonl",
-    }:
-        return min(max(requested_limit * 8, 40), 200)
-    return requested_limit
-
-
-def _is_timeline_view(view: str | None) -> bool:
-    return str(view or "").strip() == "recent_changes.timeline"
-
-
-def _timeline_events(
-    result,
-    *,
-    sort: str = "auto",
-    dedupe: str = "auto",
-    limit: int | None = None,
-) -> list[dict[str, Any]]:
-    payload = result.to_dict()
-    if not _is_timeline_view(payload.get("view")):
-        return []
-    dedupe_mode = _normalize_dedupe(dedupe)
-    by_key: dict[str, dict[str, Any]] = {}
-    ordered: list[dict[str, Any]] = []
-    items = getattr(result, "items", None)
-    if items is None:
-        items = payload.get("items", [])
-    for item in items:
-        for event in _events_from_item(item):
-            key = _event_dedupe_key(event, mode=dedupe_mode)
-            if key is not None and key in by_key:
-                existing = by_key[key]
-                if float(event.get("score") or 0.0) > float(
-                    existing.get("score") or 0.0
-                ):
-                    existing.update(event)
-                continue
-            ordered.append(event)
-            if key is not None:
-                by_key[key] = event
-    events = _sort_events(ordered, sort=sort)
-    return events[:limit] if limit is not None and limit >= 0 else events
-
-
-def _events_from_item(item: Mapping[str, Any]) -> list[dict[str, Any]]:
-    payload = dict(item)
-    relations = payload.get("relations")
-    item_score = float(payload.get("score") or 0.0)
-    if isinstance(relations, list):
-        return [
-            _event_from_relation(rel, item_score=item_score)
-            for rel in relations
-            if isinstance(rel, Mapping) and _relation_has_timeline_fact(rel)
-        ]
-    claim = payload.get("claim") if isinstance(payload.get("claim"), Mapping) else {}
-    if claim.get("source_refs") or payload.get("source_refs") or payload.get("summary"):
-        flat_payload = {**claim, **payload}
-        return [_event_from_flat_payload(flat_payload, item_score=item_score)]
-    return []
-
-
-def _relation_has_timeline_fact(rel: Mapping[str, Any]) -> bool:
-    return bool(
-        rel.get("fact") or rel.get("source_refs") or _activity_key_from_relation(rel)
-    )
-
-
-def _event_from_relation(
-    rel: Mapping[str, Any], *, item_score: float
-) -> dict[str, Any]:
-    fact = _str(rel.get("fact"))
-    source_refs = _string_list(rel.get("source_refs"))
-    related_entity = (
-        rel.get("related_entity")
-        if isinstance(rel.get("related_entity"), Mapping)
-        else {}
-    )
-    return {
-        "activity_key": _activity_key_from_relation(rel),
-        "occurred_at": _event_occurred_at(rel, fact=fact),
-        "source_refs": source_refs,
-        "fact": fact,
-        "predicate": _str(rel.get("predicate")),
-        "actor_key": _actor_key_from_relation(rel),
-        "target_key": _target_key_from_relation(rel),
-        "related_key": _str(rel.get("related_key")),
-        "related_name": _str(related_entity.get("name")),
-        "truth": _str(rel.get("truth")),
-        "evidence_strength": _str(rel.get("evidence_strength")),
-        "source_system": _str(rel.get("source_system")),
-        "score": float(rel.get("score") or item_score or 0.0),
-    }
-
-
-def _event_from_flat_payload(
-    payload: Mapping[str, Any], *, item_score: float
-) -> dict[str, Any]:
-    fact = _str(payload.get("fact") or payload.get("summary"))
-    return {
-        "activity_key": _str(payload.get("activity_key")),
-        "occurred_at": _event_occurred_at(payload, fact=fact),
-        "source_refs": _string_list(payload.get("source_refs")),
-        "fact": fact,
-        "predicate": _str(payload.get("predicate")),
-        "actor_key": None,
-        "target_key": _str(payload.get("object_key")),
-        "related_key": _str(payload.get("object_key")),
-        "related_name": None,
-        "truth": _str(payload.get("truth")),
-        "evidence_strength": _str(payload.get("evidence_strength")),
-        "source_system": _str(payload.get("source_system")),
-        "score": float(item_score or 0.0),
-    }
-
-
-def _activity_key_from_relation(rel: Mapping[str, Any]) -> str | None:
-    predicate = _str(rel.get("predicate")).upper()
-    from_key = _str(rel.get("from_key"))
-    to_key = _str(rel.get("to_key"))
-    if predicate in {"TOUCHED", "MENTIONS"}:
-        return from_key
-    if predicate in {"PERFORMED", "AUTHORED"}:
-        return to_key
-    return from_key if from_key.startswith("activity:") else to_key
-
-
-def _actor_key_from_relation(rel: Mapping[str, Any]) -> str | None:
-    predicate = _str(rel.get("predicate")).upper()
-    if predicate in {"PERFORMED", "AUTHORED"}:
-        return _str(rel.get("from_key")) or None
-    return None
-
-
-def _target_key_from_relation(rel: Mapping[str, Any]) -> str | None:
-    predicate = _str(rel.get("predicate")).upper()
-    if predicate in {"TOUCHED", "MENTIONS"}:
-        return _str(rel.get("to_key")) or None
-    return None
-
-
-def _event_occurred_at(
-    payload: Mapping[str, Any], *, fact: str | None = None
-) -> str | None:
-    props = (
-        payload.get("properties")
-        if isinstance(payload.get("properties"), Mapping)
-        else {}
-    )
-    for value in (
-        payload.get("occurred_at"),
-        props.get("occurred_at"),
-    ):
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    if fact:
-        m = re.search(r"\bon (\d{4}-\d{2}-\d{2})\b", fact)
-        if m:
-            return m.group(1)
-    value = payload.get("valid_at")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
-
-
-def _normalize_dedupe(value: str) -> str:
-    mode = (value or "auto").strip().lower()
-    if mode == "auto":
-        return "source_ref"
-    if mode not in {"none", "source_ref", "activity"}:
-        raise ValueError("--dedupe must be one of: auto, none, source_ref, activity")
-    return mode
-
-
-def _event_dedupe_key(event: Mapping[str, Any], *, mode: str) -> str | None:
-    if mode == "none":
-        return None
-    if mode == "activity":
-        return _str(event.get("activity_key")) or None
-    refs = _string_list(event.get("source_refs"))
-    if refs:
-        return "source_ref:" + "|".join(sorted(refs))
-    return _str(event.get("activity_key")) or _str(event.get("fact")) or None
-
-
-def _sort_events(events: list[dict[str, Any]], *, sort: str) -> list[dict[str, Any]]:
-    mode = (sort or "auto").strip().lower()
-    if mode == "auto":
-        mode = "occurred_at"
-    if mode not in {"score", "occurred_at"}:
-        raise ValueError("--sort must be one of: auto, score, occurred_at")
-    if mode == "score":
-        return sorted(events, key=lambda e: float(e.get("score") or 0.0), reverse=True)
-    return sorted(
-        events,
-        key=lambda e: (
-            _parse_sort_dt(e.get("occurred_at")),
-            float(e.get("score") or 0.0),
-        ),
-        reverse=True,
-    )
-
-
-def _timeline_freshness(events: list[Mapping[str, Any]]) -> dict[str, Any]:
-    dates = [e.get("occurred_at") for e in events if e.get("occurred_at")]
-    return {
-        "latest_event_at": max(dates) if dates else None,
-        "source_refs_count": len(
-            {ref for e in events for ref in _string_list(e.get("source_refs"))}
-        ),
-        "local_worktree_included": False,
-        "note": "Timeline reads recorded graph events for the whole pot/project across repo sources; uncommitted local changes are not included unless recorded.",
-    }
-
-
-def _timeline_human(
-    result, *, sort: str, dedupe: str, event_limit: int | None = None
-) -> str:
-    events = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
-    payload = result.to_dict()
-    lines = [
-        f"view={payload.get('view')} events={len(events)} "
-        f"quality={payload.get('quality', {}).get('status')}",
-        "scope=project-wide pot timeline across registered repo sources; local uncommitted worktree is not included",
-    ]
-    for event in events[:20]:
-        refs = ", ".join(_string_list(event.get("source_refs"))) or "no-source-ref"
-        when = event.get("occurred_at") or "unknown-date"
-        fact = event.get("fact") or event.get("activity_key") or "(no fact)"
-        lines.append(f"  • {when} [{refs}] {fact}")
-    return "\n".join(lines)
-
-
-def _resolve_time_bounds(
-    *, since: str | None, until: str | None, window: str | None
-) -> tuple[datetime | None, datetime | None]:
-    until_dt = _parse_instant(until) if until else None
-    since_dt = _parse_instant(since) if since else None
-    if since_dt is not None:
-        return since_dt, until_dt
-    if window:
-        end = until_dt or datetime.now(timezone.utc)
-        return end - _parse_duration(window), until_dt
-    return None, until_dt
-
-
-def _parse_instant(value: str) -> datetime:
-    raw = value.strip()
-    if not raw:
-        raise ValueError("timestamp must be non-empty")
-    if raw.endswith("Z"):
-        raw = raw[:-1] + "+00:00"
-    try:
-        dt = datetime.fromisoformat(raw)
-    except ValueError as exc:
-        raise ValueError(f"invalid timestamp {value!r}; expected ISO 8601") from exc
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
-
-
-def _parse_duration(value: str) -> timedelta:
-    m = re.fullmatch(r"\s*(\d+)\s*([mhdw])\s*", value.strip().lower())
-    if not m:
-        raise ValueError("--time-window must look like 30m, 24h, 7d, or 2w")
-    amount = int(m.group(1))
-    unit = m.group(2)
-    if unit == "m":
-        return timedelta(minutes=amount)
-    if unit == "h":
-        return timedelta(hours=amount)
-    if unit == "d":
-        return timedelta(days=amount)
-    return timedelta(weeks=amount)
-
-
-def _parse_ttl_seconds(value: str) -> int:
-    try:
-        ttl = _parse_duration(value)
-    except ValueError as exc:
-        raise ValueError("--ttl must look like 30m, 1h, 7d, or 2w") from exc
-    seconds = int(ttl.total_seconds())
-    if seconds <= 0:
-        raise ValueError("--ttl must be positive")
-    return seconds
-
-
-def _parse_sort_dt(value: Any) -> datetime:
-    if isinstance(value, str) and value.strip():
-        raw = value.strip()
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
-            raw = raw + "T00:00:00+00:00"
-        if raw.endswith("Z"):
-            raw = raw[:-1] + "+00:00"
-        try:
-            dt = datetime.fromisoformat(raw)
-            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-        except ValueError:
-            pass
-    return datetime.min.replace(tzinfo=timezone.utc)
-
-
-def _resolve_repo_scope(repo: str) -> str:
-    value = repo.strip()
-    if not value:
-        raise ValueError("--repo must be non-empty")
-    if value == "current":
-        remote = _current_repo_remote_for_scope()
-        if remote:
-            return remote
-        raise ValueError("--repo current requires a git remote.origin.url")
-    return _normalize_repo_for_scope(value)
-
-
-def _current_repo_remote_for_scope() -> str | None:
-    import subprocess
-
-    try:
-        proc = subprocess.run(
-            ["git", "config", "--get", "remote.origin.url"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-            check=False,
-        )
-    except Exception:  # noqa: BLE001
-        return None
-    if proc.returncode != 0:
-        return None
-    return _normalize_repo_for_scope(proc.stdout.strip())
-
-
-def _normalize_repo_for_scope(value: str) -> str:
-    text = value.strip()
-    if text.endswith(".git"):
-        text = text[:-4]
-    if text.startswith("git@"):
-        text = text[4:].replace(":", "/", 1)
-    elif "://" in text:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(text)
-        path = parsed.path.strip("/")
-        if parsed.netloc and path:
-            text = f"{parsed.netloc}/{path}"
-    return text.strip("/").lower()
-
-
-def _str(value: Any) -> str:
-    return value.strip() if isinstance(value, str) else ""
-
-
-def _string_list(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value] if value else []
-    if isinstance(value, (list, tuple)):
-        return [v for v in value if isinstance(v, str) and v]
-    return []
-
-
-def _nudge_human(result) -> str:
-    if result.silent:
-        return f"silent (event={result.event}): {result.detail or 'nothing to inject'}"
-    lines = [f"event={result.event}"]
-    if result.inject_context:
-        lines.append(result.inject_context)
-    if result.instruction:
-        lines.append(f"instruction: {result.instruction}")
-    if result.injected_keys:
-        lines.append(f"(injected {len(result.injected_keys)} item(s))")
-    return "\n".join(lines)
-
-
-def _mutate_human(result) -> str:
-    if result.would_apply is not None:
-        head = (
-            f"{result.status}: would_apply={result.would_apply} risk={result.risk} "
-            f"accepted={result.operations_accepted} preview={dict(result.preview or {})}"
-        )
-    else:
-        head = (
-            f"{result.status}: risk={result.risk} "
-            f"auto_committed={result.auto_committed} "
-            f"applied={result.operations_applied} {dict(result.mutations_applied)}"
-        )
-    lines = [head]
-    for issue in result.issues:
-        marker = "error" if issue.is_error else "warn"
-        lines.append(f"  [{marker}] {issue.code}: {issue.message}")
-    return "\n".join(lines)
-
-
-def _proposal_human(result) -> str:
-    lines = [
-        (
-            f"{result.status}: plan_id={result.plan_id} risk={result.risk} "
-            f"auto_applicable={result.auto_applicable}"
-        )
-    ]
-    if result.diff:
-        lines.append(f"diff: {result.diff.to_dict()}")
-    for issue in getattr(result, "issues", ()):
-        code = issue.get("code") if isinstance(issue, Mapping) else None
-        message = issue.get("message") if isinstance(issue, Mapping) else None
-        if code or message:
-            lines.append(f"  [issue] {code}: {message}")
-    return "\n".join(lines)
-
-
-def _commit_human(result) -> str:
-    head = f"{result.status}: plan_id={result.plan_id} risk={result.risk}"
-    if result.mutation_id:
-        head += f" mutation_id={result.mutation_id}"
-    lines = [head]
-    verification = getattr(result, "verification", None)
-    if verification is not None:
-        lines.append(
-            "verification: "
-            f"status={verification.status} "
-            f"readback={verification.readback_count}/{len(verification.claim_keys)} "
-            f"quality={verification.quality_status}"
-        )
-        if verification.quality_regressions:
-            lines.append(
-                f"quality_regressions={dict(verification.quality_regressions)}"
-            )
-        if verification.missing_claim_keys:
-            lines.append(f"missing_claim_keys={list(verification.missing_claim_keys)}")
-    if result.detail:
-        lines.append(result.detail)
-    return "\n".join(lines)
-
-
-def _history_human(result) -> str:
-    payload = result.to_dict()
-    entries = payload.get("entries", [])
-    lines = [f"history: entries={len(entries)} filters={payload.get('filters', {})}"]
-    detail = payload.get("detail")
-    if detail:
-        lines.append(str(detail))
-    for entry in entries[:10]:
-        when = entry.get("occurred_at") or "unknown-time"
-        kind = entry.get("kind") or "entry"
-        status = entry.get("status") or "-"
-        summary = entry.get("summary") or entry.get("id")
-        lines.append(f"  • {when} [{kind}:{status}] {summary}")
-    return "\n".join(lines)
-
-
-def _inbox_human(result) -> str:
-    payload = result.to_dict()
-    if payload.get("item"):
-        item = payload["item"]
-        head = (
-            f"inbox {payload.get('action')}: "
-            f"{item.get('item_id')} status={item.get('status')}"
-        )
-        detail = payload.get("detail")
-        return "\n".join([head, str(detail)] if detail else [head])
-    items = payload.get("items", [])
-    lines = [f"inbox {payload.get('action')}: items={len(items)}"]
-    detail = payload.get("detail")
-    if detail:
-        lines.append(str(detail))
-    for item in items[:10]:
-        lines.append(
-            f"  {item.get('item_id')} [{item.get('status')}] {item.get('summary')}"
-        )
-    return "\n".join(lines)
-
-
-def _quality_human(result) -> str:
-    payload = result.to_dict()
-    findings = payload.get("findings", [])
-    lines = [
-        f"quality {payload.get('report')}: status={payload.get('status')} findings={len(findings)}"
-    ]
-    detail = payload.get("detail")
-    if detail:
-        lines.append(str(detail))
-    for finding in findings[:10]:
-        lines.append(
-            f"  {finding.get('finding_id')} [{finding.get('severity')}] "
-            f"{finding.get('summary')}"
-        )
-    return "\n".join(lines)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 __all__ = ["backend_app", "graph_app", "timeline_app"]

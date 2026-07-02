@@ -84,11 +84,11 @@ class HttpTransport:
             config = uvicorn.Config(
                 app=app, uds=str(sockpath), log_level="warning", lifespan="off"
             )
-            self._server = uvicorn.Server(config)
+            server = uvicorn.Server(config)
+            self._server = server
             watcher = asyncio.create_task(self._mark_ready_when_started())
             try:
-                assert self._server is not None
-                await self._server.serve()
+                await server.serve()
             finally:
                 watcher.cancel()
                 if sockpath.exists():
@@ -96,11 +96,11 @@ class HttpTransport:
                 self._health.set(self._health_key, HealthStatus.STOPPED)
         else:  # tcp
             config = uvicorn.Config(app=app, log_level="warning", lifespan="off")
-            self._server = uvicorn.Server(config)
+            server = uvicorn.Server(config)
+            self._server = server
             watcher = asyncio.create_task(self._mark_ready_when_started())
             try:
-                assert self._server is not None
-                await self._server.serve(sockets=[self._sock])
+                await server.serve(sockets=[self._sock])
             finally:
                 watcher.cancel()
                 if self._sock is not None:

@@ -32,6 +32,10 @@ class FlushOutcome:
     errors: int
 
 
+class ForceFlushQueueUnavailable(RuntimeError):
+    """Raised when an open batch exists but no queue is available to run it."""
+
+
 def flush_ready_windowed_pots(
     *,
     config: IngestionConfigPort,
@@ -84,7 +88,7 @@ def force_flush_pot(
     *,
     pot_id: str,
     batches: BatchRepositoryPort,
-    jobs: ContextGraphJobQueuePort,
+    jobs: ContextGraphJobQueuePort | None,
 ) -> str | None:
     """Enqueue the pot's open batch right now (the user-facing 'force ingest').
 
@@ -95,6 +99,8 @@ def force_flush_pot(
     batch_id = batches.get_open_batch_id_for_pot(pot_id)
     if batch_id is None:
         return None
+    if jobs is None:
+        raise ForceFlushQueueUnavailable("Context graph job queue is not configured.")
     try:
         jobs.enqueue_batch(batch_id)
     except Exception:

@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Callable, Generator, Iterator
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -59,13 +60,28 @@ from domain.ports.agent_context import ResolveRequest
 # be assertable by a request.
 _CLIENT_DECLARABLE_SURFACES: frozenset[str] = frozenset({"cli", "mcp", "http"})
 
+_INGESTION_EVENT_STATUS_BY_VALUE: dict[str, IngestionEventStatus] = {
+    "queued": "queued",
+    "processing": "processing",
+    "done": "done",
+    "error": "error",
+}
+
+JsonObject = dict[str, Any]
+AuthDependency = Callable[..., object]
+ContainerDependency = Callable[..., IngestionServerContainer]
+DbDependency = Callable[..., Session | Generator[Session, None, None]]
+OptionalDbDependency = Callable[
+    ..., Session | None | Generator[Session | None, None, None]
+]
+
 UNKNOWN_POT_DETAIL = (
     "Unknown pot_id for this user (create with POST /api/v2/context/pots "
     "and attach at least one repository)."
 )
 
 
-def _ndjson_line(event: dict[str, Any]) -> bytes:
+def _ndjson_line(event: JsonObject) -> bytes:
     """Serialize one stream event as a UTF-8 NDJSON line.
 
     Matches the chat streaming client contract: one JSON object per line so
@@ -90,7 +106,7 @@ _AUDIT_LOGGER_NAME = "context_engine.operator_audit"
 _audit_logger = logging.getLogger(_AUDIT_LOGGER_NAME)
 
 
-def _actor_identity(actor: Any) -> str:
+def _actor_identity(actor: object) -> str:
     """Best-effort extraction of an actor label for audit logs."""
 
     if actor is None:
@@ -110,7 +126,7 @@ def _audit_operator_action(
     *,
     action: str,
     pot_id: str,
-    actor: Any = None,
+    actor: object | None = None,
     dry_run: bool | None = None,
     extra: dict[str, Any] | None = None,
 ) -> None:
@@ -319,14 +335,13 @@ def _parse_event_status_filters(
 ) -> tuple[IngestionEventStatus, ...] | None:
     if not raw:
         return None
-    allowed: frozenset[str] = frozenset({"queued", "processing", "done", "error"})
-    bad = [x for x in raw if x not in allowed]
+    bad = [x for x in raw if x not in _INGESTION_EVENT_STATUS_BY_VALUE]
     if bad:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid status filter(s): {bad}; use queued, processing, done, or error.",
         )
-    return tuple(raw)  # type: ignore[return-value]
+    return tuple(_INGESTION_EVENT_STATUS_BY_VALUE[x] for x in raw)
 
 
 _WINDOW_RE = re.compile(r"^(\d+)\s*([mhdw])$")
@@ -350,10 +365,10 @@ def _parse_window(window: str | None) -> timedelta | None:
 
 def create_context_router(
     *,
-    require_auth: Callable[..., Any],
-    get_container: Callable[..., IngestionServerContainer],
-    get_db: Callable[..., Any],
-    get_db_optional: Callable[..., Any],
+    require_auth: AuthDependency,
+    get_container: ContainerDependency,
+    get_db: DbDependency,
+    get_db_optional: OptionalDbDependency,
 ) -> APIRouter:
     """Build context API routes with injected FastAPI dependencies.
 
@@ -363,7 +378,7 @@ def create_context_router(
     """
     router = APIRouter()
 
-    def _resolve_actor(auth_user: Any, request: Request) -> Actor:
+    def _resolve_actor(auth_user: object, request: Request) -> Actor:
         """Derive Actor from the authenticated principal only.
 
         ``user_id`` comes solely from what ``require_auth`` resolved — never
@@ -418,7 +433,7 @@ def create_context_router(
     def post_ingest_episode(
         body: IngestEpisodeRequest,
         request: Request,
-        auth_user: Any = Depends(require_auth),
+        auth_user: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session | None = Depends(get_db_optional),
         sync: bool = Query(
@@ -430,7 +445,7 @@ def create_context_router(
             alias="X-Context-Ingest-Sync",
             description="If true/1/yes, same as sync=true.",
         ),
-    ):
+    ) -> JSONResponse:
         want_sync = _wants_sync(sync, x_context_ingest_sync)
         actor = _resolve_actor(auth_user, request)
         _enforce(
@@ -504,14 +519,17 @@ def create_context_router(
             raise HTTPException(status_code=503, detail=err)
 
         if result.status == "applied":
-            return {
-                "status": "applied",
-                "mutation_id": result.mutation_id,
-                "event_id": result.event_id,
-                "job_id": result.job_id,
-                "errors": [],
-                "downgrades": list(result.downgrades or []),
-            }
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "applied",
+                    "mutation_id": result.mutation_id,
+                    "event_id": result.event_id,
+                    "job_id": result.job_id,
+                    "errors": [],
+                    "downgrades": list(result.downgrades or []),
+                },
+            )
         return JSONResponse(
             status_code=202,
             content={
@@ -537,7 +555,7 @@ def create_context_router(
     )
     def post_hard_reset(
         body: HardResetRequest,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session | None = Depends(get_db_optional),
     ) -> dict[str, Any]:
@@ -548,11 +566,11 @@ def create_context_router(
             action=ACTION_POT_RESET,
             pot_id=body.pot_id,
         )
-        use_ledger = db is not None and not body.skip_ledger
-        ledger = SqlAlchemyIngestionLedger(db) if use_ledger else None
-        reconciliation_ledger = (
-            SqlAlchemyReconciliationLedger(db) if use_ledger else None
-        )
+        ledger = None
+        reconciliation_ledger = None
+        if db is not None and not body.skip_ledger:
+            ledger = SqlAlchemyIngestionLedger(db)
+            reconciliation_ledger = SqlAlchemyReconciliationLedger(db)
         assert container.context_graph is not None  # policy guarantees this
         out = hard_reset_pot(
             container.context_graph,
@@ -595,10 +613,10 @@ def create_context_router(
     )
     def post_events_reconcile(
         body: ContextEventHttpBody,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
-    ):
+    ) -> JSONResponse:
         _enforce(
             container,
             actor=actor,
@@ -650,7 +668,7 @@ def create_context_router(
     @router.get("/events/{event_id}", summary="Fetch a persisted context event")
     def get_context_event(
         event_id: str,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
@@ -719,10 +737,10 @@ def create_context_router(
     )
     def retry_context_event(
         event_id: str,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
-    ):
+    ) -> JSONResponse:
         events = container.ingestion_event_store(db)
         ev = events.get_event(event_id)
         if ev is None:
@@ -780,10 +798,10 @@ def create_context_router(
     def batch_retry_events(
         pot_id: str,
         body: BatchRetryEventsRequest,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
-    ):
+    ) -> JSONResponse:
         if not body.event_ids:
             raise HTTPException(status_code=400, detail="event_ids must be non-empty")
         # Cap to a sane batch — bigger bulk ops should use windowed batching.
@@ -871,7 +889,7 @@ def create_context_router(
     )
     def list_pot_events(
         pot_id: str,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
         cursor: str | None = None,
@@ -963,7 +981,7 @@ def create_context_router(
     )
     async def get_pot_timeline(
         pot_id: str,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         service: list[str] | None = Query(
             None,
@@ -1072,7 +1090,7 @@ def create_context_router(
     )
     def get_ingestion_config(
         pot_id: str,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
@@ -1098,7 +1116,7 @@ def create_context_router(
     def put_ingestion_config(
         pot_id: str,
         body: IngestionConfigBody,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
@@ -1113,7 +1131,7 @@ def create_context_router(
         try:
             cfg = container.ingestion_config(db).set(
                 pot_id=pot_id,
-                mode=body.mode,  # type: ignore[arg-type]
+                mode=body.mode,
                 window_minutes=body.window_minutes,
                 min_batch_size=body.min_batch_size,
                 actor_user_id=actor_uid if isinstance(actor_uid, str) else None,
@@ -1141,11 +1159,14 @@ def create_context_router(
     )
     def force_flush_pot_endpoint(
         pot_id: str,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
-        from application.use_cases.flush_windowed_batches import force_flush_pot
+        from application.use_cases.flush_windowed_batches import (
+            ForceFlushQueueUnavailable,
+            force_flush_pot,
+        )
 
         _enforce(
             container,
@@ -1154,11 +1175,17 @@ def create_context_router(
             action=ACTION_POT_SUBMIT_EVENT,
             pot_id=pot_id,
         )
-        batch_id = force_flush_pot(
-            pot_id=pot_id,
-            batches=container.batch_repository(db),
-            jobs=container.jobs,
-        )
+        try:
+            batch_id = force_flush_pot(
+                pot_id=pot_id,
+                batches=container.batch_repository(db),
+                jobs=container.jobs,
+            )
+        except ForceFlushQueueUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=str(exc),
+            ) from exc
         return {
             "pot_id": pot_id,
             "batch_id": batch_id,
@@ -1176,7 +1203,7 @@ def create_context_router(
     )
     def get_ingest_pipeline(
         pot_id: str,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
@@ -1237,7 +1264,7 @@ def create_context_router(
     )
     def stream_event_activity(
         event_id: str,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
         cursor: str | None = Query(
@@ -1250,7 +1277,7 @@ def create_context_router(
             le=600.0,
             description="Close the connection if no events arrive within this window.",
         ),
-    ):
+    ) -> StreamingResponse:
         events = container.event_query_service(db)
         ev = events.get_event(event_id)
         if ev is None:
@@ -1267,12 +1294,12 @@ def create_context_router(
             event_id
         )
         try:
-            cursor_seq = int(cursor) if cursor not in (None, "") else 0
+            cursor_seq = int(cursor) if cursor is not None and cursor != "" else 0
         except (TypeError, ValueError):
             cursor_seq = 0
         exec_log = container.agent_execution_log(db)
 
-        def _iter() -> Any:
+        def _iter() -> Iterator[bytes]:
             if batch_id is None:
                 # Event admitted but not yet batched/run. Emit a transient
                 # end so the client backs off and reconnects until the
@@ -1303,8 +1330,6 @@ def create_context_router(
                     {"type": "end", "status": "error", "message": str(exc)}
                 )
 
-        from fastapi.responses import StreamingResponse
-
         return StreamingResponse(
             _iter(),
             media_type="application/x-ndjson",
@@ -1328,7 +1353,7 @@ def create_context_router(
     )
     def stream_pot_events(
         pot_id: str,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         cursor: str | None = Query(
             None,
@@ -1340,7 +1365,7 @@ def create_context_router(
             le=600.0,
             description="Close the connection if no events arrive within this window.",
         ),
-    ):
+    ) -> StreamingResponse:
         _enforce(
             container,
             actor=actor,
@@ -1350,7 +1375,7 @@ def create_context_router(
         )
         publisher = container.event_stream_publisher
 
-        def _iter() -> Any:
+        def _iter() -> Iterator[bytes]:
             try:
                 for event in publisher.replay_and_tail_pot_status(
                     pot_id=pot_id,
@@ -1365,8 +1390,6 @@ def create_context_router(
                 yield _ndjson_line(
                     {"type": "end", "status": "error", "message": str(exc)}
                 )
-
-        from fastapi.responses import StreamingResponse
 
         return StreamingResponse(
             _iter(),
@@ -1384,7 +1407,7 @@ def create_context_router(
     def post_context_record(
         body: ContextRecordRequest,
         request: Request,
-        auth_user: Any = Depends(require_auth),
+        auth_user: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
         sync: bool = Query(
@@ -1398,7 +1421,7 @@ def create_context_router(
             None,
             alias="X-Context-Ingest-Sync",
         ),
-    ):
+    ) -> dict[str, Any]:
         actor = _resolve_actor(auth_user, request)
         _enforce(
             container,
@@ -1466,7 +1489,7 @@ def create_context_router(
     )
     def post_context_status(
         body: ContextStatusRequest,
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session | None = Depends(get_db_optional),
     ) -> dict[str, Any]:
@@ -1501,7 +1524,7 @@ def create_context_router(
     )
     async def post_context_graph_query(
         body: dict[str, Any],
-        actor: Any = Depends(require_auth),
+        actor: object = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
     ) -> dict[str, Any]:
         del body

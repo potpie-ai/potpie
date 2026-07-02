@@ -5,11 +5,13 @@ from __future__ import annotations
 import typer
 
 from potpie.cli.commands._common import (
+    EXIT_VALIDATION,
     EXIT_UNAVAILABLE,
     contract,
     emit,
     fail,
     get_host,
+    is_json,
 )
 from potpie.daemon.process.launcher import DaemonStartError
 from potpie.daemon.lifecycle import Daemon
@@ -70,7 +72,22 @@ def daemon_status() -> None:
 @daemon_app.command("logs")
 def daemon_logs(follow: bool = typer.Option(False, "--follow")) -> None:
     with contract():
-        lines = _detached_daemon().logs(follow=follow)
+        daemon = _detached_daemon()
+        if follow:
+            if is_json():
+                fail(
+                    code="validation_error",
+                    message="daemon logs --follow is only supported for human output",
+                    next_action="run without --json or omit --follow",
+                    exit_code=EXIT_VALIDATION,
+                )
+            try:
+                for line in daemon.iter_logs():
+                    typer.echo(line)
+            except KeyboardInterrupt:
+                pass
+            return
+        lines = daemon.logs()
         emit({"lines": lines}, human="\n".join(lines) or "(no logs)")
 
 

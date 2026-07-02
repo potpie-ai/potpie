@@ -15,6 +15,10 @@ from adapters.outbound.skills.bundle_catalog import (
     catalog_by_id,
     recommended_skill_ids,
 )
+from adapters.outbound.skills.template_resources import (
+    NO_TEMPLATE_RESOURCES,
+    TemplateResourceProvider,
+)
 from domain.ports.agent_context import SkillNudge
 from domain.ports.services.skill_manager import (
     AgentTargetPort,
@@ -27,6 +31,7 @@ from domain.ports.services.skill_manager import (
 @dataclass(slots=True)
 class DefaultSkillManager:
     targets: dict[str, AgentTargetPort] = field(default_factory=dict)
+    template_resources: TemplateResourceProvider = NO_TEMPLATE_RESOURCES
 
     def _target(self, agent: str) -> AgentTargetPort:
         target = self.targets.get(agent)
@@ -44,8 +49,18 @@ class DefaultSkillManager:
         if normalized_scope == "global":
             return self._target(agent)
         if normalized_scope == "project":
-            return ProjectAgentTarget(agent=agent, path=Path(path or "."))
+            return ProjectAgentTarget(
+                agent=agent,
+                path=Path(path or "."),
+                template_resources=self.template_resources,
+            )
         raise ValueError("scope must be 'global' or 'project'")
+
+    def _catalog_by_id(self) -> dict[str, SkillInfo]:
+        return catalog_by_id(template_resources=self.template_resources)
+
+    def _recommended_skill_ids(self) -> tuple[str, ...]:
+        return recommended_skill_ids(template_resources=self.template_resources)
 
     @staticmethod
     def _metadata(target: AgentTargetPort, *, scope: str) -> dict[str, str]:
@@ -66,7 +81,7 @@ class DefaultSkillManager:
     def list(
         self, *, agent: str = "claude", scope: str = "global", path: str | None = None
     ) -> list[SkillInfo]:
-        catalog = catalog_by_id()
+        catalog = self._catalog_by_id()
         installed = self._target_for_scope(
             agent=agent, scope=scope, path=path
         ).installed()
@@ -94,8 +109,8 @@ class DefaultSkillManager:
         scope: str = "global",
     ) -> SkillOperationResult:
         target = self._target_for_scope(agent=agent, scope=scope, path=path)
-        catalog = catalog_by_id()
-        ids = [skill_id] if skill_id else list(recommended_skill_ids())
+        catalog = self._catalog_by_id()
+        ids = [skill_id] if skill_id else list(self._recommended_skill_ids())
         changed: list[str] = []
         installed = target.installed()
         for sid in ids:
@@ -124,7 +139,7 @@ class DefaultSkillManager:
         scope: str = "global",
     ) -> SkillOperationResult:
         target = self._target_for_scope(agent=agent, scope=scope, path=path)
-        catalog = catalog_by_id()
+        catalog = self._catalog_by_id()
         installed = target.installed()
         ids = list(installed) if (all_ or skill_id is None) else [skill_id]
         changed: list[str] = []
@@ -173,14 +188,14 @@ class DefaultSkillManager:
     def status(
         self, *, agent: str, path: str | None = None, scope: str = "global"
     ) -> SkillStatus:
-        catalog = catalog_by_id()
+        catalog = self._catalog_by_id()
         installed = self._target_for_scope(
             agent=agent, scope=scope, path=path
         ).installed()
         installed_infos: list[SkillInfo] = []
         missing: list[SkillInfo] = []
         outdated: list[SkillInfo] = []
-        for sid in recommended_skill_ids():
+        for sid in self._recommended_skill_ids():
             info = catalog[sid]
             ver = installed.get(sid)
             if ver is None:

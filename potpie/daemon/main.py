@@ -8,6 +8,7 @@ import os
 import secrets
 import socket
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -28,30 +29,42 @@ from bootstrap.observability_runtime import get_observability
 from potpie.runtime import build_potpie_host_shell
 from domain.errors import CapabilityNotImplemented, PotNotFound
 from domain.ports.observability import SPAN_KIND_SERVER
-from potpie.daemon.rpc import decode, encode
+from potpie.daemon.rpc import decode, encode, validate_rpc_attr, validate_rpc_method
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_RPC_SURFACES = frozenset(
+_LOCKED_RPC_METHODS: frozenset[tuple[str, str]] = frozenset(
     {
-        "agent_context",
-        "auth",
-        "backend",
-        "backend.analytics",
-        "backend.claim_query",
-        "backend.inspection",
-        "backend.mutation",
-        "backend.semantic",
-        "backend.snapshot",
-        "config",
-        "graph",
-        "graph_workbench",
-        "installer",
-        "ledger",
-        "nudge",
-        "pots",
-        "setup",
-        "skills",
+        ("backend", "provision"),
+        ("backend.mutation", "apply"),
+        ("backend.mutation", "invalidate"),
+        ("backend.mutation", "reset_pot"),
+        ("config", "set"),
+        ("graph", "mutate"),
+        ("graph", "record"),
+        ("graph_workbench", "commit"),
+        ("graph_workbench", "inbox_add"),
+        ("graph_workbench", "inbox_claim"),
+        ("graph_workbench", "inbox_close"),
+        ("graph_workbench", "inbox_mark_applied"),
+        ("graph_workbench", "inbox_mark_rejected"),
+        ("graph_workbench", "propose"),
+        ("pots", "add_source"),
+        ("pots", "archive_pot"),
+        ("pots", "clear_repo_default"),
+        ("pots", "create_pot"),
+        ("pots", "init"),
+        ("pots", "remove_source"),
+        ("pots", "rename_pot"),
+        ("pots", "reset_pot"),
+        ("pots", "set_repo_default"),
+        ("pots", "use_pot"),
+        ("setup", "run"),
+        ("skills", "add"),
+        ("skills", "install"),
+        ("skills", "nudge"),
+        ("skills", "remove"),
+        ("skills", "update"),
     }
 )
 
@@ -62,10 +75,9 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
     home = default_home()
     pid_file = home / "daemon.pid"
     discovery_file = home / "discovery.json"
-    legacy_discovery_file = home / "daemon.json"
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         home.mkdir(parents=True, exist_ok=True)
         write_pid_file(pid_file, pid)
         discovery = dict(
@@ -77,13 +89,11 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
             backend=host.backend.profile,
         )
         write_discovery(discovery_file, **discovery)
-        write_discovery(legacy_discovery_file, **discovery)
         try:
             yield
         finally:
             remove_pid_file(pid_file)
             remove_pid_file(discovery_file)
-            remove_pid_file(legacy_discovery_file)
 
     app = FastAPI(title="potpie-daemon", lifespan=lifespan)
 
@@ -114,18 +124,20 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
                 try:
                     surface = str(payload["surface"])
                     method = str(payload["method"])
-                    _validate_rpc_target(surface, method)
+                    validate_rpc_method(surface, method)
                     span.set_attributes({"rpc.surface": surface, "rpc.method": method})
-                    args = decode(payload.get("args") or [])
-                    kwargs = decode(payload.get("kwargs") or {})
+                    args = _decode_rpc_args(payload.get("args") or [])
+                    kwargs = _decode_rpc_kwargs(payload.get("kwargs") or {})
                     if kwargs.get("pot_id"):
                         span.set_attribute("pot_id", kwargs["pot_id"])
-                    async with rpc_lock:
-                        target = _resolve(host, surface)
-                        fn = getattr(target, method)
-                        result = await run_in_threadpool(fn, *args, **kwargs)
-                        if asyncio.iscoroutine(result):
-                            result = await result
+                    target = _resolve(host, surface)
+                    if _requires_rpc_lock(surface, method):
+                        async with rpc_lock:
+                            result = await _invoke_rpc_method(
+                                target, method, args, kwargs
+                            )
+                    else:
+                        result = await _invoke_rpc_method(target, method, args, kwargs)
                     return {"ok": True, "result": encode(result)}
                 except Exception as exc:  # noqa: BLE001
                     span.record_exception(exc)
@@ -142,11 +154,10 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
                 try:
                     surface = str(payload["surface"])
                     name = str(payload["name"])
-                    _validate_rpc_target(surface, name)
+                    validate_rpc_attr(surface, name)
                     span.set_attributes({"rpc.surface": surface, "rpc.attr": name})
-                    async with rpc_lock:
-                        target = _resolve(host, surface)
-                        return {"ok": True, "result": encode(getattr(target, name))}
+                    target = _resolve(host, surface)
+                    return {"ok": True, "result": encode(getattr(target, name))}
                 except Exception as exc:  # noqa: BLE001
                     span.record_exception(exc)
                     span.set_error(exc.__class__.__name__)
@@ -182,11 +193,37 @@ def _resolve(host: Any, path: str) -> Any:
     return obj
 
 
-def _validate_rpc_target(surface: str, member: str) -> None:
-    if surface not in _ALLOWED_RPC_SURFACES:
-        raise ValueError(f"invalid RPC surface: {surface}")
-    if not member or member.startswith("_"):
-        raise ValueError(f"invalid RPC member: {member}")
+def _requires_rpc_lock(surface: str, method: str) -> bool:
+    return (surface, method) in _LOCKED_RPC_METHODS
+
+
+def _decode_rpc_args(value: Any) -> list[Any]:
+    args = decode(value)
+    if isinstance(args, tuple):
+        return list(args)
+    if isinstance(args, list):
+        return args
+    raise ValueError("invalid RPC args")
+
+
+def _decode_rpc_kwargs(value: Any) -> dict[str, Any]:
+    kwargs = decode(value)
+    if isinstance(kwargs, dict):
+        return kwargs
+    raise ValueError("invalid RPC kwargs")
+
+
+async def _invoke_rpc_method(
+    target: Any,
+    method: str,
+    args: list[Any],
+    kwargs: dict[str, Any],
+) -> Any:
+    fn = getattr(target, method)
+    result = await run_in_threadpool(fn, *args, **kwargs)
+    if asyncio.iscoroutine(result):
+        result = await result
+    return result
 
 
 def _authorize(header: str | None, token: str) -> None:

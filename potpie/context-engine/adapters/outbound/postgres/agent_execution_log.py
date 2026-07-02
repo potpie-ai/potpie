@@ -34,6 +34,7 @@ from adapters.outbound.postgres.models import (
 )
 from domain.ports.agent_execution_log import (
     ExecutionRecordType,
+    ModelPartRecordType,
     ResumeState,
     TERMINAL_RECORD_TYPES,
 )
@@ -162,7 +163,7 @@ class PostgresAgentExecutionLog:
         *,
         batch_id: str,
         seq: int,
-        record_type: str,
+        record_type: ModelPartRecordType,
         part_id: str,
         content: str,
         done: bool,

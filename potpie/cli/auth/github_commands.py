@@ -11,7 +11,7 @@ from typing import NoReturn
 import typer
 from click.exceptions import Abort
 
-from adapters.outbound.cli_auth.github import (
+from potpie.cli.auth.github import (
     GitHubDeviceFlowError,
     build_provider_credentials,
     list_user_owned_repositories,
@@ -21,7 +21,7 @@ from adapters.outbound.cli_auth.github import (
 )
 from potpie.runtime.settings import ensure_runtime_environment_loaded
 from potpie.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
-from adapters.outbound.cli_auth.credentials_store import (
+from potpie.cli.auth.credentials_store import (
     CredentialStoreError,
     ProviderCredentialError,
     _integration_secret_store_label,

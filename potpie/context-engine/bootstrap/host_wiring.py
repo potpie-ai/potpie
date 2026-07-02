@@ -37,6 +37,10 @@ from adapters.outbound.skills.claude_target import (
     CursorAgentTarget,
     OpenCodeAgentTarget,
 )
+from adapters.outbound.skills.template_resources import (
+    TemplateResourceProvider,
+    resolve_template_resources,
+)
 from application.services.agent_context import AgentContextService
 from application.services.auth_service import LocalAuthService
 from application.services.config_service import LocalConfigService
@@ -86,6 +90,7 @@ def build_host_shell(
     observability: ObservabilityPort | None = None,
     settings: Any = None,
     daemon_lifecycle: DaemonLifecyclePort | None = None,
+    template_resources: TemplateResourceProvider | None = None,
 ) -> HostShell:
     """Compose a ``HostShell`` from the default local services + adapters.
 
@@ -96,6 +101,7 @@ def build_host_shell(
     configure_logging()
     set_observability(observability or default_observability())
     with correlation_scope(source="host_shell"):
+        template_resources = resolve_template_resources(template_resources)
         backend = backend or build_backend(default_backend_profile(), settings=settings)
         pot_store = LocalPotStore()
 
@@ -109,11 +115,12 @@ def build_host_shell(
         pots = LocalPotManagementService(store=pot_store, backend=backend)
         skills = DefaultSkillManager(
             targets={
-                "claude": ClaudeAgentTarget(),
-                "codex": CodexAgentTarget(),
-                "cursor": CursorAgentTarget(),
-                "opencode": OpenCodeAgentTarget(),
-            }
+                "claude": ClaudeAgentTarget(template_resources=template_resources),
+                "codex": CodexAgentTarget(template_resources=template_resources),
+                "cursor": CursorAgentTarget(template_resources=template_resources),
+                "opencode": OpenCodeAgentTarget(template_resources=template_resources),
+            },
+            template_resources=template_resources,
         )
         agent_context = AgentContextService(
             graph=graph, pots=pots, skills=skills, profile=profile

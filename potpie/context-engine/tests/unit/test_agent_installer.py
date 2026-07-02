@@ -3,19 +3,46 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from adapters.outbound.skills.agent_installer import (
-    install_global_agent_instructions,
-    install_agent_bundle,
-    install_skill_bundle,
-    iter_template_files,
+    install_global_agent_instructions as _install_global_agent_instructions,
+    install_agent_bundle as _install_agent_bundle,
+    install_skill_bundle as _install_skill_bundle,
+    iter_template_files as _iter_template_files,
     resolve_install_root,
 )
 from adapters.outbound.skills.claude_target import FileBackedAgentTarget
 from application.services.skill_manager import DefaultSkillManager
-from adapters.outbound.skills.bundle_catalog import catalog_by_id
+from adapters.outbound.skills.bundle_catalog import catalog_by_id as _catalog_by_id
+from adapters.outbound.skills.template_resources import PackageTemplateResources
+
+TEMPLATE_RESOURCES = PackageTemplateResources("potpie.cli")
+
+
+def install_agent_bundle(*args: Any, **kwargs: Any):
+    kwargs.setdefault("template_resources", TEMPLATE_RESOURCES)
+    return _install_agent_bundle(*args, **kwargs)
+
+
+def install_skill_bundle(*args: Any, **kwargs: Any):
+    kwargs.setdefault("template_resources", TEMPLATE_RESOURCES)
+    return _install_skill_bundle(*args, **kwargs)
+
+
+def install_global_agent_instructions(*args: Any, **kwargs: Any):
+    kwargs.setdefault("template_resources", TEMPLATE_RESOURCES)
+    return _install_global_agent_instructions(*args, **kwargs)
+
+
+def iter_template_files():
+    return _iter_template_files(template_resources=TEMPLATE_RESOURCES)
+
+
+def catalog_by_id():
+    return _catalog_by_id(template_resources=TEMPLATE_RESOURCES)
 
 
 def test_resolve_install_root_prefers_git_repo(tmp_path: Path) -> None:
@@ -76,9 +103,9 @@ def test_install_global_agent_instructions_merges_compact_agents_md(
     result = install_global_agent_instructions(root, agent="codex")
 
     text = target.read_text(encoding="utf-8")
-    managed = text.split("<!-- potpie-start -->", 1)[1].split(
-        "<!-- potpie-end -->", 1
-    )[0]
+    managed = text.split("<!-- potpie-start -->", 1)[1].split("<!-- potpie-end -->", 1)[
+        0
+    ]
     assert result.updated == ["AGENTS.md"]
     assert "# Personal defaults" in text
     assert "Potpie is durable project memory" in text
@@ -116,6 +143,7 @@ def test_file_backed_target_installs_global_support_files(tmp_path: Path) -> Non
         skills_root=tmp_path / ".agents" / "skills",
         instructions_root=tmp_path / ".codex",
         instructions_agent="codex",
+        template_resources=TEMPLATE_RESOURCES,
         home=tmp_path / "potpie",
     )
 
@@ -150,7 +178,10 @@ def test_skill_manager_repairs_support_files_when_skill_is_current(
         def remove(self, *, skill_id: str) -> None:
             raise AssertionError("remove should not be called")
 
-    manager = DefaultSkillManager(targets={"codex": _Target()})
+    manager = DefaultSkillManager(
+        targets={"codex": _Target()},
+        template_resources=TEMPLATE_RESOURCES,
+    )
 
     result = manager.install(agent="codex", skill_id="potpie-cli")
 
@@ -205,9 +236,7 @@ def test_install_agent_bundle_wraps_old_unmarked_agents_md(tmp_path: Path) -> No
         if rel.as_posix() == "AGENTS.md"
     )
     old_unmarked = (
-        marked_template.split("\n", 1)[1]
-        .rsplit("\n<!-- potpie-end -->", 1)[0]
-        .strip()
+        marked_template.split("\n", 1)[1].rsplit("\n<!-- potpie-end -->", 1)[0].strip()
         + "\n"
     )
     target.write_text(old_unmarked, encoding="utf-8")
@@ -233,9 +262,7 @@ def test_install_agent_bundle_replaces_embedded_unmarked_agents_md(
         if rel.as_posix() == "AGENTS.md"
     )
     old_unmarked = (
-        marked_template.split("\n", 1)[1]
-        .rsplit("\n<!-- potpie-end -->", 1)[0]
-        .strip()
+        marked_template.split("\n", 1)[1].rsplit("\n<!-- potpie-end -->", 1)[0].strip()
     )
     target.write_text(
         "# My notes\n\nSome custom project instructions.\n\n"
