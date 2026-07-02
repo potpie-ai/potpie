@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from application.services.read_orchestrator import ReadOrchestrator
 from application.services.record_to_semantic import record_to_semantic_request
@@ -196,10 +196,7 @@ class DefaultGraphService:
             known_subgraphs = sorted({str(v["subgraph"]) for v in views})
             views = [v for v in views if v["subgraph"] == subgraph]
             if not views:
-                raise ValueError(
-                    f"unknown graph subgraph {subgraph!r}. "
-                    f"Known subgraphs: {', '.join(known_subgraphs)}"
-                )
+                raise _unknown_subgraph_error(subgraph, known_subgraphs)
         return GraphCatalogResult(
             graph_contract_version=GRAPH_CONTRACT_VERSION,
             ontology_version=ONTOLOGY_VERSION,
@@ -608,22 +605,44 @@ def _qualified_view_name(subgraph: str, view: str) -> str:
     return f"{subgraph_value}.{view_value}"
 
 
+def _guidance_suffix(guidance: Mapping[str, Any] | None) -> str:
+    if not guidance:
+        return ""
+    if guidance.get("matched_include"):
+        return (
+            f" The context include family {guidance['matched_include']!r} is "
+            f"served by view {guidance['view']!r}; try `{guidance['read_command']}`."
+        )
+    return f" Did you mean {guidance['view']!r}? Try `{guidance['read_command']}`."
+
+
 def _unknown_view_error(
     view_name: str, *, subgraph: str, view: str
 ) -> UnknownGraphViewError:
     known = ", ".join(sorted(GRAPH_VIEWS))
-    message = f"unknown graph view {view_name!r}. Known views: {known}."
     guidance = include_guess_guidance(subgraph, view)
-    if guidance:
-        if guidance.get("matched_include"):
-            message += (
-                f" The context include family {guidance['matched_include']!r} is "
-                f"served by view {guidance['view']!r}; try `{guidance['read_command']}`."
-            )
-        else:
-            message += (
-                f" Did you mean {guidance['view']!r}? Try `{guidance['read_command']}`."
-            )
+    message = (
+        f"unknown graph view {view_name!r}. Known views: {known}."
+        + _guidance_suffix(guidance)
+    )
+    return UnknownGraphViewError(
+        message,
+        did_you_mean=guidance,
+        recommended_next_action=guidance["read_command"] if guidance else None,
+    )
+
+
+def _unknown_subgraph_error(
+    subgraph: str, known_subgraphs: Sequence[str]
+) -> UnknownGraphViewError:
+    # catalog is the first command agents run; an include family typed where
+    # a subgraph is expected deserves the same migration guidance as read.
+    guidance = include_guess_guidance(subgraph, None)
+    message = (
+        f"unknown graph subgraph {subgraph!r}. "
+        f"Known subgraphs: {', '.join(known_subgraphs)}."
+        + _guidance_suffix(guidance)
+    )
     return UnknownGraphViewError(
         message,
         did_you_mean=guidance,

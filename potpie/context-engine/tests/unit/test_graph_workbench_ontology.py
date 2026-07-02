@@ -60,6 +60,16 @@ def test_describe_unknown_subgraph_without_guidance_stays_plain() -> None:
     assert getattr(e.value, "detail", None) is None
 
 
+def test_describe_view_typo_under_valid_subgraph_stays_plain() -> None:
+    # 'decisions' is both a subgraph and an include family; a near-miss view
+    # under the VALID subgraph must not be redirected to the include family's
+    # view (a confidently-wrong recommended_next_action is worse than none).
+    with pytest.raises(ValueError, match="unknown graph view") as e:
+        describe_contract(subgraph="decisions", view="preferences_for_scop")
+    assert getattr(e.value, "detail", None) is None
+    assert getattr(e.value, "recommended_next_action", None) is None
+
+
 def test_task_ranking_prioritizes_debugging_workflow_context() -> None:
     ranking = rank_views_for_task("debug staging timeout after deployment")
 

@@ -281,21 +281,35 @@ def include_guess_guidance(
     unqualified view name under the wrong subgraph. Returns a ``did_you_mean``
     payload naming the canonical view, or ``None`` when the guess resembles
     nothing known.
+
+    A token that is already a valid canonical name for its position is never
+    reinterpreted as an include family: ``decisions``, ``features``, and
+    ``infra_topology`` are both include families and subgraph names, so a
+    valid subgraph with a near-miss view must NOT be redirected to the
+    include family's view — a confidently-wrong ``recommended_next_action``
+    is worse than none.
     """
     subgraph_token = (subgraph or "").strip()
     view_token = (view or "").strip()
     spec = None
     matched = ""
-    for token in (subgraph_token, view_token):
-        candidate = view_for_include(token)
-        if candidate is not None:
-            spec, matched = candidate, token
+    via_include = False
+    for token in (view_token, subgraph_token):
+        candidates = [s for s in _VIEW_LIST if s.view == token]
+        if len(candidates) == 1:
+            spec, matched = candidates[0], token
             break
     if spec is None:
-        for token in (view_token, subgraph_token):
-            candidates = [s for s in _VIEW_LIST if s.view == token]
-            if len(candidates) == 1:
-                spec, matched = candidates[0], token
+        known_subgraphs = {s.subgraph for s in _VIEW_LIST}
+        for token, in_subgraph_position in (
+            (subgraph_token, True),
+            (view_token, False),
+        ):
+            if in_subgraph_position and token in known_subgraphs:
+                continue
+            candidate = view_for_include(token)
+            if candidate is not None:
+                spec, matched, via_include = candidate, token, True
                 break
     if spec is None:
         return None
@@ -304,7 +318,7 @@ def include_guess_guidance(
         "subgraph": spec.subgraph,
         "view_name": spec.view,
         "matched": matched,
-        "matched_include": spec.v1_include if matched == spec.v1_include else None,
+        "matched_include": spec.v1_include if via_include else None,
         "read_command": (
             f"potpie graph read --subgraph {spec.subgraph} --view {spec.view}"
         ),
@@ -341,6 +355,11 @@ def _check_views_coherent() -> None:
                     "requires the mapping to stay 1:1"
                 )
             seen[spec.v1_include] = spec.name
+    errors.extend(
+        f"reader-backed include {include!r} has no graph view; it would "
+        "silently vanish from `graph status` backed_views"
+        for include in sorted(set(READER_BACKED_INCLUDES) - set(INCLUDE_TO_VIEW))
+    )
     if errors:
         raise RuntimeError("graph_views incoherent:\n  - " + "\n  - ".join(errors))
 

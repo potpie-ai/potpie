@@ -75,12 +75,14 @@ class _Graph:
         self.read_called = False
         self.read_request = None
         self.search_request = None
+        self.describe_request = None
 
     def describe(self, request):
         # Delegate to the real domain contract so payload assertions stay
         # meaningful; the stub only stands in for the transport.
         from domain.graph_workbench_ontology import describe_contract
 
+        self.describe_request = request
         return describe_contract(
             subgraph=request.subgraph,
             view=request.view,
@@ -1551,7 +1553,7 @@ def _timeline_env() -> GraphReadResult:
         view="recent_changes.timeline",
         subgraph="recent_changes",
         read_shape="entity_relations",
-        coverage=({"include": "timeline", "status": "complete"},),
+        coverage=({"view": "recent_changes.timeline", "status": "complete"},),
         freshness={"local_worktree_included": False},
         quality={"status": "ok"},
         items=(
@@ -1972,6 +1974,39 @@ def test_graph_catalog_unknown_subgraph_uses_error_envelope() -> None:
     assert "unknown graph subgraph" in emitted["error"]["message"]
 
 
+def test_graph_catalog_include_guess_error_carries_did_you_mean() -> None:
+    # Audit item 17 first-contact path: an include family typed where a
+    # subgraph is expected gets the same migration guidance as read.
+    from domain.graph_views import UnknownGraphViewError, include_guess_guidance
+
+    _common.set_json(True)
+    guidance = include_guess_guidance("docs", None)
+    _common.set_host(
+        _Host(
+            _Graph(
+                catalog_error=UnknownGraphViewError(
+                    "unknown graph subgraph 'docs'",
+                    did_you_mean=guidance,
+                    recommended_next_action=guidance["read_command"],
+                )
+            )
+        )
+    )
+
+    result = CliRunner().invoke(graph.graph_app, ["catalog", "--subgraph", "docs"])
+
+    assert result.exit_code == 1
+    emitted = json.loads(result.output)
+    _assert_graph_envelope(emitted, "graph.catalog", ok=False)
+    assert emitted["error"]["code"] == "validation_error"
+    did_you_mean = emitted["error"]["detail"]["did_you_mean"]
+    assert did_you_mean["view"] == "knowledge.document_context"
+    assert did_you_mean["matched_include"] == "docs"
+    assert emitted["recommended_next_action"] == (
+        "potpie graph read --subgraph knowledge --view document_context"
+    )
+
+
 def test_graph_status_json_uses_workbench_envelope() -> None:
     _common.set_json(True)
     workbench = _Workbench(
@@ -1988,6 +2023,10 @@ def test_graph_status_json_uses_workbench_envelope() -> None:
     assert body["pot"]["name"] == "default"
     assert body["pot"]["source_count"] == 0
     assert body["graph_service"]["supported_commands"][0] == "status"
+    # Workbench-facing status speaks view vocabulary only; the include
+    # families backing them stay on the data-plane surface.
+    assert body["graph_service"]["backed_views"] == ["recent_changes.timeline"]
+    assert "reader_backed_includes" not in body["graph_service"]
     assert body["backend"]["profile"] == "memory"
     assert body["health_status"] == "watch"
     assert body["quality"]["source"] == "quality_summary"
@@ -2123,7 +2162,8 @@ def test_graph_neighborhood_defaults_to_relation_summary() -> None:
 
 def test_graph_describe_returns_executable_view_contract() -> None:
     _common.set_json(True)
-    _common.set_host(_Host(_Graph()))
+    graph_service = _Graph()
+    _common.set_host(_Host(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -2142,6 +2182,12 @@ def test_graph_describe_returns_executable_view_contract() -> None:
         emitted["recommended_next_action"]
         == "Use `potpie graph read --subgraph debugging --view prior_occurrences --json` after choosing a scope."
     )
+    # The CLI is a thin client: the contract must be answered through the
+    # service request, never a CLI-local domain call.
+    assert graph_service.describe_request is not None
+    assert graph_service.describe_request.subgraph == "debugging"
+    assert graph_service.describe_request.view == "prior_occurrences"
+    assert graph_service.describe_request.include_examples is True
 
 
 def test_graph_describe_unknown_view_uses_error_envelope() -> None:

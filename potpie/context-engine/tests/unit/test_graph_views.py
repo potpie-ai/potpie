@@ -105,6 +105,11 @@ def test_include_to_view_is_total_and_one_to_one() -> None:
     assert len(INCLUDE_TO_VIEW) == len(GRAPH_VIEWS)
     for spec in GRAPH_VIEWS.values():
         assert INCLUDE_TO_VIEW[spec.v1_include] == spec.name
+    # Totality: every reader-backed include has a view, so `graph status`
+    # backed_views and report_status graph_view pointers can never silently
+    # drop a backed capability (enforced at import time by
+    # _check_views_coherent).
+    assert set(READER_BACKED_INCLUDES) <= set(INCLUDE_TO_VIEW)
 
 
 def test_view_for_include_resolves_family() -> None:
@@ -142,6 +147,31 @@ def test_include_guess_guidance_matches_unique_view_basename() -> None:
 def test_include_guess_guidance_none_for_unrecognized() -> None:
     assert include_guess_guidance("nope", "nada") is None
     assert include_guess_guidance(None, None) is None
+
+
+def test_include_guess_guidance_never_redirects_a_valid_subgraph() -> None:
+    # 'decisions' and 'features' are both include families AND subgraph names;
+    # a near-miss view under the valid subgraph must not be redirected to the
+    # include family's view — a confidently-wrong recommended_next_action
+    # would send agents to the wrong sibling view.
+    assert include_guess_guidance("decisions", "preferences_for_scop") is None
+    assert include_guess_guidance("features", "feature_contex") is None
+
+
+def test_include_guess_guidance_prefers_view_basename_over_include() -> None:
+    # 'timeline' is both an include family and a view basename; a valid view
+    # under the wrong subgraph is a relocation, not legacy include usage.
+    guidance = include_guess_guidance("knowledge", "timeline")
+    assert guidance is not None
+    assert guidance["view"] == "recent_changes.timeline"
+    assert guidance["matched_include"] is None
+
+
+def test_include_guess_guidance_still_maps_include_in_view_position() -> None:
+    guidance = include_guess_guidance("decisions", "decisions")
+    assert guidance is not None
+    assert guidance["view"] == "decisions.active_decisions"
+    assert guidance["matched_include"] == "decisions"
 
 
 def test_unknown_graph_view_error_carries_guidance() -> None:

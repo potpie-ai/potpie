@@ -91,6 +91,19 @@ def test_catalog_rejects_unknown_subgraph(service) -> None:
         service.catalog(GraphCatalogRequest(pot_id="p", subgraph="missing"))
 
 
+def test_catalog_unknown_subgraph_carries_include_guidance(service) -> None:
+    # Audit item 17 first-contact path: catalog is the first command agents
+    # run, so `graph catalog --subgraph docs` gets the same migration
+    # guidance as read/describe.
+    with pytest.raises(ValueError, match="knowledge.document_context") as e:
+        service.catalog(GraphCatalogRequest(pot_id="p", subgraph="docs"))
+    err = e.value
+    assert err.detail["did_you_mean"]["matched_include"] == "docs"
+    assert err.recommended_next_action == (
+        "potpie graph read --subgraph knowledge --view document_context"
+    )
+
+
 def test_catalog_includes_ranking_inputs(service) -> None:
     cat = service.catalog(GraphCatalogRequest(pot_id="p")).to_dict()
     by_name = {v["name"]: v for v in cat["views"]}

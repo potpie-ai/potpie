@@ -608,7 +608,7 @@ Read response shape:
     }
   ],
   "coverage": [
-    {"view": "bugs.prior_occurrences", "status": "complete"}
+    {"view": "debugging.prior_occurrences", "status": "complete"}
   ],
   "unsupported": []
 }

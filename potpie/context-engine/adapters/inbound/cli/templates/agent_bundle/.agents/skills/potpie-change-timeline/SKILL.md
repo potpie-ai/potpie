@@ -85,7 +85,8 @@ Use this only when the `potpie` CLI is unavailable:
 {"intent":"debugging","include":["timeline","prior_bugs","infra_topology"],"mode":"fast","source_policy":"references_only"}
 ```
 
-Include families are MCP-only vocabulary; in the CLI these are served by the
+Include families belong to the envelope surface (`context_*` MCP tools and
+`potpie resolve`/`potpie search`); in the graph workbench they are served by the
 graph views `recent_changes.timeline`, `debugging.prior_occurrences`, and
 `infra_topology.service_neighborhood` — `graph read` does not accept include
 family names.
