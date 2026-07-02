@@ -72,3 +72,8 @@ Use this only when the `potpie` CLI is unavailable:
 ```json
 {"intent":"feature","include":["coding_preferences","decisions","docs"],"mode":"fast","source_policy":"references_only"}
 ```
+
+Include families are MCP-only vocabulary; in the CLI these are served by the
+graph views `decisions.preferences_for_scope`, `decisions.active_decisions`,
+and `knowledge.document_context` — `graph read` does not accept include family
+names.

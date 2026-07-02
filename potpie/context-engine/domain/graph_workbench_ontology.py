@@ -23,7 +23,12 @@ from domain.graph_contract import (
     STRONG_AUTHORITIES,
     TRUTH_CLASSES,
 )
-from domain.graph_views import GRAPH_VIEWS, GraphViewSpec
+from domain.graph_views import (
+    GRAPH_VIEWS,
+    GraphViewSpec,
+    UnknownGraphViewError,
+    include_guess_guidance,
+)
 from domain.ontology import EDGE_TYPES, ENTITY_TYPES
 
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
@@ -749,6 +754,30 @@ def ontology_contract() -> WorkbenchOntologyContract:
     return _ONTOLOGY_CONTRACT
 
 
+def _unknown_describe_error(
+    message: str, *, subgraph: str, view: str | None
+) -> UnknownGraphViewError:
+    guidance = include_guess_guidance(subgraph, view)
+    try_command = None
+    if guidance:
+        try_command = (
+            f"potpie graph describe {guidance['subgraph']} "
+            f"--view {guidance['view_name']}"
+        )
+        if guidance.get("matched_include"):
+            message += (
+                f" The context include family {guidance['matched_include']!r} is "
+                f"served by view {guidance['view']!r}; try `{try_command}`."
+            )
+        else:
+            message += f" Did you mean {guidance['view']!r}? Try `{try_command}`."
+    return UnknownGraphViewError(
+        message,
+        did_you_mean=guidance,
+        recommended_next_action=try_command,
+    )
+
+
 def describe_contract(
     *,
     subgraph: str,
@@ -763,8 +792,10 @@ def describe_contract(
     subgraph_contract = contract.subgraph(subgraph_name)
     if subgraph_contract is None:
         known = ", ".join(sorted(s.name for s in contract.subgraphs))
-        raise ValueError(
-            f"unknown graph subgraph {subgraph_name!r}. Known subgraphs: {known}"
+        raise _unknown_describe_error(
+            f"unknown graph subgraph {subgraph_name!r}. Known subgraphs: {known}.",
+            subgraph=subgraph_name,
+            view=view,
         )
 
     view_name = _resolve_view_name(subgraph_name, view)
@@ -773,9 +804,11 @@ def describe_contract(
         view_contract = contract.view(view_name)
         if view_contract is None or view_contract.subgraph != subgraph_name:
             known = ", ".join(sorted(v.name for v in subgraph_contract.views))
-            raise ValueError(
+            raise _unknown_describe_error(
                 f"unknown graph view {view_name!r} for subgraph {subgraph_name!r}. "
-                f"Known views: {known}"
+                f"Known views: {known}.",
+                subgraph=subgraph_name,
+                view=view,
             )
 
     payload = {

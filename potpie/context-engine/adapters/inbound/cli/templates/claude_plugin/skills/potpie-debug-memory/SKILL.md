@@ -85,3 +85,8 @@ Use this only when the `potpie` CLI is unavailable:
 ```json
 {"intent":"debugging","include":["prior_bugs","infra_topology","timeline"],"mode":"fast","source_policy":"references_only"}
 ```
+
+Include families are MCP-only vocabulary; in the CLI these are served by the
+graph views `debugging.prior_occurrences`, `infra_topology.service_neighborhood`,
+and `recent_changes.timeline` — `graph read` does not accept include family
+names.

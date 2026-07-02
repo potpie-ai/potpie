@@ -1450,7 +1450,7 @@ def test_graph_read_missing_required_scope_result_is_error_envelope() -> None:
             ),
             coverage=(
                 {
-                    "include": "features",
+                    "view": "features.feature_context",
                     "status": "unsupported",
                     "candidate_pool": 0,
                 },
@@ -1479,6 +1479,39 @@ def test_graph_read_missing_required_scope_result_is_error_envelope() -> None:
     assert emitted["unsupported"][0]["reason"] == "missing_required_scope"
     assert (
         emitted["error"]["detail"]["quality"]["reason"] == "missing_required_scope"
+    )
+
+
+def test_graph_read_include_guess_error_carries_did_you_mean() -> None:
+    # Audit item 17: a failed include-family guess returns machine-readable
+    # migration guidance in the error envelope (never accepted as input).
+    from domain.graph_views import UnknownGraphViewError, include_guess_guidance
+
+    _common.set_json(True)
+    guidance = include_guess_guidance("docs", "relevant")
+    graph_service = _Graph(
+        read_error=UnknownGraphViewError(
+            "unknown graph view 'docs.relevant'",
+            did_you_mean=guidance,
+            recommended_next_action=guidance["read_command"],
+        )
+    )
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["read", "--subgraph", "docs", "--view", "relevant"],
+    )
+
+    assert result.exit_code == 1
+    emitted = json.loads(result.output)
+    _assert_graph_envelope(emitted, "graph.read", ok=False)
+    assert emitted["error"]["code"] == "validation_error"
+    did_you_mean = emitted["error"]["detail"]["did_you_mean"]
+    assert did_you_mean["view"] == "knowledge.document_context"
+    assert did_you_mean["matched_include"] == "docs"
+    assert emitted["recommended_next_action"] == (
+        "potpie graph read --subgraph knowledge --view document_context"
     )
 
 

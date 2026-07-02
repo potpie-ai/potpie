@@ -608,8 +608,7 @@ Read response shape:
     }
   ],
   "coverage": [
-    {"include": "bugs", "status": "complete"},
-    {"include": "recent_changes", "status": "partial"}
+    {"view": "bugs.prior_occurrences", "status": "complete"}
   ],
   "unsupported": []
 }

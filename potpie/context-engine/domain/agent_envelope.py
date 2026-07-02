@@ -40,6 +40,9 @@ class CoverageReport:
     include: str
     status: str  # 'complete' | 'partial' | 'sparse' | 'empty'
     candidate_pool: int = 0
+    graph_view: str | None = None
+    """Canonical ``<subgraph>.<view>`` serving this include family — the
+    forward pointer that teaches V1 callers the workbench vocabulary."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +88,7 @@ class AgentEnvelope:
                     "include": report.include,
                     "status": report.status,
                     "candidate_pool": report.candidate_pool,
+                    "graph_view": report.graph_view,
                 }
                 for report in self.coverage
             ],

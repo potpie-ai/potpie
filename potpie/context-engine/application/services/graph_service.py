@@ -46,7 +46,13 @@ from domain.graph_contract import (
     TRUTH_CLASSES,
 )
 from domain.graph_entity_summary import normalize_entity_properties
-from domain.graph_views import GRAPH_VIEWS, view_spec, views_for_catalog
+from domain.graph_views import (
+    GRAPH_VIEWS,
+    UnknownGraphViewError,
+    include_guess_guidance,
+    view_spec,
+    views_for_catalog,
+)
 from domain.graph_workbench_ontology import ViewContract, ontology_contract
 from domain.ontology import EDGE_TYPES, ENTITY_TYPES, canonical_entity_labels
 from domain.ports.agent_context import (
@@ -209,13 +215,11 @@ class DefaultGraphService:
         relations = _normalize_read_relations(request.relations)
         view_name = _qualified_view_name(request.subgraph, request.view)
         contract = ontology_contract().view(view_name)
-        if contract is None:
-            known = ", ".join(sorted(GRAPH_VIEWS))
-            raise ValueError(f"unknown graph view {view_name!r}. Known views: {known}")
         spec = view_spec(view_name)
-        if spec is None:
-            known = ", ".join(sorted(GRAPH_VIEWS))
-            raise ValueError(f"unknown graph view {view_name!r}. Known views: {known}")
+        if contract is None or spec is None:
+            raise _unknown_view_error(
+                view_name, subgraph=request.subgraph, view=request.view
+            )
 
         unsupported = _unsupported_read_filters(request, contract)
         missing = _missing_required_read_scope(request, contract)
@@ -245,7 +249,7 @@ class DefaultGraphService:
                 items=(),
                 coverage=(
                     {
-                        "include": spec.v1_include,
+                        "view": spec.name,
                         "status": "unsupported"
                         if unsupported or missing
                         else "empty",
@@ -589,6 +593,29 @@ def _qualified_view_name(subgraph: str, view: str) -> str:
     return f"{subgraph_value}.{view_value}"
 
 
+def _unknown_view_error(
+    view_name: str, *, subgraph: str, view: str
+) -> UnknownGraphViewError:
+    known = ", ".join(sorted(GRAPH_VIEWS))
+    message = f"unknown graph view {view_name!r}. Known views: {known}."
+    guidance = include_guess_guidance(subgraph, view)
+    if guidance:
+        if guidance.get("matched_include"):
+            message += (
+                f" The context include family {guidance['matched_include']!r} is "
+                f"served by view {guidance['view']!r}; try `{guidance['read_command']}`."
+            )
+        else:
+            message += (
+                f" Did you mean {guidance['view']!r}? Try `{guidance['read_command']}`."
+            )
+    return UnknownGraphViewError(
+        message,
+        did_you_mean=guidance,
+        recommended_next_action=guidance["read_command"] if guidance else None,
+    )
+
+
 def _unsupported_read_filters(
     request: GraphReadRequest, contract: ViewContract
 ) -> tuple[dict[str, Any], ...]:
@@ -695,7 +722,9 @@ def _read_result_from_envelope(
         view=contract.name,
         subgraph=contract.subgraph,
         items=items,
-        coverage=tuple(_coverage_dict(report) for report in env.coverage),
+        coverage=tuple(
+            _coverage_dict(report, view_name=contract.name) for report in env.coverage
+        ),
         freshness=_read_freshness(env, backend_freshness=backend_freshness),
         quality=_read_quality(env, backend_quality=backend_quality),
         source_refs=source_refs,
@@ -719,9 +748,12 @@ def _read_result_from_envelope(
     )
 
 
-def _coverage_dict(report) -> dict[str, Any]:
+def _coverage_dict(report, *, view_name: str) -> dict[str, Any]:
+    # The workbench speaks view vocabulary in and out; the include family the
+    # read trunk routed through stays internal (a graph read routes exactly
+    # one include, so coverage rows all belong to the requested view).
     return {
-        "include": report.include,
+        "view": view_name,
         "status": report.status,
         "candidate_pool": report.candidate_pool,
     }

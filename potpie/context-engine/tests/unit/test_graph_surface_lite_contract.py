@@ -22,6 +22,7 @@ from domain.ports.services.graph_service import (
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
+from domain.graph_views import UnknownGraphViewError
 from domain.reconciliation import MutationBatch, MutationResult, MutationSummary
 from domain.semantic_mutations import SemanticMutationRequest
 
@@ -682,6 +683,36 @@ def test_read_missing_required_scope_is_validation_failure(service) -> None:
     assert env.unsupported[0]["reason"] == "missing_required_scope"
     assert env.coverage[0]["status"] == "unsupported"
     assert env.quality["reason"] == "missing_required_scope"
+
+
+def test_read_unknown_view_suggests_canonical_view_for_include_guess(service) -> None:
+    # Audit item 17: `--subgraph docs` guesses the include family; the error
+    # must return migration guidance, never accept the legacy name as input.
+    with pytest.raises(UnknownGraphViewError, match="knowledge.document_context") as e:
+        service.read(GraphReadRequest(pot_id="p", subgraph="docs", view="relevant"))
+    err = e.value
+    assert err.detail["did_you_mean"]["view"] == "knowledge.document_context"
+    assert err.detail["did_you_mean"]["matched_include"] == "docs"
+    assert err.recommended_next_action == (
+        "potpie graph read --subgraph knowledge --view document_context"
+    )
+
+
+def test_read_unknown_view_without_guidance_stays_plain(service) -> None:
+    with pytest.raises(ValueError, match="unknown graph view") as e:
+        service.read(GraphReadRequest(pot_id="p", subgraph="nope", view="nada"))
+    assert getattr(e.value, "detail", None) is None
+    assert getattr(e.value, "recommended_next_action", None) is None
+
+
+def test_read_coverage_is_keyed_by_view_name(service) -> None:
+    env = service.read(
+        GraphReadRequest(pot_id="p", subgraph="recent_changes", view="timeline")
+    )
+    assert env.coverage
+    for row in env.coverage:
+        assert row["view"] == "recent_changes.timeline"
+        assert "include" not in row
 
 
 def test_infra_read_keeps_environment_qualified_edges_isolated(service) -> None:

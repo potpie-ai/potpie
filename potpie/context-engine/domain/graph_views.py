@@ -17,7 +17,9 @@ views and the agent surface cannot drift.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from domain.agent_context_port import (
     CONTEXT_INCLUDE_VALUES,
@@ -229,10 +231,84 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
 
 GRAPH_VIEWS: dict[str, GraphViewSpec] = {spec.name: spec for spec in _VIEW_LIST}
 
+# Reverse routing map (derived): include family -> canonical view name. The
+# workbench never accepts include families as input (graphv2: no compatibility
+# aliases); this exists so errors can return migration guidance and the V1
+# surfaces can point forward to the canonical view.
+INCLUDE_TO_VIEW: dict[str, str] = {spec.v1_include: spec.name for spec in _VIEW_LIST}
+
+
+class UnknownGraphViewError(ValueError):
+    """Unknown subgraph/view, optionally carrying structured migration guidance.
+
+    ``detail`` and ``recommended_next_action`` ride the CLI error envelope so
+    agent retries are mechanical (guidance only — legacy names are never
+    accepted as input).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        did_you_mean: Mapping[str, Any] | None = None,
+        recommended_next_action: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.detail: dict[str, Any] | None = (
+            {"did_you_mean": dict(did_you_mean)} if did_you_mean else None
+        )
+        self.recommended_next_action = recommended_next_action
+
 
 def view_spec(name: str) -> GraphViewSpec | None:
     """Resolve a view by its ``<subgraph>.<view>`` name."""
     return GRAPH_VIEWS.get((name or "").strip())
+
+
+def view_for_include(include: str) -> GraphViewSpec | None:
+    """The canonical view that serves a V1 include family, if any."""
+    name = INCLUDE_TO_VIEW.get((include or "").strip())
+    return GRAPH_VIEWS.get(name) if name else None
+
+
+def include_guess_guidance(
+    subgraph: str | None, view: str | None
+) -> dict[str, Any] | None:
+    """Migration guidance for a failed subgraph/view guess.
+
+    Recognizes a V1 include family used where a subgraph or view name was
+    expected (e.g. ``docs`` → ``knowledge.document_context``), or an
+    unqualified view name under the wrong subgraph. Returns a ``did_you_mean``
+    payload naming the canonical view, or ``None`` when the guess resembles
+    nothing known.
+    """
+    subgraph_token = (subgraph or "").strip()
+    view_token = (view or "").strip()
+    spec = None
+    matched = ""
+    for token in (subgraph_token, view_token):
+        candidate = view_for_include(token)
+        if candidate is not None:
+            spec, matched = candidate, token
+            break
+    if spec is None:
+        for token in (view_token, subgraph_token):
+            candidates = [s for s in _VIEW_LIST if s.view == token]
+            if len(candidates) == 1:
+                spec, matched = candidates[0], token
+                break
+    if spec is None:
+        return None
+    return {
+        "view": spec.name,
+        "subgraph": spec.subgraph,
+        "view_name": spec.view,
+        "matched": matched,
+        "matched_include": spec.v1_include if matched == spec.v1_include else None,
+        "read_command": (
+            f"potpie graph read --subgraph {spec.subgraph} --view {spec.view}"
+        ),
+    }
 
 
 def backed_views() -> tuple[GraphViewSpec, ...]:
@@ -255,6 +331,16 @@ def _check_views_coherent() -> None:
         for spec in _VIEW_LIST
         if spec.v1_include not in CONTEXT_INCLUDE_VALUES
     ]
+    if len(INCLUDE_TO_VIEW) != len(_VIEW_LIST):
+        seen: dict[str, str] = {}
+        for spec in _VIEW_LIST:
+            if spec.v1_include in seen:
+                errors.append(
+                    f"views {seen[spec.v1_include]!r} and {spec.name!r} share "
+                    f"v1_include {spec.v1_include!r}; include→view guidance "
+                    "requires the mapping to stay 1:1"
+                )
+            seen[spec.v1_include] = spec.name
     if errors:
         raise RuntimeError("graph_views incoherent:\n  - " + "\n  - ".join(errors))
 
@@ -265,7 +351,11 @@ _check_views_coherent()
 __all__ = [
     "GRAPH_VIEWS",
     "GraphViewSpec",
+    "INCLUDE_TO_VIEW",
+    "UnknownGraphViewError",
     "backed_views",
+    "include_guess_guidance",
+    "view_for_include",
     "view_spec",
     "views_for_catalog",
 ]

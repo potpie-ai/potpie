@@ -54,6 +54,7 @@ from domain.graph_workbench import (
     GraphWorkbenchStatus,
 )
 from domain.ports.observability import SPAN_KIND_INTERNAL
+from domain.graph_views import INCLUDE_TO_VIEW
 from domain.graph_workbench_ontology import describe_contract
 from domain.nudge import NUDGE_EVENT_HELP
 
@@ -2201,7 +2202,13 @@ def _graph_status_payload(host: Any, pot_id: str, dp) -> dict[str, Any]:
             "data_plane_graph_contract_version": DATA_PLANE_CONTRACT_VERSION,
             "ontology_version": ONTOLOGY_VERSION,
             "supported_commands": list(GRAPH_WORKBENCH_COMMANDS),
-            "reader_backed_includes": list(dp.reader_backed_includes),
+            # Workbench-facing status speaks view vocabulary; the include
+            # families backing them stay on the data-plane surface.
+            "backed_views": sorted(
+                INCLUDE_TO_VIEW[include]
+                for include in dp.reader_backed_includes
+                if include in INCLUDE_TO_VIEW
+            ),
             "validator_ready": True,
             "match_mode": dp.match_mode,
         },
