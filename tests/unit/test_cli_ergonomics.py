@@ -188,6 +188,64 @@ def test_source_list_plain_output_includes_location() -> None:
     assert "repo: github.com/acme/shop (src_shop)" in result.output
 
 
+def test_source_list_plain_output_shows_active_pot_resolution(monkeypatch) -> None:
+    monkeypatch.setattr(_common, "_current_git_remote", lambda cwd: None)
+    src = _Source("repo", "shop", "github.com/acme/shop")
+    pots_service = _Pots(
+        [_Pot("p1", "shop", True)], {"p1": [src]}, active=_Pot("p1", "shop", True)
+    )
+    _common.set_host(_Host(pots_service))
+
+    result = CliRunner().invoke(pots.source_app, ["list"])
+
+    assert result.exit_code == 0, result.output
+    assert "via active pot" in result.output
+
+
+def test_source_list_plain_output_shows_repo_default_resolution(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    match = _Source("repo", "github.com/acme/shop")
+    active = _Pot("p3", "fresh", True)
+    pots_service = _Pots(
+        [_Pot("p1", "shop"), _Pot("p2", "shop-fork"), active],
+        {"p1": [match], "p2": [match]},
+        active=active,
+    )
+    pots_service.repo_defaults["github.com/acme/shop"] = "p2"
+    _common.set_host(_Host(pots_service))
+
+    result = CliRunner().invoke(pots.source_app, ["list"])
+
+    assert result.exit_code == 0, result.output
+    assert "via repo default for github.com/acme/shop" in result.output
+    assert "shop-fork (p2)" in result.output
+
+
+def test_source_list_json_includes_resolved_via(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    match = _Source("repo", "github.com/acme/shop")
+    pots_service = _Pots(
+        [_Pot("p1", "shop"), _Pot("p2", "shop-fork")],
+        {"p1": [match], "p2": [match]},
+        active=None,
+    )
+    pots_service.repo_defaults["github.com/acme/shop"] = "p2"
+    _common.set_host(_Host(pots_service))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(pots.source_app, ["list"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["resolved_via"] == "repo_default"
+    assert payload["repo"] == "github.com/acme/shop"
+    assert payload["pot_id"] == "p2"
+
+
 def test_source_add_targets_active_pot_even_when_repo_matches_other_pots(
     monkeypatch,
 ) -> None:

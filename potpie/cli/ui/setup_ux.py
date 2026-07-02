@@ -17,6 +17,7 @@ from typing import Any
 import click
 
 from potpie.cli.commands._common import get_store
+from potpie.cli.repo_location import resolve_repo_location
 from potpie.cli.telemetry.onboarding_events import (
     capture_github_prompt_outcome,
     capture_github_prompt_shown,
@@ -565,6 +566,7 @@ def maybe_prompt_github_login(
 
 def _register_repo_source(*, repo: str) -> str:
     from potpie.cli.commands._common import get_host
+    from potpie.cli.commands.pots import register_repo_source
 
     started_ms = now_ms()
     capture_project_binding_event(
@@ -582,7 +584,15 @@ def _register_repo_source(*, repo: str) -> str:
         )
         return "skipped"
     existing = host.pots.list_sources(pot_id=active.pot_id)
-    if any(s.kind == "repo" and s.name == repo for s in existing):
+    resolved = resolve_repo_location(repo)
+    if any(
+        s.kind == "repo"
+        and (
+            getattr(s, "location", None) == resolved
+            or getattr(s, "name", None) == resolved
+        )
+        for s in existing
+    ):
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_completed",
             entrypoint="post_setup_first_pot",
@@ -590,7 +600,7 @@ def _register_repo_source(*, repo: str) -> str:
         )
         return "skipped"
     try:
-        host.pots.add_source(pot_id=active.pot_id, kind="repo", location=repo)
+        register_repo_source(host, pot_id=active.pot_id, location=repo)
     except Exception as exc:  # noqa: BLE001
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_failed",
@@ -638,7 +648,7 @@ def _maybe_prompt_first_pot(
 
     repo_str = str(repo.resolve()) if repo is not None else None
     name_source = "default" if name == default_pot_name else "custom"
-    pot = get_host().pots.create_pot(name=name, repo=repo_str, use=True)
+    pot = get_host().pots.create_pot(name=name, use=True)
     capture_project_binding_event(
         "cli_onboarding_first_pot_created",
         entrypoint="post_setup_first_pot",

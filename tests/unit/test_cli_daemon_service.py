@@ -63,6 +63,7 @@ class _FakeDaemon:
 @dataclass
 class _FakeHost:
     daemon: _FakeDaemon
+    backend: object = field(default_factory=lambda: type("B", (), {"profile": "falkordb_lite"})())
 
 
 def test_daemon_lifecycle_commands_use_detached_daemon(tmp_path: Path) -> None:
@@ -151,7 +152,6 @@ def test_service_logs_reports_http_admin_surface_not_implemented(
     assert result.exit_code == _common.EXIT_UNAVAILABLE
     payload = json.loads(result.stdout)
     assert payload["code"] == "not_implemented"
-
 
 def test_service_logs_follow_reports_http_admin_surface_not_implemented(
     tmp_path: Path,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 import typer
@@ -12,11 +13,14 @@ from potpie.cli.commands._common import (
     contract,
     current_repo_identity_for_cli,
     emit,
+    enrich_with_pot_guidance,
     fail,
     get_host,
     pot_scope_info,
+    pot_scope_resolution_human,
     repo_pot_candidates,
     resolve_pot_id,
+    resolve_pot_scope,
 )
 from potpie.cli.telemetry.onboarding_events import (
     capture_project_binding_event,
@@ -134,25 +138,167 @@ def _repo_key_from_option(repo: str) -> str:
     return repo_key
 
 
+def _matching_repo_source(
+    host: Any,
+    *,
+    pot_id: str,
+    resolved_location: str,
+    repo_key: str | None,
+) -> Any | None:
+    list_sources = getattr(host.pots, "list_sources", None)
+    if not callable(list_sources):
+        return None
+    try:
+        sources = list_sources(pot_id=pot_id)
+    except Exception:  # noqa: BLE001 - duplicate detection must not block registration
+        return None
+    for source in sources or []:
+        if getattr(source, "kind", None) != "repo":
+            continue
+        refs = (
+            str(getattr(source, "location", "") or "").strip(),
+            str(getattr(source, "name", "") or "").strip(),
+        )
+        if repo_key:
+            if any(repo_identity_key(ref) == repo_key for ref in refs if ref):
+                return source
+            continue
+        if resolved_location in refs:
+            return source
+    return None
+
+
+def register_repo_source(
+    host: Any,
+    *,
+    pot_id: str,
+    location: str,
+    name: str | None = None,
+    make_default: bool = True,
+) -> dict[str, object]:
+    """Register a repo source using the same path as ``source add repo``.
+
+    Resolves ``.`` / ``current`` to git remote or absolute path, persists
+    ``location`` on the source row, and sets the repo-local default unless
+    ``make_default`` is false.
+    """
+    resolved_location = resolve_repo_location(location)
+    repo_key = repo_identity_key(resolved_location)
+    repo_default_set = False
+    repo_default_setter = None
+    if make_default:
+        repo_default_setter = getattr(host.pots, "set_repo_default", None)
+        if not callable(repo_default_setter):
+            fail(
+                code="repo_default_unavailable",
+                message="This host does not support repo default bindings.",
+                next_action="upgrade the local context-engine host",
+            )
+    existing = _matching_repo_source(
+        host,
+        pot_id=pot_id,
+        resolved_location=resolved_location,
+        repo_key=repo_key,
+    )
+    if existing is not None:
+        src = existing
+    else:
+        src = host.pots.add_source(
+            pot_id=pot_id,
+            kind="repo",
+            location=resolved_location,
+            name=name,
+        )
+    if make_default:
+        if not repo_key:
+            fail(
+                code="repo_unresolved",
+                message="Could not resolve the repository identity.",
+                next_action="pass a repo location such as '<owner>/<repo>'",
+            )
+        repo_default_setter(repo=repo_key, pot_id=pot_id)
+        repo_default_set = True
+    return {
+        "source_id": src.source_id,
+        "kind": src.kind,
+        "name": src.name,
+        "location": resolved_location,
+        "pot_id": pot_id,
+        "repo_default_set": repo_default_set,
+        "repo_key": repo_key,
+        "registration_only": True,
+    }
+
+
 @pot_app.command("create")
 def pot_create(
     name: str,
-    repo: str = typer.Option(None, "--repo"),
+    repo: str = typer.Option(
+        None,
+        "--repo",
+        help="Register a repo source after create (same resolution as `source add repo`).",
+    ),
     use: bool = typer.Option(False, "--use"),
+    no_default: bool = typer.Option(
+        False,
+        "--no-default",
+        help="With --repo, do not set this pot as the repo-local default.",
+    ),
 ) -> None:
     with contract():
-        pot = get_host().pots.create_pot(name=name, repo=repo, use=use)
-        emit(
-            {"id": pot.pot_id, "name": pot.name, "active": pot.active},
-            human=f"created pot '{pot.name}' ({pot.pot_id}){' [active]' if pot.active else ''}",
+        host = get_host()
+        pot = host.pots.create_pot(name=name, use=use)
+        payload: dict[str, object] = {
+            "id": pot.pot_id,
+            "name": pot.name,
+            "active": pot.active,
+        }
+        human = (
+            f"created pot '{pot.name}' ({pot.pot_id})"
+            f"{' [active]' if pot.active else ''}"
         )
+        guidance_repo: str | None = repo
+        if repo is not None:
+            source = register_repo_source(
+                host,
+                pot_id=pot.pot_id,
+                location=repo,
+                make_default=not no_default,
+            )
+            payload["source"] = source
+            payload["repo_default_set"] = source["repo_default_set"]
+            payload["repo_key"] = source["repo_key"]
+            guidance_repo = str(source["location"])
+            human = (
+                f"{human}\n"
+                f"registered source {source['kind']}:{source['name']} "
+                f"({source['source_id']}) at {source['location']} in pot {pot.pot_id}"
+            )
+            if source["repo_default_set"]:
+                human = f"{human}\nset repo default -> {pot.pot_id}"
+            human = f"{human}\nno ingestion or scan started"
+        payload, human = enrich_with_pot_guidance(
+            host,
+            pot.pot_id,
+            payload,
+            human=human,
+            repo=guidance_repo,
+        )
+        emit(payload, human=human)
 
 
 @pot_app.command("use")
 def pot_use(ref: str) -> None:
     with contract():
-        pot = get_host().pots.use_pot(ref=ref)
-        emit({"id": pot.pot_id, "name": pot.name}, human=f"active pot → {pot.name}")
+        host = get_host()
+        pot = host.pots.use_pot(ref=ref)
+        payload, human = enrich_with_pot_guidance(
+            host,
+            pot.pot_id,
+            {"id": pot.pot_id, "name": pot.name},
+            human=f"active pot → {pot.name}",
+        )
+        emit(payload, human=human)
 
 
 @pot_app.command("linked")
@@ -198,26 +344,41 @@ def pot_linked(repo: str = typer.Option("current", "--repo")) -> None:
 
 
 @default_app.command("show")
-def pot_default_show(repo: str = typer.Option("current", "--repo")) -> None:
+def pot_default_show(
+    repo: str = typer.Option("current", "--repo"),
+    with_candidates: bool = typer.Option(
+        False,
+        "--with-candidates",
+        help="Include the full candidates list (see `pot linked` for details).",
+    ),
+) -> None:
+    """Show the repo-local default pot. Use --with-candidates for the full list."""
     with contract():
         host = get_host()
         linked = repo_pot_candidates(host, repo)
         default_id = linked.get("default_pot_id")
-        payload = {
-            "repo": linked.get("repo"),
+        repo_key = linked.get("repo")
+        payload: dict = {
+            "repo": repo_key,
             "default_pot_id": default_id,
-            "candidates": linked.get("candidates", ()),
         }
+        if with_candidates:
+            payload["candidates"] = linked.get("candidates", ())
         if not default_id:
+            if not with_candidates:
+                payload["hint"] = "run `potpie pot linked` to see all candidates"
             emit(
                 payload,
-                human=f"repo {linked.get('repo') or '(unknown)'} default: (unset)",
+                human=f"repo {repo_key or '(unknown)'} default: (unset)",
             )
             return
         info = pot_scope_info(host, default_id)
+        payload["default_pot"] = info
+        if not with_candidates:
+            payload["hint"] = "run `potpie pot linked` to see all candidates"
         emit(
-            {**payload, "default_pot": info},
-            human=f"repo {linked.get('repo')} default: {info['name']} ({default_id})",
+            payload,
+            human=f"repo {repo_key} default: {info['name']} ({default_id})",
         )
 
 
@@ -439,42 +600,37 @@ def source_add(
         # Registration establishes the repo→pot mapping, so the target is the
         # explicit/active pot — never inferred from existing registrations.
         pot_id = resolve_pot_id(host, pot, infer_from_repo=False)
-        resolved_location = (
-            resolve_repo_location(location) if is_repo else location
-        )
         started_ms = now_ms()
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_started",
             entrypoint="direct_command",
             properties={"source_kind": source_kind},
         )
-        repo_default_set = False
         try:
-            repo_default_setter = None
-            if is_repo and make_default:
-                repo_default_setter = getattr(host.pots, "set_repo_default", None)
-                if not callable(repo_default_setter):
-                    fail(
-                        code="repo_default_unavailable",
-                        message="This host does not support repo default bindings.",
-                        next_action="upgrade the local context-engine host",
-                    )
-            src = host.pots.add_source(
-                pot_id=pot_id,
-                kind=source_kind,
-                location=resolved_location,
-                name=name,
-            )
-            if is_repo and make_default:
-                repo_key = repo_identity_key(resolved_location)
-                if not repo_key:
-                    fail(
-                        code="repo_unresolved",
-                        message="Could not resolve the repository identity.",
-                        next_action="pass a repo location such as '<owner>/<repo>'",
-                    )
-                repo_default_setter(repo=repo_key, pot_id=pot_id)
-                repo_default_set = True
+            if is_repo:
+                payload = register_repo_source(
+                    host,
+                    pot_id=pot_id,
+                    location=location,
+                    name=name,
+                    make_default=make_default,
+                )
+            else:
+                src = host.pots.add_source(
+                    pot_id=pot_id,
+                    kind=source_kind,
+                    location=location,
+                    name=name,
+                )
+                payload = {
+                    "source_id": src.source_id,
+                    "kind": src.kind,
+                    "name": src.name,
+                    "location": location,
+                    "pot_id": pot_id,
+                    "repo_default_set": False,
+                    "registration_only": True,
+                }
         except Exception as exc:  # noqa: BLE001
             capture_project_binding_event(
                 "cli_onboarding_repo_source_add_failed",
@@ -490,40 +646,73 @@ def source_add(
             "cli_onboarding_repo_source_add_completed",
             entrypoint="direct_command",
             properties={
-                "source_kind": src.kind,
+                "source_kind": payload.get("kind", source_kind),
                 "step_state": "done",
                 "duration_ms": elapsed_ms(started_ms),
             },
         )
-        emit(
-            {
-                "source_id": src.source_id,
-                "kind": src.kind,
-                "name": src.name,
-                "location": resolved_location,
-                "pot_id": pot_id,
-                "repo_default_set": repo_default_set,
-                "registration_only": True,
-            },
+        resolved_location = payload.get("location", location)
+        repo_default_set = bool(payload.get("repo_default_set"))
+        payload, human = enrich_with_pot_guidance(
+            host,
+            pot_id,
+            dict(payload),
             human=(
-                f"registered source {src.kind}:{src.name} ({src.source_id}) "
-                f"at {resolved_location} in pot {pot_id}\n"
+                f"registered source {payload['kind']}:{payload['name']} "
+                f"({payload['source_id']}) at {resolved_location} in pot {pot_id}\n"
                 + (f"set repo default -> {pot_id}\n" if repo_default_set else "")
                 + "no ingestion or scan started"
             ),
+            repo=str(resolved_location) if is_repo else None,
         )
+        emit(payload, human=human)
 
 
 @source_app.command("list")
 def source_list(pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
         host = get_host()
-        pot_id = resolve_pot_id(host, pot)
+        pot_id, resolved_via = resolve_pot_scope(host, pot)
         sources = host.pots.list_sources(pot_id=pot_id)
         pot_info = pot_scope_info(host, pot_id)
-        emit(
+        repo = (
+            current_repo_identity_for_cli()
+            if resolved_via in {"repo_default", "linked_repo"}
+            else None
+        )
+        counts = pot_info.get("counts") or {}
+        header = "\n".join(
+            [
+                (
+                    f"pot={pot_info['name']} ({pot_id}) "
+                    f"{pot_scope_resolution_human(resolved_via, repo=repo)}"
+                ),
+                (
+                    f"sources={len(sources)} claims={counts.get('claims', 0)} "
+                    f"entities={counts.get('entities', 0)}"
+                ),
+            ]
+        )
+        human = (
+            "\n".join(
+                [
+                    header,
+                    *(
+                        f"  {s.kind}: {getattr(s, 'location', s.name)} ({s.source_id})"
+                        for s in sources
+                    ),
+                ]
+            )
+            if sources
+            else f"{header}\n(no sources)"
+        )
+        payload, human = enrich_with_pot_guidance(
+            host,
+            pot_id,
             {
                 "pot_id": pot_id,
+                "resolved_via": resolved_via,
+                "repo": repo,
                 "pot": pot_info,
                 "source_count": len(sources),
                 "sources": [
@@ -536,25 +725,10 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
                     for s in sources
                 ],
             },
-            human="\n".join(
-                [
-                    (
-                        f"pot={pot_info['name']} ({pot_id}) "
-                        f"sources={len(sources)} claims={(pot_info.get('counts') or {}).get('claims', 0)}"
-                    ),
-                    *(
-                        f"  {s.kind}: {getattr(s, 'location', s.name)} ({s.source_id})"
-                        for s in sources
-                    ),
-                ]
-            )
-            if sources
-            else (
-                f"pot={pot_info['name']} ({pot_id}) "
-                f"sources=0 claims={(pot_info.get('counts') or {}).get('claims', 0)}\n"
-                "(no sources)"
-            ),
+            human=human,
+            repo=repo,
         )
+        emit(payload, human=human)
 
 
 @source_app.command("status")
