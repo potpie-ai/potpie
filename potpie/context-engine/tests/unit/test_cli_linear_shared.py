@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from __future__ import annotations
+from types import SimpleNamespace
+
 import typer
 import pytest
 from typer.testing import CliRunner
@@ -1233,14 +1235,20 @@ def test_verify_integration_access_unknown_provider() -> None:
 # --- test_provider_config.py ---
 
 
-def test_get_client_id_uses_packaged_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_client_id_uses_configured_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("LINEAR_CLIENT_ID", raising=False)
-    monkeypatch.setattr(
-        provider_config,
-        "PACKAGE_LINEAR_CLIENT_ID",
-        "packaged-linear-client-id",
-    )
-    assert get_client_id("linear") == "packaged-linear-client-id"
+    expected = "configured-linear-client-id"
+    if hasattr(provider_config, "PACKAGE_LINEAR_CLIENT_ID"):
+        monkeypatch.setattr(provider_config, "PACKAGE_LINEAR_CLIENT_ID", expected)
+    else:
+        monkeypatch.setattr(
+            provider_config,
+            "load_runtime_settings",
+            lambda: SimpleNamespace(linear_client_id=expected),
+        )
+    assert get_client_id("linear") == expected
 
 
 def test_get_client_id_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
