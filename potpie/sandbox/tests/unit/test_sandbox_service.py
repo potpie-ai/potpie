@@ -9,7 +9,9 @@ pytestmark = pytest.mark.unit
 
 from sandbox.adapters.outbound.file.json_store import JsonSandboxStore
 from sandbox.adapters.outbound.local.git_workspace import LocalGitWorkspaceProvider
-from sandbox.adapters.outbound.local.subprocess_runtime import LocalSubprocessRuntimeProvider
+from sandbox.adapters.outbound.local.subprocess_runtime import (
+    LocalSubprocessRuntimeProvider,
+)
 from sandbox.adapters.outbound.memory.locks import InMemoryLockManager
 from sandbox.application.services.sandbox_service import SandboxService
 from sandbox.domain.errors import RuntimeCommandRejected
@@ -157,7 +159,9 @@ async def test_stale_workspace_from_other_provider_is_dropped(tmp_path: Path) ->
                 key=req.key(),
                 repo_cache_id=None,
                 request=req,
-                location=WorkspaceLocation(kind=WorkspaceStorageKind.REMOTE_PATH, remote_path="/work"),
+                location=WorkspaceLocation(
+                    kind=WorkspaceStorageKind.REMOTE_PATH, remote_path="/work"
+                ),
                 backend_kind=self.kind,
                 state=WorkspaceState.READY,
             )
@@ -170,6 +174,7 @@ async def test_stale_workspace_from_other_provider_is_dropped(tmp_path: Path) ->
 
         async def mount_for_runtime(self, workspace: Workspace, *, writable: bool):
             from sandbox.domain.models import Mount
+
             return Mount(source="/work", target="/work", writable=writable)
 
     other = _OtherProvider()
@@ -217,4 +222,3 @@ async def test_json_store_round_trips_workspace(tmp_path: Path) -> None:
     assert found is not None
     assert found.id == workspace.id
     assert found.location.local_path == workspace.location.local_path
-

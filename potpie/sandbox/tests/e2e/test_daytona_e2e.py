@@ -41,7 +41,9 @@ PUBLIC_REPO_NAME = os.getenv("DAYTONA_TEST_REPO_NAME", "octocat/Hello-World")
 PUBLIC_REPO_REF = os.getenv("DAYTONA_TEST_REPO_REF", "master")
 
 
-def _request(*, conversation_id: str, project_id: str = "potpie-e2e") -> WorkspaceRequest:
+def _request(
+    *, conversation_id: str, project_id: str = "potpie-e2e"
+) -> WorkspaceRequest:
     return WorkspaceRequest(
         user_id="potpie-e2e",
         project_id=project_id,
@@ -193,10 +195,7 @@ async def test_daytona_two_branches_share_one_sandbox(
     try:
         await _require_git_cli(daytona_service, ws_a.id)
         assert ws_a.id != ws_b.id
-        assert (
-            ws_a.location.backend_workspace_id
-            == ws_b.location.backend_workspace_id
-        )
+        assert ws_a.location.backend_workspace_id == ws_b.location.backend_workspace_id
         assert ws_a.location.remote_path != ws_b.location.remote_path
 
         # Each worktree exec runs in its own dir.

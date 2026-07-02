@@ -38,7 +38,12 @@ from urllib.parse import quote, urlparse
 
 logger = logging.getLogger(__name__)
 
-from sandbox.domain.errors import RepoAuthFailed, RepoCacheUnavailable, RuntimeNotFound, RuntimeUnavailable
+from sandbox.domain.errors import (
+    RepoAuthFailed,
+    RepoCacheUnavailable,
+    RuntimeNotFound,
+    RuntimeUnavailable,
+)
 from sandbox.domain.models import (
     Capabilities,
     ExecChunk,
@@ -76,7 +81,7 @@ class DaytonaWorkspaceProvider:
     # failure. The previous 30-minute auto-stop was tuned for one-shot
     # agent runs and is too aggressive once we lean on the sandbox as
     # the durable home of a project's working tree.
-    DEFAULT_AUTO_STOP_MINUTES = 24 * 60          # 24 hours
+    DEFAULT_AUTO_STOP_MINUTES = 24 * 60  # 24 hours
     DEFAULT_AUTO_ARCHIVE_MINUTES = 30 * 24 * 60  # 30 days
 
     def __init__(
@@ -145,9 +150,11 @@ class DaytonaWorkspaceProvider:
         self.volume_name_prefix = volume_name_prefix
         self.volume_mount_path = volume_mount_path.rstrip("/")
         self._client: Any | None = None
-        self._sandboxes: dict[str, Any] = {}                          # sandbox_id -> SDK object
-        self._project_sandbox_ids: dict[tuple[str, str], str] = {}    # (user, project) -> sandbox_id
-        self._bare_repos: set[tuple[str, str]] = set()                # (sandbox_id, repo_name)
+        self._sandboxes: dict[str, Any] = {}  # sandbox_id -> SDK object
+        self._project_sandbox_ids: dict[
+            tuple[str, str], str
+        ] = {}  # (user, project) -> sandbox_id
+        self._bare_repos: set[tuple[str, str]] = set()  # (sandbox_id, repo_name)
         self._project_locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._by_id: dict[str, Workspace] = {}
         self._by_key: dict[str, str] = {}
@@ -218,9 +225,7 @@ class DaytonaWorkspaceProvider:
             f"git -C {shlex.quote(bare_path)} worktree remove --force "
             f"{shlex.quote(worktree_path)} 2>/dev/null || true"
         )
-        sandbox.process.exec(
-            f"rm -rf {shlex.quote(worktree_path)}"
-        )
+        sandbox.process.exec(f"rm -rf {shlex.quote(worktree_path)}")
 
     async def mount_for_runtime(self, workspace: Workspace, *, writable: bool) -> Mount:
         if workspace.location.remote_path is None:
@@ -377,9 +382,7 @@ class DaytonaWorkspaceProvider:
                 logger.debug("daytona list during recovery failed: %s", exc)
                 return None
         except Exception as exc:
-            logger.debug(
-                "daytona list(labels=...) during recovery failed: %s", exc
-            )
+            logger.debug("daytona list(labels=...) during recovery failed: %s", exc)
             return None
 
         # Newer Daytona SDKs return a `PaginatedSandboxes` pydantic model with
@@ -418,9 +421,7 @@ class DaytonaWorkspaceProvider:
                 try:
                     sandbox.start()
                 except Exception as exc:
-                    logger.debug(
-                        "daytona start during recovery failed: %s", exc
-                    )
+                    logger.debug("daytona start during recovery failed: %s", exc)
                     continue
             logger.info(
                 "daytona: recovered sandbox %s for project %s/%s (state=%s)",
@@ -506,9 +507,7 @@ class DaytonaWorkspaceProvider:
         """
         return f"{self.volume_name_prefix}-{_safe_segment(user_id)}"
 
-    def _build_bare_volume_mount(
-        self, user_id: str, project_id: str
-    ) -> Any | None:
+    def _build_bare_volume_mount(self, user_id: str, project_id: str) -> Any | None:
         """Resolve the user's volume and build the per-project mount spec.
 
         Returns ``None`` when the SDK can't expose ``VolumeMount``
@@ -634,7 +633,10 @@ class DaytonaWorkspaceProvider:
                 self._wait_for_active(state)
                 return
 
-            if self.snapshot_dockerfile is None or not self.snapshot_dockerfile.exists():
+            if (
+                self.snapshot_dockerfile is None
+                or not self.snapshot_dockerfile.exists()
+            ):
                 logger.warning(
                     "daytona snapshot %s missing and no dockerfile available "
                     "for auto-build (set DAYTONA_SNAPSHOT_DOCKERFILE)",
@@ -677,9 +679,7 @@ class DaytonaWorkspaceProvider:
                 # overriding them at sandbox creation time when spawning
                 # from a snapshot. Set them here so the snapshot ships
                 # right-sized for medium repos.
-                snapshot_kwargs: dict[str, Any] = dict(
-                    name=self.snapshot, image=image
-                )
+                snapshot_kwargs: dict[str, Any] = dict(name=self.snapshot, image=image)
                 if (
                     self.snapshot_cpu is not None
                     or self.snapshot_memory_gb is not None
@@ -823,17 +823,13 @@ class DaytonaWorkspaceProvider:
         # Sandbox may have been recovered with the clone already on disk —
         # Daytona persists the volume across restarts. Bare repos hold HEAD
         # at the root, not inside a `.git/` directory.
-        probe = sandbox.process.exec(
-            f"test -f {shlex.quote(bare_path + '/HEAD')}"
-        )
+        probe = sandbox.process.exec(f"test -f {shlex.quote(bare_path + '/HEAD')}")
         if int(getattr(probe, "exit_code", 0)) == 0:
             self._bare_repos.add(bare_key)
             self._fetch_ref(sandbox, bare_path, request.base_ref)
             return
 
-        repo_url = request.repo.repo_url or _default_github_url(
-            request.repo.repo_name
-        )
+        repo_url = request.repo.repo_url or _default_github_url(request.repo.repo_name)
         clone_url = _authenticated_url(repo_url, request.auth_token)
         self._clone_bare(sandbox, clone_url, bare_path, request.base_ref)
         self._bare_repos.add(bare_key)
@@ -884,9 +880,7 @@ class DaytonaWorkspaceProvider:
             )
         # Verify — the slim Daytona snapshot's toolbox can return success on
         # a 204 body that is hard to introspect, so prove the repo materialised.
-        status = sandbox.process.exec(
-            f"test -f {shlex.quote(bare_path + '/HEAD')}"
-        )
+        status = sandbox.process.exec(f"test -f {shlex.quote(bare_path + '/HEAD')}")
         if int(getattr(status, "exit_code", 0)) != 0:
             raise RepoCacheUnavailable(
                 f"Daytona git clone did not create a bare repository at {bare_path}"
@@ -907,9 +901,7 @@ class DaytonaWorkspaceProvider:
         # so the only way to re-enter is to ask for the same branch again.
         # `-e` (exists) handles both real git's gitdir-pointer file and the
         # test fake's directory marker.
-        probe = sandbox.process.exec(
-            f"test -e {shlex.quote(worktree_path + '/.git')}"
-        )
+        probe = sandbox.process.exec(f"test -e {shlex.quote(worktree_path + '/.git')}")
         if int(getattr(probe, "exit_code", 0)) == 0:
             return
 
@@ -1182,7 +1174,10 @@ class DaytonaRuntimeProvider:
             # confusing "Sandbox with ID … not found" error.
             if not _is_not_found(exc):
                 raise
-            recovered = self._recover_runtime(runtime, dead_sandbox_id=str(getattr(sandbox, "id", runtime.backend_runtime_id)))
+            recovered = self._recover_runtime(
+                runtime,
+                dead_sandbox_id=str(getattr(sandbox, "id", runtime.backend_runtime_id)),
+            )
             if recovered is None:
                 raise
             response = recovered.process.exec(
@@ -1225,9 +1220,7 @@ class DaytonaRuntimeProvider:
         sandbox = self._sandbox_with_recovery(runtime)
         return await asyncio.to_thread(sandbox.fs.download_file, path)
 
-    async def write_bytes(
-        self, runtime: Runtime, path: str, content: bytes
-    ) -> None:
+    async def write_bytes(self, runtime: Runtime, path: str, content: bytes) -> None:
         sandbox = self._sandbox_with_recovery(runtime)
         # `upload_file` overwrites by default; parent must exist. Mkdir is
         # cheap on Daytona (toolbox-side `mkdir -p`) and keeps the call
@@ -1300,9 +1293,7 @@ class DaytonaRuntimeProvider:
                 raise
             return recovered
 
-    def _recover_runtime(
-        self, runtime: Runtime, *, dead_sandbox_id: str
-    ) -> Any | None:
+    def _recover_runtime(self, runtime: Runtime, *, dead_sandbox_id: str) -> Any | None:
         """Replace a dead Daytona sandbox with a fresh / adopted one.
 
         Pulls ``user_id`` / ``project_id`` from
@@ -1360,8 +1351,10 @@ def _env_int(name: str, default: int) -> int:
 
 def _command_string(request: ExecRequest) -> str:
     if request.shell:
-        return request.cmd[0] if len(request.cmd) == 1 else " ".join(
-            shlex.quote(p) for p in request.cmd
+        return (
+            request.cmd[0]
+            if len(request.cmd) == 1
+            else " ".join(shlex.quote(p) for p in request.cmd)
         )
     return " ".join(shlex.quote(p) for p in request.cmd)
 

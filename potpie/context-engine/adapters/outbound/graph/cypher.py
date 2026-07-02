@@ -175,11 +175,15 @@ def _embedding_props(
         description=edge_props.get("description")
         if isinstance(edge_props.get("description"), str)
         else None,
-        fact=edge_props.get("fact") if isinstance(edge_props.get("fact"), str) else None,
+        fact=edge_props.get("fact")
+        if isinstance(edge_props.get("fact"), str)
+        else None,
         subject_key=from_key,
         predicate=predicate,
         object_key=to_key,
-        scope=edge_props.get("code_scope") if isinstance(edge_props.get("code_scope"), dict) else None,
+        scope=edge_props.get("code_scope")
+        if isinstance(edge_props.get("code_scope"), dict)
+        else None,
     )
     if not card:
         return {}
@@ -406,7 +410,9 @@ async def upsert_edges_async(
                 reserved.get("source_system") or provenance.source_system or "agent"
             )
 
-            truth = extras.get("truth") if isinstance(extras.get("truth"), str) else None
+            truth = (
+                extras.get("truth") if isinstance(extras.get("truth"), str) else None
+            )
             evidence_strength = evidence_strength_for_truth(truth)
 
             fact = _render_fact(

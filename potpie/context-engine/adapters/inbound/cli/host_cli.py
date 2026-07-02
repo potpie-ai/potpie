@@ -141,7 +141,10 @@ def run_cli(argv: list[str] | None = None) -> None:
     import click
     from typer._click.exceptions import Abort, ClickException
 
-    from adapters.inbound.cli.ui.output import configure_cli_logging, configure_error_output
+    from adapters.inbound.cli.ui.output import (
+        configure_cli_logging,
+        configure_error_output,
+    )
 
     args = list(argv if argv is not None else sys.argv[1:])
     bootstrap_output_flags_from_argv(args)

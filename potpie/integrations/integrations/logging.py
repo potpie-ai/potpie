@@ -11,7 +11,9 @@ _context_var: contextvars.ContextVar[dict] = contextvars.ContextVar(
 
 
 class StructuredLogger:
-    def __init__(self, logger: logging.Logger, bound_fields: dict | None = None) -> None:
+    def __init__(
+        self, logger: logging.Logger, bound_fields: dict | None = None
+    ) -> None:
         self._logger = logger
         self._bound_fields = bound_fields or {}
 

@@ -108,9 +108,9 @@ def test_install_global_agent_instructions_merges_compact_agents_md(
     result = install_global_agent_instructions(root, agent="codex")
 
     text = target.read_text(encoding="utf-8")
-    managed = text.split("<!-- potpie-start -->", 1)[1].split(
-        "<!-- potpie-end -->", 1
-    )[0]
+    managed = text.split("<!-- potpie-start -->", 1)[1].split("<!-- potpie-end -->", 1)[
+        0
+    ]
     assert result.updated == ["AGENTS.md"]
     assert "# Personal defaults" in text
     assert "Potpie is durable project memory" in text
@@ -237,9 +237,7 @@ def test_install_agent_bundle_wraps_old_unmarked_agents_md(tmp_path: Path) -> No
         if rel.as_posix() == "AGENTS.md"
     )
     old_unmarked = (
-        marked_template.split("\n", 1)[1]
-        .rsplit("\n<!-- potpie-end -->", 1)[0]
-        .strip()
+        marked_template.split("\n", 1)[1].rsplit("\n<!-- potpie-end -->", 1)[0].strip()
         + "\n"
     )
     target.write_text(old_unmarked, encoding="utf-8")
@@ -265,9 +263,7 @@ def test_install_agent_bundle_replaces_embedded_unmarked_agents_md(
         if rel.as_posix() == "AGENTS.md"
     )
     old_unmarked = (
-        marked_template.split("\n", 1)[1]
-        .rsplit("\n<!-- potpie-end -->", 1)[0]
-        .strip()
+        marked_template.split("\n", 1)[1].rsplit("\n<!-- potpie-end -->", 1)[0].strip()
     )
     target.write_text(
         "# My notes\n\nSome custom project instructions.\n\n"

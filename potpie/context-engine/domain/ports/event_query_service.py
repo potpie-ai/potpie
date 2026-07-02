@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Protocol
 
 from domain.context_status import EventLedgerHealth
-from domain.ingestion_event_models import EventListFilters, EventListPage, IngestionEvent
+from domain.ingestion_event_models import (
+    EventListFilters,
+    EventListPage,
+    IngestionEvent,
+)
 
 
 class EventQueryService(Protocol):
@@ -15,8 +19,7 @@ class EventQueryService(Protocol):
     Typically implemented atop :class:`IngestionEventStore` or a read replica.
     """
 
-    def get_event(self, event_id: str) -> IngestionEvent | None:
-        ...
+    def get_event(self, event_id: str) -> IngestionEvent | None: ...
 
     def list_events(
         self,
@@ -25,8 +28,7 @@ class EventQueryService(Protocol):
         *,
         cursor: str | None,
         limit: int,
-    ) -> EventListPage:
-        ...
+    ) -> EventListPage: ...
 
     def summarize_pot_events(
         self,

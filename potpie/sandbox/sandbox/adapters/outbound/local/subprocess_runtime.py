@@ -14,7 +14,11 @@ import subprocess
 from pathlib import Path
 from typing import AsyncIterator
 
-from sandbox.domain.errors import InvalidWorkspacePath, RuntimeCommandRejected, RuntimeNotFound
+from sandbox.domain.errors import (
+    InvalidWorkspacePath,
+    RuntimeCommandRejected,
+    RuntimeNotFound,
+)
 from sandbox.domain.models import (
     ExecChunk,
     ExecRequest,

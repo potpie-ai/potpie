@@ -1,2 +1,1 @@
 """Daytona workspace/runtime adapters."""
-

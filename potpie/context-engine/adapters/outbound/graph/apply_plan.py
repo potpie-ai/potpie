@@ -70,7 +70,9 @@ def _build_provenance(
         if plan.event_ref
         else ctx.source_event_id or _stable_batch_source_id(plan)
     )
-    source_system = plan.event_ref.source_system if plan.event_ref else ctx.source_system
+    source_system = (
+        plan.event_ref.source_system if plan.event_ref else ctx.source_system
+    )
     return ProvenanceRef(
         pot_id=pot_id,
         source_event_id=source_event_id,

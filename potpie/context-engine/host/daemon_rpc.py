@@ -26,7 +26,10 @@ def encode(value: Any) -> Any:
         return {
             TYPE_KEY: "dataclass",
             "class": f"{cls.__module__}:{cls.__qualname__}",
-            "value": {field.name: encode(getattr(value, field.name)) for field in fields(value)},
+            "value": {
+                field.name: encode(getattr(value, field.name))
+                for field in fields(value)
+            },
         }
     if isinstance(value, datetime):
         return {TYPE_KEY: "datetime", "value": value.isoformat()}

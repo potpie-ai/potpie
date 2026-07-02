@@ -21,4 +21,3 @@ class InMemoryLockManager:
             yield
         finally:
             lock.release()
-

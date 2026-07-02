@@ -142,15 +142,13 @@ async def test_changes_persist_across_worker_restart() -> None:
         )
         assert read_result.exit_code == 0
         assert read_result.stdout.strip() == marker.encode(), (
-            f"marker round-trip failed: wrote {marker!r}, "
-            f"read {read_result.stdout!r}"
+            f"marker round-trip failed: wrote {marker!r}, read {read_result.stdout!r}"
         )
     finally:
         # Always clean up the sandbox so repeated runs don't accumulate.
         if sandbox_id:
-            sandbox = (
-                provider_a._sandboxes.get(sandbox_id)
-                or (provider_b._sandboxes.get(sandbox_id) if provider_b else None)
+            sandbox = provider_a._sandboxes.get(sandbox_id) or (
+                provider_b._sandboxes.get(sandbox_id) if provider_b else None
             )
             if sandbox is None:
                 try:

@@ -101,9 +101,7 @@ class LocalGitWorkspaceProvider:
             )
         )
 
-        workspace = await asyncio.to_thread(
-            self._create_worktree_sync, request, cache
-        )
+        workspace = await asyncio.to_thread(self._create_worktree_sync, request, cache)
         self._by_id[workspace.id] = workspace
         self._by_key[workspace.key] = workspace.id
         return workspace

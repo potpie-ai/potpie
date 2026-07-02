@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from integrations.domain.provider_registry import ProviderRegistry, get_provider_registry
+from integrations.domain.provider_registry import (
+    ProviderRegistry,
+    get_provider_registry,
+)
 from integrations.adapters.outbound.providers.github import register_github_provider
 from integrations.adapters.outbound.providers.linear import register_linear_provider
 

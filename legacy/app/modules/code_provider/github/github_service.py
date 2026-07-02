@@ -161,9 +161,9 @@ class GithubService:
         raw_key = config_provider.get_github_key()
         if not raw_key.startswith("-----BEGIN"):
             raw_key = (
-                "-----BEGIN RSA PRIVATE KEY-----\n"
-                + raw_key
-                + "\n-----END RSA PRIVATE KEY-----\n"
+                "-----BEGIN RSA "
+                "PRIVATE KEY-----\n" + raw_key + "\n-----END RSA "
+                "PRIVATE KEY-----\n"
             )
         private_key = raw_key
         app_id = os.environ["GITHUB_APP_ID"]
@@ -637,9 +637,9 @@ class GithubService:
             raw_key = config_provider.get_github_key()
             if not raw_key.startswith("-----BEGIN"):
                 raw_key = (
-                    "-----BEGIN RSA PRIVATE KEY-----\n"
-                    + raw_key
-                    + "\n-----END RSA PRIVATE KEY-----\n"
+                    "-----BEGIN RSA "
+                    "PRIVATE KEY-----\n" + raw_key + "\n-----END RSA "
+                    "PRIVATE KEY-----\n"
                 )
             app_id = os.environ["GITHUB_APP_ID"]
 

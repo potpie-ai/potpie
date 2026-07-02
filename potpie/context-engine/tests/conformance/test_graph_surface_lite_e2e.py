@@ -40,7 +40,9 @@ def _link_payload(**over) -> dict:
         "predicate": "DEPENDS_ON",
         "object": {"key": "service:ledger-api", "type": "Service"},
         "truth": "source_observation",
-        "evidence": [{"source_ref": "repo:manifest", "authority": "repository_metadata"}],
+        "evidence": [
+            {"source_ref": "repo:manifest", "authority": "repository_metadata"}
+        ],
         "description": "payments depends on ledger to post entries",
     }
     op.update(over)
@@ -109,7 +111,9 @@ def test_apply_low_risk_link() -> None:
 def test_reject_invalid_endpoints() -> None:
     svc = _service()
     payload = _link_payload(
-        object={"key": "repo:foo", "type": "Repository"}, truth="agent_claim", evidence=[]
+        object={"key": "repo:foo", "type": "Repository"},
+        truth="agent_claim",
+        evidence=[],
     )
     res = svc.mutate(SemanticMutationRequest.parse(payload))
     assert res.status == "rejected"
@@ -160,7 +164,10 @@ def test_context_record_uses_semantic_path() -> None:
             pot_id=POT,
             record_type="preference",
             summary="wrap external calls in tenacity retry",
-            details={"policy_kind": "resilience", "prescription": "wrap external calls in tenacity retry"},
+            details={
+                "policy_kind": "resilience",
+                "prescription": "wrap external calls in tenacity retry",
+            },
             scope={"service": "payments-api", "language": "python"},
         )
     )
@@ -243,7 +250,10 @@ def test_paraphrase_retrieval_via_local_embedder() -> None:
                     {
                         "op": "assert_claim",
                         "subgraph": "decisions",
-                        "subject": {"key": "preference:retry-external", "type": "Preference"},
+                        "subject": {
+                            "key": "preference:retry-external",
+                            "type": "Preference",
+                        },
                         "predicate": "POLICY_APPLIES_TO",
                         "object": {"key": "service:payments-api", "type": "Service"},
                         "truth": "preference",

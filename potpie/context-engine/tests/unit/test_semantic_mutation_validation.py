@@ -27,7 +27,9 @@ def _link(**over) -> dict:
         "predicate": "DEPENDS_ON",
         "object": {"key": "service:ledger-api", "type": "Service"},
         "truth": "source_observation",
-        "evidence": [{"source_ref": "repo:manifest", "authority": "repository_metadata"}],
+        "evidence": [
+            {"source_ref": "repo:manifest", "authority": "repository_metadata"}
+        ],
         "description": "payments calls ledger to post entries",
     }
     base.update(over)
@@ -284,7 +286,10 @@ def test_merge_duplicate_entities_validates_identity_records() -> None:
             {
                 "op": "merge_duplicate_entities",
                 "subject": {"key": "service:payments-v1", "type": "Service"},
-                "object": {"key": "repo:github.com/potpie-ai/potpie", "type": "Repository"},
+                "object": {
+                    "key": "repo:github.com/potpie-ai/potpie",
+                    "type": "Repository",
+                },
                 "reason": "bad merge target",
             }
         )
@@ -498,7 +503,9 @@ def test_lowering_transition_state_updates_entity_and_writes_audit_claim() -> No
     decision = by_key["decision:adr-1"]
     assert decision.properties["lifecycle_state"] == "accepted"
     assert decision.properties["previous_lifecycle_state"] == "proposed"
-    assert decision.properties["state_transition_reason"] == "ADR approved by maintainers"
+    assert (
+        decision.properties["state_transition_reason"] == "ADR approved by maintainers"
+    )
     edge = plan.batch.edge_upserts[0]
     assert edge.edge_type == "MENTIONS"
     assert edge.to_entity_key == "decision:adr-1"
@@ -577,7 +584,9 @@ def test_lowering_carries_preference_fields_on_claim() -> None:
     assert props["policy_kind"] == "error_handling"
     assert props["prescription"].startswith("Emit structured CLI errors")
     assert props["strength"] == "strong"
-    assert props["code_scope"]["file_path"] == "potpie/context-engine/adapters/inbound/cli"
+    assert (
+        props["code_scope"]["file_path"] == "potpie/context-engine/adapters/inbound/cli"
+    )
 
 
 def test_lowering_value_object_creates_observation() -> None:

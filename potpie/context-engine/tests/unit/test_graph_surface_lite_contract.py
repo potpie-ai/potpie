@@ -810,7 +810,9 @@ def test_search_entities_derives_summary_for_old_nodes_without_summary(service) 
         GraphEntitySearchRequest(pot_id="p", query="web auth", type="Service")
     ).to_dict()
 
-    web = next(entity for entity in result["entities"] if entity["key"] == "service:web")
+    web = next(
+        entity for entity in result["entities"] if entity["key"] == "service:web"
+    )
     assert web["key"] == "service:web"
     assert web["summary"] == "web"
     assert web["description"] == "web"

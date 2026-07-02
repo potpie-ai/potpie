@@ -225,7 +225,9 @@ def test_embedded_unbuilt_profile_fails_closed():
 
 
 @pytest.mark.parametrize("profile", PARTIAL_PROFILES)
-def test_partial_backend_profiles_fail_closed_for_unbuilt_projections(profile, tmp_path):
+def test_partial_backend_profiles_fail_closed_for_unbuilt_projections(
+    profile, tmp_path
+):
     backend = _build(profile, tmp_path)
     assert isinstance(backend, GraphBackend)
     expected = {

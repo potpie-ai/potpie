@@ -135,8 +135,8 @@ def test_daemon_rpc_validation_error_guidance_round_trips() -> None:
     with pytest.raises(ValueError) as exc_info:
         daemon_client._raise_remote_error(payload)
     assert getattr(exc_info.value, "detail") == {"did_you_mean": guidance}
-    assert getattr(exc_info.value, "recommended_next_action") == (
-        guidance["read_command"]
+    assert (
+        getattr(exc_info.value, "recommended_next_action") == (guidance["read_command"])
     )
 
 

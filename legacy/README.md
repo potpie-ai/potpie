@@ -14,11 +14,7 @@
 > this `legacy/` directory on **July 24, 2026**. If you still depend on the old v1
 > stack, pin to a commit before that removal date or migrate to the v2 packages.
 
-<<<<<<< HEAD
-[Potpie](https://potpie.ai) turns your entire codebase into a **knowledge graph** - a structural index of every file, class, and function, capturing all their relationships and what each part of the code does in context of everything else. AI agents built on this graph can reason about your code with the precision of someone who wrote it - from debugging to feature development.
-=======
 Core libraries live at the repo root under `potpie/` (`context-engine`, `parsing`, `sandbox`, `integrations`). You can delete this entire `legacy/` directory if you only need those packages.
->>>>>>> origin
 
 
 <p align="center">

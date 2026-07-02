@@ -62,7 +62,9 @@ def test_build_embedder_reads_setup_sentence_transformer_config(
     )
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     _clear_embedding_env(monkeypatch)
-    monkeypatch.setattr(local_embedder, "_sentence_transformers_installed", lambda: True)
+    monkeypatch.setattr(
+        local_embedder, "_sentence_transformers_installed", lambda: True
+    )
 
     embedder = local_embedder.build_embedder()
 
@@ -91,7 +93,9 @@ def test_semantic_embedder_aliases_fall_back_to_hashing_when_unavailable(
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     _clear_embedding_env(monkeypatch)
     monkeypatch.setenv("CONTEXT_ENGINE_EMBEDDER", choice)
-    monkeypatch.setattr(local_embedder, "_sentence_transformers_installed", lambda: False)
+    monkeypatch.setattr(
+        local_embedder, "_sentence_transformers_installed", lambda: False
+    )
 
     embedder = local_embedder.build_embedder()
 

@@ -27,7 +27,9 @@ from adapters.outbound.graph.backends._unimplemented import (
     UnimplementedInspection,
     UnimplementedSnapshot,
 )
-from adapters.outbound.graph.backends.claim_query_semantic import ClaimQuerySemanticSearch
+from adapters.outbound.graph.backends.claim_query_semantic import (
+    ClaimQuerySemanticSearch,
+)
 from adapters.outbound.graph.backends.claim_query_analytics import ClaimQueryAnalytics
 from adapters.outbound.graph.cypher import _coerce_props_for_neo4j
 from adapters.outbound.graph.entity_summary_repair import (
@@ -166,9 +168,7 @@ class Neo4jGraphBackend:
         # Lazy: only touch neo4j when this profile is selected.
         from adapters.outbound.graph.neo4j_reader import Neo4jClaimQueryStore
 
-        self._claim_query = Neo4jClaimQueryStore(
-            self.settings, embedder=self.embedder
-        )
+        self._claim_query = Neo4jClaimQueryStore(self.settings, embedder=self.embedder)
         self._mutation = _Neo4jMutation(
             self.settings, writer=self.writer, embedder=self.embedder
         )

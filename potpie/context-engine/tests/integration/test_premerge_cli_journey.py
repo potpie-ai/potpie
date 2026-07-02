@@ -93,8 +93,12 @@ def _isolated_env(tmp_path: Path) -> dict[str, str]:
     env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
     # Keep rustup/cargo on the host toolchain when HOME is redirected for Potpie
     # config isolation — otherwise `cargo` exists on PATH but has no toolchain.
-    env.setdefault("RUSTUP_HOME", os.environ.get("RUSTUP_HOME", str(source_home / ".rustup")))
-    env.setdefault("CARGO_HOME", os.environ.get("CARGO_HOME", str(source_home / ".cargo")))
+    env.setdefault(
+        "RUSTUP_HOME", os.environ.get("RUSTUP_HOME", str(source_home / ".rustup"))
+    )
+    env.setdefault(
+        "CARGO_HOME", os.environ.get("CARGO_HOME", str(source_home / ".cargo"))
+    )
     return env
 
 
@@ -113,7 +117,9 @@ def _has_usable_rust_toolchain(env: dict[str, str]) -> bool:
     return proc.returncode == 0
 
 
-def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path) -> None:
+def test_premerge_journey_from_fresh_clone_creates_context_graph(
+    tmp_path: Path,
+) -> None:
     clone_root = tmp_path / "repo-clone"
     env = _isolated_env(tmp_path)
     if not _has_usable_rust_toolchain(env):
@@ -155,11 +161,15 @@ def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path)
     setup = _unwrap_result(setup_payload)
     assert setup.get("ok") is True
     step_states = {
-        row.get("step"): row.get("state") for row in setup.get("steps", []) if isinstance(row, dict)
+        row.get("step"): row.get("state")
+        for row in setup.get("steps", [])
+        if isinstance(row, dict)
     }
     assert step_states.get("source") in {"done", "skipped"}
 
-    source_payload = _run_json_cli(clone_root, env, "source", "add", "repo", ".", timeout=60)
+    source_payload = _run_json_cli(
+        clone_root, env, "source", "add", "repo", ".", timeout=60
+    )
     source_add = _unwrap_result(source_payload)
     assert source_add.get("kind") == "repo"
     assert source_add.get("registration_only") is True
@@ -192,7 +202,10 @@ def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path)
                     {
                         "op": "link_entities",
                         "subgraph": "infra_topology",
-                        "subject": {"key": "service:journey-service", "type": "Service"},
+                        "subject": {
+                            "key": "service:journey-service",
+                            "type": "Service",
+                        },
                         "predicate": "DEPENDS_ON",
                         "object": {"key": "service:journey-ledger", "type": "Service"},
                         "truth": "source_observation",
@@ -203,7 +216,7 @@ def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path)
                                 "authority": "repository_metadata",
                             }
                         ],
-                    }
+                    },
                 ]
             }
         ),
@@ -240,7 +253,9 @@ def test_premerge_journey_from_fresh_clone_creates_context_graph(tmp_path: Path)
         timeout=60,
     )
     read_result = _unwrap_result(read_payload)
-    assert read_result.get("items"), "expected graph read to return journey topology items"
+    assert read_result.get("items"), (
+        "expected graph read to return journey topology items"
+    )
 
     status_payload = _run_json_cli(clone_root, env, "graph", "status", timeout=60)
     status = _unwrap_result(status_payload)

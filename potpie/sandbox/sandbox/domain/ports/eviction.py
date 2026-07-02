@@ -34,9 +34,7 @@ class EvictionResult:
 class EvictionPolicy(Protocol):
     """Decide when/what to evict before workspace allocation."""
 
-    async def evict_if_needed(
-        self, *, user_id: str | None = None
-    ) -> EvictionResult:
+    async def evict_if_needed(self, *, user_id: str | None = None) -> EvictionResult:
         """Run the policy; evict if thresholds are breached.
 
         ``user_id`` scopes the decision when the policy is multi-tenant

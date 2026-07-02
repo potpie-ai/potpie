@@ -139,9 +139,7 @@ def _is_skill_markdown(rel_path: Path) -> bool:
     return rel_path.name == "SKILL.md" and "skills" in rel_path.parts
 
 
-def _selected_skill_matches(
-    rel_path: Path, selected: frozenset[str] | None
-) -> bool:
+def _selected_skill_matches(rel_path: Path, selected: frozenset[str] | None) -> bool:
     if selected is None:
         return True
     sid = _skill_id_for_path(rel_path) or _skill_id_from_generic_skill_path(rel_path)
@@ -156,9 +154,7 @@ def _skill_id_from_generic_skill_path(rel_path: Path) -> str | None:
     return None
 
 
-def _include_selected_skills(
-    rel_path: Path, selected: frozenset[str] | None
-) -> bool:
+def _include_selected_skills(rel_path: Path, selected: frozenset[str] | None) -> bool:
     sid = _skill_id_for_path(rel_path)
     return sid is not None and (selected is None or sid in selected)
 
@@ -250,7 +246,9 @@ def _validate_potpie_command_tokens(tokens: list[str]) -> str | None:
         opt = _option_name(token)
         if opt not in command_options:
             command = " ".join(path)
-            return f"{' '.join(tokens)} uses unsupported option {opt} for potpie {command}"
+            return (
+                f"{' '.join(tokens)} uses unsupported option {opt} for potpie {command}"
+            )
     return None
 
 

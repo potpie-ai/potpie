@@ -262,17 +262,13 @@ class DefaultGraphService:
                 coverage=(
                     {
                         "view": spec.name,
-                        "status": "unsupported"
-                        if unsupported or missing
-                        else "empty",
+                        "status": "unsupported" if unsupported or missing else "empty",
                         "candidate_pool": 0,
                     },
                 ),
                 freshness=_read_freshness(None, backend_freshness={}),
                 quality={
-                    "status": "unsupported"
-                    if unsupported or missing
-                    else "empty",
+                    "status": "unsupported" if unsupported or missing else "empty",
                     "reason": quality_reason,
                 },
                 source_refs=(),
@@ -640,8 +636,7 @@ def _unknown_subgraph_error(
     guidance = include_guess_guidance(subgraph, None)
     message = (
         f"unknown graph subgraph {subgraph!r}. "
-        f"Known subgraphs: {', '.join(known_subgraphs)}."
-        + _guidance_suffix(guidance)
+        f"Known subgraphs: {', '.join(known_subgraphs)}." + _guidance_suffix(guidance)
     )
     return UnknownGraphViewError(
         message,

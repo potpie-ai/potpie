@@ -815,9 +815,13 @@ def source_status(
                 )
             elif claim_count == 0:
                 warnings = empty_pot_warnings(host, pot_id)
-                recommended = warnings[0] if warnings else (
-                    "Sources are registered only; no claims in graph yet. "
-                    "Use ledger/agent ingestion to populate."
+                recommended = (
+                    warnings[0]
+                    if warnings
+                    else (
+                        "Sources are registered only; no claims in graph yet. "
+                        "Use ledger/agent ingestion to populate."
+                    )
                 )
 
             emit(

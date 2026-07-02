@@ -9,7 +9,11 @@ import subprocess
 from pathlib import Path
 from typing import AsyncIterator
 
-from sandbox.domain.errors import RuntimeCommandRejected, RuntimeNotFound, RuntimeUnavailable
+from sandbox.domain.errors import (
+    RuntimeCommandRejected,
+    RuntimeNotFound,
+    RuntimeUnavailable,
+)
 from sandbox.domain.models import (
     ExecChunk,
     ExecRequest,
@@ -35,7 +39,9 @@ class DockerRuntimeProvider:
     kind = "docker"
     capabilities = RuntimeCapabilities(preview_url=False, interactive_session=False)
 
-    def __init__(self, *, docker_bin: str = "docker", name_prefix: str = "potpie-sandbox") -> None:
+    def __init__(
+        self, *, docker_bin: str = "docker", name_prefix: str = "potpie-sandbox"
+    ) -> None:
         self.docker_bin = docker_bin
         self.name_prefix = name_prefix
         self._runtimes: dict[str, Runtime] = {}
@@ -64,7 +70,9 @@ class DockerRuntimeProvider:
         self._runtimes.setdefault(runtime.id, runtime)
         if runtime.backend_runtime_id is None:
             raise RuntimeUnavailable("Docker runtime has no container id")
-        result = await asyncio.to_thread(self._run, [self.docker_bin, "start", runtime.backend_runtime_id], 60)
+        result = await asyncio.to_thread(
+            self._run, [self.docker_bin, "start", runtime.backend_runtime_id], 60
+        )
         if result.returncode != 0:
             raise RuntimeUnavailable(result.stderr.strip())
         runtime.state = RuntimeState.RUNNING
@@ -124,7 +132,9 @@ class DockerRuntimeProvider:
             self._docker_network(spec.network),
         ]
         for mount in spec.mounts:
-            cmd.extend(["--mount", self._mount_arg(mount.source, mount.target, mount.writable)])
+            cmd.extend(
+                ["--mount", self._mount_arg(mount.source, mount.target, mount.writable)]
+            )
         for key, value in spec.env.items():
             cmd.extend(["-e", f"{key}={value}"])
         if spec.resources:
@@ -151,7 +161,11 @@ class DockerRuntimeProvider:
             cmd.extend(["-e", f"{key}={value}"])
         cmd.append(runtime.backend_runtime_id)
         if request.shell:
-            command = request.cmd[0] if len(request.cmd) == 1 else " ".join(shlex.quote(p) for p in request.cmd)
+            command = (
+                request.cmd[0]
+                if len(request.cmd) == 1
+                else " ".join(shlex.quote(p) for p in request.cmd)
+            )
             cmd.extend(["sh", "-lc", command])
         else:
             cmd.extend(request.cmd)
@@ -213,7 +227,9 @@ class DockerRuntimeProvider:
 
     @staticmethod
     def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        return subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
+        )
 
     @staticmethod
     def _limit_output(

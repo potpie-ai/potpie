@@ -92,34 +92,28 @@ def settings_from_env() -> SandboxSettings:
         dockerfile = str(_DEFAULT_AGENT_DOCKERFILE)
     return SandboxSettings(
         provider=os.getenv("SANDBOX_WORKSPACE_PROVIDER", "local").strip().lower(),
-        runtime=os.getenv("SANDBOX_RUNTIME_PROVIDER", "local_subprocess").strip().lower(),
+        runtime=os.getenv("SANDBOX_RUNTIME_PROVIDER", "local_subprocess")
+        .strip()
+        .lower(),
         repos_base_path=base,
         metadata_path=metadata,
         docker_image=os.getenv("SANDBOX_DOCKER_IMAGE", DEFAULT_AGENT_DOCKER_IMAGE),
         local_allow_write=_bool_env("SANDBOX_LOCAL_ALLOW_WRITE", False),
         daytona_snapshot=os.getenv("DAYTONA_SNAPSHOT") or DEFAULT_AGENT_SNAPSHOT,
-        daytona_workspace_root=os.getenv(
-            "DAYTONA_WORKSPACE_ROOT", "/home/agent/work"
-        ),
+        daytona_workspace_root=os.getenv("DAYTONA_WORKSPACE_ROOT", "/home/agent/work"),
         daytona_snapshot_dockerfile=dockerfile,
         daytona_snapshot_build_timeout_s=_float_env(
             "DAYTONA_SNAPSHOT_BUILD_TIMEOUT_S", 20 * 60
         ),
-        daytona_snapshot_heartbeat_s=_float_env(
-            "DAYTONA_SNAPSHOT_HEARTBEAT_S", 15
-        ),
-        daytona_sandbox_name_prefix=os.getenv(
-            "DAYTONA_SANDBOX_NAME_PREFIX", "potpie"
-        ),
+        daytona_snapshot_heartbeat_s=_float_env("DAYTONA_SNAPSHOT_HEARTBEAT_S", 15),
+        daytona_sandbox_name_prefix=os.getenv("DAYTONA_SANDBOX_NAME_PREFIX", "potpie"),
         daytona_auto_delete_minutes=_optional_int_env("DAYTONA_AUTO_DELETE_MINUTES"),
         daytona_network_allow_list=os.getenv("DAYTONA_NETWORK_ALLOW_LIST", ""),
         daytona_network_block_all=_bool_env("DAYTONA_NETWORK_BLOCK_ALL", False),
         daytona_snapshot_cpu=_int_env("DAYTONA_SNAPSHOT_CPU", 2),
         daytona_snapshot_memory_gb=_int_env("DAYTONA_SNAPSHOT_MEMORY_GB", 4),
         daytona_snapshot_disk_gb=_int_env("DAYTONA_SNAPSHOT_DISK_GB", 10),
-        daytona_use_volume_for_bare=_bool_env(
-            "DAYTONA_USE_VOLUME_FOR_BARE", False
-        ),
+        daytona_use_volume_for_bare=_bool_env("DAYTONA_USE_VOLUME_FOR_BARE", False),
         daytona_volume_name_prefix=os.getenv(
             "DAYTONA_VOLUME_NAME_PREFIX", "potpie-bare"
         ),

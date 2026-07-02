@@ -40,9 +40,7 @@ class _RecordingEvictionPolicy:
     def __init__(self) -> None:
         self.calls: list[str | None] = []
 
-    async def evict_if_needed(
-        self, *, user_id: str | None = None
-    ) -> EvictionResult:
+    async def evict_if_needed(self, *, user_id: str | None = None) -> EvictionResult:
         self.calls.append(user_id)
         return EvictionResult()
 

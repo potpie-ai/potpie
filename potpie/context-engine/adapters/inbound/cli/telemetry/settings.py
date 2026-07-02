@@ -102,9 +102,7 @@ def _product_analytics_settings_from_runtime(
     )
 
 
-def _sink_status(
-    enabled: bool, telemetry: TelemetryState
-) -> TelemetrySinkStatus:
+def _sink_status(enabled: bool, telemetry: TelemetryState) -> TelemetrySinkStatus:
     if telemetry == "blocked":
         return "blocked"
     if telemetry == "disabled":

@@ -134,7 +134,9 @@ def _merge_entities(
             continue
 
         if canonical_key in by_key:
-            by_key[canonical_key] = _merge_pair(by_key[canonical_key], item, canonical_key)
+            by_key[canonical_key] = _merge_pair(
+                by_key[canonical_key], item, canonical_key
+            )
             merges += 1
         else:
             by_key[canonical_key] = EntityUpsert(
@@ -153,7 +155,9 @@ def _merge_pair(
     merged_props = dict(prior.properties)
     for k, v in incoming.properties.items():
         merged_props.setdefault(k, v)
-    return EntityUpsert(entity_key=canonical_key, labels=labels, properties=merged_props)
+    return EntityUpsert(
+        entity_key=canonical_key, labels=labels, properties=merged_props
+    )
 
 
 def _rewrite_edges(

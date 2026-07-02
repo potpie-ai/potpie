@@ -22,7 +22,10 @@ def validation_line_to_issue(line: str) -> dict[str, str]:
         (": missing required properties:", "missing required properties:"),
         (": invalid lifecycle/status ", "invalid lifecycle/status "),
         (": unknown canonical labels:", "unknown canonical labels:"),
-        (": at least one public canonical label is required", "at least one public canonical label is required"),
+        (
+            ": at least one public canonical label is required",
+            "at least one public canonical label is required",
+        ),
         (": at least one label is required", "at least one label is required"),
         (": unknown canonical edge type", "unknown canonical edge type"),
         (": from_entity_key is required", "from_entity_key is required"),

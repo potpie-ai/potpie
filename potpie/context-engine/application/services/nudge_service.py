@@ -36,7 +36,15 @@ class GraphReadPort(Protocol):
 
 
 # Scope keys worth surfacing inline in injected context.
-_SCOPE_KEYS = ("repo", "service", "file_path", "path", "environment", "language", "framework")
+_SCOPE_KEYS = (
+    "repo",
+    "service",
+    "file_path",
+    "path",
+    "environment",
+    "language",
+    "framework",
+)
 
 
 @dataclass(slots=True)
@@ -163,7 +171,11 @@ def _format_inject_context(items: list[tuple[float, str, dict[str, Any]]]) -> st
             or payload.get("entity_key")
         )
         scope_bits: list[str] = []
-        code_scope = payload.get("code_scope") if isinstance(payload.get("code_scope"), dict) else {}
+        code_scope = (
+            payload.get("code_scope")
+            if isinstance(payload.get("code_scope"), dict)
+            else {}
+        )
         for key in _SCOPE_KEYS:
             val = payload.get(key) or (code_scope.get(key) if code_scope else None)
             if isinstance(val, str) and val.strip():

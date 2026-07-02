@@ -41,7 +41,9 @@ def test_telemetry_resolution_defaults_to_enabled_without_preference() -> None:
     assert resolution.runtime.telemetry_disabled is False
 
 
-def test_telemetry_resolution_applies_persisted_disable_as_final_cli_preference() -> None:
+def test_telemetry_resolution_applies_persisted_disable_as_final_cli_preference() -> (
+    None
+):
     save_preferences(TelemetryPreferences(enabled=False))
 
     resolution = load_telemetry_resolution()

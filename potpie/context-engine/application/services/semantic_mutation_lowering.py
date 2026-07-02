@@ -117,9 +117,13 @@ def _lower_op(
         SemanticMutationOp.link_entities.value,
         SemanticMutationOp.assert_claim.value,
     ):
-        return _lower_claim(op, request=request, batch=batch, entity_by_key=entity_by_key)
+        return _lower_claim(
+            op, request=request, batch=batch, entity_by_key=entity_by_key
+        )
     if name == SemanticMutationOp.append_event.value:
-        return _lower_event(op, request=request, batch=batch, entity_by_key=entity_by_key)
+        return _lower_event(
+            op, request=request, batch=batch, entity_by_key=entity_by_key
+        )
     if name in (
         SemanticMutationOp.end_relation_validity.value,
         SemanticMutationOp.retract_claim.value,
@@ -294,9 +298,8 @@ def _lower_event(
 def _lower_retract(op: SemanticMutation, *, batch: MutationBatch) -> None:
     reason = op.reason or "retracted via semantic mutation"
     valid_to = op.valid_until or _now_iso()
-    if (
-        op.op == SemanticMutationOp.end_relation_validity.value
-        and not (op.subject is not None and op.predicate and op.object is not None)
+    if op.op == SemanticMutationOp.end_relation_validity.value and not (
+        op.subject is not None and op.predicate and op.object is not None
     ):
         return
     if op.subject is not None and op.predicate and op.object is not None:
@@ -331,7 +334,12 @@ def _lower_supersede_claim(
     batch: MutationBatch,
     entity_by_key: dict[str, EntityUpsert],
 ) -> list[str]:
-    if op.subject is None or op.object is None or op.superseded_by is None or not op.predicate:
+    if (
+        op.subject is None
+        or op.object is None
+        or op.superseded_by is None
+        or not op.predicate
+    ):
         return []
 
     predicate = op.predicate.strip().upper()
@@ -672,16 +680,21 @@ def _claim_properties(
         "source_refs": source_refs,
         "evidence": evidence_dicts,
         "source_system": request.created_by.surface or "agent",
-        "source_ref": source_refs[0] if source_refs else (request.idempotency_key or claim_key),
+        "source_ref": source_refs[0]
+        if source_refs
+        else (request.idempotency_key or claim_key),
         "valid_at": valid_at,
         "valid_from": valid_at,
         "observed_at": op.observed_at or _now_iso(),
         "created_by": _actor_dict(request),
-        "graph_contract_version": request.graph_contract_version or GRAPH_CONTRACT_VERSION,
+        "graph_contract_version": request.graph_contract_version
+        or GRAPH_CONTRACT_VERSION,
         "ontology_version": ONTOLOGY_VERSION,
         "idempotency_key": request.idempotency_key,
         "identity_key": list(
-            edge_identity_key(subject_key, predicate, object_key, environment=op.environment)
+            edge_identity_key(
+                subject_key, predicate, object_key, environment=op.environment
+            )
         ),
     }
     if op.environment:
@@ -705,9 +718,8 @@ def _valid_at_for_claim(op: SemanticMutation, *, truth: str) -> str:
     if op.valid_from:
         return op.valid_from
     if (
-        (truth == _EVENT_TRUTH or op.op == SemanticMutationOp.append_event.value)
-        and op.occurred_at
-    ):
+        truth == _EVENT_TRUTH or op.op == SemanticMutationOp.append_event.value
+    ) and op.occurred_at:
         return op.occurred_at
     return _now_iso()
 
@@ -751,7 +763,15 @@ def _structured_claim_fields_for(op: SemanticMutation) -> dict[str, object]:
 
 def _code_scope_for(op: SemanticMutation) -> dict[str, str]:
     """Collect scope hints (repo/service/file_path/...) from op + subject props."""
-    keys = ("language", "framework", "repo", "service", "file_path", "audience", "environment")
+    keys = (
+        "language",
+        "framework",
+        "repo",
+        "service",
+        "file_path",
+        "audience",
+        "environment",
+    )
     out: dict[str, str] = {}
     sources = [dict(op.extra)]
     if op.subject is not None:
@@ -789,7 +809,9 @@ def _actor_dict(request: SemanticMutationRequest) -> dict[str, str]:
     return out
 
 
-def _discriminator(op: SemanticMutation, request: SemanticMutationRequest) -> str | None:
+def _discriminator(
+    op: SemanticMutation, request: SemanticMutationRequest
+) -> str | None:
     if op.evidence:
         return op.evidence[0].source_ref
     return request.idempotency_key

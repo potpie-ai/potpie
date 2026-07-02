@@ -22,7 +22,9 @@ PLUGIN = TEMPLATES / "claude_plugin"
 
 
 def test_plugin_manifest_required_fields() -> None:
-    manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
     for key in ("name", "description", "version", "hooks"):
         assert key in manifest, f"plugin.json missing {key}"
     assert manifest["name"] == "potpie"
@@ -40,7 +42,9 @@ def test_marketplace_descriptor_points_at_plugin() -> None:
 
 
 def _hooks() -> dict:
-    return json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    return json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))[
+        "hooks"
+    ]
 
 
 def test_hooks_cover_the_four_v15_event_classes() -> None:
@@ -73,7 +77,13 @@ def test_every_hook_calls_the_adapter_via_plugin_root() -> None:
 
 
 def test_no_hook_command_invokes_a_model() -> None:
-    forbidden = ("anthropic", "openai", "claude -p", "ANTHROPIC_API_KEY", "OPENAI_API_KEY")
+    forbidden = (
+        "anthropic",
+        "openai",
+        "claude -p",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+    )
     for cmd in _all_hook_commands():
         low = cmd.lower()
         for token in forbidden:
@@ -98,18 +108,30 @@ def test_adapter_and_skill_files_exist() -> None:
 
 def test_adapter_is_model_free() -> None:
     source = (PLUGIN / "hooks" / "potpie_nudge.py").read_text(encoding="utf-8").lower()
-    for token in ("import anthropic", "import openai", "anthropic_api_key", "openai_api_key"):
+    for token in (
+        "import anthropic",
+        "import openai",
+        "anthropic_api_key",
+        "openai_api_key",
+    ):
         assert token not in source, f"adapter references a model client: {token}"
 
 
 def test_potpie_graph_skill_does_not_drift_across_bundles() -> None:
     paths = [
         TEMPLATES / "agent_bundle" / ".agents" / "skills" / "potpie-graph" / "SKILL.md",
-        TEMPLATES / "claude_bundle" / ".claude" / "skills" / "potpie-graph" / "SKILL.md",
+        TEMPLATES
+        / "claude_bundle"
+        / ".claude"
+        / "skills"
+        / "potpie-graph"
+        / "SKILL.md",
         PLUGIN / "skills" / "potpie-graph" / "SKILL.md",
     ]
     bodies = {p.read_text(encoding="utf-8") for p in paths}
-    assert len(bodies) == 1, "potpie-graph SKILL.md must be identical across all bundles"
+    assert len(bodies) == 1, (
+        "potpie-graph SKILL.md must be identical across all bundles"
+    )
 
 
 def test_shared_plugin_and_agent_skills_do_not_drift() -> None:
@@ -122,14 +144,9 @@ def test_shared_plugin_and_agent_skills_do_not_drift() -> None:
         "potpie-source-ingestion",
     ):
         agent = (
-            TEMPLATES
-            / "agent_bundle"
-            / ".agents"
-            / "skills"
-            / skill_id
-            / "SKILL.md"
+            TEMPLATES / "agent_bundle" / ".agents" / "skills" / skill_id / "SKILL.md"
         )
         plugin = PLUGIN / "skills" / skill_id / "SKILL.md"
-        assert agent.read_text(encoding="utf-8") == plugin.read_text(encoding="utf-8"), (
-            f"{skill_id} SKILL.md must be identical in agent_bundle and claude_plugin"
-        )
+        assert agent.read_text(encoding="utf-8") == plugin.read_text(
+            encoding="utf-8"
+        ), f"{skill_id} SKILL.md must be identical in agent_bundle and claude_plugin"

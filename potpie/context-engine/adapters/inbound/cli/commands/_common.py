@@ -533,15 +533,11 @@ def pot_scope_info(host: Any, pot_id: str) -> dict[str, Any]:
     }
 
 
-def pot_scope_resolution_human(
-    resolved_via: str, *, repo: str | None = None
-) -> str:
+def pot_scope_resolution_human(resolved_via: str, *, repo: str | None = None) -> str:
     if resolved_via == "explicit":
         return "via --pot"
     if resolved_via == "repo_default":
-        return (
-            f"via repo default for {repo}" if repo else "via repo default"
-        )
+        return f"via repo default for {repo}" if repo else "via repo default"
     if resolved_via == "linked_repo":
         return f"via linked repo {repo}" if repo else "via linked repo"
     return "via active pot"

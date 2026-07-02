@@ -65,7 +65,9 @@ def main() -> int:
         "Default: all sandboxes in the org.",
     )
     parser.add_argument(
-        "--dry-run", action="store_true", help="List what would be deleted; don't delete."
+        "--dry-run",
+        action="store_true",
+        help="List what would be deleted; don't delete.",
     )
     args = parser.parse_args()
 
@@ -80,7 +82,8 @@ def main() -> int:
         "DAYTONA_ORGANIZATION_ID"
     )
     missing = [
-        n for n, v in (
+        n
+        for n, v in (
             ("DAYTONA_API_URL", api_url),
             ("DAYTONA_API_KEY", api_key),
             ("DAYTONA_ORGANIZATION_ID", org_id),
@@ -105,7 +108,9 @@ def main() -> int:
         f"{api_url}/sandbox", method="GET", api_key=api_key, org_id=org_id
     )
     if status != 200:
-        sys.stderr.write(f"list failed: HTTP {status}: {body.decode(errors='replace')}\n")
+        sys.stderr.write(
+            f"list failed: HTTP {status}: {body.decode(errors='replace')}\n"
+        )
         return 1
     parsed = json.loads(body)
     if not isinstance(parsed, list):
