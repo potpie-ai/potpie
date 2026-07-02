@@ -7,12 +7,14 @@ from typing import Any
 
 import pytest
 
+import adapters.outbound.skills.agent_installer as agent_installer
 from adapters.outbound.skills.agent_installer import (
     install_global_agent_instructions as _install_global_agent_instructions,
     install_agent_bundle as _install_agent_bundle,
     install_skill_bundle as _install_skill_bundle,
     iter_template_files as _iter_template_files,
     resolve_install_root,
+    validate_packaged_skill_command_snippets as _validate_packaged_skill_command_snippets,
 )
 from adapters.outbound.skills.claude_target import FileBackedAgentTarget
 from application.services.skill_manager import DefaultSkillManager
@@ -43,6 +45,11 @@ def iter_template_files():
 
 def catalog_by_id():
     return _catalog_by_id(template_resources=TEMPLATE_RESOURCES)
+
+
+def validate_packaged_skill_command_snippets(*args: Any, **kwargs: Any):
+    kwargs.setdefault("template_resources", TEMPLATE_RESOURCES)
+    return _validate_packaged_skill_command_snippets(*args, **kwargs)
 
 
 def test_resolve_install_root_prefers_git_repo(tmp_path: Path) -> None:
@@ -90,6 +97,36 @@ def test_install_skill_bundle_writes_to_global_root(tmp_path: Path) -> None:
     assert "potpie-cli/SKILL.md" in result.created
     assert (root / "potpie-cli" / "SKILL.md").exists()
     assert {path.name for path in root.iterdir()} == {"potpie-cli"}
+
+
+def test_packaged_skill_command_snippets_match_cli_surface() -> None:
+    validate_packaged_skill_command_snippets()
+
+
+def test_install_skill_bundle_rejects_invalid_potpie_snippet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bad_skill = """---
+name: potpie-cli
+description: bad snippet
+---
+
+```bash
+potpie search "query" --node-labels PullRequest,Decision
+```
+"""
+
+    def fake_bundle_files(bundle_name: str, **_kwargs: object):
+        if bundle_name != "agent_bundle":
+            return []
+        return [(Path(".agents/skills/potpie-cli/SKILL.md"), bad_skill)]
+
+    monkeypatch.setattr(agent_installer, "_iter_bundle_files", fake_bundle_files)
+
+    with pytest.raises(ValueError, match="unsupported option --node-labels"):
+        install_skill_bundle(tmp_path, skill_ids=("potpie-cli",))
+
+    assert not (tmp_path / "potpie-cli" / "SKILL.md").exists()
 
 
 def test_install_global_agent_instructions_merges_compact_agents_md(

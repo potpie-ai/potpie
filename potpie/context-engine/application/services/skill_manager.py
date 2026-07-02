@@ -11,6 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from adapters.outbound.skills.claude_target import ProjectAgentTarget
+from adapters.outbound.skills.agent_installer import (
+    validate_packaged_skill_command_snippets,
+)
 from adapters.outbound.skills.bundle_catalog import (
     catalog_by_id,
     recommended_skill_ids,
@@ -119,6 +122,7 @@ class DefaultSkillManager:
                 continue
             if installed.get(sid) == info.version:
                 continue
+            validate_packaged_skill_command_snippets(skill_ids=(sid,))
             target.install(skill_id=sid, version=info.version, path=path)
             changed.append(sid)
         self._install_support_files(target, path=path)
@@ -146,6 +150,7 @@ class DefaultSkillManager:
         for sid in ids:
             info = catalog.get(sid)
             if info and installed.get(sid) != info.version:
+                validate_packaged_skill_command_snippets(skill_ids=(sid,))
                 target.install(skill_id=sid, version=info.version)
                 changed.append(sid)
         self._install_support_files(target, path=path)

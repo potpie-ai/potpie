@@ -453,6 +453,8 @@ def _emit_graph_read(
             human_prefix=human_prefix,
             warnings=warnings,
         )
+        if result.to_dict().get("ok", True) is False:
+            raise typer.Exit(code=EXIT_VALIDATION)
         return
 
     normalized_format = _effective_read_format(result, format_)
@@ -480,6 +482,7 @@ def _emit_graph_read(
             dedupe=dedupe,
             event_limit=event_limit,
         )
+    failed = payload.get("ok", True) is False
     _emit_graph_result(
         ctx,
         payload,
@@ -496,3 +499,5 @@ def _emit_graph_read(
         ),
         warnings=warnings,
     )
+    if failed:
+        raise typer.Exit(code=EXIT_VALIDATION)
