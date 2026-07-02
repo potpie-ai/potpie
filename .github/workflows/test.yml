@@ -6,7 +6,192 @@ on:
   push:
     branches: [main, master]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.7"
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-packages --no-cache
+
+      - name: Run static quality checks
+        run: |
+          uv lock --check
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.base_ref }}" --depth=1
+            mapfile -t changed < <(git diff --name-only --diff-filter=ACMRT "origin/${{ github.base_ref }}...HEAD")
+          else
+            mapfile -t changed < <(git diff --name-only --diff-filter=ACMRT "${{ github.event.before }}" "${{ github.sha }}")
+          fi
+          if [ "${#changed[@]}" -gt 0 ]; then
+            uv run pre-commit run --files "${changed[@]}"
+          fi
+          if printf '%s\n' "${changed[@]}" | grep -qE '^potpie/parsing/.*\.rs$'; then
+            cargo fmt --manifest-path potpie/parsing/Cargo.toml -- --check
+          fi
+
+  integrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.7"
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-packages --no-cache
+
+      - name: Run integrations package tests
+        env:
+          POSTGRES_SERVER: "postgresql://postgres:postgres@localhost:5432/postgres"
+          ENV: "development"
+        # HTTP integration tests mount the full legacy FastAPI app, which still
+        # imports removed context-graph Celery handlers; run unit coverage until
+        # that wiring is repaired.
+        run: uv run --project legacy pytest potpie/integrations/tests -m "not integration"
+
+  ui-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build graph-explorer UI
+        working-directory: potpie/context-engine/adapters/inbound/http/ui/frontend
+        run: npm install && npm run build
+
+  graph-e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      falkordb:
+        image: falkordb/falkordb:latest
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.7"
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-packages --no-cache
+
+      - name: Run FalkorDB graph e2e tests
+        working-directory: potpie/context-engine
+        env:
+          POSTGRES_SERVER: "postgresql://postgres:postgres@localhost:5432/postgres"
+          FALKORDB_URL: "redis://localhost:6379"
+          FALKORDB_MODE: "server"
+          GRAPH_DB_BACKEND: "falkordb"
+          CONTEXT_GRAPH_ENABLED: "1"
+          ENV: "development"
+        run: |
+          uv run --project . pytest \
+            tests/integration/test_falkordb_server_e2e.py \
+            tests/integration/test_falkordb_roundtrip.py \
+            tests/integration/test_e2e_batching.py \
+            tests/conformance/ \
+            -v
+
+  benchmark-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.7"
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-packages --no-cache
+
+      - name: Run benchmark harness unit tests
+        working-directory: potpie/context-engine
+        run: uv run --project . pytest tests/unit/benchmarks/ -v
+
   potpie-parsing:
     runs-on: ubuntu-latest
     strategy:
