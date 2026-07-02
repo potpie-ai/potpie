@@ -24,9 +24,10 @@ from adapters.inbound.cli.commands._common import (
     fail,
     get_host,
     is_json,
-    repo_pot_candidates,
     repo_default_pot_id,
+    repo_effective_pot_info,
     resolve_pot_id,
+    use_pot_selection,
 )
 from adapters.inbound.cli.telemetry.onboarding_events import (
     CliSetupAnalyticsObserver,
@@ -54,15 +55,17 @@ def _effective_current_repo_pot_id(
     if not repo_identity:
         return None
 
-    default_pot_id = repo_default_pot_id(host, repo_identity)
-    if default_pot_id:
-        return default_pot_id
-
-    candidates = repo_pot_candidates(host).get("candidates", ())
-    candidate_ids = [str(row.get("pot_id")) for row in candidates if row.get("pot_id")]
-    if len(candidate_ids) == 1:
-        return candidate_ids[0]
-    if len(candidate_ids) > 1:
+    routing = repo_effective_pot_info(host)
+    effective = routing.get("effective_pot") or {}
+    effective_id = effective.get("id")
+    if effective_id:
+        return str(effective_id)
+    if routing.get("status") == "ambiguous":
+        candidate_ids = {
+            str(row.get("id"))
+            for row in routing.get("candidates", ())
+            if row.get("id")
+        }
         return active_pot_id if active_pot_id in candidate_ids else None
     return active_pot_id
 
@@ -374,6 +377,11 @@ def register(root: typer.Typer) -> None:
         managed: bool = typer.Option(
             False, "--managed", help="Select a managed-origin pot."
         ),
+        also_default_for_current_repo: bool = typer.Option(
+            False,
+            "--also-default-for-current-repo",
+            help="Also set the current repo's local default pot to this pot.",
+        ),
     ) -> None:
         """Select the active pot by name/id (top-level alias for `pot use`)."""
         with contract():
@@ -384,12 +392,11 @@ def register(root: typer.Typer) -> None:
                     recommended_next_action="select a local pot; managed routing lands in HU3",
                 )
             host = get_host()
-            pot = host.pots.use_pot(ref=ref)
-            payload, human = enrich_with_pot_guidance(
+            payload, human = use_pot_selection(
                 host,
-                pot.pot_id,
-                {"id": pot.pot_id, "name": pot.name, "origin": "local"},
-                human=f"active pot → {pot.name} (local)",
+                ref,
+                also_default_for_current_repo=also_default_for_current_repo,
+                origin="local",
             )
             emit(payload, human=human)
 

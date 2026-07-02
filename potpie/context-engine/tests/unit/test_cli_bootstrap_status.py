@@ -13,7 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from adapters.inbound.cli import host_cli as cli_main
-from adapters.inbound.cli.commands import bootstrap
+from adapters.inbound.cli.commands import _common, bootstrap
 from adapters.inbound.cli.commands._common import EXIT_DEGRADED
 from bootstrap.host_wiring import default_host_mode
 from domain.lifecycle import DONE, FAILED, SetupPlan, SetupReport, StepResult
@@ -479,22 +479,36 @@ def test_doctor_json_effective_prefers_single_linked_repo_pot_over_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When exactly one linked repo pot exists, doctor matches CLI resolution."""
+    class _NamedPot:
+        def __init__(self, pid: str, name: str) -> None:
+            self.pot_id = pid
+            self.name = name
+
+    class _RepoSource:
+        kind = "repo"
+        name = "github.com/acme/shop"
+        location = "github.com/acme/shop"
+
     mock_host = _make_doctor_host(
         active_pot_id="pot-active",
         repo_default=None,
+    )
+    mock_host.graph.data_plane_status.side_effect = AssertionError(
+        "doctor effective-pot lookup should not fetch graph counts"
+    )
+    mock_host.pots.list_pots.return_value = [
+        _NamedPot("pot-active", "active"),
+        _NamedPot("pot-linked", "linked"),
+    ]
+    mock_host.pots.list_sources.side_effect = lambda *, pot_id: (
+        [_RepoSource()] if pot_id == "pot-linked" else []
     )
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
         bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
     )
     monkeypatch.setattr(
-        bootstrap,
-        "repo_pot_candidates",
-        lambda _host: {
-            "repo": "github.com/acme/shop",
-            "default_pot_id": None,
-            "candidates": [{"pot_id": "pot-linked", "name": "linked"}],
-        },
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
     )
 
     result = runner.invoke(cli_main.app, ["--json", "doctor"])
