@@ -219,8 +219,8 @@ risk decision above.)
 - claims emit an `EdgeUpsert`; a `value` literal mints a synthetic `Observation` carrying the
   literal — "never an authoritative fact from raw text";
 - `append_event` anchors an `Activity` and emits PERFORMED/TOUCHED/MENTIONS edges;
-- `retract`/`end` → `InvalidationOp`; `supersede_claim` writes the replacement claim **and** an
-  invalidation stamped with `superseded_by_key`;
+- `retract_claim`/`end_relation_validity` → `InvalidationOp`; `supersede_claim` writes the
+  replacement claim **and** an invalidation stamped with `superseded_by_key`;
 - `merge_duplicate_entities` stamps merge props + a `RELATED_TO` merge-record edge;
   `patch_entity` is entity-only; `transition_state` stamps lifecycle props and mints an Activity
   MENTIONS edge.
@@ -279,7 +279,7 @@ result carries `expected_version` / `actual_version` and a "reread and re-propos
 
 `GraphMutationDiff.to_dict()` emits exactly these keys (not the old `entities_created/…`):
 
-```
+```text
 entity_upserts · edge_upserts · edge_deletes · invalidations ·
 claims_asserted · claims_retracted · claim_keys
 ```
@@ -436,7 +436,7 @@ Full flags live in [cli-flow.md](./cli-flow.md); the write loop discipline is ta
 | `graph mutate --file … [--dry-run] [--allow-review-required] [--approved-by]` | **legacy wrapper** over propose+commit |
 | `graph mutation-template --kind <…>` | static schema-only skeleton (no host call) |
 | `record --type … --summary …` / MCP `context_record` | Spine B — record→semantic bridge (only MCP write) |
-| `graph history [--entity|--claim|--plan|--mutation|--subgraph]` | committed-write audit trail |
+| `graph history [--entity\|--claim\|--plan\|--mutation\|--subgraph]` | committed-write audit trail |
 | `graph inbox …` / `graph quality …` | pending work / diagnostics (§10–11) |
 
 Canonical loop: discover the contract (`graph catalog`) → read (`graph read`) → resolve identity

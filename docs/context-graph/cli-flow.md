@@ -139,7 +139,9 @@ potpie ui      [--open/--no-open] [--pot <ref>]
   (daemon mode calls `host.daemon.ensure()` first); `--dry-run` returns a preview
   without executing. `--pot` only overrides the initial pot name.
 - **`doctor`** — local diagnostics composed from `backend.capabilities()` +
-  `backend.mutation.readiness()` + `daemon.status()` + `ledger.status()`.
+  `backend.mutation.readiness()` + `daemon.status()` + `ledger.status()`; also
+  reports `effective_current_repo_pot` and `repo_default_pot` (the repo→pot
+  routing resolution for the current directory).
 - **`whoami`** — local OSS reports a `none` identity.
 - **`use <ref>`** — alias for `pot use`. `--managed` raises `CapabilityNotImplemented`
   (see Roadmap below).
@@ -178,13 +180,13 @@ Local setup creates and activates a `default` pot.
 ```bash
 potpie pot list [--local | --managed | --all]
 potpie pot info
-potpie pot create <name> [--repo .] [--use]
-potpie pot use    <ref>
+potpie pot create <name> [--repo .] [--use] [--also-default-for-current-repo]
+potpie pot use    <ref> [--also-default-for-current-repo]
 potpie pot rename <ref> <new-name>
 potpie pot reset  [<ref>] [--confirm]
 potpie pot archive <ref>
 
-potpie pot linked  [--repo .]
+potpie pot linked  [--repo .] [--summary]
 potpie pot default show | set | clear [--repo .]
 
 potpie pot linear-team   ingest | diff-sync <team> [--pot <ref>] [--count <n>] [--since <time>]
@@ -192,14 +194,19 @@ potpie pot jira-project  ingest | diff-sync <key>  [--pot <ref>] [--count <n>] [
 
 potpie source add    <kind> <location> [--name <n>] [--pot <ref>] [--default/--no-default]
 potpie source list   [--pot <ref>]
-potpie source status <id> [--pot <ref>]
+potpie source status [<id>] [--pot <ref>]
 potpie source remove <id> [--pot <ref>]
 ```
 
 - **`pot reset`** is the destructive per-pot wipe — note there is **no
   `graph reset`** command.
 - **`pot linked` / `pot default`** manage the repo→pot binding consumed by
-  `resolve_pot_id`.
+  `resolve_pot_id`. `pot linked --summary` skips per-pot graph counts for a faster
+  repo-routing summary. `pot create`/`pot use --also-default-for-current-repo` set
+  the repo's default binding in the same step (otherwise the CLI warns when the
+  repo default and the selected pot diverge).
+- **`source status`** with no ID prints a per-pot summary of all sources; with an
+  ID it reports that single source.
 - **`pot linear-team` / `pot jira-project`** **bypass HostShell** and POST a single
   `one_shot_ingest` event to the managed `PotpieContextApiClient.submit_event`; they
   fail with `api_unreachable` against the embedded local store.

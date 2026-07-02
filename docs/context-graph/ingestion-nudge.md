@@ -123,7 +123,7 @@ This is the biggest ingestion correction versus the old docs.
   default_registry) — no `.py` source remains (removed in commit `5af8ea5f`,
   "mega-removal of dead CE surface"). Repo-baseline ingestion is now
   **harness-led**: the `potpie-repo-baseline` and `potpie-source-ingestion`
-  skills author semantic mutations through `graph propose` → `graph commit`
+  skills author semantic mutations through `graph propose` → `graph commit --verify`
   (see [skills.md](./skills.md)).
 - **Only `github` + `notion` remain as outbound `SourceConnectorPort`
   connectors** (`adapters/outbound/connectors/{github,notion}/` + `_bench_stubs.py`).

@@ -128,7 +128,7 @@ in `_common.py`: `ReadRequest`/`ReadResponse`, `make_task_context`,
 use-case-specific `scope_overlap` → builds `Candidate`s → delegates ranking to the
 shared `RankingService`.
 
-The 9 readers map one-to-one onto the 9 named views (§7):
+The 9 readers map one-to-one onto the 9 named views (§8):
 
 | Reader (`include`) | Predicates it reads | Notes |
 |---|---|---|
@@ -141,6 +141,11 @@ The 9 readers map one-to-one onto the 9 named views (§7):
 | `owners` | `OWNED_BY`, `MEMBER_OF` | ownership by scope/path |
 | `docs` | `Document RELATED_TO scope` | scoped document context |
 | `raw_graph` | every live `:RELATES_TO` edge (incl. generic `RELATED_TO`) | unscoped, for the explorer UI — **not** an agent retrieval family |
+
+> Known spec/reader drift: the `service_neighborhood` view spec
+> (`domain/graph_views.py` `inline_relations`) advertises `EXPOSES` where the reader
+> actually traverses `IMPLEMENTED_IN` (`application/readers/infra_topology.py`
+> `_INFRA_PREDICATES`). The table above documents what the reader reads.
 
 The vocabulary single source of truth is `domain/agent_context_port.py`: it owns
 `CONTEXT_INTENTS` (11), `READER_BACKED_INCLUDES` (9), `CONTEXT_INCLUDE_VALUES` (derived

@@ -38,7 +38,7 @@ flowchart LR
 ```
 
 Reads use the shipped V1.5 workbench (`potpie graph read` over named views; see
-[querying.md](./querying.md)); writes use `graph propose` → `graph commit`
+[querying.md](./querying.md)); writes use `graph propose` → `graph commit --verify`
 (see [writing.md](./writing.md)). The benchmark measures whether the engine
 stores the right facts, retrieves the right evidence, and gives an agent enough
 context to answer well.
