@@ -22,6 +22,7 @@ from adapters.inbound.cli.commands._common import (
     emit,
     get_host,
     is_json,
+    repo_pot_candidates,
     repo_default_pot_id,
     resolve_pot_id,
 )
@@ -41,6 +42,26 @@ from bootstrap import sentry_metrics_runtime
 from domain.errors import CapabilityNotImplemented
 from domain.lifecycle import SetupPlan, SetupReport
 from domain.ports.agent_context import StatusRequest
+
+
+def _effective_current_repo_pot_id(
+    host, *, repo_identity: str | None, active_pot_id: str | None
+) -> str | None:
+    """Mirror CLI repo-pot resolution without raising structured command errors."""
+    if not repo_identity:
+        return None
+
+    default_pot_id = repo_default_pot_id(host, repo_identity)
+    if default_pot_id:
+        return default_pot_id
+
+    candidates = repo_pot_candidates(host).get("candidates", ())
+    candidate_ids = [str(row.get("pot_id")) for row in candidates if row.get("pot_id")]
+    if len(candidate_ids) == 1:
+        return candidate_ids[0]
+    if len(candidate_ids) > 1:
+        return active_pot_id if active_pot_id in candidate_ids else None
+    return active_pot_id
 
 
 def register(root: typer.Typer) -> None:
@@ -274,10 +295,12 @@ def register(root: typer.Typer) -> None:
             daemon_status = host.daemon.status()
 
             repo_identity = current_repo_identity_for_cli()
-            default_pot_id = repo_default_pot_id(host, repo_identity)
-            effective_current_repo_pot = (
-                default_pot_id or pot_id or None if repo_identity else None
+            effective_current_repo_pot = _effective_current_repo_pot_id(
+                host,
+                repo_identity=repo_identity,
+                active_pot_id=pot_id or None,
             )
+            default_pot_id = repo_default_pot_id(host, repo_identity)
 
             cli_install = collect_cli_install_status()
             emit(

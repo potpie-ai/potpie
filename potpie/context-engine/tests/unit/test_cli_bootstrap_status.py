@@ -373,7 +373,11 @@ def test_doctor_emits_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_doctor_host(*, active_pot_id: str | None, repo_default: str | None) -> MagicMock:
+def _make_doctor_host(
+    *,
+    active_pot_id: str | None,
+    repo_default: str | None,
+) -> MagicMock:
     class _Pot:
         def __init__(self, pid: str) -> None:
             self.pot_id = pid
@@ -437,6 +441,37 @@ def test_doctor_json_effective_falls_back_to_active_when_no_default(
     payload = json.loads(result.stdout)
     assert payload["repo_default_pot"] is None
     assert payload["effective_current_repo_pot"] == "pot-active"
+
+
+def test_doctor_json_effective_prefers_single_linked_repo_pot_over_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When exactly one linked repo pot exists, doctor matches CLI resolution."""
+    mock_host = _make_doctor_host(
+        active_pot_id="pot-active",
+        repo_default=None,
+    )
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(
+        bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "repo_pot_candidates",
+        lambda _host: {
+            "repo": "github.com/acme/shop",
+            "default_pot_id": None,
+            "candidates": [{"pot_id": "pot-linked", "name": "linked"}],
+        },
+    )
+
+    result = runner.invoke(cli_main.app, ["--json", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["repo_default_pot"] is None
+    assert payload["active_pot"] == "pot-active"
+    assert payload["effective_current_repo_pot"] == "pot-linked"
 
 
 def test_doctor_json_no_repo_identity_leaves_effective_none(
