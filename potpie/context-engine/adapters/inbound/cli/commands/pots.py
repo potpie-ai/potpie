@@ -22,6 +22,7 @@ from adapters.inbound.cli.commands._common import (
     get_host,
     is_json,
     pot_scope_info,
+    pot_scope_resolution_human,
     repo_default_matches,
     repo_pot_candidates,
     resolve_pot_id,
