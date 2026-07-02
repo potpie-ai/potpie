@@ -101,7 +101,7 @@ real family."
 | Field | Meaning |
 |---|---|
 | `items` | ranked `EvidenceItem`s: `include`, `candidate_key`, `score`, `payload`, `coverage_status`, ranker `breakdown` |
-| `coverage` | per-include `CoverageReport`: `status ∈ {complete, partial, sparse, empty}` + `candidate_pool` |
+| `coverage` | per-include `CoverageReport`: `status ∈ {complete, partial, sparse, empty}` + `candidate_pool` + `graph_view` (the canonical `<subgraph>.<view>` serving that include — the forward pointer that teaches envelope callers the workbench vocabulary) |
 | `unsupported_includes` | the not_implemented / unknown includes from the anti-phantom rule |
 | `overall_confidence` | a **coverage rollup**, not a trust score (see below) |
 | `as_of` | read timestamp |
@@ -287,9 +287,10 @@ There are **8 subgraphs** (`debugging`, `recent_changes`, `infra_topology`, `dec
 | `admin` | `inspection_slice` | `raw_graph` | Operator/explorer raw slice. |
 
 > Note the corrected names: the prior-occurrences view is under subgraph **`debugging`**
-> (not `bugs` — `graph read --subgraph bugs …` fails with "unknown graph subgraph"), and
-> the only features view is **`features.feature_context`** (there is no
-> `features.implementation_map`).
+> (not `bugs` — `graph read --subgraph bugs …` fails with "unknown graph view",
+> carrying `did_you_mean` + `recommended_next_action` migration guidance that points
+> at the canonical `debugging.prior_occurrences`), and the only features view is
+> **`features.feature_context`** (there is no `features.implementation_map`).
 
 `graph read` resolves the named view, validates `required_any_scope` + `supported_filters`
 against the view's `ViewContract` (returning `missing_required_scope`/`unsupported_filter`
@@ -348,8 +349,7 @@ payloads (`read_shape="entity_relations"`). `timeline recent` and
     }
   ],
   "coverage": [
-    {"include": "prior_bugs", "status": "complete"},
-    {"include": "recent_changes", "status": "partial"}
+    {"view": "debugging.prior_occurrences", "status": "complete", "candidate_pool": 3}
   ],
   "quality": {"status": "good", "confidence": "high", "backend": "falkordb_lite"},
   "unsupported": [],
@@ -360,7 +360,9 @@ payloads (`read_shape="entity_relations"`). `timeline recent` and
 Note the real shape, corrected from the old docs: debugging relations are
 `REPRODUCES`/`RESOLVED`/`ATTEMPTED_FIX_FAILED`/`VERIFIED` (there is no `FIXES`
 predicate); normalized relations use `valid_at`/`valid_until`; PRs/commits/issues/
-deployments collapse to a single `Activity` entity (key prefix `activity`); and
+deployments collapse to a single `Activity` entity (key prefix `activity`);
+`coverage` rows are keyed by the requested **view** (`view`, not `include` — a read
+routes exactly one include family, which stays internal to the trunk); and
 optimistic-concurrency versioning is coarse — `subgraph_versions` is only
 `{"_global": <total pot claim count>}`, not per-subgraph counters (see
 [`writing.md`](./writing.md)).

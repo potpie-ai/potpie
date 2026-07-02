@@ -113,6 +113,47 @@ def test_daemon_rpc_expected_error_is_not_captured(monkeypatch) -> None:
     assert captured == []
 
 
+def test_daemon_rpc_validation_error_guidance_round_trips() -> None:
+    # UnknownGraphViewError's did_you_mean must survive the daemon RPC
+    # boundary so remote reads error exactly like in-process ones.
+    from domain.graph_views import UnknownGraphViewError, include_guess_guidance
+    from host import daemon_client
+
+    guidance = include_guess_guidance("docs", "relevant")
+    payload = daemon_main._error_payload(
+        UnknownGraphViewError(
+            "unknown graph view 'docs.relevant'",
+            did_you_mean=guidance,
+            recommended_next_action=guidance["read_command"],
+        )
+    )
+
+    assert payload["error"]["code"] == "validation_error"
+    assert payload["error"]["detail"] == {"did_you_mean": guidance}
+    assert payload["error"]["recommended_next_action"] == guidance["read_command"]
+
+    with pytest.raises(ValueError) as exc_info:
+        daemon_client._raise_remote_error(payload)
+    assert getattr(exc_info.value, "detail") == {"did_you_mean": guidance}
+    assert getattr(exc_info.value, "recommended_next_action") == (
+        guidance["read_command"]
+    )
+
+
+def test_daemon_rpc_plain_validation_error_has_no_guidance() -> None:
+    from host import daemon_client
+
+    payload = daemon_main._error_payload(ValueError("--subgraph is required"))
+
+    assert payload["error"]["code"] == "validation_error"
+    assert payload["error"]["detail"] is None
+    assert payload["error"]["recommended_next_action"] is None
+
+    with pytest.raises(ValueError) as exc_info:
+        daemon_client._raise_remote_error(payload)
+    assert not hasattr(exc_info.value, "detail")
+
+
 def test_daemon_rpc_authorize_uses_compare_digest(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
 

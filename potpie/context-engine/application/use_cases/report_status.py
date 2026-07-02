@@ -37,6 +37,7 @@ from domain.context_status import (
 )
 from domain.graph_quality import assess_graph_quality
 from domain.graph_quality import CoverageReport
+from domain.graph_views import INCLUDE_TO_VIEW
 from domain.source_references import SourceReferenceRecord
 
 
@@ -201,6 +202,13 @@ def report_status(
                 "action": "resolve",
                 "intent": recommended_recipe["intent"],
                 "include": recommended_recipe["include"],
+                # Canonical workbench equivalents of the include families —
+                # `potpie graph read` is the preferred read surface.
+                "graph_views": [
+                    INCLUDE_TO_VIEW[name]
+                    for name in recommended_recipe["include"]
+                    if name in INCLUDE_TO_VIEW
+                ],
                 "mode": recommended_recipe["mode"],
                 "source_policy": recommended_recipe["source_policy"],
                 "reason": "Gather a bounded context wrap for the task scope.",
@@ -289,6 +297,7 @@ def report_status(
             {
                 "family": name,
                 "description": f"Reader-backed include '{name}' over the canonical claim store.",
+                "graph_view": INCLUDE_TO_VIEW.get(name),
                 "intents": [
                     intent
                     for intent, includes in DEFAULT_INTENT_INCLUDES.items()
