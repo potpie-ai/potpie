@@ -8,8 +8,8 @@ journey. It is the one doc that may restate flags in full; conceptual depth live
 in the sibling docs linked under each group and in [See also](#see-also).
 
 This file lives at repo-root `docs/context-graph/cli-flow.md`. The code it
-describes lives under `/Users/nandan/Desktop/Dev/potpie/potpie/context-engine/`
-(paths below are relative to that root).
+describes lives under repo-root `potpie/context-engine/` (paths below are
+relative to that root).
 
 ## One CLI for humans and agents
 
@@ -343,9 +343,11 @@ potpie graph search-entities [<query> | --query <text>] \
 
 - **`graph catalog`** returns the live contract (versions, commands, 7 truth classes,
   the 10 mutation ops — all `APPLICABLE`, 6 source authorities, the 9 views, the
-  public 24 entity types and 25 predicates). **`--task` is accepted but ignored in
-  V1.5**; `--subgraph` filters, `--profile full|read` and `--format auto|table` shape
-  output. See [ontology.md](./ontology.md) for the catalog itself.
+  public 24 entity types and 25 predicates). **`--task <text>`** reorders views by
+  task relevance (`ranked_catalog_views`) and adds `task_ranking` metadata to the
+  output (including `--profile read`); `--subgraph` filters, `--profile full|read`
+  and `--format auto|table` shape output. See [ontology.md](./ontology.md) for the
+  catalog itself.
 - **`graph describe`** runs in-process (`describe_contract()`), not a host call.
 - **`graph read`** is the **Retrieve** axis — resolves a named `<subgraph>.<view>`
   (one of the 9 views), validates required scope/filters, then routes through the one
@@ -500,7 +502,7 @@ Backend precedence: `CONTEXT_ENGINE_BACKEND` > `GRAPH_DB_BACKEND` >
 ```mermaid
 flowchart LR
   cf_setup["setup --repo . --agent claude"]
-  cf_status["status"]
+  cf_status["status --host"]
   cf_read["graph catalog → graph read / search-entities"]
   cf_write["graph propose → graph commit --verify"]
   cf_nudge["graph nudge (zero-token hook)"]
@@ -516,7 +518,7 @@ during setup):
 ```bash
 pip install potpie
 potpie setup --repo . --agent claude
-potpie status
+potpie status --host
 
 # read the contract, then the graph
 potpie graph catalog --profile read
