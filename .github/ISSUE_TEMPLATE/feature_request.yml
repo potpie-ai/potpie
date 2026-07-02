@@ -1,90 +1,70 @@
 name: Feature Request
-description: Suggest a new feature or enhancement
+description: Suggest an improvement to the Potpie CLI or context graph workflow
 title: "[Feature]: "
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for suggesting a feature! Please fill out the form below to help us understand your request.
+        Thanks for suggesting an improvement. Please describe the CLI workflow you want to make better.
 
   - type: dropdown
-    id: component
+    id: area
     attributes:
-      label: Component/Module
-      description: Which part of Potpie would this feature affect?
+      label: Area
+      description: Which part of Potpie would this affect?
       options:
-        - Auth
-        - Code Provider (GitHub/GitBucket/Local)
-        - Conversations
-        - Intelligence (Agents/Tools/Prompts)
-        - Integrations (Jira/Linear/Confluence/Sentry/GitHub)
-        - Parsing
-        - Projects
-        - Search
-        - Media
-        - API
-        - UI
-        - Deployment/Docker
+        - Install or upgrade
+        - Setup wizard (potpie setup)
+        - Login or auth
+        - Integrations
+        - Daemon or local services
+        - Pot/source management
+        - Context graph, resolve, or search
+        - Agent skills or harness setup
+        - Web UI (potpie ui)
+        - Packaging or release
         - Other
     validations:
       required: true
 
-  - type: dropdown
-    id: feature_type
+  - type: input
+    id: agent_model
     attributes:
-      label: Feature Type
-      description: What type of feature is this?
-      options:
-        - New Agent
-        - New Tool
-        - New Integration
-        - Enhancement to Existing Feature
-        - API Enhancement
-        - UI/UX Improvement
-        - Other
+      label: Coding agent and model
+      description: If this request depends on a coding agent, tell us which agent and model should be supported.
+      placeholder: "Codex with GPT-5, Claude Code with Sonnet, Cursor, OpenCode, etc."
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: problem
     attributes:
-      label: Problem Statement
-      description: What problem does this feature solve?
+      label: Problem or workflow
+      description: What is hard, missing, confusing, or repetitive today?
       placeholder: |
-        Describe the problem you're trying to solve. For example:
-        "I'm always frustrated when..."
+        Describe the workflow, missing capability, or friction.
     validations:
       required: true
 
   - type: textarea
     id: solution
     attributes:
-      label: Proposed Solution
-      description: How should this feature work?
+      label: Desired behavior
+      description: What should Potpie do instead?
       placeholder: |
-        Describe your proposed solution in detail. How would this feature work?
+        Describe the command, flag, behavior, integration, or UI change you want.
     validations:
       required: true
 
   - type: textarea
-    id: use_case
+    id: example
     attributes:
-      label: Use Case
-      description: Describe a specific use case for this feature
+      label: Example workflow
+      description: Show what using this would look like, if you can.
       placeholder: |
-        Provide a concrete example of how you would use this feature.
-        For example: "When I want to do X, I would use this feature to..."
-    validations:
-      required: true
-
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: Alternatives Considered
-      description: Have you considered any alternative solutions?
-      placeholder: |
-        Describe any alternative solutions or features you've considered.
+        potpie ...
+        potpie graph ...
     validations:
       required: false
 
@@ -92,7 +72,7 @@ body:
     id: additional
     attributes:
       label: Additional Context
-      description: Any other context, mockups, or information about the feature request
-      placeholder: Add any other context, screenshots, or mockups about the feature request here.
+      description: Anything else that would help us evaluate this request
+      placeholder: Links, examples, related issues, or constraints.
     validations:
       required: false
