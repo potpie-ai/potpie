@@ -102,7 +102,7 @@ def test_esc_handles_none_and_markup() -> None:
 
 
 def test_auth_status_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(
         auth_commands,
         "get_integration_status",
@@ -122,7 +122,7 @@ def test_auth_status_json(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_auth_logout_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -152,7 +152,7 @@ def test_token_is_expired_invalid_expires_at() -> None:
 
 
 def test_auth_logout_not_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -174,7 +174,7 @@ def test_auth_logout_not_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
     monkeypatch.setattr(
         auth_commands,
@@ -192,7 +192,7 @@ def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from adapters.outbound.cli_auth.credentials_store import ProviderCredentialError
 
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, True))
     monkeypatch.setattr(
         auth_commands,
@@ -219,7 +219,7 @@ runner = CliRunner()
 
 
 def _mock_cli(monkeypatch: pytest.MonkeyPatch, *, json_mode: bool = False) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (json_mode, False))
 
 
@@ -335,7 +335,7 @@ runner = CliRunner()
 
 
 def test_auth_status_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -359,7 +359,7 @@ def test_auth_status_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auth_status_includes_github_authenticated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -380,7 +380,7 @@ def test_auth_status_includes_github_authenticated(
 
 
 def test_linear_ls_lists_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -403,7 +403,7 @@ def test_linear_ls_lists_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_linear_select_fetches_issues(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -439,7 +439,7 @@ def test_linear_select_fetches_issues(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auth_status_verify_linear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
     monkeypatch.setattr(
         auth_commands,
@@ -469,7 +469,7 @@ def test_auth_status_verify_linear(
 
 
 def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -505,7 +505,7 @@ def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_auth_status_human_verify_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,

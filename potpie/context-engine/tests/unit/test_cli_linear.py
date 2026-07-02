@@ -415,7 +415,7 @@ class _ImmediateThread:
 
 
 def test_run_linear_oauth_flow_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
     status_reads = iter(
         [
@@ -481,7 +481,7 @@ def test_run_linear_oauth_flow_already_connected(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -504,7 +504,7 @@ def test_run_linear_oauth_flow_already_connected(
 def test_run_linear_oauth_flow_missing_client_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -530,7 +530,7 @@ def test_run_linear_oauth_flow_missing_client_id(
 def test_run_linear_oauth_flow_expired_reauth_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -585,7 +585,7 @@ def test_run_linear_oauth_flow_expired_reauth_message(
 
 
 def test_run_linear_oauth_flow_state_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -624,7 +624,7 @@ def test_run_linear_oauth_flow_state_mismatch(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_run_linear_oauth_flow_missing_code(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -661,7 +661,7 @@ def test_run_linear_oauth_flow_missing_code(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_run_linear_oauth_flow_oauth_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -705,7 +705,7 @@ def test_run_linear_oauth_flow_oauth_error(monkeypatch: pytest.MonkeyPatch) -> N
 def test_run_linear_oauth_flow_exchange_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -747,7 +747,7 @@ def test_run_linear_oauth_flow_exchange_failure(
 
 
 def _oauth_setup(monkeypatch: pytest.MonkeyPatch, *, json_mode: bool = False) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (json_mode, False))
     monkeypatch.setattr(
         auth_commands,
@@ -876,7 +876,7 @@ def test_run_linear_oauth_flow_webbrowser_not_opened(
 def test_run_linear_oauth_flow_invalid_redirect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -909,7 +909,7 @@ def test_run_linear_oauth_flow_invalid_redirect(
 def test_linear_refresh_emits_single_json_document(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(auth_commands, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
     monkeypatch.setattr(
         auth_commands,

@@ -4,8 +4,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "node scripts/dev.mjs",
+    "test": "npm run test:dev-port",
+    "test:dev-port": "node --test scripts/dev-port.test.mjs",
+    "audit": "npm audit --audit-level=moderate",
+    "build": "npm run test:dev-port && tsc -b && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -18,6 +21,10 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^6.4.3"
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "fsevents": true
   }
 }

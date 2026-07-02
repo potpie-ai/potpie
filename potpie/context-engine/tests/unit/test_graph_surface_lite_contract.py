@@ -664,6 +664,26 @@ def test_read_returns_unsupported_for_filters_outside_view_contract(service) -> 
     assert env.coverage[0]["status"] == "unsupported"
 
 
+def test_read_missing_required_scope_is_validation_failure(service) -> None:
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="features",
+            view="feature_context",
+            limit=5,
+        )
+    )
+
+    body = env.to_dict()
+    assert body["ok"] is False
+    assert body["status"] == "missing_required_scope"
+    assert "requires one of" in body["message"]
+    assert env.items == ()
+    assert env.unsupported[0]["reason"] == "missing_required_scope"
+    assert env.coverage[0]["status"] == "unsupported"
+    assert env.quality["reason"] == "missing_required_scope"
+
+
 def test_infra_read_keeps_environment_qualified_edges_isolated(service) -> None:
     store = service.backend.claim_query
     store.add(

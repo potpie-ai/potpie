@@ -441,6 +441,8 @@ def _error_code_from_result(payload: Mapping[str, Any]) -> str:
 
 
 def _error_message_from_result(payload: Mapping[str, Any]) -> str:
+    if payload.get("message"):
+        return str(payload["message"])
     if payload.get("detail"):
         return str(payload["detail"])
     issues = payload.get("issues")
@@ -2903,6 +2905,21 @@ def _emit_graph_read(
     human_prefix: str | None = None,
     warnings: tuple[str, ...] = (),
 ) -> None:
+    normalized_format = _effective_read_format(result, format_)
+    payload = _read_payload(
+        result,
+        format_="raw" if normalized_format == "jsonl" else normalized_format,
+        sort=sort,
+        dedupe=dedupe,
+        event_limit=event_limit,
+    )
+    if payload.get("ok", True) is False:
+        human = _error_message_from_result(payload)
+        if human_prefix:
+            human = "\n".join((human_prefix, human))
+        _emit_graph_result(ctx, payload, human=human, warnings=warnings)
+        raise typer.Exit(code=EXIT_VALIDATION)
+
     if not is_json():
         _emit_read(
             result,
@@ -2915,7 +2932,6 @@ def _emit_graph_read(
         )
         return
 
-    normalized_format = _effective_read_format(result, format_)
     if normalized_format == "jsonl":
         rows = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
         if not rows:

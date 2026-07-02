@@ -297,10 +297,20 @@ wrapping `contract()` with the richer **workbench envelope**
 `subgraph_versions`, `warnings`, `unsupported`) and emitting OTLP spans + metrics +
 usage events.
 
-> Naming note: the data plane is `GRAPH_CONTRACT_VERSION="v1.5"`
-> (`ONTOLOGY_VERSION="2026-06-graph"`); the string `"v2"` survives only as the
-> workbench *envelope* version (`GRAPH_WORKBENCH_CONTRACT_VERSION`). There is no
-> separate unshipped "Graph V2 product."
+`doctor` is local-profile diagnostics: daemon/backend readiness, CLI install
+facts (uv tool env, PATH, python shebang), and recommended follow-up commands.
+Do not use `python -m pip show potpie-context-engine` for local dev installs —
+the package lives in the uv tool environment. Prefer `uv tool list`,
+`which -a potpie`, and `make cli-status`.
+
+```bash
+uv tool list
+which -a potpie
+head -n 1 "$(command -v potpie)"
+make cli-status
+potpie doctor
+potpie --json doctor
+```
 
 ### Read / contract (route `host.graph`)
 

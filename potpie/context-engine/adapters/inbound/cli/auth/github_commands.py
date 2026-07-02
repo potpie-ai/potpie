@@ -11,7 +11,7 @@ from typing import NoReturn
 import typer
 from click.exceptions import Abort
 
-from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+from bootstrap.runtime_settings import ensure_runtime_environment_loaded
 from adapters.outbound.cli_auth.github import (
     GitHubDeviceFlowError,
     build_provider_credentials,
@@ -148,7 +148,7 @@ def _wait_for_enter_or_auto_open(
 
 def github_login_impl() -> None:
     """Authenticate the CLI with GitHub using device flow."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     entrypoint = current_entrypoint("direct_github_auth")
     auth_started_ms = now_ms()

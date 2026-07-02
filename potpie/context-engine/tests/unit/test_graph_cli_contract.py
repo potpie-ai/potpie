@@ -1434,6 +1434,54 @@ def test_graph_read_unknown_view_uses_error_envelope() -> None:
     assert "unknown graph view" in emitted["error"]["message"]
 
 
+def test_graph_read_missing_required_scope_result_is_error_envelope() -> None:
+    _common.set_json(True)
+    graph_service = _Graph(
+        read_result=GraphReadResult(
+            graph_contract_version="v1.5",
+            ontology_version="2026-06-graph",
+            view="features.feature_context",
+            subgraph="features",
+            ok=False,
+            status="missing_required_scope",
+            message=(
+                "graph read view 'features.feature_context' requires one of "
+                "scope, service, repo, anchor_entity_key, query"
+            ),
+            coverage=(
+                {
+                    "include": "features",
+                    "status": "unsupported",
+                    "candidate_pool": 0,
+                },
+            ),
+            quality={"status": "unsupported", "reason": "missing_required_scope"},
+            unsupported=(
+                {
+                    "name": "features.feature_context",
+                    "reason": "missing_required_scope",
+                },
+            ),
+        )
+    )
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["read", "--subgraph", "features", "--view", "feature_context"],
+    )
+
+    assert result.exit_code == 1
+    assert graph_service.read_called is True
+    emitted = json.loads(result.output)
+    _assert_graph_envelope(emitted, "graph.read", ok=False)
+    assert emitted["error"]["code"] == "missing_required_scope"
+    assert emitted["unsupported"][0]["reason"] == "missing_required_scope"
+    assert (
+        emitted["error"]["detail"]["quality"]["reason"] == "missing_required_scope"
+    )
+
+
 def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:
     _common.set_json(True)
     graph_service = _Graph()
