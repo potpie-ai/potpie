@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "potpie"
-version = "2.0.0b3"
+version = "2.0.0"
 description = "Potpie context engine"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Software Development",
 ]
 dependencies = [
-    "potpie-context-engine[all]==0.1.0b3",
+    "potpie-context-engine[all]==0.1.0",
 ]
 
 [project.scripts]
