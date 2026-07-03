@@ -104,10 +104,9 @@ the gate warns or fails.
 
 For GitHub, Linear, Jira, and other hosted integrations, pull PRs, issues,
 tickets, comments, labels/status, and linked docs with the agent's integration
-tools/connectors. Do not use pot-level connector ingestion commands such as
-`potpie pot linear-team ingest`, `potpie pot linear-team diff-sync`, or
-Jira/GitHub queue commands as the ingestion path; write the graph updates
-yourself with `graph propose` / `graph commit --verify` or `graph inbox`.
+tools/connectors. Do not use Potpie CLI queue ingestion as the ingestion path;
+write the graph updates yourself with `graph propose` / `graph commit --verify`
+or `graph inbox`.
 
 ## Nudges
 

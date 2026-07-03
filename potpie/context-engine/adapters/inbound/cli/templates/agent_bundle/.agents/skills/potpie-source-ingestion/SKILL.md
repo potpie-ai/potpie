@@ -127,8 +127,7 @@ truth, then read the relevant snippets or authored docs.
 
 Use the agent's integration tools/connectors, including GitHub app/MCP/CLI
 tools when available, not Potpie queue ingestion commands. For GitHub-backed
-repo ingestion, gather the items below. Do not use pot-level connector
-ingestion commands.
+repo ingestion, gather the items below. Do not use Potpie CLI queue ingestion.
 
 - Repository metadata: full name, default branch, description, topics,
   visibility, homepage, license, archived/fork status.

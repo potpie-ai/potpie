@@ -50,7 +50,7 @@ uniformly across the surface.
   (the shipped CLI default host mode is a detached `daemon`). Only
   `CONTEXT_ENGINE_HOST_MODE=in_process` builds an in-process shell via
   `bootstrap/host_wiring.py build_host_shell()`. A handful of commands bypass the
-  HostShell entirely (see notes on `login`, `pot linear-team/jira-project`, `cloud`).
+  HostShell entirely (see notes on `login` and `cloud`).
 - **`contract()`** — the error boundary that maps outcomes to exit codes and emits
   structured JSON errors (`code`, `message`, `detail`, `recommended_next_action`):
 
@@ -189,9 +189,6 @@ potpie pot archive <ref>
 potpie pot linked  [--repo .] [--summary]
 potpie pot default show | set | clear [--repo .]
 
-potpie pot linear-team   ingest | diff-sync <team> [--pot <ref>] [--count <n>] [--since <time>]
-potpie pot jira-project  ingest | diff-sync <key>  [--pot <ref>] [--count <n>] [--since <time>]
-
 potpie source add    <kind> <location> [--name <n>] [--pot <ref>] [--default/--no-default]
 potpie source list   [--pot <ref>]
 potpie source status [<id>] [--pot <ref>]
@@ -207,9 +204,6 @@ potpie source remove <id> [--pot <ref>]
   repo default and the selected pot diverge).
 - **`source status`** with no ID prints a per-pot summary of all sources; with an
   ID it reports that single source.
-- **`pot linear-team` / `pot jira-project`** **bypass HostShell** and POST a single
-  `one_shot_ingest` event to the managed `PotpieContextApiClient.submit_event`; they
-  fail with `api_unreachable` against the embedded local store.
 - **`source add <kind> <location>`** is generic registration only (no scan/ingest);
   registering a repo also sets the repo default. Repo-baseline ingestion is
   harness-led via skills ([skills.md](./skills.md)), not a scanner.
