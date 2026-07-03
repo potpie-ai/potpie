@@ -13,8 +13,8 @@ The two things this doc most wants you to internalise:
    internal Postgres event store); the other is a mostly-stubbed external seam
    (the *Event Ledger* product). The old docs conflate them.
 2. **Scanners and most connectors are gone.** Repo/PR/ticket ingestion is now
-   either harness-led (skills authoring semantic mutations) or a CLI one-shot
-   flow — not an in-process scanner library. The canonical write door for
+   either harness-led (skills authoring semantic mutations) or a server-side
+   event flow — not an in-process scanner library. The canonical write door for
    everything that lands as a *fact* is still `graph propose` → `graph commit
    --verify` (see [writing.md](./writing.md)).
 
@@ -59,7 +59,6 @@ flowchart TD
   ing_ep2["POST /api/v1/context/events/reconcile<br/>(agent_reconciliation)"]
   ing_ep3["POST /api/v1/context/record<br/>(context_record)"]
   ing_wh["POST /webhooks/github<br/>(merged PRs)"]
-  ing_cli["CLI one-shot<br/>jira/linear ... ingest<br/>(one_shot_ingest)"]
 
   ing_submit["DefaultIngestionSubmissionService.submit()<br/>_do_submit"]
   ing_record["GraphService.record()<br/>(deterministic, semantic-mutation path)"]
@@ -70,7 +69,6 @@ flowchart TD
   ing_ep2 --> ing_submit
   ing_ep3 --> ing_submit
   ing_wh --> ing_submit
-  ing_cli --> ing_submit
 
   ing_submit -->|"event_type == context_record"| ing_record
   ing_submit -->|"all other events"| ing_admit
@@ -85,7 +83,6 @@ flowchart TD
 | `POST /api/v1/context/events/reconcile` | `agent_reconciliation` | The canonical event-submission path; deduped by scope + `source_system` + `source_id`. |
 | `POST /api/v1/context/record` | `context_record` (`record_durable_context.py`) | **The deterministic exception** — see §3. |
 | `POST /webhooks/github` | `agent_reconciliation` | `GitHubConnector.normalize_webhook()` verifies HMAC (fail-closed unless `CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS=1`), emits a `ContextEvent` for merged PRs, maps repo→pot, stamps a server-trusted `webhook` Actor. |
-| CLI one-shot ingest | `one_shot_ingest` (`commands/pots.py`) | `potpie jira project <KEY> ingest` / `potpie linear team <KEY> ingest` POST a single event through the API client into the same agent pipeline. |
 
 For non-record events, `_do_submit` resolves pot/repo/source_id and calls
 `event_admission.admit_event(...)`: persist the event (idempotent on
@@ -130,10 +127,11 @@ This is the biggest ingestion correction versus the old docs.
   `connectors/jira/` and `connectors/linear/` are stale `.pyc` only.
   Connectors implement `kind / capabilities / list_artifacts / normalize_webhook
   / fetch`; `propose_plan` was removed, so **connectors no longer write claims**.
-- **jira/linear are a CLI + agent flow, not connectors.** The `one_shot_ingest`
-  events are processed by the reconciliation agent using event playbooks
-  (`domain/event_playbooks.py`) + the `backfill-enumerate-drain` skill; the
-  actual jira/linear *reads* live in
+- **jira/linear reads are harness-led, not CLI queue-driven.** The old
+  pot-level CLI queue-ingest commands have been removed. Hosted-source
+  hydration should happen through the harness and integration tools, while
+  server-side event ingestion continues to flow through the HTTP endpoints
+  above. The actual jira/linear *reads* live in
   `adapters/outbound/cli_auth/{atlassian_read_client,linear_read_client}.py`.
 
 ---
@@ -313,7 +311,6 @@ taught in the `potpie-graph` skill's "Responding To Nudges" — see
 - [architecture.md](./architecture.md) — the two composition roots / two HTTP
   roots that this doc's ingestion server vs local spine split rests on.
 - [querying.md](./querying.md) — the named views a nudge reads.
-- [cli-flow.md](./cli-flow.md) — full flags for `ledger ...`, `graph nudge`, and
-  the jira/linear one-shot ingest commands.
+- [cli-flow.md](./cli-flow.md) — full flags for `ledger ...` and `graph nudge`.
 - [observability.md](./observability.md) — `batch.process` / `agent.run_batch`
   spans (and the `reconciliation_run` ledger row) and ingestion metrics.

@@ -419,30 +419,25 @@ def test_hosted_integration_ingestion_is_agent_led() -> None:
         assert "agent's integration tools/connectors" in text, (
             f"{fragment} does not direct agents to hydrate hosted sources through integrations"
         )
-        assert "do not use pot-level connector ingestion commands" in text, (
-            f"{fragment} does not rule out pot-level connector ingestion commands"
+        assert "do not use potpie cli queue ingestion" in text, (
+            f"{fragment} does not rule out Potpie CLI queue ingestion"
         )
         assert "graph propose" in text and "graph commit" in text, (
             f"{fragment} does not route hosted ingestion back through graph plans"
         )
 
 
-def test_connector_queue_commands_only_appear_as_forbidden_examples() -> None:
-    forbidden_examples = (
+def test_removed_connector_queue_commands_are_not_advertised() -> None:
+    removed_commands = (
         "potpie pot linear-team ingest",
         "potpie pot linear-team diff-sync",
+        "potpie pot jira-project ingest",
+        "potpie pot jira-project diff-sync",
     )
     for path in MD_FILES:
         rel = path.relative_to(TEMPLATES)
         lowered = path.read_text(encoding="utf-8").lower()
-        for token in forbidden_examples:
-            start = 0
-            while True:
-                idx = lowered.find(token, start)
-                if idx == -1:
-                    break
-                window = lowered[max(0, idx - 120) : idx + len(token) + 120]
-                assert "do not use" in window, (
-                    f"{rel} mentions connector queue command `{token}` outside a ban"
-                )
-                start = idx + len(token)
+        for token in removed_commands:
+            assert token not in lowered, (
+                f"{rel} still advertises removed connector queue command `{token}`"
+            )

@@ -52,6 +52,35 @@ def test_unknown_subcommand_emits_structured_json_via_run_cli(
     assert payload["recommended_next_action"]
 
 
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (["--json", "pot", "jira-project", "ingest", "ENG"], "jira-project"),
+        (["--json", "pot", "linear-team", "ingest", "ENG"], "linear-team"),
+    ],
+)
+def test_removed_pot_queue_commands_emit_structured_unknown_command(
+    argv: list[str],
+    expected: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(typer.Exit) as exc_info:
+        host_cli.run_cli(argv)
+
+    assert exc_info.value.exit_code == _common.EXIT_VALIDATION
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["code"] == "usage_error"
+    assert expected in payload["message"]
+
+
+def test_pot_help_no_longer_lists_removed_queue_groups() -> None:
+    result = CliRunner().invoke(host_cli.app, ["pot", "--help"])
+    assert result.exit_code == 0
+    assert "linear-team" not in result.output
+    assert "jira-project" not in result.output
+
+
 def test_missing_argument_keeps_typer_text_in_human_mode(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

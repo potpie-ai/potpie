@@ -200,7 +200,7 @@ worth recording, resolves identity, and writes a semantic mutation.
 
 For GitHub, Linear, Jira, and similar hosted integrations, use the agent's
 integration tools/connectors to pull and hydrate source records first. Do not use
-pot-level connector ingestion commands as the graph update path; after reading
+Potpie CLI queue ingestion as the graph update path; after reading
 the integration data, write durable facts with `graph propose` / `graph commit --verify`
 or capture uncertainty with `graph inbox`.
 
