@@ -57,6 +57,8 @@ def test_unknown_subcommand_emits_structured_json_via_run_cli(
     [
         (["--json", "pot", "jira-project", "ingest", "ENG"], "jira-project"),
         (["--json", "pot", "linear-team", "ingest", "ENG"], "linear-team"),
+        (["--json", "pot", "jira-project", "diff-sync"], "jira-project"),
+        (["--json", "pot", "linear-team", "diff-sync"], "linear-team"),
     ],
 )
 def test_removed_pot_queue_commands_emit_structured_unknown_command(
