@@ -705,4 +705,5 @@ def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> Non
         host.pots.remove_source(pot_id=pot_id, source_id=source_id)
         emit({"removed": source_id}, human=f"removed source {source_id}")
 
+
 __all__ = ["pot_app", "source_app"]
