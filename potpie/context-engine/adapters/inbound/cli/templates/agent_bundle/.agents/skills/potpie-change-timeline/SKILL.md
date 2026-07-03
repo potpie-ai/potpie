@@ -57,8 +57,8 @@ Timeline reads do not include uncommitted local work unless it was recorded.
 ## Record History
 
 For GitHub, Linear, Jira, docs, and similar sources, hydrate records with the
-agent's integration tools/connectors first. Do not use pot-level connector
-ingestion commands as the source-history path.
+agent's integration tools/connectors first. Do not use Potpie CLI queue
+ingestion as the source-history path.
 
 Use the workbench write flow after reading the source:
 
