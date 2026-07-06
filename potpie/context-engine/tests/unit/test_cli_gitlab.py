@@ -50,7 +50,7 @@ def test_save_and_get_gitlab_credentials() -> None:
 
     creds = cs.get_gitlab_credentials()
     assert creds["personal_access_token"] == "glpat-abc123"
-    assert creds.get("instance_host") == "gitlab.corp.com" or creds.get("provider_host") == "gitlab.corp.com"
+    assert creds.get("instance_host") == "gitlab.corp.com"
 
 
 def test_save_gitlab_credentials_requires_pat() -> None:
@@ -156,6 +156,50 @@ def test_save_gitlab_workspace_prefs() -> None:
     creds = cs.get_gitlab_credentials()
     workspaces = creds.get("workspaces") or {}
     assert workspaces.get("default_project") == "acme/api"
+
+
+def test_save_gitlab_credentials_preserves_workspace_prefs_on_relogin() -> None:
+    cs.save_gitlab_credentials(
+        {
+            "instance_url": "https://gitlab.com",
+            "instance_host": "gitlab.com",
+            "personal_access_token": "glpat-old",
+            "stored_at": 1710000000.0,
+        },
+    )
+    cs.save_gitlab_workspace_prefs(default_project="acme/api")
+    first = cs.get_gitlab_credentials()
+    created_at = first.get("created_at")
+
+    cs.save_gitlab_credentials(
+        {
+            "instance_url": "https://gitlab.com",
+            "instance_host": "gitlab.com",
+            "personal_access_token": "glpat-new",
+            "stored_at": 1710000100.0,
+        },
+        account={"username": "jane"},
+    )
+    creds = cs.get_gitlab_credentials()
+    assert creds["personal_access_token"] == "glpat-new"
+    assert creds.get("workspaces", {}).get("default_project") == "acme/api"
+    if created_at is not None:
+        assert creds.get("created_at") == created_at
+
+
+def test_save_gitlab_workspace_prefs_unknown_host() -> None:
+    cs.save_gitlab_credentials(
+        {
+            "instance_url": "https://gitlab.com",
+            "instance_host": "gitlab.com",
+            "personal_access_token": "glpat-abc",
+        },
+    )
+    with pytest.raises(cs.ProviderCredentialError, match="not connected"):
+        cs.save_gitlab_workspace_prefs(
+            instance_host="unknown.corp.com",
+            default_project="acme/api",
+        )
 
 
 def test_save_gitlab_workspace_prefs_not_connected() -> None:

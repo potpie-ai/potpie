@@ -75,15 +75,7 @@ def gitlab_login(
     )
 
 
-@gitlab_app.command("logout")
-def gitlab_logout(
-    instance: str | None = typer.Option(
-        None,
-        "--instance",
-        "-i",
-        help="GitLab instance host to disconnect (default: all).",
-    ),
-) -> None:
+def gitlab_logout_impl(instance: str | None = None) -> None:
     """Remove stored GitLab credentials."""
     j, v = _flags()
     was_authenticated = bool(
@@ -111,6 +103,19 @@ def gitlab_logout(
             "No active session found. Any stale local credentials were removed.",
             as_json=False,
         )
+
+
+@gitlab_app.command("logout")
+def gitlab_logout(
+    instance: str | None = typer.Option(
+        None,
+        "--instance",
+        "-i",
+        help="GitLab instance host to disconnect (default: all).",
+    ),
+) -> None:
+    """Remove stored GitLab credentials."""
+    gitlab_logout_impl(instance=instance)
 
 
 @gitlab_app.command("ls")
@@ -286,7 +291,8 @@ def _print_issue_row(row: dict[str, Any]) -> None:
         labels = row.get("labels") or []
         if isinstance(labels, list) and labels:
             print_plain_line(
-                f"    Labels: {', '.join(str(l) for l in labels)}", as_json=False,
+                f"    Labels: {', '.join(_esc(label) for label in labels)}",
+                as_json=False,
             )
     if row.get("web_url"):
         print_plain_line(f"    URL: {_esc(row.get('web_url'))}", as_json=False)

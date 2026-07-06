@@ -391,9 +391,35 @@ def test_run_gitlab_select_flow_with_project_path(
     assert len(result["issues"]) == 1
 
 
+def test_run_gitlab_select_flow_with_saved_default_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _save_gitlab()
+    cs.save_gitlab_workspace_prefs(default_project="acme/api")
+    monkeypatch.setattr(gl_read.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(
+        gl_read,
+        "fetch_gitlab_projects",
+        lambda **_k: [{"id": 7, "path_with_namespace": "acme/api", "name": "API"}],
+    )
+    monkeypatch.setattr(
+        gl_read,
+        "fetch_gitlab_merge_requests",
+        lambda *_a, **_k: [{"iid": 1, "title": "MR"}],
+    )
+    monkeypatch.setattr(
+        gl_read,
+        "fetch_gitlab_issues",
+        lambda *_a, **_k: [{"iid": 2, "title": "Issue"}],
+    )
+    result = gl_read.run_gitlab_select_flow(limit=5)
+    assert result["workspace_key"] == "acme/api"
+
+
 def test_run_gitlab_select_flow_requires_terminal_without_project(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _save_gitlab()
     monkeypatch.setattr(gl_read.sys.stdin, "isatty", lambda: False)
     with pytest.raises(GitLabReadError, match="requires a terminal"):
         gl_read.run_gitlab_select_flow()

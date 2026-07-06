@@ -6,7 +6,9 @@ picker flow lives in ``adapters.inbound.cli.auth.gitlab_read``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
+from urllib.parse import quote_plus
 
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 from adapters.outbound.cli_auth.gitlab_client import (
@@ -95,40 +97,50 @@ def _get_json(
             http.close()
 
 
+def _encode_project_id(project_id: int | str) -> int | str:
+    if isinstance(project_id, str):
+        return quote_plus(project_id)
+    return project_id
+
+
+def _fetch_normalized_list(
+    path: str,
+    *,
+    instance_host: str | None,
+    params: dict[str, str],
+    mapper: Callable[[dict[str, Any]], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    creds = load_gitlab_read_credentials(instance_host=instance_host)
+    data = _get_json(f"{_api_base(creds)}{path}", _headers(creds), params=params)
+    if not isinstance(data, list):
+        return []
+    return [mapper(item) for item in data if isinstance(item, dict)]
+
+
 def fetch_gitlab_projects(
     *,
     instance_host: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     """List projects accessible to the authenticated user."""
-    creds = load_gitlab_read_credentials(instance_host=instance_host)
-    api_base = _api_base(creds)
-    headers = _headers(creds)
-    data = _get_json(
-        f"{api_base}/projects",
-        headers,
+    return _fetch_normalized_list(
+        "/projects",
+        instance_host=instance_host,
         params={
             "membership": "true",
             "order_by": "last_activity_at",
             "sort": "desc",
             "per_page": str(min(limit, 100)),
         },
-    )
-    if not isinstance(data, list):
-        return []
-    rows: list[dict[str, Any]] = []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        rows.append({
+        mapper=lambda item: {
             "id": item.get("id"),
             "path_with_namespace": item.get("path_with_namespace"),
             "name": item.get("name"),
             "visibility": item.get("visibility"),
             "web_url": item.get("web_url"),
             "default_branch": item.get("default_branch"),
-        })
-    return rows
+        },
+    )
 
 
 def fetch_gitlab_merge_requests(
@@ -139,37 +151,31 @@ def fetch_gitlab_merge_requests(
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     """Fetch merge requests for a project."""
-    creds = load_gitlab_read_credentials(instance_host=instance_host)
-    api_base = _api_base(creds)
-    headers = _headers(creds)
-    data = _get_json(
-        f"{api_base}/projects/{project_id}/merge_requests",
-        headers,
+    encoded_id = _encode_project_id(project_id)
+    return _fetch_normalized_list(
+        f"/projects/{encoded_id}/merge_requests",
+        instance_host=instance_host,
         params={
             "state": state,
             "order_by": "updated_at",
             "sort": "desc",
             "per_page": str(min(limit, 100)),
         },
-    )
-    if not isinstance(data, list):
-        return []
-    rows: list[dict[str, Any]] = []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        author = item.get("author")
-        rows.append({
+        mapper=lambda item: {
             "iid": item.get("iid"),
             "title": item.get("title"),
             "state": item.get("state"),
-            "author": author.get("username") if isinstance(author, dict) else None,
+            "author": (
+                item.get("author", {}).get("username")
+                if isinstance(item.get("author"), dict)
+                else None
+            ),
             "target_branch": item.get("target_branch"),
             "source_branch": item.get("source_branch"),
             "web_url": item.get("web_url"),
             "updated_at": item.get("updated_at"),
-        })
-    return rows
+        },
+    )
 
 
 def fetch_gitlab_issues(
@@ -180,33 +186,27 @@ def fetch_gitlab_issues(
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     """Fetch issues for a project."""
-    creds = load_gitlab_read_credentials(instance_host=instance_host)
-    api_base = _api_base(creds)
-    headers = _headers(creds)
-    data = _get_json(
-        f"{api_base}/projects/{project_id}/issues",
-        headers,
+    encoded_id = _encode_project_id(project_id)
+    return _fetch_normalized_list(
+        f"/projects/{encoded_id}/issues",
+        instance_host=instance_host,
         params={
             "state": state,
             "order_by": "updated_at",
             "sort": "desc",
             "per_page": str(min(limit, 100)),
         },
-    )
-    if not isinstance(data, list):
-        return []
-    rows: list[dict[str, Any]] = []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        assignee = item.get("assignee")
-        rows.append({
+        mapper=lambda item: {
             "iid": item.get("iid"),
             "title": item.get("title"),
             "state": item.get("state"),
-            "assignee": assignee.get("username") if isinstance(assignee, dict) else None,
+            "assignee": (
+                item.get("assignee", {}).get("username")
+                if isinstance(item.get("assignee"), dict)
+                else None
+            ),
             "labels": item.get("labels"),
             "web_url": item.get("web_url"),
             "updated_at": item.get("updated_at"),
-        })
-    return rows
+        },
+    )

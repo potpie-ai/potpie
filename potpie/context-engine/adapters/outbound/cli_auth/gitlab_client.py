@@ -7,6 +7,7 @@ login command lives in ``adapters.inbound.cli.auth.gitlab_auth``.
 from __future__ import annotations
 
 import enum
+import os
 from typing import Any
 from urllib.parse import urlparse
 
@@ -27,7 +28,7 @@ class GitLabAuthErrorKind(enum.StrEnum):
     UNKNOWN = "unknown"
 
 
-def normalize_instance_url(url: str) -> str:
+def normalize_instance_url(url: str, *, allow_http: bool | None = None) -> str:
     """Normalize a GitLab instance URL to ``https://host[:port]``."""
     value = url.strip().rstrip("/")
     if not value:
@@ -37,6 +38,15 @@ def normalize_instance_url(url: str) -> str:
     parsed = urlparse(value)
     if not parsed.netloc:
         return ""
+    if parsed.scheme == "http":
+        if allow_http is None:
+            allow_http = os.environ.get("POTPIE_GITLAB_ALLOW_HTTP", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+        if not allow_http:
+            return f"https://{parsed.netloc}"
     scheme = parsed.scheme or "https"
     return f"{scheme}://{parsed.netloc}"
 

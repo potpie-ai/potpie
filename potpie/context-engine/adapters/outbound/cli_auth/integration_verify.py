@@ -123,6 +123,7 @@ def _verify_gitlab(
     from adapters.outbound.cli_auth.gitlab_client import (
         GitLabAuthErrorKind,
         verify_instance_access,
+        verify_read_api_scope,
         parse_user_profile,
     )
 
@@ -143,6 +144,12 @@ def _verify_gitlab(
             return False, "GitLab token missing required scopes (need read_api)"
         if error_kind == GitLabAuthErrorKind.INSTANCE_UNREACHABLE:
             return False, f"GitLab instance unreachable: {instance_url}"
+        return False, "GitLab verification failed"
+
+    scope_ok, scope_error = verify_read_api_scope(instance_url, pat, http=http)
+    if not scope_ok:
+        if scope_error == GitLabAuthErrorKind.INSUFFICIENT_SCOPES:
+            return False, "GitLab token missing required scopes (need read_api)"
         return False, "GitLab verification failed"
 
     account = parse_user_profile(user_data)

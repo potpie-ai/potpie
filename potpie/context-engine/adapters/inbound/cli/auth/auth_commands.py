@@ -501,8 +501,6 @@ def integration_status(
                     credentials = ensure_valid_integration_tokens(provider)
                 elif provider == "github":
                     credentials = get_store().get_provider_credentials("github")
-                elif provider == "gitlab":
-                    credentials = get_integration_tokens(provider)
                 else:
                     credentials = get_integration_tokens(provider)
             except (ValueError, RuntimeError, ProviderCredentialError) as exc:
@@ -637,9 +635,9 @@ def auth_logout(provider: str) -> None:
         github_logout_impl()
         return
     if key == "gitlab":
-        from adapters.inbound.cli.auth.gitlab_commands import gitlab_logout
+        from adapters.inbound.cli.auth.gitlab_commands import gitlab_logout_impl
 
-        gitlab_logout()
+        gitlab_logout_impl()
         return
 
     store = get_store()

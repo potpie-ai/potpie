@@ -1152,13 +1152,22 @@ def save_gitlab_credentials(
     instance_entry["instance_host"] = inst_host
     instance_entry["token_storage"] = token_storage
 
+    meta = _read_gitlab_metadata()
+    existing_instances = dict(meta.get("instances") or {})
+    existing_entry = existing_instances.get(inst_host) or {}
+    if "workspaces" not in instance_entry and isinstance(
+        existing_entry.get("workspaces"), dict,
+    ):
+        instance_entry["workspaces"] = existing_entry["workspaces"]
+    if "created_at" not in instance_entry and existing_entry.get("created_at"):
+        instance_entry["created_at"] = existing_entry["created_at"]
+
     record = build_gitlab_integration_record(
         instance_entry,
         account=account,
     )
 
-    meta = _read_gitlab_metadata()
-    instances = dict(meta.get("instances") or {})
+    instances = existing_instances
     instances[inst_host] = record
     meta["instances"] = instances
     meta["active_instance_host"] = inst_host
@@ -1244,6 +1253,10 @@ def save_gitlab_workspace_prefs(
             "GitLab is not connected. Run: potpie gitlab login"
         )
     instances = dict(meta.get("instances") or {})
+    if host not in instances:
+        raise ProviderCredentialError(
+            "GitLab is not connected. Run: potpie gitlab login"
+        )
     entry = dict(instances.get(host) or {})
     workspaces = dict(entry.get("workspaces") or {})
     workspaces["default_project"] = default_project.strip()

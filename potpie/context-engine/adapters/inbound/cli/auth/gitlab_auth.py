@@ -18,17 +18,6 @@ import typer
 import click
 from click.exceptions import Abort
 
-if sys.platform == "win32":
-    import msvcrt
-else:
-    msvcrt = None
-
-EXIT_CANCELLED = 130
-GITLAB_AUTO_OPEN_SECONDS = 10
-_GITLAB_OPEN_PROMPT_PREFIX = (
-    "Press Enter to open now, or browser opens in "
-)
-
 from adapters.outbound.cli_auth.gitlab_client import (
     GitLabAuthErrorKind,
     instance_host,
@@ -50,6 +39,17 @@ from adapters.outbound.cli_auth.provider_config import (
     GITLAB_DEFAULT_INSTANCE,
     GITLAB_RECOMMENDED_SCOPES,
     gitlab_pat_page_url,
+)
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    msvcrt = None
+
+EXIT_CANCELLED = 130
+GITLAB_AUTO_OPEN_SECONDS = 10
+_GITLAB_OPEN_PROMPT_PREFIX = (
+    "Press Enter to open now, or browser opens in "
 )
 
 
@@ -257,7 +257,7 @@ def run_gitlab_pat_auth(
     else:
         git_hint = _detect_gitlab_from_git_remote()
         inst_url = normalize_instance_url(
-            _prompt_instance_url(default=git_hint or "")
+            _prompt_instance_url(default=instance or git_hint or "")
         ) or GITLAB_DEFAULT_INSTANCE
         if not as_json:
             _open_gitlab_pat_page(inst_url)

@@ -39,7 +39,14 @@ def test_normalize_bare_hostname() -> None:
 
 
 def test_normalize_with_scheme() -> None:
-    assert normalize_instance_url("http://git.local:8080") == "http://git.local:8080"
+    assert normalize_instance_url("http://git.local:8080") == "https://git.local:8080"
+
+
+def test_normalize_with_scheme_allow_http() -> None:
+    assert (
+        normalize_instance_url("http://git.local:8080", allow_http=True)
+        == "http://git.local:8080"
+    )
 
 
 def test_normalize_strips_trailing_slash() -> None:
@@ -249,6 +256,7 @@ def test_gitlab_account_from_entry_empty() -> None:
 def test_verify_integration_access_gitlab_ok() -> None:
     fake = FakeAuthHttpClient([
         httpx.Response(200, json={"id": 42, "username": "jane", "name": "Jane"}),
+        httpx.Response(200, json=[]),
     ])
     ok, msg = verify_integration_access(
         "gitlab",

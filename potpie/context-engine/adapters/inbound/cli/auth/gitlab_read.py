@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import sys
 from typing import Any
-from urllib.parse import quote_plus
 
 import typer
 
@@ -59,18 +58,18 @@ def run_gitlab_select_flow(
     limit: int = 10,
 ) -> dict[str, Any]:
     """Pick a GitLab project, persist choice, and fetch sample MRs + issues."""
-    if not sys.stdin.isatty() and not project_path:
+    creds = load_gitlab_read_credentials(instance_host=instance_host)
+    prefs = creds.get("workspaces") if isinstance(creds.get("workspaces"), dict) else {}
+    default_project = str(
+        project_path or prefs.get("default_project") or ""
+    ).strip()
+
+    if not sys.stdin.isatty() and not project_path and not default_project:
         raise GitLabReadError(
             "Interactive project selection requires a terminal. "
             "Use: potpie gitlab select --project group/repo"
         )
-    creds = load_gitlab_read_credentials(instance_host=instance_host)
-    prefs = creds.get("workspaces") if isinstance(creds.get("workspaces"), dict) else {}
     projects = fetch_gitlab_projects(instance_host=instance_host, limit=100)
-
-    default_project = str(
-        project_path or prefs.get("default_project") or ""
-    ).strip()
 
     if project_path or (default_project and not sys.stdin.isatty()):
         match = next(
@@ -89,7 +88,7 @@ def run_gitlab_select_flow(
     project_id = picked.get("id")
 
     if project_id is None:
-        project_id = quote_plus(path_with_ns)
+        project_id = path_with_ns
 
     mrs = fetch_gitlab_merge_requests(
         project_id, instance_host=instance_host, limit=limit,
