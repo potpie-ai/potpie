@@ -122,7 +122,10 @@ class DefaultSkillManager:
                 continue
             if installed.get(sid) == info.version:
                 continue
-            validate_packaged_skill_command_snippets(skill_ids=(sid,))
+            validate_packaged_skill_command_snippets(
+                skill_ids=(sid,),
+                template_resources=self.template_resources,
+            )
             target.install(skill_id=sid, version=info.version, path=path)
             changed.append(sid)
         self._install_support_files(target, path=path)
@@ -150,7 +153,10 @@ class DefaultSkillManager:
         for sid in ids:
             info = catalog.get(sid)
             if info and installed.get(sid) != info.version:
-                validate_packaged_skill_command_snippets(skill_ids=(sid,))
+                validate_packaged_skill_command_snippets(
+                    skill_ids=(sid,),
+                    template_resources=self.template_resources,
+                )
                 target.install(skill_id=sid, version=info.version)
                 changed.append(sid)
         self._install_support_files(target, path=path)

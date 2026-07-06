@@ -131,7 +131,7 @@ jobs:
       - name: Run pre-merge CLI journey test
         env:
           PREMERGE_JOURNEY_REQUIRED: "1"
-        run: uv run --project potpie/context-engine pytest potpie/context-engine/tests/integration/test_premerge_cli_journey.py -v
+        run: uv run --project . pytest tests/integration/test_premerge_cli_journey.py -v
 
   potpie-sandbox:
     runs-on: ubuntu-latest
