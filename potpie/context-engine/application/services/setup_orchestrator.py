@@ -24,6 +24,11 @@ from typing import Callable
 from urllib.parse import urlparse
 
 from domain.errors import CapabilityNotImplemented
+from domain.embedding_modes import (
+    EMBEDDING_MODEL_PREP_SKIPPED_ALIASES,
+    SEMANTIC_EMBEDDER_ALIASES,
+    normalize_embedding_mode,
+)
 from domain.lifecycle import (
     DONE,
     FAILED,
@@ -60,6 +65,11 @@ _SEAM_PLAN: tuple[tuple[str, str, str], ...] = (
         "installer / packaging",
         "ensure CLI on PATH + register service unit",
     ),
+    (
+        "embeddings.model",
+        "intelligence / embeddings",
+        "prepare {embeddings} model '{embedding_model}'",
+    ),
     ("backend.provision", "graph backend", "provision '{backend}' store"),
     ("pot.init", "pot management", "init control-plane state store (mode={mode})"),
     (
@@ -77,7 +87,7 @@ _SEAM_PLAN: tuple[tuple[str, str, str], ...] = (
 
 # Soft steps never gate the run. Host-gated steps are hard only for a detached
 # daemon host; an in-process host skips them.
-_SOFT_STEPS = frozenset({"auth", "source", "skills"})
+_SOFT_STEPS = frozenset({"auth", "source", "skills", "embeddings.model"})
 _HOST_GATED = frozenset({"installer", "daemon"})
 
 
@@ -100,6 +110,12 @@ def _skip_reason(step: str, plan: SetupPlan) -> str | None:
         return "named in post-setup wizard"
     if step == "skills" and plan.defer_skills:
         return "chosen in post-setup wizard"
+    if (
+        step == "embeddings.model"
+        and normalize_embedding_mode(plan.embeddings)
+        in EMBEDDING_MODEL_PREP_SKIPPED_ALIASES
+    ):
+        return f"embedding mode is {plan.embeddings}"
     return None
 
 
@@ -122,6 +138,8 @@ def _planned_steps(plan: SetupPlan) -> list[PlannedSetupStep]:
                     pot=plan.pot,
                     agent=plan.agent,
                     repo=plan.repo,
+                    embeddings=plan.embeddings,
+                    embedding_model=plan.embedding_model,
                 ),
                 skip_reason=_skip_reason(step, plan),
             )
@@ -169,6 +187,11 @@ class DefaultSetupOrchestrator:
         steps: list[StepResult] = [
             self._step("config", hard("config"), lambda: self._config(plan)),
             self._step("installer", hard("installer"), self._installer),
+            self._step(
+                "embeddings.model",
+                hard("embeddings.model"),
+                lambda: self._embedding_model(plan),
+            ),
             self._step(
                 "backend.provision",
                 hard("backend.provision"),
@@ -264,6 +287,60 @@ class DefaultSetupOrchestrator:
     def _default_pot(self, plan: SetupPlan) -> str:
         pot = self.pots.create_pot(name=plan.pot, use=True)
         return f"active pot '{pot.name}' ({pot.pot_id})"
+
+    def _embedding_model(self, plan: SetupPlan) -> StepResult:
+        mode = normalize_embedding_mode(plan.embeddings)
+        if mode in EMBEDDING_MODEL_PREP_SKIPPED_ALIASES:
+            return StepResult(
+                "embeddings.model",
+                SKIPPED,
+                f"embedding mode is {plan.embeddings}",
+                metadata={"mode": plan.embeddings},
+            )
+        embedder = getattr(self.backend, "embedder", None)
+        prepare = getattr(embedder, "prepare", None)
+        if embedder is None or not callable(prepare):
+            if mode in SEMANTIC_EMBEDDER_ALIASES and (
+                getattr(embedder, "name", None) == "local-hashing-v1"
+            ):
+                return StepResult(
+                    "embeddings.model",
+                    FAILED,
+                    "sentence-transformers is unavailable; using local-hashing-v1",
+                    metadata={
+                        "mode": plan.embeddings,
+                        "model": plan.embedding_model,
+                        "fallback": "local-hashing-v1",
+                    },
+                )
+            return StepResult(
+                "embeddings.model",
+                SKIPPED,
+                "embedding model is not configurable for this backend",
+                metadata={"mode": plan.embeddings},
+            )
+        try:
+            metadata = prepare()
+        except Exception as exc:  # noqa: BLE001 - setup should keep moving offline.
+            return StepResult(
+                "embeddings.model",
+                FAILED,
+                f"{plan.embedding_model} was not prepared: {exc}",
+                metadata={"mode": plan.embeddings, "model": plan.embedding_model},
+            )
+        if not isinstance(metadata, dict):
+            metadata = {}
+        model = metadata.get("model") or plan.embedding_model
+        cache = metadata.get("cache_folder")
+        detail = f"{model} ready"
+        if cache:
+            detail = f"{detail} in {cache}"
+        return StepResult(
+            "embeddings.model",
+            DONE,
+            detail,
+            metadata={**metadata, "mode": plan.embeddings, "model": model},
+        )
 
     def _source(self, plan: SetupPlan) -> StepResult:
         if not plan.repo:

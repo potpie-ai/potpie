@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from application.services.read_orchestrator import ReadOrchestrator
 from application.services.record_to_semantic import record_to_semantic_request
@@ -46,8 +46,18 @@ from domain.graph_contract import (
     TRUTH_CLASSES,
 )
 from domain.graph_entity_summary import normalize_entity_properties
-from domain.graph_views import GRAPH_VIEWS, view_spec, views_for_catalog
-from domain.graph_workbench_ontology import ViewContract, ontology_contract
+from domain.graph_views import (
+    GRAPH_VIEWS,
+    UnknownGraphViewError,
+    include_guess_guidance,
+    view_spec,
+    views_for_catalog,
+)
+from domain.graph_workbench_ontology import (
+    ViewContract,
+    describe_contract,
+    ontology_contract,
+)
 from domain.ontology import EDGE_TYPES, ENTITY_TYPES, canonical_entity_labels
 from domain.ports.agent_context import (
     RecordReceipt,
@@ -61,6 +71,7 @@ from domain.ports.services.graph_service import (
     DataPlaneStatus,
     GraphCatalogRequest,
     GraphCatalogResult,
+    GraphDescribeRequest,
     GraphEntityCandidate,
     GraphEntitySearchRequest,
     GraphEntitySearchResult,
@@ -185,10 +196,7 @@ class DefaultGraphService:
             known_subgraphs = sorted({str(v["subgraph"]) for v in views})
             views = [v for v in views if v["subgraph"] == subgraph]
             if not views:
-                raise ValueError(
-                    f"unknown graph subgraph {subgraph!r}. "
-                    f"Known subgraphs: {', '.join(known_subgraphs)}"
-                )
+                raise _unknown_subgraph_error(subgraph, known_subgraphs)
         return GraphCatalogResult(
             graph_contract_version=GRAPH_CONTRACT_VERSION,
             ontology_version=ONTOLOGY_VERSION,
@@ -204,18 +212,26 @@ class DefaultGraphService:
             source_authorities=tuple(sorted(SOURCE_AUTHORITIES)),
         )
 
+    def describe(self, request: GraphDescribeRequest) -> dict[str, Any]:
+        # Service-routed (not CLI-local) so the answer always reflects this
+        # build's ontology and errors cross the RPC boundary like every other
+        # graph command.
+        return describe_contract(
+            subgraph=request.subgraph,
+            view=request.view,
+            include_examples=request.include_examples,
+        )
+
     def read(self, request: GraphReadRequest) -> GraphReadResult:
         detail = _normalize_read_detail(request.detail)
         relations = _normalize_read_relations(request.relations)
         view_name = _qualified_view_name(request.subgraph, request.view)
         contract = ontology_contract().view(view_name)
-        if contract is None:
-            known = ", ".join(sorted(GRAPH_VIEWS))
-            raise ValueError(f"unknown graph view {view_name!r}. Known views: {known}")
         spec = view_spec(view_name)
-        if spec is None:
-            known = ", ".join(sorted(GRAPH_VIEWS))
-            raise ValueError(f"unknown graph view {view_name!r}. Known views: {known}")
+        if contract is None or spec is None:
+            raise _unknown_view_error(
+                view_name, subgraph=request.subgraph, view=request.view
+            )
 
         unsupported = _unsupported_read_filters(request, contract)
         missing = _missing_required_read_scope(request, contract)
@@ -245,18 +261,14 @@ class DefaultGraphService:
                 items=(),
                 coverage=(
                     {
-                        "include": spec.v1_include,
-                        "status": "unsupported"
-                        if unsupported or missing
-                        else "empty",
+                        "view": spec.name,
+                        "status": "unsupported" if unsupported or missing else "empty",
                         "candidate_pool": 0,
                     },
                 ),
                 freshness=_read_freshness(None, backend_freshness={}),
                 quality={
-                    "status": "unsupported"
-                    if unsupported or missing
-                    else "empty",
+                    "status": "unsupported" if unsupported or missing else "empty",
                     "reason": quality_reason,
                 },
                 source_refs=(),
@@ -589,6 +601,50 @@ def _qualified_view_name(subgraph: str, view: str) -> str:
     return f"{subgraph_value}.{view_value}"
 
 
+def _guidance_suffix(guidance: Mapping[str, Any] | None) -> str:
+    if not guidance:
+        return ""
+    if guidance.get("matched_include"):
+        return (
+            f" The context include family {guidance['matched_include']!r} is "
+            f"served by view {guidance['view']!r}; try `{guidance['read_command']}`."
+        )
+    return f" Did you mean {guidance['view']!r}? Try `{guidance['read_command']}`."
+
+
+def _unknown_view_error(
+    view_name: str, *, subgraph: str, view: str
+) -> UnknownGraphViewError:
+    known = ", ".join(sorted(GRAPH_VIEWS))
+    guidance = include_guess_guidance(subgraph, view)
+    message = (
+        f"unknown graph view {view_name!r}. Known views: {known}."
+        + _guidance_suffix(guidance)
+    )
+    return UnknownGraphViewError(
+        message,
+        did_you_mean=guidance,
+        recommended_next_action=guidance["read_command"] if guidance else None,
+    )
+
+
+def _unknown_subgraph_error(
+    subgraph: str, known_subgraphs: Sequence[str]
+) -> UnknownGraphViewError:
+    # catalog is the first command agents run; an include family typed where
+    # a subgraph is expected deserves the same migration guidance as read.
+    guidance = include_guess_guidance(subgraph, None)
+    message = (
+        f"unknown graph subgraph {subgraph!r}. "
+        f"Known subgraphs: {', '.join(known_subgraphs)}." + _guidance_suffix(guidance)
+    )
+    return UnknownGraphViewError(
+        message,
+        did_you_mean=guidance,
+        recommended_next_action=guidance["read_command"] if guidance else None,
+    )
+
+
 def _unsupported_read_filters(
     request: GraphReadRequest, contract: ViewContract
 ) -> tuple[dict[str, Any], ...]:
@@ -695,7 +751,9 @@ def _read_result_from_envelope(
         view=contract.name,
         subgraph=contract.subgraph,
         items=items,
-        coverage=tuple(_coverage_dict(report) for report in env.coverage),
+        coverage=tuple(
+            _coverage_dict(report, view_name=contract.name) for report in env.coverage
+        ),
         freshness=_read_freshness(env, backend_freshness=backend_freshness),
         quality=_read_quality(env, backend_quality=backend_quality),
         source_refs=source_refs,
@@ -719,9 +777,12 @@ def _read_result_from_envelope(
     )
 
 
-def _coverage_dict(report) -> dict[str, Any]:
+def _coverage_dict(report, *, view_name: str) -> dict[str, Any]:
+    # The workbench speaks view vocabulary in and out; the include family the
+    # read trunk routed through stays internal (a graph read routes exactly
+    # one include, so coverage rows all belong to the requested view).
     return {
-        "include": report.include,
+        "view": view_name,
         "status": report.status,
         "candidate_pool": report.candidate_pool,
     }

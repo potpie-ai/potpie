@@ -133,7 +133,12 @@ def _envelope_payload(env) -> dict[str, object]:
             {"include": i.include, "score": i.score, "payload": dict(i.payload)}
             for i in env.items
         ],
-        "coverage": [{"include": c.include, "status": c.status} for c in env.coverage],
+        "coverage": [
+            # graph_view is the canonical workbench name serving this include
+            # family — the pointer to follow when moving to `graph read`.
+            {"include": c.include, "status": c.status, "graph_view": c.graph_view}
+            for c in env.coverage
+        ],
         "unsupported_includes": [
             {"name": u.name, "reason": u.reason} for u in env.unsupported_includes
         ],

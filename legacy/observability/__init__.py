@@ -40,7 +40,9 @@ class _ObsFieldsFilter(logging.Filter):
 
 
 class StructuredLogger:
-    def __init__(self, logger: logging.Logger, bound_fields: dict | None = None) -> None:
+    def __init__(
+        self, logger: logging.Logger, bound_fields: dict | None = None
+    ) -> None:
         self._logger = logger
         self._bound_fields = bound_fields or {}
 
@@ -110,7 +112,9 @@ def configure(config: ObservabilityConfig | None = None) -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s %(obs_fields)s",
     )
     for handler in logging.getLogger().handlers:
-        if not any(isinstance(log_filter, _ObsFieldsFilter) for log_filter in handler.filters):
+        if not any(
+            isinstance(log_filter, _ObsFieldsFilter) for log_filter in handler.filters
+        ):
             handler.addFilter(_ObsFieldsFilter())
     _state["configured_pid"] = os.getpid()
     _state["config"] = cfg

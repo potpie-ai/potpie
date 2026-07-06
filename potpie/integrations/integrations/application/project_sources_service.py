@@ -64,7 +64,9 @@ def ensure_github_repository_source(
         db.rollback()
         return (
             db.query(ProjectSource)
-            .filter(ProjectSource.project_id == project_id, ProjectSource.scope_hash == h)
+            .filter(
+                ProjectSource.project_id == project_id, ProjectSource.scope_hash == h
+            )
             .first()
         )
     db.refresh(row)
@@ -162,7 +164,9 @@ def attach_linear_team_source(
         db.rollback()
         return (
             db.query(ProjectSource)
-            .filter(ProjectSource.project_id == project_id, ProjectSource.scope_hash == h)
+            .filter(
+                ProjectSource.project_id == project_id, ProjectSource.scope_hash == h
+            )
             .first()
         )
     db.refresh(row)

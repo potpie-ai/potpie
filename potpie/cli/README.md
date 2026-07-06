@@ -27,6 +27,9 @@ The public agent contract is exactly four tools, each returning an
 | `context_record` / `potpie record` | Record a durable learning (decision, fix, preference, …). |
 | `context_status` / `potpie status` | Cheap pot/scope readiness + recommended recipe. |
 
+Integration credential status is intentionally outside this four-tool surface:
+use `potpie auth status [--verify]` for local provider auth state.
+
 ## Authoritative reference
 
 The full command catalog, flags, profiles (local vs managed), and the output

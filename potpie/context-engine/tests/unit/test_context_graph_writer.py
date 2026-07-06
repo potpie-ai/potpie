@@ -12,7 +12,12 @@ from adapters.outbound.graph.context_graph_service import ContextGraphService
 from adapters.outbound.graph.cypher import upsert_entities_async
 from domain.context_events import EventRef
 from domain.errors import CapabilityNotImplemented
-from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceContext, ProvenanceRef
+from domain.graph_mutations import (
+    EdgeUpsert,
+    EntityUpsert,
+    ProvenanceContext,
+    ProvenanceRef,
+)
 from domain.reconciliation import (
     MutationBatch,
 )
@@ -200,8 +205,14 @@ def test_canonical_entity_upsert_derives_compact_summary_from_description() -> N
 
     assert count == 1
     kwargs = driver.session_obj.calls[0][1]
-    assert kwargs["a_summary"] == "Payments API handles refunds, settlement, and ledger posting."
-    assert kwargs["a_description"] == "Payments API handles refunds, settlement, and ledger posting."
+    assert (
+        kwargs["a_summary"]
+        == "Payments API handles refunds, settlement, and ledger posting."
+    )
+    assert (
+        kwargs["a_description"]
+        == "Payments API handles refunds, settlement, and ledger posting."
+    )
 
 
 def test_bare_entity_reference_never_carries_key_derived_display_fields() -> None:

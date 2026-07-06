@@ -16,7 +16,6 @@ from application.services.graph_workbench import (
     normalize_catalog_result,
 )
 from domain.errors import CapabilityNotImplemented
-from domain.graph_workbench_ontology import describe_contract
 from domain.nudge import NUDGE_EVENT_HELP
 
 from potpie.cli.commands._common import (
@@ -640,12 +639,16 @@ def graph_describe(
     examples: bool = typer.Option(False, "--examples"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
+    from domain.ports.services.graph_service import GraphDescribeRequest
+
     with _graph_command("graph.describe") as ctx:
         _set_optional_pot(ctx, pot)
-        payload = describe_contract(
-            subgraph=subgraph,
-            view=view,
-            include_examples=examples,
+        payload = get_host().graph.describe(
+            GraphDescribeRequest(
+                subgraph=subgraph,
+                view=view,
+                include_examples=examples,
+            )
         )
         subgraph_name = payload["subgraph"]["name"]
         described = payload["view"]["name"] if view else subgraph_name
@@ -664,7 +667,7 @@ def graph_describe(
 
 @graph_app.command("neighborhood")
 def graph_neighborhood(
-    entity: str = typer.Option(None, "--entity"),
+    entity: str = typer.Option(..., "--entity"),
     predicate: str = typer.Option(None, "--predicate"),
     depth: int = typer.Option(2, "--depth"),
     direction: str = typer.Option("both", "--direction"),
@@ -1313,7 +1316,7 @@ def _run_quality_report(
 
 @graph_app.command("inspect")
 def graph_inspect(
-    entity_key: str = typer.Argument(None),
+    entity_key: str = typer.Argument(...),
     depth: int = typer.Option(2, "--depth"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
@@ -1349,7 +1352,7 @@ def graph_inspect(
 
 @graph_app.command("export")
 def graph_export(
-    file: str = typer.Argument(None), pot: str = typer.Option(None, "--pot")
+    file: str = typer.Argument(...), pot: str = typer.Option(None, "--pot")
 ) -> None:
     with _graph_command("graph.export") as ctx:
         if not file:
@@ -1373,7 +1376,7 @@ def graph_export(
 
 @graph_app.command("import")
 def graph_import(
-    file: str = typer.Argument(None), pot: str = typer.Option(None, "--pot")
+    file: str = typer.Argument(...), pot: str = typer.Option(None, "--pot")
 ) -> None:
     with _graph_command("graph.import") as ctx:
         if not file:

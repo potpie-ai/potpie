@@ -17,7 +17,7 @@ import typer
 from typer.testing import CliRunner
 
 from potpie.cli import repo_location
-from potpie.cli.commands import _common, graph, pots, ui
+from potpie.cli.commands import _common, bootstrap, graph, pots, ui
 from application.services.semantic_mutation_validator import validate_semantic_request
 from domain.semantic_mutations import SemanticMutationRequest
 
@@ -60,6 +60,16 @@ class _Pots:
     def active_pot(self):
         return self._active
 
+    def use_pot(self, *, ref):
+        for pot in self._pots:
+            if ref in (pot.pot_id, pot.name):
+                for row in self._pots:
+                    row.active = row.pot_id == pot.pot_id
+                pot.active = True
+                self._active = pot
+                return pot
+        raise ValueError(f"No pot matching '{ref}'.")
+
     def list_sources(self, *, pot_id):
         return self._sources.get(pot_id, [])
 
@@ -81,9 +91,11 @@ class _Pots:
 
 
 class _Host:
-    def __init__(self, pots_service, daemon=None) -> None:
+    def __init__(self, pots_service, daemon=None, graph=None) -> None:
         self.pots = pots_service
         self.daemon = daemon
+        if graph is not None:
+            self.graph = graph
 
 
 class _Daemon:
@@ -92,6 +104,20 @@ class _Daemon:
 
     def discovery(self):
         return {"base_url": "http://127.0.0.1:8765"}
+
+
+class _Status:
+    def __init__(self, claims: int = 7, entities: int = 3) -> None:
+        self.counts = {"claims": claims, "entities": entities}
+
+
+class _Graph:
+    def __init__(self) -> None:
+        self.status_calls = []
+
+    def data_plane_status(self, pot_id):
+        self.status_calls.append(pot_id)
+        return _Status()
 
 
 # --- source add repo . / current --------------------------------------------
@@ -356,6 +382,150 @@ def test_pot_linked_lists_candidates_and_default(monkeypatch) -> None:
     assert payload["default_pot_id"] == "p2"
     assert [row["pot_id"] for row in payload["candidates"]] == ["p1", "p2"]
     assert payload["candidates"][1]["default"] is True
+
+
+def test_pot_info_shows_current_repo_effective_pot(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    match = _Source("repo", "github.com/acme/shop")
+    active = _Pot("p1", "active-shop", True)
+    pots_service = _Pots(
+        [active, _Pot("p2", "repo-default")],
+        {"p1": [match], "p2": [match]},
+        active=active,
+    )
+    pots_service.repo_defaults["github.com/acme/shop"] = "p2"
+    _common.set_host(_Host(pots_service))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(pots.pot_app, ["info"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["active_pot"]["id"] == "p1"
+    assert payload["current_repo"]["effective_pot"]["id"] == "p2"
+    assert payload["current_repo"]["reason"] == "repo_default"
+
+
+def test_pot_use_warns_when_repo_default_differs(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    match = _Source("repo", "github.com/acme/shop")
+    pots_service = _Pots(
+        [_Pot("p1", "fresh"), _Pot("p2", "repo-default")],
+        {"p1": [match], "p2": [match]},
+        active=None,
+    )
+    pots_service.repo_defaults["github.com/acme/shop"] = "p2"
+    _common.set_host(_Host(pots_service))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(pots.pot_app, ["use", "p1"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["id"] == "p1"
+    assert payload["current_repo"]["effective_pot"]["id"] == "p2"
+    assert payload["warnings"]
+    assert (
+        "repo github.com/acme/shop default remains repo-default (p2)"
+        in payload["warnings"][0]
+    )
+    assert payload["recommended_next_action"] == payload["warnings"][0]
+
+
+def test_top_level_use_alias_warns_when_repo_default_differs(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    match = _Source("repo", "github.com/acme/shop")
+    pots_service = _Pots(
+        [_Pot("p1", "fresh"), _Pot("p2", "repo-default")],
+        {"p1": [match], "p2": [match]},
+        active=None,
+    )
+    pots_service.repo_defaults["github.com/acme/shop"] = "p2"
+    _common.set_host(_Host(pots_service))
+    _common.set_json(True)
+    app = typer.Typer()
+    bootstrap.register(app)
+
+    result = CliRunner().invoke(app, ["use", "p1"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["id"] == "p1"
+    assert payload["origin"] == "local"
+    assert payload["warnings"]
+    assert payload["recommended_next_action"] == payload["warnings"][0]
+
+
+def test_pot_use_can_also_set_current_repo_default(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    match = _Source("repo", "github.com/acme/shop")
+    pots_service = _Pots(
+        [_Pot("p1", "fresh"), _Pot("p2", "repo-default")],
+        {"p1": [match], "p2": [match]},
+        active=None,
+    )
+    pots_service.repo_defaults["github.com/acme/shop"] = "p2"
+    _common.set_host(_Host(pots_service))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(
+        pots.pot_app, ["use", "p1", "--also-default-for-current-repo"]
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["repo_default_set"] is True
+    assert payload["warnings"] == []
+    assert pots_service.repo_defaults == {"github.com/acme/shop": "p1"}
+    assert payload["current_repo"]["effective_pot"]["id"] == "p1"
+
+
+def test_pot_use_also_default_requires_current_repo(monkeypatch) -> None:
+    monkeypatch.setattr(_common, "_current_repo_identity", lambda: None)
+    pots_service = _Pots([_Pot("p1", "fresh")], {}, active=None)
+    _common.set_host(_Host(pots_service))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(
+        pots.pot_app, ["use", "p1", "--also-default-for-current-repo"]
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["code"] == "validation_error"
+    assert "--also-default-for-current-repo requires a repo" in payload["message"]
+    assert pots_service._active is None
+
+
+def test_pot_linked_summary_skips_graph_counts(monkeypatch) -> None:
+    monkeypatch.setattr(
+        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
+    )
+    match = _Source("repo", "github.com/acme/shop")
+    graph = _Graph()
+    pots_service = _Pots(
+        [_Pot("p1", "shop"), _Pot("p2", "shop-fork")],
+        {"p1": [match], "p2": [match]},
+        active=None,
+    )
+    _common.set_host(_Host(pots_service, graph=graph))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(pots.pot_app, ["linked", "--summary"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["counts_included"] is False
+    assert "counts" not in payload["candidates"][0]
+    assert graph.status_calls == []
 
 
 def test_ui_pot_option_opens_selected_pot_url(monkeypatch) -> None:

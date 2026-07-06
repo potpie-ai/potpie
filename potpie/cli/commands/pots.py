@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
 from typing import Any
 
-import httpx
 import typer
 
 from potpie.cli.commands._common import (
@@ -14,13 +11,19 @@ from potpie.cli.commands._common import (
     current_repo_identity_for_cli,
     emit,
     enrich_with_pot_guidance,
+    empty_pot_warnings,
     fail,
     get_host,
+    pot_graph_counts,
     pot_scope_info,
     pot_scope_resolution_human,
+    repo_default_matches,
+    repo_effective_pot_human,
+    repo_effective_pot_info,
     repo_pot_candidates,
     resolve_pot_id,
     resolve_pot_scope,
+    use_pot_selection,
 )
 from potpie.cli.telemetry.onboarding_events import (
     capture_project_binding_event,
@@ -44,29 +47,7 @@ default_app = typer.Typer(help="Repo-local default pot routing.")
 source_app = typer.Typer(
     help="Source registry for a pot; registration does not ingest or scan."
 )
-linear_team_app = typer.Typer(help="Linear teams attached to a context pot.")
-jira_project_app = typer.Typer(help="Jira projects reachable from a context pot.")
 pot_app.add_typer(default_app, name="default")
-
-
-def _potpie_api_client() -> PotpieContextApiClient:
-    try:
-        return PotpieContextApiClient(
-            resolve_potpie_api_base_url(),
-            auth_headers_provider=lambda: resolve_potpie_auth_config().headers,
-            reauth_provider=lambda: (
-                resolve_potpie_auth_config(force_refresh=True).headers
-            ),
-            client_surface="cli",
-            client_name="potpie-cli",
-        )
-    except ValueError as exc:
-        fail(
-            code="auth_missing",
-            message="Potpie API not configured.",
-            detail=str(exc),
-            next_action="run 'potpie login' or set POTPIE_API_KEY",
-        )
 
 
 @pot_app.command("list")
@@ -105,26 +86,24 @@ def pot_list(
 @pot_app.command("info")
 def pot_info() -> None:
     with contract():
-        active = get_host().pots.active_pot()
-        if active is None:
-            emit({"active_pot": None}, human="(no active pot)")
-            return
-        emit(
-            {"active_pot": {"id": active.pot_id, "name": active.name}},
-            human=f"active: {active.name} ({active.pot_id})",
+        host = get_host()
+        active = host.pots.active_pot()
+        routing = repo_effective_pot_info(host)
+        active_payload = (
+            {"id": active.pot_id, "name": active.name} if active is not None else None
         )
-
-
-def _fail_api_unreachable(*, label: str, exc: httpx.RequestError) -> None:
-    fail(
-        code="api_unreachable",
-        message=f"{label} failed.",
-        detail=str(exc),
-        next_action=(
-            "check POTPIE_API_BASE_URL / POTPIE_API_KEY or run 'potpie login'; "
-            "remote event ingestion is not served by the embedded local graph store"
-        ),
-    )
+        lines = [
+            f"active: {active.name} ({active.pot_id})"
+            if active is not None
+            else "(no active pot)"
+        ]
+        routing_line = repo_effective_pot_human(routing)
+        if routing_line:
+            lines.append(routing_line)
+        emit(
+            {"active_pot": active_payload, "current_repo": routing},
+            human="\n".join(lines),
+        )
 
 
 def _repo_key_from_option(repo: str) -> str:
@@ -288,25 +267,38 @@ def pot_create(
 
 
 @pot_app.command("use")
-def pot_use(ref: str) -> None:
+def pot_use(
+    ref: str,
+    also_default_for_current_repo: bool = typer.Option(
+        False,
+        "--also-default-for-current-repo",
+        help="Also set the current repo's local default pot to this pot.",
+    ),
+) -> None:
     with contract():
         host = get_host()
-        pot = host.pots.use_pot(ref=ref)
-        payload, human = enrich_with_pot_guidance(
+        payload, human = use_pot_selection(
             host,
-            pot.pot_id,
-            {"id": pot.pot_id, "name": pot.name},
-            human=f"active pot → {pot.name}",
+            ref,
+            also_default_for_current_repo=also_default_for_current_repo,
         )
         emit(payload, human=human)
 
 
 @pot_app.command("linked")
-def pot_linked(repo: str = typer.Option("current", "--repo")) -> None:
+def pot_linked(
+    repo: str = typer.Option("current", "--repo"),
+    summary: bool = typer.Option(
+        False,
+        "--summary",
+        help="Skip per-pot graph counts for a faster repo routing summary.",
+    ),
+) -> None:
     """Show pots linked to a repo source and the local default, if any."""
     with contract():
         host = get_host()
-        linked = repo_pot_candidates(host, repo)
+        linked = repo_pot_candidates(host, repo, include_counts=not summary)
+        linked["counts_included"] = not summary
         candidates = list(linked.get("candidates", ()))
         repo_key = linked.get("repo")
         lines = [f"repo {repo_key or '(unknown)'}"]
@@ -332,14 +324,22 @@ def pot_linked(repo: str = typer.Option("current", "--repo")) -> None:
                     if enabled
                 ]
                 suffix = f"  {', '.join(markers)}" if markers else ""
+                count_text = (
+                    f" claims={counts.get('claims', 0)} "
+                    f"entities={counts.get('entities', 0)}"
+                    if not summary
+                    else ""
+                )
                 lines.append(
                     f"  {row.get('name')} ({row.get('pot_id')}) "
-                    f"sources={row.get('source_count', 0)} "
-                    f"claims={counts.get('claims', 0)} entities={counts.get('entities', 0)}"
+                    f"sources={row.get('source_count', 0)}"
+                    f"{count_text}"
                     f"{suffix}"
                 )
         else:
             lines.append("  (no linked pots)")
+        if summary:
+            lines.append("counts omitted; rerun without --summary for graph counts")
         emit(linked, human="\n".join(lines))
 
 
@@ -431,140 +431,6 @@ def pot_reset(
         emit(
             {"id": pot.pot_id, "reset": True},
             human=f"reset graph state for '{pot.name}'",
-        )
-
-
-@linear_team_app.command("ingest")
-def linear_team_ingest(
-    team: str = typer.Argument(..., help="Linear team id or key, e.g. ENG."),
-    pot: str = typer.Option(None, "--pot", help="Pot id/name (default: active pot)."),
-    count: int = typer.Option(
-        120,
-        "--count",
-        min=1,
-        max=1000,
-        help="Soft per-kind item limit for the one-shot ingestion playbook.",
-    ),
-) -> None:
-    """Queue one-shot ingestion for a Linear team's recent graph history."""
-    with contract():
-        team_key = team.strip()
-        if not team_key:
-            raise ValueError("Linear team id/key is required.")
-
-        pid = resolve_pot_id(get_host(), pot)
-        source_id = f"one_shot_ingest:linear:{team_key.lower()}:{uuid.uuid4()}"
-        try:
-            status_code, data = _potpie_api_client().submit_event(
-                pot_id=pid,
-                source_system="linear",
-                event_type="linear_team",
-                action="one_shot_ingest",
-                source_id=source_id,
-                payload={"team": team_key, "count": count},
-                provider=None,
-                provider_host=None,
-                repo_name=None,
-                occurred_at=datetime.now(timezone.utc),
-            )
-        except PotpieContextApiError as exc:
-            fail(
-                code="api_error",
-                message="Linear ingest failed.",
-                detail=str(exc.detail),
-            )
-        except httpx.RequestError as exc:
-            _fail_api_unreachable(label="Linear ingest", exc=exc)
-
-        out = {
-            "status": "queued" if status_code == 202 else data.get("status", "applied"),
-            "pot_id": pid,
-            "team": team_key,
-            "count": count,
-            "source_id": source_id,
-            "event_id": data.get("event_id"),
-            "batch_id": data.get("batch_id"),
-        }
-        if status_code == 409:
-            out["status"] = "duplicate"
-        emit(
-            out,
-            human=(
-                f"Queued Linear team ingest for {team_key} in pot {pid} "
-                f"(event {out.get('event_id') or 'unknown'})."
-            ),
-        )
-
-
-@linear_team_app.command("diff-sync")
-def linear_team_diff_sync(
-    team: str = typer.Argument(..., help="Linear team id or key, e.g. ENG."),
-    pot: str = typer.Option(None, "--pot", help="Pot id/name (default: active pot)."),
-    since: str = typer.Option(
-        None,
-        "--since",
-        help="ISO-8601 lower bound for source enumeration. Omit to use the "
-        "last graph-audit cursor from history.",
-    ),
-    count: int = typer.Option(
-        120,
-        "--count",
-        min=1,
-        max=1000,
-        help="Soft per-kind item limit for the diff-sync playbook.",
-    ),
-) -> None:
-    """Queue an incremental graph-audit diff-sync for a Linear team."""
-    with contract():
-        team_key = team.strip()
-        if not team_key:
-            raise ValueError("Linear team id/key is required.")
-
-        pid = resolve_pot_id(get_host(), pot)
-        source_id = f"diff_sync:linear:{team_key.lower()}:{uuid.uuid4()}"
-        payload: dict[str, object] = {"team": team_key, "count": count}
-        if since:
-            payload["since"] = since
-        try:
-            status_code, data = _potpie_api_client().submit_event(
-                pot_id=pid,
-                source_system="linear",
-                event_type="linear_team",
-                action="diff_sync",
-                source_id=source_id,
-                payload=payload,
-                provider=None,
-                provider_host=None,
-                repo_name=None,
-                occurred_at=datetime.now(timezone.utc),
-            )
-        except PotpieContextApiError as exc:
-            fail(
-                code="api_error",
-                message="Linear diff-sync failed.",
-                detail=str(exc.detail),
-            )
-        except httpx.RequestError as exc:
-            _fail_api_unreachable(label="Linear diff-sync", exc=exc)
-
-        out = {
-            "status": "queued" if status_code == 202 else data.get("status", "applied"),
-            "pot_id": pid,
-            "team": team_key,
-            "since": since,
-            "count": count,
-            "source_id": source_id,
-            "event_id": data.get("event_id"),
-            "batch_id": data.get("batch_id"),
-        }
-        if status_code == 409:
-            out["status"] = "duplicate"
-        emit(
-            out,
-            human=(
-                f"Queued Linear team diff-sync for {team_key} in pot {pid} "
-                f"(event {out.get('event_id') or 'unknown'})."
-            ),
         )
 
 
@@ -731,16 +597,112 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
         emit(payload, human=human)
 
 
+def _enrich_source(host, src, pot_id: str) -> dict:
+    """Build the rich source row used by both per-pot summary and single-source status."""
+    location = getattr(src, "location", None)
+    kind = getattr(src, "kind", "unknown")
+    repo_default = False
+    if kind == "repo" and location:
+        repo_key = repo_identity_key(location)
+        repo_default = repo_default_matches(host, repo_key, pot_id)
+    return {
+        "id": src.source_id,
+        "kind": kind,
+        "name": src.name,
+        "location": location,
+        "status": getattr(src, "status", "ok"),
+        "repo_default": repo_default,
+        "registration_only": True,
+        "ingestion_status": "not_started",
+    }
+
+
 @source_app.command("status")
-def source_status(source_id: str, pot: str = typer.Option(None, "--pot")) -> None:
+def source_status(
+    source_id: str | None = typer.Argument(None),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    """Show source status for the pot (all sources) or a single source by ID."""
     with contract():
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
-        src = host.pots.source_status(pot_id=pot_id, source_id=source_id)
-        emit(
-            {"id": src.source_id, "status": src.status, "name": src.name},
-            human=f"{src.name}: {src.status}",
-        )
+
+        if source_id is None:
+            # Per-pot summary: all sources with enriched fields
+            sources = host.pots.list_sources(pot_id=pot_id)
+            pot_info = pot_scope_info(host, pot_id)
+            counts = pot_graph_counts(host, pot_id)
+            claim_count = counts.get("claims", 0)
+
+            source_rows = [_enrich_source(host, s, pot_id) for s in sources]
+
+            recommended = None
+            if not sources:
+                recommended = (
+                    "No sources registered. "
+                    "Run `potpie source add repo .` to register a repository."
+                )
+            elif claim_count == 0:
+                warnings = empty_pot_warnings(host, pot_id)
+                recommended = (
+                    warnings[0]
+                    if warnings
+                    else (
+                        "Sources are registered only; no claims in graph yet. "
+                        "Use ledger/agent ingestion to populate."
+                    )
+                )
+
+            emit(
+                {
+                    "pot_id": pot_id,
+                    "pot": pot_info,
+                    "source_count": len(sources),
+                    "claim_count": claim_count,
+                    "sources": source_rows,
+                    "recommended_next_action": recommended,
+                },
+                human=(
+                    "\n".join(
+                        [
+                            (
+                                f"pot={pot_info['name']} ({pot_id}) "
+                                f"sources={len(sources)} claims={claim_count}"
+                            ),
+                            *(
+                                (
+                                    f"  {row['kind']}: "
+                                    f"{row['location'] or row['name']} "
+                                    f"({row['id']}) "
+                                    f"status={row['status']}"
+                                    + (" [repo-default]" if row["repo_default"] else "")
+                                    + " [registration-only]"
+                                )
+                                for row in source_rows
+                            ),
+                        ]
+                    )
+                    if sources
+                    else (
+                        f"pot={pot_info['name']} ({pot_id}) "
+                        f"sources=0 claims={claim_count}\n"
+                        "(no sources)"
+                    )
+                )
+                + (f"\nnote: {recommended}" if recommended else ""),
+            )
+        else:
+            # Single-source mode: same enriched shape
+            src = host.pots.source_status(pot_id=pot_id, source_id=source_id)
+            row = _enrich_source(host, src, pot_id)
+            emit(
+                row,
+                human=(
+                    f"{src.name}: {src.status} kind={src.kind}"
+                    + (" [repo-default]" if row["repo_default"] else "")
+                    + " [registration-only]"
+                ),
+            )
 
 
 @source_app.command("remove")
@@ -751,144 +713,5 @@ def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> Non
         host.pots.remove_source(pot_id=pot_id, source_id=source_id)
         emit({"removed": source_id}, human=f"removed source {source_id}")
 
-
-pot_app.add_typer(linear_team_app, name="linear-team")
-
-
-@jira_project_app.command("ingest")
-def jira_project_ingest(
-    project_key: str = typer.Argument(..., help="Jira project key, e.g. PROJ."),
-    pot: str = typer.Option(None, "--pot", help="Pot id/name (default: active pot)."),
-    count: int = typer.Option(
-        120,
-        "--count",
-        min=1,
-        max=1000,
-        help="Soft per-kind item limit for the one-shot ingestion playbook.",
-    ),
-) -> None:
-    """Queue one-shot ingestion for a Jira project's recent epics and issues."""
-    with contract():
-        key = project_key.strip()
-        if not key:
-            raise ValueError("Jira project key is required.")
-
-        pid = resolve_pot_id(get_host(), pot)
-        source_id = f"one_shot_ingest:jira:{key.lower()}:{uuid.uuid4()}"
-        try:
-            status_code, data = _potpie_api_client().submit_event(
-                pot_id=pid,
-                source_system="jira",
-                event_type="jira_project",
-                action="one_shot_ingest",
-                source_id=source_id,
-                payload={"project_key": key, "count": count},
-                provider=None,
-                provider_host=None,
-                repo_name=None,
-                occurred_at=datetime.now(timezone.utc),
-            )
-        except PotpieContextApiError as exc:
-            fail(
-                code="api_error",
-                message="Jira ingest failed.",
-                detail=str(exc.detail),
-            )
-        except httpx.RequestError as exc:
-            _fail_api_unreachable(label="Jira ingest", exc=exc)
-
-        out = {
-            "status": "queued" if status_code == 202 else data.get("status", "applied"),
-            "pot_id": pid,
-            "project_key": key,
-            "count": count,
-            "source_id": source_id,
-            "event_id": data.get("event_id"),
-            "job_id": data.get("job_id") or data.get("batch_id"),
-        }
-        if status_code == 409:
-            out["status"] = "duplicate"
-        emit(
-            out,
-            human=(
-                f"Queued Jira project ingest for {key} in pot {pid} "
-                f"(event {out.get('event_id') or 'unknown'})."
-            ),
-        )
-
-
-@jira_project_app.command("diff-sync")
-def jira_project_diff_sync(
-    project_key: str = typer.Argument(..., help="Jira project key, e.g. PROJ."),
-    pot: str = typer.Option(None, "--pot", help="Pot id/name (default: active pot)."),
-    since: str = typer.Option(
-        None,
-        "--since",
-        help="ISO-8601 lower bound for source enumeration. Omit to use the "
-        "last graph-audit cursor from history.",
-    ),
-    count: int = typer.Option(
-        120,
-        "--count",
-        min=1,
-        max=1000,
-        help="Soft per-kind item limit for the diff-sync playbook.",
-    ),
-) -> None:
-    """Queue an incremental graph-audit diff-sync for a Jira project."""
-    with contract():
-        key = project_key.strip()
-        if not key:
-            raise ValueError("Jira project key is required.")
-
-        pid = resolve_pot_id(get_host(), pot)
-        source_id = f"diff_sync:jira:{key.lower()}:{uuid.uuid4()}"
-        payload: dict[str, object] = {"project_key": key, "count": count}
-        if since:
-            payload["since"] = since
-        try:
-            status_code, data = _potpie_api_client().submit_event(
-                pot_id=pid,
-                source_system="jira",
-                event_type="jira_project",
-                action="diff_sync",
-                source_id=source_id,
-                payload=payload,
-                provider=None,
-                provider_host=None,
-                repo_name=None,
-                occurred_at=datetime.now(timezone.utc),
-            )
-        except PotpieContextApiError as exc:
-            fail(
-                code="api_error",
-                message="Jira diff-sync failed.",
-                detail=str(exc.detail),
-            )
-        except httpx.RequestError as exc:
-            _fail_api_unreachable(label="Jira diff-sync", exc=exc)
-
-        out = {
-            "status": "queued" if status_code == 202 else data.get("status", "applied"),
-            "pot_id": pid,
-            "project_key": key,
-            "since": since,
-            "count": count,
-            "source_id": source_id,
-            "event_id": data.get("event_id"),
-            "job_id": data.get("job_id") or data.get("batch_id"),
-        }
-        if status_code == 409:
-            out["status"] = "duplicate"
-        emit(
-            out,
-            human=(
-                f"Queued Jira project diff-sync for {key} in pot {pid} "
-                f"(event {out.get('event_id') or 'unknown'})."
-            ),
-        )
-
-
-pot_app.add_typer(jira_project_app, name="jira-project")
 
 __all__ = ["pot_app", "source_app"]

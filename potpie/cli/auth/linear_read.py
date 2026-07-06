@@ -77,8 +77,7 @@ def run_linear_use_flow(
     team_id = str(picked_team.get("id") or "").strip()
     if not team_id:
         raise LinearReadError(
-            f"Could not resolve Linear team {team_key_value!r}. "
-            "Run: potpie linear ls"
+            f"Could not resolve Linear team {team_key_value!r}. Run: potpie linear ls"
         )
     rows = fetch_linear_issues_in_team(
         team_id,

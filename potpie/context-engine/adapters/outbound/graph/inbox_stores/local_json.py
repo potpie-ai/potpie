@@ -60,9 +60,7 @@ class LocalJsonGraphInboxStore:
         if status_filter:
             records = [record for record in records if record.status in status_filter]
         if claimed_by:
-            records = [
-                record for record in records if record.claimed_by == claimed_by
-            ]
+            records = [record for record in records if record.claimed_by == claimed_by]
         if suspected_subgraph:
             records = [
                 record

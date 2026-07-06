@@ -184,7 +184,9 @@ async def test_full_agent_flow_against_potpie_ui(
     assert "AGENT_NOTES.md" in listing, listing
     # Make sure we're on the right branch from the runtime's perspective.
     branch_check = await client.exec(
-        handle, ["git", "rev-parse", "--abbrev-ref", "HEAD"], command_kind=CommandKind.READ
+        handle,
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        command_kind=CommandKind.READ,
     )
     assert branch_check.exit_code == 0
     assert branch_check.stdout.decode().strip() == handle.branch

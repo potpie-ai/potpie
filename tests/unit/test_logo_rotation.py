@@ -1,6 +1,10 @@
 """Compact static setup intro logo."""
 
-from potpie.cli.ui.logo_rotation import _intro_logo_grid, render_intro_logo, render_static_intro_logo
+from potpie.cli.ui.logo_rotation import (
+    _intro_logo_grid,
+    render_intro_logo,
+    render_static_intro_logo,
+)
 from potpie.cli.ui.potpie_logo_anim import (
     _celebration_sparkle,
     _logo_layout,

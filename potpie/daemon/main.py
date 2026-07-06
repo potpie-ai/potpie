@@ -247,7 +247,15 @@ def _error_payload(exc: Exception) -> dict[str, Any]:
         error = {"code": "pot_not_found", "message": str(exc)}
     elif isinstance(exc, ValueError):
         logger.debug("daemon RPC returned expected validation error: %s", exc)
-        error = {"code": "validation_error", "message": str(exc)}
+        # Domain validation errors may carry structured guidance (e.g.
+        # UnknownGraphViewError's did_you_mean) that the CLI error envelope
+        # surfaces; keep it on the wire like CapabilityNotImplemented above.
+        error = {
+            "code": "validation_error",
+            "message": str(exc),
+            "detail": getattr(exc, "detail", None),
+            "recommended_next_action": getattr(exc, "recommended_next_action", None),
+        }
     else:
         logger.exception("daemon RPC failed")
         from potpie.daemon.telemetry.sentry_runtime import (

@@ -44,7 +44,9 @@ _install_localhost_resolver()
 from sandbox.adapters.outbound.docker.runtime import DockerRuntimeProvider
 from sandbox.adapters.outbound.file.json_store import JsonSandboxStore
 from sandbox.adapters.outbound.local.git_workspace import LocalGitWorkspaceProvider
-from sandbox.adapters.outbound.local.subprocess_runtime import LocalSubprocessRuntimeProvider
+from sandbox.adapters.outbound.local.subprocess_runtime import (
+    LocalSubprocessRuntimeProvider,
+)
 from sandbox.adapters.outbound.memory.locks import InMemoryLockManager
 from sandbox.application.services.sandbox_service import SandboxService
 
@@ -115,7 +117,10 @@ def _daytona_configured() -> bool:
     """True if either an explicit API key is provided, or the dev stack is reachable."""
     if os.getenv("DAYTONA_API_KEY"):
         return True
-    dashboard = os.getenv("DAYTONA_DASHBOARD_URL", f"http://localhost:{os.getenv('DAYTONA_DASHBOARD_PORT', '3010')}")
+    dashboard = os.getenv(
+        "DAYTONA_DASHBOARD_URL",
+        f"http://localhost:{os.getenv('DAYTONA_DASHBOARD_PORT', '3010')}",
+    )
     return _daytona_dashboard_up(dashboard)
 
 
@@ -165,14 +170,15 @@ def _daytona_credentials() -> tuple[str, str, str | None]:
         return api_url, api_key, org_id
     import importlib.util
 
-    helper = (
-        Path(__file__).resolve().parents[2] / "scripts" / "daytona_local.py"
-    )
+    helper = Path(__file__).resolve().parents[2] / "scripts" / "daytona_local.py"
     spec = importlib.util.spec_from_file_location("_potpie_daytona_local", helper)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
-    dashboard = os.getenv("DAYTONA_DASHBOARD_URL", f"http://localhost:{os.getenv('DAYTONA_DASHBOARD_PORT', '3010')}")
+    dashboard = os.getenv(
+        "DAYTONA_DASHBOARD_URL",
+        f"http://localhost:{os.getenv('DAYTONA_DASHBOARD_PORT', '3010')}",
+    )
     api_key, org_id = module.mint_dev_api_key(dashboard=dashboard)
     return api_url, api_key, org_id
 

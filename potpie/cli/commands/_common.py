@@ -175,7 +175,7 @@ def fail(
     *,
     code: str,
     message: str,
-    detail: str | None = None,
+    detail: Any = None,
     next_action: str | None = None,
     exit_code: int = EXIT_VALIDATION,
 ) -> NoReturn:
@@ -202,7 +202,9 @@ def fail(
         print_structured_error(
             title=message,
             message=message,
-            hint=detail,
+            # Structured (mapping) detail is for the JSON envelope; the human
+            # message already carries the guidance in prose.
+            hint=detail if isinstance(detail, str) else None,
             next_action=next_action,
         )
     raise typer.Exit(code=exit_code)
@@ -251,7 +253,15 @@ def contract() -> Iterator[None]:
     except ValueError as exc:
         result = "validation_error"
         error_code = "validation_error"
-        fail(code="validation_error", message=str(exc), exit_code=EXIT_VALIDATION)
+        # Domain errors may carry structured guidance (e.g. UnknownGraphViewError's
+        # detail.did_you_mean) for the JSON envelope.
+        fail(
+            code="validation_error",
+            message=str(exc),
+            detail=getattr(exc, "detail", None),
+            next_action=getattr(exc, "recommended_next_action", None),
+            exit_code=EXIT_VALIDATION,
+        )
     except typer.Exit:
         result = "exit"
         error_code = "exit"
@@ -397,12 +407,10 @@ def current_repo_identity_for_cli() -> str | None:
     return _current_repo_identity()
 
 
-def repo_pot_candidates(host: Any, repo: str | None = None) -> dict[str, Any]:
-    repo_identity = (
-        _current_repo_identity()
-        if repo in (None, "", ".", "current")
-        else repo_identity_key(repo or "")
-    )
+def repo_pot_candidates(
+    host: Any, repo: str | None = None, *, include_counts: bool = True
+) -> dict[str, Any]:
+    repo_identity = _repo_identity_from_option(repo)
     matches = (
         _pots_matching_current_repo(host)
         if repo in (None, "", ".", "current")
@@ -412,24 +420,110 @@ def repo_pot_candidates(host: Any, repo: str | None = None) -> dict[str, Any]:
     active = _safe_call(lambda: host.pots.active_pot(), None)
     rows: list[dict[str, Any]] = []
     for pot_id, name in matches:
-        counts = pot_graph_counts(host, pot_id)
-        rows.append(
-            {
-                "pot_id": pot_id,
-                "name": name,
-                "active": bool(
-                    active is not None and getattr(active, "pot_id", None) == pot_id
-                ),
-                "default": bool(default_pot_id == pot_id),
-                "source_count": pot_source_count(host, pot_id),
-                "counts": counts,
-            }
-        )
+        row = {
+            "pot_id": pot_id,
+            "name": name,
+            "active": bool(
+                active is not None and getattr(active, "pot_id", None) == pot_id
+            ),
+            "default": bool(default_pot_id == pot_id),
+            "source_count": pot_source_count(host, pot_id),
+        }
+        if include_counts:
+            row["counts"] = pot_graph_counts(host, pot_id)
+        rows.append(row)
     return {
         "repo": repo_identity,
         "default_pot_id": default_pot_id,
         "candidates": rows,
     }
+
+
+def repo_effective_pot_info(host: Any, repo: str | None = None) -> dict[str, Any]:
+    repo_identity = _repo_identity_from_option(repo)
+    matches = (
+        _pots_matching_current_repo(host)
+        if repo in (None, "", ".", "current")
+        else _pots_matching_repo_identity(host, repo_identity)
+    )
+    default_pot_id = _repo_default_pot_id(host, repo_identity)
+    active = _safe_call(lambda: host.pots.active_pot(), None)
+    active_id = getattr(active, "pot_id", None) if active is not None else None
+    match_ids = {pot_id for pot_id, _ in matches}
+
+    effective_id: str | None = None
+    reason = "unresolved"
+    status = "resolved"
+    if default_pot_id:
+        effective_id = default_pot_id
+        reason = "repo_default"
+    elif len(matches) == 1:
+        effective_id = matches[0][0]
+        reason = "single_linked_repo_pot"
+    elif len(matches) > 1:
+        if active_id and active_id in match_ids:
+            effective_id = str(active_id)
+            reason = "active_linked_repo_pot"
+        else:
+            status = "ambiguous"
+            reason = "multiple_linked_repo_pots"
+    elif active_id:
+        effective_id = str(active_id)
+        reason = "active_pot"
+    else:
+        status = "unresolved"
+        reason = "no_active_pot"
+
+    return {
+        "repo": repo_identity,
+        "active_pot_id": active_id,
+        "default_pot_id": default_pot_id,
+        "effective_pot": _pot_summary(host, effective_id) if effective_id else None,
+        "reason": reason,
+        "status": status,
+        "candidates": [
+            {"id": pot_id, "name": name, "active": bool(active_id == pot_id)}
+            for pot_id, name in matches
+        ],
+    }
+
+
+def repo_effective_pot_human(routing: dict[str, Any]) -> str | None:
+    repo = routing.get("repo")
+    if not repo:
+        return None
+    effective = routing.get("effective_pot")
+    if effective:
+        reason = _ROUTING_REASON_LABELS.get(
+            str(routing.get("reason") or ""), str(routing.get("reason") or "")
+        )
+        return (
+            f"current repo effective pot: {effective.get('name')} "
+            f"({effective.get('id')}) via {reason}"
+        )
+    if routing.get("status") == "ambiguous":
+        names = ", ".join(
+            f"{row.get('name')} ({row.get('id')})"
+            for row in routing.get("candidates", ())
+        )
+        return f"current repo effective pot: ambiguous ({names})"
+    return "current repo effective pot: (unresolved)"
+
+
+def repo_default_mismatch_warning(
+    host: Any, routing: dict[str, Any], *, selected_pot_id: str
+) -> str | None:
+    default_id = routing.get("default_pot_id")
+    repo = routing.get("repo")
+    if not default_id or default_id == selected_pot_id or not repo:
+        return None
+    default = _pot_summary(host, str(default_id))
+    return (
+        f"repo {repo} default remains {default.get('name')} ({default_id}); "
+        "repo-scoped commands here use that pot. Run "
+        f"`potpie pot default set --repo current {selected_pot_id}` "
+        "or retry with `--also-default-for-current-repo` to switch both."
+    )
 
 
 def pot_scope_info(host: Any, pot_id: str) -> dict[str, Any]:
@@ -443,15 +537,11 @@ def pot_scope_info(host: Any, pot_id: str) -> dict[str, Any]:
     }
 
 
-def pot_scope_resolution_human(
-    resolved_via: str, *, repo: str | None = None
-) -> str:
+def pot_scope_resolution_human(resolved_via: str, *, repo: str | None = None) -> str:
     if resolved_via == "explicit":
         return "via --pot"
     if resolved_via == "repo_default":
-        return (
-            f"via repo default for {repo}" if repo else "via repo default"
-        )
+        return f"via repo default for {repo}" if repo else "via repo default"
     if resolved_via == "linked_repo":
         return f"via linked repo {repo}" if repo else "via linked repo"
     return "via active pot"
@@ -551,15 +641,72 @@ def enrich_with_pot_guidance(
     repo: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     warnings = empty_pot_guidance(host, pot_id, repo)
-    if not warnings:
+    existing = payload.get("warnings") or []
+    existing_warnings = [existing] if isinstance(existing, str) else list(existing)
+    combined_warnings = [*existing_warnings, *warnings]
+    if not combined_warnings:
         return payload, human
+    human_lines = [human, *(f"! {warning}" for warning in warnings)]
     return (
         {
             **payload,
-            "warnings": list(warnings),
-            "recommended_next_action": warnings[0],
+            "warnings": combined_warnings,
+            "recommended_next_action": payload.get("recommended_next_action")
+            or combined_warnings[0],
         },
-        "\n".join([human, *(f"! {warning}" for warning in warnings)]),
+        "\n".join(human_lines),
+    )
+
+
+def use_pot_selection(
+    host: Any,
+    ref: str,
+    *,
+    also_default_for_current_repo: bool = False,
+    origin: str | None = None,
+) -> tuple[dict[str, Any], str]:
+    repo_key = None
+    if also_default_for_current_repo:
+        repo_key = current_repo_identity_for_cli()
+        if not repo_key:
+            raise ValueError("--also-default-for-current-repo requires a repo")
+
+    pot = host.pots.use_pot(ref=ref)
+    repo_default_set = False
+    if repo_key:
+        host.pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
+        repo_default_set = True
+
+    routing = repo_effective_pot_info(host)
+    warnings = []
+    warning = repo_default_mismatch_warning(host, routing, selected_pot_id=pot.pot_id)
+    if warning:
+        warnings.append(warning)
+
+    active_line = f"active pot → {pot.name}"
+    if origin:
+        active_line = f"{active_line} ({origin})"
+    lines = [active_line]
+    if repo_default_set:
+        lines.append(f"repo {repo_key} default → {pot.name} ({pot.pot_id})")
+    lines.extend(f"warning: {item}" for item in warnings)
+
+    payload: dict[str, Any] = {
+        "id": pot.pot_id,
+        "name": pot.name,
+        "repo_default_set": repo_default_set,
+        "current_repo": routing,
+        "warnings": warnings,
+    }
+    if origin:
+        payload["origin"] = origin
+
+    return enrich_with_pot_guidance(
+        host,
+        pot.pot_id,
+        payload,
+        human="\n".join(lines),
+        repo=repo_key,
     )
 
 
@@ -582,6 +729,25 @@ def pot_graph_counts(host: Any, pot_id: str) -> dict[str, int]:
 
 def pot_source_count(host: Any, pot_id: str) -> int:
     return len(_safe_call(lambda: host.pots.list_sources(pot_id=pot_id), []) or [])
+
+
+def _repo_identity_from_option(repo: str | None) -> str | None:
+    return (
+        _current_repo_identity()
+        if repo in (None, "", ".", "current")
+        else repo_identity_key(repo or "")
+    )
+
+
+def _pot_summary(host: Any, pot_id: str | None) -> dict[str, Any] | None:
+    if not pot_id:
+        return None
+    pot = _pot_for_id(host, pot_id)
+    return {
+        "id": pot_id,
+        "name": getattr(pot, "name", pot_id) if pot is not None else pot_id,
+        "active": bool(getattr(pot, "active", False)) if pot is not None else False,
+    }
 
 
 def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
@@ -663,7 +829,8 @@ def _current_repo_identity() -> str | None:
     return _current_git_remote(cwd) or str(cwd)
 
 
-def _repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
+def repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
+    """Return the locally persisted default pot id for a repo identity, if valid."""
     if not repo_identity:
         return None
     getter = getattr(host.pots, "repo_default", None)
@@ -674,6 +841,16 @@ def _repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
         return None
     pot_id = str(pot_id)
     return pot_id if _pot_for_id(host, pot_id) is not None else None
+
+
+def repo_default_matches(host: Any, repo_key: str | None, pot_id: str) -> bool:
+    """True when ``repo_key``'s repo default is set to ``pot_id``."""
+    default_pot = repo_default_pot_id(host, repo_key)
+    return bool(default_pot and default_pot == pot_id)
+
+
+def _repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
+    return repo_default_pot_id(host, repo_identity)
 
 
 def _pot_for_id(host: Any, pot_id: str):
@@ -720,6 +897,14 @@ def _normalize_repo_ref(value: str) -> str | None:
     return shared_normalize_repo_ref(value)
 
 
+_ROUTING_REASON_LABELS: Final[dict[str, str]] = {
+    "repo_default": "repo default",
+    "single_linked_repo_pot": "single linked repo pot",
+    "active_linked_repo_pot": "active linked repo pot",
+    "active_pot": "active pot",
+}
+
+
 __all__ = [
     "EXIT_AUTH",
     "EXIT_DEGRADED",
@@ -743,6 +928,11 @@ __all__ = [
     "pot_scope_info",
     "pot_scope_resolution_human",
     "pot_source_count",
+    "repo_default_matches",
+    "repo_default_mismatch_warning",
+    "repo_default_pot_id",
+    "repo_effective_pot_human",
+    "repo_effective_pot_info",
     "repo_pot_candidates",
     "resolve_pot_id",
     "resolve_pot_scope",
@@ -750,4 +940,5 @@ __all__ = [
     "set_store",
     "set_json",
     "set_verbose",
+    "use_pot_selection",
 ]

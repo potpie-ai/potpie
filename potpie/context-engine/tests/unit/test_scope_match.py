@@ -55,9 +55,10 @@ def test_unconstrained_task_dimension_is_neutral() -> None:
 
 
 def test_exact_language_match() -> None:
-    assert hierarchical_scope_overlap(
-        {"language": "python"}, {"language": "python"}
-    ) == 1.0
+    assert (
+        hierarchical_scope_overlap({"language": "python"}, {"language": "python"})
+        == 1.0
+    )
 
 
 def test_path_contains_helper() -> None:

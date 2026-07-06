@@ -157,7 +157,14 @@ def _raise_remote_error(data: dict[str, Any]) -> None:
     if code == "pot_not_found":
         raise PotNotFound(message)
     if code in {"validation_error", "value_error"}:
-        raise ValueError(message)
+        exc = ValueError(message)
+        # Re-attach structured guidance so the CLI error boundary can surface
+        # detail/recommended_next_action exactly as with an in-process service.
+        if detail is not None:
+            setattr(exc, "detail", detail)
+        if next_action is not None:
+            setattr(exc, "recommended_next_action", next_action)
+        raise exc
     raise ContextEngineDisabled(message)
 
 

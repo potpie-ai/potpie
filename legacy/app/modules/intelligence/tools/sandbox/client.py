@@ -130,9 +130,11 @@ def _mint_scoped_installation_token(repo_name: str) -> str | None:
         return None
     if not private_key.startswith("-----BEGIN"):
         private_key = (
-            "-----BEGIN RSA PRIVATE KEY-----\n"
+            "-----BEGIN RSA "
+            "PRIVATE KEY-----\n"
             f"{private_key}\n"
-            "-----END RSA PRIVATE KEY-----\n"
+            "-----END RSA "
+            "PRIVATE KEY-----\n"
         )
 
     jwt_token = AppAuth(app_id=app_id, private_key=private_key).create_jwt()

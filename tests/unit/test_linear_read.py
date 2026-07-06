@@ -23,7 +23,9 @@ def test_run_linear_use_flow_no_workspaces(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(lr, "load_linear_read_credentials", lambda **_: {"access_token": "t"})
+    monkeypatch.setattr(
+        lr, "load_linear_read_credentials", lambda **_: {"access_token": "t"}
+    )
     monkeypatch.setattr(lr, "fetch_linear_workspaces", lambda: [])
     with pytest.raises(LinearReadError, match="No Linear workspaces connected"):
         lr.run_linear_use_flow()
@@ -35,7 +37,9 @@ def test_run_linear_use_flow_single_workspace_auto_pick(
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     saved: list[dict] = []
 
-    monkeypatch.setattr(lr, "load_linear_read_credentials", lambda **_: {"access_token": "t"})
+    monkeypatch.setattr(
+        lr, "load_linear_read_credentials", lambda **_: {"access_token": "t"}
+    )
     monkeypatch.setattr(
         lr,
         "fetch_linear_workspaces",
@@ -76,7 +80,9 @@ def test_run_linear_use_flow_non_interactive_org_and_team(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
-    monkeypatch.setattr(lr, "load_linear_read_credentials", lambda **_: {"access_token": "t"})
+    monkeypatch.setattr(
+        lr, "load_linear_read_credentials", lambda **_: {"access_token": "t"}
+    )
     monkeypatch.setattr(
         lr,
         "fetch_linear_workspaces",
@@ -116,7 +122,9 @@ def test_run_linear_use_flow_non_interactive_org_only(
 ) -> None:
     """Org-only non-interactive runs must not call the team prompt."""
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
-    monkeypatch.setattr(lr, "load_linear_read_credentials", lambda **_: {"access_token": "t"})
+    monkeypatch.setattr(
+        lr, "load_linear_read_credentials", lambda **_: {"access_token": "t"}
+    )
     monkeypatch.setattr(
         lr,
         "fetch_linear_workspaces",
@@ -133,7 +141,9 @@ def test_run_linear_use_flow_non_interactive_org_only(
         "fetch_linear_teams",
         lambda **_: [{"id": "t1", "key": "ENG", "name": "Engineering"}],
     )
-    resolve_team = MagicMock(return_value={"id": "t1", "key": "ENG", "name": "Engineering"})
+    resolve_team = MagicMock(
+        return_value={"id": "t1", "key": "ENG", "name": "Engineering"}
+    )
     monkeypatch.setattr(lr, "resolve_linear_team", resolve_team)
     prompt = MagicMock()
     monkeypatch.setattr(lr, "_prompt_workspace", prompt)

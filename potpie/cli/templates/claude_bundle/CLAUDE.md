@@ -36,8 +36,8 @@ verification, or full evidence/debug payloads.
 
 When only MCP is configured, use `context_status`, `context_resolve`,
 `context_search`, and `context_record`. Valid include families:
-`coding_preferences`, `infra_topology`, `prior_bugs`, `timeline`, `decisions`,
-`owners`, `docs`, `raw_graph`.
+`coding_preferences`, `infra_topology`, `features`, `prior_bugs`, `timeline`,
+`decisions`, `owners`, `docs`, `raw_graph`.
 
 Valid `context_record` types:
 preference|policy|bug_pattern|fix|verification|decision|doc_reference|workflow|runbook_note|incident_summary|investigation|diagnostic_signal|service_note|feature_note|integration_note
@@ -104,10 +104,9 @@ the gate warns or fails.
 
 For GitHub, Linear, Jira, and other hosted integrations, pull PRs, issues,
 tickets, comments, labels/status, and linked docs with the agent's integration
-tools/connectors. Do not use pot-level connector ingestion commands such as
-`potpie pot linear-team ingest`, `potpie pot linear-team diff-sync`, or
-Jira/GitHub queue commands as the ingestion path; write the graph updates
-yourself with `graph propose` / `graph commit --verify` or `graph inbox`.
+tools/connectors. Do not use Potpie CLI queue ingestion as the ingestion path;
+write the graph updates yourself with `graph propose` / `graph commit --verify`
+or `graph inbox`.
 
 ## Nudges
 

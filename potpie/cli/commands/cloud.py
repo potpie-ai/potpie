@@ -15,8 +15,12 @@ import typer
 from potpie.cli.commands._common import contract
 from domain.errors import CapabilityNotImplemented
 
-cloud_app = typer.Typer(help="Managed profile + sync (TODO).", invoke_without_command=True)
-skills_app = typer.Typer(help="Managed skill catalog sync (TODO).", invoke_without_command=True)
+cloud_app = typer.Typer(
+    help="Managed profile + sync (TODO).", invoke_without_command=True
+)
+skills_app = typer.Typer(
+    help="Managed skill catalog sync (TODO).", invoke_without_command=True
+)
 cloud_app.add_typer(skills_app, name="skills")
 
 

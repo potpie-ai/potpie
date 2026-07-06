@@ -26,7 +26,9 @@ class _UnusedPlanStore:
 
 def _service() -> tuple[GraphWorkbenchService, InMemoryGraphBackend]:
     backend = InMemoryGraphBackend()
-    return GraphWorkbenchService(backend=backend, plan_store=_UnusedPlanStore()), backend
+    return GraphWorkbenchService(
+        backend=backend, plan_store=_UnusedPlanStore()
+    ), backend
 
 
 def _row(
@@ -79,8 +81,7 @@ def test_quality_summary_aggregates_deep_report_counts() -> None:
     assert result.metrics["backend_quality"]["claim_count"] == 3
     assert result.metrics["quality_counts"]["conflicting_claims"] >= 1
     assert (
-        result.metrics["quality_reports"]["conflicting-claims"]["status"]
-        == "degraded"
+        result.metrics["quality_reports"]["conflicting-claims"]["status"] == "degraded"
     )
     assert result.metrics["total_findings"] >= 1
 
@@ -89,8 +90,12 @@ def test_quality_duplicate_candidates_are_read_only() -> None:
     workbench, backend = _service()
     backend.store.add(_row("DEPENDS_ON", "service:api-a", "service:db", claim_key="c1"))
     backend.store.add(_row("DEPENDS_ON", "service:api-b", "service:db", claim_key="c2"))
-    backend.store.set_entity_label(pot_id=POT, entity_key="service:api-a", labels=("Service",))
-    backend.store.set_entity_label(pot_id=POT, entity_key="service:api-b", labels=("Service",))
+    backend.store.set_entity_label(
+        pot_id=POT, entity_key="service:api-a", labels=("Service",)
+    )
+    backend.store.set_entity_label(
+        pot_id=POT, entity_key="service:api-b", labels=("Service",)
+    )
     backend.store.set_entity_properties(
         pot_id=POT, entity_key="service:api-a", properties={"name": "Payments API"}
     )
@@ -132,7 +137,9 @@ def test_quality_stale_and_low_confidence_find_source_backed_claims() -> None:
     )
 
     stale = workbench.quality(pot_id=POT, report="stale-facts")
-    low = workbench.quality(pot_id=POT, report="low-confidence", confidence_threshold=0.5)
+    low = workbench.quality(
+        pot_id=POT, report="low-confidence", confidence_threshold=0.5
+    )
 
     assert stale.findings[0].claim_keys == ("stale",)
     assert stale.findings[0].source_refs == ("repo:manifest",)
@@ -187,9 +194,15 @@ def test_quality_orphan_entities_reports_entities_with_only_invalid_claims() -> 
 
 def test_quality_projection_drift_reports_invalid_endpoint_pairs() -> None:
     workbench, backend = _service()
-    backend.store.add(_row("DEPENDS_ON", "service:web", "team:platform", claim_key="bad"))
-    backend.store.set_entity_label(pot_id=POT, entity_key="service:web", labels=("Service",))
-    backend.store.set_entity_label(pot_id=POT, entity_key="team:platform", labels=("Team",))
+    backend.store.add(
+        _row("DEPENDS_ON", "service:web", "team:platform", claim_key="bad")
+    )
+    backend.store.set_entity_label(
+        pot_id=POT, entity_key="service:web", labels=("Service",)
+    )
+    backend.store.set_entity_label(
+        pot_id=POT, entity_key="team:platform", labels=("Team",)
+    )
 
     result = workbench.quality(pot_id=POT, report="projection-drift")
 

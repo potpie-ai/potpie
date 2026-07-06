@@ -196,13 +196,20 @@ class TestCloudGroupJson:
         assert result.exit_code != 0
         payload = json.loads(result.output)
         assert payload["code"] == "not_implemented"
-        assert "login" in payload["message"].lower() or "status" in payload["message"].lower() or "cloud" in payload["message"].lower()
+        assert (
+            "login" in payload["message"].lower()
+            or "status" in payload["message"].lower()
+            or "cloud" in payload["message"].lower()
+        )
 
     def test_cloud_group_human_does_not_crash(self) -> None:
         app = _make_cloud_app()
         result = CliRunner().invoke(app, ["cloud"])
         assert result.exit_code != 0
-        assert "not implemented" in result.output.lower() or "not_implemented" in result.output.lower()
+        assert (
+            "not implemented" in result.output.lower()
+            or "not_implemented" in result.output.lower()
+        )
 
     def test_cloud_skills_sync_still_works(self) -> None:
         app = _make_cloud_app()

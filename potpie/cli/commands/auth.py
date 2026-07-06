@@ -4,7 +4,7 @@ This registrar bolts the credential-acquisition surface onto the host-routed
 root app:
 
 - ``potpie github|linear|jira|confluence …`` — integration OAuth/API-token flows;
-- ``potpie status [--verify]`` — local integration auth status (see ``bootstrap``);
+- ``potpie auth status [--verify]`` — local integration auth status;
 - top-level ``potpie login`` / ``potpie logout`` — Potpie account (Firebase/API key);
 - ``potpie auth …`` — deprecated aliases for the provider commands above.
 

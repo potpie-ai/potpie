@@ -108,7 +108,9 @@ def load_static_logo(viewport_width: int = VIEWPORT_WIDTH) -> StaticLogoArt | No
         return StaticLogoArt(
             width=vw,
             height=vh,
-            text=layout_logo_lines(lines, viewport_width=vw, viewport_height=vh, style=style),
+            text=layout_logo_lines(
+                lines, viewport_width=vw, viewport_height=vh, style=style
+            ),
             chomp_token=token,
         )
     except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError):

@@ -63,7 +63,9 @@ class _FakeDaemon:
 @dataclass
 class _FakeHost:
     daemon: _FakeDaemon
-    backend: object = field(default_factory=lambda: type("B", (), {"profile": "falkordb_lite"})())
+    backend: object = field(
+        default_factory=lambda: type("B", (), {"profile": "falkordb_lite"})()
+    )
 
 
 def test_daemon_lifecycle_commands_use_detached_daemon(tmp_path: Path) -> None:

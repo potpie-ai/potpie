@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.intelligence.local_embedder import build_embedder
+from adapters.outbound.intelligence.local_embedder import HashingEmbedder
 from adapters.outbound.session.injection_ledger import InMemoryInjectionLedger
 from application.services.graph_service import DefaultGraphService
 from application.services.nudge_service import NudgeService
@@ -26,7 +26,7 @@ POT = "local/default"
 
 
 def _stack() -> tuple[NudgeService, DefaultGraphService]:
-    backend = InMemoryGraphBackend(embedder=build_embedder())
+    backend = InMemoryGraphBackend(embedder=HashingEmbedder())
     svc = DefaultGraphService(backend=backend)
     nudge = NudgeService(graph=svc, ledger=InMemoryInjectionLedger())
     return nudge, svc
@@ -41,7 +41,10 @@ def _seed_bug(svc: DefaultGraphService) -> None:
                     {
                         "op": "assert_claim",
                         "subgraph": "debugging",
-                        "subject": {"key": "bug_pattern:settle-deadlock", "type": "BugPattern"},
+                        "subject": {
+                            "key": "bug_pattern:settle-deadlock",
+                            "type": "BugPattern",
+                        },
                         "predicate": "REPRODUCES",
                         "object": {"key": "service:payments-api", "type": "Service"},
                         "truth": "agent_claim",
@@ -78,16 +81,31 @@ def test_no_duplicate_injection_within_session() -> None:
     nudge, svc = _stack()
     _seed_bug(svc)
     first = nudge.nudge(
-        GraphNudgeRequest(pot_id=POT, event="test_failed", session_id="sess-dup", query="settle deadlock")
+        GraphNudgeRequest(
+            pot_id=POT,
+            event="test_failed",
+            session_id="sess-dup",
+            query="settle deadlock",
+        )
     )
     assert first.injected_keys
     again = nudge.nudge(
-        GraphNudgeRequest(pot_id=POT, event="test_failed", session_id="sess-dup", query="settle deadlock")
+        GraphNudgeRequest(
+            pot_id=POT,
+            event="test_failed",
+            session_id="sess-dup",
+            query="settle deadlock",
+        )
     )
     assert again.silent  # everything already injected this session
     # A different session still gets it.
     other = nudge.nudge(
-        GraphNudgeRequest(pot_id=POT, event="test_failed", session_id="sess-other", query="settle deadlock")
+        GraphNudgeRequest(
+            pot_id=POT,
+            event="test_failed",
+            session_id="sess-other",
+            query="settle deadlock",
+        )
     )
     assert other.injected_keys == first.injected_keys
 
@@ -107,14 +125,16 @@ def test_loop_runs_without_any_api_key(monkeypatch) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert agent_planner_enabled() is False  # LLM reconciliation parked
-    embedder = build_embedder()
+    embedder = HashingEmbedder()
     assert embedder is not None
     assert embedder.name == "local-hashing-v1"  # bundled, dependency-free
 
     nudge, svc = _stack()
     _seed_bug(svc)
     res = nudge.nudge(
-        GraphNudgeRequest(pot_id=POT, event="test_failed", session_id="s", query="settle deadlock")
+        GraphNudgeRequest(
+            pot_id=POT, event="test_failed", session_id="s", query="settle deadlock"
+        )
     )
     assert res.ok  # retrieval succeeded with no API client anywhere on the path
 

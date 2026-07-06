@@ -11,8 +11,16 @@ from rich.live import Live
 from rich.padding import Padding
 from rich.text import Text
 
-from potpie.cli.ui.brand import LOGO_COLOR, LOGO_DIM_STYLE, LOGO_STYLE, UI_MUTED_STYLE
-from potpie.cli.ui.logo_rotation import render_intro_logo, render_static_intro_logo
+from potpie.cli.ui.brand import (
+    LOGO_COLOR,
+    LOGO_DIM_STYLE,
+    LOGO_STYLE,
+    UI_MUTED_STYLE,
+)
+from potpie.cli.ui.logo_rotation import (
+    render_intro_logo,
+    render_static_intro_logo,
+)
 from potpie.cli.ui.static_logo_loader import VIEWPORT_WIDTH, load_static_logo
 
 _ACCENT = LOGO_STYLE
@@ -145,7 +153,9 @@ def play_intro(
         logo = _intro_logo(content_w, frame_no)
         return Group(
             Text(""),
-            _center_on_logo(Text("potpie", style=_ACCENT), logo=logo, content_w=content_w),
+            _center_on_logo(
+                Text("potpie", style=_ACCENT), logo=logo, content_w=content_w
+            ),
             Text(""),
             _left_splash(logo, content_w),
             Text(""),
@@ -155,7 +165,9 @@ def play_intro(
         )
 
     interval = 1.0 / _INTRO_FPS
-    with Live(render(0), console=console, refresh_per_second=_INTRO_FPS, transient=True) as live:
+    with Live(
+        render(0), console=console, refresh_per_second=_INTRO_FPS, transient=True
+    ) as live:
         tick = 0.0
         frame_no = 0
         while tick < seconds:

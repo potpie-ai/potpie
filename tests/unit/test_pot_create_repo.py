@@ -30,7 +30,9 @@ class _Pots:
     active_id: str | None = None
     _pots_by_name: dict[str, str] = field(default_factory=dict)
 
-    def create_pot(self, *, name: str, repo: str | None = None, use: bool = False) -> PotInfo:
+    def create_pot(
+        self, *, name: str, repo: str | None = None, use: bool = False
+    ) -> PotInfo:
         self.created.append({"name": name, "use": use})
         pot_id = self._pots_by_name.get(name, "pot-new")
         if name not in self._pots_by_name:
@@ -148,7 +150,9 @@ def test_register_repo_source_skips_duplicate_matching_identity(monkeypatch) -> 
     fake_pots = _Pots()
     host = _Host(pots=fake_pots)
 
-    first = pots.register_repo_source(host, pot_id="pot-new", location="github.com/acme/shop")
+    first = pots.register_repo_source(
+        host, pot_id="pot-new", location="github.com/acme/shop"
+    )
     second = pots.register_repo_source(
         host, pot_id="pot-new", location=".", make_default=False
     )

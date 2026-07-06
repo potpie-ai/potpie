@@ -26,6 +26,7 @@ from domain.agent_envelope import (
     UnsupportedInclude,
     derive_overall_confidence,
 )
+from domain.graph_views import INCLUDE_TO_VIEW
 
 
 @dataclass(slots=True)
@@ -95,6 +96,7 @@ class EnvelopeBuilder:
                     candidate_pool=int(resp.meta.get("candidate_pool", 0))
                     if isinstance(resp.meta.get("candidate_pool"), int)
                     else 0,
+                    graph_view=INCLUDE_TO_VIEW.get(inc),
                 )
             )
 

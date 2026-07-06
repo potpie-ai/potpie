@@ -59,7 +59,9 @@ def _edge(**overrides) -> SimpleNamespace:
 class _Payload:
     """Stand-in for :class:`parsing_rs.GraphPayload`."""
 
-    def __init__(self, nodes: Iterable, edges: Iterable, *, edges_attr: str = "relationships") -> None:
+    def __init__(
+        self, nodes: Iterable, edges: Iterable, *, edges_attr: str = "relationships"
+    ) -> None:
         self.nodes = list(nodes)
         # Some older payloads name the attr `edges` instead of
         # `relationships`; the runner tolerates both, so we exercise
@@ -185,12 +187,29 @@ def test_parse_stream_round_trip_basic():
 
 def test_parse_stream_rejects_missing_header():
     with pytest.raises(WireFormatError, match="missing header"):
-        parse_stream([
-            json.dumps({"kind": "node", "id": "x", "node_type": "FILE",
-                        "file": "x", "line": 0, "end_line": 0, "name": "x"}),
-            json.dumps({"kind": "footer", "node_count": 1, "edge_count": 0,
-                        "elapsed_s": 0.1}),
-        ])
+        parse_stream(
+            [
+                json.dumps(
+                    {
+                        "kind": "node",
+                        "id": "x",
+                        "node_type": "FILE",
+                        "file": "x",
+                        "line": 0,
+                        "end_line": 0,
+                        "name": "x",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "kind": "footer",
+                        "node_count": 1,
+                        "edge_count": 0,
+                        "elapsed_s": 0.1,
+                    }
+                ),
+            ]
+        )
 
 
 def test_parse_stream_rejects_truncated_stream():
@@ -198,65 +217,103 @@ def test_parse_stream_rejects_truncated_stream():
     (potpie-parse pipe was killed mid-flight). Distinct from a
     parser-internal failure (which carries `error` on the footer)."""
     with pytest.raises(WireFormatError, match="truncated"):
-        parse_stream([
-            json.dumps({"kind": "header", "version": WIRE_VERSION, "repo_dir": "/r"}),
-            json.dumps({"kind": "node", "id": "x", "node_type": "FILE",
-                        "file": "x", "line": 0, "end_line": 0, "name": "x"}),
-        ])
+        parse_stream(
+            [
+                json.dumps(
+                    {"kind": "header", "version": WIRE_VERSION, "repo_dir": "/r"}
+                ),
+                json.dumps(
+                    {
+                        "kind": "node",
+                        "id": "x",
+                        "node_type": "FILE",
+                        "file": "x",
+                        "line": 0,
+                        "end_line": 0,
+                        "name": "x",
+                    }
+                ),
+            ]
+        )
 
 
 def test_parse_stream_propagates_parser_error_in_footer():
     """When the runner emits a footer with `error`, the host should
     surface that as WireFormatError instead of returning empty artifacts."""
     with pytest.raises(WireFormatError, match="syntax"):
-        parse_stream([
-            json.dumps({"kind": "header", "version": WIRE_VERSION, "repo_dir": "/r"}),
-            json.dumps({"kind": "footer", "node_count": 0, "edge_count": 0,
-                        "elapsed_s": 0.1, "error": "syntax error"}),
-        ])
+        parse_stream(
+            [
+                json.dumps(
+                    {"kind": "header", "version": WIRE_VERSION, "repo_dir": "/r"}
+                ),
+                json.dumps(
+                    {
+                        "kind": "footer",
+                        "node_count": 0,
+                        "edge_count": 0,
+                        "elapsed_s": 0.1,
+                        "error": "syntax error",
+                    }
+                ),
+            ]
+        )
 
 
 def test_parse_stream_rejects_wire_version_mismatch():
     with pytest.raises(WireFormatError, match="wire version"):
-        parse_stream([
-            json.dumps({"kind": "header", "version": 999, "repo_dir": "/r"}),
-            json.dumps({"kind": "footer", "node_count": 0, "edge_count": 0,
-                        "elapsed_s": 0}),
-        ])
+        parse_stream(
+            [
+                json.dumps({"kind": "header", "version": 999, "repo_dir": "/r"}),
+                json.dumps(
+                    {"kind": "footer", "node_count": 0, "edge_count": 0, "elapsed_s": 0}
+                ),
+            ]
+        )
 
 
 def test_parse_stream_rejects_non_json_line():
     with pytest.raises(WireFormatError, match="non-JSON"):
-        parse_stream([
-            json.dumps({"kind": "header", "version": WIRE_VERSION, "repo_dir": "/r"}),
-            "this is not json at all",
-            json.dumps({"kind": "footer", "node_count": 0, "edge_count": 0,
-                        "elapsed_s": 0}),
-        ])
+        parse_stream(
+            [
+                json.dumps(
+                    {"kind": "header", "version": WIRE_VERSION, "repo_dir": "/r"}
+                ),
+                "this is not json at all",
+                json.dumps(
+                    {"kind": "footer", "node_count": 0, "edge_count": 0, "elapsed_s": 0}
+                ),
+            ]
+        )
 
 
 def test_parse_stream_tolerates_unknown_kinds():
     """Forward-compat: a newer runner might emit additional record types
     alongside nodes/edges; the host should ignore them rather than
     fail (and ignore them silently rather than warn — they're inert)."""
-    artifacts = parse_stream([
-        json.dumps({"kind": "header", "version": WIRE_VERSION, "repo_dir": "/r"}),
-        json.dumps({"kind": "diagnostic", "msg": "from a future runner"}),
-        json.dumps({"kind": "footer", "node_count": 0, "edge_count": 0,
-                    "elapsed_s": 0}),
-    ])
+    artifacts = parse_stream(
+        [
+            json.dumps({"kind": "header", "version": WIRE_VERSION, "repo_dir": "/r"}),
+            json.dumps({"kind": "diagnostic", "msg": "from a future runner"}),
+            json.dumps(
+                {"kind": "footer", "node_count": 0, "edge_count": 0, "elapsed_s": 0}
+            ),
+        ]
+    )
     assert artifacts.nodes == []
     assert artifacts.relationships == []
 
 
 def test_parse_stream_skips_blank_lines():
     """Trailing newlines from a subprocess pipe shouldn't bother us."""
-    raw = "\n".join([
-        json.dumps({"kind": "header", "version": WIRE_VERSION, "repo_dir": "/r"}),
-        "",
-        json.dumps({"kind": "footer", "node_count": 0, "edge_count": 0,
-                    "elapsed_s": 0}),
-        "",
-    ])
+    raw = "\n".join(
+        [
+            json.dumps({"kind": "header", "version": WIRE_VERSION, "repo_dir": "/r"}),
+            "",
+            json.dumps(
+                {"kind": "footer", "node_count": 0, "edge_count": 0, "elapsed_s": 0}
+            ),
+            "",
+        ]
+    )
     artifacts = parse_stream(raw.splitlines())
     assert artifacts.repo_dir == "/r"

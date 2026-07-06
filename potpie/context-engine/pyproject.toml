@@ -7,7 +7,7 @@ path = "distribution_defaults_hook.py"
 
 [project]
 name = "potpie-context-engine"
-version = "0.1.0b3"
+version = "0.1.0"
 description = "Reusable context graph engine library, HTTP API, webhooks, and MCP."
 requires-python = ">=3.12,<3.15"
 dependencies = [

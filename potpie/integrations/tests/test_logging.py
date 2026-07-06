@@ -39,4 +39,6 @@ def test_log_context_is_emitted_in_obs_fields():
         "provider": "linear",
     }
     if handler.records[0].obs_fields != expected_fields:
-        raise AssertionError(f"unexpected obs_fields: {handler.records[0].obs_fields!r}")
+        raise AssertionError(
+            f"unexpected obs_fields: {handler.records[0].obs_fields!r}"
+        )

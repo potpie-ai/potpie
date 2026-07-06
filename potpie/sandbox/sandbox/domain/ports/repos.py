@@ -39,8 +39,7 @@ class RepoCacheProvider(Protocol):
         """
         ...
 
-    async def get_cache(self, cache_id: str) -> RepoCache | None:
-        ...
+    async def get_cache(self, cache_id: str) -> RepoCache | None: ...
 
     async def delete_cache(self, cache: RepoCache) -> None:
         """Remove the bare repo from the backend.

@@ -22,9 +22,16 @@ pytestmark = pytest.mark.unit
 
 TEMPLATES = Path(_clipkg.__file__).resolve().parent / "templates"
 AGENT_SKILL = (
-    TEMPLATES / "agent_bundle" / ".agents" / "skills" / "potpie-repo-baseline" / "SKILL.md"
+    TEMPLATES
+    / "agent_bundle"
+    / ".agents"
+    / "skills"
+    / "potpie-repo-baseline"
+    / "SKILL.md"
 )
-PLUGIN_SKILL = TEMPLATES / "claude_plugin" / "skills" / "potpie-repo-baseline" / "SKILL.md"
+PLUGIN_SKILL = (
+    TEMPLATES / "claude_plugin" / "skills" / "potpie-repo-baseline" / "SKILL.md"
+)
 
 
 def _frontmatter_and_body(path: Path) -> tuple[dict[str, str], str]:
@@ -93,12 +100,28 @@ def test_source_priority_starts_with_authored_docs() -> None:
 
 def test_referenced_entities_and_predicates_are_canonical() -> None:
     _, body = _frontmatter_and_body(AGENT_SKILL)
-    for label in ("Repository", "Service", "Feature", "Environment", "DataStore",
-                  "APIContract", "Dependency", "Preference"):
+    for label in (
+        "Repository",
+        "Service",
+        "Feature",
+        "Environment",
+        "DataStore",
+        "APIContract",
+        "Dependency",
+        "Preference",
+    ):
         assert label in body, f"skill does not mention entity `{label}`"
         assert label in CANONICAL_LABELS
-    for edge in ("PROVIDES", "IMPLEMENTED_IN", "DEFINED_IN", "DEPENDS_ON", "USES",
-                 "EXPOSES", "DEPLOYED_TO", "POLICY_APPLIES_TO"):
+    for edge in (
+        "PROVIDES",
+        "IMPLEMENTED_IN",
+        "DEFINED_IN",
+        "DEPENDS_ON",
+        "USES",
+        "EXPOSES",
+        "DEPLOYED_TO",
+        "POLICY_APPLIES_TO",
+    ):
         assert f"`{edge}`" in body, f"skill does not mention predicate `{edge}`"
         assert edge in CANONICAL_EDGE_TYPES
 

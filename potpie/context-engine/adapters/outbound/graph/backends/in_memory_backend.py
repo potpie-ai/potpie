@@ -157,7 +157,10 @@ class _Mutation:
         )
         # Embed the retrieval card on write (R1/R2) so reads use a real vector.
         if self.embedder is not None and row.fact_embedding is None:
-            row = _with_embedding(row, self.embedder.embed(card_for_row(row)))
+            try:
+                row = _with_embedding(row, self.embedder.embed(card_for_row(row)))
+            except Exception:  # noqa: BLE001 - graph writes should survive embedder failure.
+                pass
         return row
 
     def _upsert_claim_row(self, row: ClaimRow) -> None:

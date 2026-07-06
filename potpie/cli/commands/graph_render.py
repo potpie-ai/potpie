@@ -8,6 +8,7 @@ from typing import Any
 from domain.errors import CapabilityNotImplemented
 from domain.graph_contract import GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION
 from domain.graph_contract import ONTOLOGY_VERSION
+from domain.graph_views import INCLUDE_TO_VIEW
 from domain.graph_workbench import GRAPH_WORKBENCH_COMMANDS, GraphWorkbenchStatus
 
 from potpie.cli.commands._common import pot_scope_info
@@ -35,7 +36,7 @@ def _graph_status_payload(host: Any, pot_id: str, dp: Any) -> dict[str, Any]:
             "data_plane_graph_contract_version": DATA_PLANE_CONTRACT_VERSION,
             "ontology_version": ONTOLOGY_VERSION,
             "supported_commands": list(GRAPH_WORKBENCH_COMMANDS),
-            "reader_backed_includes": list(dp.reader_backed_includes),
+            "backed_views": _backed_view_names(dp.reader_backed_includes),
             "validator_ready": True,
             "match_mode": dp.match_mode,
         },
@@ -63,6 +64,14 @@ def _graph_status_payload(host: Any, pot_id: str, dp: Any) -> dict[str, Any]:
     payload = status.to_dict()
     payload["health_status"] = health_status
     return payload
+
+
+def _backed_view_names(reader_backed_includes: Any) -> list[str]:
+    names: list[str] = []
+    for include in reader_backed_includes or ():
+        spec = INCLUDE_TO_VIEW.get(str(include))
+        names.append(getattr(spec, "name", spec) if spec is not None else str(include))
+    return names
 
 
 def _graph_status_quality_summary(

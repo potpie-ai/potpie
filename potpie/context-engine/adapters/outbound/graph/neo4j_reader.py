@@ -165,14 +165,16 @@ class Neo4jClaimQueryStore:
         assert filter_.fact_query is not None
         assert self._embedder is not None
         limit = filter_.limit if filter_.limit is not None and filter_.limit > 0 else 10
-        vector_params = {
-            **dict(params),
-            "index_name": _VECTOR_INDEX_NAME,
-            "embedding": [float(x) for x in self._embedder.embed(filter_.fact_query)],
-            "k": max(limit * 5, 50),
-            "limit": limit,
-        }
         try:
+            vector_params = {
+                **dict(params),
+                "index_name": _VECTOR_INDEX_NAME,
+                "embedding": [
+                    float(x) for x in self._embedder.embed(filter_.fact_query)
+                ],
+                "k": max(limit * 5, 50),
+                "limit": limit,
+            }
             driver = self._get_driver()
             with driver.session() as session:
                 records = list(session.run(_VECTOR_CLAIMS_CYPHER, **vector_params))

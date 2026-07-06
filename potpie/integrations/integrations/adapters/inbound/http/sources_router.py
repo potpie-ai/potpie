@@ -41,7 +41,9 @@ router = APIRouter(prefix="/sources", tags=["sources"])
 
 
 class LinearAttachBody(BaseModel):
-    integration_id: str = Field(..., description="integrations.integration_id for Linear")
+    integration_id: str = Field(
+        ..., description="integrations.integration_id for Linear"
+    )
     team_id: str = Field(..., min_length=1, description="Linear team UUID")
     team_name: str | None = None
 
@@ -151,9 +153,7 @@ async def linear_teams(
         """
         data = linear_graphql(token, q, {})
     except Exception as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Linear API error: {exc}"
-        ) from exc
+        raise HTTPException(status_code=502, detail=f"Linear API error: {exc}") from exc
     org = ((data.get("viewer") or {}).get("organization")) or {}
     teams = ((org.get("teams") or {}).get("nodes")) or []
     return {"teams": teams}
@@ -207,9 +207,7 @@ async def attach_linear_to_project(
         if msg == "project_not_found_or_forbidden":
             raise HTTPException(status_code=404, detail="project_not_found") from e
         if msg == "integration_not_found_or_forbidden":
-            raise HTTPException(
-                status_code=404, detail="integration_not_found"
-            ) from e
+            raise HTTPException(status_code=404, detail="integration_not_found") from e
         raise
     return {"id": src.id, "provider": src.provider, "scope_json": src.scope_json}
 
@@ -353,9 +351,7 @@ async def linear_sources_webhook(
     if not team_id and isinstance(payload.get("data"), dict):
         d = payload["data"]
         team_id = (
-            (d.get("team") or {}).get("id")
-            if isinstance(d.get("team"), dict)
-            else None
+            (d.get("team") or {}).get("id") if isinstance(d.get("team"), dict) else None
         )
 
     if not team_id:

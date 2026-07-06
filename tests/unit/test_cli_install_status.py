@@ -17,8 +17,12 @@ pytestmark = pytest.mark.unit
 runner = CliRunner()
 
 
-def test_collect_cli_install_status_from_uv_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cis.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+def test_collect_cli_install_status_from_uv_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cis.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None
+    )
     monkeypatch.setattr(
         cis,
         "_potpie_paths_on_path",

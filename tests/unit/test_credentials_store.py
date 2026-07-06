@@ -781,6 +781,4 @@ def test_delete_integration_secret_surfaces_provider_error(
     with pytest.raises(cs.ProviderCredentialError) as exc:
         cs.clear_provider_credentials("github")
 
-    assert "Failed to remove GitHub token from local credentials file" in str(
-        exc.value
-    )
+    assert "Failed to remove GitHub token from local credentials file" in str(exc.value)

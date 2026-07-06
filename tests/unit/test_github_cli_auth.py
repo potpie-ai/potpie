@@ -413,10 +413,7 @@ def test_wait_for_enter_or_auto_open_returns_when_enter_is_pressed(
     gh_cmds._wait_for_enter_or_auto_open(seconds=10, input_stream=input_stream)
 
     out = capsys.readouterr().out
-    assert (
-        "Copy the code. Press Enter to open now, or GitHub opens in 10s"
-        in out
-    )
+    assert "Copy the code. Press Enter to open now, or GitHub opens in 10s" in out
     assert "Opening GitHub now" not in out
 
 
@@ -435,8 +432,12 @@ def test_wait_for_enter_or_auto_open_times_out_on_same_line(
     gh_cmds._wait_for_enter_or_auto_open(seconds=2, input_stream=io.StringIO(""))
 
     out = capsys.readouterr().out
-    assert "\r\033[KCopy the code. Press Enter to open now, or GitHub opens in 2s" in out
-    assert "\r\033[KCopy the code. Press Enter to open now, or GitHub opens in 1s" in out
+    assert (
+        "\r\033[KCopy the code. Press Enter to open now, or GitHub opens in 2s" in out
+    )
+    assert (
+        "\r\033[KCopy the code. Press Enter to open now, or GitHub opens in 1s" in out
+    )
     assert "Opening GitHub now..." not in out
     assert sleeps == []
 
@@ -462,10 +463,7 @@ def test_wait_for_enter_or_auto_open_uses_msvcrt_on_windows(
     gh_cmds._wait_for_enter_or_auto_open(seconds=10)
 
     out = capsys.readouterr().out
-    assert (
-        "Copy the code. Press Enter to open now, or GitHub opens in 10s"
-        in out
-    )
+    assert "Copy the code. Press Enter to open now, or GitHub opens in 10s" in out
     assert "Opening GitHub now" not in out
 
 
@@ -764,8 +762,7 @@ def test_github_repos_requires_stored_github_credentials(
     assert result.exit_code == 4
     assert (
         f"GitHub token not found in {cs._integration_secret_store_label()}. "
-        "Run: potpie github login"
-        in result.output
+        "Run: potpie github login" in result.output
     )
 
 

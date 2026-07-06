@@ -88,7 +88,9 @@ def _fit_size(img_w: int, img_h: int, max_cols: int, max_rows: int) -> tuple[int
     return max(10, int(img_w * scale)), max(10, int(img_h * scale))
 
 
-def _braille_grid_from_rgba(px: bytes, out_w: int, out_h: int) -> list[list[_LogoCell | None]]:
+def _braille_grid_from_rgba(
+    px: bytes, out_w: int, out_h: int
+) -> list[list[_LogoCell | None]]:
     rows: list[list[_LogoCell | None]] = []
     row_idx = 0
     for by in range(0, out_h, 4):
@@ -124,7 +126,9 @@ def _braille_grid_from_rgba(px: bytes, out_w: int, out_h: int) -> list[list[_Log
 
 
 @lru_cache(maxsize=8)
-def _intro_logo_grid(viewport_width: int, max_rows: int) -> tuple[list[list[_LogoCell | None]], int]:
+def _intro_logo_grid(
+    viewport_width: int, max_rows: int
+) -> tuple[list[list[_LogoCell | None]], int]:
     """Cached braille grid and wave span for a viewport size."""
     if pillow_available():
         base = _base_logo_image()
@@ -137,18 +141,25 @@ def _intro_logo_grid(viewport_width: int, max_rows: int) -> tuple[list[list[_Log
             span = max((c.wave_pos for row in grid for c in row if c), default=0) + 1
             return grid, span
 
-    from potpie.cli.ui.static_logo_loader import load_raw_logo_lines, layout_logo_lines
+    from potpie.cli.ui.static_logo_loader import (
+        load_raw_logo_lines,
+        layout_logo_lines,
+    )
 
     lines = load_raw_logo_lines()
     if not lines:
         return [], 1
-    trimmed = layout_logo_lines(lines, viewport_width=viewport_width, viewport_height=max_rows)
+    trimmed = layout_logo_lines(
+        lines, viewport_width=viewport_width, viewport_height=max_rows
+    )
     grid = _ascii_grid_from_text(trimmed.plain, viewport_width)
     span = max((c.wave_pos for row in grid for c in row if c), default=0) + 1
     return grid, span
 
 
-def _ascii_grid_from_text(plain: str, viewport_width: int) -> list[list[_LogoCell | None]]:
+def _ascii_grid_from_text(
+    plain: str, viewport_width: int
+) -> list[list[_LogoCell | None]]:
     rows: list[list[_LogoCell | None]] = []
     for row_idx, line in enumerate(plain.splitlines()):
         row: list[_LogoCell | None] = []
@@ -171,7 +182,9 @@ def _cell_style(cell: _LogoCell, *, frame: int, span: int) -> str:
     return LOGO_DIM_STYLE
 
 
-def _render_grid_wave(grid: list[list[_LogoCell | None]], *, frame: int, span: int) -> Text:
+def _render_grid_wave(
+    grid: list[list[_LogoCell | None]], *, frame: int, span: int
+) -> Text:
     out = Text()
     for row_idx, row in enumerate(grid):
         if row_idx:

@@ -79,9 +79,9 @@ The main CLI commands are:
 | `potpie setup` | Run first-time local setup for config, daemon, default pot, and agent skills. |
 | `potpie login` | Sign in to Potpie for account-backed and managed features. |
 | `potpie github login` / `potpie linear login` | Connect source integrations you want agents to use. |
-| `potpie status` | Show configured integration auth status. |
-| `potpie status --verify` | Verify integration credentials with lightweight API checks. |
-| `potpie status --host` | Check daemon, pot, graph, and skill readiness. |
+| `potpie status` | Show context readiness for the active pot, including daemon, graph, and skill checks. |
+| `potpie auth status` | Show configured integration auth status. |
+| `potpie auth status --verify` | Verify integration credentials with lightweight API checks. |
 | `potpie doctor` | Run local diagnostics for daemon, backend capabilities, and skill drift. |
 | `potpie source add repo .` | Register the current repo as a source for the resolved pot. |
 | `potpie pot list` / `potpie pot use <id-or-name>` | List pots and choose the active workspace. |
@@ -97,7 +97,8 @@ Examples:
 ```bash
 potpie setup --repo . --agent claude
 potpie github login
-potpie status --host
+potpie auth status
+potpie status
 potpie source add repo .
 potpie resolve "what should I know before working in this repository?"
 potpie search "authentication flow"

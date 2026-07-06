@@ -86,7 +86,9 @@ def validate_semantic_request(request: SemanticMutationRequest) -> SemanticMutat
         )
     if not request.pot_id.strip():
         issues.append(
-            SemanticMutationValidationIssue(code="missing_pot_id", message="pot_id is required")
+            SemanticMutationValidationIssue(
+                code="missing_pot_id", message="pot_id is required"
+            )
         )
 
     accepted: list[LoweredOperation] = []
@@ -201,7 +203,10 @@ def _validate_op(
         ("occurred_at", op.occurred_at),
     ):
         if raw and not _parses_iso(raw):
-            err("bad_timestamp", f"{field_name} {raw!r} is not a valid ISO 8601 timestamp")
+            err(
+                "bad_timestamp",
+                f"{field_name} {raw!r} is not a valid ISO 8601 timestamp",
+            )
 
     # 6. evidence authorities (when present) must be known
     for ev in op.evidence:
@@ -233,20 +238,32 @@ def _validate_op(
     has_errors = any(i.is_error and i.op_index == index for i in issues)
     if has_errors:
         return issues, LoweredOperation(
-            op_index=index, op=name, risk=_op_risk(op).value, status="rejected",
-            subgraph=subgraph, truth=op.truth,
+            op_index=index,
+            op=name,
+            risk=_op_risk(op).value,
+            status="rejected",
+            subgraph=subgraph,
+            truth=op.truth,
         )
 
     # 8. review-required ops (always)
     if name in REVIEW_REQUIRED_OPS:
         return issues, LoweredOperation(
-            op_index=index, op=name, risk=MutationRisk.high.value,
-            status="review_required", subgraph=subgraph, truth=op.truth,
+            op_index=index,
+            op=name,
+            risk=MutationRisk.high.value,
+            status="review_required",
+            subgraph=subgraph,
+            truth=op.truth,
         )
 
     return issues, LoweredOperation(
-        op_index=index, op=name, risk=_op_risk(op).value, status="accepted",
-        subgraph=subgraph, truth=op.truth,
+        op_index=index,
+        op=name,
+        risk=_op_risk(op).value,
+        status="accepted",
+        subgraph=subgraph,
+        truth=op.truth,
     )
 
 
@@ -257,7 +274,10 @@ def _validate_entity_ref(ref, role, *, required, err, warn) -> None:
             err("missing_entity", f"{role} entity is required for this op")
         return
     if ref.type is not None and ref.type not in ENTITY_TYPES:
-        err("unknown_entity_type", f"{role} type {ref.type!r} is not a known entity type")
+        err(
+            "unknown_entity_type",
+            f"{role} type {ref.type!r} is not a known entity type",
+        )
         return
     if ref.type is not None and not entity_key_matches_type(ref.key, ref.type):
         err(
@@ -320,9 +340,13 @@ def _validate_event_op(op, *, err, warn) -> None:
     _validate_entity_ref(op.subject, "subject", required=False, err=err, warn=warn)
     _validate_entity_ref(op.actor, "actor", required=False, err=err, warn=warn)
     for index, target in enumerate(op.targets):
-        _validate_entity_ref(target, f"targets[{index}]", required=False, err=err, warn=warn)
+        _validate_entity_ref(
+            target, f"targets[{index}]", required=False, err=err, warn=warn
+        )
     for index, mention in enumerate(op.mentions):
-        _validate_entity_ref(mention, f"mentions[{index}]", required=False, err=err, warn=warn)
+        _validate_entity_ref(
+            mention, f"mentions[{index}]", required=False, err=err, warn=warn
+        )
 
     if op.subject is not None:
         _validate_activity_anchor(op.subject, "subject", err=err)
@@ -441,7 +465,10 @@ def _validate_merge_duplicate_entities_op(op, *, err, warn) -> None:
     _validate_entity_ref(op.object, "object", required=True, err=err, warn=warn)
     if op.subject is not None and op.object is not None:
         if normalize_entity_key(op.subject.key) == normalize_entity_key(op.object.key):
-            err("self_merge", "merge_duplicate_entities requires two distinct entity keys")
+            err(
+                "self_merge",
+                "merge_duplicate_entities requires two distinct entity keys",
+            )
         subject_type = _effective_entity_type(op.subject, None)
         object_type = _effective_entity_type(op.object, None)
         if subject_type and object_type and subject_type != object_type:
@@ -455,7 +482,10 @@ def _validate_merge_duplicate_entities_op(op, *, err, warn) -> None:
             "merge_duplicate_entities requires external_ids or extra.external_ids for audit",
         )
     if not (op.reason and op.reason.strip()):
-        err("missing_reason", "merge_duplicate_entities requires a reason for audit history")
+        err(
+            "missing_reason",
+            "merge_duplicate_entities requires a reason for audit history",
+        )
     if not (op.description and op.description.strip()):
         warn(
             "missing_description",
@@ -505,7 +535,10 @@ def _validate_transition_state_op(op, *, err, warn) -> None:
     _validate_entity_ref(op.subject, "subject", required=True, err=err, warn=warn)
     entity_type = _effective_entity_type(op.subject, None)
     if entity_type not in ENTITY_TYPES:
-        err("missing_entity_type", "transition_state requires a known subject entity type")
+        err(
+            "missing_entity_type",
+            "transition_state requires a known subject entity type",
+        )
         return
 
     spec = ENTITY_TYPES[entity_type]
@@ -628,7 +661,9 @@ def _validate_edge_endpoints(
     )
 
 
-def _effective_entity_type(ref: GraphEntityRef | None, default: str | None) -> str | None:
+def _effective_entity_type(
+    ref: GraphEntityRef | None, default: str | None
+) -> str | None:
     if ref is None:
         return default
     if ref.type in ENTITY_TYPES:
@@ -699,7 +734,11 @@ def _op_risk(op: SemanticMutation) -> MutationRisk:
 def _overall_risk(
     accepted: list[LoweredOperation], review: list[LoweredOperation]
 ) -> MutationRisk:
-    order = {MutationRisk.low.value: 0, MutationRisk.medium.value: 1, MutationRisk.high.value: 2}
+    order = {
+        MutationRisk.low.value: 0,
+        MutationRisk.medium.value: 1,
+        MutationRisk.high.value: 2,
+    }
     worst = MutationRisk.low
     for outcome in (*accepted, *review):
         if order[outcome.risk] > order[worst.value]:
@@ -724,8 +763,7 @@ def _decide(
         return "rejected"
     # Any medium/high-risk op requires explicit approval; otherwise auto-apply.
     needs_approval = any(
-        o.risk in {MutationRisk.medium.value, MutationRisk.high.value}
-        for o in accepted
+        o.risk in {MutationRisk.medium.value, MutationRisk.high.value} for o in accepted
     )
     if needs_approval and not (allow_review_required and approved_by):
         return "review_required"
