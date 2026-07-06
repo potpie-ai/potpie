@@ -300,6 +300,7 @@ class DefaultGraphService:
             freshness_preference=request.freshness_preference,
             include_invalidated=request.include_invalidated,
             source_refs=request.source_refs,
+            query_threshold=request.query_threshold,
             depth=request.depth,
             direction=request.direction,
         )

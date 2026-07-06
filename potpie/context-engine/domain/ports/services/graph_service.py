@@ -137,6 +137,7 @@ class GraphReadRequest:
     source_refs: tuple[str, ...] = ()
     detail: str = "compact"
     relations: str = "summary"
+    query_threshold: float = 0.70
 
 
 @dataclass(frozen=True, slots=True)

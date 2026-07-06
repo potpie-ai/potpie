@@ -324,7 +324,7 @@ potpie graph catalog [--task <text>] [--subgraph <s>] [--profile full|read] [--f
 potpie graph describe [<subgraph>] [--view <v>] [--examples] [--pot <ref>]
 
 potpie graph read --subgraph <s> --view <v> \
-  [--query <text>] [--scope <k:v,...>] [--repo <r>] \
+  [--query <text>] [--query-threshold 0.70] [--scope <k:v,...>] [--repo <r>] \
   [--since <t>] [--until <t>] [--time-window/--window <dur>] \
   [--environment <env>] [--source-ref <ref> ...] \
   [--depth <n>] [--direction out|in|both] [--limit 12] \
@@ -333,7 +333,7 @@ potpie graph read --subgraph <s> --view <v> \
   [--current] [--pot <ref>]
 
 potpie timeline recent \
-  [--query <text>] [--since <t>] [--until <t>] [--time-window/--window <dur>] \
+  [--query <text>] [--query-threshold 0.70] [--since <t>] [--until <t>] [--time-window/--window <dur>] \
   [--service <svc>] [--limit 12] [--format ...] [--detail ...] [--relations ...] [--pot <ref>]
 
 potpie graph search-entities [<query> | --query <text>] \

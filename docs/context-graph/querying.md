@@ -378,7 +378,7 @@ Full flag lists live in [`cli-flow.md`](./cli-flow.md); this is the read-side or
 | `graph status` | data-plane status for the active pot |
 | `graph catalog [--subgraph] [--profile full\|read]` | **contract discovery** — returns `GraphCatalogResult`: versions, commands, truth classes, mutation ops (+ empty review/deferred), source authorities, `match_mode`, views, public entity types & predicates. Derived entirely from the ontology + view map + constants ("no docs needed"). `--task` is **accepted but ignored in V1.5**. |
 | `graph describe [subgraph] [--view] [--examples]` | in-process `describe_contract()` (not a host call); returns a subgraph and optionally one view. |
-| `graph read --subgraph <s> --view <v>` | **Retrieve** axis (§7/§8); `--detail compact\|full`, `--relations summary\|full`, `--query`, `--scope k:v`, `--since/--until`, `--depth/--direction`, `--limit`, `--sort`, `--format`. |
+| `graph read --subgraph <s> --view <v>` | **Retrieve** axis (§7/§8); `--detail compact\|full`, `--relations summary\|full`, `--query`, `--query-threshold` (default `0.70`; lower is looser), `--scope k:v`, `--since/--until`, `--depth/--direction`, `--limit`, `--sort`, `--format`. |
 | `timeline recent` | sugar for `graph read --subgraph recent_changes --view timeline`. |
 | `graph search-entities` | **Filter** axis (§7); structured typed lookup for identity resolution. |
 | `graph neighborhood --entity <key>` | **Traverse** axis (§7); `graph inspect <key>` is a legacy alias. |
