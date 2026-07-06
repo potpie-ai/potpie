@@ -59,7 +59,9 @@ class TestReapStaleBatches:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         obs = _RecordingObservability()
-        monkeypatch.setattr("bootstrap.observability_runtime.get_observability", lambda: obs)
+        monkeypatch.setattr(
+            "bootstrap.observability_runtime.get_observability", lambda: obs
+        )
         batches = MagicMock()
         batches.list_stale_in_flight_batches.return_value = [
             _batch("b1"),

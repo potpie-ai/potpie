@@ -31,14 +31,6 @@ from potpie.cli.telemetry.onboarding_events import (
     now_ms,
     sanitized_failure_kind,
 )
-from potpie.cli.auth.potpie_api_config import (
-    resolve_potpie_api_base_url,
-    resolve_potpie_auth_config,
-)
-from adapters.outbound.http.potpie_context_api_client import (
-    PotpieContextApiClient,
-    PotpieContextApiError,
-)
 from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
 from domain.errors import CapabilityNotImplemented
 

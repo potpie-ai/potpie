@@ -98,9 +98,7 @@ def test_verify_gateway_product_confluence_success() -> None:
     response.status_code = 200
     response.content = b'{"displayName":"Wiki"}'
     response.json.return_value = {"displayName": "Wiki"}
-    with patch(
-        "potpie.cli.auth.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
+    with patch("potpie.cli.auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
         client.get.return_value = response
@@ -136,9 +134,7 @@ def test_verify_gateway_product_insufficient_scopes_on_403() -> None:
     response = MagicMock()
     response.status_code = 403
     response.content = b""
-    with patch(
-        "potpie.cli.auth.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
+    with patch("potpie.cli.auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
         client.get.return_value = response
@@ -159,9 +155,7 @@ def test_verify_gateway_product_success() -> None:
     response.status_code = 200
     response.content = b'{"displayName":"Ada"}'
     response.json.return_value = {"displayName": "Ada"}
-    with patch(
-        "potpie.cli.auth.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
+    with patch("potpie.cli.auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
         client.get.return_value = response
@@ -185,9 +179,7 @@ def test_verify_gateway_product_bearer_after_basic_401() -> None:
     bearer.status_code = 200
     bearer.content = b'{"displayName":"Bearer User"}'
     bearer.json.return_value = {"displayName": "Bearer User"}
-    with patch(
-        "potpie.cli.auth.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
+    with patch("potpie.cli.auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
         client.get.side_effect = [basic, bearer]
@@ -208,9 +200,7 @@ def test_fetch_cloud_id_for_site_success() -> None:
     response = MagicMock()
     response.status_code = 200
     response.json.return_value = {"cloudId": "cloud-xyz"}
-    with patch(
-        "potpie.cli.auth.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
+    with patch("potpie.cli.auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
         client.get.return_value = response
@@ -302,9 +292,7 @@ def test_auth_failure_message_insufficient_scopes_per_product() -> None:
 
 
 def test_fetch_cloud_id_for_site_returns_empty_on_http_error() -> None:
-    with patch(
-        "potpie.cli.auth.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
+    with patch("potpie.cli.auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
         client.get.side_effect = AuthHttpError("connection refused")
@@ -313,9 +301,7 @@ def test_fetch_cloud_id_for_site_returns_empty_on_http_error() -> None:
 
 
 def test_verify_gateway_product_returns_unknown_on_http_error() -> None:
-    with patch(
-        "potpie.cli.auth.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
+    with patch("potpie.cli.auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
         client.get.side_effect = AuthHttpError("connection refused")
@@ -626,9 +612,7 @@ def test_run_atlassian_auth_emits_site_discovery_error_on_tenant_http_error(
 
     monkeypatch.setattr(atlassian_auth, "emit_error", _capture_error)
 
-    with patch(
-        "potpie.cli.auth.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
+    with patch("potpie.cli.auth.atlassian_client.AuthHttpClient") as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
         client.get.side_effect = AuthHttpError("connection refused")
@@ -852,9 +836,7 @@ def test_fetch_accessible_resources_bearer_fallback() -> None:
     bearer.json.return_value = [
         {"id": "c2", "url": "https://other.atlassian.net", "name": "Other"},
     ]
-    with patch(
-        "potpie.cli.auth.atlassian_client.AuthHttpClient"
-    ) as mock_cls:
+    with patch("potpie.cli.auth.atlassian_client.AuthHttpClient") as mock_cls:
         client = MagicMock()
         mock_cls.return_value = client
         client.get.side_effect = [basic, bearer]
@@ -869,9 +851,7 @@ def test_fetch_accessible_resources_basic_success() -> None:
     response.json.return_value = [
         {"id": "c1", "url": "https://team.atlassian.net", "name": "Team"},
     ]
-    with patch(
-        "potpie.cli.auth.atlassian_client.AuthHttpClient"
-    ) as mock_cls:
+    with patch("potpie.cli.auth.atlassian_client.AuthHttpClient") as mock_cls:
         client = MagicMock()
         mock_cls.return_value = client
         client.get.return_value = response
@@ -885,9 +865,7 @@ def test_fetch_accessible_resources_http_error_tries_next_scheme() -> None:
     bearer.json.return_value = [
         {"id": "c2", "url": "https://other.atlassian.net", "name": "Other"},
     ]
-    with patch(
-        "potpie.cli.auth.atlassian_client.AuthHttpClient"
-    ) as mock_cls:
+    with patch("potpie.cli.auth.atlassian_client.AuthHttpClient") as mock_cls:
         client = MagicMock()
         mock_cls.return_value = client
         client.get.side_effect = [AuthHttpError("down"), bearer]
@@ -905,9 +883,7 @@ def test_fetch_accessible_resources_invalid_json_tries_next_scheme() -> None:
     good.json.return_value = [
         {"id": "c1", "url": "https://team.atlassian.net", "name": "Team"},
     ]
-    with patch(
-        "potpie.cli.auth.atlassian_client.AuthHttpClient"
-    ) as mock_cls:
+    with patch("potpie.cli.auth.atlassian_client.AuthHttpClient") as mock_cls:
         client = MagicMock()
         mock_cls.return_value = client
         client.get.side_effect = [bad_json, good]

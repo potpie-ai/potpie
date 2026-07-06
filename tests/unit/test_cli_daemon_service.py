@@ -155,6 +155,7 @@ def test_service_logs_reports_http_admin_surface_not_implemented(
     payload = json.loads(result.stdout)
     assert payload["code"] == "not_implemented"
 
+
 def test_service_logs_follow_reports_http_admin_surface_not_implemented(
     tmp_path: Path,
 ) -> None:

@@ -10,6 +10,7 @@ from pathlib import Path
 from rich.text import Text
 
 from potpie.cli.ui.brand import LOGO_COLOR, LOGO_STYLE
+
 LOGO_DIM_STYLE = f"dim {LOGO_COLOR}"
 _INTRO_MAX_ROWS = 5
 _INTRO_MAX_SCALE = 0.72

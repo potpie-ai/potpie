@@ -7,6 +7,7 @@ import sys
 from collections.abc import Mapping
 from typing import Any
 
+
 def _load_json(file: str | None) -> dict:
     """Load a mutation payload from a file or stdin."""
     raw = _read_payload_text(file)
@@ -232,9 +233,7 @@ def _bulk_commit_summary(result: Any) -> dict[str, Any]:
     return out
 
 
-def _bulk_issues_from_proposal(
-    result: Any, chunk_index: int
-) -> list[dict[str, Any]]:
+def _bulk_issues_from_proposal(result: Any, chunk_index: int) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     for issue in result.issues or ():
         if isinstance(issue, Mapping):

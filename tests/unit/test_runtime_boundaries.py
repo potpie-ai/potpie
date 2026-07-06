@@ -124,9 +124,9 @@ def test_root_and_context_engine_env_bootstrap_core_behavior_stays_in_sync() -> 
     assert root_env_bootstrap._PROJECT_ROOT_MARKERS == (
         engine_env_bootstrap._PROJECT_ROOT_MARKERS
     )
-    assert [
-        root_env_bootstrap._parse_env_line(line) for line in lines
-    ] == [engine_env_bootstrap._parse_env_line(line) for line in lines]
+    assert [root_env_bootstrap._parse_env_line(line) for line in lines] == [
+        engine_env_bootstrap._parse_env_line(line) for line in lines
+    ]
 
 
 def test_public_daemon_lifecycle_uses_active_http_discovery_contract() -> None:

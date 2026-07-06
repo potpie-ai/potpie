@@ -107,14 +107,14 @@ class _CompositeSetupObserver:
         for observer in self._observers:
             try:
                 observer.step_started(step=step, hard=hard)
-            except Exception:  # noqa: BLE001 - one observer must not block another.
+            except Exception:  # noqa: BLE001,S112 - one observer must not block another.
                 continue
 
     def step_completed(self, *, result: Any, duration_ms: int) -> None:
         for observer in self._observers:
             try:
                 observer.step_completed(result=result, duration_ms=duration_ms)
-            except Exception:  # noqa: BLE001 - one observer must not block another.
+            except Exception:  # noqa: BLE001,S112 - one observer must not block another.
                 continue
 
 
@@ -864,8 +864,8 @@ def _maybe_prompt_first_pot(
 
     agent_hint = _agent_usage_hint(_globally_installed_harnesses())
     if rich_enabled(as_json=False):
-        from adapters.inbound.cli.ui.potpie_logo_anim import play_setup_finish
-        from adapters.inbound.cli.ui.setup_wizard_ui import stderr_console
+        from potpie.cli.ui.potpie_logo_anim import play_setup_finish
+        from potpie.cli.ui.setup_wizard_ui import stderr_console
 
         play_setup_finish(
             stderr_console(),
@@ -874,7 +874,7 @@ def _maybe_prompt_first_pot(
         )
         return
 
-    from adapters.inbound.cli.ui.output import print_plain_line
+    from potpie.cli.ui.output import print_plain_line
 
     print_plain_line(f"✓ Pot {pot.name} is ready.", as_json=False, markup=False)
     if agent_hint:

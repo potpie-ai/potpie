@@ -94,22 +94,6 @@ graph_app.add_typer(quality_app, name="quality")
 graph_app.add_typer(bulk_app, name="bulk")
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # --- Graph Surface Lite (V1.5) ----------------------------------------------
 
 
@@ -1489,16 +1473,6 @@ def _set_optional_pot(ctx: Any, pot: str | None) -> None:
         ctx.set_pot_id(getattr(active, "pot_id", None))
 
 
-
-
-
-
-
-
-
-
-
-
 def _require_backend_capability(
     host: Any,
     *,
@@ -1518,142 +1492,6 @@ def _require_backend_capability(
             f"a backend that implements {capability}"
         ),
     )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 __all__ = ["backend_app", "graph_app", "timeline_app"]

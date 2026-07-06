@@ -14,6 +14,7 @@ from domain.graph_workbench import GRAPH_WORKBENCH_COMMANDS, GraphWorkbenchStatu
 from potpie.cli.commands._common import pot_scope_info
 from potpie.cli.commands.graph_common import _safe, _str, _string_list
 
+
 def _graph_status_payload(host: Any, pot_id: str, dp: Any) -> dict[str, Any]:
     caps = _safe(lambda: host.backend.capabilities(), None)
     implemented = list(caps.implemented()) if caps is not None else []
@@ -74,9 +75,7 @@ def _backed_view_names(reader_backed_includes: Any) -> list[str]:
     return names
 
 
-def _graph_status_quality_summary(
-    host: Any, pot_id: str, dp: Any
-) -> dict[str, Any]:
+def _graph_status_quality_summary(host: Any, pot_id: str, dp: Any) -> dict[str, Any]:
     fallback = _data_plane_quality_summary(dp)
     workbench = getattr(host, "graph_workbench", None)
     if workbench is None or not getattr(workbench, "quality", None):

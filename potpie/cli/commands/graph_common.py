@@ -10,6 +10,7 @@ from typing import Any
 
 from potpie.cli.repo_location import current_git_remote, normalize_repo_ref
 
+
 def _safe(fn, default):
     try:
         return fn()

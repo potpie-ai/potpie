@@ -51,9 +51,7 @@ def sentry_config_values(
         "POTPIE_TELEMETRY_DISABLED": _env_or_default(
             "POTPIE_TELEMETRY_DISABLED", "0", environ
         ),
-        "POTPIE_SENTRY_ENABLED": _env_or_default(
-            "POTPIE_SENTRY_ENABLED", "1", environ
-        ),
+        "POTPIE_SENTRY_ENABLED": _env_or_default("POTPIE_SENTRY_ENABLED", "1", environ),
         "POTPIE_SENTRY_DSN": _env("POTPIE_SENTRY_DSN", environ),
         "POTPIE_SENTRY_ENVIRONMENT": _env_or_default(
             "POTPIE_SENTRY_ENVIRONMENT",
