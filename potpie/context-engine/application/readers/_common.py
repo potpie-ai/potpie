@@ -238,11 +238,7 @@ def graph_read_scope(scope: Mapping[str, Any]) -> dict[str, str]:
         value = scope.get(key) or scope.get(f"{key}s")
         if isinstance(value, Iterable) and not isinstance(value, (str, Mapping)):
             value = next(
-                (
-                    item
-                    for item in value
-                    if isinstance(item, str) and item.strip()
-                ),
+                (item for item in value if isinstance(item, str) and item.strip()),
                 None,
             )
         if isinstance(value, str) and value.strip():
@@ -253,7 +249,9 @@ def graph_read_scope(scope: Mapping[str, Any]) -> dict[str, str]:
 def scope_ref_matches(row: ClaimRow, scope: Mapping[str, str], key: str) -> bool:
     """Whether either endpoint of a claim row matches one requested scope key."""
     if key == "repo":
-        return any(_repo_key_matches(endpoint, scope["repo"]) for endpoint in _endpoints(row))
+        return any(
+            _repo_key_matches(endpoint, scope["repo"]) for endpoint in _endpoints(row)
+        )
     if key == "service":
         return any(
             _scope_entity_key_matches(endpoint, scope["service"], prefix="service")
@@ -262,7 +260,8 @@ def scope_ref_matches(row: ClaimRow, scope: Mapping[str, str], key: str) -> bool
     if key in _PATH_SCOPE_KEYS:
         requested = _scope_path(scope)
         return bool(requested) and any(
-            _code_asset_key_matches_path(endpoint, requested) for endpoint in _endpoints(row)
+            _code_asset_key_matches_path(endpoint, requested)
+            for endpoint in _endpoints(row)
         )
     return False
 
@@ -280,12 +279,16 @@ def code_scope_conflicts(
     for key in ("language", "framework", "audience", "environment"):
         if key in requested and key in rule and requested[key] != rule[key]:
             return True
-    if "repo" in requested and "repo" in rule and not _repo_values_match(
-        requested["repo"], rule["repo"]
+    if (
+        "repo" in requested
+        and "repo" in rule
+        and not _repo_values_match(requested["repo"], rule["repo"])
     ):
         return True
-    if "service" in requested and "service" in rule and not _service_values_match(
-        requested["service"], rule["service"]
+    if (
+        "service" in requested
+        and "service" in rule
+        and not _service_values_match(requested["service"], rule["service"])
     ):
         return True
     requested_path = _scope_path(requested)

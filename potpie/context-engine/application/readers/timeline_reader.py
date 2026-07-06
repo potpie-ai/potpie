@@ -290,9 +290,7 @@ def _timeline_anchor_keys(scope: Mapping[str, str]) -> list[str]:
         keys.append(repo if repo.startswith("repo:") else f"repo:{repo}")
     service = scope.get("service")
     if service:
-        keys.append(
-            service if service.startswith("service:") else f"service:{service}"
-        )
+        keys.append(service if service.startswith("service:") else f"service:{service}")
     return keys
 
 
