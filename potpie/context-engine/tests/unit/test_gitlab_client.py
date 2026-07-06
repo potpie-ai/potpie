@@ -148,11 +148,15 @@ def test_parse_user_profile_minimal() -> None:
 
 
 def test_verify_instance_access_success() -> None:
-    fake = FakeAuthHttpClient([
-        httpx.Response(200, json={"id": 42, "username": "jane"}),
-    ])
+    fake = FakeAuthHttpClient(
+        [
+            httpx.Response(200, json={"id": 42, "username": "jane"}),
+        ]
+    )
     ok, error_kind, data = verify_instance_access(
-        "https://gitlab.com", "glpat-test", http=fake,
+        "https://gitlab.com",
+        "glpat-test",
+        http=fake,
     )
     assert ok is True
     assert error_kind is None
@@ -162,7 +166,9 @@ def test_verify_instance_access_success() -> None:
 def test_verify_instance_access_unauthorized() -> None:
     fake = FakeAuthHttpClient([httpx.Response(401)])
     ok, error_kind, data = verify_instance_access(
-        "https://gitlab.com", "bad-token", http=fake,
+        "https://gitlab.com",
+        "bad-token",
+        http=fake,
     )
     assert ok is False
     assert error_kind == GitLabAuthErrorKind.INVALID_CREDENTIALS
@@ -172,7 +178,9 @@ def test_verify_instance_access_unauthorized() -> None:
 def test_verify_instance_access_forbidden() -> None:
     fake = FakeAuthHttpClient([httpx.Response(403)])
     ok, error_kind, _ = verify_instance_access(
-        "https://gitlab.com", "scoped-token", http=fake,
+        "https://gitlab.com",
+        "scoped-token",
+        http=fake,
     )
     assert ok is False
     assert error_kind == GitLabAuthErrorKind.INSUFFICIENT_SCOPES
@@ -186,7 +194,9 @@ def test_verify_instance_access_unreachable() -> None:
 
     fake = FakeAuthHttpClient(handler=_raise)
     ok, error_kind, _ = verify_instance_access(
-        "https://gitlab.corp.com", "tok", http=fake,
+        "https://gitlab.corp.com",
+        "tok",
+        http=fake,
     )
     assert ok is False
     assert error_kind == GitLabAuthErrorKind.INSTANCE_UNREACHABLE
@@ -254,10 +264,12 @@ def test_gitlab_account_from_entry_empty() -> None:
 
 
 def test_verify_integration_access_gitlab_ok() -> None:
-    fake = FakeAuthHttpClient([
-        httpx.Response(200, json={"id": 42, "username": "jane", "name": "Jane"}),
-        httpx.Response(200, json=[]),
-    ])
+    fake = FakeAuthHttpClient(
+        [
+            httpx.Response(200, json={"id": 42, "username": "jane", "name": "Jane"}),
+            httpx.Response(200, json=[]),
+        ]
+    )
     ok, msg = verify_integration_access(
         "gitlab",
         {

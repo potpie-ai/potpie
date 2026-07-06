@@ -2,24 +2,14 @@
 
 from __future__ import annotations
 
-import time
-from typing import Any
-from unittest.mock import patch
 
-import httpx
 import pytest
 import typer
 
 from adapters.outbound.cli_auth import credentials_store as cs
-from adapters.outbound.cli_auth.gitlab_client import (
-    GitLabAuthErrorKind,
-    normalize_instance_url,
-    parse_user_profile,
-)
 from adapters.outbound.cli_auth.gitlab_read_client import (
     GitLabReadError,
 )
-from tests._auth_fakes import FakeAuthHttpClient
 
 pytestmark = pytest.mark.unit
 
@@ -33,7 +23,9 @@ def _isolate_creds(tmp_path, monkeypatch):
     monkeypatch.setattr(cs, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
     monkeypatch.setattr(
-        cs, "integration_secrets_path", lambda: tmp_path / "integration_secrets.json",
+        cs,
+        "integration_secrets_path",
+        lambda: tmp_path / "integration_secrets.json",
     )
 
 
@@ -290,14 +282,18 @@ def test_list_integration_providers_includes_gitlab() -> None:
 
 
 def test_load_gitlab_read_credentials_raises_when_not_connected() -> None:
-    from adapters.outbound.cli_auth.gitlab_read_client import load_gitlab_read_credentials
+    from adapters.outbound.cli_auth.gitlab_read_client import (
+        load_gitlab_read_credentials,
+    )
 
     with pytest.raises(GitLabReadError, match="not connected"):
         load_gitlab_read_credentials()
 
 
 def test_load_gitlab_read_credentials_raises_when_no_token() -> None:
-    from adapters.outbound.cli_auth.gitlab_read_client import load_gitlab_read_credentials
+    from adapters.outbound.cli_auth.gitlab_read_client import (
+        load_gitlab_read_credentials,
+    )
 
     cs.save_gitlab_credentials(
         {
@@ -415,7 +411,9 @@ def test_run_gitlab_pat_auth_opens_browser_after_countdown(
         lambda url, **_kwargs: opened.append(url) or True,
     )
     monkeypatch.setattr(gl_auth, "_wait_for_enter_or_auto_open", lambda: None)
-    monkeypatch.setattr(gl_auth, "_prompt_instance_url", lambda default="": "gitlab.com")
+    monkeypatch.setattr(
+        gl_auth, "_prompt_instance_url", lambda default="": "gitlab.com"
+    )
     monkeypatch.setattr(gl_auth, "_prompt_pat", lambda: "glpat-test")
     monkeypatch.setattr(
         gl_auth,

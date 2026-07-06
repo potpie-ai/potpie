@@ -216,7 +216,8 @@ class InMemoryCredentialStore:
 
     # --- GitLab credentials + workspace prefs ----------------------------
     def get_gitlab_credentials(
-        self, instance_host: str | None = None,
+        self,
+        instance_host: str | None = None,
     ) -> dict[str, Any]:
         gitlab = self.providers.get("gitlab", {})
         if not gitlab:
@@ -254,7 +255,8 @@ class InMemoryCredentialStore:
         self.providers["gitlab"] = gitlab
 
     def clear_gitlab_credentials(
-        self, instance_host: str | None = None,
+        self,
+        instance_host: str | None = None,
     ) -> None:
         if instance_host:
             gitlab = dict(self.providers.get("gitlab", {}))

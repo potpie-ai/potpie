@@ -1156,7 +1156,8 @@ def save_gitlab_credentials(
     existing_instances = dict(meta.get("instances") or {})
     existing_entry = existing_instances.get(inst_host) or {}
     if "workspaces" not in instance_entry and isinstance(
-        existing_entry.get("workspaces"), dict,
+        existing_entry.get("workspaces"),
+        dict,
     ):
         instance_entry["workspaces"] = existing_entry["workspaces"]
     if "created_at" not in instance_entry and existing_entry.get("created_at"):
@@ -1179,7 +1180,9 @@ def get_gitlab_credentials(
 ) -> dict[str, Any]:
     """Return GitLab credentials (metadata + PAT) for an instance."""
     meta = _read_gitlab_metadata()
-    host = _norm_gitlab_host(instance_host) if instance_host else _get_active_gitlab_host()
+    host = (
+        _norm_gitlab_host(instance_host) if instance_host else _get_active_gitlab_host()
+    )
     if not host:
         return {}
 
@@ -1247,7 +1250,9 @@ def save_gitlab_workspace_prefs(
 ) -> None:
     """Persist the user's default GitLab project selection."""
     meta = _read_gitlab_metadata()
-    host = _norm_gitlab_host(instance_host) if instance_host else _get_active_gitlab_host()
+    host = (
+        _norm_gitlab_host(instance_host) if instance_host else _get_active_gitlab_host()
+    )
     if not host:
         raise ProviderCredentialError(
             "GitLab is not connected. Run: potpie gitlab login"
@@ -1483,9 +1488,7 @@ def get_integration_status(provider: str) -> dict[str, Any]:
             else {}
         ) or {}
         account = gitlab_account_from_entry(entry)
-        instance_count = (
-            len(instances) if isinstance(instances, dict) else 0
-        )
+        instance_count = len(instances) if isinstance(instances, dict) else 0
         return {
             "provider": key,
             "authenticated": True,

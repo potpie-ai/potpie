@@ -30,10 +30,9 @@ from adapters.outbound.cli_auth.credentials_store import (
     ProviderCredentialError,
     credentials_path,
     get_gitlab_credentials,
-    get_integration_status,
     save_gitlab_credentials,
 )
-from adapters.inbound.cli.commands._common import EXIT_AUTH, get_store
+from adapters.inbound.cli.commands._common import EXIT_AUTH
 from adapters.inbound.cli.ui.output import emit_error, print_plain_line
 from adapters.outbound.cli_auth.provider_config import (
     GITLAB_DEFAULT_INSTANCE,
@@ -48,9 +47,7 @@ else:
 
 EXIT_CANCELLED = 130
 GITLAB_AUTO_OPEN_SECONDS = 10
-_GITLAB_OPEN_PROMPT_PREFIX = (
-    "Press Enter to open now, or browser opens in "
-)
+_GITLAB_OPEN_PROMPT_PREFIX = "Press Enter to open now, or browser opens in "
 
 
 def _guard_typer_prompt(callback):
@@ -225,9 +222,7 @@ def run_gitlab_pat_auth(
     supplied = bool((instance or "").strip() and (token or "").strip())
 
     if not force:
-        host_to_check = (
-            instance_host(instance) if instance else None
-        )
+        host_to_check = instance_host(instance) if instance else None
         existing = get_gitlab_credentials(instance_host=host_to_check)
         if existing.get("personal_access_token"):
             inst = existing.get("instance_url") or existing.get("instance_host", "")
@@ -256,9 +251,12 @@ def run_gitlab_pat_auth(
         pat = (token or "").strip()
     else:
         git_hint = _detect_gitlab_from_git_remote()
-        inst_url = normalize_instance_url(
-            _prompt_instance_url(default=instance or git_hint or "")
-        ) or GITLAB_DEFAULT_INSTANCE
+        inst_url = (
+            normalize_instance_url(
+                _prompt_instance_url(default=instance or git_hint or "")
+            )
+            or GITLAB_DEFAULT_INSTANCE
+        )
         if not as_json:
             _open_gitlab_pat_page(inst_url)
         else:
@@ -298,7 +296,9 @@ def run_gitlab_pat_auth(
         save_gitlab_credentials(payload, account=account)
     except ProviderCredentialError as exc:
         emit_error(
-            "GitLab credential storage failed", str(exc), verbose=verbose,
+            "GitLab credential storage failed",
+            str(exc),
+            verbose=verbose,
         )
         raise typer.Exit(code=EXIT_AUTH) from exc
 

@@ -60,9 +60,7 @@ def run_gitlab_select_flow(
     """Pick a GitLab project, persist choice, and fetch sample MRs + issues."""
     creds = load_gitlab_read_credentials(instance_host=instance_host)
     prefs = creds.get("workspaces") if isinstance(creds.get("workspaces"), dict) else {}
-    default_project = str(
-        project_path or prefs.get("default_project") or ""
-    ).strip()
+    default_project = str(project_path or prefs.get("default_project") or "").strip()
 
     if not sys.stdin.isatty() and not project_path and not default_project:
         raise GitLabReadError(
@@ -91,10 +89,14 @@ def run_gitlab_select_flow(
         project_id = path_with_ns
 
     mrs = fetch_gitlab_merge_requests(
-        project_id, instance_host=instance_host, limit=limit,
+        project_id,
+        instance_host=instance_host,
+        limit=limit,
     )
     issues = fetch_gitlab_issues(
-        project_id, instance_host=instance_host, limit=limit,
+        project_id,
+        instance_host=instance_host,
+        limit=limit,
     )
 
     save_gitlab_workspace_prefs(

@@ -40,7 +40,9 @@ def normalize_instance_url(url: str, *, allow_http: bool | None = None) -> str:
         return ""
     if parsed.scheme == "http":
         if allow_http is None:
-            allow_http = os.environ.get("POTPIE_GITLAB_ALLOW_HTTP", "").strip().lower() in (
+            allow_http = os.environ.get(
+                "POTPIE_GITLAB_ALLOW_HTTP", ""
+            ).strip().lower() in (
                 "1",
                 "true",
                 "yes",

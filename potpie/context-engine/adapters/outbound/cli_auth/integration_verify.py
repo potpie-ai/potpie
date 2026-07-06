@@ -130,12 +130,12 @@ def _verify_gitlab(
     pat = str(credentials.get("personal_access_token") or "").strip()
     if not pat:
         return False, "not authenticated"
-    instance_url = str(
-        credentials.get("instance_url") or "https://gitlab.com"
-    ).strip()
+    instance_url = str(credentials.get("instance_url") or "https://gitlab.com").strip()
 
     ok, error_kind, user_data = verify_instance_access(
-        instance_url, pat, http=http,
+        instance_url,
+        pat,
+        http=http,
     )
     if not ok:
         if error_kind == GitLabAuthErrorKind.INVALID_CREDENTIALS:

@@ -15,11 +15,10 @@ from adapters.outbound.cli_auth.gitlab_read_client import (
     GitLabReadError,
     fetch_gitlab_projects,
 )
-from adapters.inbound.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
+from adapters.inbound.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE
 from adapters.outbound.cli_auth.credentials_store import (
     CredentialStoreError,
     ProviderCredentialError,
-    credentials_path,
     get_integration_status,
     list_gitlab_instances,
     clear_gitlab_credentials,
@@ -78,9 +77,7 @@ def gitlab_login(
 def gitlab_logout_impl(instance: str | None = None) -> None:
     """Remove stored GitLab credentials."""
     j, v = _flags()
-    was_authenticated = bool(
-        get_integration_status("gitlab").get("authenticated")
-    )
+    was_authenticated = bool(get_integration_status("gitlab").get("authenticated"))
     try:
         clear_gitlab_credentials(instance_host=instance)
     except (ProviderCredentialError, CredentialStoreError, ValueError) as exc:
@@ -136,7 +133,8 @@ def gitlab_ls() -> None:
     )
     if j:
         print_json_blob(
-            {"ok": True, "provider": "gitlab", "instances": rows}, as_json=True,
+            {"ok": True, "provider": "gitlab", "instances": rows},
+            as_json=True,
         )
         return
     print_plain_line("GitLab instances:", as_json=False)
@@ -223,7 +221,9 @@ def gitlab_select(
     j, v = _flags()
     try:
         result = run_gitlab_select_flow(
-            instance_host=instance, project_path=project, limit=limit,
+            instance_host=instance,
+            project_path=project,
+            limit=limit,
         )
     except GitLabReadError as exc:
         emit_error("GitLab fetch failed", str(exc), verbose=v)
@@ -233,8 +233,7 @@ def gitlab_select(
         command="gitlab select",
         result_kind="provider_select",
         item_count=(
-            len(result.get("merge_requests") or [])
-            + len(result.get("issues") or [])
+            len(result.get("merge_requests") or []) + len(result.get("issues") or [])
         ),
         provider="gitlab",
     )

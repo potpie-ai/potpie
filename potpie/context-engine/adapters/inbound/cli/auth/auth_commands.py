@@ -83,7 +83,13 @@ jira_app = typer.Typer(help="Jira integration and read.")
 confluence_app = typer.Typer(help="Confluence integration and read.")
 
 _OAUTH_CALLBACK_TIMEOUT = 300.0
-_ALL_PROVIDERS: tuple[Provider, ...] = ("github", "linear", "jira", "confluence", "gitlab")
+_ALL_PROVIDERS: tuple[Provider, ...] = (
+    "github",
+    "linear",
+    "jira",
+    "confluence",
+    "gitlab",
+)
 IntegrationAuthProvider = Literal["linear", "atlassian", "jira", "confluence"]
 
 

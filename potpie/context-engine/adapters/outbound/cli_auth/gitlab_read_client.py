@@ -16,7 +16,6 @@ from adapters.outbound.cli_auth.gitlab_client import (
     normalize_instance_url,
 )
 from adapters.outbound.cli_auth.credentials_store import (
-    ProviderCredentialError,
     get_gitlab_credentials,
 )
 from adapters.outbound.cli_auth.provider_config import (
@@ -38,21 +37,22 @@ def load_gitlab_read_credentials(
     """Load stored GitLab credentials for API reads."""
     creds = get_gitlab_credentials(instance_host=instance_host)
     if not creds:
-        raise GitLabReadError(
-            "GitLab is not connected. Run: potpie gitlab login"
-        )
+        raise GitLabReadError("GitLab is not connected. Run: potpie gitlab login")
     pat = str(creds.get("personal_access_token") or "").strip()
     if not pat:
         raise GitLabReadError(
-            "GitLab token not found in local credentials. "
-            "Run: potpie gitlab login"
+            "GitLab token not found in local credentials. Run: potpie gitlab login"
         )
     return creds
 
 
 def _api_base(creds: dict[str, Any]) -> str:
     instance_url = str(creds.get("instance_url") or "").strip()
-    normalized = normalize_instance_url(instance_url) if instance_url else GITLAB_DEFAULT_INSTANCE
+    normalized = (
+        normalize_instance_url(instance_url)
+        if instance_url
+        else GITLAB_DEFAULT_INSTANCE
+    )
     return gitlab_api_base_url(normalized)
 
 
@@ -85,9 +85,7 @@ def _get_json(
                 "Run: potpie gitlab login --force"
             )
         if response.status_code != 200:
-            raise GitLabReadError(
-                f"GitLab API returned HTTP {response.status_code}"
-            )
+            raise GitLabReadError(f"GitLab API returned HTTP {response.status_code}")
         try:
             return response.json()
         except ValueError as exc:

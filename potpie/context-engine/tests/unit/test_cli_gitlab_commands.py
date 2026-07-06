@@ -36,7 +36,9 @@ def _isolate_creds(tmp_path, monkeypatch):
     monkeypatch.setattr(cs, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
     monkeypatch.setattr(
-        cs, "integration_secrets_path", lambda: tmp_path / "integration_secrets.json",
+        cs,
+        "integration_secrets_path",
+        lambda: tmp_path / "integration_secrets.json",
     )
 
 
@@ -51,7 +53,9 @@ def _save_gitlab(*, host: str = "gitlab.com", token: str = "glpat-test") -> None
     )
 
 
-def _patch_read_http(monkeypatch: pytest.MonkeyPatch, responses: list[httpx.Response]) -> None:
+def _patch_read_http(
+    monkeypatch: pytest.MonkeyPatch, responses: list[httpx.Response]
+) -> None:
     from adapters.outbound.cli_auth import gitlab_read_client as gl_read_client
 
     fake = FakeAuthHttpClient(responses)
@@ -69,15 +73,18 @@ def test_auth_failure_message_all_kinds() -> None:
     base = gl_auth._auth_failure_message(None, "https://gitlab.com")
     assert "Could not authenticate" in base
     invalid = gl_auth._auth_failure_message(
-        GitLabAuthErrorKind.INVALID_CREDENTIALS, "https://gitlab.com",
+        GitLabAuthErrorKind.INVALID_CREDENTIALS,
+        "https://gitlab.com",
     )
     assert "Invalid personal access token" in invalid
     scopes = gl_auth._auth_failure_message(
-        GitLabAuthErrorKind.INSUFFICIENT_SCOPES, "https://gitlab.com",
+        GitLabAuthErrorKind.INSUFFICIENT_SCOPES,
+        "https://gitlab.com",
     )
     assert "missing required scopes" in scopes
     unreachable = gl_auth._auth_failure_message(
-        GitLabAuthErrorKind.INSTANCE_UNREACHABLE, "https://git.corp.com",
+        GitLabAuthErrorKind.INSTANCE_UNREACHABLE,
+        "https://git.corp.com",
     )
     assert "Cannot reach" in unreachable
 
@@ -90,7 +97,9 @@ def test_detect_gitlab_from_git_remote(monkeypatch: pytest.MonkeyPatch) -> None:
     assert gl_auth._detect_gitlab_from_git_remote() == "https://gitlab.corp.com"
 
 
-def test_detect_gitlab_from_git_remote_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_detect_gitlab_from_git_remote_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         "adapters.inbound.cli.repo_location.current_git_remote",
         lambda _cwd: "github.com/acme/api",
@@ -129,7 +138,9 @@ def test_run_gitlab_pat_auth_already_connected(tmp_path, capsys) -> None:
     assert "already connected" in out
 
 
-def test_run_gitlab_pat_auth_non_tty_requires_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_gitlab_pat_auth_non_tty_requires_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(gl_auth.sys.stdin, "isatty", lambda: False)
     with pytest.raises(typer.Exit) as exc:
         gl_auth.run_gitlab_pat_auth(force=True)
@@ -273,7 +284,9 @@ def test_fetch_gitlab_projects_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert rows[0]["path_with_namespace"] == "acme/api"
 
 
-def test_fetch_gitlab_projects_non_list_response(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fetch_gitlab_projects_non_list_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _save_gitlab()
     _patch_read_http(monkeypatch, [httpx.Response(200, json={"error": "nope"})])
     assert fetch_gitlab_projects() == []
@@ -534,7 +547,9 @@ def test_gitlab_select_cli_json(monkeypatch: pytest.MonkeyPatch) -> None:
     assert '"merge_requests"' in result.stdout
 
 
-def test_prompt_instance_url_defaults_to_gitlab_com(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prompt_instance_url_defaults_to_gitlab_com(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(gl_auth.typer, "prompt", lambda *_a, **_k: "gitlab.com")
     assert gl_auth._prompt_instance_url() == "https://gitlab.com"
 
