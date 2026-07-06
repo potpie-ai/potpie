@@ -394,6 +394,8 @@ def _emit_graph_result(
             or payload.get("recommended_next_action"),
         )
     emit(env.to_dict(), human=_with_graph_warnings(human, merged_warnings))
+    if payload.get("ok", True) is False:
+        raise typer.Exit(code=EXIT_VALIDATION)
 
 
 def _with_graph_warnings(human: str, warnings: tuple[str, ...]) -> str:
