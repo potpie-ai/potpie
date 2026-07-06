@@ -359,6 +359,35 @@ potpie graph search-entities [<query> | --query <text>] \
   answer synthesis**. `timeline recent` is the same path as
   `graph read --subgraph recent_changes --view timeline`. Reader/ranking/view detail
   lives in [querying.md](./querying.md).
+
+  **Text-mode presentation** (default human output, no `--json`): `--format`,
+  `--detail`, and `--relations` shape the layout and depth independently.
+
+  | Flag | Text effect |
+  |------|-------------|
+  | `--format events` (timeline default) | Bullet list of deduped timeline events |
+  | `--format table` | Markdown pipe table (`occurred_at \| source_ref \| …`) |
+  | `--format raw` (non-timeline default) | Bullet list of ranked items |
+  | `--detail compact` | Core fields only (fact, score, summary) |
+  | `--detail full` | Adds truth, coverage, claim/breakdown metadata |
+  | `--relations summary` | Inline relation counts and predicate names |
+  | `--relations full` | Indented relation sub-lines (or secondary table with `--format table`) |
+
+  ```bash
+  # Human markdown table for recent changes
+  potpie graph read --subgraph recent_changes --view timeline --format table --limit 10
+
+  # Deeper relation detail in text mode
+  potpie graph read --subgraph recent_changes --view timeline \
+    --format events --detail full --relations full --limit 5
+
+  # Non-timeline entity table
+  potpie graph read --subgraph decisions --view preferences_for_scope \
+    --scope language:python --format table --limit 5
+  ```
+
+  `--json` uses the same item shaping (`detail` / `relations`) but emits structured
+  JSON instead of human tables/bullets.
 - **`graph search-entities`** is the **Filter** axis (identity resolution before a
   write) — structured per-entity lookup, **not** through the read trunk.
 
