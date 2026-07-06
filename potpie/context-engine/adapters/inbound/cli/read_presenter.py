@@ -53,9 +53,8 @@ def build_presentation_context(
     dedupe: str,
     event_limit: int | None,
 ) -> ReadPresentationContext:
-    payload = result.to_dict()
     return ReadPresentationContext(
-        view=_str(payload.get("view")),
+        view=_str(getattr(result, "view", None)),
         detail=_normalize_read_detail(getattr(result, "detail", None)),
         relations=_normalize_read_relations(getattr(result, "relations", None)),
         format_mode=format_,
@@ -71,8 +70,11 @@ def render_timeline_events(
     shaped_items: list[dict[str, Any]],
     ctx: ReadPresentationContext,
 ) -> str:
-    payload = result.to_dict()
-    quality = payload.get("quality", {})
+    payload = {
+        "view": getattr(result, "view", None),
+        "unsupported": getattr(result, "unsupported", ()),
+    }
+    quality = getattr(result, "quality", {}) or {}
     lines = _timeline_header_lines(payload, len(events), quality)
     if not events:
         lines.append("(no events)")
@@ -93,8 +95,11 @@ def render_timeline_table(
     shaped_items: list[dict[str, Any]],
     ctx: ReadPresentationContext,
 ) -> str:
-    payload = result.to_dict()
-    quality = payload.get("quality", {})
+    payload = {
+        "view": getattr(result, "view", None),
+        "unsupported": getattr(result, "unsupported", ()),
+    }
+    quality = getattr(result, "quality", {}) or {}
     lines = _timeline_header_lines(payload, len(events), quality)
     if not events:
         lines.append("(no events)")
@@ -190,8 +195,12 @@ def render_items_bullets(
     items: list[dict[str, Any]],
     ctx: ReadPresentationContext,
 ) -> str:
-    payload = result.to_dict()
-    quality = payload.get("quality", {})
+    payload = {
+        "view": getattr(result, "view", None),
+        "backed": getattr(result, "backed", None),
+        "unsupported": getattr(result, "unsupported", ()),
+    }
+    quality = getattr(result, "quality", {}) or {}
     lines = _items_header_lines(payload, len(items), quality)
     if not items:
         lines.append("(no rows)")
