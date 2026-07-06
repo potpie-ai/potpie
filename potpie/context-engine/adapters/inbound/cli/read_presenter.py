@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from domain.ports.services.graph_service import (
-    _normalize_read_detail,
-    _normalize_read_relations,
-    _read_item_for_detail,
+    normalize_read_detail,
+    normalize_read_relations,
+    read_item_for_detail,
 )
 
 _FACT_TRUNCATE_LEN = 120
@@ -27,11 +27,11 @@ class ReadPresentationContext:
 
 
 def prepare_items(result) -> list[dict[str, Any]]:
-    detail = _normalize_read_detail(getattr(result, "detail", None))
-    relations = _normalize_read_relations(getattr(result, "relations", None))
+    detail = normalize_read_detail(getattr(result, "detail", None))
+    relations = normalize_read_relations(getattr(result, "relations", None))
     raw_items = getattr(result, "items", None) or ()
     return [
-        _read_item_for_detail(item, detail=detail, relations=relations)
+        read_item_for_detail(item, detail=detail, relations=relations)
         for item in raw_items
     ]
 
@@ -55,8 +55,8 @@ def build_presentation_context(
 ) -> ReadPresentationContext:
     return ReadPresentationContext(
         view=_str(getattr(result, "view", None)),
-        detail=_normalize_read_detail(getattr(result, "detail", None)),
-        relations=_normalize_read_relations(getattr(result, "relations", None)),
+        detail=normalize_read_detail(getattr(result, "detail", None)),
+        relations=normalize_read_relations(getattr(result, "relations", None)),
         format_mode=format_,
         sort=sort,
         dedupe=dedupe,
