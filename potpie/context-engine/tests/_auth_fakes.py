@@ -212,5 +212,74 @@ class InMemoryCredentialStore:
     def save_confluence_workspace_prefs(self, *, space_key: str) -> None:
         self.workspace_prefs["confluence"] = {"space_key": space_key}
 
+    # --- GitLab credentials + workspace prefs ----------------------------
+    def get_gitlab_credentials(
+        self, instance_host: str | None = None,
+    ) -> dict[str, Any]:
+        gitlab = self.providers.get("gitlab", {})
+        if not gitlab:
+            return {}
+        instances = gitlab.get("instances", {})
+        host = instance_host or gitlab.get("active_instance_host")
+        if host and isinstance(instances, dict):
+            return dict(instances.get(host, {}))
+        return {}
+
+    def save_gitlab_credentials(
+        self,
+        credentials: dict[str, Any],
+        *,
+        account: dict[str, Any] | None = None,
+    ) -> None:
+        gitlab = dict(self.providers.get("gitlab", {}))
+        instances = dict(gitlab.get("instances", {}))
+        host = credentials.get("instance_host") or "gitlab.com"
+        entry = dict(credentials)
+        entry.pop("personal_access_token", None)
+        if account:
+            entry["account"] = account
+        instances[host] = entry
+        gitlab["instances"] = instances
+        gitlab["active_instance_host"] = host
+        self.providers["gitlab"] = gitlab
+
+    def clear_gitlab_credentials(
+        self, instance_host: str | None = None,
+    ) -> None:
+        if instance_host:
+            gitlab = dict(self.providers.get("gitlab", {}))
+            instances = dict(gitlab.get("instances", {}))
+            instances.pop(instance_host, None)
+            if instances:
+                gitlab["instances"] = instances
+                self.providers["gitlab"] = gitlab
+            else:
+                self.providers.pop("gitlab", None)
+        else:
+            self.providers.pop("gitlab", None)
+
+    def list_gitlab_instances(self) -> list[dict[str, Any]]:
+        gitlab = self.providers.get("gitlab", {})
+        instances = gitlab.get("instances", {})
+        if not isinstance(instances, dict):
+            return []
+        active = str(gitlab.get("active_instance_host") or "")
+        return [
+            {**entry, "instance_host": host, "active": host == active}
+            for host, entry in instances.items()
+            if isinstance(entry, dict)
+        ]
+
+    def save_gitlab_workspace_prefs(
+        self,
+        *,
+        instance_host: str | None = None,
+        default_project: str,
+    ) -> None:
+        self.workspace_prefs["gitlab"] = {
+            "instance_host": instance_host,
+            "default_project": default_project,
+        }
+
 
 __all__ = ["FakeAuthHttpClient", "InMemoryCredentialStore"]
