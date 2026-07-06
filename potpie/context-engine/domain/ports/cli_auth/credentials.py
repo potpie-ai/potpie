@@ -101,7 +101,8 @@ class CredentialStore(Protocol):
 
     # --- GitLab credentials + workspace prefs ----------------------------
     def get_gitlab_credentials(
-        self, instance_host: str | None = None,
+        self,
+        instance_host: str | None = None,
     ) -> dict[str, Any]: ...
 
     def save_gitlab_credentials(
@@ -112,7 +113,8 @@ class CredentialStore(Protocol):
     ) -> None: ...
 
     def clear_gitlab_credentials(
-        self, instance_host: str | None = None,
+        self,
+        instance_host: str | None = None,
     ) -> None: ...
 
     def list_gitlab_instances(self) -> list[dict[str, Any]]: ...

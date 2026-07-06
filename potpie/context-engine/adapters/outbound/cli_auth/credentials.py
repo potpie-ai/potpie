@@ -137,7 +137,8 @@ class FileCredentialStore(CredentialStore):
 
     # --- GitLab credentials + workspace prefs ----------------------------
     def get_gitlab_credentials(
-        self, instance_host: str | None = None,
+        self,
+        instance_host: str | None = None,
     ) -> dict[str, Any]:
         return _store.get_gitlab_credentials(instance_host=instance_host)
 
@@ -150,7 +151,8 @@ class FileCredentialStore(CredentialStore):
         _store.save_gitlab_credentials(credentials, account=account)
 
     def clear_gitlab_credentials(
-        self, instance_host: str | None = None,
+        self,
+        instance_host: str | None = None,
     ) -> None:
         _store.clear_gitlab_credentials(instance_host=instance_host)
 
@@ -164,7 +166,8 @@ class FileCredentialStore(CredentialStore):
         default_project: str,
     ) -> None:
         _store.save_gitlab_workspace_prefs(
-            instance_host=instance_host, default_project=default_project,
+            instance_host=instance_host,
+            default_project=default_project,
         )
 
 
