@@ -121,6 +121,20 @@ def claim_corroboration(row: ClaimRow) -> int:
     return 1
 
 
+def claim_semantic_similarity(row: ClaimRow) -> float | None:
+    """Backend-stamped query similarity, when the read carried a ``fact_query``.
+
+    Returns ``None`` when the backend did not stamp a score so the ranker
+    falls back to its neutral default instead of a fabricated value.
+    """
+    sim = row.properties.get("semantic_similarity")
+    if isinstance(sim, bool):
+        return None
+    if isinstance(sim, (int, float)):
+        return float(sim)
+    return None
+
+
 def claim_environment(row: ClaimRow) -> str | None:
     env = row.environment
     if isinstance(env, str) and env.strip():
@@ -209,6 +223,7 @@ __all__ = [
     "claim_corroboration",
     "claim_environment",
     "claim_payload",
+    "claim_semantic_similarity",
     "coverage_status_from_count",
     "dedupe_claim_rows",
     "make_task_context",

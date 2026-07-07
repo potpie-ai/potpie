@@ -23,6 +23,7 @@ from application.readers._common import (
     claim_candidate_key,
     claim_corroboration,
     claim_payload,
+    claim_semantic_similarity,
     coverage_status_from_count,
     dedupe_claim_rows,
     rank_candidates,
@@ -64,7 +65,6 @@ class CodingPreferencesReader:
                 # Hard zero on overlap: skip — readers should not surface
                 # rules that demonstrably don't apply.
                 continue
-            sim = row.properties.get("semantic_similarity")
             candidates.append(
                 Candidate(
                     candidate_key=claim_candidate_key(row),
@@ -73,9 +73,7 @@ class CodingPreferencesReader:
                     valid_at=row.valid_at,
                     corroboration_count=claim_corroboration(row),
                     scope_overlap=overlap if scope_keys else None,
-                    semantic_similarity=float(sim)
-                    if isinstance(sim, (int, float))
-                    else None,
+                    semantic_similarity=claim_semantic_similarity(row),
                 )
             )
 

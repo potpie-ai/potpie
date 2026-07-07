@@ -23,7 +23,11 @@ from application.readers import (
     PriorBugsReader,
     TimelineReader,
 )
-from application.readers._common import ReadRequest, dedupe_claim_rows
+from application.readers._common import (
+    ReadRequest,
+    claim_semantic_similarity,
+    dedupe_claim_rows,
+)
 from domain.ports.claim_query import ClaimRow
 from domain.ranking import RankingService
 
@@ -93,6 +97,16 @@ def test_dedupe_claim_rows_uses_claim_key_then_triple_and_sources() -> None:
         first,
         distinct_source,
     ]
+
+
+def test_claim_semantic_similarity_ignores_booleans() -> None:
+    row = _row(
+        predicate="DEPENDS_ON",
+        subject_key="service:a",
+        object_key="service:b",
+        properties={"semantic_similarity": True},
+    )
+    assert claim_semantic_similarity(row) is None
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +333,88 @@ class TestInfraTopologyReader:
         response = reader.read(ReadRequest(pot_id="pot-1", scope={}))
         # Unscoped: returns all infra predicates, all neutral overlap
         assert len(response.items) >= 2
+
+    def _setup_semantic_store(self) -> InMemoryClaimQueryStore:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="DEPENDS_ON",
+                subject_key="service:auth-svc",
+                object_key="datastore:redis-cache",
+                fact="auth-svc depends on redis cache for session connection pooling",
+                evidence_strength="deterministic",
+            )
+        )
+        store.add(
+            _row(
+                predicate="DEPENDS_ON",
+                subject_key="service:auth-svc",
+                object_key="service:kafka-broker",
+                fact="auth-svc publishes login events to the kafka broker",
+                evidence_strength="deterministic",
+            )
+        )
+        return store
+
+    def test_query_makes_anchored_ranking_semantic(self) -> None:
+        store = self._setup_semantic_store()
+        reader = InfraTopologyReader(claim_query=store, ranker=RankingService())
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"services": ["auth-svc"]},
+                query="redis connection pool for sessions",
+            )
+        )
+        assert len(response.items) == 2
+        top, second = response.items
+        assert top.candidate.payload["object_key"] == "datastore:redis-cache"
+        assert (
+            top.breakdown["semantic_similarity"]
+            > second.breakdown["semantic_similarity"]
+        )
+
+    def test_query_makes_unanchored_ranking_semantic(self) -> None:
+        store = self._setup_semantic_store()
+        reader = InfraTopologyReader(claim_query=store, ranker=RankingService())
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={},
+                query="redis connection pool for sessions",
+            )
+        )
+        assert response.items
+        top = response.items[0]
+        assert top.candidate.payload["object_key"] == "datastore:redis-cache"
+        sims = {r.breakdown["semantic_similarity"] for r in response.items}
+        assert len(sims) > 1  # not flat-scored
+
+    def test_no_query_keeps_neutral_similarity(self) -> None:
+        store = self._setup_semantic_store()
+        reader = InfraTopologyReader(claim_query=store, ranker=RankingService())
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"services": ["auth-svc"]})
+        )
+        assert response.items
+        assert all(r.breakdown["semantic_similarity"] == 0.5 for r in response.items)
+
+    def test_query_does_not_change_traversal_discovery(self) -> None:
+        store = self._setup_semantic_store()
+        reader = InfraTopologyReader(claim_query=store, ranker=RankingService())
+        without_query = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"services": ["auth-svc"]})
+        )
+        with_query = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"services": ["auth-svc"]},
+                query="redis connection pool for sessions",
+            )
+        )
+        assert {r.candidate.candidate_key for r in without_query.items} == {
+            r.candidate.candidate_key for r in with_query.items
+        }
 
 
 # ---------------------------------------------------------------------------
