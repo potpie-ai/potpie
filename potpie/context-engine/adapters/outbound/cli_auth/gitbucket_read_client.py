@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any
 
 from adapters.outbound.cli_auth.credentials_store import (
-    ProviderCredentialError,
     get_gitbucket_credentials,
 )
 from adapters.outbound.cli_auth.errors import CliAuthError
@@ -57,9 +56,7 @@ def _get_json(
             "GitBucket authentication failed. Run: potpie gitbucket login"
         )
     if response.status_code not in (200, 201):
-        raise GitBucketReadError(
-            f"GitBucket API returned HTTP {response.status_code}."
-        )
+        raise GitBucketReadError(f"GitBucket API returned HTTP {response.status_code}.")
     try:
         return response.json()
     except ValueError as exc:
@@ -69,9 +66,7 @@ def _get_json(
 def _normalize_repo(repo: dict[str, Any]) -> dict[str, Any]:
     owner_value = repo.get("owner")
     owner_login = (
-        str(owner_value.get("login") or "")
-        if isinstance(owner_value, dict)
-        else ""
+        str(owner_value.get("login") or "") if isinstance(owner_value, dict) else ""
     )
     return {
         "full_name": str(repo.get("full_name") or ""),
@@ -125,11 +120,7 @@ def list_gitbucket_repos(
         raise GitBucketReadError(
             "GitBucket API returned an unexpected response format for /user/repos."
         )
-    return [
-        _normalize_repo(repo)
-        for repo in data
-        if isinstance(repo, dict)
-    ]
+    return [_normalize_repo(repo) for repo in data if isinstance(repo, dict)]
 
 
 __all__ = [

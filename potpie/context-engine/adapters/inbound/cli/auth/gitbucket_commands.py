@@ -71,9 +71,7 @@ def _prompt_host_url() -> str:
 
 def _prompt_gitbucket_login() -> str:
     login = _guard_typer_prompt(
-        lambda: typer.prompt(
-            "GitBucket username (for opening the token page)"
-        ).strip()
+        lambda: typer.prompt("GitBucket username (for opening the token page)").strip()
     )
     if not login:
         raise typer.Exit(code=1)
@@ -213,7 +211,9 @@ def run_gitbucket_api_token_auth(
 
     if existing.get("token") and existing.get("host_url") and not force:
         host_url_stored = existing.get("host_url", "")
-        account = existing.get("account") if isinstance(existing.get("account"), dict) else {}
+        account = (
+            existing.get("account") if isinstance(existing.get("account"), dict) else {}
+        )
         login = str(existing.get("login") or account.get("login") or "").strip()
         print_plain_line(
             "GitBucket is already connected.",

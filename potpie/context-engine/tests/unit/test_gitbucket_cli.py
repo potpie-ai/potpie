@@ -115,7 +115,9 @@ def test_verify_gitbucket_token_rejects_127_prefixed_non_loopback_hostname(
     client = FakeClient([httpx.Response(200, json={"login": "alice"})])
 
     with pytest.raises(GitBucketClientError, match="plain HTTP is only allowed"):
-        verify_gitbucket_token("http://127.example.com:8080", "secret-token", http=client)
+        verify_gitbucket_token(
+            "http://127.example.com:8080", "secret-token", http=client
+        )
 
     assert client.calls == []
 
@@ -163,7 +165,9 @@ def test_verify_gitbucket_token_success() -> None:
 
 
 def test_verify_gitbucket_token_401() -> None:
-    client = FakeClient([httpx.Response(401, json={"message": "Requires authentication"})])
+    client = FakeClient(
+        [httpx.Response(401, json={"message": "Requires authentication"})]
+    )
 
     with pytest.raises(GitBucketClientError, match="Authentication failed") as exc:
         verify_gitbucket_token("http://localhost:8080", "bad-token", http=client)
@@ -367,7 +371,9 @@ def test_gitbucket_credentials_roundtrip() -> None:
 
 def test_save_gitbucket_credentials_requires_token() -> None:
     with pytest.raises(cs.ProviderCredentialError, match="token is required"):
-        cs.save_gitbucket_credentials({"host_url": "http://localhost:8080", "token": "  "})
+        cs.save_gitbucket_credentials(
+            {"host_url": "http://localhost:8080", "token": "  "}
+        )
 
 
 def test_save_gitbucket_credentials_requires_host_url() -> None:

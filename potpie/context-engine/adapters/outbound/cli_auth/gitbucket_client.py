@@ -55,14 +55,16 @@ def normalize_gitbucket_host_url(host_url: str) -> str:
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
     parsed = urlparse(url)
-    normalized = urlunparse((
-        parsed.scheme,
-        parsed.netloc,
-        parsed.path.rstrip("/"),
-        "",
-        "",
-        "",
-    ))
+    normalized = urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path.rstrip("/"),
+            "",
+            "",
+            "",
+        )
+    )
     return normalized
 
 
@@ -183,9 +185,7 @@ def verify_gitbucket_token(
 
     login = str(data.get("login") or "").strip()
     if not login:
-        raise GitBucketClientError(
-            "GitBucket API response missing 'login' field."
-        )
+        raise GitBucketClientError("GitBucket API response missing 'login' field.")
     email = str(data.get("email") or "").strip()
     site_admin = bool(data.get("site_admin"))
     html_url = str(data.get("html_url") or "").strip()
