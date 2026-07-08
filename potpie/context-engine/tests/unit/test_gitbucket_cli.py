@@ -58,7 +58,7 @@ class FakeClient:
 @pytest.fixture(autouse=True)
 def _isolated_config(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(gb_cmds, "load_cli_env", lambda: None)
+    monkeypatch.setattr(gb_cmds, "ensure_runtime_environment_loaded", lambda: None)
 
 
 # --- gitbucket_client.py ---

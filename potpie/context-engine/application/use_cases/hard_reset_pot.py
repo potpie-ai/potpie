@@ -25,7 +25,9 @@ def hard_reset_pot(
     out: dict[str, Any] = {"pot_id": pot_id, "ok": False}
 
     if reconciliation_ledger is not None:
-        out["reconciliation_rows_deleted"] = reconciliation_ledger.delete_all_for_pot(pot_id)
+        out["reconciliation_rows_deleted"] = reconciliation_ledger.delete_all_for_pot(
+            pot_id
+        )
 
     if ledger is not None:
         out["ledger_rows_deleted"] = ledger.delete_all_for_pot(pot_id)

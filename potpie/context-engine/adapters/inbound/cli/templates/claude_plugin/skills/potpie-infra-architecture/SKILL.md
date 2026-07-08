@@ -76,3 +76,9 @@ Use this only when the `potpie` CLI is unavailable:
 ```json
 {"intent":"operations","include":["infra_topology","timeline","owners"],"mode":"balanced","source_policy":"summary"}
 ```
+
+Include families belong to the envelope surface (`context_*` MCP tools and
+`potpie resolve`/`potpie search`); in the graph workbench they are served by the
+graph views `infra_topology.service_neighborhood`, `recent_changes.timeline`,
+and `code_topology.ownership_by_path` — `graph read` does not accept include
+family names.

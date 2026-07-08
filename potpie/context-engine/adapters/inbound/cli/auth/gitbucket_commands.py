@@ -39,7 +39,7 @@ from adapters.inbound.cli.ui.output import emit_error, print_json_blob, print_pl
 from adapters.outbound.cli_auth.provider_config import (
     GITBUCKET_TOKEN_ENV_VARS,
 )
-from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+from bootstrap.runtime_settings import ensure_runtime_environment_loaded
 
 T = TypeVar("T")
 
@@ -374,7 +374,7 @@ def gitbucket_login(
     ),
 ) -> None:
     """Connect to a GitBucket instance with a personal access token."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     run_gitbucket_api_token_auth(
         force=force,
@@ -388,7 +388,7 @@ def gitbucket_login(
 @gitbucket_app.command("logout")
 def gitbucket_logout() -> None:
     """Remove stored GitBucket credentials."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     store = get_store()
     existing = get_integration_status("gitbucket")
@@ -420,7 +420,7 @@ def gitbucket_repos(
     limit: int = typer.Option(30, "--limit", "-n", min=1, max=100),
 ) -> None:
     """List GitBucket repositories you can access."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         repos = list_gitbucket_repos(limit=limit)

@@ -200,7 +200,7 @@ def _build_operation(
                 # the bug from the symptom.
                 "object": bug,
                 "description": " • ".join(p for p in (summary, symptom) if p),
-            }
+            },
         ]
         for attempt in _as_list(details.get("attempted_failed_fixes")):
             ops.append(

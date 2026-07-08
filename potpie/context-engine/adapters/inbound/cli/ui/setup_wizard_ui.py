@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import sys
-import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -85,7 +84,24 @@ class ChecklistStep:
 
 
 def stderr_console() -> Console:
-    return Console(stderr=True)
+    force_terminal = _env_flag("POTPIE_FORCE_UI")
+    return Console(
+        stderr=_setup_console_uses_stderr(),
+        force_terminal=True if force_terminal else None,
+    )
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes")
+
+
+def _setup_console_uses_stderr() -> bool:
+    """Prefer stderr, but use stdout when it is the only terminal stream."""
+    if sys.stderr.isatty():
+        return True
+    if sys.stdout.isatty():
+        return False
+    return True
 
 
 def _truncate_middle(text: str, max_len: int) -> str:
@@ -99,16 +115,23 @@ def _truncate_middle(text: str, max_len: int) -> str:
 
 
 def rich_ui_enabled(*, as_json: bool) -> bool:
-    """Rich UI when stderr/stdout is a TTY (Cursor often has non-TTY stdin)."""
+    """Rich styling when stderr/stdout is a TTY (Cursor often has non-TTY stdin)."""
     if as_json:
         return False
-    if os.getenv("POTPIE_PLAIN", "").strip().lower() in ("1", "true", "yes"):
+    if _env_flag("POTPIE_PLAIN"):
         return False
-    if os.getenv("POTPIE_FORCE_UI", "").strip().lower() in ("1", "true", "yes"):
+    if _env_flag("POTPIE_FORCE_UI"):
         return True
     if os.getenv("TERM", "").strip().lower() == "dumb":
         return False
     return sys.stderr.isatty() or sys.stdout.isatty()
+
+
+def live_ui_enabled(*, as_json: bool) -> bool:
+    """True when setup may repaint a live terminal region."""
+    if _env_flag("POTPIE_NO_LIVE"):
+        return False
+    return rich_ui_enabled(as_json=as_json)
 
 
 def is_interactive_tty() -> bool:
@@ -122,6 +145,14 @@ def print_json(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2))
 
 
+class _LiveSetupRenderable:
+    def __init__(self, wizard: SetupWizardUI) -> None:
+        self._wizard = wizard
+
+    def __rich_console__(self, console: Console, _options: Any) -> Iterator[Group]:
+        yield self._wizard._render(console)
+
+
 @dataclass
 class SetupWizardUI:
     """Interactive setup checklist; no-op when ``use_rich`` is False."""
@@ -129,9 +160,7 @@ class SetupWizardUI:
     use_rich: bool
     steps: list[ChecklistStep] = field(default_factory=list)
     _live: Live | None = field(default=None, repr=False)
-    _chomp_frame: int = 0
-    _chomp_stop: threading.Event | None = field(default=None, repr=False)
-    _chomp_thread: threading.Thread | None = field(default=None, repr=False)
+    _started_at: float = field(default_factory=time.monotonic, repr=False)
 
     def add_step(
         self,
@@ -184,22 +213,19 @@ class SetupWizardUI:
 
     def _render_table(self, *, content_width: int) -> Table:
         table = Table.grid(padding=(0, 1))
-        table.add_column(width=3)
-        table.add_column(max_width=max(16, content_width - 4))
+        label_width = max(16, content_width - 4)
+        table.add_column(width=3, no_wrap=True)
+        table.add_column(width=label_width, no_wrap=True, overflow="ellipsis")
+        frame = int((time.monotonic() - self._started_at) / 0.12)
         for step in self.steps:
-            icon = _status_icon(step.status, self._chomp_frame)
+            icon = _status_icon(step.status, frame)
             text = step.display_label()
-            line = text
-            if step.status == "running":
-                line = f"[bold]{text}[/bold]"
+            line = Text(text, style="bold" if step.status == "running" else "")
             if step.detail:
-                detail = _truncate_middle(step.detail, max(12, content_width - 10))
-                suffix = f" [dim]{escape(detail)}[/dim]"
-                line = (
-                    f"{line}{suffix}"
-                    if isinstance(line, str)
-                    else Text.assemble(line, (suffix, ""))
-                )
+                detail_width = max(12, label_width - len(text) - 1)
+                detail = _truncate_middle(step.detail, detail_width)
+                line.append(" ")
+                line.append(detail, style="dim")
             table.add_row(icon, line)
         return table
 
@@ -210,29 +236,28 @@ class SetupWizardUI:
 
     def refresh(self) -> None:
         if self._live is not None:
-            self._live.update(self._render())
+            self._live.refresh()
 
-    def _start_chomp_ticker(self) -> None:
-        if not self.use_rich or self._chomp_thread is not None:
-            return
-        self._chomp_stop = threading.Event()
+    def start_step(self, step_id: str) -> None:
+        """Mark a checklist row as running and refresh the live view."""
+        step = self.get(step_id)
+        step.status = "running"
+        self.refresh()
 
-        def tick() -> None:
-            while self._chomp_stop and not self._chomp_stop.is_set():
-                self._chomp_frame += 1
-                self.refresh()
-                time.sleep(0.12)
-
-        self._chomp_thread = threading.Thread(target=tick, daemon=True)
-        self._chomp_thread.start()
-
-    def _stop_chomp_ticker(self) -> None:
-        if self._chomp_stop is not None:
-            self._chomp_stop.set()
-        if self._chomp_thread is not None:
-            self._chomp_thread.join(timeout=0.3)
-        self._chomp_stop = None
-        self._chomp_thread = None
+    def complete_step(
+        self,
+        step_id: str,
+        *,
+        status: StepStatus,
+        detail: str | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
+        """Apply a final status to a checklist row and refresh the live view."""
+        step = self.get(step_id)
+        step.status = status
+        step.detail = detail or ""
+        step.duration_ms = duration_ms
+        self.refresh()
 
     @contextmanager
     def live(self) -> Iterator[SetupWizardUI]:
@@ -241,28 +266,26 @@ class SetupWizardUI:
             return
         console = stderr_console()
         with Live(
-            self._render(console), console=console, refresh_per_second=10
+            _LiveSetupRenderable(self),
+            console=console,
+            refresh_per_second=10,
+            transient=False,
         ) as live:
             self._live = live
             try:
                 yield self
             finally:
-                self._stop_chomp_ticker()
                 self._live = None
 
     @contextmanager
     def run_step(self, step_id: str) -> Iterator[None]:
         """Mark step running, yield for work, caller sets done/fail."""
+        self.start_step(step_id)
         step = self.get(step_id)
-        step.status = "running"
-        if self.use_rich:
-            self._start_chomp_ticker()
-        self.refresh()
         t0 = time.perf_counter()
         try:
             yield
         finally:
-            self._stop_chomp_ticker()
             step.duration_ms = int((time.perf_counter() - t0) * 1000)
             self.refresh()
 

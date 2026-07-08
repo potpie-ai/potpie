@@ -16,7 +16,9 @@ from adapters.outbound.graph.backends._unimplemented import (
     UnimplementedSnapshot,
 )
 from adapters.outbound.graph.backends.claim_query_analytics import ClaimQueryAnalytics
-from adapters.outbound.graph.backends.claim_query_semantic import ClaimQuerySemanticSearch
+from adapters.outbound.graph.backends.claim_query_semantic import (
+    ClaimQuerySemanticSearch,
+)
 from adapters.outbound.graph.falkordb_inspection import FalkorDBInspection
 from adapters.outbound.graph.falkordb_reader import FalkorDBClaimQueryStore
 from adapters.outbound.graph.falkordb_writer import (

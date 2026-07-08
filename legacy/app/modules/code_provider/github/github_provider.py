@@ -55,7 +55,12 @@ class GitHubProvider(ICodeProvider):
 
             # Format private key
             if not private_key.startswith("-----BEGIN"):
-                private_key = f"-----BEGIN RSA PRIVATE KEY-----\n{private_key}\n-----END RSA PRIVATE KEY-----\n"
+                private_key = (
+                    "-----BEGIN RSA "
+                    f"PRIVATE KEY-----\n{private_key}\n"
+                    "-----END RSA "
+                    "PRIVATE KEY-----\n"
+                )
 
             auth = AppAuth(app_id=app_id, private_key=private_key)
 

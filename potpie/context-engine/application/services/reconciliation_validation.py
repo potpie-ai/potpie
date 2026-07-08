@@ -46,9 +46,7 @@ _TEMPORAL_PROPERTY_KEYS = frozenset(
 _OBSERVATION_FALLBACK = "Observation"
 
 
-def validate_reconciliation_plan(
-    plan: MutationBatch, expected_pot_id: str
-) -> None:
+def validate_reconciliation_plan(plan: MutationBatch, expected_pot_id: str) -> None:
     plan.ontology_downgrades.clear()
     canonicalize_reconciliation_plan(plan)
     _validate_hard(plan, expected_pot_id)

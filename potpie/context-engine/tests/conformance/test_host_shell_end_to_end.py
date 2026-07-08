@@ -40,6 +40,29 @@ def host(tmp_path, monkeypatch):
     return build_host_shell(backend=InMemoryGraphBackend())
 
 
+class _PreparedEmbedder:
+    name = "prepared-test-embedder"
+    dimensions = 3
+
+    def __init__(self) -> None:
+        self.prepared = False
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        return (0.1, 0.2, 0.3)
+
+    def embed_many(self, texts):
+        return [self.embed(t) for t in texts]
+
+    def prepare(self) -> dict[str, object]:
+        self.prepared = True
+        return {
+            "provider": "sentence-transformers",
+            "model": "all-MiniLM-L6-v2",
+            "dimensions": self.dimensions,
+            "cache_folder": "/tmp/potpie-model-cache",
+        }
+
+
 def test_setup_record_resolve_status_journey(host):
     pot = host.pots.create_pot(name="default", repo="potpie", use=True)
     host.skills.install(agent="claude")
@@ -118,6 +141,22 @@ def test_setup_orchestrator_provisions_and_creates_default_pot(host):
     assert active is not None and active.name == "default"
 
 
+def test_setup_prepares_backend_embedder(tmp_path, monkeypatch):
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    embedder = _PreparedEmbedder()
+    local_host = build_host_shell(backend=InMemoryGraphBackend(embedder=embedder))
+
+    report = local_host.setup.run(
+        SetupPlan(repo=None, embeddings="sentence-transformers")
+    )
+
+    step = next(s for s in report.steps if s.step == "embeddings.model")
+    assert step.state == DONE
+    assert step.metadata["model"] == "all-MiniLM-L6-v2"
+    assert embedder.prepared is True
+
+
 def test_setup_is_idempotent(host):
     host.setup.run(SetupPlan(repo="potpie"))
     report = host.setup.run(SetupPlan(repo="potpie"))
@@ -128,7 +167,12 @@ def test_setup_is_idempotent(host):
 
 def test_setup_dry_run_executes_nothing(host):
     steps = host.setup.plan(SetupPlan())
-    assert [s.step for s in steps][:3] == ["config", "installer", "backend.provision"]
+    assert [s.step for s in steps][:4] == [
+        "config",
+        "installer",
+        "embeddings.model",
+        "backend.provision",
+    ]
     assert all(s.state == PLANNED for s in steps)
     assert host.pots.active_pot() is None  # plan() creates nothing
 
@@ -141,6 +185,7 @@ def test_setup_preview_classifies_owners_and_host_gated_hardness(host):
 
     by_step = {s.step: s for s in daemon.steps}
     assert by_step["config"].owner and by_step["config"].hard is True
+    assert by_step["embeddings.model"].hard is False
     assert by_step["auth"].hard is False  # soft step
     # HU16 seams are present in the plan and hard for the flat-file profile.
     assert "state_store.provision" in by_step and by_step["state_store.provision"].hard

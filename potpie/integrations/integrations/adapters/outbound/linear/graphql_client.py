@@ -65,7 +65,9 @@ def linear_graphql(
     except httpx.HTTPError as exc:
         raise RuntimeError(f"Linear API request failed: {exc}") from exc
     if not isinstance(body, dict):
-        raise RuntimeError(f"Linear API returned unexpected response type: {type(body).__name__}")
+        raise RuntimeError(
+            f"Linear API returned unexpected response type: {type(body).__name__}"
+        )
     errs = body.get("errors")
     if errs:
         first_msg = errs[0].get("message", str(errs[0])) if errs else "unknown"

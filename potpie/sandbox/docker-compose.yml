@@ -15,4 +15,3 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     command: >
       sh -lc "pytest -q tests/unit tests/integration/test_docker_runtime.py"
-

@@ -57,8 +57,8 @@ Timeline reads do not include uncommitted local work unless it was recorded.
 ## Record History
 
 For GitHub, Linear, Jira, docs, and similar sources, hydrate records with the
-agent's integration tools/connectors first. Do not use pot-level connector
-ingestion commands as the source-history path.
+agent's integration tools/connectors first. Do not use Potpie CLI queue
+ingestion as the source-history path.
 
 Use the workbench write flow after reading the source:
 
@@ -84,3 +84,9 @@ Use this only when the `potpie` CLI is unavailable:
 ```json
 {"intent":"debugging","include":["timeline","prior_bugs","infra_topology"],"mode":"fast","source_policy":"references_only"}
 ```
+
+Include families belong to the envelope surface (`context_*` MCP tools and
+`potpie resolve`/`potpie search`); in the graph workbench they are served by the
+graph views `recent_changes.timeline`, `debugging.prior_occurrences`, and
+`infra_topology.service_neighborhood` — `graph read` does not accept include
+family names.

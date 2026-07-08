@@ -16,11 +16,9 @@ from domain.ingestion_event_models import (
 class IngestionEventStore(Protocol):
     """Event lifecycle and progress; separate from plan/step stores conceptually."""
 
-    def create_event(self, params: CreateIngestionEventParams) -> IngestionEvent:
-        ...
+    def create_event(self, params: CreateIngestionEventParams) -> IngestionEvent: ...
 
-    def get_event(self, event_id: str) -> IngestionEvent | None:
-        ...
+    def get_event(self, event_id: str) -> IngestionEvent | None: ...
 
     def find_duplicate(
         self, pot_id: str, dedup_key: str | None, ingestion_kind: str
@@ -28,7 +26,9 @@ class IngestionEventStore(Protocol):
         """Return existing event when dedupe matches; ``dedup_key`` may be null (no match)."""
         ...
 
-    def transition_event(self, event_id: str, transition: EventTransition) -> IngestionEvent | None:
+    def transition_event(
+        self, event_id: str, transition: EventTransition
+    ) -> IngestionEvent | None:
         """Apply lifecycle fields; return updated row or None if missing."""
         ...
 
@@ -50,5 +50,4 @@ class IngestionEventStore(Protocol):
         step_total: int | None = None,
         step_done: int | None = None,
         step_error: int | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...

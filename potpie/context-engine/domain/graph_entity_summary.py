@@ -61,7 +61,9 @@ def merge_entity_display_properties(
         props.get("title"),
         authored_name,
     )
-    authored_description = _clean_text(props.pop("description", None)) or authored_summary
+    authored_description = (
+        _clean_text(props.pop("description", None)) or authored_summary
+    )
     out = dict(props)
     out["name"] = authored_name or _clean_text(existing.get("name")) or entity_key
     out["summary"] = (

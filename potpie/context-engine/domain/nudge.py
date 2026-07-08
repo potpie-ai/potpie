@@ -98,8 +98,12 @@ NUDGE_POLICIES: dict[str, NudgePolicy] = {
         event=NudgeEvent.session_start.value,
         direction=NudgeDirection.data,
         views=(
-            NudgeViewSpec("decisions.active_decisions", pass_query=False, pass_scope=True),
-            NudgeViewSpec("decisions.preferences_for_scope", pass_query=False, pass_scope=True),
+            NudgeViewSpec(
+                "decisions.active_decisions", pass_query=False, pass_scope=True
+            ),
+            NudgeViewSpec(
+                "decisions.preferences_for_scope", pass_query=False, pass_scope=True
+            ),
         ),
         triggers_ingest=True,
     ),
@@ -107,8 +111,12 @@ NUDGE_POLICIES: dict[str, NudgePolicy] = {
         event=NudgeEvent.pre_edit.value,
         direction=NudgeDirection.data,
         views=(
-            NudgeViewSpec("decisions.preferences_for_scope", pass_query=False, pass_scope=True),
-            NudgeViewSpec("debugging.prior_occurrences", pass_query=True, pass_scope=True),
+            NudgeViewSpec(
+                "decisions.preferences_for_scope", pass_query=False, pass_scope=True
+            ),
+            NudgeViewSpec(
+                "debugging.prior_occurrences", pass_query=True, pass_scope=True
+            ),
         ),
     ),
     NudgeEvent.pre_deploy.value: NudgePolicy(
@@ -124,7 +132,9 @@ NUDGE_POLICIES: dict[str, NudgePolicy] = {
         event=NudgeEvent.test_failed.value,
         direction=NudgeDirection.data,
         views=(
-            NudgeViewSpec("debugging.prior_occurrences", pass_query=True, pass_scope=True),
+            NudgeViewSpec(
+                "debugging.prior_occurrences", pass_query=True, pass_scope=True
+            ),
             NudgeViewSpec("recent_changes.timeline", pass_query=False, pass_scope=True),
         ),
     ),

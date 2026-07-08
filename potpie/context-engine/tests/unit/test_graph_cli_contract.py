@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+import re
 
 import pytest
 from typer.testing import CliRunner
@@ -37,6 +38,12 @@ from domain.ports.graph.analytics import RepairReport
 from domain.ports.graph.backend import BackendCapabilities
 
 pytestmark = pytest.mark.unit
+
+_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _plain_cli_output(output: str) -> str:
+    return _ANSI_RE.sub("", output)
 
 
 @pytest.fixture(autouse=True)
@@ -75,6 +82,19 @@ class _Graph:
         self.read_called = False
         self.read_request = None
         self.search_request = None
+        self.describe_request = None
+
+    def describe(self, request):
+        # Delegate to the real domain contract so payload assertions stay
+        # meaningful; the stub only stands in for the transport.
+        from domain.graph_workbench_ontology import describe_contract
+
+        self.describe_request = request
+        return describe_contract(
+            subgraph=request.subgraph,
+            view=request.view,
+            include_examples=request.include_examples,
+        )
 
     def catalog(self, _request):
         if self.catalog_error is not None:
@@ -704,6 +724,57 @@ def test_graph_repair_accepts_entity_summaries_target() -> None:
     assert result.exit_code == 0, result.output
     assert backend.analytics.calls == [("p", ("entity_summaries",))]
     assert "repaired 2 entity summaries" in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "required_marker", "optional_marker", "missing_message"),
+    [
+        (
+            "neighborhood",
+            "--entity",
+            None,
+            "Missing option '--entity'",
+        ),
+        (
+            "inspect",
+            "ENTITY_KEY",
+            "[ENTITY_KEY]",
+            "Missing argument 'ENTITY_KEY'",
+        ),
+        (
+            "export",
+            "FILE",
+            "[FILE]",
+            "Missing argument 'FILE'",
+        ),
+        (
+            "import",
+            "FILE",
+            "[FILE]",
+            "Missing argument 'FILE'",
+        ),
+    ],
+)
+def test_graph_required_inputs_are_declared_in_help(
+    command: str,
+    required_marker: str,
+    optional_marker: str | None,
+    missing_message: str,
+) -> None:
+    help_result = CliRunner().invoke(graph.graph_app, [command, "--help"])
+
+    assert help_result.exit_code == 0, help_result.output
+    help_output = _plain_cli_output(help_result.output)
+    assert required_marker in help_output
+    assert "[required]" in help_output
+    if optional_marker is not None:
+        assert optional_marker not in help_output
+
+    missing_result = CliRunner().invoke(graph.graph_app, [command])
+    missing_output = _plain_cli_output(missing_result.output)
+
+    assert missing_result.exit_code == 2
+    assert missing_message in missing_output
 
 
 @pytest.mark.parametrize(
@@ -1434,6 +1505,85 @@ def test_graph_read_unknown_view_uses_error_envelope() -> None:
     assert "unknown graph view" in emitted["error"]["message"]
 
 
+def test_graph_read_missing_required_scope_result_is_error_envelope() -> None:
+    _common.set_json(True)
+    graph_service = _Graph(
+        read_result=GraphReadResult(
+            graph_contract_version="v1.5",
+            ontology_version="2026-06-graph",
+            view="features.feature_context",
+            subgraph="features",
+            ok=False,
+            status="missing_required_scope",
+            message=(
+                "graph read view 'features.feature_context' requires one of "
+                "scope, service, repo, anchor_entity_key, query"
+            ),
+            coverage=(
+                {
+                    "view": "features.feature_context",
+                    "status": "unsupported",
+                    "candidate_pool": 0,
+                },
+            ),
+            quality={"status": "unsupported", "reason": "missing_required_scope"},
+            unsupported=(
+                {
+                    "name": "features.feature_context",
+                    "reason": "missing_required_scope",
+                },
+            ),
+        )
+    )
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["read", "--subgraph", "features", "--view", "feature_context"],
+    )
+
+    assert result.exit_code == 1
+    assert graph_service.read_called is True
+    emitted = json.loads(result.output)
+    _assert_graph_envelope(emitted, "graph.read", ok=False)
+    assert emitted["error"]["code"] == "missing_required_scope"
+    assert emitted["unsupported"][0]["reason"] == "missing_required_scope"
+    assert emitted["error"]["detail"]["quality"]["reason"] == "missing_required_scope"
+
+
+def test_graph_read_include_guess_error_carries_did_you_mean() -> None:
+    # Audit item 17: a failed include-family guess returns machine-readable
+    # migration guidance in the error envelope (never accepted as input).
+    from domain.graph_views import UnknownGraphViewError, include_guess_guidance
+
+    _common.set_json(True)
+    guidance = include_guess_guidance("docs", "relevant")
+    graph_service = _Graph(
+        read_error=UnknownGraphViewError(
+            "unknown graph view 'docs.relevant'",
+            did_you_mean=guidance,
+            recommended_next_action=guidance["read_command"],
+        )
+    )
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["read", "--subgraph", "docs", "--view", "relevant"],
+    )
+
+    assert result.exit_code == 1
+    emitted = json.loads(result.output)
+    _assert_graph_envelope(emitted, "graph.read", ok=False)
+    assert emitted["error"]["code"] == "validation_error"
+    did_you_mean = emitted["error"]["detail"]["did_you_mean"]
+    assert did_you_mean["view"] == "knowledge.document_context"
+    assert did_you_mean["matched_include"] == "docs"
+    assert emitted["recommended_next_action"] == (
+        "potpie graph read --subgraph knowledge --view document_context"
+    )
+
+
 def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:
     _common.set_json(True)
     graph_service = _Graph()
@@ -1459,7 +1609,7 @@ def _timeline_env() -> GraphReadResult:
         view="recent_changes.timeline",
         subgraph="recent_changes",
         read_shape="entity_relations",
-        coverage=({"include": "timeline", "status": "complete"},),
+        coverage=({"view": "recent_changes.timeline", "status": "complete"},),
         freshness={"local_worktree_included": False},
         quality={"status": "ok"},
         items=(
@@ -1880,6 +2030,39 @@ def test_graph_catalog_unknown_subgraph_uses_error_envelope() -> None:
     assert "unknown graph subgraph" in emitted["error"]["message"]
 
 
+def test_graph_catalog_include_guess_error_carries_did_you_mean() -> None:
+    # Audit item 17 first-contact path: an include family typed where a
+    # subgraph is expected gets the same migration guidance as read.
+    from domain.graph_views import UnknownGraphViewError, include_guess_guidance
+
+    _common.set_json(True)
+    guidance = include_guess_guidance("docs", None)
+    _common.set_host(
+        _Host(
+            _Graph(
+                catalog_error=UnknownGraphViewError(
+                    "unknown graph subgraph 'docs'",
+                    did_you_mean=guidance,
+                    recommended_next_action=guidance["read_command"],
+                )
+            )
+        )
+    )
+
+    result = CliRunner().invoke(graph.graph_app, ["catalog", "--subgraph", "docs"])
+
+    assert result.exit_code == 1
+    emitted = json.loads(result.output)
+    _assert_graph_envelope(emitted, "graph.catalog", ok=False)
+    assert emitted["error"]["code"] == "validation_error"
+    did_you_mean = emitted["error"]["detail"]["did_you_mean"]
+    assert did_you_mean["view"] == "knowledge.document_context"
+    assert did_you_mean["matched_include"] == "docs"
+    assert emitted["recommended_next_action"] == (
+        "potpie graph read --subgraph knowledge --view document_context"
+    )
+
+
 def test_graph_status_json_uses_workbench_envelope() -> None:
     _common.set_json(True)
     workbench = _Workbench(
@@ -1896,6 +2079,10 @@ def test_graph_status_json_uses_workbench_envelope() -> None:
     assert body["pot"]["name"] == "default"
     assert body["pot"]["source_count"] == 0
     assert body["graph_service"]["supported_commands"][0] == "status"
+    # Workbench-facing status speaks view vocabulary only; the include
+    # families backing them stay on the data-plane surface.
+    assert body["graph_service"]["backed_views"] == ["recent_changes.timeline"]
+    assert "reader_backed_includes" not in body["graph_service"]
     assert body["backend"]["profile"] == "memory"
     assert body["health_status"] == "watch"
     assert body["quality"]["source"] == "quality_summary"
@@ -2031,7 +2218,8 @@ def test_graph_neighborhood_defaults_to_relation_summary() -> None:
 
 def test_graph_describe_returns_executable_view_contract() -> None:
     _common.set_json(True)
-    _common.set_host(_Host(_Graph()))
+    graph_service = _Graph()
+    _common.set_host(_Host(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -2050,6 +2238,12 @@ def test_graph_describe_returns_executable_view_contract() -> None:
         emitted["recommended_next_action"]
         == "Use `potpie graph read --subgraph debugging --view prior_occurrences --json` after choosing a scope."
     )
+    # The CLI is a thin client: the contract must be answered through the
+    # service request, never a CLI-local domain call.
+    assert graph_service.describe_request is not None
+    assert graph_service.describe_request.subgraph == "debugging"
+    assert graph_service.describe_request.view == "prior_occurrences"
+    assert graph_service.describe_request.include_examples is True
 
 
 def test_graph_describe_unknown_view_uses_error_envelope() -> None:

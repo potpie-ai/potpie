@@ -22,6 +22,7 @@ from domain.ports.services.graph_service import (
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
+from domain.graph_views import UnknownGraphViewError
 from domain.reconciliation import MutationBatch, MutationResult, MutationSummary
 from domain.semantic_mutations import SemanticMutationRequest
 
@@ -88,6 +89,19 @@ def test_catalog_filters_by_subgraph(service) -> None:
 def test_catalog_rejects_unknown_subgraph(service) -> None:
     with pytest.raises(ValueError, match="unknown graph subgraph"):
         service.catalog(GraphCatalogRequest(pot_id="p", subgraph="missing"))
+
+
+def test_catalog_unknown_subgraph_carries_include_guidance(service) -> None:
+    # Audit item 17 first-contact path: catalog is the first command agents
+    # run, so `graph catalog --subgraph docs` gets the same migration
+    # guidance as read/describe.
+    with pytest.raises(ValueError, match="knowledge.document_context") as e:
+        service.catalog(GraphCatalogRequest(pot_id="p", subgraph="docs"))
+    err = e.value
+    assert err.detail["did_you_mean"]["matched_include"] == "docs"
+    assert err.recommended_next_action == (
+        "potpie graph read --subgraph knowledge --view document_context"
+    )
 
 
 def test_catalog_includes_ranking_inputs(service) -> None:
@@ -664,6 +678,72 @@ def test_read_returns_unsupported_for_filters_outside_view_contract(service) -> 
     assert env.coverage[0]["status"] == "unsupported"
 
 
+def test_read_missing_required_scope_is_validation_failure(service) -> None:
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="features",
+            view="feature_context",
+            limit=5,
+        )
+    )
+
+    body = env.to_dict()
+    assert body["ok"] is False
+    assert body["status"] == "missing_required_scope"
+    assert "requires one of" in body["message"]
+    assert env.items == ()
+    assert env.unsupported[0]["reason"] == "missing_required_scope"
+    assert env.coverage[0]["status"] == "unsupported"
+    assert env.quality["reason"] == "missing_required_scope"
+
+
+def test_describe_routes_through_service(service) -> None:
+    # `graph describe` must answer from the service (daemon-side ontology),
+    # not a CLI-local contract lookup — same routing as every graph command.
+    from domain.ports.services.graph_service import GraphDescribeRequest
+
+    payload = service.describe(
+        GraphDescribeRequest(subgraph="debugging", view="prior_occurrences")
+    )
+    assert payload["contract_kind"] == "graph_workbench_ontology"
+    assert payload["view"]["name"] == "debugging.prior_occurrences"
+
+    with pytest.raises(ValueError, match="knowledge.document_context") as e:
+        service.describe(GraphDescribeRequest(subgraph="docs"))
+    assert e.value.detail["did_you_mean"]["matched_include"] == "docs"
+
+
+def test_read_unknown_view_suggests_canonical_view_for_include_guess(service) -> None:
+    # Audit item 17: `--subgraph docs` guesses the include family; the error
+    # must return migration guidance, never accept the legacy name as input.
+    with pytest.raises(UnknownGraphViewError, match="knowledge.document_context") as e:
+        service.read(GraphReadRequest(pot_id="p", subgraph="docs", view="relevant"))
+    err = e.value
+    assert err.detail["did_you_mean"]["view"] == "knowledge.document_context"
+    assert err.detail["did_you_mean"]["matched_include"] == "docs"
+    assert err.recommended_next_action == (
+        "potpie graph read --subgraph knowledge --view document_context"
+    )
+
+
+def test_read_unknown_view_without_guidance_stays_plain(service) -> None:
+    with pytest.raises(ValueError, match="unknown graph view") as e:
+        service.read(GraphReadRequest(pot_id="p", subgraph="nope", view="nada"))
+    assert getattr(e.value, "detail", None) is None
+    assert getattr(e.value, "recommended_next_action", None) is None
+
+
+def test_read_coverage_is_keyed_by_view_name(service) -> None:
+    env = service.read(
+        GraphReadRequest(pot_id="p", subgraph="recent_changes", view="timeline")
+    )
+    assert env.coverage
+    for row in env.coverage:
+        assert row["view"] == "recent_changes.timeline"
+        assert "include" not in row
+
+
 def test_infra_read_keeps_environment_qualified_edges_isolated(service) -> None:
     store = service.backend.claim_query
     store.add(
@@ -730,7 +810,9 @@ def test_search_entities_derives_summary_for_old_nodes_without_summary(service) 
         GraphEntitySearchRequest(pot_id="p", query="web auth", type="Service")
     ).to_dict()
 
-    web = next(entity for entity in result["entities"] if entity["key"] == "service:web")
+    web = next(
+        entity for entity in result["entities"] if entity["key"] == "service:web"
+    )
     assert web["key"] == "service:web"
     assert web["summary"] == "web"
     assert web["description"] == "web"

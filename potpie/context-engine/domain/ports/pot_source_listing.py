@@ -15,5 +15,4 @@ class PotSourceListingPort(Protocol):
     view used by ``POST /api/v2/context/status``.
     """
 
-    def list_pot_sources(self, pot_id: str) -> list[StatusSource]:
-        ...
+    def list_pot_sources(self, pot_id: str) -> list[StatusSource]: ...

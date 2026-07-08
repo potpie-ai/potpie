@@ -9,14 +9,23 @@ from sqlalchemy.orm import Session
 
 from adapters.outbound.postgres.models import ContextEventModel
 from domain.context_status import EventLedgerHealth
-from domain.ingestion_db_status import canonical_statuses_to_db_filters, db_status_to_canonical
-from domain.ingestion_event_models import EventListFilters, EventListPage, IngestionEvent
+from domain.ingestion_db_status import (
+    canonical_statuses_to_db_filters,
+    db_status_to_canonical,
+)
+from domain.ingestion_event_models import (
+    EventListFilters,
+    EventListPage,
+    IngestionEvent,
+)
 from domain.ports.event_query_service import EventQueryService
 from domain.ports.ingestion_event_store import IngestionEventStore
 
 
 class DelegatingEventQueryService(EventQueryService):
-    def __init__(self, store: IngestionEventStore, session: Session | None = None) -> None:
+    def __init__(
+        self, store: IngestionEventStore, session: Session | None = None
+    ) -> None:
         self._store = store
         self._db = session
 
@@ -54,16 +63,14 @@ class DelegatingEventQueryService(EventQueryService):
 
         done_filter = canonical_statuses_to_db_filters(("done",))
         last_success = self._db.scalar(
-            select(func.max(ContextEventModel.completed_at))
-            .where(
+            select(func.max(ContextEventModel.completed_at)).where(
                 ContextEventModel.pot_id == pot_id,
                 ContextEventModel.status.in_(tuple(done_filter)),
             )
         )
         if last_success is None:
             last_success = self._db.scalar(
-                select(func.max(ContextEventModel.received_at))
-                .where(
+                select(func.max(ContextEventModel.received_at)).where(
                     ContextEventModel.pot_id == pot_id,
                     ContextEventModel.status.in_(tuple(done_filter)),
                 )
@@ -86,7 +93,11 @@ class DelegatingEventQueryService(EventQueryService):
                 ContextEventModel.status.in_(tuple(error_filter)),
             )
             .order_by(
-                desc(func.coalesce(ContextEventModel.completed_at, ContextEventModel.received_at))
+                desc(
+                    func.coalesce(
+                        ContextEventModel.completed_at, ContextEventModel.received_at
+                    )
+                )
             )
             .limit(max(recent_error_limit, 0))
         ).all()
@@ -105,13 +116,17 @@ class DelegatingEventQueryService(EventQueryService):
                     "source_system": r.source_system,
                     "repo_name": r.repo_name,
                     "error": r.event_error,
-                    "at": _ensure_aware(ts).isoformat() if isinstance(ts, datetime) else None,
+                    "at": _ensure_aware(ts).isoformat()
+                    if isinstance(ts, datetime)
+                    else None,
                 }
             )
 
         return EventLedgerHealth(
             counts=counts,
-            last_success_at=_ensure_aware(last_success) if isinstance(last_success, datetime) else None,
+            last_success_at=_ensure_aware(last_success)
+            if isinstance(last_success, datetime)
+            else None,
             last_error_at=last_error_at,
             recent_errors=recent_errors,
         )

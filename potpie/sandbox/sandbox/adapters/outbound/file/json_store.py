@@ -142,7 +142,9 @@ class JsonSandboxStore(InMemorySandboxStore):
                 "repo_caches": repo_caches,
             }
             tmp = self._path.with_suffix(f"{self._path.suffix}.tmp")
-            tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            tmp.write_text(
+                json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+            )
             tmp.replace(self._path)
 
 
@@ -150,11 +152,7 @@ def _json_ready(obj: Any) -> Any:
     if hasattr(obj, "__dataclass_fields__"):
         obj = asdict(obj)
     if isinstance(obj, dict):
-        return {
-            k: _json_ready(v)
-            for k, v in obj.items()
-            if k != "auth_token"
-        }
+        return {k: _json_ready(v) for k, v in obj.items() if k != "auth_token"}
     if isinstance(obj, list | tuple):
         return [_json_ready(v) for v in obj]
     if isinstance(obj, Enum):
@@ -271,4 +269,3 @@ def _runtime_from_json(raw: dict[str, Any]) -> Runtime:
         created_at=_dt(raw.get("created_at")) or datetime.now(timezone.utc),
         updated_at=_dt(raw.get("updated_at")) or datetime.now(timezone.utc),
     )
-

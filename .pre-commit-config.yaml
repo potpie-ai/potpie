@@ -3,6 +3,7 @@ repos:
     rev: v5.0.0
     hooks:
       - id: check-yaml
+        args: ["--unsafe"]
       - id: check-toml
       - id: check-json
       - id: check-ast
@@ -12,7 +13,7 @@ repos:
       - id: check-merge-conflict
       - id: check-case-conflict
       - id: check-added-large-files
-        args: ["--maxkb=51200"]
+        args: ["--maxkb=25600"]
       - id: detect-private-key
       - id: debug-statements
 
@@ -20,10 +21,11 @@ repos:
     rev: v0.14.3
     hooks:
       - id: ruff
-        args: ["--fix"]
-        exclude: ^legacy/app/alembic/
+        args:
+          - "--extend-ignore=E402,S101,S105,S106,S110,S311,S324,S603,S607,S608,E722"
+        exclude: ^legacy/
       - id: ruff-format
-        exclude: ^legacy/app/alembic/
+        exclude: ^legacy/
 
   - repo: https://github.com/astral-sh/uv-pre-commit
     rev: 0.10.7

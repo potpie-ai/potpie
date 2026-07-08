@@ -98,6 +98,29 @@ class TestEnvelopeBuilder:
         envelope = builder.build(pot_id="pot-1", intent="not-a-real-intent", results=[])
         assert envelope.intent == "unknown"
 
+    def test_coverage_carries_graph_view_forward_pointer(self) -> None:
+        builder = EnvelopeBuilder()
+        envelope = builder.build(
+            pot_id="pot-1",
+            intent="debugging",
+            results=[
+                IncludeResult(
+                    include="prior_bugs",
+                    response=_resp(
+                        family="prior_bugs",
+                        items=[],
+                        coverage_status="empty",
+                    ),
+                ),
+            ],
+            requested_includes=["prior_bugs"],
+        )
+        assert envelope.coverage[0].graph_view == "debugging.prior_occurrences"
+        assert (
+            envelope.to_dict()["coverage"][0]["graph_view"]
+            == "debugging.prior_occurrences"
+        )
+
     def test_unsupported_includes_propagate(self) -> None:
         builder = EnvelopeBuilder()
         envelope = builder.build(

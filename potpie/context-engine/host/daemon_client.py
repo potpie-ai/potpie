@@ -17,7 +17,9 @@ from host.daemon_rpc import decode, encode
 class DaemonRpcClient:
     """Small local HTTP client that calls operations inside the daemon."""
 
-    daemon: Daemon = field(default_factory=lambda: Daemon(home=default_home(), in_process=False))
+    daemon: Daemon = field(
+        default_factory=lambda: Daemon(home=default_home(), in_process=False)
+    )
     timeout_s: float = 30.0
 
     def call(self, surface: str, method: str, *args: Any, **kwargs: Any) -> Any:
@@ -37,9 +39,7 @@ class DaemonRpcClient:
                 timeout=self.timeout_s,
             )
         except httpx.RequestError as exc:
-            raise ContextEngineDisabled(
-                f"Potpie daemon is unavailable: {exc}"
-            ) from exc
+            raise ContextEngineDisabled(f"Potpie daemon is unavailable: {exc}") from exc
         data = _response_json(response)
         if response.status_code >= 400 or not data.get("ok", False):
             _raise_remote_error(data)
@@ -56,9 +56,7 @@ class DaemonRpcClient:
                 timeout=self.timeout_s,
             )
         except httpx.RequestError as exc:
-            raise ContextEngineDisabled(
-                f"Potpie daemon is unavailable: {exc}"
-            ) from exc
+            raise ContextEngineDisabled(f"Potpie daemon is unavailable: {exc}") from exc
         data = _response_json(response)
         if response.status_code >= 400 or not data.get("ok", False):
             _raise_remote_error(data)
@@ -159,7 +157,14 @@ def _raise_remote_error(data: dict[str, Any]) -> None:
     if code == "pot_not_found":
         raise PotNotFound(message)
     if code in {"validation_error", "value_error"}:
-        raise ValueError(message)
+        exc = ValueError(message)
+        # Re-attach structured guidance so the CLI error boundary can surface
+        # detail/recommended_next_action exactly as with an in-process service.
+        if detail is not None:
+            setattr(exc, "detail", detail)
+        if next_action is not None:
+            setattr(exc, "recommended_next_action", next_action)
+        raise exc
     raise ContextEngineDisabled(message)
 
 

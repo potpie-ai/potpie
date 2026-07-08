@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from __future__ import annotations
+from types import SimpleNamespace
+
 import typer
 import pytest
 from typer.testing import CliRunner
@@ -20,19 +22,24 @@ from adapters.outbound.cli_auth.integration_profile import (
 from adapters.outbound.cli_auth.http import AuthHttpError
 from adapters.inbound.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
+from adapters.outbound.cli_auth import provider_config
 from adapters.outbound.cli_auth.integration_verify import (
     _verify_linear,
     verify_integration_access,
 )
 from adapters.outbound.cli_auth.provider_config import (
+    DEFAULT_CALLBACK_PORT,
+    DEFAULT_FALLBACK_CALLBACK_PORTS,
     LINEAR_TOKEN_URL,
     authorization_url,
     get_callback_host,
     get_callback_path,
     get_callback_port,
+    get_callback_port_candidates,
     get_client_id,
     get_client_secret,
     get_redirect_uri,
+    get_redirect_uri_for_port,
     get_scopes,
     token_url,
 )
@@ -50,10 +57,12 @@ def test_auth_help_is_wired_into_main_cli() -> None:
     result = runner.invoke(cli_main.app, ["auth", "--help"])
 
     assert result.exit_code == 0, result.stdout
-    assert "Deprecated" in result.stdout
+    assert "Integration auth status" in result.stdout
 
 
-def test_status_routes_to_integration_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auth_status_routes_to_integration_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     called: list[bool] = []
 
     def _integration_status(*, verify: bool = False) -> None:
@@ -65,11 +74,11 @@ def test_status_routes_to_integration_auth(monkeypatch: pytest.MonkeyPatch) -> N
         _integration_status,
     )
 
-    result = runner.invoke(cli_main.app, ["status"])
+    result = runner.invoke(cli_main.app, ["auth", "status"])
     assert result.exit_code == 0, result.stdout
     assert called == [False]
 
-    result = runner.invoke(cli_main.app, ["status", "--verify"])
+    result = runner.invoke(cli_main.app, ["auth", "status", "--verify"])
     assert result.exit_code == 0, result.stdout
     assert called == [False, True]
 
@@ -102,7 +111,9 @@ def test_esc_handles_none_and_markup() -> None:
 
 
 def test_auth_status_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(
         auth_commands,
         "get_integration_status",
@@ -121,8 +132,38 @@ def test_auth_status_json(monkeypatch: pytest.MonkeyPatch) -> None:
     assert '"linear"' in result.stdout
 
 
+def test_auth_status_json_keeps_provider_errors_per_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
+
+    def _status(provider: str) -> dict[str, object]:
+        if provider == "linear":
+            raise cs.ProviderCredentialError("keychain locked")
+        return {
+            "provider": provider,
+            "authenticated": False,
+            "auth_type": "oauth",
+        }
+
+    monkeypatch.setattr(auth_commands, "get_integration_status", _status)
+    monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
+
+    result = runner.invoke(auth_commands.auth_app, ["status"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    linear = next(row for row in payload["integrations"] if row["provider"] == "linear")
+    assert linear["authenticated"] is False
+    assert linear["status_error"] == "keychain locked"
+
+
 def test_auth_logout_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -152,7 +193,9 @@ def test_token_is_expired_invalid_expires_at() -> None:
 
 
 def test_auth_logout_not_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -174,7 +217,9 @@ def test_auth_logout_not_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
     monkeypatch.setattr(
         auth_commands,
@@ -192,7 +237,9 @@ def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from adapters.outbound.cli_auth.credentials_store import ProviderCredentialError
 
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, True))
     monkeypatch.setattr(
         auth_commands,
@@ -219,7 +266,9 @@ runner = CliRunner()
 
 
 def _mock_cli(monkeypatch: pytest.MonkeyPatch, *, json_mode: bool = False) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (json_mode, False))
 
 
@@ -335,7 +384,9 @@ runner = CliRunner()
 
 
 def test_auth_status_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -359,7 +410,9 @@ def test_auth_status_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auth_status_includes_github_authenticated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -380,7 +433,9 @@ def test_auth_status_includes_github_authenticated(
 
 
 def test_linear_ls_lists_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -403,7 +458,9 @@ def test_linear_ls_lists_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_linear_select_fetches_issues(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -439,7 +496,9 @@ def test_linear_select_fetches_issues(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auth_status_verify_linear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
     monkeypatch.setattr(
         auth_commands,
@@ -468,8 +527,59 @@ def test_auth_status_verify_linear(
     assert '"verified": true' in result.stdout
 
 
+def test_auth_status_verify_linear_refresh_error_stays_in_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
+    monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
+    linear_status_calls = 0
+
+    def _status(provider: str) -> dict[str, object]:
+        nonlocal linear_status_calls
+        if provider != "linear":
+            return {
+                "provider": provider,
+                "authenticated": False,
+                "auth_type": "oauth",
+            }
+        linear_status_calls += 1
+        if linear_status_calls == 2:
+            raise cs.ProviderCredentialError("keychain locked")
+        return {
+            "provider": provider,
+            "authenticated": True,
+            "auth_type": "oauth",
+            "expires_at": 9999999999.0,
+        }
+
+    monkeypatch.setattr(auth_commands, "get_integration_status", _status)
+    monkeypatch.setattr(
+        auth_commands,
+        "ensure_valid_integration_tokens",
+        lambda _provider: {"access_token": "tok", "expires_at": 9999999999.0},
+    )
+    monkeypatch.setattr(
+        auth_commands,
+        "verify_integration_access",
+        lambda _provider, _creds: (True, "ok (Ada)"),
+    )
+
+    result = runner.invoke(auth_commands.auth_app, ["status", "--verify"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    linear = next(row for row in payload["integrations"] if row["provider"] == "linear")
+    assert linear["verified"] is False
+    assert linear["verify_message"] == "keychain locked"
+    assert linear_status_calls == 2
+
+
 def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -505,7 +615,9 @@ def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_auth_status_human_verify_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands, "ensure_runtime_environment_loaded", lambda: None
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         auth_commands,
@@ -857,15 +969,22 @@ def test_get_integration_status_unknown_provider(
 
 
 def test_get_integration_status_github_unauthenticated(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     status = cs.get_integration_status("github")
-    assert status == {"provider": "github", "authenticated": False, "auth_type": "oauth"}
+    assert status == {
+        "provider": "github",
+        "authenticated": False,
+        "auth_type": "oauth",
+    }
 
 
 def test_get_integration_status_github_authenticated(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, keychain: dict[tuple[str, str], str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    keychain: dict[tuple[str, str], str],
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cs.write_provider_credentials(
@@ -1221,9 +1340,20 @@ def test_verify_integration_access_unknown_provider() -> None:
 # --- test_provider_config.py ---
 
 
-def test_get_client_id_requires_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_client_id_uses_configured_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("LINEAR_CLIENT_ID", raising=False)
-    assert get_client_id("linear") == ""
+    expected = "configured-linear-client-id"
+    if hasattr(provider_config, "PACKAGE_LINEAR_CLIENT_ID"):
+        monkeypatch.setattr(provider_config, "PACKAGE_LINEAR_CLIENT_ID", expected)
+    else:
+        monkeypatch.setattr(
+            provider_config,
+            "load_runtime_settings",
+            lambda: SimpleNamespace(linear_client_id=expected),
+        )
+    assert get_client_id("linear") == expected
 
 
 def test_get_client_id_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1240,6 +1370,19 @@ def test_redirect_and_callback_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
     assert get_callback_host() == "127.0.0.1"
     assert get_callback_path() == "/custom/callback"
     assert get_callback_port() == 9001
+    assert get_callback_port_candidates() == (9001,)
+
+
+def test_default_callback_port_is_five_digit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("POTPIE_CLI_OAUTH_REDIRECT_URI", raising=False)
+    monkeypatch.delenv("POTPIE_CLI_OAUTH_CALLBACK_PORT", raising=False)
+    assert DEFAULT_CALLBACK_PORT == 28757
+    assert DEFAULT_FALLBACK_CALLBACK_PORTS == (28763,)
+    assert get_callback_port() == DEFAULT_CALLBACK_PORT
+    assert get_callback_port_candidates() == (
+        DEFAULT_CALLBACK_PORT,
+        *DEFAULT_FALLBACK_CALLBACK_PORTS,
+    )
 
 
 def test_get_callback_port_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1249,6 +1392,17 @@ def test_get_callback_port_env_override(monkeypatch: pytest.MonkeyPatch) -> None
     )
     monkeypatch.setenv("POTPIE_CLI_OAUTH_CALLBACK_PORT", "9999")
     assert get_callback_port() == 9999
+    assert get_callback_port_candidates() == (9999,)
+
+
+def test_get_redirect_uri_for_port_rewrites_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "POTPIE_CLI_OAUTH_REDIRECT_URI",
+        "http://127.0.0.1:9001/custom/callback",
+    )
+    assert get_redirect_uri_for_port(9002) == "http://127.0.0.1:9002/custom/callback"
 
 
 def test_linear_oauth_urls() -> None:

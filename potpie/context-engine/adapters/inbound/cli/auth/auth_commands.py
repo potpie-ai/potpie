@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import secrets
-import threading
 import time
 import urllib.parse
 import webbrowser
@@ -30,6 +29,7 @@ from adapters.outbound.cli_auth.linear_read_client import (
 from adapters.inbound.cli.auth.linear_read import run_linear_use_flow
 from adapters.outbound.cli_auth.callback_server import (
     OAuthCallbackResult,
+    start_oauth_callback_server,
     wait_for_oauth_callback,
 )
 from adapters.outbound.cli_auth.credentials_store import (
@@ -38,12 +38,7 @@ from adapters.outbound.cli_auth.credentials_store import (
     get_integration_status,
     get_integration_tokens,
 )
-from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
-
-try:
-    from bootstrap.runtime_settings import ensure_runtime_environment_loaded
-except ModuleNotFoundError:
-    ensure_runtime_environment_loaded = load_cli_env
+from bootstrap.runtime_settings import ensure_runtime_environment_loaded
 from adapters.outbound.cli_auth.integration_session import (
     ensure_valid_integration_tokens,
     token_needs_refresh,
@@ -70,15 +65,18 @@ from adapters.outbound.cli_auth.provider_config import (
     authorization_url,
     get_callback_host,
     get_callback_path,
-    get_callback_port,
+    get_callback_port_candidates,
     get_client_id,
-    get_redirect_uri,
+    get_redirect_uri_for_port,
     get_scopes,
 )
 from adapters.outbound.cli_auth.token_exchange import exchange_authorization_code
 
 auth_app = typer.Typer(
-    help="[Deprecated] Use `potpie <provider>` and `potpie status` instead.",
+    help=(
+        "Integration auth status and deprecated provider aliases. "
+        "Use `potpie <provider>` for provider login/logout."
+    ),
 )
 linear_app = typer.Typer(help="Linear integration.")
 jira_app = typer.Typer(help="Jira integration and read.")
@@ -241,7 +239,7 @@ def _print_linear_login_success(
 
 
 def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     store = get_store()
 
@@ -303,92 +301,82 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
         raise typer.Exit(code=1)
 
     try:
-        redirect_uri = get_redirect_uri()
-        port = get_callback_port()
+        port_candidates = get_callback_port_candidates()
         host = get_callback_host()
         callback_path = get_callback_path()
     except ValueError as exc:
         emit_error("Linear OAuth redirect is invalid", str(exc), verbose=v)
         raise typer.Exit(code=1) from exc
-    state = secrets.token_urlsafe(24)
-    code_verifier, code_challenge = generate_pkce_pair()
-    auth_url = _build_linear_authorization_url(
-        redirect_uri=redirect_uri,
-        state=state,
-        code_challenge=code_challenge,
-    )
 
-    callback_result: OAuthCallbackResult | None = None
-    callback_error: BaseException | None = None
-
-    def _capture_callback() -> None:
-        nonlocal callback_result, callback_error
-        try:
-            callback_result = _wait_for_callback(
-                host=host,
-                port=port,
-                path=callback_path,
-            )
-        except BaseException as exc:
-            callback_error = exc
-
-    server_thread = threading.Thread(target=_capture_callback, daemon=True)
-    server_thread.start()
-    time.sleep(0.15)
-    if callback_error is not None:
+    primary_port = port_candidates[0]
+    try:
+        callback_server = start_oauth_callback_server(
+            host=host,
+            port=primary_port,
+            path=callback_path,
+            fallback_ports=port_candidates[1:],
+        )
+    except OSError as exc:
         emit_error(
             "OAuth callback failed to start",
-            str(callback_error),
+            str(exc),
             verbose=v,
-            exc=callback_error if v else None,
+            exc=exc if v else None,
         )
-        raise typer.Exit(code=EXIT_AUTH) from callback_error
+        raise typer.Exit(code=EXIT_AUTH) from exc
 
-    if not j:
-        print_plain_line(
-            "Opening browser for Linear authentication...",
-            as_json=False,
+    try:
+        redirect_uri = get_redirect_uri_for_port(callback_server.port)
+        state = secrets.token_urlsafe(24)
+        code_verifier, code_challenge = generate_pkce_pair()
+        auth_url = _build_linear_authorization_url(
+            redirect_uri=redirect_uri,
+            state=state,
+            code_challenge=code_challenge,
         )
-        if add:
+
+        if not j:
+            if callback_server.port != primary_port:
+                print_plain_line(
+                    f"Port {primary_port} is busy; using {callback_server.port} for OAuth callback.",
+                    as_json=False,
+                )
             print_plain_line(
-                "Choose the Linear workspace to connect in the browser.",
+                "Opening browser for Linear authentication...",
                 as_json=False,
             )
-        print_plain_line(
-            f"If the browser does not open, visit:\n{auth_url}",
-            as_json=False,
-        )
-
-    opened = webbrowser.open(auth_url, new=1)
-    if not opened and not j:
-        print_plain_line(
-            "Could not open a browser automatically; use the URL above.",
-            as_json=False,
-        )
-
-    server_thread.join(timeout=_OAUTH_CALLBACK_TIMEOUT + 5.0)
-
-    if callback_error is not None:
-        if isinstance(callback_error, TimeoutError):
-            emit_error("OAuth callback timed out", str(callback_error), verbose=v)
-        else:
-            emit_error(
-                "OAuth callback failed",
-                str(callback_error),
-                verbose=v,
-                exc=callback_error if v else None,
+            if add:
+                print_plain_line(
+                    "Choose the Linear workspace to connect in the browser.",
+                    as_json=False,
+                )
+            print_plain_line(
+                f"If the browser does not open, visit:\n{auth_url}",
+                as_json=False,
             )
-        raise typer.Exit(code=EXIT_AUTH) from callback_error
 
-    if callback_result is None:
+        opened = webbrowser.open(auth_url, new=1)
+        if not opened and not j:
+            print_plain_line(
+                "Could not open a browser automatically; use the URL above.",
+                as_json=False,
+            )
+
+        callback = callback_server.wait(timeout=_OAUTH_CALLBACK_TIMEOUT)
+    except TimeoutError as exc:
+        emit_error("OAuth callback timed out", str(exc), verbose=v)
+        raise typer.Exit(code=EXIT_AUTH) from exc
+    except Exception as exc:
         emit_error(
-            "OAuth callback timed out",
-            f"No response on {redirect_uri} within {_OAUTH_CALLBACK_TIMEOUT:.0f}s.",
+            "OAuth callback failed",
+            str(exc),
             verbose=v,
+            exc=exc if v else None,
         )
-        raise typer.Exit(code=EXIT_AUTH)
+        raise typer.Exit(code=EXIT_AUTH) from exc
+    finally:
+        callback_server.close()
 
-    callback = callback_result
     if callback.error:
         msg = callback.error
         if callback.error_description:
@@ -499,12 +487,22 @@ def integration_status(
     verify: bool = False,
 ) -> None:
     """Show local integration auth status."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, _ = _flags()
     rows: list[dict[str, Any]] = []
 
     for provider in _ALL_PROVIDERS:
-        meta = get_integration_status(provider)
+        try:
+            meta = get_integration_status(provider)
+        except ProviderCredentialError as exc:
+            rows.append(
+                {
+                    "provider": provider,
+                    "authenticated": False,
+                    "status_error": str(exc),
+                }
+            )
+            continue
         row = dict(meta)
         if verify and meta.get("authenticated"):
             try:
@@ -522,8 +520,13 @@ def integration_status(
                 row["verified"] = ok
                 row["verify_message"] = message
                 if provider == "linear":
-                    refreshed = get_integration_status(provider)
-                    row["expires_at"] = refreshed.get("expires_at")
+                    try:
+                        refreshed = get_integration_status(provider)
+                    except ProviderCredentialError as exc:
+                        row["verified"] = False
+                        row["verify_message"] = str(exc)
+                    else:
+                        row["expires_at"] = refreshed.get("expires_at")
         rows.append(row)
 
     if j:
@@ -532,6 +535,11 @@ def integration_status(
 
     for row in rows:
         provider = row["provider"]
+        if row.get("status_error"):
+            _print_remote_line(
+                f"{provider}: status unavailable ({_esc(row['status_error'])})"
+            )
+            continue
         if not row.get("authenticated"):
             print_plain_line(f"{provider}: not authenticated", as_json=False)
             continue
@@ -570,13 +578,13 @@ def auth_status(
         help="Run a lightweight read-only API check for authenticated providers.",
     ),
 ) -> None:
-    """Deprecated: use ``potpie status``."""
+    """Show local integration auth status."""
     integration_status(verify=verify)
 
 
 def linear_logout_impl() -> None:
     """Remove stored Linear credentials with workspace-aware messaging."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     store = get_store()
     existing = get_integration_status("linear")
@@ -614,7 +622,7 @@ def linear_logout_impl() -> None:
 
 def auth_logout(provider: str) -> None:
     """Remove locally stored credentials for a provider."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     key = provider.strip().lower()
     if key in {"wiki", "conf"}:
@@ -735,7 +743,7 @@ def linear_ls(
     limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
 ) -> None:
     """List Linear workspaces connected to this CLI."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         rows = fetch_linear_workspaces(limit=limit)
@@ -782,7 +790,7 @@ def linear_select(
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
 ) -> None:
     """Select a Linear workspace and team, then fetch issues in the terminal."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         result = run_linear_use_flow(org_key=org, team_key=key, limit=limit)
@@ -930,7 +938,7 @@ def _run_product_use_result(
     *,
     product_label: str,
 ) -> None:
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, _ = _flags()
     provider = _canonical_provider_for_json(str(result.get("product") or ""))
     rows = result.get("items") or []
@@ -991,7 +999,7 @@ def jira_login(
     """Connect Jira with an Atlassian API token (Jira access only)."""
 
     def _run() -> None:
-        load_cli_env()
+        ensure_runtime_environment_loaded()
         j, v = _flags()
         run_atlassian_api_token_auth(
             "jira",
@@ -1021,7 +1029,7 @@ def jira_ls(
     limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
 ) -> None:
     """List Jira projects you can access."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         rows = fetch_jira_projects(limit=limit)
@@ -1057,7 +1065,7 @@ def jira_select(
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
 ) -> None:
     """Select a Jira project and fetch issues in the terminal."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         result = run_jira_use_flow(workspace_key=key, limit=limit)
@@ -1093,7 +1101,7 @@ def confluence_login(
     """Connect Confluence with an Atlassian API token (Confluence access only)."""
 
     def _run() -> None:
-        load_cli_env()
+        ensure_runtime_environment_loaded()
         j, v = _flags()
         run_atlassian_api_token_auth(
             "confluence",
@@ -1123,7 +1131,7 @@ def confluence_ls(
     limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
 ) -> None:
     """List Confluence spaces you can access."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         rows = fetch_confluence_spaces_sample(limit=limit)
@@ -1157,7 +1165,7 @@ def confluence_select(
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
 ) -> None:
     """Select a Confluence space and fetch pages in the terminal."""
-    load_cli_env()
+    ensure_runtime_environment_loaded()
     j, v = _flags()
     try:
         result = run_confluence_use_flow(workspace_key=key, limit=limit)

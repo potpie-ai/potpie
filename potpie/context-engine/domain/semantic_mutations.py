@@ -64,7 +64,9 @@ class GraphEntityRef:
             raise SemanticMutationParseError("entity ref is missing 'key'")
         props = raw.get("properties") or {}
         if not isinstance(props, Mapping):
-            raise SemanticMutationParseError("entity ref 'properties' must be an object")
+            raise SemanticMutationParseError(
+                "entity ref 'properties' must be an object"
+            )
         return cls(
             key=key,
             type=_opt_str(raw.get("type")),

@@ -1,5 +1,6 @@
 ---
 name: potpie-cli
+version: "2"
 description: "Use when the task is centered on running, explaining, configuring, or troubleshooting the `potpie` command: doctor, login, pot management, source registration, search, graph workbench reads/writes, and pot scope behavior."
 ---
 
@@ -13,6 +14,9 @@ ordinary project-memory context, prefer the relevant use-case skill first.
 ```bash
 potpie doctor
 potpie --json doctor
+make cli-status
+uv tool list
+which -a potpie
 potpie login <api-key> --url <host>
 potpie pot list
 potpie pot use <pot-id-or-alias>
@@ -46,9 +50,9 @@ suggested `pot default set --repo current <pot>` command before continuing.
 
 ```bash
 potpie search "query"
-potpie --json search "query" -n 15
-potpie search "query" --node-labels PullRequest,Decision
-potpie search "query" --with-temporal
+potpie --json search "query"
+potpie search "query" --include decisions,features
+potpie search "query" --pot <pot-id-or-alias>
 ```
 
 ## Graph Workbench
@@ -74,6 +78,8 @@ written with graph workbench mutations. Do not use pot-level connector queueing 
 deterministic local code scans as the agent ingestion path.
 Do not use scanner-driven graph updates.
 
-For CLI failures, stay in this skill: run `potpie doctor`, inspect JSON output
-when useful, check API URL/key config, confirm pot scope, and verify source
+For CLI failures, stay in this skill: run `potpie doctor`, `make cli-status`, or
+`uv tool list` for install facts. Do not use `python -m pip show
+potpie-context-engine` for local uv-tool installs. Inspect JSON output when
+useful, check API URL/key config, confirm pot scope, and verify source
 registration before changing project code.

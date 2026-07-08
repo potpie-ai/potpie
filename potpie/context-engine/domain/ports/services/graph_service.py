@@ -69,6 +69,19 @@ class GraphCatalogRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class GraphDescribeRequest:
+    """``graph describe`` — the executable contract for a subgraph or view.
+
+    Routed through the service (not answered CLI-side) so the contract always
+    reflects the daemon's ontology build, like every other graph command.
+    """
+
+    subgraph: str
+    view: str | None = None
+    include_examples: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class GraphCatalogResult:
     """The static contract a harness needs to use the graph without docs."""
 
@@ -136,6 +149,9 @@ class GraphReadResult:
 
     view: str
     subgraph: str
+    ok: bool = True
+    status: str | None = None
+    message: str | None = None
     items: tuple[Mapping[str, Any], ...] = ()
     coverage: tuple[Mapping[str, Any], ...] = ()
     freshness: Mapping[str, Any] = field(default_factory=dict)
@@ -158,8 +174,8 @@ class GraphReadResult:
     def to_dict(self) -> dict[str, Any]:
         detail = _normalize_read_detail(self.detail)
         relations = _normalize_read_relations(self.relations)
-        return {
-            "ok": True,
+        out = {
+            "ok": self.ok,
             "graph_contract_version": self.graph_contract_version,
             "ontology_version": self.ontology_version,
             "view": self.view,
@@ -184,6 +200,11 @@ class GraphReadResult:
             "warnings": list(self.warnings),
             "as_of": self.as_of.isoformat() if self.as_of else None,
         }
+        if self.status:
+            out["status"] = self.status
+        if self.message:
+            out["message"] = self.message
+        return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,6 +295,10 @@ class GraphService(Protocol):
     # --- Graph Surface Lite (V1.5) -----------------------------------------
     def catalog(self, request: GraphCatalogRequest) -> GraphCatalogResult:
         """Return the V1.5 graph contract (versions, views, ops, ontology)."""
+        ...
+
+    def describe(self, request: GraphDescribeRequest) -> dict[str, Any]:
+        """Executable contract for one subgraph or view (``describe_contract``)."""
         ...
 
     def read(self, request: GraphReadRequest) -> GraphReadResult:
@@ -385,6 +410,7 @@ __all__ = [
     "DataPlaneStatus",
     "GraphCatalogRequest",
     "GraphCatalogResult",
+    "GraphDescribeRequest",
     "GraphEntityCandidate",
     "GraphEntitySearchRequest",
     "GraphEntitySearchResult",

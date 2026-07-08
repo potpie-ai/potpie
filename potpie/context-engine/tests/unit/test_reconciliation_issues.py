@@ -1,6 +1,9 @@
 """Split validation lines into {entity, issue} rows."""
 
-from domain.reconciliation_issues import validation_line_to_issue, validation_lines_to_issues
+from domain.reconciliation_issues import (
+    validation_line_to_issue,
+    validation_lines_to_issues,
+)
 
 
 def test_unknown_canonical_labels_entity_key_with_colons() -> None:
@@ -47,4 +50,3 @@ def test_validation_lines_to_issues_order() -> None:
     assert len(rows) == 2
     assert rows[0]["entity"] == "adr:0042"
     assert rows[1]["entity"] == "technology:mongodb"
-

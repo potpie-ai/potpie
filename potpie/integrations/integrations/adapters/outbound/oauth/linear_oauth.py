@@ -135,8 +135,13 @@ class LinearOAuth:
 
                 if response.status_code != 200:
                     logger.error("Linear token exchange failed:")
-                    logger.error(f"  Status: {response.status_code}", response_status_code=response.status_code)
-                    logger.error(f"  Response: {response.text}", response_text=response.text)
+                    logger.error(
+                        f"  Status: {response.status_code}",
+                        response_status_code=response.status_code,
+                    )
+                    logger.error(
+                        f"  Response: {response.text}", response_text=response.text
+                    )
                     raise Exception(f"Token exchange failed: {response.status_code}")
 
                 token_response = response.json()
@@ -193,8 +198,9 @@ class LinearOAuth:
 
                 if response.status_code != 200:
                     logger.error(
-                        f"Failed to get Linear user info: {response.status_code}"
-                    , response_status_code=response.status_code)
+                        f"Failed to get Linear user info: {response.status_code}",
+                        response_status_code=response.status_code,
+                    )
                     return None
 
                 result = response.json()

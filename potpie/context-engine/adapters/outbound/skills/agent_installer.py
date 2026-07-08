@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import inspect
 import re
+import shlex
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 from importlib import resources
 from pathlib import Path
 from typing import Iterable
@@ -14,6 +17,7 @@ _MANAGED_MARKER_RE = re.compile(
     re.DOTALL,
 )
 _DEFAULT_MERGE_FILES = frozenset({"AGENTS.md", "CLAUDE.md"})
+_BASH_BLOCK_RE = re.compile(r"```bash\s*\n(.*?)\n```", re.DOTALL)
 
 AGENT_TYPES = ("default", "codex", "claude", "claude-plugin", "cursor", "opencode")
 _SOURCE_SKILLS_PREFIX = ".agents/skills/"
@@ -131,11 +135,190 @@ def _normalize_skill_ids(skill_ids: Iterable[str] | None) -> frozenset[str] | No
     return frozenset(sid.strip() for sid in skill_ids if sid and sid.strip())
 
 
-def _include_selected_skills(
-    rel_path: Path, selected: frozenset[str] | None
-) -> bool:
+def _is_skill_markdown(rel_path: Path) -> bool:
+    return rel_path.name == "SKILL.md" and "skills" in rel_path.parts
+
+
+def _selected_skill_matches(rel_path: Path, selected: frozenset[str] | None) -> bool:
+    if selected is None:
+        return True
+    sid = _skill_id_for_path(rel_path) or _skill_id_from_generic_skill_path(rel_path)
+    return sid in selected
+
+
+def _skill_id_from_generic_skill_path(rel_path: Path) -> str | None:
+    parts = rel_path.parts
+    for idx, part in enumerate(parts[:-1]):
+        if part == "skills" and idx + 1 < len(parts):
+            return parts[idx + 1]
+    return None
+
+
+def _include_selected_skills(rel_path: Path, selected: frozenset[str] | None) -> bool:
     sid = _skill_id_for_path(rel_path)
     return sid is not None and (selected is None or sid in selected)
+
+
+def validate_packaged_skill_command_snippets(
+    *, skill_ids: Iterable[str] | None = None
+) -> None:
+    """Validate packaged Potpie CLI snippets before install/update.
+
+    This intentionally validates only ``potpie`` commands in bash fences. Skills
+    may contain other shell commands whose correctness depends on the user's repo.
+    """
+    selected = _normalize_skill_ids(skill_ids)
+    for bundle_name in ("agent_bundle", "claude_plugin"):
+        for rel_path, content in _iter_bundle_files(bundle_name):
+            if not _is_skill_markdown(rel_path):
+                continue
+            if not _selected_skill_matches(rel_path, selected):
+                continue
+            validate_skill_command_snippets(content, rel_path=rel_path)
+
+
+def validate_skill_command_snippets(content: str, *, rel_path: Path) -> None:
+    errors: list[str] = []
+    for line in _iter_potpie_bash_lines(content):
+        try:
+            tokens = shlex.split(line, comments=True)
+        except ValueError as exc:
+            errors.append(f"{line!r}: {exc}")
+            continue
+        if not tokens or tokens[0] != "potpie":
+            continue
+        error = _validate_potpie_command_tokens(tokens)
+        if error:
+            errors.append(error)
+    if errors:
+        prefix = f"invalid Potpie command snippets in {rel_path.as_posix()}: "
+        raise ValueError(prefix + "; ".join(errors))
+
+
+def _iter_potpie_bash_lines(content: str) -> Iterable[str]:
+    for block in _BASH_BLOCK_RE.findall(content):
+        pending = ""
+        for raw in block.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("$ "):
+                line = line[2:].lstrip()
+            if pending:
+                line = f"{pending} {line}"
+            if line.endswith("\\"):
+                pending = line[:-1].rstrip()
+                continue
+            pending = ""
+            if line == "potpie" or line.startswith("potpie "):
+                yield line
+        if pending and (pending == "potpie" or pending.startswith("potpie ")):
+            yield pending
+
+
+def _validate_potpie_command_tokens(tokens: list[str]) -> str | None:
+    specs = _potpie_command_option_specs()
+    root_options = _potpie_root_options()
+    idx = 1
+    while idx < len(tokens) and tokens[idx].startswith("-"):
+        opt = _option_name(tokens[idx])
+        if opt not in root_options:
+            return f"{' '.join(tokens)} uses unsupported root option {opt}"
+        idx += 1
+
+    match: tuple[tuple[str, ...], int, frozenset[str]] | None = None
+    for end in range(idx + 1, len(tokens) + 1):
+        token = tokens[end - 1]
+        if token.startswith("-"):
+            break
+        path = tuple(tokens[idx:end])
+        options = specs.get(path)
+        if options is not None:
+            match = (path, end, options)
+    if match is None:
+        command = " ".join(tokens[idx : idx + 3]) or "(missing command)"
+        return f"{' '.join(tokens)} uses unknown potpie command {command!r}"
+
+    path, end, command_options = match
+    for token in tokens[end:]:
+        if not token.startswith("-") or token == "-":
+            continue
+        opt = _option_name(token)
+        if opt not in command_options:
+            command = " ".join(path)
+            return (
+                f"{' '.join(tokens)} uses unsupported option {opt} for potpie {command}"
+            )
+    return None
+
+
+def _option_name(token: str) -> str:
+    return token.split("=", 1)[0]
+
+
+@lru_cache(maxsize=1)
+def _potpie_command_option_specs() -> dict[tuple[str, ...], frozenset[str]]:
+    from adapters.inbound.cli.host_cli import app
+
+    specs: dict[tuple[str, ...], frozenset[str]] = {}
+    _collect_typer_command_specs(app, path=(), out=specs)
+    return specs
+
+
+@lru_cache(maxsize=1)
+def _potpie_root_options() -> frozenset[str]:
+    from adapters.inbound.cli.host_cli import app
+
+    callback = app.registered_callback
+    if callback is None or callback.callback is None:
+        return frozenset()
+    return _callback_option_decls(callback.callback)
+
+
+def _collect_typer_command_specs(
+    typer_app, *, path: tuple[str, ...], out: dict[tuple[str, ...], frozenset[str]]
+) -> None:
+    for command in typer_app.registered_commands:
+        if command.callback is None:
+            continue
+        out[(*path, _typer_command_name(command))] = _callback_option_decls(
+            command.callback
+        )
+    for group in typer_app.registered_groups:
+        _collect_typer_command_specs(
+            group.typer_instance,
+            path=(*path, group.name),
+            out=out,
+        )
+
+
+def _typer_command_name(command) -> str:
+    if command.name:
+        return str(command.name)
+    return command.callback.__name__.replace("_", "-")
+
+
+def _callback_option_decls(callback: Callable[..., object]) -> frozenset[str]:
+    from typer.models import OptionInfo
+
+    options: set[str] = set()
+    for parameter in inspect.signature(callback).parameters.values():
+        default = parameter.default
+        if not isinstance(default, OptionInfo):
+            continue
+        for decl in default.param_decls:
+            options.update(_split_option_decl(str(decl)))
+    return frozenset(options)
+
+
+def _split_option_decl(decl: str) -> tuple[str, ...]:
+    if not decl.startswith("-"):
+        return ()
+    out: list[str] = []
+    for part in decl.split("/"):
+        if part.startswith("-"):
+            out.append(part)
+    return tuple(out)
 
 
 def _install_file(
@@ -177,6 +360,8 @@ def _install_bundle(
     for rel_path, content in _iter_bundle_files(bundle_name):
         if include is not None and not include(rel_path):
             continue
+        if _is_skill_markdown(rel_path):
+            validate_skill_command_snippets(content, rel_path=rel_path)
         out_path = rel_path if remap is None else remap(rel_path)
         if out_path is None:
             continue

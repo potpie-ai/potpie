@@ -150,13 +150,15 @@ class FalkorDBClaimQueryStore:
         assert filter_.fact_query is not None
         assert self._embedder is not None
         limit = filter_.limit if filter_.limit is not None and filter_.limit > 0 else 10
-        vector_params = {
-            **dict(params),
-            "embedding": [float(x) for x in self._embedder.embed(filter_.fact_query)],
-            "k": max(limit * 5, 50),
-            "limit": limit,
-        }
         try:
+            vector_params = {
+                **dict(params),
+                "embedding": [
+                    float(x) for x in self._embedder.embed(filter_.fact_query)
+                ],
+                "k": max(limit * 5, 50),
+                "limit": limit,
+            }
             result = self._get_graph().query(
                 _VECTOR_CLAIMS_CYPHER, params=vector_params
             )

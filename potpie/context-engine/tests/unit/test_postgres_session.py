@@ -25,7 +25,9 @@ def test_database_url_postgres_server(monkeypatch: pytest.MonkeyPatch) -> None:
     assert database_url() == "postgresql://u:p@localhost:5432/db"
 
 
-def test_database_url_explicit_over_postgres_server(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_database_url_explicit_over_postgres_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _clear_db_env(monkeypatch)
     monkeypatch.setenv("POSTGRES_SERVER", "postgresql://legacy:5432/x")
     monkeypatch.setenv("DATABASE_URL", "postgresql://primary:5432/y")

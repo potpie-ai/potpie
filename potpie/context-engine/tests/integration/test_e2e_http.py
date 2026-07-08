@@ -160,7 +160,9 @@ class TestHttpQuery:
         body = r.json()
         assert body["detail"]["code"] == "http_context_graph_query_not_supported"
 
-    def test_query_validation_is_bypassed_for_unsupported_route(self, make_client) -> None:
+    def test_query_validation_is_bypassed_for_unsupported_route(
+        self, make_client
+    ) -> None:
         client = make_client()
         r = client.post(f"{API}/query/context-graph", json={"goal": "neighborhood"})
         assert r.status_code == 501

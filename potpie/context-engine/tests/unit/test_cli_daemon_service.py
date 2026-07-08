@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import httpx
 from typer.testing import CliRunner
 
 from adapters.inbound.cli import host_cli
 from adapters.inbound.cli.commands import _common, bootstrap
 from adapters.inbound.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
-from domain.lifecycle import SKIPPED, PlannedSetupStep, SetupPlan, SetupPreview, SetupReport, StepResult
+from domain.lifecycle import (
+    SKIPPED,
+    PlannedSetupStep,
+    SetupPlan,
+    SetupPreview,
+    SetupReport,
+    StepResult,
+)
 
 runner = CliRunner()
 
@@ -52,6 +61,9 @@ class _FakeDaemon:
 @dataclass
 class _FakeHost:
     daemon: _FakeDaemon
+    backend: object = field(
+        default_factory=lambda: type("B", (), {"profile": "falkordb_lite"})()
+    )
 
 
 def test_daemon_lifecycle_commands_use_detached_daemon(tmp_path: Path) -> None:
@@ -92,6 +104,48 @@ def test_service_logs_reads_service_log_without_running_daemon(tmp_path: Path) -
 
     assert result.exit_code == 0, result.stdout
     assert json.loads(result.stdout)["lines"] == ["hello"]
+
+
+def test_service_logs_falkordb_lite_explains_embedded_backend(tmp_path: Path) -> None:
+    _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
+
+    result = CliRunner().invoke(
+        host_cli.app, ["--json", "service", "logs", "falkordb_lite"]
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "embedded_backend"
+    assert payload["profile"] == "falkordb_lite"
+    assert payload["recommended_log_command"] == "potpie daemon logs"
+    assert "database_path" in payload
+    assert "no separate service log" in result.stdout
+
+
+def test_service_logs_returns_helpful_message_when_daemon_ipc_fails(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    @contextmanager
+    def _failing_client(_home: Path):
+        class _Client:
+            def get(self, _path: str) -> None:
+                raise httpx.ConnectError("stale daemon socket")
+
+        yield _Client()
+
+    monkeypatch.setattr(
+        "adapters.inbound.cli.commands.service.client_for",
+        _failing_client,
+    )
+    _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
+
+    result = runner.invoke(host_cli.app, ["--json", "service", "logs", "graph"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "no_log_file"
+    assert "no log file for 'graph'" in payload["message"]
 
 
 def test_service_logs_follow_exits_cleanly_on_keyboard_interrupt(

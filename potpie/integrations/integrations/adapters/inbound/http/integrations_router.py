@@ -57,8 +57,10 @@ router = APIRouter(prefix="/integrations", tags=["integrations"])
 def _linear_oauth_callback_redirect_uri(request: Request) -> str:
     """URL registered in Linear OAuth app; must match authorize + token exchange."""
     scheme = (
-        request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
-    ).split(",")[0].strip()
+        (request.headers.get("x-forwarded-proto") or request.url.scheme or "https")
+        .split(",")[0]
+        .strip()
+    )
     host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     if host:
         return f"{scheme}://{host}/api/v1/integrations/linear/callback"
@@ -792,8 +794,9 @@ async def jira_oauth_callback(
                     )
 
                 logger.info(
-                    f"Using Jira redirect_uri for token exchange: {redirect_uri}"
-                , redirect_uri=redirect_uri)
+                    f"Using Jira redirect_uri for token exchange: {redirect_uri}",
+                    redirect_uri=redirect_uri,
+                )
 
                 save_request = JiraSaveRequest(
                     code=code,
@@ -1103,7 +1106,9 @@ async def confluence_oauth_callback(
             try:
                 integrations_service = IntegrationsService(db)
 
-                from integrations.domain.integrations_schema import ConfluenceSaveRequest
+                from integrations.domain.integrations_schema import (
+                    ConfluenceSaveRequest,
+                )
                 from datetime import datetime
 
                 # Prefer configured redirect URI so it exactly matches what's registered
@@ -1405,8 +1410,11 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
 
                 logger.info(
                     f"Sentry webhook event {event_id} published for integration {integration_id}, "
-                    f"type: {event_type}"
-                , event_id=event_id, integration_id=integration_id, event_type=event_type)
+                    f"type: {event_type}",
+                    event_id=event_id,
+                    integration_id=integration_id,
+                    event_type=event_type,
+                )
 
                 return {
                     "status": "success",
@@ -1576,8 +1584,9 @@ async def linear_webhook(
                 }
         else:
             logger.warning(
-                f"No Linear integration found for organization {organization_id}"
-            , organization_id=organization_id)
+                f"No Linear integration found for organization {organization_id}",
+                organization_id=organization_id,
+            )
 
             return {
                 "status": "success",
@@ -1606,9 +1615,10 @@ def verify_github_webhook_signature(
         return False
     if not signature_header.startswith("sha256="):
         return False
-    expected = "sha256=" + hmac.new(
-        webhook_secret.encode("utf-8"), payload, hashlib.sha256
-    ).hexdigest()
+    expected = (
+        "sha256="
+        + hmac.new(webhook_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    )
     return hmac.compare_digest(expected, signature_header)
 
 
@@ -1659,7 +1669,9 @@ async def github_webhook(request: Request) -> Dict[str, Any]:
 
         # We keep integration_id lightweight because webhook processing for github
         # uses repo_name lookup inside WebhookEventHandler.
-        repo = webhook_data.get("repository", {}) if isinstance(webhook_data, dict) else {}
+        repo = (
+            webhook_data.get("repository", {}) if isinstance(webhook_data, dict) else {}
+        )
         repo_name = repo.get("full_name") if isinstance(repo, dict) else None
         integration_id = (
             query_params.get("integration_id")
@@ -1903,15 +1915,20 @@ async def jira_webhook(
                                 if site_id and webhook_site_id == site_id:
                                     integration_id = integration.integration_id
                                     logger.info(
-                                        f"Found integration {integration_id} for webhook {webhook_id} + site {site_id}"
-                                    , integration_id=integration_id, webhook_id=webhook_id, site_id=site_id)
+                                        f"Found integration {integration_id} for webhook {webhook_id} + site {site_id}",
+                                        integration_id=integration_id,
+                                        webhook_id=webhook_id,
+                                        site_id=site_id,
+                                    )
                                     break
                                 elif not site_id:
                                     # Fallback: match webhook_id only if site_id unavailable (less secure)
                                     integration_id = integration.integration_id
                                     logger.warning(
-                                        f"Found integration {integration_id} for webhook {webhook_id} (no site_id verification)"
-                                    , integration_id=integration_id, webhook_id=webhook_id)
+                                        f"Found integration {integration_id} for webhook {webhook_id} (no site_id verification)",
+                                        integration_id=integration_id,
+                                        webhook_id=webhook_id,
+                                    )
                                     break
 
                         if integration_id:

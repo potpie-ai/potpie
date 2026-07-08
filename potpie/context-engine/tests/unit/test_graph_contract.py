@@ -114,7 +114,9 @@ def test_key_prefix_normalization_strips_only() -> None:
 def test_normalize_entity_key_preserves_body_hyphens() -> None:
     # Prefixes are exact; the body may still contain hyphens.
     assert normalize_entity_key("service:payments-api") == "service:payments-api"
-    assert normalize_entity_key(" bug_pattern:refund-race ") == "bug_pattern:refund-race"
+    assert (
+        normalize_entity_key(" bug_pattern:refund-race ") == "bug_pattern:refund-race"
+    )
     assert normalize_entity_key("no-colon-here") == "no-colon-here"
 
 

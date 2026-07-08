@@ -11,7 +11,7 @@ import pytest
 
 from adapters.outbound.graph.backends.embedded_backend import EmbeddedGraphBackend
 from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.intelligence.local_embedder import build_embedder
+from adapters.outbound.intelligence.local_embedder import HashingEmbedder
 from application.services.graph_service import DefaultGraphService
 from domain.ports.agent_context import RecordRequest, ResolveRequest
 from domain.ports.claim_query import ClaimQueryFilter
@@ -28,7 +28,7 @@ POT = "local/default"
 
 
 def _service(embedder=True) -> DefaultGraphService:
-    be = InMemoryGraphBackend(embedder=build_embedder() if embedder else None)
+    be = InMemoryGraphBackend(embedder=HashingEmbedder() if embedder else None)
     return DefaultGraphService(backend=be)
 
 
@@ -40,7 +40,9 @@ def _link_payload(**over) -> dict:
         "predicate": "DEPENDS_ON",
         "object": {"key": "service:ledger-api", "type": "Service"},
         "truth": "source_observation",
-        "evidence": [{"source_ref": "repo:manifest", "authority": "repository_metadata"}],
+        "evidence": [
+            {"source_ref": "repo:manifest", "authority": "repository_metadata"}
+        ],
         "description": "payments depends on ledger to post entries",
     }
     op.update(over)
@@ -109,7 +111,9 @@ def test_apply_low_risk_link() -> None:
 def test_reject_invalid_endpoints() -> None:
     svc = _service()
     payload = _link_payload(
-        object={"key": "repo:foo", "type": "Repository"}, truth="agent_claim", evidence=[]
+        object={"key": "repo:foo", "type": "Repository"},
+        truth="agent_claim",
+        evidence=[],
     )
     res = svc.mutate(SemanticMutationRequest.parse(payload))
     assert res.status == "rejected"
@@ -160,7 +164,10 @@ def test_context_record_uses_semantic_path() -> None:
             pot_id=POT,
             record_type="preference",
             summary="wrap external calls in tenacity retry",
-            details={"policy_kind": "resilience", "prescription": "wrap external calls in tenacity retry"},
+            details={
+                "policy_kind": "resilience",
+                "prescription": "wrap external calls in tenacity retry",
+            },
             scope={"service": "payments-api", "language": "python"},
         )
     )
@@ -211,13 +218,13 @@ def test_record_and_graph_mutate_produce_same_metadata() -> None:
 # 9. embedded backend persists V1.5 metadata across CLI processes
 def test_embedded_persists_metadata_across_processes(tmp_path) -> None:
     # Process 1: write through a fresh embedded backend.
-    be1 = EmbeddedGraphBackend(home=tmp_path, embedder=build_embedder())
+    be1 = EmbeddedGraphBackend(home=tmp_path, embedder=HashingEmbedder())
     svc1 = DefaultGraphService(backend=be1)
     res = svc1.mutate(SemanticMutationRequest.parse(_link_payload()))
     assert res.status == "applied"
 
     # Process 2: a brand-new backend instance reads from the same JSON file.
-    be2 = EmbeddedGraphBackend(home=tmp_path, embedder=build_embedder())
+    be2 = EmbeddedGraphBackend(home=tmp_path, embedder=HashingEmbedder())
     svc2 = DefaultGraphService(backend=be2)
     rows = svc2.backend.claim_query.find_claims(
         ClaimQueryFilter(pot_id=POT, predicate_in=("DEPENDS_ON",))
@@ -243,7 +250,10 @@ def test_paraphrase_retrieval_via_local_embedder() -> None:
                     {
                         "op": "assert_claim",
                         "subgraph": "decisions",
-                        "subject": {"key": "preference:retry-external", "type": "Preference"},
+                        "subject": {
+                            "key": "preference:retry-external",
+                            "type": "Preference",
+                        },
                         "predicate": "POLICY_APPLIES_TO",
                         "object": {"key": "service:payments-api", "type": "Service"},
                         "truth": "preference",

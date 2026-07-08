@@ -247,9 +247,7 @@ def _e(
     required = kwargs.pop("required", ())
     lifecycle = kwargs.pop("lifecycle", frozenset())
     lifecycle_transitions = kwargs.pop("lifecycle_transitions", {})
-    patchable = kwargs.pop(
-        "patchable", ("name", "summary", "description", "title")
-    )
+    patchable = kwargs.pop("patchable", ("name", "summary", "description", "title"))
     if identity_policy is None:
         suffix = {
             IdentityClass.SLUG_ALIAS: "<slug>",

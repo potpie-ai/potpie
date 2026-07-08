@@ -1,769 +1,490 @@
 # Context Graph Architecture
 
-Last reviewed: 2026-06-08.
+> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
 
-This document is the implementation map for the Context Graph. It follows the
-same shape as the product: CLI first, the same service modules hosted either by
-a local daemon or managed backend API, swappable storage backends, explicit
-managed-backend login, and explicit cloud sync or ledger commands.
+This is the implementation map for the Context Graph: the layered code, the
+composition roots that wire it, the daemon that hosts it, the swappable
+`GraphBackend`, and the shared storage engine room underneath. It orients you to
+the moving parts and points at the docs that own each flow in full — the read
+path lives in [querying.md](./querying.md), the write path in
+[writing.md](./writing.md), the vocabulary in [ontology.md](./ontology.md), and
+ingestion/nudge in [ingestion-nudge.md](./ingestion-nudge.md).
 
-## Anatomy
+The single most important framing fact: the `potpie graph …` workbench is
+**shipped today** as the V1.5 surface. The string `v2` survives only as the
+workbench *envelope* version (`GRAPH_WORKBENCH_CONTRACT_VERSION="v2"`); the data
+plane is `GRAPH_CONTRACT_VERSION="v1.5"` / `ONTOLOGY_VERSION="2026-06-graph"`.
+Both the legacy `resolve`/`search`/`record` wrappers and the full workbench ship
+now. The **canonical write door is `graph propose` → `graph commit --verify`**;
+`graph mutate` is a legacy wrapper over it (see [Writing the graph, high
+level](#the-write-door-high-level)).
+
+## Hexagonal layers
+
+The engine is ports-and-adapters. Pure model in the middle, I/O at the edges,
+composition roots at the top.
 
 ```mermaid
 flowchart TB
-  cg_actor["user or agent"]
-  cg_cli["potpie CLI"]
-  cg_host["host shell<br/>local daemon or managed backend API"]
-  cg_pot_service["Pot Management Service"]
-  cg_graph_service["Graph Service"]
-  cg_backend["GraphBackend"]
-  cg_skill_service["Skill Manager Service"]
-  cg_state_db[("state DB<br/>local or hosted")]
-  cg_graph_store[("graph/search store<br/>local or hosted")]
-  cg_skill_cache[("skill catalog/cache<br/>local or hosted")]
+  cg_inbound["inbound adapters<br/>cli · mcp · http ingestion · daemon_http · webhooks"]
+  cg_app["application<br/>services · readers · use_cases"]
+  cg_domain["domain<br/>ontology · contract · ports · DTOs · ranking · coherence · identity"]
+  cg_outbound["outbound adapters<br/>graph backends + engine room · connectors · ledger clients · postgres event store · skills targets · local embedder"]
+  cg_boot["bootstrap (composition roots)<br/>host_wiring.py · ingestion_server.py"]
+  cg_host["host<br/>shell.py (HostShell) · daemon.py"]
 
-  cg_actor --> cg_cli
-  cg_cli --> cg_host
-  cg_host --> cg_pot_service
-  cg_host --> cg_graph_service
-  cg_host --> cg_skill_service
-  cg_pot_service --> cg_state_db
-  cg_pot_service --> cg_graph_service
-  cg_graph_service --> cg_backend
-  cg_backend --> cg_graph_store
-  cg_skill_service --> cg_skill_cache
+  cg_boot --> cg_host
+  cg_boot --> cg_inbound
+  cg_inbound --> cg_app
+  cg_app --> cg_domain
+  cg_app --> cg_outbound
+  cg_outbound --> cg_domain
 ```
 
-| Piece | Responsibility |
-|---|---|
-| CLI | User/agent surface, command UX, setup/login flags and output, JSON rendering, active-pot selection, local/managed filters. |
-| Host shell | Local daemon or managed backend API. Owns process/API lifecycle, auth, IPC/HTTP, health, logs, and migrations/dependency setup trigger. |
-| Pot Management | Active pot, pot CRUD, source registry, lifecycle, status aggregation, export/import metadata. |
-| Graph Service | Graph data plane. Graph V1 exposes compatibility wrappers over V2-compatible ontology, views, semantic mutations, validation, and inbox handling; Graph V2 later exposes the explicit workbench surface. |
-| GraphBackend | Store capability bundle: mutation, claim query, semantic search, inspection, analytics, snapshot. |
-| Skill Manager | Skill catalog and install/update/remove into agent harnesses. |
-
-The host shell hosts services; it does not contain their business logic. The
-same Graph Service (and Skill Manager) modules run in the local daemon and in
-the managed backend API. Pot Management is **not** shared: the managed backend
-keeps its own pots behind the thin `PotResolutionPort` (scope decision
-2026-05-29). Storage adapters and operational dependencies differ by deployment.
-
-## Deployment Shapes
-
-```mermaid
-flowchart LR
-  cg_entry["potpie CLI"]
-
-  subgraph cg_local_profile["Local profile"]
-    direction LR
-    cg_local_daemon["local daemon"]
-    cg_local_services["Pot Management<br/>Graph Service<br/>Skill Manager"]
-    cg_local_storage[("local stores")]
-    cg_local_daemon --> cg_local_services --> cg_local_storage
-  end
-
-  subgraph cg_managed_profile["Managed backend"]
-    direction LR
-    cg_managed_api["managed backend API"]
-    cg_managed_services["Pot Management<br/>Graph Service<br/>Skill Manager"]
-    cg_managed_storage[("hosted stores")]
-    cg_managed_api --> cg_managed_services --> cg_managed_storage
-  end
-
-  cg_entry --> cg_local_daemon
-  cg_entry -. "login + managed pot selection" .-> cg_managed_api
-```
-
-Both profiles run the same service modules. Only the host shell and storage
-adapters change.
-
-```mermaid
-flowchart LR
-  cg_sources["GitHub / Linear / other sources"]
-  cg_ledger["Event Ledger<br/>managed or self-hosted"]
-  cg_event_batches["filtered event pages<br/>and replay tokens"]
-  cg_local_graph["local graph"]
-  cg_managed_graph["managed graph"]
-
-  cg_sources --> cg_ledger --> cg_event_batches
-  cg_event_batches --> cg_local_graph
-  cg_event_batches --> cg_managed_graph
-```
-
-| Boundary | Local OSS | Managed backend |
+| Layer | Path | Responsibility |
 |---|---|---|
-| Entry | `potpie setup` creates local daemon; CLI defaults to local active pot | `potpie login` authenticates to configured backend URL; selecting a managed pot routes commands there |
-| Host | Local daemon shell | Managed backend API |
-| Service modules | Pot Management, Graph Service, Skill Manager | Same modules hosted in managed backend API |
-| Auth | Local token/socket/OS user | Potpie auth and policy |
-| Pot state | Local DB with active `default` pot after setup | Hosted operational DB |
-| Graph backend | Embedded/local GraphBackend profile | Hosted graph/search GraphBackend profile |
-| Skills | Local catalog/cache and agent target adapters | Hosted catalog/state plus managed target adapters |
-| Event Ledger | Optional managed or self-hosted ledger, pulled explicitly | Managed or self-hosted ledger, consumed by hosted workers/services |
-| Source integrations | Source metadata only; graph writes come from harness semantic mutations | Hosted connectors, webhook receivers, queues, and workers |
-| Sync | Explicit `potpie cloud ...`; ledger pull does not move graph state to cloud | Native hosted pots; snapshot push/pull remains explicit |
-
-## Component Lifecycle & Setup
-
-`potpie setup` is the single local first-run flow. It is idempotent, makes
-Potpie usable in one command, and users never run `daemon` or install commands
-on the happy path. The CLI owns the setup UX: flags, validation, local bootstrap
-output, and next-command hints. Its local bootstrap job is to install/start the
-daemon service. Once the daemon is running, the daemon-hosted
-`SetupOrchestrator` owns lifecycle ordering: the ordered sequence of component
-setup calls. Each step it calls is a **bespoke per-component method** owned
-independently, so the config, storage, auth, pot, skills, and source-event
-processing pieces can be built and handed over separately.
-
-Three rules make independent ownership work:
-
-- **Daemon first, then dependencies.** The CLI ensures the local daemon service
-  exists and is running. The daemon hosts `SetupOrchestrator`, which calls
-  `config.ensure_home()`, `backend.provision(plan)`, `pot_service.init(...)`,
-  `auth.init_local()`, and so on. Each is a different owner's slot; the
-  orchestrator only sequences them.
-- **Backends self-provision.** A `GraphBackend` stands up its own store —
-  `embedded` writes a local file, `postgres` creates the DB, enables pgvector,
-  and runs DDL, `neo4j` pulls its container. The `build_backend(profile)`
-  registry already selects by profile; provisioning lives behind the same
-  profile, not in setup.
-- **Hard deps are profile-scoped.** Every method returns a `StepResult`
-  (`done | skipped | not_implemented | failed`); an unbuilt body raises
-  `CapabilityNotImplemented("<dotted.slot>")` (e.g. `host.auth.init_local`).
-  `SetupOrchestrator` splits **hard deps** (must succeed) from **soft steps**
-  (best-effort), but hardness depends on the selected setup host mode. Detached
-  daemon service install/start is hard for the normal local daemon profile,
-  skipped for in-process/dev profiles, and not part of managed login.
-
-### Setup sequence
-
-```mermaid
-sequenceDiagram
-  participant User
-  participant CLI
-  participant Daemon
-  participant Setup as daemon-hosted setup
-  participant Config
-  participant Backend as GraphBackend
-  participant Pot as Pot Management
-  participant Auth
-  participant Skills as Skill Manager
-
-  User->>CLI: potpie setup --repo . --backend embedded --agent claude
-  CLI->>Daemon: install/start service
-  CLI->>Daemon: setup request with SetupPlan
-  Daemon->>Setup: run(plan)
-  Setup->>Config: ensure_home; write_defaults(plan)
-  Setup->>Backend: provision(plan)
-  Setup->>Pot: init(mode, backend)
-  Setup->>Auth: init_local
-  Setup->>Pot: add_source(repo)
-  Setup->>Skills: install(agent)
-  Setup-->>Daemon: SetupReport
-  Daemon-->>CLI: SetupReport
-  CLI-->>User: per-step state + next command
-```
-
-Ordered steps and their dependency class:
-
-1. CLI bootstrap: install/start local daemon service — hard for local daemon
-   profile, skipped if present, skipped for in-process/dev profiles
-2. `config.ensure_home()` + `config.write_defaults(plan)` inside the daemon — hard
-3. `backend.provision(plan)` — hard, graph/vector self-provision
-4. `pot_service.init(mode, backend)` — hard, state store + migrate + default pot
-5. `auth.init_local()` — soft, skipped for local no-auth
-6. `pot_service.add_source(repo)` — soft
-7. `skills.install(agent)` — soft
-
-`--pot <name>` only overrides the initial pot name; without it setup creates and
-uses `default`. `--dry-run` calls `orchestrator.preview(plan)` and returns a
-`SetupPreview` without executing or returning run `StepResult`s. Re-running setup
-is safe: each method is `ensure`-shaped.
-
-### Seam → owner map
-
-Dependency-ordered. Each row is independently ownable behind its method
-signature; the orchestrator depends only on those signatures.
-
-| # | Component | Bespoke method(s) | Dep | Code slot |
-|---:|---|---|---|---|
-| 1 | Daemon process | `ensure`, `install`, `start`, `stop`, `restart` | hard for local daemon profile; skipped for in-process/dev | `host/daemon.py` |
-| 2 | Config / workspace | `ensure_home`, `write_defaults`, `get`/`set` | hard | `application/services/config_service.py` |
-| 3 | Graph/vector backend | `provision`, `health`, `capabilities` | hard | `domain/ports/graph/backend.py` + backend adapters |
-| 4 | Relational state store | `pot_service.init`, `state_store.provision`, `migrator.migrate` | hard | `application/services/pot_management.py` + `adapters/outbound/pots/` |
-| 5 | Local auth | `init_local`, `whoami`, `logout` | soft | `application/services/auth_service.py` |
-| 6 | Skills | `install(agent)` | soft | `application/services/skill_manager.py` |
-
-### Setup skeletons
-
-Lifecycle orchestration is an application use case (`SetupOrchestrator`) hosted
-by the daemon, so dependency setup stays outside inbound adapters and outside the
-daemon shell. `commands/bootstrap.py:setup` owns the CLI contract: build a
-`SetupPlan` from flags → install/start the daemon service → send the plan to the
-daemon-hosted orchestrator → render the `SetupReport`.
-
-```python
-# domain/lifecycle.py — shared value objects
-@dataclass(frozen=True)
-class SetupPlan:
-    mode: str = "local"        # local setup; managed auth uses LoginPlan
-    host_mode: str = "daemon"  # daemon | in_process
-    backend: str = default_setup_backend()  # falkordb_lite
-    repo: str | None = "."
-    pot: str = "default"
-    agent: str = "claude"
-    assume_yes: bool = False
-
-@dataclass(frozen=True)
-class StepResult:
-    step: str
-    state: str                 # done | skipped | not_implemented | failed
-    detail: str | None = None
-
-@dataclass(frozen=True)
-class SetupReport:
-    plan: SetupPlan
-    steps: tuple[StepResult, ...]
-    ok: bool
-
-@dataclass(frozen=True)
-class PlannedSetupStep:
-    step: str
-    hard: bool
-    owner: str
-    action: str
-    skip_reason: str | None = None
-
-@dataclass(frozen=True)
-class SetupPreview:
-    plan: SetupPlan
-    steps: tuple[PlannedSetupStep, ...]
-    ok_to_run: bool
-
-class SetupOrchestrator(Protocol):
-    def preview(self, plan: SetupPlan) -> SetupPreview: ...   # dry-run
-    def run(self, plan: SetupPlan) -> SetupReport: ...        # ensure each, in order
-
-@dataclass(frozen=True)
-class LoginPlan:
-    backend_url: str | None = None  # defaults to config cloud.backend_url
-    org: str | None = None
-```
-
-Each named method is a stub raising `CapabilityNotImplemented("<dotted.slot>")`
-until its owner ships the body — the same convention the rest of the skeleton
-uses today (`host.daemon.install`). The per-component shapes setup calls:
-
-```python
-config.ensure_home() -> Path
-config.write_defaults(plan: SetupPlan) -> Path
-
-daemon.ensure() -> StepResult                  # install/start service when needed
-
-backend.provision(plan: SetupPlan) -> StepResult           # create DB/index, DDL, docker
-pot_service.init(*, mode: str, backend: str) -> StepResult # provision state store + migrate
-pot_service.create_pot(name, use=True) -> PotInfo          # create + activate the default pot
-auth.init_local() -> StepResult
-```
-
-### Managed backend login
-
-Managed backend access is a separate lifecycle from local setup. `potpie login`
-authenticates against `cloud.backend_url`, stores the managed session, and makes
-managed pots visible to the same pot commands. The default URL points at Potpie
-managed; users can point it at a compatible self-hosted backend:
-
-```bash
-potpie config set cloud.backend_url https://potpie.example.com
-potpie login
-potpie pot list --managed
-potpie use <managed-pot-name> --managed
-```
-
-The CLI treats local and managed pots as the same product object. Internally, an
-active pot selection includes an origin (`local` or `managed`) plus a pot id/name.
-Commands route by the selected pot: local pots route to the local daemon, while
-managed pots route to the authenticated managed backend. If a name exists in both
-places, the user must disambiguate with `--local`, `--managed`, or an equivalent
-qualified pot id.
-
-## Runtime Flows
-
-### Graph discover/read
-
-```mermaid
-sequenceDiagram
-  participant Agent
-  participant CLI
-  participant Host as Daemon/API Host
-  participant Pot as Pot Management
-  participant Graph as Graph Service
-  participant Backend as GraphBackend
-
-  Agent->>CLI: potpie graph catalog --task "<task>"
-  CLI->>Host: graph catalog DTO
-  Host->>Graph: catalog(task, pot)
-  Graph-->>Host: recommended subgraphs/views
-  Host-->>CLI: catalog result
-
-  Agent->>CLI: potpie graph read --subgraph <name> --view <view>
-  CLI->>Host: graph read DTO
-  Host->>Pot: active pot + source freshness
-  Host->>Graph: read(pot, subgraph, view, scope, query)
-  Graph->>Backend: claim query + semantic/traversal projections
-  Backend-->>Graph: claims + scored keys
-  Graph-->>Host: GraphReadResult
-  Host-->>CLI: response DTO
-  CLI-->>Agent: human output or --json
-```
-
-Code slots: `commands/graph.py:catalog|describe|search_entities|read` →
-`HostShell.graph` → `GraphService` → Ontology Catalog / Identity Resolver / Read
-View Router over `GraphBackend.claim_query`, semantic search, and inspection
-projections. Generic traversal is an inspection/admin capability, not the default
-agent read path.
-
-### Semantic Mutation
-
-```mermaid
-flowchart LR
-  cg_mutate_cmd["potpie graph mutate"]
-  cg_validate["Semantic Mutation Validator"]
-  cg_lower["Semantic Lowerer"]
-  cg_write["GraphMutationPort"]
-  cg_audit["mutation provenance"]
-  cg_project["rebuild/update projections"]
-
-  cg_mutate_cmd --> cg_validate --> cg_lower --> cg_write
-  cg_write --> cg_audit --> cg_project
-```
-
-Code slots: `commands/graph.py:mutate` → `HostShell.graph` →
-`GraphService.mutate`. A single `SemanticMutationRequest` validates schema,
-ontology, identity, source authority, risk, and conflicts; dry-run returns the
-preview without writing, and apply lowers accepted operations into one
-`GraphBackend.mutation.apply` call with mutation provenance. There is no shipped
-server-created `plan_id` or separate `propose|commit` contract.
-
-### Harness Writes And Ledger Reads
-
-```mermaid
-flowchart LR
-  cg_register["potpie source add repo ."]
-  cg_ledger_pull["potpie ledger pull"]
-  cg_harness["processing harness"]
-  cg_graph_service["Graph Service"]
-  cg_backend["GraphBackend"]
-
-  cg_register --> cg_harness
-  cg_ledger_pull --> cg_harness
-  cg_harness --> cg_graph_service --> cg_backend
-```
-
-Registering a source records metadata. Pulling from an Event Ledger reads
-normalized source events from a managed or self-hosted ledger and advances the
-local cursor. It does not write graph claims. Harnesses inspect source evidence,
-choose truth/risk, and submit semantic mutations; Graph Service owns the final
-graph write path to the active GraphBackend.
-
-### Event Ledger Pull
-
-```mermaid
-sequenceDiagram
-  participant CLI
-  participant Host as Daemon/API Host
-  participant Pot as Pot Management
-  participant Ledger as Event Ledger
-
-  CLI->>Host: potpie ledger pull
-  Host->>Pot: active pot + consumer cursor
-  Host->>Ledger: query/fetch event page with filters + cursor
-  Ledger-->>Host: events + next cursor
-  Host->>Pot: advance local cursor
-```
-
-Code slots: `commands/ledger.py:pull` → `HostShell.ledger`
-(`LedgerFacade` in `host/shell.py`) orchestrates query/fetch → cursor advance:
-`EventLedgerClientPort.query/fetch` (`adapters/outbound/ledger/`) →
-`LedgerCursorStorePort.set`. The ledger client never writes to the graph backend
-directly.
-
-The graph consumer owns processing state for pulled events:
-
-| State | Meaning |
-|---|---|
-| `pending` | Event was durably enqueued from the ledger and awaits processing. |
-| `processing` | A worker/harness has leased the event. |
-| `applied` | Graph Service accepted the resulting semantic proposal or mutation. |
-| `failed_retryable` | Processing failed but can be retried with backoff. |
-| `failed_terminal` | Processing cannot proceed without data/code/operator action. |
-| `timed_out` | A processing lease expired; the event can be retried or inspected. |
-
-Because events are first written into the consumer ingestion ledger, the consumer
-cursor can advance after durable enqueue, not after every event is fully applied.
-Retries, timeouts, dead-letter decisions, and idempotency checks happen from the
-consumer ingestion ledger. If that local/hosted consumer state is lost, the Event
-Ledger replay tokens and query/filter API let the graph rehydrate from an earlier
-position.
-
-The local daemon does not need to be internet-facing. A local profile can log in
-to Potpie managed, use the managed Event Ledger for GitHub/Linear/webhook
-events, and still keep the graph store local. A self-hosted Event Ledger follows
-the same pull contract.
-
-## Agent Contract
-
-Agents should see one graph model in every deployment. In Graph V1, agents may
-still use the existing `context_*` tools and top-level CLI wrappers, but those
-surfaces must be compatibility adapters over V2-compatible graph internals and
-harness-owned skills. In Graph V2, the same internals are exposed through the
-explicit `potpie graph ...` workbench.
-
-Graph V1 compatibility surface:
-
-| Command Family | Role |
-|---|---|
-| `context_status` / `potpie status` | Cheap readiness, active pot, backend/source/skill health, and suggested next action. |
-| `context_resolve` / `potpie resolve` | Bounded context read through `intent`, `include`, `scope`, `mode`, and `source_policy`, internally mapped to named views. |
-| `context_search` / `potpie search` | Narrow follow-up lookup over claim and semantic indexes. |
-| `context_record` / `potpie record` | Convenience write/capture wrapper over semantic mutation validation and apply. |
-
-Graph V2 workbench surface:
-
-| Command Family | Role |
-|---|---|
-| `potpie graph status` | Cheap health, readiness, capability, freshness, and skill check. |
-| `potpie graph catalog` / `describe` | Discover relevant subgraphs, views, entity/relation contracts, source authority, mutation policies, and examples. |
-| `potpie graph search-entities` | Resolve names, aliases, and external IDs before creating or linking entities. |
-| `potpie graph read` / `history` | Return bounded named views and audit history with provenance, truth class, confidence, and version metadata. |
-| `potpie graph mutate` | Validate, dry-run, or apply semantic mutation requests through the canonical graph write door. |
-
-The V1 compatibility surface is not the long-term product contract. It must not
-bypass semantic validation, evidence requirements, mutation provenance, or inbox
-handling. New graph behavior should land in shared graph internals first, then
-be reached from both V1 wrappers and V2 workbench commands.
-
-Common request fields:
-
-| Field | Meaning |
-|---|---|
-| `pot_id` | Pot scope. Callers may use `current`, `local/<name-or-id>`, or `managed/<name-or-id>`; the selected pot determines local-daemon vs managed-backend routing. |
-| `subgraph` | Ontology partition such as `features`, `bugs`, `recent_changes`, `infra_topology`, or `decisions`. |
-| `view` | Named bounded read contract within a subgraph. |
-| `scope` | Repo, service, file, PR, ticket, feature, user, environment, or time window. |
-| `query` | Optional natural-language or keyword filter within a bounded view. |
-| `source_policy` | Evidence policy: `references_only`, `summary`, `verify`, or `snippets`. |
-| `expected_subgraph_versions` | Stale-write guard carried from reads into mutation requests. |
-| `evidence` | Source refs and authority metadata required for durable writes. |
-
-Read responses include:
-
-| Field | Meaning |
-|---|---|
-| `items[]` | Ranked entities, claims, events, or relations matching the named view. |
-| `source_refs[]` / `evidence[]` | Pointers back to source material and authority classification. |
-| `truth` / `confidence` | Truth class and confidence for facts or claims. |
-| `subgraph_versions` | Versions the agent should carry into write requests. |
-| `coverage[]` | Per-subgraph or per-source availability and completeness. |
-| `unsupported[]` | Requested views, scopes, or source policies that cannot be served yet. |
-
-Mutation responses include:
-
-| Field | Meaning |
-|---|---|
-| `status` | `validated`, `applied`, `rejected`, `review_required`, or `error`. |
-| `risk` / `auto_committed` | Risk classification and whether the request was applied automatically. |
-| `preview` / `mutations_applied` | Inspectable counts for entities, relations, claims, and invalidations. |
-| `warnings` / `issues` | Validation feedback and unsupported mutation operations. |
-| `subgraphs` / `claim_keys` | Affected subgraphs and deterministic claim identities. |
-
-`potpie graph status` is sectioned by owner so readiness remains debuggable:
-
-| Section | Owner | Reports |
-|---|---|---|
-| `host` | Host shell / daemon / managed backend API | liveness, version, IPC/HTTP reachability, auth transport, logs path, managed backend URL host when safe |
-| `pot` | Pot Management | active pot id/name/origin, migrations, source registry, source freshness, graph consumer cursor lag |
-| `graph_service` | Graph Service | data-plane readiness, supported subgraphs/views, mutation operation support, validator readiness |
-| `backend` | GraphBackend | profile/name, capabilities, canonical store health, semantic index readiness, projection repair status |
-| `ledger` | Event Ledger consumer binding | binding kind, auth, source list reachability, consumer cursor, retry backlog, timed-out leases, dead-letter backlog |
-| `skills` | Skill Manager | catalog readiness, installed-vs-recommended drift, optional install/update nudge |
-
-A skill nudge may include an exact `potpie skills install ...` command. The
-install still happens through the CLI.
-
-## GraphBackend
-
-A backend is a set of capability ports, not a database handle.
+| **domain/** | `domain/` | Pure model and contracts: the three ontology catalogs, contract constants, ports (Protocols), DTOs, ranking, coherence invariants, identity. No I/O. Import-time coherence guards fail startup fast if vocabularies drift. |
+| **application/** | `application/` | Services and use cases that orchestrate domain over ports: `services/` (graph_service, graph_workbench, agent_context, read_orchestrator, envelope_builder, nudge_service, skill_manager, semantic_mutation_validator/lowering, reconciliation_validation, ingestion_submission_service), `readers/` (the 9 readers), `use_cases/` (the ingestion pipeline). |
+| **adapters/** | `adapters/inbound`, `adapters/outbound` | Concrete I/O. Inbound: cli, mcp, http ingestion server, daemon_http, webhooks. Outbound: graph backends + the shared engine room, skills targets, connectors, ledger clients, the Postgres event store, `intelligence/local_embedder`, the session injection ledger. |
+| **bootstrap/** | `bootstrap/` | The two composition roots (next section). |
+| **host/** | `host/` | `shell.py` (the `HostShell` facade) and `daemon.py` (lifecycle). |
+
+The architecture's single spine is `CLI → HostShell → service(s) → ports`
+(`adapters/inbound/cli/host_cli.py` docstring). Agents reach the same system
+either through the CLI directly or through the in-process MCP `context_*` tools,
+which are compatibility adapters over the same graph internals
+(`adapters/inbound/mcp/server.py`).
+
+## Two composition roots / two HTTP roots
+
+There are **two separate composition roots**, and conflating them is the most
+common architecture error.
 
 ```mermaid
 flowchart TB
-  cg_backend["GraphBackend"]
-  cg_mutation["GraphMutationPort"]
-  cg_query["ClaimQueryPort"]
-  cg_semantic["SemanticSearchPort"]
-  cg_inspection["GraphInspectionPort"]
-  cg_analytics["GraphAnalyticsPort"]
-  cg_snapshot["GraphSnapshotPort"]
+  subgraph cg_spine["Local agent spine — bootstrap/host_wiring.py build_host_shell()"]
+    direction TB
+    cg_cli["potpie CLI · MCP · daemon HTTP"]
+    cg_shell["HostShell facade (host/shell.py)"]
+    cg_services["services: graph · graph_workbench · agent_context · pots · skills · nudge · ledger"]
+    cg_lite[("default backend: falkordb_lite<br/>default host mode: daemon")]
+    cg_cli --> cg_shell --> cg_services --> cg_lite
+  end
 
-  cg_backend --> cg_mutation
-  cg_backend --> cg_query
-  cg_backend --> cg_semantic
-  cg_backend --> cg_inspection
-  cg_backend --> cg_analytics
-  cg_backend --> cg_snapshot
+  subgraph cg_ingest["Ingestion HTTP server — bootstrap/ingestion_server.py"]
+    direction TB
+    cg_fastapi["FastAPI app (adapters/inbound/http/)"]
+    cg_pipeline["async reconciliation pipeline · connectors · optional reconciliation agent"]
+    cg_neo[("default backend: neo4j")]
+    cg_fastapi --> cg_pipeline --> cg_neo
+  end
 ```
 
-| Capability | Required | Notes |
-|---|---:|---|
-| Mutation | yes | Apply validated mutations, invalidations, resets, readiness. |
-| Claim query | yes | Read canonical claims for readers and label lookup. |
-| Semantic search | yes | Vector search over claim facts; local embedder by default. |
-| Inspection | derivable | Neighborhoods, paths, labels, graph slices. |
-| Analytics | derivable | Counts, freshness, quality checks, repair. |
-| Snapshot | derivable | Portable pot export/import. |
+1. **The local agent spine** — `bootstrap/host_wiring.py build_host_shell()`
+   builds `HostShell`, which the inbound adapters (CLI, MCP, daemon HTTP) bind
+   to. The detached daemon serves an `OperationRegistry` over loopback UDS/TCP
+   (`adapters/inbound/daemon_http/transport.py`) — that is the **first HTTP
+   root**, a private IPC transport. Everything you reach with `potpie graph …`,
+   `potpie resolve/search/record`, and `potpie graph nudge` routes through here.
+   **Default backend: `falkordb_lite`. Default host mode: `daemon`.**
+2. **The ingestion HTTP server** — `bootstrap/ingestion_server.py
+   IngestionServerContainer` composes the FastAPI app under
+   `adapters/inbound/http/` (the async reconciliation pipeline, connectors, the
+   optional reconciliation agent). That public FastAPI app is the **second HTTP
+   root**. **Default backend here: `neo4j`** (via `settings.graph_db_backend()`).
+   It is a distinct root; migrating its async pipeline onto `HostShell` is
+   deferred.
 
-The canonical claim store is the only source of truth. Vector indexes,
-inspection views, and analytics rollups are projections that can be rebuilt.
+Both roots run the same domain/application code over a swappable `GraphBackend`;
+they differ only in wiring and default storage.
 
-Default profiles:
+> **Roadmap (not yet wired):** a managed Potpie backend that hosts the same
+> service modules on hosted stores. `potpie use --managed`, `pot list --managed`,
+> and the entire `cloud` command group raise `CapabilityNotImplemented` today.
+> Local and managed are designed to share one graph model; only the host shell
+> and storage adapters would change.
 
-| Profile | Purpose |
+## The daemon model
+
+`host/daemon.py Daemon` is the local background process for lifecycle, IPC,
+health, and logs — explicitly **not** the business layer. Two modes:
+
+- **in_process** — the host runs inside the CLI process and reports synthetic
+  liveness. Built directly via `build_host_shell()`.
+- **detached** — a separate process runs `host.daemon_main` and serves the
+  `HostShell` RPC over loopback (UDS / TCP, with `base_url` discovery). The CLI
+  talks to it through a daemon-backed `RemoteHostShell`.
+
+Mode is chosen by `CONTEXT_ENGINE_HOST_MODE` (`daemon` | `in_process`);
+`default_host_mode()` returns **`daemon`**, so the shipped CLI default is a
+**detached daemon**. `get_host()` (`commands/_common.py`) returns the
+daemon-backed `RemoteHostShell` by default and only builds an in-process shell
+when `CONTEXT_ENGINE_HOST_MODE=in_process`.
+
+**Liveness ≠ readiness.** The daemon can be live while a backend or semantic
+index is not yet ready; the two are reported separately. `potpie doctor`
+composes `backend.capabilities()` + `backend.mutation.readiness()` +
+`daemon.status()` + `ledger.status()` so a half-ready system is debuggable.
+`potpie ui` (the read-only graph explorer) is served by this daemon — it ensures
+the daemon, discovers `base_url`, and opens `<base>/ui`.
+
+## Two altitudes onto one data plane
+
+Reads and writes both reach `DefaultGraphService`
+(`application/services/graph_service.py`) over the backend, but agents see two
+altitudes:
+
+- **The 4-tool MCP contract** — `context_resolve` / `context_search` /
+  `context_record` / `context_status`, bound by `AgentContextService`. This is
+  the entire long-term agent surface; `context_record` is the only MCP write.
+- **Graph Surface Lite (V1.5)** — the richer `potpie graph …` workbench
+  (`catalog`/`read`/`search-entities`/`neighborhood`/`propose`/`commit`/`bulk`/
+  `history`/`inbox`/`quality` …). **CLI-only**; it does not add MCP tools.
+
+Both are shipped. The read shapes and the 9-reader trunk are owned by
+[querying.md](./querying.md); the write stack is owned by
+[writing.md](./writing.md). No read returns a server-synthesized answer —
+reads return ranked evidence (`AgentEnvelope`) and the agent reasons over it.
+
+## The `GraphBackend` port
+
+`domain/ports/graph/backend.py` defines `GraphBackend` as a `@runtime_checkable`
+Protocol that **bundles six capability ports** in two tiers, plus three bundle
+members.
+
+```mermaid
+flowchart TB
+  cg_be["GraphBackend"]
+  subgraph cg_canon["canonical source of truth"]
+    cg_mut["mutation (GraphMutationPort)"]
+    cg_cq["claim_query (ClaimQueryPort)"]
+  end
+  subgraph cg_proj["rebuildable projections"]
+    cg_sem["semantic (SemanticSearchPort)"]
+    cg_insp["inspection (GraphInspectionPort)"]
+    cg_an["analytics (GraphAnalyticsPort)"]
+    cg_snap["snapshot (GraphSnapshotPort)"]
+  end
+  cg_be --> cg_mut
+  cg_be --> cg_cq
+  cg_be --> cg_sem
+  cg_be --> cg_insp
+  cg_be --> cg_an
+  cg_be --> cg_snap
+  cg_be -. "profile · capabilities() · provision(plan)" .-> cg_meta["bundle members"]
+```
+
+- **Canonical:** `mutation` (`apply`/`apply_async`, `invalidate`, `reset_pot`,
+  `readiness`) and `claim_query` (`find_claims`, `entity_labels`,
+  `entity_properties`). Note `ClaimQueryPort` lives at
+  `domain/ports/claim_query.py`, **not** under `graph/`.
+- **Projections (rebuildable):** `semantic` (vector NN over claim embeddings,
+  stamps `semantic_similarity`), `inspection` (`neighborhood`/`path`/`labels`/
+  `slice` → backs `graph neighborhood`/`inspect` + the explorer UI), `analytics`
+  (`counts`/`freshness`/`quality`/`repair`), `snapshot` (`export`/`import_`).
+- **Bundle members:** `profile` (string), `capabilities() -> BackendCapabilities`
+  (a frozen dataclass declaring which of the six are *really* implemented vs
+  fail-closed — read by `backend status`/`doctor`), and `provision(plan:
+  SetupPlan) -> StepResult` (the setup seam where a backend stands up its own
+  store idempotently).
+
+Two workbench stores also live under `domain/ports/graph/` but are **not** part
+of the six-cap bundle: `inbox_store.py` and `plan_store.py`.
+
+The registry (`adapters/outbound/graph/backends/__init__.py`) is
+`build_backend(profile, *, settings, embedder)`. `KNOWN_PROFILES = (in_memory,
+embedded, neo4j, falkordb, falkordb_lite, postgres, chroma, hosted)`. It
+normalizes names (`falkordblite`→`falkordb_lite`, dashes→underscores) and, when
+`embedder is None` for a real profile, default-builds the bundled local embedder
+(disable via `CONTEXT_ENGINE_EMBEDDER=none`).
+
+### Backend coverage — real capabilities per profile
+
+This table is the corrected source of truth (the older doc overstated coverage).
+A "real cap" is one whose port actually executes; everything else is fail-closed
+and raises `CapabilityNotImplemented`.
+
+| Profile | Backend class | Real caps | Notes |
+|---|---|---:|---|
+| `in_memory` | `InMemoryGraphBackend` | **6/6** | Conformance/reference; genuinely real (validates, MERGEs by identity, bitemporal invalidation, embeds on write); `dump_store`/`load_store`. |
+| `embedded` | `EmbeddedGraphBackend` | **6/6** (delegated) | OSS JSON-persisted fallback wrapping `in_memory`; persists to `<home>/graph.json` after each mutation (atomic tmp-replace). |
+| `falkordb_lite` | `FalkorDBLiteGraphBackend` | **5/6** (no snapshot) | **The OSS/CLI default.** Embedded FalkorDBLite via `redislite` over a local file — no server, no Docker. |
+| `falkordb` | `FalkorDBGraphBackend` | **5/6** (no snapshot) | Full FalkorDB server over a redis URL; needs the optional `falkordb` client. |
+| `neo4j` | `Neo4jGraphBackend` | **4/6** (no inspection, no snapshot) | "Shape-first production target"; native relationship vector index. |
+| `postgres` / `chroma` / `hosted` | `StubGraphBackend` | **0/6** | Fail-closed seam: every port and `provision` raise `CapabilityNotImplemented("graph.<profile>.<cap>.<method>")`. Documented but unbuilt; `backend list` still shows them. |
+
+**Cross-profile gaps to internalize:**
+
+- Claim-key `mutation.invalidate` raises on **both** Neo4j and FalkorDB (that
+  invalidation path is unbuilt there).
+- `snapshot` (export/import) is real only on `in_memory`/`embedded`.
+- `inspection` is real on `in_memory`/`embedded`/`falkordb` but **not** Neo4j.
+- Net effect: **FalkorDB is more complete than Neo4j** (5 vs 4 ports), and the
+  OSS default `falkordb_lite` is a first-class backend, not a stub.
+
+> **Roadmap (not yet wired):** `snapshot` on falkordb/neo4j; `inspection` on
+> neo4j; the `postgres`/`chroma`/`hosted` backends (all `StubGraphBackend`);
+> claim-key `mutation.invalidate` on neo4j/falkordb.
+
+## The shared engine room
+
+The real storage logic is shared across backends, not duplicated per profile
+(`adapters/outbound/graph/`). This is the implementation underneath the canonical
+ports.
+
+| Module | Role |
 |---|---|
-| `falkordb_lite` | OSS default on Python ≥3.12: embedded FalkorDBLite local graph with vector search. |
-| `embedded` | JSON-persisted local fallback, no Docker. |
-| `in_memory` | Tests and conformance. |
-| `neo4j`, `postgres/pgvector`, `chroma` | Optional profiles behind the same ports. |
-| hosted profile | Managed API server storage/search adapter. |
+| `cypher.py` | The **Position-B canonical write engine shared by BOTH the Neo4j and FalkorDB writers.** Claims are stored as `(:Entity {group_id, entity_key})-[:RELATES_TO {group_id, name, subject_key, object_key, source_ref, valid_at, invalid_at, created_at, …}]->(:Entity)`. The MERGE key **includes `source_ref`** so corroborating writes from different sources don't collide; bitemporal stamps (`valid_at`/`invalid_at` = event time, `created_at` = system time); `_supersede_singleton_predecessors` stamps `invalid_at` on prior disagreeing live singleton claims. A Phase-0 spike proved this Cypher runs unchanged on FalkorDB. |
+| `canonical_claim_query.py` | Shared `FIND_CLAIMS_CYPHER`, `ENTITY_LABELS_CYPHER`, `row_from_record`, the lexical `embedding_score` token-overlap scorer, `stamp_similarity`/`stamp_scored_rows`, `CONTRACT_EDGE_KEYS`. Both readers reuse these; the FalkorDB reader only swaps row normalization. |
+| `claim_query_analytics.py` / `claim_query_semantic.py` | Give any claim-backed profile a real analytics projection and a `fact_query`-routed semantic search computed on read. |
+| `apply_plan.py` | `apply_mutation_batch` (alias `apply_reconciliation_plan`) — the **single async write door** (high-level below; full flow in [writing.md](./writing.md)). |
+| `writer_port.py` | `GraphWriterPort` — the narrow async mutation surface (`ensure_indexes`, 4 verbs, `reset_pot`), implemented by `Neo4jGraphWriter` and `FalkorDBGraphWriter`. Storage-internal; services depend on `GraphBackend`/`GraphMutationPort`, not this. |
+| `in_memory_reader.py` | `InMemoryClaimQueryStore` — full filter semantics; `match_mode` = `vector` (embedder cosine over `fact_embedding`) or `lexical` (token overlap). |
+| `context_graph_service.py` | Legacy `ContextGraphPort` DTO shim; `apply_plan`/`apply_plan_async` are **disabled** (raise `CapabilityNotImplemented`) — writes must go through `GraphService.mutate`. |
+| `plan_stores/local_json.py`, `inbox_stores/local_json.py` | JSON workbench stores (plans, inbox) under the Potpie home. |
 
-## Skill Manager
+`FalkorDBGraphProvider` memoizes **one** graph handle so the Falkor reader and
+writer share a single embedded instance.
 
-Skills teach agent harnesses how to use the Graph V1 compatibility wrappers
-today and the Graph V2 workbench workflow later. They are not graph facts and
-do not define a second graph API.
+## The write door (high level)
 
-```mermaid
-flowchart LR
-  cg_skills_cli["potpie skills ..."]
-  cg_skill_manager["Skill Manager"]
-  cg_skill_catalog["catalog"]
-  cg_target_adapter["agent target adapter"]
-  cg_status_nudge["graph status skills nudge"]
-
-  cg_skills_cli --> cg_skill_manager
-  cg_skill_manager --> cg_skill_catalog
-  cg_skill_manager --> cg_target_adapter
-  cg_skill_manager --> cg_status_nudge
-```
-
-`potpie graph status` may report missing/outdated skills and provide an install
-command. The install still happens through the CLI.
-
-## Managed Backend API
-
-Managed Potpie hosts the same service modules behind a managed backend API:
-
-- Potpie auth, teams, roles, billing, and collaboration policy.
-- Hosted operational, graph/search, and skill/catalog stores.
-- Workers and queues for async ingestion that call the same services.
-- Hosted graph/search profile.
-- Hosted observability and cost telemetry.
-- Cloud skill sync.
-
-It does not add a cloud-only graph model or a separate agent contract. The
-managed backend API is another host for Pot Management, Graph Service, and Skill
-Manager, backed by hosted databases. `potpie login` authenticates to the
-configured backend URL; this can be Potpie managed or a compatible self-hosted
-backend.
-
-## Event Ledger
-
-The Event Ledger is a separate managed or self-hostable service for source
-events. It is not the Context Graph source of truth.
+The canonical write door is two-phase: **`graph propose` → `graph commit
+--verify`** (Spine A, `application/services/graph_workbench.py`). `propose`
+validates, lowers accepted ops, and persists a plan record with no graph write;
+`commit` re-checks the conflict guard, enforces approval for medium/high risk,
+calls the single backend write door, and `--verify` reads the committed claims
+back.
 
 ```mermaid
 flowchart LR
-  cg_sources["GitHub / Linear / other sources"]
-  cg_event_ledger["Event Ledger<br/>webhooks + normalized events<br/>query/filter + replay tokens"]
-  cg_local_consumer["local graph<br/>consumer cursor + ingestion ledger"]
-  cg_managed_consumer["managed graph<br/>consumer cursor + ingestion ledger"]
-
-  cg_sources --> cg_event_ledger
-  cg_event_ledger --> cg_local_consumer
-  cg_event_ledger --> cg_managed_consumer
+  cg_propose["potpie graph propose<br/>(validate · lower · persist plan)"]
+  cg_commit["potpie graph commit --verify<br/>(re-check · apply · read-back)"]
+  cg_apply["apply_mutation_batch<br/>(single backend write door)"]
+  cg_writer["GraphWriterPort<br/>upsert_entities → upsert_edges → delete_edges → invalidate"]
+  cg_propose --> cg_commit --> cg_apply --> cg_writer
 ```
 
-Responsibilities:
+Two corrections to the previous version of this doc:
 
-- receive webhooks and poll source APIs;
-- normalize source events and keep replayable event history;
-- expose ordered event pages, replay tokens, source listings, and query/filter
-  APIs for pull consumers;
-- keep third-party credentials and webhook receivers out of the local daemon by
-  default;
-- let local graphs use managed integrations without pushing graph state to
-  managed storage.
+- **`graph mutate` is a legacy wrapper, not the canonical door.** It internally
+  calls `propose` then `commit` and emits a legacy warning
+  (`commands/graph.py`). The direct-apply `DefaultGraphService.mutate` (Spine B)
+  is now reached **only** through `record` / `context_record`, never via `graph
+  mutate`.
+- There **is** a server-created `plan_id` and a real `propose|commit` contract —
+  the prior claim that none existed was wrong.
 
-The Graph Service remains responsible for turning source events into semantic
-proposals or claims and applying validated graph mutations. The Event Ledger only
-supplies ordered source events.
-Consumer cursor state belongs to the graph deployment that pulled the events,
-along with per-event processing state, retry counters, lease timeouts, and
-dead-letter records. The ledger may separately keep provider ingestion cursors
-for webhook/polling work, but it does not own a graph's last-applied or
-last-enqueued position.
+Optimistic concurrency on this path is **coarse**: the only version tracked is
+`{"_global": <total pot claim count>}` — there are no per-subgraph versions. A
+conflict fires only if the pot's total claim count changed between propose and
+commit. `GraphMutationDiff.to_dict()` emits `entity_upserts`, `edge_upserts`,
+`edge_deletes`, `invalidations`, `claims_asserted`, `claims_retracted`,
+`claim_keys`. The full tiered stack — semantic DSL (flat ops), validation/risk,
+lowering, the 4-verb idempotent apply, inbox, and quality — is owned by
+[writing.md](./writing.md).
 
-## Code Map
+## Persistence & per-pot scoping
 
-The active package is `potpie/context-engine/`; older repository layouts may
-still appear in history. Graph V1 should first
-run one forward-compatible graph model across two composition roots: the local
-agent spine (`build_host_shell`, behind the CLI + MCP if enabled) and the
-managed HTTP ingestion server (`build_ingestion_server`, consumed by the parent
-app). Graph V2 then exposes the workbench over that same model. Rows marked
-_(local POC)_ have a working body sufficient for the local profile with deeper
-production work deferred; _(deferred)_ rows are the managed pipeline not yet
-migrated onto `HostShell`.
+Every fact is scoped by **`pot_id`, which IS the Cypher `group_id`** on every
+`:Entity` node and `:RELATES_TO` edge. `reset_pot` is `MATCH (n {group_id:$gid})
+DETACH DELETE n`. There is no cross-pot federation (an explicit anti-goal).
+
+| Profile | Where it persists | Pot isolation |
+|---|---|---|
+| `in_memory` | Process-local, ephemeral | by `group_id` |
+| `embedded` | One multi-pot `<home>/graph.json`, atomic rewrite per mutation | by `group_id` |
+| `falkordb_lite` | `redislite` file at `falkordb_lite_path()` (default `.potpie/context_graph/falkordb.db`), single keyspace `context_graph` | by `group_id` |
+| `neo4j` | External server, one DB | by `group_id` |
+
+Relevant settings (`domain/ports/settings.py`): `graph_db_backend()='neo4j'`,
+`falkordb_mode()='lite'`, `falkordb_graph_name()='context_graph'`,
+`falkordb_lite_path()='.potpie/context_graph/falkordb.db'`, plus the Neo4j URI/
+credentials.
+
+## Backend selection precedence
+
+- **Host / CLI:** `CONTEXT_ENGINE_BACKEND` (preferred) > legacy
+  `GRAPH_DB_BACKEND` > `default_backend_profile()` = **`falkordb_lite`**.
+- **Ingestion server:** `settings.graph_db_backend()` default **`neo4j`**, but it
+  also routes through `build_backend`, so FalkorDB works there too.
+
+There is **no `NotImplementedError` gate** on FalkorDB anywhere — the old
+"selecting falkordb raises NotImplementedError, use neo4j" guidance is obsolete.
+`backend use <profile>` is **advisory only** (it suggests
+`CONTEXT_ENGINE_BACKEND`, it does not persist a selection).
+
+## Setup & provisioning (orientation)
+
+`potpie setup` is the idempotent first-run flow. The CLI builds a `SetupPlan`
+(config, storage, daemon, default `default` pot, source registration, skills),
+ensures the daemon first when in daemon mode (`host.daemon.ensure()`), and each
+backend self-provisions its store through `provision(plan: SetupPlan) ->
+StepResult`. Re-running is safe; each step is `ensure`-shaped and reports `done |
+skipped | not_implemented | failed`.
+
+Two corrections worth stating here:
+
+- The default backend a fresh `setup` provisions is **`falkordb_lite`** (a local
+  `redislite` file), not `embedded` or `neo4j`. `postgres`/`chroma`/`hosted`
+  cannot be provisioned — `StubGraphBackend.provision()` raises (the prior
+  "postgres creates the DB, enables pgvector, runs DDL" claim was aspirational).
+- `--scan` is **opt-in** (default off): `setup` registers the repo as a source
+  but does not scan or ingest the working tree.
+
+The full `setup` flag set and the canonical local journey live in
+[cli-flow.md](./cli-flow.md).
+
+> **Roadmap (not yet wired):** a separate managed-backend login lifecycle
+> (`potpie login` to a configured `cloud.backend_url`, then managed pot
+> selection). The plumbing exists, but managed routing raises
+> `CapabilityNotImplemented`.
+
+## Two ledgers: the live event store vs the external seam
+
+The older doc conflated two different things called a "ledger." Keep them
+distinct.
+
+1. **The internal event store (the real, live "ledger").** A Postgres-backed
+   `context_events` table plus reconciliation-run/work-event/batch tables, where
+   every inbound episode/event/record actually lands and gets a lifecycle
+   (`adapters/outbound/postgres/…`). Its consumer-state vocabulary is
+   **`queued` / `processing` / `done` / `error`** — **not** the six-state
+   `pending/processing/applied/failed_retryable/failed_terminal/timed_out` list
+   the old doc described. This is what ingestion really uses.
+2. **The external Event Ledger seam.** `domain/ports/ledger/client.py
+   EventLedgerClientPort` (cursor-advancing `fetch`, read-only `query`,
+   `sources`, `health`) + `LedgerCursorStorePort`. The *cursor* concept belongs
+   only to this external seam, never to the internal Postgres store.
+
+```mermaid
+flowchart LR
+  cg_int["internal Postgres event store<br/>context_events · queued/processing/done/error"]
+  cg_ext["external Event Ledger seam<br/>EventLedgerClientPort + cursor (stubs)"]
+  cg_graph["Graph Service → GraphBackend"]
+  cg_int --> cg_graph
+  cg_ext -. "pull (roadmap)" .-> cg_graph
+```
+
+> **Roadmap (not yet wired):** the external Event Ledger clients
+> (`adapters/outbound/ledger/managed_client.py`, `self_hosted_client.py`) are
+> **TODO stubs** — `fetch` returns an empty page, `query` raises, `health`
+> reports unavailable. Only the in-process `FixtureEventLedgerClient` (tests)
+> pages for real, and `LocalLedgerCursorStore` persists cursors. So `potpie
+> ledger pull/query/status` exists but is non-functional against any real
+> provider today.
+
+The internal store, ingestion entry points, connectors (github/notion only —
+scanners are deleted), windowed batching, and the nudge trigger model are owned
+by [ingestion-nudge.md](./ingestion-nudge.md).
+
+## Environment switches
+
+| Variable | Effect | Default |
+|---|---|---|
+| `CONTEXT_ENGINE_BACKEND` / `GRAPH_DB_BACKEND` | Backend profile (first wins) | `falkordb_lite` (host) / `neo4j` (ingestion server) |
+| `CONTEXT_ENGINE_HOST_MODE` | `daemon` \| `in_process` | `daemon` |
+| `CONTEXT_ENGINE_EMBEDDER` | `none` disables the bundled local embedder | bundled local embedder |
+| `CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL` | Downgrade instead of reject on ontology drift at apply time | off |
+| `CONTEXT_ENGINE_AGENT_PLANNER_ENABLED` | Enable service-side LLM reconciliation | **off** |
+| `CONTEXT_ENGINE_MAX_CHUNK_EVENTS` | Reconciliation chunk size | 20 |
+| `CONTEXT_ENGINE_RECONCILIATION_ENABLED` / `_INFER_LABELS` / `_CONFLICT_DETECT` / `_AUTO_SUPERSEDE` | Reconciliation feature flags | on (planner off) |
+| `CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS` / `GITHUB_WEBHOOK_SECRET` | GitHub webhook HMAC handling (fail-closed by default) | signed required |
+| `POTPIE_HOOK_DEBUG` / `POTPIE_HOOK_TIMEOUT` / `POTPIE_BIN` / `POTPIE_POT` | Claude Code nudge-hook adapter env | — |
+
+> **Roadmap (not yet wired):** `CONTEXT_ENGINE_AGENT_PLANNER_ENABLED` turns on
+> service-side LLM reconciliation, which is parked/non-canonical — canonical
+> writes come from harness-authored semantic mutations and the deterministic
+> `context_record` path.
+
+## Code map
+
+The active package is `potpie/context-engine/`. Fictional read-path modules from
+the old doc ("Ontology Catalog / Identity Resolver / Read View Router") have been
+removed — those are **methods on `DefaultGraphService`** plus the declarative
+`GRAPH_VIEWS` table and the `ReadOrchestrator`, not standalone components.
 
 | Area | Path |
 |---|---|
-| Graph V1 compatibility DTOs / Graph command DTOs | Existing `AgentContextPort` DTOs plus `domain/ports/services/graph_service.py` graph command DTOs |
-| Services (interfaces) | `domain/ports/services/{graph_service,pot_management,skill_manager}.py` |
-| Graph capability ports | `domain/ports/graph/{backend,mutation,claim_query,semantic,inspection,analytics,snapshot}.py` |
-| Event Ledger consumer ports | `domain/ports/ledger/{client,cursor}.py` |
-| Host shell + daemon | `host/{shell,daemon}.py` |
-| Composition root | `bootstrap/host_wiring.py` (`build_host_shell`) |
-| Graph command impl | `application/services/graph_service.py` methods for catalog/read/search-entities/mutate/status |
-| Graph Service _(local POC)_ | `application/services/graph_service.py` over a `GraphBackend` + read view router; Semantic Mutation DSL operations lower into validated graph mutations |
-| Pot Management _(local POC)_ | `application/services/pot_management.py` + `adapters/outbound/pots/local_pot_store.py` |
-| Skill Manager _(local POC)_ | `application/services/skill_manager.py` + `adapters/outbound/skills/{bundle_catalog,claude_target}.py` |
-| GraphBackend adapters | `adapters/outbound/graph/backends/{in_memory,embedded,neo4j}_backend.py` + `build_backend` registry; `claim_query_analytics.py` gives any claim-backed profile real analytics |
-| Event Ledger adapters _(local POC)_ | `adapters/outbound/ledger/{managed_client,self_hosted_client,cursor_store}.py` |
+| Composition roots | `bootstrap/host_wiring.py` (`build_host_shell`); `bootstrap/ingestion_server.py` + `standalone_container.py` (ingestion HTTP root) |
+| Host shell + daemon | `host/{shell,daemon}.py`; daemon IPC transport `adapters/inbound/daemon_http/transport.py` |
+| Service interfaces (ports) | `domain/ports/services/{graph_service,pot_management,skill_manager}.py` |
+| Graph capability ports | `domain/ports/graph/{backend,mutation,semantic,inspection,analytics,snapshot}.py` + `domain/ports/claim_query.py` |
+| Read trunk | `application/services/read_orchestrator.py`, `envelope_builder.py`, `application/readers/`, `domain/agent_envelope.py`, `domain/ranking.py`, `domain/agent_context_port.py` |
+| Graph Service (catalog/read/search-entities/mutate/status) | `application/services/graph_service.py` (methods, not separate modules) |
+| Named views | `domain/graph_views.py` (`GRAPH_VIEWS`) |
+| Write stack | `application/services/{semantic_mutation_validator,semantic_mutation_lowering,graph_workbench,record_to_semantic,reconciliation_validation}.py`; `domain/{semantic_mutations,graph_plans,graph_inbox}.py` |
+| GraphBackend adapters | `adapters/outbound/graph/backends/{in_memory,embedded,neo4j,falkordb,stub}_backend.py` + `__init__.py` (`build_backend`) |
+| Shared engine room | `adapters/outbound/graph/{cypher,canonical_claim_query,claim_query_analytics,claim_query_semantic,apply_plan,writer_port,in_memory_reader,context_graph_service}.py` + `plan_stores/`, `inbox_stores/` |
+| Internal event store | `adapters/outbound/postgres/{reconciliation_ledger,ingestion_event_store,batch_repository,ledger}.py` |
+| External Event Ledger seam (stubs) | `domain/ports/ledger/{client,cursor}.py`; `adapters/outbound/ledger/{managed_client,self_hosted_client,cursor_store}.py` |
 | CLI (host-routed) | `adapters/inbound/cli/host_cli.py` + `adapters/inbound/cli/commands/` |
-| Readers | `application/readers/`, `application/services/read_orchestrator.py` |
-| Ontology + semantic mutations | `domain/ontology.py`, Semantic Mutation DSL schemas _(planned)_, existing reconciliation plan types where reused |
-| Managed read/write facade | `domain/ports/context_graph.py`, `adapters/outbound/graph/context_graph_service.py` — should expose the same V2-compatible graph model without a separate data-plane model |
-| MCP (optional host-routed) | `adapters/inbound/mcp/server.py` — Graph V1 may keep `context_*` compatibility wrappers; Graph V2 should mirror workbench command families or route wrappers through them |
-| HTTP ingestion server _(deferred)_ | `adapters/inbound/http/`, `bootstrap/{ingestion_server,standalone_container}.py` — its own composition root; the async pipeline migrates onto `HostShell` over time |
-| Reconciliation adapters _(parked)_ | `adapters/outbound/reconciliation/` — not the canonical intelligence layer; candidate implementation detail only for ingestion event processing or future deterministic extraction |
-| Managed API adapter | `app/modules/context_graph/` |
+| MCP (4 tools) | `adapters/inbound/mcp/server.py` |
+| Ingestion HTTP server | `adapters/inbound/http/` |
+| Skills | `application/services/skill_manager.py` + `adapters/outbound/skills/{bundle_catalog,agent_installer,claude_target}.py` |
 
-### Interfaces
-
-The stable contracts. Methods may be added; the interfaces and their package
-boundaries are not expected to change.
+### Stable interfaces
 
 | Interface | File | Role |
 |---|---|---|
-| `GraphService` | `domain/ports/services/graph_service.py` | Data plane: ontology-aware reads, identity resolution, semantic mutation validation/apply, status, and projections. |
+| `GraphService` | `domain/ports/services/graph_service.py` | Data plane: reads, identity resolution, semantic mutation validate/apply, status, projections. |
 | `PotManagementService` | `domain/ports/services/pot_management.py` | Control plane: pots, active pot, sources, readiness rollup. |
 | `SkillManager` + `AgentTargetPort` | `domain/ports/services/skill_manager.py` | Catalog + per-harness install drift; advisory `SkillNudge`. |
-| `GraphBackend` | `domain/ports/graph/backend.py` | Six-capability storage bundle + `profile` + `capabilities()`. |
-| `GraphMutationPort` / `ClaimQueryPort` | `domain/ports/graph/{mutation,claim_query}.py` | Canonical source of truth (write / read). |
+| `GraphBackend` | `domain/ports/graph/backend.py` | Six-capability storage bundle + `profile` + `capabilities()` + `provision()`. |
+| `GraphMutationPort` / `ClaimQueryPort` | `domain/ports/graph/mutation.py`, `domain/ports/claim_query.py` | Canonical source of truth (write / read). |
 | `SemanticSearchPort` / `GraphInspectionPort` / `GraphAnalyticsPort` / `GraphSnapshotPort` | `domain/ports/graph/{semantic,inspection,analytics,snapshot}.py` | Rebuildable projections. |
-| `EventLedgerClientPort` | `domain/ports/ledger/client.py` | Query/filter/pull normalized source events from the Event Ledger. |
-| `LedgerCursorStorePort` | `domain/ports/ledger/cursor.py` | Graph-consumer cursor: last enqueued/applied position per (pot, source). |
-| `LedgerEventRunStorePort` _(planned — HU4)_ | `domain/ports/ledger/run_store.py` | Per-event processing state: status, retries, leases, dead letters. |
+| `EventLedgerClientPort` / `LedgerCursorStorePort` | `domain/ports/ledger/{client,cursor}.py` | External Event Ledger pull + per-(pot,source) cursor (clients are stubs today). |
 | `HostShell` / `Daemon` | `host/{shell,daemon}.py` | In-process facade over the services + local lifecycle. |
 
-An unbuilt capability raises `domain.errors.CapabilityNotImplemented` (a dotted
-`graph.<profile>.<cap>.<method>` slot), which inbound adapters render as the
-structured not-implemented contract — never a bare `NotImplementedError`.
+An unbuilt capability raises `domain.errors.CapabilityNotImplemented` with a
+dotted `graph.<profile>.<cap>.<method>` slot, which inbound adapters render as
+the structured not-implemented contract — never a bare `NotImplementedError`.
 
-## Extension Points
+## Extension points
 
-The rule of thumb: add behavior at the narrowest service boundary that owns it.
-CLI adapts user intent, the daemon hosts services, Pot Management owns control
-plane behavior, Graph Service owns data-plane behavior, and GraphBackend owns
-physical storage.
-
-```mermaid
-flowchart LR
-  cg_cli_command["CLI command"]
-  cg_use_case["application use case"]
-  cg_service_boundary["service boundary"]
-  cg_domain_port["domain port"]
-  cg_adapter["adapter"]
-
-  cg_cli_command --> cg_use_case --> cg_service_boundary --> cg_domain_port --> cg_adapter
-```
+Add behavior at the narrowest service boundary that owns it. CLI adapts user
+intent, the daemon hosts services, Pot Management owns the control plane, Graph
+Service owns the data plane, and `GraphBackend` owns physical storage.
 
 | Change | Put it here | Rule |
 |---|---|---|
-| Read view | Ontology Catalog + Read View Router | Read through `ClaimQueryPort` and projections; do not query stores directly. |
-| Ledger event processor | external harness | Pull events are read-only locally; harnesses decide what to record and submit semantic mutations through Graph Service. Do not let ledger clients write to GraphBackend directly. |
-| Semantic mutation operation | Semantic Mutation DSL schemas + validator | Add deterministic lowering and validation policy before exposing it to agents. |
-| Entity/predicate | `domain/ontology.py` | Add identity, endpoint rules, freshness, and source-of-truth metadata. |
-| Graph backend | `domain/ports/graph/` + backend adapter | Implement mandatory ports, preserve pot isolation, pass conformance. |
-| Skill | Skill catalog + `AgentTargetPort` adapter | Keep skill content harness-neutral; do not put it in the graph. |
-| Pot behavior | Pot Management Service | Preserve first-setup active `default` pot. |
-| Event Ledger connector | Event Ledger service adapter | Normalize provider events, own webhook/polling concerns, expose query/filter and replay-token-based pull. |
-| Managed host behavior | Managed backend API + shared services | Reuse Pot Management, Graph Service, and Skill Manager; swap only host/storage adapters. |
-| Setup/lifecycle step | Component's bespoke method + `SetupOrchestrator` sequence | Return a `StepResult`; raise `CapabilityNotImplemented` until built; declare hard vs soft for the selected host mode. |
-| CLI command | CLI -> selected pot service/use case | Commands route by active/selected pot; selecting a managed pot after login is the explicit remote boundary. |
+| Read view | `domain/graph_views.py` (`GRAPH_VIEWS`) + a reader in `application/readers/` | Route through `ReadOrchestrator` and `ClaimQueryPort`; never query stores directly. `READER_BACKED_INCLUDES` must mirror the reader registry (coherence-enforced). |
+| Semantic mutation op | semantic DSL + validator + lowering | Add deterministic validation and lowering before exposing it to agents. |
+| Entity / predicate | `domain/ontology.py` | One row in `ENTITY_TYPES` / `EDGE_TYPES`; add identity, endpoint rules, freshness, source-of-truth. Coherence guards fail import if it drifts. See [ontology.md](./ontology.md). |
+| Graph backend | `domain/ports/graph/` + a backend adapter | Implement the canonical ports, preserve `group_id` pot isolation, pass conformance; declare real caps in `capabilities()`. |
+| Skill | skill catalog + `AgentTargetPort` adapter | Keep skill content harness-neutral; it is not graph data. See [skills.md](./skills.md). |
+| Pot behavior | Pot Management Service | Preserve the first-setup active `default` pot. |
+| Setup / lifecycle step | the component's `provision`/bespoke method + `SetupOrchestrator` sequence | Return a `StepResult`; raise `CapabilityNotImplemented` until built. |
 
-Do not extend by bypassing the Read View Router, querying physical stores from
-CLI/readers, making projections a second source of truth, putting service
-business logic in the daemon shell, exposing skill management as an agent tool,
-or duplicating ontology enums in docs/CLI/cloud-only code.
+Do not bypass the read trunk, query physical stores from CLI/readers, make a
+projection a second source of truth, put service logic in the daemon shell, or
+duplicate ontology enums in docs/CLI.
 
-## Implementation Order
+## Invariants
 
-The architectural skeleton must first converge on Graph V1 as described in
-`graphv1.md`: existing wrappers remain usable, intelligence moves into harness
-skills, and canonical graph state adopts the V2-compatible ontology,
-truth/evidence model, semantic mutations, validation, and inbox handling. Graph
-V2 then adds the explicit workbench surface over those internals. What remains is
-replacing POC bodies with real implementations: a persistent embedded store with
-real vectors, a detached daemon, ontology/read-view contracts, semantic proposal
-validation, snapshots + cloud sync, and managed hosting — plus folding the
-parked Neo4j and reconciliation modules in behind GraphBackend and ingestion
-event-processing seams.
+- OSS graph use works with no cloud auth and no mandatory Docker/Neo4j/Postgres
+  (the default `falkordb_lite` is embedded).
+- The CLI is the primary user/agent surface; the MCP surface stays at exactly 4
+  tools.
+- The canonical claim store is the only source of truth; semantic/inspection/
+  analytics/snapshot are rebuildable projections.
+- Every fact is scoped by `pot_id` = `group_id`; no cross-pot federation.
+- The canonical write door is `propose` → `commit --verify`; `graph mutate` is a
+  legacy wrapper; reads never synthesize answers.
+- Pot Management owns the control plane; Graph Service owns the data plane; the
+  daemon hosts services but holds no business logic.
+- Unbuilt capabilities fail-closed with a dotted `CapabilityNotImplemented`
+  slot, surfaced as the structured not-implemented contract.
 
-1. Create graph capability ports and `GraphBackend`.
-2. Add conformance suite and in-memory backend.
-3. Implement embedded backend with vector search.
-4. Add setup-aware daemon with local auth, health, logs, and service-manager
-   install/start.
-5. Add local Pot Management with `default` active pot creation and source
-   registry.
-6. Make V1 wrappers use V2-compatible ontology, named views, and semantic
-   mutation validation.
-7. Add canonical `potpie graph status/catalog/describe/search-entities/read`.
-8. Add `potpie graph mutate` over the same internals.
-9. Finish `pot`, `source`, connector ingest/diff-sync, `backend`, and `skills`
-   commands.
-10. Add login to configurable managed backend URL, unified local/managed pot
-   selection, snapshots, cloud push/pull, and managed skill sync.
-11. Add Event Ledger client, consumer cursor/run storage, `ledger` CLI,
-   query/filter commands, and ingestion event-processing path with retry and
-   timeout handling.
-12. Add managed backend API hosting the same services on hosted stores.
+## See also
 
-## Rules
-
-- OSS graph use works without cloud auth.
-- CLI is the primary user/agent surface.
-- Setup creates the daemon; the daemon-hosted setup flow creates the active local
-  `default` pot and provisions local dependencies.
-- Setup hard dependencies are scoped to host mode: service-manager registration
-  is hard for detached local daemon setup, skipped for in-process/dev setup, and
-  outside `potpie login`.
-- `potpie setup --dry-run` returns `SetupPreview`, not executed `StepResult`s.
-- `potpie login` authenticates to a configured managed backend URL; it does not
-  run local setup.
-- Local and managed pots use the same CLI pot surface; `--local` and `--managed`
-  filters disambiguate.
-- `potpie graph status` is sectioned by owner: host, pot, graph service,
-  backend, ledger, and skills.
-- The same service modules run in the local daemon and managed backend API.
-- Pot Management owns control plane; Graph Service owns data plane.
-- CLI/readers never query physical stores directly.
-- Skills are CLI-managed recipes, not graph data and not a second graph API.
-- The Event Ledger is a source-event stream, not graph storage.
-- Event Ledger consumers store their own cursor, per-event status, retries,
-  leases, and dead letters.
-- Local graphs may pull from managed or self-hosted ledgers only after explicit
-  ledger configuration.
-- Managed-only concerns stay outside the local daemon unless explicitly
-  configured by the user.
+- [vision.md](./vision.md) — what the Context Graph is and why.
+- [ontology.md](./ontology.md) — entities, predicates, views, contract constants.
+- [querying.md](./querying.md) — the read trunk, readers, ranking, envelopes.
+- [writing.md](./writing.md) — the full write stack (DSL → validate → lower →
+  apply), propose/commit, inbox, quality.
+- [ingestion-nudge.md](./ingestion-nudge.md) — the internal event store,
+  connectors, batching, and the nudge trigger model.
+- [cli-flow.md](./cli-flow.md) — the full command surface and the canonical
+  journey.
+- [observability.md](./observability.md) — logs/traces/metrics/readiness (its
+  `graph.propose`/`graph.commit` span names match the corrected write door here).

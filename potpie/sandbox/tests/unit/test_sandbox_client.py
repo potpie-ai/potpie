@@ -623,8 +623,15 @@ def _runner_ndjson(
     return ("\n".join(out) + "\n").encode("utf-8")
 
 
-def _stub_exec(monkeypatch, *, stdout: bytes, exit_code: int = 0,
-               stderr: bytes = b"", timed_out: bool = False, truncated: bool = False):
+def _stub_exec(
+    monkeypatch,
+    *,
+    stdout: bytes,
+    exit_code: int = 0,
+    stderr: bytes = b"",
+    timed_out: bool = False,
+    truncated: bool = False,
+):
     """Replace ``SandboxClient.exec`` with a coroutine returning a fixed ExecResult.
 
     Captures the most recent invocation in ``calls`` so tests can
@@ -665,15 +672,28 @@ async def test_parse_repo_happy_path(tmp_path: Path, monkeypatch) -> None:
 
     stdout = _runner_ndjson(
         nodes=[
-            {"id": "a.py", "node_type": "FILE", "file": "a.py",
-             "line": 0, "end_line": 0, "name": "a.py", "text": "hi"},
-            {"id": "Foo", "node_type": "CLASS", "file": "a.py",
-             "line": 1, "end_line": 5, "name": "Foo", "class_name": None,
-             "text": "class Foo: pass"},
+            {
+                "id": "a.py",
+                "node_type": "FILE",
+                "file": "a.py",
+                "line": 0,
+                "end_line": 0,
+                "name": "a.py",
+                "text": "hi",
+            },
+            {
+                "id": "Foo",
+                "node_type": "CLASS",
+                "file": "a.py",
+                "line": 1,
+                "end_line": 5,
+                "name": "Foo",
+                "class_name": None,
+                "text": "class Foo: pass",
+            },
         ],
         edges=[
-            {"source_id": "a.py", "target_id": "Foo",
-             "relationship_type": "CONTAINS"},
+            {"source_id": "a.py", "target_id": "Foo", "relationship_type": "CONTAINS"},
         ],
     )
     calls = _stub_exec(monkeypatch, stdout=stdout)
@@ -750,8 +770,9 @@ async def test_parse_repo_raises_on_non_zero_exit(tmp_path: Path, monkeypatch) -
         base_ref="main",
         mode=WorkspaceMode.ANALYSIS,
     )
-    _stub_exec(monkeypatch, stdout=b"", exit_code=2,
-               stderr=b"potpie-parse: command not found")
+    _stub_exec(
+        monkeypatch, stdout=b"", exit_code=2, stderr=b"potpie-parse: command not found"
+    )
     with pytest.raises(SandboxOpError, match="exited 2"):
         await client.parse_repo(handle)
 

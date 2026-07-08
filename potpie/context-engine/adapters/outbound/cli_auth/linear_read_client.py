@@ -13,7 +13,9 @@ from adapters.outbound.cli_auth.credentials_store import (
 from adapters.outbound.cli_auth.errors import CliAuthError
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 from adapters.outbound.cli_auth.integration_profile import linear_workspaces_from_entry
-from adapters.outbound.cli_auth.integration_session import ensure_valid_integration_tokens
+from adapters.outbound.cli_auth.integration_session import (
+    ensure_valid_integration_tokens,
+)
 
 LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql"
 _HTTP_TIMEOUT = 30.0
@@ -68,14 +70,16 @@ class LinearReadError(CliAuthError):
 
 def _access_token(organization_id: str | None = None) -> str:
     org_id = organization_id or get_active_linear_organization_id()
-    tokens = get_linear_tokens(org_id) if org_id else ensure_valid_integration_tokens("linear")
+    tokens = (
+        get_linear_tokens(org_id)
+        if org_id
+        else ensure_valid_integration_tokens("linear")
+    )
     if org_id and not tokens.get("access_token"):
         tokens = ensure_valid_integration_tokens("linear")
     access_token = str(tokens.get("access_token") or "").strip()
     if not access_token:
-        raise LinearReadError(
-            "Linear is not connected. Run: potpie linear login"
-        )
+        raise LinearReadError("Linear is not connected. Run: potpie linear login")
     return access_token
 
 
@@ -84,11 +88,13 @@ def load_linear_read_credentials(
 ) -> dict[str, Any]:
     """Return stored Linear credentials including workspace preferences."""
     org_id = organization_id or get_active_linear_organization_id()
-    tokens = get_linear_tokens(org_id) if org_id else ensure_valid_integration_tokens("linear")
+    tokens = (
+        get_linear_tokens(org_id)
+        if org_id
+        else ensure_valid_integration_tokens("linear")
+    )
     if not str(tokens.get("access_token") or "").strip():
-        raise LinearReadError(
-            "Linear is not connected. Run: potpie linear login"
-        )
+        raise LinearReadError("Linear is not connected. Run: potpie linear login")
     return tokens
 
 
@@ -115,9 +121,7 @@ def _parse_issue_node(node: dict[str, Any]) -> dict[str, Any]:
     status = state_payload.get("name") if isinstance(state_payload, dict) else None
     assignee_payload = node.get("assignee")
     assignee = (
-        assignee_payload.get("name")
-        if isinstance(assignee_payload, dict)
-        else None
+        assignee_payload.get("name") if isinstance(assignee_payload, dict) else None
     )
     return {
         "id": node.get("id"),
@@ -199,9 +203,7 @@ def fetch_linear_teams(
     """Return teams within a connected Linear workspace."""
     org_id = organization_id or get_active_linear_organization_id()
     if not org_id:
-        raise LinearReadError(
-            "No active Linear workspace. Run: potpie linear select"
-        )
+        raise LinearReadError("No active Linear workspace. Run: potpie linear select")
     access_token = _access_token(org_id)
     data = _linear_graphql(access_token, _TEAMS_QUERY)
     viewer = data.get("viewer")
@@ -302,9 +304,7 @@ def resolve_linear_organization(
         return workspaces[0]
     if workspaces:
         return workspaces[0]
-    raise LinearReadError(
-        "No Linear workspaces connected. Run: potpie linear login"
-    )
+    raise LinearReadError("No Linear workspaces connected. Run: potpie linear login")
 
 
 def resolve_linear_team(

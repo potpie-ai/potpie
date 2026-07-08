@@ -26,9 +26,7 @@ from sandbox.domain.models import (
 class GitPlatformProvider(Protocol):
     kind: str
 
-    async def create_pull_request(
-        self, request: PullRequestRequest
-    ) -> PullRequest:
+    async def create_pull_request(self, request: PullRequestRequest) -> PullRequest:
         """Open a PR from ``request.head_branch`` into ``request.base_branch``.
 
         Implementations should raise :class:`PullRequestFailed` (or a
