@@ -67,6 +67,7 @@ def test_neighborhood_declares_depth_direction_environment() -> None:
     spec = view_spec("infra_topology.service_neighborhood")
     assert {"depth", "direction", "environment"} <= set(spec.inputs)
     assert "PROVIDES" not in spec.inline_relations
+    assert "EXPOSES" in spec.inline_relations
 
 
 def test_neighborhood_documents_environment_filter_rule() -> None:
