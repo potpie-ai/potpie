@@ -39,6 +39,11 @@ from adapters.outbound.cli_auth.credentials_store import (
     get_integration_tokens,
 )
 from adapters.outbound.cli_auth.env_bootstrap import load_cli_env
+
+try:
+    from bootstrap.runtime_settings import ensure_runtime_environment_loaded
+except ModuleNotFoundError:
+    ensure_runtime_environment_loaded = load_cli_env
 from adapters.outbound.cli_auth.integration_session import (
     ensure_valid_integration_tokens,
     token_needs_refresh,
@@ -475,11 +480,11 @@ def run_integration_login(provider: str, *, force: bool = False) -> None:
                 run_gitbucket_api_token_auth,
             )
 
-            load_cli_env()
+            ensure_runtime_environment_loaded()
             j, v = _flags()
             run_gitbucket_api_token_auth(force=force, as_json=j, verbose=v)
             return
-        load_cli_env()
+        ensure_runtime_environment_loaded()
         j, v = _flags()
         run_atlassian_api_token_auth(key, force=force, as_json=j, verbose=v)
 

@@ -1152,7 +1152,11 @@ def test_run_integration_login_gitbucket_routes_to_gitbucket_auth(
     def _fake_gitbucket_login(**kwargs: object) -> None:
         calls.append(kwargs)
 
-    monkeypatch.setattr(auth_commands, "load_cli_env", lambda: None)
+    monkeypatch.setattr(
+        auth_commands,
+        "ensure_runtime_environment_loaded",
+        lambda: None,
+    )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
     monkeypatch.setattr(
         "adapters.inbound.cli.auth.gitbucket_commands.run_gitbucket_api_token_auth",
