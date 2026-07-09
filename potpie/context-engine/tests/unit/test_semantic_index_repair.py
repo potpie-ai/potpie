@@ -48,8 +48,7 @@ def test_claim_needs_reembed_predicate() -> None:
         "embedding_dim": 4,
     }
     assert (
-        claim_needs_reembed(healthy, embedder_name="new-model", embedder_dim=4)
-        is False
+        claim_needs_reembed(healthy, embedder_name="new-model", embedder_dim=4) is False
     )
     assert claim_needs_reembed({}, embedder_name="new-model", embedder_dim=4) is True
     assert (

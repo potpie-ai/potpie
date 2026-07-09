@@ -356,7 +356,9 @@ def test_semantic_index_repair_recovers_and_migrates_embedder_change(
         "r.fact_embedding IS NOT NULL AS has_embedding",
         params={"gid": pot},
     )
-    rows = [dict(zip(["model", "dim", "has_embedding"], row)) for row in recs.result_set]
+    rows = [
+        dict(zip(["model", "dim", "has_embedding"], row)) for row in recs.result_set
+    ]
     assert len(rows) == 2
     assert all(r["model"] == "fake-4" for r in rows)
     assert all(r["dim"] == 4 for r in rows)

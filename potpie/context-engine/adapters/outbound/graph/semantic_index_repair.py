@@ -49,9 +49,7 @@ def claim_needs_reembed(
     return stored_dim != int(embedder_dim)
 
 
-def stored_dim_mismatch(
-    props: Mapping[str, Any], *, embedder_dim: int
-) -> bool:
+def stored_dim_mismatch(props: Mapping[str, Any], *, embedder_dim: int) -> bool:
     """True when a stored embedding was written at a different dimension."""
     if props.get("fact_embedding") is None:
         return False

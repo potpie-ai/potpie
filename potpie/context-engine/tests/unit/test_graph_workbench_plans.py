@@ -269,9 +269,7 @@ def test_commit_verify_flags_unembedded_claims() -> None:
     assert verification.status == "watch"
     assert any("without a fact embedding" in w for w in verification.warnings)
     assert "repair semantic_index" in (verification.recommended_next_action or "")
-    assert verification.to_dict()["unembedded_claim_keys"] == list(
-        proposal.claim_keys
-    )
+    assert verification.to_dict()["unembedded_claim_keys"] == list(proposal.claim_keys)
 
 
 def test_commit_verify_flags_quality_regression() -> None:

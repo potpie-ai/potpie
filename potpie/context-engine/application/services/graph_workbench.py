@@ -1281,9 +1281,7 @@ def _verification_readback(
     # When the backend runs in vector mode, every committed claim should carry
     # a fact embedding; a claim without one silently drops out of semantic
     # ranking, so the gap must surface here rather than in nobody's logs.
-    vector_mode = (
-        getattr(backend.claim_query, "match_mode", "lexical") == "vector"
-    )
+    vector_mode = getattr(backend.claim_query, "match_mode", "lexical") == "vector"
     unembedded = (
         tuple(
             key

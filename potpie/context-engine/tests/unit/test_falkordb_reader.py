@@ -44,7 +44,9 @@ class _SequencedGraph:
 
     def query(self, cypher, params=None):
         self.captured.append((cypher, params or {}))
-        header, result_set = self._results[min(len(self.captured) - 1, len(self._results) - 1)]
+        header, result_set = self._results[
+            min(len(self.captured) - 1, len(self._results) - 1)
+        ]
         return _FakeResult(header, result_set)
 
 

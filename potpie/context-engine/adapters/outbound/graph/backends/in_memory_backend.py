@@ -538,9 +538,7 @@ class _Analytics:
             if row.fact_embedding is not None and len(row.fact_embedding) == dims:
                 continue
             try:
-                embedding = tuple(
-                    float(x) for x in embedder.embed(card_for_row(row))
-                )
+                embedding = tuple(float(x) for x in embedder.embed(card_for_row(row)))
             except Exception:  # noqa: BLE001 - repair must not die on one row.
                 continue
             self.store.rows[idx] = _with_embedding(row, embedding)
