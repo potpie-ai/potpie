@@ -28,6 +28,10 @@ from adapters.outbound.graph.entity_summary_repair import (
     repaired_entity_properties,
     wants_entity_summary_repair,
 )
+from adapters.outbound.graph.semantic_index_repair import (
+    SEMANTIC_INDEX_TARGET,
+    wants_semantic_index_repair,
+)
 from application.services.reconciliation_validation import (
     validate_reconciliation_plan,
 )
@@ -493,15 +497,27 @@ class _Analytics:
         }
 
     def repair(self, pot_id: str, *, targets: Sequence[str] = ()) -> RepairReport:
+        repaired: dict[str, int] = {}
+        details: list[str] = []
+        changed = False
+        if wants_semantic_index_repair(targets) and self.store.embedder is not None:
+            reembedded = self._repair_semantic_index(pot_id)
+            repaired[SEMANTIC_INDEX_TARGET] = reembedded
+            details.append(f"re-embedded {reembedded} stale claim(s)")
+            changed = changed or bool(reembedded)
         if wants_entity_summary_repair(targets):
-            repaired = self._repair_entity_summaries(pot_id)
-            if repaired and self.on_change is not None:
-                self.on_change()
+            count = self._repair_entity_summaries(pot_id)
+            repaired[ENTITY_SUMMARY_TARGET] = count
+            details.append(f"repaired {count} entity summaries")
+            changed = changed or bool(count)
+        if changed and self.on_change is not None:
+            self.on_change()
+        if repaired or details:
             return RepairReport(
                 pot_id=pot_id,
                 targets=tuple(targets),
-                repaired={ENTITY_SUMMARY_TARGET: repaired},
-                detail=f"repaired {repaired} entity summaries",
+                repaired=repaired,
+                detail="; ".join(details) or None,
             )
         return RepairReport(
             pot_id=pot_id,
@@ -509,6 +525,27 @@ class _Analytics:
             repaired={},
             detail="in_memory projections are computed on read; nothing to rebuild",
         )
+
+    def _repair_semantic_index(self, pot_id: str) -> int:
+        """Re-embed rows whose stored vector is missing or mis-sized."""
+        embedder = self.store.embedder
+        assert embedder is not None
+        dims = int(getattr(embedder, "dimensions", 0))
+        repaired = 0
+        for idx, row in enumerate(self.store.rows):
+            if row.pot_id != pot_id:
+                continue
+            if row.fact_embedding is not None and len(row.fact_embedding) == dims:
+                continue
+            try:
+                embedding = tuple(
+                    float(x) for x in embedder.embed(card_for_row(row))
+                )
+            except Exception:  # noqa: BLE001 - repair must not die on one row.
+                continue
+            self.store.rows[idx] = _with_embedding(row, embedding)
+            repaired += 1
+        return repaired
 
     def _repair_entity_summaries(self, pot_id: str) -> int:
         entity_keys = {
