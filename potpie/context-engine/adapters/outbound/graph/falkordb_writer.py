@@ -198,6 +198,7 @@ class FalkorDBGraphWriter(GraphWriterPort):
         self._graph = graph  # injectable for unit tests
         self._graph_provider = graph_provider  # shared handle from the container
         self._embedder = embedder
+        self._indexes_ensured = False
 
     @property
     def enabled(self) -> bool:
@@ -354,6 +355,14 @@ class FalkorDBGraphWriter(GraphWriterPort):
         """
         if self._embedder is None:
             return []
+        # Setup's provision step normally creates the vector index, but a
+        # write must not depend on setup having run (fresh homes, tests,
+        # library embedding): ensure indexes once per writer so the vectors
+        # written below are actually queryable.
+        if not self._indexes_ensured:
+            embedding_dim = int(getattr(self._embedder, "dimensions", 1536))
+            self._ensure_indexes_sync(graph, embedding_dim)
+            self._indexes_ensured = True
         failures: list[dict[str, str]] = []
         for item in items:
             raw_props = dict(item.properties)
