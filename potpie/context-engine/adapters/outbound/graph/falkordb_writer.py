@@ -344,9 +344,17 @@ class FalkorDBGraphWriter(GraphWriterPort):
         pot_id: str,
         items: list[EdgeUpsert],
         provenance: ProvenanceRef,
-    ) -> None:
+    ) -> list[dict[str, str]]:
+        """Attach fact embeddings to just-upserted edges.
+
+        Returns one failure record per edge whose embedding could not be
+        attached — a zero-row MATCH counts as a failure, not a no-op: the edge
+        exists (the upsert wrote it), so silence here is how claims used to
+        vanish from vector-only reads.
+        """
         if self._embedder is None:
-            return
+            return []
+        failures: list[dict[str, str]] = []
         for item in items:
             raw_props = dict(item.properties)
             source_ref = _stable_source_ref(
@@ -381,20 +389,24 @@ class FalkorDBGraphWriter(GraphWriterPort):
                 # Keep embedding inside the try: a model error must degrade to
                 # "no vector enrichment", not abort the already-written edge.
                 embedding = [float(x) for x in self._embedder.embed(card)]
-                graph.query(
+                # The edge is matched with UNBOUND endpoints: anchoring the
+                # source node (`(:Entity {entity_key: $from_key})-[r]->`) is
+                # the embedded-FalkorDB plan shape that silently matches zero
+                # rows when the source is internal node id 0 — always the
+                # Repository on a fresh pot. See FIND_CLAIMS_CYPHER.
+                result = graph.query(
                     """
-                    MATCH (:Entity {group_id: $gid, entity_key: $from_key})
-                          -[r:RELATES_TO {
+                    MATCH ()-[r:RELATES_TO {
                               group_id: $gid,
                               name: $predicate,
                               subject_key: $from_key,
                               object_key: $to_key,
                               source_ref: $source_ref
-                          }]->
-                          (:Entity {group_id: $gid, entity_key: $to_key})
+                          }]->()
                     SET r.fact_embedding = vecf32($embedding),
                         r.embedding_model = $embedding_model,
                         r.embedding_dim = $embedding_dim
+                    RETURN count(r) AS updated
                     """,
                     params={
                         "gid": pot_id,
@@ -409,14 +421,38 @@ class FalkorDBGraphWriter(GraphWriterPort):
                         ),
                     },
                 )
+                records = _records_from_result(result)
+                updated = int(records[0]["updated"]) if records else 0
+                if updated < 1:
+                    raise RuntimeError(
+                        "embedding attach matched no edge (upsert wrote it, "
+                        "the attach MATCH could not find it)"
+                    )
             except Exception as exc:  # noqa: BLE001
+                failures.append(
+                    {
+                        "predicate": item.edge_type,
+                        "subject_key": item.from_entity_key,
+                        "object_key": item.to_entity_key,
+                        "error": str(exc),
+                    }
+                )
                 logger.warning(
-                    "falkordb vector write skipped for %s:%s->%s: %s",
+                    "falkordb embedding attach FAILED for %s:%s->%s "
+                    "(claim stays readable, semantic ranking degraded): %s",
                     item.edge_type,
                     item.from_entity_key,
                     item.to_entity_key,
                     exc,
                 )
+        if failures:
+            logger.warning(
+                "falkordb embedding attach failed for %d of %d edge(s) in this "
+                "batch — run 'potpie graph repair semantic_index' to re-embed",
+                len(failures),
+                len(items),
+            )
+        return failures
 
 
 __all__ = ["FalkorDBGraphProvider", "FalkorDBGraphWriter", "build_falkordb_graph"]

@@ -298,6 +298,7 @@ class GraphIngestionVerificationResult:
     claim_keys: tuple[str, ...] = ()
     readback_claim_keys: tuple[str, ...] = ()
     missing_claim_keys: tuple[str, ...] = ()
+    unembedded_claim_keys: tuple[str, ...] = ()
     readback_count: int = 0
     quality_status: str | None = None
     quality_counts: Mapping[str, int] = field(default_factory=dict)
@@ -319,6 +320,7 @@ class GraphIngestionVerificationResult:
             "claim_keys": list(self.claim_keys),
             "readback_claim_keys": list(self.readback_claim_keys),
             "missing_claim_keys": list(self.missing_claim_keys),
+            "unembedded_claim_keys": list(self.unembedded_claim_keys),
             "readback_count": self.readback_count,
             "quality_status": self.quality_status,
             "quality_counts": dict(self.quality_counts),
