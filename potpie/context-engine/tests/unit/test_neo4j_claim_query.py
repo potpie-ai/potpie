@@ -227,9 +227,7 @@ def test_fact_query_stamps_similarity_and_orders() -> None:
     )
 
 
-def test_fact_query_uses_native_relationship_vector_index_when_embedder_present() -> (
-    None
-):
+def test_fact_query_overlays_native_vector_scores_when_embedder_present() -> None:
     driver = _FakeDriver(
         [
             {
@@ -252,8 +250,14 @@ def test_fact_query_uses_native_relationship_vector_index_when_embedder_present(
         ClaimQueryFilter(pot_id="p1", fact_query="connection pool exhausted", limit=3)
     )
 
-    cypher, params = driver.captured[0]
-    assert "db.index.vector.queryRelationships" in cypher
+    # Lexical membership pass first, vector score overlay second.
+    lexical_cypher, _ = driver.captured[0]
+    assert "db.index.vector" not in lexical_cypher
+    vector_cypher, params = driver.captured[1]
+    assert "db.index.vector.queryRelationships" in vector_cypher
+    # No endpoint binding after the procedure (same edge-first shape as the
+    # FalkorDB adapter): filters run on edge properties only.
+    assert "MATCH" not in vector_cypher
     assert params["embedding"] == [0.1, 0.2, 0.3]
     assert params["k"] == 50
     assert rows[0].subject_key == "a"

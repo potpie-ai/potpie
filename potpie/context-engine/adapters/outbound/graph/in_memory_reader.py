@@ -19,10 +19,13 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
-from adapters.outbound.graph.canonical_claim_query import embedding_score
+from adapters.outbound.graph.canonical_claim_query import (
+    card_for_row,
+    embedding_score,
+)
 from domain.ports.claim_query import ClaimQueryFilter, ClaimRow
 from domain.ports.embedder import EmbedderPort
-from domain.retrieval_card import build_retrieval_card, cosine_similarity
+from domain.retrieval_card import cosine_similarity
 
 
 @dataclass(slots=True)
@@ -116,21 +119,6 @@ class InMemoryClaimQueryStore:
         # card on the fly so the row still participates in vector ranking.
         assert self.embedder is not None
         return self.embedder.embed(card_for_row(row))
-
-
-def card_for_row(row: ClaimRow) -> str:
-    """Build the retrieval card for a stored claim row (read-side / on-the-fly embed)."""
-    props = row.properties or {}
-    return build_retrieval_card(
-        description=row.description or props.get("description"),
-        fact=row.fact,
-        subject_key=row.subject_key,
-        predicate=row.predicate,
-        object_key=row.object_key,
-        scope=props.get("code_scope")
-        if isinstance(props.get("code_scope"), Mapping)
-        else None,
-    )
 
 
 def _stamp_similarity(row: ClaimRow, score: float) -> ClaimRow:

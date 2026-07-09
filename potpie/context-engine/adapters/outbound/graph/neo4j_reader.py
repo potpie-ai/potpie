@@ -10,34 +10,42 @@ The driver is the plain *synchronous* Neo4j driver (``ClaimQueryPort`` is a
 sync surface; the readers call it inline). It is built lazily from settings
 and cached for reuse.
 
-``fact_query`` uses Neo4j's native relationship vector index when an embedder is
-wired. If the vector procedure is unavailable, the adapter falls back to the
-labeled lexical scorer so old deployments degrade instead of dropping results.
+``fact_query`` merges two passes: the lexical query defines which claims are
+visible (an unembedded claim must never disappear from reads), and Neo4j's
+native relationship vector index — when an embedder is wired — overlays real
+similarity scores on top. A failing vector index degrades ranking, loudly,
+never visibility.
 """
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping
+import logging
+from typing import Any, Callable, Iterable, Mapping
 
 from adapters.outbound.graph.canonical_claim_query import (
     ENTITY_LABELS_CYPHER as _ENTITY_LABELS_CYPHER,
     FIND_CLAIMS_CYPHER as _FIND_CLAIMS_CYPHER,
     embedding_score as _embedding_score,
     iso as _iso,
+    merge_vector_scored_rows,
     row_from_record as _row_from_record,
-    stamp_scored_rows,
-    stamp_similarity,
 )
 from domain.ports.claim_query import ClaimQueryFilter, ClaimRow
 from domain.ports.embedder import EmbedderPort
 from domain.ports.settings import ContextEngineSettingsPort
 
+logger = logging.getLogger(__name__)
+
 _VECTOR_INDEX_NAME = "claim_fact_embeddings"
 
+# Filters on edge properties only (no endpoint MATCH) — same edge-first shape
+# as FIND_CLAIMS_CYPHER, kept structurally identical to the FalkorDB adapter so
+# both backends share one mental model. Entity-label filters are re-applied by
+# the caller in Python. ``score`` is a similarity on Neo4j.
 _VECTOR_CLAIMS_CYPHER = """
 CALL db.index.vector.queryRelationships($index_name, $k, $embedding)
 YIELD relationship AS r, score
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
+WITH r, score
 WHERE r.group_id = $gid
   AND ($preds IS NULL OR r.name IN $preds)
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
@@ -51,11 +59,8 @@ WHERE r.group_id = $gid
   AND ($as_of IS NULL OR r.valid_at IS NULL OR r.valid_at <= $as_of)
   AND ($va_after IS NULL OR (r.valid_at IS NOT NULL AND r.valid_at >= $va_after))
   AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
-  AND ($subject_label IS NULL OR $subject_label IN labels(a))
-  AND ($object_label IS NULL OR $object_label IN labels(b))
 RETURN r{.*} AS props, score
 ORDER BY score DESC
-LIMIT $limit
 """
 
 _ENTITY_PROPERTIES_CYPHER = """
@@ -79,6 +84,7 @@ class Neo4jClaimQueryStore:
         self._settings = settings
         self._driver = driver
         self._embedder = embedder
+        self._vector_query_warned = False
 
     @property
     def match_mode(self) -> str:
@@ -137,31 +143,37 @@ class Neo4jClaimQueryStore:
             "subject_label": filter_.subject_label,
             "object_label": filter_.object_label,
         }
-        if filter_.fact_query and self._embedder is not None:
-            rows = self._find_claims_vector(filter_, params)
-            if rows:
-                return rows
+        # Lexical rows define membership: a claim must stay readable even when
+        # its embedding is missing or stale. Vector results only overlay
+        # ranking scores (plus defense-in-depth extras) on top.
+        rows = self._find_claims_lexical(params)
 
-        rows = self._find_claims_lexical(filter_, params)
+        if filter_.fact_query:
+            vector_scored = (
+                self._vector_scored(filter_, params)
+                if self._embedder is not None
+                else []
+            )
+            rows = merge_vector_scored_rows(
+                rows,
+                vector_scored,
+                filter_.fact_query,
+                admit_extra=self._label_filter_check(filter_),
+            )
 
         if filter_.limit is not None and filter_.limit >= 0:
             rows = rows[: filter_.limit]
         return rows
 
-    def _find_claims_lexical(
-        self, filter_: ClaimQueryFilter, params: Mapping[str, object]
-    ) -> list[ClaimRow]:
+    def _find_claims_lexical(self, params: Mapping[str, object]) -> list[ClaimRow]:
         driver = self._get_driver()
         with driver.session() as session:
             records = list(session.run(_FIND_CLAIMS_CYPHER, **params))
-        rows = [_row_from_record(rec) for rec in records]
-        if filter_.fact_query:
-            rows = stamp_similarity(rows, filter_.fact_query)
-        return rows
+        return [_row_from_record(rec) for rec in records]
 
-    def _find_claims_vector(
+    def _vector_scored(
         self, filter_: ClaimQueryFilter, params: Mapping[str, object]
-    ) -> list[ClaimRow]:
+    ) -> list[tuple[float, ClaimRow]]:
         assert filter_.fact_query is not None
         assert self._embedder is not None
         limit = filter_.limit if filter_.limit is not None and filter_.limit > 0 else 10
@@ -173,17 +185,50 @@ class Neo4jClaimQueryStore:
                     float(x) for x in self._embedder.embed(filter_.fact_query)
                 ],
                 "k": max(limit * 5, 50),
-                "limit": limit,
             }
             driver = self._get_driver()
             with driver.session() as session:
                 records = list(session.run(_VECTOR_CLAIMS_CYPHER, **vector_params))
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            # Degrading to lexical scores must not be silent: a broken vector
+            # index (missing, or built for a different embedder dimension)
+            # quietly flattens semantic ranking otherwise.
+            level = logging.DEBUG if self._vector_query_warned else logging.WARNING
+            self._vector_query_warned = True
+            logger.log(
+                level,
+                "neo4j vector query failed (%s); using lexical scores — "
+                "if the embedder changed, run 'potpie graph repair semantic_index'",
+                exc,
+            )
             return []
-        rows = [
+        return [
             (float(rec.get("score", 0.0)), _row_from_record(rec)) for rec in records
         ]
-        return stamp_scored_rows(rows)
+
+    def _label_filter_check(
+        self, filter_: ClaimQueryFilter
+    ) -> Callable[[ClaimRow], bool] | None:
+        """Re-apply entity-label filters to vector-only rows in Python."""
+        if not (filter_.subject_label or filter_.object_label):
+            return None
+
+        def check(row: ClaimRow) -> bool:
+            labels = self.entity_labels(
+                pot_id=filter_.pot_id,
+                entity_keys=[row.subject_key, row.object_key],
+            )
+            if filter_.subject_label and filter_.subject_label not in labels.get(
+                row.subject_key, ()
+            ):
+                return False
+            if filter_.object_label and filter_.object_label not in labels.get(
+                row.object_key, ()
+            ):
+                return False
+            return True
+
+        return check
 
     def entity_labels(
         self, *, pot_id: str, entity_keys: Iterable[str]

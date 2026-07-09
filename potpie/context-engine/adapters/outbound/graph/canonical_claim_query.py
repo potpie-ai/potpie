@@ -217,8 +217,75 @@ def stamp_scored_rows(scored: Iterable[tuple[float, ClaimRow]]) -> list[ClaimRow
     return out
 
 
+def claim_identity(row: ClaimRow) -> tuple:
+    """Stable identity for merging the same claim seen via different paths."""
+    if row.claim_key:
+        return ("claim_key", row.claim_key)
+    return ("tuple", row.predicate, row.subject_key, row.object_key, row.source_ref)
+
+
+def merge_vector_scored_rows(
+    lexical_rows: Iterable[ClaimRow],
+    vector_scored: Iterable[tuple[float, ClaimRow]],
+    query: str,
+    *,
+    admit_extra: Any = None,
+) -> list[ClaimRow]:
+    """Overlay native vector scores onto the lexical result superset.
+
+    The lexical rows define membership: a claim must never become invisible
+    because its embedding is missing, stale, or the vector index is unusable —
+    those rows simply fall back to the lexical score. Rows the vector index
+    returned but the lexical query missed are appended as defense in depth
+    (``admit_extra`` lets the caller re-apply filters the vector path cannot
+    express, e.g. entity-label constraints).
+    """
+    scores = {claim_identity(row): score for score, row in vector_scored}
+    seen: set[tuple] = set()
+    out_scored: list[tuple[float, ClaimRow]] = []
+    for row in lexical_rows:
+        ident = claim_identity(row)
+        seen.add(ident)
+        out_scored.append((scores.get(ident, embedding_score(row.fact, query)), row))
+    for score, row in vector_scored:
+        ident = claim_identity(row)
+        if ident in seen:
+            continue
+        if admit_extra is not None and not admit_extra(row):
+            continue
+        seen.add(ident)
+        out_scored.append((score, row))
+    out_scored.sort(key=lambda pair: pair[0], reverse=True)
+    return stamp_scored_rows(out_scored)
+
+
+def card_for_row(row: ClaimRow) -> str:
+    """Build the retrieval card for a stored claim row (read-side / re-embed)."""
+    from domain.retrieval_card import build_retrieval_card
+
+    props = row.properties or {}
+    return build_retrieval_card(
+        description=row.description or props.get("description"),
+        fact=row.fact,
+        subject_key=row.subject_key,
+        predicate=row.predicate,
+        object_key=row.object_key,
+        scope=props.get("code_scope")
+        if isinstance(props.get("code_scope"), Mapping)
+        else None,
+    )
+
+
+# The endpoints stay UNBOUND (no label, no inline property map). Binding them
+# (``(a:Entity {group_id: $gid})``) makes the planner run the edge scan under a
+# bound node scan — the exact plan shape that returns zero rows on embedded
+# FalkorDB when the bound source is internal node id 0 (always the Repository,
+# the first entity a baseline flow creates). Edge-first plans are immune, and
+# ``labels(a)`` / ``labels(b)`` still evaluate on unbound endpoints. The edge's
+# ``group_id`` scopes the pot; endpoints can only be same-pot entities by
+# construction of the writer's MERGE.
 FIND_CLAIMS_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
+MATCH (a)-[r:RELATES_TO {group_id: $gid}]->(b)
 WHERE ($preds IS NULL OR r.name IN $preds)
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
   AND ($objects IS NULL OR r.object_key IN $objects)
@@ -249,8 +316,11 @@ __all__ = [
     "FIND_CLAIMS_CYPHER",
     "CONTRACT_EDGE_KEYS",
     "RESERVED_EDGE_KEYS",
+    "card_for_row",
+    "claim_identity",
     "embedding_score",
     "iso",
+    "merge_vector_scored_rows",
     "parse_dt",
     "row_from_record",
     "stamp_similarity",
