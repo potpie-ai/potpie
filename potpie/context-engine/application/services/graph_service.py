@@ -531,6 +531,7 @@ class DefaultGraphService:
             freshness=freshness,
             quality=quality,
             match_mode=self._match_mode(),
+            embedder=self._embedder_identity(),
             detail=readiness.detail,
         )
 
@@ -540,6 +541,25 @@ class DefaultGraphService:
         if mode:
             return mode
         return getattr(self.backend.claim_query, "match_mode", "lexical")
+
+    def _embedder_identity(self) -> dict[str, Any]:
+        """Name + dimensions of the active embedder, or {} in lexical mode.
+
+        "vector" alone hides a real quality difference: the hashing fallback
+        and a sentence-transformers model both report vector mode, but only
+        the latter matches paraphrases.
+        """
+        embedder = getattr(self.backend, "embedder", None)
+        if embedder is None:
+            return {}
+        name = getattr(embedder, "name", None)
+        if not name:
+            return {}
+        out: dict[str, Any] = {"name": str(name)}
+        dimensions = _safe(lambda: int(getattr(embedder, "dimensions", 0)), 0)
+        if dimensions:
+            out["dimensions"] = dimensions
+        return out
 
     def _subgraph_versions(self, pot_id: str) -> dict[str, int]:
         # V1.5 stub: a single monotonic counter (claim count) is enough for V2's

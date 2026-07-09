@@ -34,16 +34,38 @@ def _clear_embedding_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def test_no_config_defaults_to_bundled_hashing_embedder(
+def test_no_config_defaults_to_sentence_transformers_when_installed(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The shipped wheel carries the embeddings extra: semantic by default."""
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     _clear_embedding_env(monkeypatch)
+    monkeypatch.setattr(
+        local_embedder, "_sentence_transformers_installed", lambda: True
+    )
 
     embedder = local_embedder.build_embedder()
 
+    assert isinstance(embedder, SentenceTransformerEmbedder)
+    assert embedder.model_name == "all-MiniLM-L6-v2"
+
+
+def test_no_config_falls_back_to_hashing_without_sentence_transformers(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    _clear_embedding_env(monkeypatch)
+    monkeypatch.setattr(
+        local_embedder, "_sentence_transformers_installed", lambda: False
+    )
+
+    with caplog.at_level(logging.INFO, logger=local_embedder.__name__):
+        embedder = local_embedder.build_embedder()
+
     assert isinstance(embedder, HashingEmbedder)
     assert embedder.name == "local-hashing-v1"
+    # The quality downgrade must announce itself.
+    assert any("hashing embedder" in rec.getMessage() for rec in caplog.records)
 
 
 def test_build_embedder_reads_setup_sentence_transformer_config(

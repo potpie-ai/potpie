@@ -1,27 +1,26 @@
 """Context-graph embedders.
 
 The Trigger Model non-negotiable: retrieval must work with **no API key and no
-external embeddings service**, on the user's machine. This is the default OSS
-embedder. It is a real local embedding model in the feature-hashing family: text
-is tokenized into words *and* character n-grams, each feature is hashed (via a
-stable digest, so embeddings are identical across processes — required for the
-JSON-persisted embedded backend) into a fixed-dimension accumulator with a signed
-contribution, then L2-normalized.
+external embeddings service**, on the user's machine. The default is the
+strongest *local* model available: sentence-transformers (all-MiniLM-L6-v2)
+whenever the package is importable — which it always is for the shipped
+``potpie`` wheel, whose base install carries the ``embeddings`` extra.
 
-Why this beats the old Jaccard stub for V1.5 recall:
+When sentence-transformers is absent (a bare ``potpie-context-engine`` install
+without extras), ``auto`` degrades — with an INFO log — to the bundled
+:class:`HashingEmbedder`: a real feature-hashing embedding model, no
+dependencies. Text is tokenized into words *and* character n-grams, each
+feature is hashed (via a stable digest, so embeddings are identical across
+processes — required for the JSON-persisted embedded backend) into a
+fixed-dimension accumulator with a signed contribution, then L2-normalized.
+It scores in continuous vector space (near-misses rank above noise) and
+catches morphological variants through n-grams — but it measures lexical
+overlap, not meaning; paraphrases don't land near each other.
 
-- It scores in continuous vector space, so near-misses rank above noise instead
-  of collapsing to 0.
-- Character n-grams catch morphological variants (``retry`` / ``retries`` /
-  ``retrying`` share trigrams) and typos — the paraphrase failure mode Jaccard
-  misses entirely.
-
-It is intentionally swappable: ``build_embedder`` reads ``CONTEXT_ENGINE_EMBEDDER``
-first, then Potpie's local setup config. Before setup, the dependency-free hashing
-embedder remains the no-config fallback. ``potpie setup`` can persist
-``sentence-transformers`` so normal ingestion/search uses the stronger local model.
-``CONTEXT_ENGINE_EMBEDDER=none`` disables embeddings and the store falls back to a
-*labeled* lexical match.
+``build_embedder`` reads ``CONTEXT_ENGINE_EMBEDDER`` first, then Potpie's
+local setup config (``potpie setup`` persists ``sentence-transformers`` and
+pre-downloads the model). ``CONTEXT_ENGINE_EMBEDDER=none`` disables embeddings
+and the store falls back to a *labeled* lexical match.
 """
 
 from __future__ import annotations
@@ -280,18 +279,20 @@ def _quiet_transformer_progress() -> Iterator[None]:
 
 
 def build_embedder() -> EmbedderPort | None:
-    """Build the configured embedder (bundled local default, or None to disable).
+    """Build the configured embedder (semantic by default, hashing fallback).
 
     ``CONTEXT_ENGINE_EMBEDDER``:
-      - unset with no setup config / ``local`` / ``hashing`` → :class:`HashingEmbedder`
+      - unset with no setup config / ``auto`` → sentence-transformers when
+        installed (the shipped ``potpie`` wheel always includes it via the
+        ``embeddings`` extra), otherwise the dependency-free hashing embedder
       - ``legacy`` / ``sentence-transformers`` → all-MiniLM-L6-v2 by default
-      - ``auto`` → sentence-transformers when installed, otherwise hashing
+      - ``local`` / ``hashing`` → :class:`HashingEmbedder`
       - ``none`` / ``off`` / ``lexical`` → ``None`` (labeled lexical fallback)
 
     ``CONTEXT_ENGINE_EMBEDDING_MODEL`` overrides the SentenceTransformer model
-    name when the legacy embedder is selected.
+    name when the sentence-transformers embedder is selected.
     """
-    choice = normalize_embedding_mode(configured_embedder_choice() or "local")
+    choice = normalize_embedding_mode(configured_embedder_choice() or "auto")
     if choice in DISABLED_EMBEDDER_ALIASES:
         return None
     if choice in HASHING_EMBEDDER_ALIASES:
@@ -299,6 +300,13 @@ def build_embedder() -> EmbedderPort | None:
     if choice in AUTO_SENTENCE_TRANSFORMER_ALIASES:
         if _sentence_transformers_installed():
             return _sentence_transformer_embedder()
+        # The downgrade changes match quality; say so once instead of leaving
+        # "vector" mode looking semantic when it is only fuzzy-lexical.
+        logger.info(
+            "sentence-transformers is not installed; semantic search uses the "
+            "bundled hashing embedder (install potpie[embeddings] or run "
+            "'potpie setup' for the semantic model)"
+        )
         return HashingEmbedder()
     if choice in EXPLICIT_SENTENCE_TRANSFORMER_ALIASES:
         if not _sentence_transformers_installed():

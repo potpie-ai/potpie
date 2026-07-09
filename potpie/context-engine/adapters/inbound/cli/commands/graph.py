@@ -2206,6 +2206,7 @@ def _graph_status_payload(host: Any, pot_id: str, dp) -> dict[str, Any]:
             ),
             "validator_ready": True,
             "match_mode": dp.match_mode,
+            "embedder": dict(dp.embedder),
         },
         backend={
             "profile": dp.backend_profile,
@@ -2728,6 +2729,7 @@ def _data_plane_status_payload(status) -> dict[str, Any]:
         "freshness": dict(status.freshness),
         "quality": dict(status.quality),
         "match_mode": status.match_mode,
+        "embedder": dict(status.embedder),
         "detail": status.detail,
     }
 

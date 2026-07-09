@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import socket
 import tempfile
@@ -13,6 +14,13 @@ from pathlib import Path
 import pytest
 
 from host.daemon_runtime.context import ServiceEndpoints, ShellContext
+
+# The production default embedder is `auto` → sentence-transformers when
+# installed. Tests must stay deterministic and offline (a real model load
+# downloads weights on a cold cache), so the suite pins the dependency-free
+# hashing embedder; tests that exercise the auto/sentence-transformers paths
+# override this explicitly via monkeypatch.
+os.environ.setdefault("CONTEXT_ENGINE_EMBEDDER", "local")
 
 
 @pytest.fixture()
