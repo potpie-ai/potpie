@@ -226,18 +226,72 @@ def test_fact_query_overlays_native_vector_scores_when_embedder_present() -> Non
     assert rows[0].properties["semantic_similarity"] == pytest.approx(0.88)
 
 
-def test_lexical_find_claims_keeps_endpoints_unbound() -> None:
-    """Regression pin for the embedded-FalkorDB id-0 planner defect.
+def test_lexical_find_claims_never_references_endpoints() -> None:
+    """Regression pin for the embedded-FalkorDB endpoint-resolution defect.
 
-    Binding endpoints (``(a:Entity {group_id: $gid})``) plans the edge scan
-    under a bound node scan, which returns zero rows when the bound node is
-    internal id 0 — always the Repository on a fresh pot.
+    Any endpoint reference — a binding like ``(a:Entity {group_id: $gid})``
+    or even ``labels(a)`` in WHERE with a null parameter — makes the planner
+    resolve the endpoint nodes under the edge scan, and that plan silently
+    returns zero rows after the store is persisted and reloaded when internal
+    node id 0 (always the first entity created) is an endpoint. The claim
+    query must stay a pure edge scan; label filters are applied in Python.
     """
     from adapters.outbound.graph.canonical_claim_query import FIND_CLAIMS_CYPHER
 
-    assert "MATCH (a)-[r:RELATES_TO {group_id: $gid}]->(b)" in FIND_CLAIMS_CYPHER
-    assert "(a:Entity" not in FIND_CLAIMS_CYPHER
-    assert "(b:Entity" not in FIND_CLAIMS_CYPHER
+    assert "MATCH ()-[r:RELATES_TO {group_id: $gid}]->()" in FIND_CLAIMS_CYPHER
+    assert "labels(" not in FIND_CLAIMS_CYPHER
+    assert "$subject_label" not in FIND_CLAIMS_CYPHER
+    assert "$object_label" not in FIND_CLAIMS_CYPHER
+
+
+def test_label_filters_are_applied_in_python() -> None:
+    """subject_label/object_label constrain results via entity_labels lookups."""
+    claim_row = {
+        "group_id": "p1",
+        "name": "DEPENDS_ON",
+        "subject_key": "service:web",
+        "object_key": "team:platform",
+        "fact": "web is owned by platform",
+    }
+
+    class _LabelsGraph(_FakeGraph):
+        def query(self, cypher, params=None):
+            self.captured.append((cypher, params or {}))
+            if "labels(e)" in cypher:
+                return _FakeResult(
+                    [[1, "key"], [1, "labels"]],
+                    [
+                        ["service:web", ["Entity", "Service"]],
+                        ["team:platform", ["Entity", "Team"]],
+                    ],
+                )
+            return _FakeResult([[1, "props"]], [[claim_row]])
+
+    store = FalkorDBClaimQueryStore(
+        settings=object(),
+        graph=_LabelsGraph(header=[], result_set=[]),
+    )  # type: ignore[arg-type]
+
+    kept = store.find_claims(
+        ClaimQueryFilter(pot_id="p1", subject_label="Service", limit=10)
+    )
+    assert len(kept) == 1
+
+    dropped = store.find_claims(
+        ClaimQueryFilter(pot_id="p1", subject_label="Team", limit=10)
+    )
+    assert dropped == []
+
+
+def test_limit_zero_short_circuits_before_any_query() -> None:
+    graph = _FakeGraph(header=[], result_set=[])
+    store = FalkorDBClaimQueryStore(
+        settings=object(), graph=graph, embedder=_FakeEmbedder()
+    )  # type: ignore[arg-type]
+    assert (
+        store.find_claims(ClaimQueryFilter(pot_id="p1", fact_query="x", limit=0)) == []
+    )
+    assert graph.captured == []
 
 
 def test_unembedded_claims_stay_visible_in_fact_query_results() -> None:

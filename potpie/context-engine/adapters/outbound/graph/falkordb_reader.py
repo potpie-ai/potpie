@@ -1,12 +1,13 @@
 """FalkorDB :class:`ClaimQueryPort` — read surface for the P9 readers.
 
 Parity with :class:`Neo4jClaimQueryStore`: same canonical ``:RELATES_TO``
-claim shape, same filters, same ``ClaimRow`` output. The Phase-0 spike proved
-the entire ``_FIND_CLAIMS_CYPHER`` (IN lists, IS NULL guards, temporal
-predicates, ``labels()`` filters) runs unchanged on FalkorDB, so this adapter
-**reuses** the Neo4j query constants and row-parsing helpers and only swaps the
-driver call + record normalization (FalkorDB returns ``result_set`` rows, not
-Neo4j ``Record`` maps).
+claim shape, same filters, same ``ClaimRow`` output. This adapter **reuses**
+the Neo4j query constants and row-parsing helpers and only swaps the driver
+call + record normalization (FalkorDB returns ``result_set`` rows, not Neo4j
+``Record`` maps). Claim queries never reference the edge endpoints — entity
+label filters are applied in Python — because embedded FalkorDB silently
+drops rows from endpoint-resolving plans after a persistence reload (see
+``FIND_CLAIMS_CYPHER``).
 
 ``fact_query`` merges two passes: the lexical query defines which claims are
 visible (an unembedded claim must never disappear from reads), and FalkorDB's
@@ -27,6 +28,7 @@ from adapters.outbound.graph.falkordb_writer import (
 from adapters.outbound.graph.canonical_claim_query import (
     ENTITY_LABELS_CYPHER,
     FIND_CLAIMS_CYPHER,
+    filter_rows_by_labels,
     iso,
     merge_vector_scored_rows,
     row_from_record,
@@ -114,6 +116,10 @@ class FalkorDBClaimQueryStore:
         self._graph = None
 
     def find_claims(self, filter_: ClaimQueryFilter) -> list[ClaimRow]:
+        # An explicit zero-row request must win before the vector path (which
+        # coerces limit=0 → 10) or the lexical slice can return anything.
+        if filter_.limit == 0:
+            return []
         params = {
             "gid": filter_.pot_id,
             "preds": list(filter_.predicate_in) or None,
@@ -128,13 +134,13 @@ class FalkorDBClaimQueryStore:
             "as_of": iso(filter_.as_of),
             "va_after": iso(filter_.valid_at_after),
             "va_before": iso(filter_.valid_at_before),
-            "subject_label": filter_.subject_label,
-            "object_label": filter_.object_label,
         }
         # Lexical rows define membership: a claim must stay readable even when
         # its embedding is missing or stale. Vector results only overlay
         # ranking scores (plus defense-in-depth extras) on top.
-        rows = self._find_claims_lexical(params)
+        rows = filter_rows_by_labels(
+            self._find_claims_lexical(params), filter_, self.entity_labels
+        )
 
         if filter_.fact_query:
             vector_scored = (

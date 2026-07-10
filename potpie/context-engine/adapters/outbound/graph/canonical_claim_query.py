@@ -240,6 +240,7 @@ def merge_vector_scored_rows(
     (``admit_extra`` lets the caller re-apply filters the vector path cannot
     express, e.g. entity-label constraints).
     """
+    vector_scored = list(vector_scored)  # iterated twice; accept generators
     scores = {claim_identity(row): score for score, row in vector_scored}
     seen: set[tuple] = set()
     out_scored: list[tuple[float, ClaimRow]] = []
@@ -259,6 +260,39 @@ def merge_vector_scored_rows(
     return stamp_scored_rows(out_scored)
 
 
+def filter_rows_by_labels(
+    rows: Iterable[ClaimRow],
+    filter_: Any,
+    entity_labels: Any,
+) -> list[ClaimRow]:
+    """Apply ``subject_label`` / ``object_label`` filters in Python.
+
+    ``FIND_CLAIMS_CYPHER`` cannot reference the edge endpoints (see the comment
+    on the constant), so label constraints are enforced here via the store's
+    node-only ``entity_labels`` lookup. No-op when neither filter is set — the
+    hot read paths never pay the extra query.
+    """
+    rows = list(rows)
+    if not (filter_.subject_label or filter_.object_label):
+        return rows
+    keys = {key for row in rows for key in (row.subject_key, row.object_key)}
+    labels = (
+        entity_labels(pot_id=filter_.pot_id, entity_keys=sorted(keys)) if keys else {}
+    )
+    out: list[ClaimRow] = []
+    for row in rows:
+        if filter_.subject_label and filter_.subject_label not in labels.get(
+            row.subject_key, ()
+        ):
+            continue
+        if filter_.object_label and filter_.object_label not in labels.get(
+            row.object_key, ()
+        ):
+            continue
+        out.append(row)
+    return out
+
+
 def card_for_row(row: ClaimRow) -> str:
     """Build the retrieval card for a stored claim row (read-side / re-embed)."""
     from domain.retrieval_card import build_retrieval_card
@@ -276,16 +310,18 @@ def card_for_row(row: ClaimRow) -> str:
     )
 
 
-# The endpoints stay UNBOUND (no label, no inline property map). Binding them
-# (``(a:Entity {group_id: $gid})``) makes the planner run the edge scan under a
-# bound node scan — the exact plan shape that returns zero rows on embedded
-# FalkorDB when the bound source is internal node id 0 (always the Repository,
-# the first entity a baseline flow creates). Edge-first plans are immune, and
-# ``labels(a)`` / ``labels(b)`` still evaluate on unbound endpoints. The edge's
-# ``group_id`` scopes the pot; endpoints can only be same-pot entities by
-# construction of the writer's MERGE.
+# The endpoints must not be REFERENCED at all — not bound (``(a:Entity
+# {group_id: $gid})``) and not even read (``labels(a)`` in WHERE). Any endpoint
+# reference makes the planner resolve the nodes under the edge scan, and on
+# embedded FalkorDB that nested node stage silently returns zero rows after the
+# store is persisted and reloaded (every ``potpie`` CLI call is a new process)
+# when internal node id 0 — always the first entity created — is an endpoint.
+# A pure edge scan is immune. The edge's ``group_id`` scopes the pot; endpoints
+# can only be same-pot entities by construction of the writer's MERGE.
+# ``subject_label`` / ``object_label`` filters are applied by the callers in
+# Python via :func:`filter_rows_by_labels` (node-only lookups are safe).
 FIND_CLAIMS_CYPHER = """
-MATCH (a)-[r:RELATES_TO {group_id: $gid}]->(b)
+MATCH ()-[r:RELATES_TO {group_id: $gid}]->()
 WHERE ($preds IS NULL OR r.name IN $preds)
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
   AND ($objects IS NULL OR r.object_key IN $objects)
@@ -298,8 +334,6 @@ WHERE ($preds IS NULL OR r.name IN $preds)
   AND ($as_of IS NULL OR r.valid_at IS NULL OR r.valid_at <= $as_of)
   AND ($va_after IS NULL OR (r.valid_at IS NOT NULL AND r.valid_at >= $va_after))
   AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
-  AND ($subject_label IS NULL OR $subject_label IN labels(a))
-  AND ($object_label IS NULL OR $object_label IN labels(b))
 RETURN r{.*} AS props
 """
 
@@ -319,6 +353,7 @@ __all__ = [
     "card_for_row",
     "claim_identity",
     "embedding_score",
+    "filter_rows_by_labels",
     "iso",
     "merge_vector_scored_rows",
     "parse_dt",

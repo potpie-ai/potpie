@@ -285,6 +285,82 @@ async def test_embedding_attach_zero_match_is_loud_failure(caplog) -> None:
     assert "repair semantic_index" in warning_text
 
 
+async def test_lazy_index_ensure_creates_only_the_vector_index() -> None:
+    """The write-path ensure must not create range indexes.
+
+    Creating node/edge range indexes lazily flips global planner behaviour on
+    a store that was never provisioned — embedded FalkorDB then routes other
+    queries through index-scan plans that silently drop rows after a
+    persistence reload. The vector write only needs the vector index.
+    """
+    graph = _FakeGraph()
+    w = FalkorDBGraphWriter(_FakeSettings(), graph=graph, embedder=_FakeEmbedder())
+    prov = ProvenanceRef(pot_id="p1", source_event_id="e1")
+    await w.upsert_edges(
+        "p1",
+        [EdgeUpsert("DEPENDS_ON", "service:web", "service:auth", {"fact": "x"})],
+        prov,
+    )
+
+    index_qs = [q for q, _ in graph.queries if q.startswith("CREATE")]
+    assert len(index_qs) == 1
+    assert index_qs[0].startswith("CREATE VECTOR INDEX")
+
+
+def test_lazy_vector_index_failure_is_retried_next_batch() -> None:
+    """A failed index creation must not be cached as ensured."""
+
+    class _FlakyIndexGraph(_FakeGraph):
+        def __init__(self):
+            super().__init__()
+            self.vector_index_attempts = 0
+
+        def query(self, cypher: str, params=None):
+            if "CREATE VECTOR INDEX" in cypher:
+                self.queries.append((cypher, params or {}))
+                self.vector_index_attempts += 1
+                if self.vector_index_attempts == 1:
+                    raise RuntimeError("connection reset")
+                return _FakeResult()
+            return super().query(cypher, params)
+
+    graph = _FlakyIndexGraph()
+    w = FalkorDBGraphWriter(_FakeSettings(), graph=graph, embedder=_FakeEmbedder())
+    prov = ProvenanceRef(pot_id="p1", source_event_id="e1")
+    edge = [EdgeUpsert("DEPENDS_ON", "service:web", "service:auth", {"fact": "x"})]
+
+    w._write_edge_vectors_sync(graph, "p1", edge, prov)
+    w._write_edge_vectors_sync(graph, "p1", edge, prov)
+    w._write_edge_vectors_sync(graph, "p1", edge, prov)
+
+    # Attempted again after the failure, then cached once it succeeded.
+    assert graph.vector_index_attempts == 2
+
+
+def test_lazy_vector_index_already_indexed_counts_as_success() -> None:
+    class _AlreadyIndexedGraph(_FakeGraph):
+        def __init__(self):
+            super().__init__()
+            self.vector_index_attempts = 0
+
+        def query(self, cypher: str, params=None):
+            if "CREATE VECTOR INDEX" in cypher:
+                self.queries.append((cypher, params or {}))
+                self.vector_index_attempts += 1
+                raise RuntimeError("Attribute 'fact_embedding' is already indexed")
+            return super().query(cypher, params)
+
+    graph = _AlreadyIndexedGraph()
+    w = FalkorDBGraphWriter(_FakeSettings(), graph=graph, embedder=_FakeEmbedder())
+    prov = ProvenanceRef(pot_id="p1", source_event_id="e1")
+    edge = [EdgeUpsert("DEPENDS_ON", "service:web", "service:auth", {"fact": "x"})]
+
+    w._write_edge_vectors_sync(graph, "p1", edge, prov)
+    w._write_edge_vectors_sync(graph, "p1", edge, prov)
+
+    assert graph.vector_index_attempts == 1
+
+
 def test_build_falkordb_graph_server_mode_requires_url() -> None:
     # Server mode with no URL must fail loudly, not silently fall back to Lite.
     with pytest.raises(RuntimeError, match="server mode requires a URL"):

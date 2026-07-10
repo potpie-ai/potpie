@@ -26,6 +26,7 @@ from adapters.outbound.graph.canonical_claim_query import (
     ENTITY_LABELS_CYPHER as _ENTITY_LABELS_CYPHER,
     FIND_CLAIMS_CYPHER as _FIND_CLAIMS_CYPHER,
     embedding_score as _embedding_score,
+    filter_rows_by_labels,
     iso as _iso,
     merge_vector_scored_rows,
     row_from_record as _row_from_record,
@@ -140,13 +141,13 @@ class Neo4jClaimQueryStore:
             "as_of": _iso(filter_.as_of),
             "va_after": _iso(filter_.valid_at_after),
             "va_before": _iso(filter_.valid_at_before),
-            "subject_label": filter_.subject_label,
-            "object_label": filter_.object_label,
         }
         # Lexical rows define membership: a claim must stay readable even when
         # its embedding is missing or stale. Vector results only overlay
         # ranking scores (plus defense-in-depth extras) on top.
-        rows = self._find_claims_lexical(params)
+        rows = filter_rows_by_labels(
+            self._find_claims_lexical(params), filter_, self.entity_labels
+        )
 
         if filter_.fact_query:
             vector_scored = (

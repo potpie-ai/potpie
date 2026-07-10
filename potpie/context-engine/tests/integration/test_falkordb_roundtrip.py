@@ -244,17 +244,17 @@ def test_claim_read_plan_avoids_bound_node_scan(shared_graph) -> None:
         "$as_of",
         "$va_after",
         "$va_before",
-        "$subject_label",
-        "$object_label",
     ):
         literal = literal.replace(param, "NULL")
     literal = literal.replace("$include_invalid", "false")
 
     plan = str(shared_graph.explain(literal))
 
+    # The plan must not touch the endpoint nodes at all: node scans under the
+    # edge scan (including the `All Node Scan` a labels() reference plans)
+    # silently return zero rows after a persistence reload.
     assert "Edge By Index Scan" in plan
-    assert "Node By Index Scan" not in plan
-    assert "Node By Label Scan" not in plan
+    assert "Node" not in plan
 
 
 def test_semantic_index_repair_recovers_and_migrates_embedder_change(
@@ -370,3 +370,109 @@ def test_semantic_index_repair_recovers_and_migrates_embedder_change(
     )
     assert {r.object_key for r in found} == {"feature:login", "feature:storage"}
     assert found[0].object_key == "feature:login"
+
+
+def test_claim_reads_survive_persistence_reload() -> None:
+    """Regression pin for the embedded-FalkorDB reload defect (the P0-1 bug).
+
+    Every ``potpie`` CLI call is a fresh process: the store is persisted to
+    disk and reloaded between the write and the read. After that reload, any
+    query plan that resolves the edge ENDPOINTS through node scans — a bound
+    node scan, or the ``All Node Scan`` a ``labels(a)`` reference plans under
+    the edge scan — silently returns zero rows when internal node id 0 (the
+    first entity ever created) is an endpoint. In-process reads never hit it,
+    which is exactly why it survived the in-process roundtrip tests above.
+
+    Pins the full journey shape: seed + indexes → close → reopen → read.
+    """
+    import shutil as _shutil
+    import tempfile as _tempfile
+
+    tmp = _tempfile.mkdtemp(prefix="falkordblite_reload_test_")
+    settings = _Settings()
+    pot = "potReload"
+    prov = ProvenanceRef(pot_id=pot, source_event_id="e1", source_system="agent")
+    try:
+        db = falkordb_client.FalkorDB(f"{tmp}/context_graph.db")
+        graph = db.select_graph("context_graph")
+        writer = FalkorDBGraphWriter(settings, graph=graph, embedder=_FakeEmbedder())
+
+        async def _seed() -> None:
+            # Full provision-style indexes: the worst case for the planner.
+            assert await writer.ensure_indexes() is True
+            # The FIRST entity created is internal node id 0 — and the claim
+            # is anchored on it, exactly like the Repository on a fresh pot.
+            await writer.upsert_entities(
+                pot,
+                [
+                    EntityUpsert("service:web", ("Entity", "Service"), {}),
+                    EntityUpsert("service:auth", ("Entity", "Service"), {}),
+                ],
+                prov,
+            )
+            await writer.upsert_edges(
+                pot,
+                [
+                    EdgeUpsert(
+                        "DEPENDS_ON",
+                        "service:web",
+                        "service:auth",
+                        {"fact": "web depends on auth"},
+                    )
+                ],
+                prov,
+            )
+
+        asyncio.run(_seed())
+        db.close()  # persist + stop the embedded redis-server
+
+        # New handle over the persisted file = the next CLI invocation.
+        db = falkordb_client.FalkorDB(f"{tmp}/context_graph.db")
+        graph = db.select_graph("context_graph")
+        try:
+            reader = FalkorDBClaimQueryStore(
+                settings, graph=graph, embedder=_FakeEmbedder()
+            )
+
+            unscoped = reader.find_claims(ClaimQueryFilter(pot_id=pot, limit=10))
+            assert [r.predicate for r in unscoped] == ["DEPENDS_ON"]
+
+            scoped = reader.find_claims(
+                ClaimQueryFilter(pot_id=pot, subject_key_in=("service:web",), limit=10)
+            )
+            assert [r.subject_key for r in scoped] == ["service:web"]
+
+            labelled = reader.find_claims(
+                ClaimQueryFilter(pot_id=pot, subject_label="Service", limit=10)
+            )
+            assert len(labelled) == 1
+            assert (
+                reader.find_claims(
+                    ClaimQueryFilter(pot_id=pot, subject_label="Team", limit=10)
+                )
+                == []
+            )
+
+            # `graph status` counts go through the same claim query.
+            from adapters.outbound.graph.backends.claim_query_analytics import (
+                ClaimQueryAnalytics,
+            )
+
+            counts = ClaimQueryAnalytics(claim_query=reader).counts(pot)
+            assert counts["claims"] == 1
+            assert counts["entities"] == 2
+
+            # The explorer edge queries are edge-only for the same reason.
+            from adapters.outbound.graph.falkordb_inspection import (
+                FalkorDBInspection,
+            )
+
+            inspection = FalkorDBInspection(settings, graph=graph)
+            slice_ = inspection.slice(pot_id=pot, filter_=ClaimQueryFilter(pot_id=pot))
+            assert len(slice_.edges) == 1
+            hood = inspection.neighborhood(pot_id=pot, entity_key="service:web")
+            assert len(hood.edges) == 1
+        finally:
+            db.close()
+    finally:
+        _shutil.rmtree(tmp, ignore_errors=True)

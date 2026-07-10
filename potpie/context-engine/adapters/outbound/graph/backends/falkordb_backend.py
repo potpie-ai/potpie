@@ -73,9 +73,13 @@ SET r.fact_embedding = vecf32($embedding),
 RETURN count(r) AS updated
 """
 
+# ``source_ref`` is part of the edge identity for FalkorDB writes: a null
+# param must match only edges that themselves have no source_ref, never act
+# as a wildcard across every edge sharing the (predicate, subject, object)
+# tuple.
 _REEMBED_BY_TUPLE_CYPHER = """
 MATCH ()-[r:RELATES_TO {group_id: $gid, name: $predicate, subject_key: $subject_key, object_key: $object_key}]->()
-WHERE ($source_ref IS NULL OR r.source_ref = $source_ref)
+WHERE (($source_ref IS NULL AND r.source_ref IS NULL) OR r.source_ref = $source_ref)
 SET r.fact_embedding = vecf32($embedding),
     r.embedding_model = $embedding_model,
     r.embedding_dim = $embedding_dim
@@ -337,6 +341,7 @@ class FalkorDBGraphBackend:
             )
         ]
         index_recreated = False
+        index_errors: list[str] = []
         if any(
             stored_dim_mismatch(props, embedder_dim=embedder_dim) for props in needs
         ):
@@ -344,6 +349,7 @@ class FalkorDBGraphBackend:
                 graph.query(_DROP_VECTOR_INDEX_CYPHER)
                 index_recreated = True
             except Exception as exc:  # noqa: BLE001
+                index_errors.append(f"index drop failed: {exc}")
                 logger.warning("vector index drop failed (continuing): %s", exc)
         repaired = 0
         failed = 0
@@ -376,12 +382,13 @@ class FalkorDBGraphBackend:
                     exc,
                 )
         # Recreate (or ensure) the vector index after values are rewritten.
+        # The index covers every :RELATES_TO edge in the (shared) graph, so a
+        # dimension migration re-shapes it for all pots in this store.
         assert self.writer is not None
-        try:
-            embedding_dim = int(getattr(self.embedder, "dimensions", 1536))
-            FalkorDBGraphWriter._ensure_indexes_sync(graph, embedding_dim)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("vector index recreate failed: %s", exc)
+        embedding_dim = int(getattr(self.embedder, "dimensions", 1536))
+        if not FalkorDBGraphWriter._ensure_vector_index_sync(graph, embedding_dim):
+            index_errors.append("index recreate failed — see the daemon/CLI log")
+        index_recreated = index_recreated and not index_errors
         detail = (
             f"re-embedded {repaired} of {len(needs)} stale claim(s) "
             f"(scanned {len(props_list)})"
@@ -390,10 +397,12 @@ class FalkorDBGraphBackend:
             detail += f"; {failed} FAILED — see warnings in the daemon/CLI log"
         if index_recreated:
             detail += "; vector index rebuilt for new embedding dimensions"
+        if index_errors:
+            detail += "; " + "; ".join(index_errors)
         return {
             "scanned": len(props_list),
             "repaired": repaired,
-            "failed": failed,
+            "failed": failed + (1 if index_errors else 0),
             "index_recreated": index_recreated,
             "detail": detail,
         }

@@ -41,7 +41,7 @@ class _FakeGraph:
                     ["person:y", ["Entity", "Person"], {"name": "y"}],
                 ],
             )
-        if "a.entity_key AS source" in cypher:  # slice edges
+        if "r.subject_key AS source" in cypher:  # slice edges (edge-only query)
             return _FakeResult(
                 ["source", "target", "predicate"],
                 [["person:y", "repo:x", "PERFORMED"]],
@@ -82,6 +82,21 @@ def test_neighborhood_bfs_collects_incident_edges_and_hydrates() -> None:
     assert {n.key for n in sl.nodes} == {"repo:x", "person:y"}
     assert len(sl.edges) == 1
     assert sl.edges[0].predicate == "PERFORMED"
+
+
+def test_edge_queries_never_reference_endpoints() -> None:
+    """Same defect class as FIND_CLAIMS_CYPHER: endpoint-resolving plans drop
+    rows on embedded FalkorDB after a persistence reload when node id 0 is an
+    endpoint. The explorer edge queries read source/target off the edge."""
+    from adapters.outbound.graph.falkordb_inspection import (
+        _EDGES_CYPHER,
+        _INCIDENT_CYPHER,
+    )
+
+    for cypher in (_EDGES_CYPHER, _INCIDENT_CYPHER):
+        assert "MATCH ()-[r:RELATES_TO {group_id: $gid}]->()" in cypher
+        assert "a.entity_key" not in cypher
+        assert "labels(" not in cypher
 
 
 def test_neighborhood_clamps_depth() -> None:

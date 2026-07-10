@@ -264,6 +264,46 @@ def test_fact_query_overlays_native_vector_scores_when_embedder_present() -> Non
     assert rows[0].properties["semantic_similarity"] == pytest.approx(0.91)
 
 
+def test_label_filters_are_applied_in_python() -> None:
+    """The shared claim query has no labels() clause; filters use entity_labels."""
+    from adapters.outbound.graph.canonical_claim_query import FIND_CLAIMS_CYPHER
+
+    assert "labels(" not in FIND_CLAIMS_CYPHER
+
+    claim = _rec(
+        group_id="p1",
+        name="OWNED_BY",
+        subject_key="service:web",
+        object_key="team:platform",
+        fact="web is owned by platform",
+    )
+
+    class _DispatchingSession(_FakeSession):
+        def run(self, cypher, **params):
+            self._captured.append((cypher, params))
+            if "labels(e)" in cypher:
+                return [
+                    {"key": "service:web", "labels": ["Entity", "Service"]},
+                    {"key": "team:platform", "labels": ["Entity", "Team"]},
+                ]
+            return [claim]
+
+    class _DispatchingDriver(_FakeDriver):
+        def session(self):
+            return _DispatchingSession(self._records, self.captured)
+
+    store = Neo4jClaimQueryStore(settings=object(), driver=_DispatchingDriver([]))  # type: ignore[arg-type]
+
+    kept = store.find_claims(
+        ClaimQueryFilter(pot_id="p1", subject_label="Service", limit=10)
+    )
+    assert len(kept) == 1
+    dropped = store.find_claims(
+        ClaimQueryFilter(pot_id="p1", object_label="Service", limit=10)
+    )
+    assert dropped == []
+
+
 def test_fact_query_falls_back_to_lexical_when_embedder_fails() -> None:
     driver = _FakeDriver(
         [

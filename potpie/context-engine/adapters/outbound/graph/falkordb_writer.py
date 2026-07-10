@@ -65,11 +65,17 @@ _INDEX_STATEMENTS = (
 _RESET_BATCH = 500
 
 
+def _vector_index_statement(embedding_dim: int) -> str:
+    return (
+        "CREATE VECTOR INDEX FOR ()-[r:RELATES_TO]->() ON (r.fact_embedding) "
+        f"OPTIONS {{dimension:{int(embedding_dim)}, similarityFunction:'cosine'}}"
+    )
+
+
 def _index_statements(embedding_dim: int) -> tuple[str, ...]:
     return (
         *_INDEX_STATEMENTS,
-        "CREATE VECTOR INDEX FOR ()-[r:RELATES_TO]->() ON (r.fact_embedding) "
-        f"OPTIONS {{dimension:{int(embedding_dim)}, similarityFunction:'cosine'}}",
+        _vector_index_statement(embedding_dim),
     )
 
 
@@ -244,6 +250,26 @@ class FalkorDBGraphWriter(GraphWriterPort):
                 # Re-running creates an "already indexed" error; best-effort.
                 logger.debug("falkordb index skipped (%s): %s", stmt, exc)
 
+    @staticmethod
+    def _ensure_vector_index_sync(graph: Any, embedding_dim: int) -> bool:
+        """Create just the vector index; report whether it is usable.
+
+        The lazy write-path call must NOT create the range indexes: those
+        change global planner behaviour mid-flight for a store that was never
+        provisioned (embedded FalkorDB plans differently once node indexes
+        exist), and the vector write only needs the vector index. Returns
+        ``False`` on a real failure so the caller retries on the next batch
+        instead of caching a broken state.
+        """
+        try:
+            graph.query(_vector_index_statement(embedding_dim))
+        except Exception as exc:  # noqa: BLE001
+            if "already indexed" in str(exc).lower():
+                return True
+            logger.warning("falkordb vector index creation failed: %s", exc)
+            return False
+        return True
+
     async def upsert_entities(
         self, pot_id: str, items: list[EntityUpsert], provenance: ProvenanceRef
     ) -> int:
@@ -357,12 +383,13 @@ class FalkorDBGraphWriter(GraphWriterPort):
             return []
         # Setup's provision step normally creates the vector index, but a
         # write must not depend on setup having run (fresh homes, tests,
-        # library embedding): ensure indexes once per writer so the vectors
-        # written below are actually queryable.
+        # library embedding): ensure the vector index once per writer so the
+        # vectors written below are actually queryable. Only the vector index
+        # — creating the range indexes here would flip planner behaviour for
+        # every other query on a store that was never provisioned.
         if not self._indexes_ensured:
             embedding_dim = int(getattr(self._embedder, "dimensions", 1536))
-            self._ensure_indexes_sync(graph, embedding_dim)
-            self._indexes_ensured = True
+            self._indexes_ensured = self._ensure_vector_index_sync(graph, embedding_dim)
         failures: list[dict[str, str]] = []
         for item in items:
             raw_props = dict(item.properties)
