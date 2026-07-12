@@ -1,0 +1,55 @@
+{
+  "context_resolve": {
+    "type": "object",
+    "required": ["pot_id", "query"],
+    "properties": {
+      "pot_id": {"type": "string"},
+      "query": {"type": "string"},
+      "intent": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "repo_name": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "branch": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "file_path": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "function_name": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "symbol": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "pr_number": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": null},
+      "services": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "features": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "environment": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "ticket_ids": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "user": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "source_refs": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "include": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "exclude": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "mode": {"type": "string", "default": "fast"},
+      "source_policy": {"type": "string", "default": "references_only"},
+      "max_items": {"type": "integer", "default": 12},
+      "as_of": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null}
+    }
+  },
+  "context_search": {
+    "type": "object",
+    "required": ["pot_id", "query"],
+    "properties": {
+      "pot_id": {"type": "string"},
+      "query": {"type": "string"},
+      "include": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "repo_name": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "max_items": {"type": "integer", "default": 8}
+    }
+  },
+  "context_record": {
+    "type": "object",
+    "required": ["pot_id", "record_type", "summary"],
+    "properties": {
+      "pot_id": {"type": "string"},
+      "record_type": {"type": "string"},
+      "summary": {"type": "string"},
+      "repo_name": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "source_refs": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "details": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null},
+      "confidence": {"type": "number", "default": 0.7},
+      "visibility": {"type": "string", "default": "project"},
+      "idempotency_key": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null}
+    }
+  }
+}

@@ -137,5 +137,7 @@ def test_daemon_http_rpc_rejects_unregistered_method(monkeypatch, tmp_path) -> N
         "error": {
             "code": "validation_error",
             "message": "invalid RPC method: graph.delete_all",
+            "detail": None,
+            "recommended_next_action": None,
         },
     }

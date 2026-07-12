@@ -1,0 +1,150 @@
+{
+  "format_version": "2",
+  "rows": [
+    {
+      "pot_id": "pot_existing",
+      "predicate": "DEPENDS_ON",
+      "subject_key": "service:payments-api",
+      "object_key": "service:ledger-api",
+      "valid_at": "2026-06-30T10:00:00+00:00",
+      "invalid_at": null,
+      "source_system": "agent",
+      "source_ref": "repo:manifest",
+      "fact": "payments depends on ledger",
+      "properties": {},
+      "fact_embedding": null,
+      "claim_key": "claim:fixture:depends-on",
+      "subgraph": "infra_topology",
+      "truth": "source_observation",
+      "confidence": 1.0,
+      "description": "payments depends on ledger",
+      "environment": null,
+      "observed_at": "2026-06-30T10:00:00+00:00",
+      "valid_until": null,
+      "mutation_id": "mutation-fixture-infra",
+      "source_refs": ["repo:manifest"],
+      "evidence": [
+        {
+          "source_ref": "repo:manifest",
+          "authority": "repository_metadata"
+        }
+      ],
+      "graph_contract_version": "v1.5",
+      "ontology_version": "2026-06-graph"
+    },
+    {
+      "pot_id": "pot_existing",
+      "predicate": "PERFORMED",
+      "subject_key": "person:alice",
+      "object_key": "activity:fixture-deploy",
+      "valid_at": "2026-07-01T12:00:00+00:00",
+      "invalid_at": null,
+      "source_system": "agent",
+      "source_ref": "deploy:42",
+      "fact": "deployed payments api version 2",
+      "properties": {
+        "verb_class": "deployed",
+        "occurred_at": "2026-07-01T12:00:00Z"
+      },
+      "fact_embedding": null,
+      "claim_key": "claim:fixture:performed",
+      "subgraph": "recent_changes",
+      "truth": "timeline_event",
+      "confidence": 1.0,
+      "description": "deployed payments api version 2",
+      "environment": null,
+      "observed_at": "2026-07-01T12:00:00+00:00",
+      "valid_until": null,
+      "mutation_id": "mutation-fixture-timeline",
+      "source_refs": ["deploy:42"],
+      "evidence": [
+        {
+          "source_ref": "deploy:42",
+          "authority": "external_system"
+        }
+      ],
+      "graph_contract_version": "v1.5",
+      "ontology_version": "2026-06-graph"
+    },
+    {
+      "pot_id": "pot_existing",
+      "predicate": "TOUCHED",
+      "subject_key": "activity:fixture-deploy",
+      "object_key": "service:payments-api",
+      "valid_at": "2026-07-01T12:00:00+00:00",
+      "invalid_at": null,
+      "source_system": "agent",
+      "source_ref": "deploy:42",
+      "fact": "deployed payments api version 2",
+      "properties": {
+        "verb_class": "deployed",
+        "occurred_at": "2026-07-01T12:00:00Z"
+      },
+      "fact_embedding": null,
+      "claim_key": "claim:fixture:touched",
+      "subgraph": "recent_changes",
+      "truth": "timeline_event",
+      "confidence": 1.0,
+      "description": "deployed payments api version 2",
+      "environment": null,
+      "observed_at": "2026-07-01T12:00:00+00:00",
+      "valid_until": null,
+      "mutation_id": "mutation-fixture-timeline",
+      "source_refs": ["deploy:42"],
+      "evidence": [
+        {
+          "source_ref": "deploy:42",
+          "authority": "external_system"
+        }
+      ],
+      "graph_contract_version": "v1.5",
+      "ontology_version": "2026-06-graph"
+    }
+  ],
+  "labels": [
+    ["pot_existing", "service:payments-api", ["Service"]],
+    ["pot_existing", "service:ledger-api", ["Service"]],
+    ["pot_existing", "activity:fixture-deploy", ["APIContract", "Activity"]],
+    ["pot_existing", "person:alice", ["Person"]]
+  ],
+  "entity_properties": [
+    [
+      "pot_existing",
+      "service:payments-api",
+      {
+        "name": "payments-api",
+        "summary": "Payments API",
+        "description": "Processes payments"
+      }
+    ],
+    [
+      "pot_existing",
+      "service:ledger-api",
+      {
+        "name": "ledger-api",
+        "summary": "Ledger API",
+        "description": "Posts ledger entries"
+      }
+    ],
+    [
+      "pot_existing",
+      "activity:fixture-deploy",
+      {
+        "verb_class": "deployed",
+        "occurred_at": "2026-07-01T12:00:00Z",
+        "name": "fixture deployment",
+        "summary": "deployed payments api version 2",
+        "description": "deployed payments api version 2"
+      }
+    ],
+    [
+      "pot_existing",
+      "person:alice",
+      {
+        "name": "alice",
+        "summary": "Alice",
+        "description": "Deployment actor"
+      }
+    ]
+  ]
+}

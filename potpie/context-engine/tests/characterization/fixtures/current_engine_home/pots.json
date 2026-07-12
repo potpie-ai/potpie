@@ -1,0 +1,23 @@
+{
+  "pots": {
+    "pot_existing": {
+      "pot_id": "pot_existing",
+      "name": "existing-project",
+      "archived": false
+    }
+  },
+  "active": "pot_existing",
+  "sources": {
+    "pot_existing": [
+      {
+        "source_id": "src_existing",
+        "kind": "repo",
+        "name": "potpie",
+        "location": "https://github.com/potpie-ai/potpie.git"
+      }
+    ]
+  },
+  "repo_defaults": {
+    "github.com/potpie-ai/potpie": "pot_existing"
+  }
+}

@@ -118,7 +118,7 @@ def test_daemon_rpc_validation_error_guidance_round_trips() -> None:
     # UnknownGraphViewError's did_you_mean must survive the daemon RPC
     # boundary so remote reads error exactly like in-process ones.
     from domain.graph_views import UnknownGraphViewError, include_guess_guidance
-    from host import daemon_client
+    from potpie.daemon import client as daemon_client
 
     guidance = include_guess_guidance("docs", "relevant")
     payload = daemon_main._error_payload(
@@ -142,7 +142,7 @@ def test_daemon_rpc_validation_error_guidance_round_trips() -> None:
 
 
 def test_daemon_rpc_plain_validation_error_has_no_guidance() -> None:
-    from host import daemon_client
+    from potpie.daemon import client as daemon_client
 
     payload = daemon_main._error_payload(ValueError("--subgraph is required"))
 
