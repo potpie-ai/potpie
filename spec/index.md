@@ -35,9 +35,8 @@ verification:
 This is the entrypoint for Potpie's living specification. Read this file before
 editing a spec or implementing behavior governed by one.
 
-The package-boundary proposal describes a target architecture. Until a behavior
-is implemented and verified, current-state documentation and code remain the
-source of truth for runtime behavior.
+The accepted package-boundary spec and its verification record describe the
+implemented product/library split.
 
 ## Read Order
 
@@ -58,7 +57,7 @@ source of truth for runtime behavior.
 | `SPEC-GLOSSARY` | [glossary.md](glossary.md) | proposed | 0.1.0 | Canonical package-boundary and runtime terms. | not applicable |
 | `SPEC-PRODUCT` | [product.md](product.md) | draft | 0.1.0 | Product goals, users, workflows, constraints, and non-goals. | not applicable |
 | `SPEC-SYSTEM` | [system.md](system.md) | draft | 0.1.0 | Cross-system guarantees and interfaces; initially scoped to the package-boundary proposal. | not implemented |
-| `SPEC-PACKAGE-BOUNDARY` | [modules/package-boundary.md](modules/package-boundary.md) | proposed | 0.1.0 | Ownership and interaction boundary between root Potpie and the standalone context engine. | not implemented |
+| `SPEC-PACKAGE-BOUNDARY` | [modules/package-boundary.md](modules/package-boundary.md) | accepted | 1.0.0 | Ownership and interaction boundary between root Potpie and the standalone context engine. | verified at `f435fb4` |
 
 ## Decisions
 

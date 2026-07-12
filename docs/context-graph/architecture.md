@@ -1,495 +1,223 @@
 # Context Graph Architecture
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
->
-> Target boundary: [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md)
-> is proposed and not yet implemented. This file continues to describe current
-> `HostShell` behavior until the corresponding
-> [migration commits](./package-boundary-migration-plan.md) land.
+> Verified against the package-boundary implementation at `f435fb4` on
+> 2026-07-13. The normative ownership contract is
+> [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md).
 
-This is the implementation map for the Context Graph: the layered code, the
-composition roots that wire it, the daemon that hosts it, the swappable
-`GraphBackend`, and the shared storage engine room underneath. It orients you to
-the moving parts and points at the docs that own each flow in full — the read
-path lives in [querying.md](./querying.md), the write path in
-[writing.md](./writing.md), the vocabulary in [ontology.md](./ontology.md), and
-ingestion/nudge in [ingestion-nudge.md](./ingestion-nudge.md).
+Potpie is one product distribution backed by one independently installable
+context-engine library. Root `potpie` owns every process and user workflow. The
+`potpie-context-engine` wheel owns context and graph behavior, but no product
+process, credentials, user-home defaults, or presentation.
 
-The single most important framing fact: the `potpie graph …` workbench is
-**shipped today** as the V1.5 surface. The string `v2` survives only as the
-workbench *envelope* version (`GRAPH_WORKBENCH_CONTRACT_VERSION="v2"`); the data
-plane is `GRAPH_CONTRACT_VERSION="v1.5"` / `ONTOLOGY_VERSION="2026-06-graph"`.
-Both the legacy `resolve`/`search`/`record` wrappers and the full workbench ship
-now. The **canonical write door is `graph propose` → `graph commit --verify`**;
-`graph mutate` is a legacy wrapper over it (see [Writing the graph, high
-level](#the-write-door-high-level)).
-
-## Hexagonal layers
-
-The engine is ports-and-adapters. Pure model in the middle, I/O at the edges,
-composition roots at the top.
-
-```mermaid
-flowchart TB
-  cg_inbound["inbound adapters<br/>cli · mcp · http ingestion · daemon_http · webhooks"]
-  cg_app["application<br/>services · readers · use_cases"]
-  cg_domain["domain<br/>ontology · contract · ports · DTOs · ranking · coherence · identity"]
-  cg_outbound["outbound adapters<br/>graph backends + engine room · connectors · ledger clients · postgres event store · skills targets · local embedder"]
-  cg_boot["bootstrap (composition roots)<br/>host_wiring.py · ingestion_server.py"]
-  cg_host["host<br/>shell.py (HostShell) · daemon.py"]
-
-  cg_boot --> cg_host
-  cg_boot --> cg_inbound
-  cg_inbound --> cg_app
-  cg_app --> cg_domain
-  cg_app --> cg_outbound
-  cg_outbound --> cg_domain
-```
-
-| Layer | Path | Responsibility |
-|---|---|---|
-| **domain/** | `domain/` | Pure model and contracts: the three ontology catalogs, contract constants, ports (Protocols), DTOs, ranking, coherence invariants, identity. No I/O. Import-time coherence guards fail startup fast if vocabularies drift. |
-| **application/** | `application/` | Services and use cases that orchestrate domain over ports: `services/` (graph_service, graph_workbench, agent_context, read_orchestrator, envelope_builder, nudge_service, skill_manager, semantic_mutation_validator/lowering, reconciliation_validation, ingestion_submission_service), `readers/` (the 9 readers), `use_cases/` (the ingestion pipeline). |
-| **adapters/** | `adapters/inbound`, `adapters/outbound` | Concrete I/O. Inbound: cli, mcp, http ingestion server, daemon_http, webhooks. Outbound: graph backends + the shared engine room, skills targets, connectors, ledger clients, the Postgres event store, `intelligence/local_embedder`, the session injection ledger. |
-| **bootstrap/** | `bootstrap/` | The two composition roots (next section). |
-| **host/** | `host/` | `shell.py` (the `HostShell` facade) and `daemon.py` (lifecycle). |
-
-The architecture's single spine is `CLI → HostShell → service(s) → ports`
-(`adapters/inbound/cli/host_cli.py` docstring). Agents reach the same system
-either through the CLI directly or through the in-process MCP `context_*` tools,
-which are compatibility adapters over the same graph internals
-(`adapters/inbound/mcp/server.py`).
-
-## Two composition roots / two HTTP roots
-
-There are **two separate composition roots**, and conflating them is the most
-common architecture error.
-
-```mermaid
-flowchart TB
-  subgraph cg_spine["Local agent spine — bootstrap/host_wiring.py build_host_shell()"]
-    direction TB
-    cg_cli["potpie CLI · MCP · daemon HTTP"]
-    cg_shell["HostShell facade (host/shell.py)"]
-    cg_services["services: graph · graph_workbench · agent_context · pots · skills · nudge · ledger"]
-    cg_lite[("default backend: falkordb_lite<br/>default host mode: daemon")]
-    cg_cli --> cg_shell --> cg_services --> cg_lite
-  end
-
-  subgraph cg_ingest["Ingestion HTTP server — bootstrap/ingestion_server.py"]
-    direction TB
-    cg_fastapi["FastAPI app (adapters/inbound/http/)"]
-    cg_pipeline["async reconciliation pipeline · connectors · optional reconciliation agent"]
-    cg_neo[("default backend: neo4j")]
-    cg_fastapi --> cg_pipeline --> cg_neo
-  end
-```
-
-1. **The local agent spine** — `bootstrap/host_wiring.py build_host_shell()`
-   builds `HostShell`, which the inbound adapters (CLI, MCP, daemon HTTP) bind
-   to. The detached daemon serves an `OperationRegistry` over loopback UDS/TCP
-   (`adapters/inbound/daemon_http/transport.py`) — that is the **first HTTP
-   root**, a private IPC transport. Everything you reach with `potpie graph …`,
-   `potpie resolve/search/record`, and `potpie graph nudge` routes through here.
-   **Default backend: `falkordb_lite`. Default host mode: `daemon`.**
-2. **The ingestion HTTP server** — `bootstrap/ingestion_server.py
-   IngestionServerContainer` composes the FastAPI app under
-   `adapters/inbound/http/` (the async reconciliation pipeline, connectors, the
-   optional reconciliation agent). That public FastAPI app is the **second HTTP
-   root**. **Default backend here: `neo4j`** (via `settings.graph_db_backend()`).
-   It is a distinct root; migrating its async pipeline onto `HostShell` is
-   deferred.
-
-Both roots run the same domain/application code over a swappable `GraphBackend`;
-they differ only in wiring and default storage.
-
-> **Roadmap (not yet wired):** a managed Potpie backend that hosts the same
-> service modules on hosted stores. `potpie use --managed`, `pot list --managed`,
-> and the entire `cloud` command group raise `CapabilityNotImplemented` today.
-> Local and managed are designed to share one graph model; only the host shell
-> and storage adapters would change.
-
-## The daemon model
-
-`host/daemon.py Daemon` is the local background process for lifecycle, IPC,
-health, and logs — explicitly **not** the business layer. Two modes:
-
-- **in_process** — the host runs inside the CLI process and reports synthetic
-  liveness. Built directly via `build_host_shell()`.
-- **detached** — a separate process runs `host.daemon_main` and serves the
-  `HostShell` RPC over loopback (UDS / TCP, with `base_url` discovery). The CLI
-  talks to it through a daemon-backed `RemoteHostShell`.
-
-Mode is chosen by `CONTEXT_ENGINE_HOST_MODE` (`daemon` | `in_process`);
-`default_host_mode()` returns **`daemon`**, so the shipped CLI default is a
-**detached daemon**. `get_host()` (`commands/_common.py`) returns the
-daemon-backed `RemoteHostShell` by default and only builds an in-process shell
-when `CONTEXT_ENGINE_HOST_MODE=in_process`.
-
-**Liveness ≠ readiness.** The daemon can be live while a backend or semantic
-index is not yet ready; the two are reported separately. `potpie doctor`
-composes `backend.capabilities()` + `backend.mutation.readiness()` +
-`daemon.status()` + `ledger.status()` so a half-ready system is debuggable.
-`potpie ui` (the read-only graph explorer) is served by this daemon — it ensures
-the daemon, discovers `base_url`, and opens `<base>/ui`.
-
-## Two altitudes onto one data plane
-
-Reads and writes both reach `DefaultGraphService`
-(`application/services/graph_service.py`) over the backend, but agents see two
-altitudes:
-
-- **The 4-tool MCP contract** — `context_resolve` / `context_search` /
-  `context_record` / `context_status`, bound by `AgentContextService`. This is
-  the entire long-term agent surface; `context_record` is the only MCP write.
-- **Graph Surface Lite (V1.5)** — the richer `potpie graph …` workbench
-  (`catalog`/`read`/`search-entities`/`neighborhood`/`propose`/`commit`/`bulk`/
-  `history`/`inbox`/`quality` …). **CLI-only**; it does not add MCP tools.
-
-Both are shipped. The read shapes and the 9-reader trunk are owned by
-[querying.md](./querying.md); the write stack is owned by
-[writing.md](./writing.md). No read returns a server-synthesized answer —
-reads return ranked evidence (`AgentEnvelope`) and the agent reasons over it.
-
-## The `GraphBackend` port
-
-`domain/ports/graph/backend.py` defines `GraphBackend` as a `@runtime_checkable`
-Protocol that **bundles six capability ports** in two tiers, plus three bundle
-members.
-
-```mermaid
-flowchart TB
-  cg_be["GraphBackend"]
-  subgraph cg_canon["canonical source of truth"]
-    cg_mut["mutation (GraphMutationPort)"]
-    cg_cq["claim_query (ClaimQueryPort)"]
-  end
-  subgraph cg_proj["rebuildable projections"]
-    cg_sem["semantic (SemanticSearchPort)"]
-    cg_insp["inspection (GraphInspectionPort)"]
-    cg_an["analytics (GraphAnalyticsPort)"]
-    cg_snap["snapshot (GraphSnapshotPort)"]
-  end
-  cg_be --> cg_mut
-  cg_be --> cg_cq
-  cg_be --> cg_sem
-  cg_be --> cg_insp
-  cg_be --> cg_an
-  cg_be --> cg_snap
-  cg_be -. "profile · capabilities() · provision(plan)" .-> cg_meta["bundle members"]
-```
-
-- **Canonical:** `mutation` (`apply`/`apply_async`, `invalidate`, `reset_pot`,
-  `readiness`) and `claim_query` (`find_claims`, `entity_labels`,
-  `entity_properties`). Note `ClaimQueryPort` lives at
-  `domain/ports/claim_query.py`, **not** under `graph/`.
-- **Projections (rebuildable):** `semantic` (vector NN over claim embeddings,
-  stamps `semantic_similarity`), `inspection` (`neighborhood`/`path`/`labels`/
-  `slice` → backs `graph neighborhood`/`inspect` + the explorer UI), `analytics`
-  (`counts`/`freshness`/`quality`/`repair`), `snapshot` (`export`/`import_`).
-- **Bundle members:** `profile` (string), `capabilities() -> BackendCapabilities`
-  (a frozen dataclass declaring which of the six are *really* implemented vs
-  fail-closed — read by `backend status`/`doctor`), and `provision(plan:
-  SetupPlan) -> StepResult` (the setup seam where a backend stands up its own
-  store idempotently).
-
-Two workbench stores also live under `domain/ports/graph/` but are **not** part
-of the six-cap bundle: `inbox_store.py` and `plan_store.py`.
-
-The registry (`adapters/outbound/graph/backends/__init__.py`) is
-`build_backend(profile, *, settings, embedder)`. `KNOWN_PROFILES = (in_memory,
-embedded, neo4j, falkordb, falkordb_lite, postgres, chroma, hosted)`. It
-normalizes names (`falkordblite`→`falkordb_lite`, dashes→underscores) and, when
-`embedder is None` for a real profile, default-builds the bundled local embedder
-(disable via `CONTEXT_ENGINE_EMBEDDER=none`).
-
-### Backend coverage — real capabilities per profile
-
-This table is the corrected source of truth (the older doc overstated coverage).
-A "real cap" is one whose port actually executes; everything else is fail-closed
-and raises `CapabilityNotImplemented`.
-
-| Profile | Backend class | Real caps | Notes |
-|---|---|---:|---|
-| `in_memory` | `InMemoryGraphBackend` | **6/6** | Conformance/reference; genuinely real (validates, MERGEs by identity, bitemporal invalidation, embeds on write); `dump_store`/`load_store`. |
-| `embedded` | `EmbeddedGraphBackend` | **6/6** (delegated) | OSS JSON-persisted fallback wrapping `in_memory`; persists to `<home>/graph.json` after each mutation (atomic tmp-replace). |
-| `falkordb_lite` | `FalkorDBLiteGraphBackend` | **5/6** (no snapshot) | **The OSS/CLI default.** Embedded FalkorDBLite via `redislite` over a local file — no server, no Docker. |
-| `falkordb` | `FalkorDBGraphBackend` | **5/6** (no snapshot) | Full FalkorDB server over a redis URL; needs the optional `falkordb` client. |
-| `neo4j` | `Neo4jGraphBackend` | **4/6** (no inspection, no snapshot) | "Shape-first production target"; native relationship vector index. |
-| `postgres` / `chroma` / `hosted` | `StubGraphBackend` | **0/6** | Fail-closed seam: every port and `provision` raise `CapabilityNotImplemented("graph.<profile>.<cap>.<method>")`. Documented but unbuilt; `backend list` still shows them. |
-
-**Cross-profile gaps to internalize:**
-
-- Claim-key `mutation.invalidate` raises on **both** Neo4j and FalkorDB (that
-  invalidation path is unbuilt there).
-- `snapshot` (export/import) is real only on `in_memory`/`embedded`.
-- `inspection` is real on `in_memory`/`embedded`/`falkordb` but **not** Neo4j.
-- Net effect: **FalkorDB is more complete than Neo4j** (5 vs 4 ports), and the
-  OSS default `falkordb_lite` is a first-class backend, not a stub.
-
-> **Roadmap (not yet wired):** `snapshot` on falkordb/neo4j; `inspection` on
-> neo4j; the `postgres`/`chroma`/`hosted` backends (all `StubGraphBackend`);
-> claim-key `mutation.invalidate` on neo4j/falkordb.
-
-## The shared engine room
-
-The real storage logic is shared across backends, not duplicated per profile
-(`adapters/outbound/graph/`). This is the implementation underneath the canonical
-ports.
-
-| Module | Role |
-|---|---|
-| `cypher.py` | The **Position-B canonical write engine shared by BOTH the Neo4j and FalkorDB writers.** Claims are stored as `(:Entity {group_id, entity_key})-[:RELATES_TO {group_id, name, subject_key, object_key, source_ref, valid_at, invalid_at, created_at, …}]->(:Entity)`. The MERGE key **includes `source_ref`** so corroborating writes from different sources don't collide; bitemporal stamps (`valid_at`/`invalid_at` = event time, `created_at` = system time); `_supersede_singleton_predecessors` stamps `invalid_at` on prior disagreeing live singleton claims. A Phase-0 spike proved this Cypher runs unchanged on FalkorDB. |
-| `canonical_claim_query.py` | Shared `FIND_CLAIMS_CYPHER`, `ENTITY_LABELS_CYPHER`, `row_from_record`, the lexical `embedding_score` token-overlap scorer, `stamp_similarity`/`stamp_scored_rows`, `CONTRACT_EDGE_KEYS`. Both readers reuse these; the FalkorDB reader only swaps row normalization. |
-| `claim_query_analytics.py` / `claim_query_semantic.py` | Give any claim-backed profile a real analytics projection and a `fact_query`-routed semantic search computed on read. |
-| `apply_plan.py` | `apply_mutation_batch` (alias `apply_reconciliation_plan`) — the **single async write door** (high-level below; full flow in [writing.md](./writing.md)). |
-| `writer_port.py` | `GraphWriterPort` — the narrow async mutation surface (`ensure_indexes`, 4 verbs, `reset_pot`), implemented by `Neo4jGraphWriter` and `FalkorDBGraphWriter`. Storage-internal; services depend on `GraphBackend`/`GraphMutationPort`, not this. |
-| `in_memory_reader.py` | `InMemoryClaimQueryStore` — full filter semantics; `match_mode` = `vector` (embedder cosine over `fact_embedding`) or `lexical` (token overlap). |
-| `context_graph_service.py` | Legacy `ContextGraphPort` DTO shim; `apply_plan`/`apply_plan_async` are **disabled** (raise `CapabilityNotImplemented`) — writes must go through `GraphService.mutate`. |
-| `plan_stores/local_json.py`, `inbox_stores/local_json.py` | JSON workbench stores (plans, inbox) under the Potpie home. |
-
-`FalkorDBGraphProvider` memoizes **one** graph handle so the Falkor reader and
-writer share a single embedded instance.
-
-## The write door (high level)
-
-The canonical write door is two-phase: **`graph propose` → `graph commit
---verify`** (Spine A, `application/services/graph_workbench.py`). `propose`
-validates, lowers accepted ops, and persists a plan record with no graph write;
-`commit` re-checks the conflict guard, enforces approval for medium/high risk,
-calls the single backend write door, and `--verify` reads the committed claims
-back.
+## System shape
 
 ```mermaid
 flowchart LR
-  cg_propose["potpie graph propose<br/>(validate · lower · persist plan)"]
-  cg_commit["potpie graph commit --verify<br/>(re-check · apply · read-back)"]
-  cg_apply["apply_mutation_batch<br/>(single backend write door)"]
-  cg_writer["GraphWriterPort<br/>upsert_entities → upsert_edges → delete_edges → invalidate"]
-  cg_propose --> cg_commit --> cg_apply --> cg_writer
+    subgraph Product["potpie 2.0 product"]
+        CLI["potpie CLI"]
+        MCP["potpie-mcp"]
+        UI["daemon UI"]
+        Runtime["PotpieRuntime"]
+        ProductServices["auth · setup · status · skills · install · config · telemetry"]
+        Local["LocalEngineClient"]
+        Remote["DaemonEngineClient"]
+        Daemon["potpie-daemon"]
+    end
+
+    subgraph Library["potpie-context-engine 0.2 library"]
+        Engine["ContextEngine"]
+        App["application services"]
+        Ports["ports"]
+        Adapters["graph · storage · queue · connectors · OTel adapters"]
+    end
+
+    CLI --> Runtime
+    MCP --> Runtime
+    UI --> Runtime
+    Runtime --> ProductServices
+    Runtime --> Local
+    Runtime --> Remote
+    Local --> Engine
+    Remote -->|"protocol-v1 engine.* RPC"| Daemon
+    Daemon --> Engine
+    Engine --> App --> Ports --> Adapters
 ```
 
-Two corrections to the previous version of this doc:
+The important reviewable seam is `runtime.engine.*`. Product capabilities are
+siblings on `PotpieRuntime`; they never cross daemon RPC.
 
-- **`graph mutate` is a legacy wrapper, not the canonical door.** It internally
-  calls `propose` then `commit` and emits a legacy warning
-  (`commands/graph.py`). The direct-apply `DefaultGraphService.mutate` (Spine B)
-  is now reached **only** through `record` / `context_record`, never via `graph
-  mutate`.
-- There **is** a server-created `plan_id` and a real `propose|commit` contract —
-  the prior claim that none existed was wrong.
+## Ownership
 
-Optimistic concurrency on this path is **coarse**: the only version tracked is
-`{"_global": <total pot claim count>}` — there are no per-subgraph versions. A
-conflict fires only if the pot's total claim count changed between propose and
-commit. `GraphMutationDiff.to_dict()` emits `entity_upserts`, `edge_upserts`,
-`edge_deletes`, `invalidations`, `claims_asserted`, `claims_retracted`,
-`claim_keys`. The full tiered stack — semantic DSL (flat ops), validation/risk,
-lowering, the 4-verb idempotent apply, inbox, and quality — is owned by
-[writing.md](./writing.md).
-
-## Persistence & per-pot scoping
-
-Every fact is scoped by **`pot_id`, which IS the Cypher `group_id`** on every
-`:Entity` node and `:RELATES_TO` edge. `reset_pot` is `MATCH (n {group_id:$gid})
-DETACH DELETE n`. There is no cross-pot federation (an explicit anti-goal).
-
-| Profile | Where it persists | Pot isolation |
+| Concern | Root `potpie` | Context engine |
 |---|---|---|
-| `in_memory` | Process-local, ephemeral | by `group_id` |
-| `embedded` | One multi-pot `<home>/graph.json`, atomic rewrite per mutation | by `group_id` |
-| `falkordb_lite` | `redislite` file at `falkordb_lite_path()` (default `.potpie/context_graph/falkordb.db`), single keyspace `context_graph` | by `group_id` |
-| `neo4j` | External server, one DB | by `group_id` |
+| Processes | CLI, daemon, MCP | None |
+| Presentation | Typer, Rich, prompts, JSON, UI | None |
+| Product state | settings, paths, runtime mode | explicit `EngineConfig` only |
+| Authentication | account, integrations, keyring | typed request actor only |
+| Setup/status | workflow, enrichment, recommendations | pure provision/status facts |
+| Skills/install | resources, target adapters, lifecycle | None |
+| Telemetry | Sentry, PostHog, build defaults | generic events/ports and optional OTel |
+| Context/graph | command/tool exposure | domain, use cases, stores, backends |
+| Daemon/RPC | lifecycle, transport, allowlist | operation handlers behind `EngineClient` |
+| MCP | four tool declarations and process | context methods called by root |
 
-Relevant settings (`domain/ports/settings.py`): `graph_db_backend()='neo4j'`,
-`falkordb_mode()='lite'`, `falkordb_graph_name()='context_graph'`,
-`falkordb_lite_path()='.potpie/context_graph/falkordb.db'`, plus the Neo4j URI/
-credentials.
+## Root product structure
 
-## Backend selection precedence
-
-- **Host / CLI:** `CONTEXT_ENGINE_BACKEND` (preferred) > legacy
-  `GRAPH_DB_BACKEND` > `default_backend_profile()` = **`falkordb_lite`**.
-- **Ingestion server:** `settings.graph_db_backend()` default **`neo4j`**, but it
-  also routes through `build_backend`, so FalkorDB works there too.
-
-There is **no `NotImplementedError` gate** on FalkorDB anywhere — the old
-"selecting falkordb raises NotImplementedError, use neo4j" guidance is obsolete.
-`backend use <profile>` is **advisory only** (it suggests
-`CONTEXT_ENGINE_BACKEND`, it does not persist a selection).
-
-## Setup & provisioning (orientation)
-
-`potpie setup` is the idempotent first-run flow. The CLI builds a `SetupPlan`
-(config, storage, daemon, default `default` pot, source registration, skills),
-ensures the daemon first when in daemon mode (`host.daemon.ensure()`), and each
-backend self-provisions its store through `provision(plan: SetupPlan) ->
-StepResult`. Re-running is safe; each step is `ensure`-shaped and reports `done |
-skipped | not_implemented | failed`.
-
-Two corrections worth stating here:
-
-- The default backend a fresh `setup` provisions is **`falkordb_lite`** (a local
-  `redislite` file), not `embedded` or `neo4j`. `postgres`/`chroma`/`hosted`
-  cannot be provisioned — `StubGraphBackend.provision()` raises (the prior
-  "postgres creates the DB, enables pgvector, runs DDL" claim was aspirational).
-- `--scan` is **opt-in** (default off): `setup` registers the repo as a source
-  but does not scan or ingest the working tree.
-
-The full `setup` flag set and the canonical local journey live in
-[cli-flow.md](./cli-flow.md).
-
-> **Roadmap (not yet wired):** a separate managed-backend login lifecycle
-> (`potpie login` to a configured `cloud.backend_url`, then managed pot
-> selection). The plumbing exists, but managed routing raises
-> `CapabilityNotImplemented`.
-
-## Two ledgers: the live event store vs the external seam
-
-The older doc conflated two different things called a "ledger." Keep them
-distinct.
-
-1. **The internal event store (the real, live "ledger").** A Postgres-backed
-   `context_events` table plus reconciliation-run/work-event/batch tables, where
-   every inbound episode/event/record actually lands and gets a lifecycle
-   (`adapters/outbound/postgres/…`). Its consumer-state vocabulary is
-   **`queued` / `processing` / `done` / `error`** — **not** the six-state
-   `pending/processing/applied/failed_retryable/failed_terminal/timed_out` list
-   the old doc described. This is what ingestion really uses.
-2. **The external Event Ledger seam.** `domain/ports/ledger/client.py
-   EventLedgerClientPort` (cursor-advancing `fetch`, read-only `query`,
-   `sources`, `health`) + `LedgerCursorStorePort`. The *cursor* concept belongs
-   only to this external seam, never to the internal Postgres store.
-
-```mermaid
-flowchart LR
-  cg_int["internal Postgres event store<br/>context_events · queued/processing/done/error"]
-  cg_ext["external Event Ledger seam<br/>EventLedgerClientPort + cursor (stubs)"]
-  cg_graph["Graph Service → GraphBackend"]
-  cg_int --> cg_graph
-  cg_ext -. "pull (roadmap)" .-> cg_graph
+```text
+potpie/
+├── auth/                 account and provider authentication
+├── cli/
+│   ├── main.py           Typer registration and product callback
+│   ├── commands/         argument binding and runtime calls
+│   ├── output/           versioned JSON and error contracts
+│   └── ui/               Rich output, prompts, setup UX, assets
+├── config/               product configuration service
+├── daemon/
+│   ├── client.py         typed remote EngineClient
+│   ├── rpc.py            protocol-v1 registry and encoding
+│   ├── process/          launcher, PID, discovery, logs
+│   └── http/             transport health and local UI
+├── install/              harness target installation
+├── mcp/                  four-tool public MCP server
+├── runtime/
+│   ├── composition.py    create_runtime/get_runtime
+│   ├── contracts.py      root bridge to public engine DTOs
+│   ├── settings.py       ProductSettings and product runtime settings
+│   ├── paths.py          product filesystem locations
+│   └── telemetry/        product telemetry settings and metrics
+├── setup/                setup orchestration and flat product status
+└── skills/
+    ├── service.py        catalog/lifecycle service
+    └── resources/        installed harness bundles and templates
 ```
 
-> **Roadmap (not yet wired):** the external Event Ledger clients
-> (`adapters/outbound/ledger/managed_client.py`, `self_hosted_client.py`) are
-> **TODO stubs** — `fetch` returns an empty page, `query` raises, `health`
-> reports unavailable. Only the in-process `FixtureEventLedgerClient` (tests)
-> pages for real, and `LocalLedgerCursorStore` persists cursors. So `potpie
-> ledger pull/query/status` exists but is non-functional against any real
-> provider today.
+CLI and MCP modules obtain `get_runtime()`; they do not construct an engine,
+daemon client, credential store, or installer directly.
 
-The internal store, ingestion entry points, connectors (github/notion only —
-scanners are deleted), windowed batching, and the nudge trigger model are owned
-by [ingestion-nudge.md](./ingestion-nudge.md).
+## Engine structure
 
-## Environment switches
+```text
+potpie/context-engine/
+├── pyproject.toml
+├── src/potpie_context_engine/
+│   ├── __init__.py       supported facade exports
+│   ├── engine.py         ContextEngine
+│   ├── client.py         asynchronous EngineClient protocol
+│   ├── config.py         explicit EngineConfig
+│   ├── dependencies.py   injected EngineDependencies
+│   ├── contracts/        supported cross-boundary DTOs
+│   ├── domain/           graph/context concepts and ports
+│   ├── application/      use cases and orchestration
+│   ├── adapters/         optional inbound/outbound adapters
+│   └── composition/      engine-only construction
+├── tests/
+└── benchmarks/           development tooling, absent from the wheel
+```
 
-| Variable | Effect | Default |
-|---|---|---|
-| `CONTEXT_ENGINE_BACKEND` / `GRAPH_DB_BACKEND` | Backend profile (first wins) | `falkordb_lite` (host) / `neo4j` (ingestion server) |
-| `CONTEXT_ENGINE_HOST_MODE` | `daemon` \| `in_process` | `daemon` |
-| `CONTEXT_ENGINE_EMBEDDER` | `none` disables the bundled local embedder | bundled local embedder |
-| `CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL` | Downgrade instead of reject on ontology drift at apply time | off |
-| `CONTEXT_ENGINE_AGENT_PLANNER_ENABLED` | Enable service-side LLM reconciliation | **off** |
-| `CONTEXT_ENGINE_MAX_CHUNK_EVENTS` | Reconciliation chunk size | 20 |
-| `CONTEXT_ENGINE_RECONCILIATION_ENABLED` / `_INFER_LABELS` / `_CONFLICT_DETECT` / `_AUTO_SUPERSEDE` | Reconciliation feature flags | on (planner off) |
-| `CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS` / `GITHUB_WEBHOOK_SECRET` | GitHub webhook HMAC handling (fail-closed by default) | signed required |
-| `POTPIE_HOOK_DEBUG` / `POTPIE_HOOK_TIMEOUT` / `POTPIE_BIN` / `POTPIE_POT` | Claude Code nudge-hook adapter env | — |
+Supported embedder imports are:
 
-> **Roadmap (not yet wired):** `CONTEXT_ENGINE_AGENT_PLANNER_ENABLED` turns on
-> service-side LLM reconciliation, which is parked/non-canonical — canonical
-> writes come from harness-authored semantic mutations and the deterministic
-> `context_record` path.
+```python
+from potpie_context_engine import (
+    ContextEngine,
+    EngineClient,
+    EngineConfig,
+    EngineDependencies,
+    create_engine,
+)
+from potpie_context_engine.contracts import ...
+```
 
-## Code map
+Everything below `domain`, `application`, `adapters`, and `composition` is
+internal implementation. Root code consumes public facade and contract exports.
 
-The active package is `potpie/context-engine/`. Fictional read-path modules from
-the old doc ("Ontology Catalog / Identity Resolver / Read View Router") have been
-removed — those are **methods on `DefaultGraphService`** plus the declarative
-`GRAPH_VIEWS` table and the `ReadOrchestrator`, not standalone components.
+## Runtime construction
 
-| Area | Path |
-|---|---|
-| Composition roots | `bootstrap/host_wiring.py` (`build_host_shell`); `bootstrap/ingestion_server.py` + `standalone_container.py` (ingestion HTTP root) |
-| Host shell + daemon | `host/{shell,daemon}.py`; daemon IPC transport `adapters/inbound/daemon_http/transport.py` |
-| Service interfaces (ports) | `domain/ports/services/{graph_service,pot_management,skill_manager}.py` |
-| Graph capability ports | `domain/ports/graph/{backend,mutation,semantic,inspection,analytics,snapshot}.py` + `domain/ports/claim_query.py` |
-| Read trunk | `application/services/read_orchestrator.py`, `envelope_builder.py`, `application/readers/`, `domain/agent_envelope.py`, `domain/ranking.py`, `domain/agent_context_port.py` |
-| Graph Service (catalog/read/search-entities/mutate/status) | `application/services/graph_service.py` (methods, not separate modules) |
-| Named views | `domain/graph_views.py` (`GRAPH_VIEWS`) |
-| Write stack | `application/services/{semantic_mutation_validator,semantic_mutation_lowering,graph_workbench,record_to_semantic,reconciliation_validation}.py`; `domain/{semantic_mutations,graph_plans,graph_inbox}.py` |
-| GraphBackend adapters | `adapters/outbound/graph/backends/{in_memory,embedded,neo4j,falkordb,stub}_backend.py` + `__init__.py` (`build_backend`) |
-| Shared engine room | `adapters/outbound/graph/{cypher,canonical_claim_query,claim_query_analytics,claim_query_semantic,apply_plan,writer_port,in_memory_reader,context_graph_service}.py` + `plan_stores/`, `inbox_stores/` |
-| Internal event store | `adapters/outbound/postgres/{reconciliation_ledger,ingestion_event_store,batch_repository,ledger}.py` |
-| External Event Ledger seam (stubs) | `domain/ports/ledger/{client,cursor}.py`; `adapters/outbound/ledger/{managed_client,self_hosted_client,cursor_store}.py` |
-| CLI (host-routed) | `adapters/inbound/cli/host_cli.py` + `adapters/inbound/cli/commands/` |
-| MCP (4 tools) | `adapters/inbound/mcp/server.py` |
-| Ingestion HTTP server | `adapters/inbound/http/` |
-| Skills | `application/services/skill_manager.py` + `adapters/outbound/skills/{bundle_catalog,agent_installer,claude_target}.py` |
+`ProductSettings.load()` resolves:
 
-### Stable interfaces
+1. explicit CLI `--runtime` override;
+2. `POTPIE_RUNTIME_MODE`;
+3. persisted product setting;
+4. `daemon` default.
 
-| Interface | File | Role |
-|---|---|---|
-| `GraphService` | `domain/ports/services/graph_service.py` | Data plane: reads, identity resolution, semantic mutation validate/apply, status, projections. |
-| `PotManagementService` | `domain/ports/services/pot_management.py` | Control plane: pots, active pot, sources, readiness rollup. |
-| `SkillManager` + `AgentTargetPort` | `domain/ports/services/skill_manager.py` | Catalog + per-harness install drift; advisory `SkillNudge`. |
-| `GraphBackend` | `domain/ports/graph/backend.py` | Six-capability storage bundle + `profile` + `capabilities()` + `provision()`. |
-| `GraphMutationPort` / `ClaimQueryPort` | `domain/ports/graph/mutation.py`, `domain/ports/claim_query.py` | Canonical source of truth (write / read). |
-| `SemanticSearchPort` / `GraphInspectionPort` / `GraphAnalyticsPort` / `GraphSnapshotPort` | `domain/ports/graph/{semantic,inspection,analytics,snapshot}.py` | Rebuildable projections. |
-| `EventLedgerClientPort` / `LedgerCursorStorePort` | `domain/ports/ledger/{client,cursor}.py` | External Event Ledger pull + per-(pot,source) cursor (clients are stubs today). |
-| `HostShell` / `Daemon` | `host/{shell,daemon}.py` | In-process facade over the services + local lifecycle. |
+The only values are `daemon` and `in-process`.
 
-An unbuilt capability raises `domain.errors.CapabilityNotImplemented` with a
-dotted `graph.<profile>.<cap>.<method>` slot, which inbound adapters render as
-the structured not-implemented contract — never a bare `NotImplementedError`.
+- `daemon`: runtime creates `DaemonEngineClient` over root-owned transport.
+- `in-process`: runtime maps the product data directory/backend into
+  `EngineConfig.persistent()` and wraps `ContextEngine` in `LocalEngineClient`.
 
-## Extension points
+Daemon unavailability raises `RUNTIME_DAEMON_UNAVAILABLE` and recommends
+`potpie daemon start`. It never creates a local engine implicitly. Setup,
+doctor, and daemon lifecycle diagnostics can run without the daemon because
+their first steps are product-owned.
 
-Add behavior at the narrowest service boundary that owns it. CLI adapts user
-intent, the daemon hosts services, Pot Management owns the control plane, Graph
-Service owns the data plane, and `GraphBackend` owns physical storage.
+## Typed daemon protocol
 
-| Change | Put it here | Rule |
-|---|---|---|
-| Read view | `domain/graph_views.py` (`GRAPH_VIEWS`) + a reader in `application/readers/` | Route through `ReadOrchestrator` and `ClaimQueryPort`; never query stores directly. `READER_BACKED_INCLUDES` must mirror the reader registry (coherence-enforced). |
-| Semantic mutation op | semantic DSL + validator + lowering | Add deterministic validation and lowering before exposing it to agents. |
-| Entity / predicate | `domain/ontology.py` | One row in `ENTITY_TYPES` / `EDGE_TYPES`; add identity, endpoint rules, freshness, source-of-truth. Coherence guards fail import if it drifts. See [ontology.md](./ontology.md). |
-| Graph backend | `domain/ports/graph/` + a backend adapter | Implement the canonical ports, preserve `group_id` pot isolation, pass conformance; declare real caps in `capabilities()`. |
-| Skill | skill catalog + `AgentTargetPort` adapter | Keep skill content harness-neutral; it is not graph data. See [skills.md](./skills.md). |
-| Pot behavior | Pot Management Service | Preserve the first-setup active `default` pot. |
-| Setup / lifecycle step | the component's `provision`/bespoke method + `SetupOrchestrator` sequence | Return a `StepResult`; raise `CapabilityNotImplemented` until built. |
+The root daemon accepts only declared `engine.*` methods on `/rpc`.
 
-Do not bypass the read trunk, query physical stores from CLI/readers, make a
-projection a second source of truth, put service logic in the daemon shell, or
-duplicate ontology enums in docs/CLI.
+```json
+{
+  "protocol_version": "1",
+  "request_id": "uuid",
+  "method": "engine.graph.read",
+  "params": {}
+}
+```
 
-## Invariants
+Every registry entry names its request DTO, result DTO, encoder/decoder, and
+handler. Unknown methods, malformed parameters, and protocol mismatches fail
+before dispatch. `/healthz` reports root transport health; auth, setup, skills,
+config, install, and daemon lifecycle are not RPC methods.
 
-- OSS graph use works with no cloud auth and no mandatory Docker/Neo4j/Postgres
-  (the default `falkordb_lite` is embedded).
-- The CLI is the primary user/agent surface; the MCP surface stays at exactly 4
-  tools.
-- The canonical claim store is the only source of truth; semantic/inspection/
-  analytics/snapshot are rebuildable projections.
-- Every fact is scoped by `pot_id` = `group_id`; no cross-pot federation.
-- The canonical write door is `propose` → `commit --verify`; `graph mutate` is a
-  legacy wrapper; reads never synthesize answers.
-- Pot Management owns the control plane; Graph Service owns the data plane; the
-  daemon hosts services but holds no business logic.
-- Unbuilt capabilities fail-closed with a dotted `CapabilityNotImplemented`
-  slot, surfaced as the structured not-implemented contract.
+An incompatible daemon returns `RPC_PROTOCOL_MISMATCH` with
+`potpie daemon restart`. There is no legacy or dynamic protocol fallback.
 
-## See also
+## Setup and status
 
-- [vision.md](./vision.md) — what the Context Graph is and why.
-- [ontology.md](./ontology.md) — entities, predicates, views, contract constants.
-- [querying.md](./querying.md) — the read trunk, readers, ranking, envelopes.
-- [writing.md](./writing.md) — the full write stack (DSL → validate → lower →
-  apply), propose/commit, inbox, quality.
-- [ingestion-nudge.md](./ingestion-nudge.md) — the internal event store,
-  connectors, batching, and the nudge trigger model.
-- [cli-flow.md](./cli-flow.md) — the full command surface and the canonical
-  journey.
-- [observability.md](./observability.md) — logs/traces/metrics/readiness (its
-  `graph.propose`/`graph.commit` span names match the corrected write door here).
+Product setup performs:
+
+```text
+settings/paths
+  → account and integration checks
+  → daemon reconciliation
+  → runtime.engine.provision.inspect/apply
+  → root skill installation
+  → product setup report
+```
+
+Engine status contains engine facts only: schema, pot, backend, storage,
+ingestion, source count, last ingestion time, and degraded reasons. Root status
+adds runtime mode, daemon state, skills, setup state, issues, readiness, and a
+recommended command. `potpie status --json` and MCP `context_status` expose the
+same flat data object; only the surrounding protocol envelope differs.
+
+## Persistence and isolation
+
+- Root resolves the existing product data directory and passes it explicitly.
+- `EngineConfig.persistent(data_dir=...)` requires a caller path.
+- `EngineConfig.in_memory()` uses temporary state and does not read or create
+  the user's home directory.
+- Pot, graph, ledger, credential, and daemon discovery formats were preserved.
+- Every graph operation remains pot-scoped.
+
+## Distribution boundary
+
+`potpie` 2.0 owns all three console scripts and depends by default on
+`potpie-context-engine[embedded]==0.2.0`. Root mirrors optional engine
+capabilities as extras.
+
+The engine has a Pydantic-only core and these extras: `embedded`, `http`,
+`postgres`, `neo4j`, `embeddings`, `github`, `reconciliation`, `hatchet`, and
+`observability`. It exposes no executable and its wheel contains only the
+`potpie_context_engine` namespace and engine resources.
+
+## Extension rules
+
+- Add a product workflow as a root service and a thin CLI/MCP/UI adapter.
+- Add an engine operation as a typed request/result pair, capability method,
+  local implementation, and RPC registry entry.
+- Add a backend behind engine ports and an explicit capability extra.
+- Do not add dynamic RPC, product service RPC, root imports in the engine,
+  product defaults in `EngineConfig`, or direct engine construction in CLI/MCP.
+
+Verification details are in
+[package-boundary-1.0.0.md](../../spec/verification/package-boundary-1.0.0.md).

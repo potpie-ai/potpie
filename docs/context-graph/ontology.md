@@ -419,13 +419,12 @@ Command sets:
 
 | Set | Commands |
 |---|---|
-| `GRAPH_WORKBENCH_COMMANDS` | `status`, `catalog`, `describe`, `search-entities`, `read`, `neighborhood`, `propose`, `commit`, `bulk`, `history`, `inbox`, `quality` |
+| `GRAPH_WORKBENCH_COMMANDS` | `status`, `catalog`, `search-entities`, `read`, `inspect`, `propose`, `commit`, `bulk`, `history`, `inbox`, `quality` |
 | `GRAPH_WORKBENCH_ADMIN_COMMANDS` | `repair`, `export`, `import` |
-| `GRAPH_WORKBENCH_LEGACY_COMMANDS` | `mutate`, `inspect`, `mutation-template`, `nudge` |
+| `GRAPH_WORKBENCH_UTILITY_COMMANDS` | `mutation-template`, `nudge` |
 
 The **canonical write door is `graph propose` → `graph commit --verify`.**
-`graph mutate` is a **legacy wrapper** that internally calls propose+commit and
-emits a steering warning; `graph inspect` is a legacy alias of `neighborhood`.
+The old mutate/describe/neighborhood commands are not registered.
 There is no `graph admin` command and no `graph reset` (reset is `pot reset`).
 
 ## 10. Coherence guards

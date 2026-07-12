@@ -1,91 +1,69 @@
-# Potpie CLI (`potpie`)
+# Potpie CLI
 
-> Target architecture: [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md)
-> replaces `HostShell` with `PotpieRuntime`, routes engine calls through
-> `runtime.engine.*`, and moves public MCP ownership into root Potpie. This file
-> remains a current-state reference until the
-> [migration](../../docs/context-graph/package-boundary-migration-plan.md) lands.
+The root `potpie` distribution owns the CLI. The accepted boundary is
+[SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md); the full command
+contract is [cli-flow.md](../../docs/context-graph/cli-flow.md).
 
-The host-routed command-line entrypoint for the context graph. Every command
-routes `CLI → HostShell → service(s) → ports`; the in-process `HostShell` is the
-single composition root for the agent surface (shared with the MCP server).
+## Entrypoint and flow
 
-- **Entrypoint:** `potpie/cli/main.py` (registered as the `potpie`
-  console script in `pyproject.toml` → `[project.scripts]`).
-- **Command groups:** `potpie/cli/commands/` — one module per
-  `cli-flow.md` section (`bootstrap`, `query`, `pots`/`source`, `daemon`,
-  `ledger`, `graph`, `timeline`, `backend`, `skills`, `cloud`).
-- **Cross-cutting contract:** `commands/_common.py` owns `--json` output, the
-  exit-code map (0 ok / 1 validation / 2 unavailable / 3 degraded / 4 auth), the
-  structured error shape (`code`/`message`/`detail`/`recommended_next_action`),
-  and active-pot resolution. An unbuilt capability surfaces as the structured
-  not-implemented contract (`CapabilityNotImplemented`), never a traceback.
+`pyproject.toml` registers `potpie = potpie.cli.main:main`.
 
-## The four-tool agent surface
+```text
+Typer arguments
+  → get_runtime()
+  → product service or runtime.engine.*
+  → root renderer/error mapper
+  → Rich output or one JSON object
+```
 
-The public agent contract is exactly four tools, each returning an
-`AgentEnvelope` (no server-side synthesis):
+`commands/` binds arguments. It does not construct engines, daemon transports,
+auth stores, skill catalogs, or installers.
 
-| Tool / CLI | Use |
-|------------|-----|
-| `context_resolve` / `potpie resolve` | Primary bounded-context wrap for a task. |
-| `context_search` / `potpie search` | Narrow follow-up lookup. |
-| `context_record` / `potpie record` | Record a durable learning (decision, fix, preference, …). |
-| `context_status` / `potpie status` | Cheap pot/scope readiness + recommended recipe. |
+## Runtime modes
 
-Integration credential status is intentionally outside this four-tool surface:
-use `potpie auth status [--verify]` for local provider auth state.
+Daemon mode is the product default. `--runtime`, `POTPIE_RUNTIME_MODE`, and the
+persisted product setting can select `daemon` or `in-process` in that order. An
+unavailable selected daemon produces `RUNTIME_DAEMON_UNAVAILABLE` and recommends
+`potpie daemon start`; it never falls back locally.
 
-## Authoritative reference
+## Agent context surface
 
-The full command catalog, flags, profiles (local vs managed), and the output
-contract live in **[`docs/context-graph/cli-flow.md`](../../../../../../docs/context-graph/cli-flow.md)**.
-The end-state architecture (services, ports, composition roots) is in
-**[`docs/context-graph/architecture.md`](../../../../../../docs/context-graph/architecture.md)**.
-The in-progress Graph V1.5 handover plan is
-**[`docs/context-graph/graphv1-5-implementation-plan.md`](../../../../../../docs/context-graph/graphv1-5-implementation-plan.md)**.
+| CLI | MCP equivalent | Runtime call |
+|---|---|---|
+| `potpie resolve` | `context_resolve` | `runtime.engine.context.resolve` |
+| `potpie search` | `context_search` | `runtime.engine.context.search` |
+| `potpie record` | `context_record` | `runtime.engine.context.record` |
+| `potpie status` | `context_status` data | root `runtime.status` composition |
 
-Run `potpie --help` (or `python -m potpie.cli.main --help`) to list
-the live commands.
+MCP is root-owned under `potpie/mcp`; it is not implemented in this package or
+the engine package as a CLI adapter.
 
-## Agent harness install
+## Command ownership
 
-`potpie skills install [<id>] --agent claude` materializes the packaged skill
-bundle through the root `PotpieRuntime.skills` service. The
-default scope is global, so skills are installed once into the selected
-harness's user-level skills directory:
+- `query.py`, `pots.py`, `graph*.py`, `ledger.py`: typed engine workflows.
+- `bootstrap.py`: setup, doctor, status, config, and identity product workflows.
+- root auth modules: account and provider integration workflows.
+- `daemon.py`, `service.py`: product daemon lifecycle.
+- `skills.py`: root resource installation and drift.
+- `telemetry.py`: root product telemetry controls.
+- `output/contracts.py`: JSON success/error envelopes and exit codes.
 
-The shipped templates live under `potpie/skills/resources/templates/`: project bundles in
-`agent_bundle/` and `claude_bundle/`, compact global instruction blocks in
-`global_agent_bundle/`, and the Claude Code plugin in `claude_plugin/`.
+Run `potpie --help`; the exact hierarchy is pinned by
+`tests/unit/test_cli_v1_contract.py` and the skill command manifest.
 
-| Harness | Global path |
-|---------|-------------|
-| Cursor | `~/.cursor/skills/<skill>/SKILL.md` |
-| Claude Code | `~/.claude/skills/<skill>/SKILL.md` |
-| OpenCode | `~/.config/opencode/skills/<skill>/SKILL.md` |
-| Codex | `$HOME/.agents/skills/<skill>/SKILL.md` |
+## JSON
 
-For harnesses with documented file-backed global instructions, install/update
-also refreshes a compact Potpie managed block in `~/.claude/CLAUDE.md` and
-`~/.codex/AGENTS.md`. Existing user-authored content is preserved; Potpie only
-appends or updates the `<!-- potpie-start -->` / `<!-- potpie-end -->` managed
-section.
+Global `--json` emits exactly one schema-version-1 object to stdout. JSON mode
+does not prompt. Logs and tracebacks stay on stderr. Lists use `items`, `count`,
+and `next_cursor`; failures use stable error codes and recommended actions.
 
-Remove one global skill with `potpie skills remove <id> --agent claude`, or
-delete every globally installed Potpie skill for a harness with
-`potpie skills remove --all --agent claude`. Use `--scope project --path .` for
-repo-local cleanup.
+Exit codes are 0 success, 1 operation failure, 2 validation, 3 runtime
+unavailable, 4 auth/permission, 5 degraded/conflict/not-ready, 70 internal, and
+130 interruption.
 
-Use `--scope project --path .` for repo-local installs. The bundle keeps the
-agent surface to the four tools above and encodes feature / debugging / review /
-operations / docs / onboarding workflows as `context_resolve` recipes. Agents
-see only an advisory `skills` block in `context_status` with missing/outdated
-skills and the exact install command. Repo-local `AGENTS.md` and `CLAUDE.md`
-files are merged the same way as global instruction files, so setup does not
-replace existing agent instructions.
+## Skills
 
-## MCP
-
-The MCP server (`potpie-mcp`, stdio) binds to the same in-process `HostShell`
-and exposes exactly the four tools above (`adapters/inbound/mcp/server.py`).
+`potpie skills ...` materializes resources from
+`potpie/skills/resources/templates`. Runtime installation uses a static command
+manifest, not Typer introspection. Managed blocks preserve all user-authored
+content outside `<!-- potpie-start -->` and `<!-- potpie-end -->`.

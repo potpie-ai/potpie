@@ -173,13 +173,10 @@ prevents accidental shadowing by generic top-level packages.
 - [SPEC-SYSTEM](../system.md)
 - [SPEC-PACKAGE-BOUNDARY](../modules/package-boundary.md)
 
-## Follow-Up Spec Changes
+## Follow-Up Status
 
-- Keep `SPEC-PACKAGE-BOUNDARY` proposed at `0.1.0` while implementation has not
-  started.
-- Promote it to `1.0.0` only after the contract is reviewed for acceptance.
-- Record implementation evidence commit by commit in the migration document.
-- Add a verification record and promote the spec to `verified` only after all
-  acceptance gates pass at a named commit.
+- `SPEC-PACKAGE-BOUNDARY` is accepted at `1.0.0`.
+- Implementation evidence is recorded commit by commit in the migration plan.
+- The verification record covers every behavior at `f435fb4` with no known gap.
 - Future auth, daemon, setup, CLI, MCP, and observability module specs link back
   to this ADR when they are introduced.

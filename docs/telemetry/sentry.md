@@ -1,174 +1,118 @@
-# Context-Engine CLI Sentry Telemetry
+# Product Telemetry and Engine Observability
 
-> Target ownership: [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md)
-> keeps product Sentry/PostHog telemetry in root Potpie and generic observability
-> in the engine. This file describes current behavior until the corresponding
-> [migration commits](../context-graph/package-boundary-migration-plan.md) land.
+> Verified at `f435fb4` on 2026-07-13. Product telemetry ownership is defined by
+> [PKG-OBS-001](../../spec/modules/package-boundary.md).
 
-Sentry is used only for unexpected Potpie context-engine CLI failures. It is a
-small CLI-owned integration under `potpie/context-engine`, independent of
-the context-engine telemetry path and `legacy/deploy/observability`.
+Sentry and PostHog are product integrations owned by root `potpie`. The
+standalone context engine exposes generic observability ports/events and an
+optional OpenTelemetry adapter; it does not import Sentry, PostHog, product
+telemetry settings, or product build defaults.
 
-## Configuration
+## Ownership
 
-The CLI root callback resolves runtime settings through
-`bootstrap.runtime_settings`. A project `.env` file is read only when the
-bootstrap environment is `dev`; non-dev environments read the process
-environment and packaged distribution defaults only. `.env` values fill missing
-process env keys and cannot set or change `POTPIE_ENVIRONMENT`.
+| Concern | Owner | Primary code |
+|---|---|---|
+| CLI crash capture | root | `potpie/cli/telemetry/sentry_runtime.py` |
+| Daemon crash capture | root | `potpie/daemon/telemetry/sentry_runtime.py` |
+| Metrics and privacy filtering | root | `potpie/runtime/telemetry/` |
+| Product usage/onboarding events | root | `potpie/cli/telemetry/product_analytics.py`, `onboarding_events.py` |
+| Telemetry enable/disable/status | root | `potpie/cli/commands/telemetry.py` |
+| Generic spans/events | engine | `potpie_context_engine.domain.ports.observability` |
+| Console/OTel adapters | engine | `potpie_context_engine.adapters.outbound.observability` |
 
-Environment precedence:
+Product telemetry never becomes an engine configuration field or daemon RPC
+method.
 
-- process environment
-- `.env` values, only when `POTPIE_ENVIRONMENT` resolves to `dev` and only for
-  missing keys
-- distribution defaults packaged into the wheel
-- code defaults
+## Product settings
 
-Canonical Sentry configuration:
-
-- `POTPIE_ENVIRONMENT`: Sentry environment and telemetry event environment.
-- `POTPIE_SENTRY_DSN`: enables Sentry when present.
-- `POTPIE_TELEMETRY_DISABLED=1`: disables all outbound telemetry.
-- `POTPIE_SENTRY_ENABLED=0`: disables Sentry only.
-- `POTPIE_SENTRY_RELEASE`: optional release override; otherwise
-  `potpie-cli@<potpie-context-engine version>`.
-- `POTPIE_SENTRY_DIST`: optional dist override; otherwise the generated build
-  Git SHA when available.
-
-Generic `SENTRY_*` aliases are not read. Distribution defaults are packaged
-public defaults for installed wheels, not production environment variables or
-secrets.
-
-Sentry initializes directly through `sentry-sdk` with:
-
-- `send_default_pii=False`
-- `include_local_variables=False`
-- `max_request_body_size="never"`
-- `before_send` event scrubbing
-- `before_breadcrumb` breadcrumb scrubbing
-
-The CLI never calls `sentry_sdk.set_user()`.
-
-## Identity State
-
-Reusable non-secret telemetry identity is stored globally:
+Root runtime settings resolve environment, packaged public defaults, and code
+defaults. Common controls are:
 
 ```text
-$XDG_CONFIG_HOME/potpie/telemetry/identity.json
-~/.config/potpie/telemetry/identity.json
+POTPIE_TELEMETRY_DISABLED
+POTPIE_SENTRY_ENABLED
+POTPIE_SENTRY_DSN
+POTPIE_SENTRY_ENVIRONMENT
+POTPIE_POSTHOG_ENABLED
+POTPIE_PRODUCT_ANALYTICS_ENABLED
+POTPIE_POSTHOG_API_KEY
+POTPIE_POSTHOG_HOST
 ```
 
-The file is written with `0600` permissions through an atomic temp-file replace.
-It contains:
-
-- `schema_version`
-- `anonymous_install_id`
-- `created_at`
-- `last_seen_at`
-
-The identity file never stores DSNs, auth tokens, API keys, user IDs, org IDs,
-repo names, prompts, code, paths, headers, or request bodies. The
-`anonymous_install_id` is stable until an explicit reset flow exists. Each CLI
-run also gets an in-memory `invocation_id`; each process gets an in-memory
-`daemon_session_id`.
-
-## Captured Errors
-
-Captured:
-
-- unexpected exceptions crossing `commands/_common.py::contract()`
-- unexpected auth implementation failures in login/logout flows that do not use
-  `contract()`
-- unexpected daemon command failures through the normal CLI command boundary
-
-Not captured:
-
-- `typer.Exit`
-- `KeyboardInterrupt`, EOF, or user cancellation
-- validation errors
-- expected domain errors such as `pot_not_found`, `no_active_pot`,
-  `context_engine_unavailable`, and `not_implemented`
-- auth denied, expired, or missing credentials
-- missing local config
-- missing DSN or disabled telemetry
-
-Captured events use stable metadata only:
-
-- `service`
-- `command`
-- `subcommand` when available
-- `output_mode`
-- `cli_version`
-- `python_version`
-- `os`
-- `arch`
-- `error.code`
-- `error.kind`
-- `is_expected=false`
-
-Allowed event context:
-
-- `anonymous_install_id`
-- `invocation_id`
-- `daemon_session_id`
-
-## Privacy Scrubbing
-
-Telemetry code avoids attaching sensitive data in the first place. Sentry SDK
-privacy settings and hooks are the final guard before transport.
-
-`before_send` removes:
-
-- request data
-- headers
-- cookies
-- env
-- extra payloads
-- module lists
-- server name
-- stack frame locals
-- full frame paths
-- raw exception messages and values
-
-`before_breadcrumb` drops HTTP/subprocess breadcrumbs and strips breadcrumb
-`data` and `message` from kept breadcrumbs.
-
-Sentry events must not contain:
-
-- email, name, user ID, or org ID
-- prompts or episode bodies
-- source code or file contents
-- terminal output
-- repository names
-- git remotes
-- full local paths
-- URLs with query strings
-- request or response bodies
-- headers
-- environment variables
-- API keys, GitHub tokens, bearer tokens, or secrets
-- frame locals
-- raw exception messages or values
-- raw CLI command arguments
-
-## Local Verification
-
-Default tests use fake or in-memory Sentry surfaces and do not call the network.
+Use the product commands instead of editing files:
 
 ```bash
-UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine pytest potpie/context-engine/tests/unit/test_sentry_*.py -q
-UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine pytest potpie/context-engine/tests/unit/test_telemetry_*.py -q
-UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine ruff check adapters/inbound/cli tests/unit/test_sentry_*.py tests/unit/test_telemetry_*.py
+potpie telemetry status
+potpie telemetry disable
+potpie telemetry enable
 ```
 
-Manual CLI smoke:
+The preference affects root product telemetry. It does not disable engine-local
+generic observability explicitly injected by a library embedder.
+
+## CLI behavior
+
+The CLI configures product telemetry during root startup. Expected operational
+errors—validation, unavailable daemon, auth, conflict, degraded health—are
+mapped to stable CLI errors and are not treated as unexpected crashes.
+Unexpected exceptions can be captured after privacy scrubbing, while JSON mode
+still writes exactly one response to stdout.
+
+Diagnostics, tracebacks, and telemetry logging use stderr/log sinks; telemetry
+must never corrupt the JSON envelope.
+
+## Daemon behavior
+
+The daemon is a root product process and configures its own Sentry lifecycle.
+Transport and process failures can be reported there. Engine methods running in
+the daemon emit only generic engine observations; root decides whether and how
+those observations are exported.
+
+## Privacy boundary
+
+Root privacy filters strip or reject sensitive fields before product telemetry
+leaves the process. Credentials, keyring values, provider tokens, raw source
+payloads, document bodies, graph claim content, and arbitrary CLI arguments are
+not product telemetry payloads.
+
+Stable operational attributes may include product/engine version, runtime mode,
+command family, backend profile, success/failure category, timing, and anonymous
+installation/invocation identifiers according to the telemetry settings.
+
+## Product analytics
+
+PostHog-style product analytics is implemented with root-owned HTTP/settings
+code. It covers bounded product events such as setup progress, activation, CLI
+invocation, and installation lifecycle. The engine is not aware of product
+funnels or user identity.
+
+## Engine observability
+
+Engine embedders can inject `EngineDependencies.observability`. The default is a
+no-op implementation. Optional engine observability can be installed with:
 
 ```bash
-XDG_CONFIG_HOME=/tmp/potpie-xdg \
-UV_CACHE_DIR=/private/tmp/uv-cache \
-uv run --package potpie-context-engine potpie --json daemon status
+python -m pip install "potpie-context-engine[observability]==0.2.0"
 ```
 
-Expected result: command exits `0`, prints daemon status JSON, and creates
-`/tmp/potpie-xdg/potpie/telemetry/identity.json` without requiring a Sentry DSN.
+When explicitly configured, the engine can use console or OpenTelemetry
+adapters. Missing optional telemetry dependencies fail dark to the no-op path;
+they do not activate product Sentry/PostHog.
+
+## Build defaults
+
+Product build-time telemetry defaults are root packaging concerns. The engine
+wheel contains no Sentry/PostHog build hook or product OAuth/telemetry defaults.
+Artifact tests inspect both distributions to enforce this boundary.
+
+## Verification
+
+```bash
+uv run pytest tests/unit/test_sentry_*.py tests/unit/test_telemetry_*.py -q
+uv run pytest tests/unit/test_product_analytics.py tests/unit/test_usage_analytics.py -q
+cd potpie/context-engine
+uv run pytest tests/unit/test_observability*.py tests/unit/test_telemetry_port.py -q
+```
+
+Boundary scans also require zero `sentry_sdk`, PostHog, and root `potpie`
+imports in the engine source.

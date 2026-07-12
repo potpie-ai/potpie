@@ -35,4 +35,4 @@ acceptance criteria.
 
 | ID | File | Status | Version | Summary |
 |---|---|---:|---:|---|
-| `SPEC-PACKAGE-BOUNDARY` | [package-boundary.md](package-boundary.md) | proposed | 0.1.0 | Root Potpie and standalone context-engine ownership and interaction contract. |
+| `SPEC-PACKAGE-BOUNDARY` | [package-boundary.md](package-boundary.md) | accepted | 1.0.0 | Root Potpie and standalone context-engine ownership and interaction contract. |

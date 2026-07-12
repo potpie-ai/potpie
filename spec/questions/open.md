@@ -29,7 +29,7 @@ verification:
 
 # Open Questions
 
-There are no open questions for `SPEC-PACKAGE-BOUNDARY` version `0.1.0`.
+There are no open questions for `SPEC-PACKAGE-BOUNDARY` version `1.0.0`.
 
 New questions must use a stable `OQ-<MODULE>-NNN` ID, name the behaviors they
 block, link every affected spec, and record a decision trigger.

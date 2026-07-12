@@ -2,8 +2,8 @@
 id: SPEC-PACKAGE-BOUNDARY
 title: Potpie / Context Engine Package Boundary
 kind: module-spec
-status: proposed
-version: 0.1.0
+status: accepted
+version: 1.0.0
 owners:
   - Potpie Engineering
 depends_on:
@@ -19,65 +19,75 @@ affects:
   - SPEC-SYSTEM
 open_questions: []
 verification:
-  code_status: not_implemented
-  verified_commit: null
-  verified_at: null
-  verified_by: null
-  behavior_scope: []
-  evidence: []
+  code_status: verified
+  verified_commit: f435fb4
+  verified_at: 2026-07-13
+  verified_by: Codex
+  behavior_scope:
+    - PKG-OWN-001
+    - PKG-OWN-002
+    - PKG-API-001
+    - PKG-RUNTIME-001
+    - PKG-MODE-001
+    - PKG-RPC-001
+    - PKG-CONFIG-001
+    - PKG-AUTH-001
+    - PKG-SKILL-001
+    - PKG-SETUP-001
+    - PKG-STATUS-001
+    - PKG-MCP-001
+    - PKG-CLI-001
+    - PKG-CLI-002
+    - PKG-QUEUE-001
+    - PKG-OBS-001
+    - PKG-DIST-001
+    - PKG-VERIFY-001
+  evidence:
+    - spec/verification/package-boundary-1.0.0.md
+    - docs/context-graph/package-boundary-migration-plan.md
   cross_spec_status: passed
   cross_spec_checked_against:
     - SPEC-GLOSSARY
     - SPEC-PRODUCT
     - SPEC-SYSTEM
     - ADR-0002
-  drift_status: unverified
+  drift_status: current
 ---
 
 # Potpie / Context Engine Package Boundary
 
 ## Purpose
 
-This spec defines the target ownership and interaction boundary between the
+This spec defines the accepted ownership and interaction boundary between the
 root `potpie` product distribution and the standalone `potpie-context-engine`
 library distribution.
 
 It is the normative source for the migration tracked in
 [package-boundary-migration-plan.md](../../docs/context-graph/package-boundary-migration-plan.md).
-The current code does not yet implement this proposal. Current-state documents
-remain accurate until their corresponding migration phases land.
+The boundary is implemented and verified at `f435fb4`; detailed evidence is in
+[the verification record](../verification/package-boundary-1.0.0.md).
 
 Decision: [ADR-0002: Separate Product Runtime from Context Engine](../decisions/ADR-0002-potpie-context-engine-boundary.md).
 
 ## Ownership And Boundaries
 
-### Current-state evidence
+### Implementation evidence
 
-The live `feat/cli_daemon` checkout begins from a partially separated product:
+- Root [pyproject.toml](../../pyproject.toml) owns `potpie`, `potpie-daemon`, and
+  `potpie-mcp` and selects `potpie-context-engine[embedded]==0.2.0`.
+- Engine [pyproject.toml](../../potpie/context-engine/pyproject.toml) exports no
+  process entrypoint, has a Pydantic-only core, and declares nine explicit
+  capability extras.
+- [potpie/runtime/composition.py](../../potpie/runtime/composition.py) constructs
+  `PotpieRuntime`, `LocalEngineClient`, or `DaemonEngineClient`.
+- [potpie/daemon/rpc.py](../../potpie/daemon/rpc.py) declares a protocol-v1,
+  allowlisted `engine.*` registry with typed request/result adapters.
+- [potpie/mcp/server.py](../../potpie/mcp/server.py) owns exactly the four public
+  tools and routes context work through `runtime.engine.context`.
+- The standalone engine is namespaced under `potpie_context_engine`, imports no
+  root `potpie`, and accepts caller-owned configuration and dependencies.
 
-- The root [pyproject.toml](../../pyproject.toml) owns the `potpie` and
-  `potpie-daemon` scripts and depends on `potpie-context-engine[all]`.
-- The engine [pyproject.toml](../../potpie/context-engine/pyproject.toml) owns
-  `potpie-mcp` and builds six generic top-level Python packages: `domain`,
-  `application`, `adapters`, `bootstrap`, `benchmarks`, and `host`.
-- [potpie/runtime/__init__.py](../../potpie/runtime/__init__.py) imports those
-  generic packages directly and builds an engine-owned `HostShell` with a
-  root-owned daemon and root-owned template resources.
-- [potpie/cli/commands/_common.py](../../potpie/cli/commands/_common.py) caches
-  either `RemoteHostShell` or the in-process `HostShell` as the CLI facade.
-- [potpie/daemon/client.py](../../potpie/daemon/client.py) implements dynamic
-  `RemoteSurface` proxies for product and engine capabilities.
-- [potpie/daemon/rpc.py](../../potpie/daemon/rpc.py) serializes dataclass and
-  enum module/class identities across the daemon transport.
-- [potpie/context-engine/host/shell.py](../../potpie/context-engine/host/shell.py)
-  combines context, graph, pots, ledger, daemon, auth, config, installer, skills,
-  and setup capabilities into one facade.
-- Root CLI, daemon, and runtime modules contain dozens of direct imports from
-  engine implementation packages.
-
-This is evidence, not the target contract.
-
-### Target ownership
+### Accepted ownership
 
 | Concern | Root `potpie` | `potpie-context-engine` |
 |---|---|---|
@@ -96,7 +106,7 @@ This is evidence, not the target contract.
 | Persistence | Product path resolution | State under an explicitly supplied data directory |
 | HTTP/webhooks | Product hosting when applicable | Optional injected engine app factories |
 
-### Target root structure
+### Landed root structure
 
 ```text
 potpie/
@@ -128,7 +138,7 @@ potpie/
 └── mcp/
 ```
 
-### Target engine structure
+### Landed engine structure
 
 ```text
 potpie/context-engine/
@@ -430,10 +440,9 @@ resolve settings and paths
 ### Spec implementation
 
 ```text
-proposed 0.1.0
-  -> accepted 1.0.0 after contract review
-  -> implemented after migration completion
-  -> verified after commit-scoped evidence and consistency review
+accepted 1.0.0
+  -> implemented by commits 2-13
+  -> verified at f435fb4
 ```
 
 ## Interfaces
@@ -580,7 +589,7 @@ potpie telemetry status|enable|disable
 
 Command migration:
 
-| Current command | Target |
+| Removed command | Landed replacement |
 |---|---|
 | `potpie use` | `potpie pot use` |
 | `potpie github ...` | `potpie integration github ...` |
@@ -709,8 +718,8 @@ command can therefore return `ok: true`, report a degraded data state, and exit
 - JSON mode emits one document and does not stream interleaved diagnostics.
 - `EngineConfig.in_memory()` is intended for tests, embedding, and explicit
   local use; it does not promise cross-process durability.
-- Backend-specific limits remain owned by engine adapter contracts and are not
-  changed by this proposal.
+- Backend-specific limits remain owned by engine adapter contracts and were not
+  changed by this boundary.
 
 ## Compatibility, Migration, And Rollout
 
@@ -728,8 +737,8 @@ This is a clean break for imports, commands, facades, executables, and RPC.
 - The engine exposes explicit extras: `embedded`, `http`, `postgres`, `neo4j`,
   `embeddings`, `github`, `reconciliation`, `hatchet`, and `observability`.
 
-Implementation is delivered as the fourteen separately verified commits in the
-migration plan. No commit begins until the prior commit is reviewed.
+Implementation was delivered as the fourteen separately verified commits in the
+migration plan.
 
 ## Examples
 
@@ -792,7 +801,7 @@ The returned status data has the same fields as `potpie status --json`'s `data`.
 | `PKG-SETUP-001` | Setup tests cover fresh, existing, daemon-unavailable, provision-failed, and missing-skill states. |
 | `PKG-STATUS-001` | CLI data and MCP status have the same flat status fields; engine status contains no product fields. |
 | `PKG-MCP-001` | MCP discovery reports exactly four approved tool names from the root distribution. |
-| `PKG-CLI-001` | Target command snapshot passes and every removed command is unknown. |
+| `PKG-CLI-001` | Exact command snapshot passes and every removed command is unknown. |
 | `PKG-CLI-002` | JSON tests parse exactly one stdout value, see no prompts, and verify stderr separation and exit codes. |
 | `PKG-QUEUE-001` | Search and tests find no `sys.path` mutation or legacy queue import; injected/default queue tests pass. |
 | `PKG-OBS-001` | Engine dependency/import scan finds no Sentry/PostHog product modules; root telemetry tests pass. |
@@ -821,8 +830,7 @@ Additional release gates:
   decisions and links back to this spec.
 - `spec/questions/open.md` records no unresolved package-boundary question.
 
-No contradiction was found in this initialization review. Current-state docs
-describe `HostShell` intentionally until implementation changes those paths.
+No contradiction was found in the final cross-spec and implementation review.
 
 ## Open Questions
 
@@ -844,7 +852,7 @@ This section is non-normative; requirements remain in the behavior IDs above.
 
 ### Primarily mechanical moves
 
-| Current | Target |
+| Original location | Landed location |
 |---|---|
 | Engine domain, application, ports, reusable adapters | `src/potpie_context_engine/...` |
 | `potpie/cli/auth` credential/OAuth/provider clients | `potpie/auth/...` |

@@ -11,9 +11,9 @@ site is safe to invoke unconditionally, and a local CLI/daemon stays completely 
 unless an operator opts in. Observability never raises into a caller — it can never
 fail a request.
 
-Both composition roots wire the same port: the local agent spine
-(`bootstrap/host_wiring.py`) and the ingestion HTTP server
-(`bootstrap/ingestion_server.py`) — see [architecture.md](./architecture.md).
+Engine-only composition wires the port for local/daemon engines; the optional
+ingestion HTTP factory uses the same port. Root product Sentry/PostHog ownership
+is documented in [../telemetry/sentry.md](../telemetry/sentry.md).
 
 ## Shape
 
@@ -96,8 +96,8 @@ the spans actually emitted today.
 
 | Span | Kind | Meaning | Code boundary |
 |---|---|---|---|
-| `daemon.health`, `daemon.rpc`, `daemon.attr` | server | Local daemon health probe + RPC dispatch. | `host/daemon_main.py` |
-| `graph.<command>` | internal | One workbench command: `graph.status`, `graph.catalog`, `graph.describe`, `graph.search_entities`, `graph.read`, `graph.neighborhood`, **`graph.propose`**, **`graph.commit`**, `graph.bulk`, `graph.history`, `graph.inbox` (carries `operation`), `graph.quality` (carries `report`), plus the legacy `graph.mutate` / `graph.mutation_template` / `graph.nudge`. | `adapters/inbound/cli/commands/graph.py` (`_graph_command`) |
+| `daemon.health`, `daemon.rpc` | server | Root daemon health probe and typed RPC dispatch. | `potpie/daemon/main.py`, `potpie/daemon/rpc.py` |
+| `graph.<command>` | internal | Engine graph operations such as status, catalog, search, read, propose, commit, bulk, history, inbox, quality, template, nudge, and repair. | engine graph application services |
 | `ingest.submit` | server | Inbound episode/event/record normalized and submitted. | `application/services/ingestion_submission_service.py` |
 | `HTTP <method> <route>`, `http.ready` | server | Ingestion HTTP server request + readiness. | `adapters/inbound/http/_hardening.py`, `adapters/inbound/http/api/router.py` |
 | `batch.process` | consumer | Windowed batch fan-in (N events → 1 run → M mutations); **links back** to each event's ingress traceparent. | `application/use_cases/context_graph_jobs.py` |
@@ -131,12 +131,12 @@ Notes:
 All metric names are `ce.*`. Graph-workbench and batch metrics are mirrored to both the
 `ObservabilityPort` and a Sentry metrics runtime.
 
-Workbench commands (`adapters/inbound/cli/commands/graph.py`) — one counter +
+Root workbench handlers and engine operations — one counter +
 histogram per command root:
 
 - `ce.graph.<root>_total` and `ce.graph.<root>_ms` for each root (`read`, `propose`,
-  `commit`, `catalog`, `status`, `describe`, `search_entities`, `neighborhood`,
-  `history`, `inbox`, `quality`, `bulk`, `mutate`, …). Bounded label set:
+  `commit`, `catalog`, `status`, `search_entities`, `history`, `inbox`,
+  `quality`, `bulk`, `nudge`, …). Bounded label set:
   `{result, error_code, pot_id, subgraph, view, risk, status, operation, report,
   backend_profile, match_mode}`.
 

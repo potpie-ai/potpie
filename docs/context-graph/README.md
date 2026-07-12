@@ -1,102 +1,81 @@
-# Context Graph Docs
+# Context Graph Documentation
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
+> Package architecture verified at `f435fb4` on 2026-07-13.
 
-The Context Graph is Potpie's durable, shared **project memory for AI agents** — a
-compact store of sourced **claims** (decisions, ownership, infra topology, prior
-bugs/fixes, conventions, features) so an agent doesn't rebuild context from raw
-code, PRs, tickets, and chat on every task. Humans and agents talk to the **same
-`potpie` CLI**; agents can also reach the same internals through four in-process
-MCP `context_*` tools. The `potpie graph …` workbench is **shipped today**
-(data-plane contract `v1.5`, ontology `2026-06-graph`) alongside the legacy
-`resolve`/`search`/`record` compatibility wrappers — there is no separate "future
-V2." The same Pot Management, Graph, and Skill Manager service modules run inside
-either a local daemon or a managed backend API; **state stays local by default**.
+The Context Graph is Potpie's durable, sourced project memory for AI agents.
+Root `potpie` is the product/runtime distribution; `potpie-context-engine` is the
+standalone graph/context library. The accepted boundary is
+[SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md).
 
 ```mermaid
-flowchart TB
-  cg_human["Humans"]
-  cg_agent["Agents<br/>(Claude Code, Codex, Cursor…)"]
-  cg_cli["potpie CLI<br/>(graph workbench + V1 wrappers)"]
-  cg_mcp["in-process MCP<br/>(4 context_* tools)"]
-
-  cg_human --> cg_cli
-  cg_agent --> cg_cli
-  cg_agent --> cg_mcp
-  cg_mcp --> cg_cli
-
-  subgraph cg_local["Local profile — shipped, default"]
-    direction TB
-    cg_daemon["local daemon<br/>(detached by default)"]
-    cg_services["services:<br/>Pot Mgmt · Graph · Skill Manager"]
-    cg_backend["GraphBackend<br/>(default falkordb_lite, embedded)"]
-    cg_daemon --> cg_services --> cg_backend
-  end
-
-  subgraph cg_managed["Managed backend — roadmap"]
-    direction TB
-    cg_api["managed API<br/>(same service modules)"]
-    cg_hosted[("hosted stores")]
-    cg_api --> cg_hosted
-  end
-
-  cg_ledger["Event Ledger<br/>(source-event service: webhooks · polling · cursors)"]
-
-  cg_cli --> cg_daemon
-  cg_cli -. "managed routing<br/>(CapabilityNotImplemented)" .-> cg_api
-  cg_services -. "pull events (external clients are stubs)" .-> cg_ledger
+flowchart LR
+    Human["Human"] --> CLI["potpie CLI"]
+    Agent["Agent"] --> CLI
+    Agent --> MCP["potpie-mcp · four tools"]
+    CLI --> Runtime["PotpieRuntime"]
+    MCP --> Runtime
+    Runtime --> Product["auth · setup · status · skills · config · telemetry"]
+    Runtime --> EngineClient["runtime.engine"]
+    EngineClient --> Engine["ContextEngine"]
+    Engine --> Graph["claims · graph · ledger · timeline"]
 ```
 
-## Target OSS default
+## Install targets
+
+End users install the root product:
 
 ```bash
-pip install potpie
-potpie setup        # provisions config, local stores, the default pot, the daemon, and skills
+uv tool install potpie
+potpie setup
 potpie status
 ```
 
-`setup` also registers your repo as a source. A working-tree scan is **opt-in**
-via `--scan` (default off). The OSS/CLI default backend is **`falkordb_lite`** —
-an embedded FalkorDB over a local file, with **no Docker, server, Neo4j, or cloud
-key required**; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
-(precedence: `CONTEXT_ENGINE_BACKEND` > legacy `GRAPH_DB_BACKEND` >
-`falkordb_lite`). Full flags live in [`cli-flow.md`](./cli-flow.md).
+Library embedders install the engine:
 
-> **Roadmap (not yet wired):** Managed-backend routing is designed but not
-> functional — `pot use --managed`, `pot list --managed`, and the whole `cloud`
-> group raise `CapabilityNotImplemented`. The **external** Event Ledger clients
-> (`ledger pull/query` against real providers) are TODO stubs. The live "ledger"
-> today is the internal Postgres event store described in
-> [`ingestion-nudge.md`](./ingestion-nudge.md).
+```bash
+python -m pip install potpie-context-engine==0.2.0
+```
+
+The engine has no product executable or user-home default. Persistent embedding
+requires a caller-supplied path; `EngineConfig.in_memory()` is isolated and
+temporary.
 
 ## Start here
 
-| Doc | What it answers |
+| Document | Purpose |
 |---|---|
-| [`vision.md`](./vision.md) | What the Context Graph is and why; claims-not-payloads; harness-owned intelligence; the three product boundaries (local OSS / managed [roadmap] / Event Ledger [roadmap]); pots-as-tenancy; anti-goals. |
-| [`architecture.md`](./architecture.md) | Hexagonal layers; the two composition roots (local agent spine vs ingestion server); the daemon model; the `GraphBackend` port + 6 capabilities + the backend coverage table; per-pot scoping and backend selection. |
-| [`ontology.md`](./ontology.md) | The three declarative catalogs (24 entity types / 25 predicates + `RELATED_TO` / record types); contract constants (versions, 7 truth classes, 10 mutation ops, 6 source authorities); 8 subgraphs / 9 views; identity keys and the environment qualifier. |
-| [`querying.md`](./querying.md) | Reading: the 4-tool MCP contract vs the CLI-only Graph Surface Lite; the single read trunk and 9 readers; the `AgentEnvelope` (ranked evidence, no server-side answers); ranking; the 3-axis model (Retrieve / Filter / Traverse — all shipped). |
-| [`writing.md`](./writing.md) | Writing: the flat semantic-mutation DSL (10 ops); validation + runtime risk; the canonical write door `graph propose` → `graph commit --verify` (with `graph mutate` and `record` as the legacy wrappers); coarse `_global` concurrency; inbox; quality. |
-| [`ingestion-nudge.md`](./ingestion-nudge.md) | How raw episodes/events enter; the internal Postgres event store vs the external Event Ledger seam; connectors (github/notion only); windowed reconciliation (off by default); the zero-token nudge trigger model. |
-| [`skills.md`](./skills.md) | Harness-owned intelligence; the bundled CLI skills (potpie-graph teaches propose/commit); the Claude Code plugin + hooks; the separate server-side reconciliation skill surface (not the same thing). |
-| [`cli-flow.md`](./cli-flow.md) | The full `potpie` command reference, grouped, with flags, exit-code contract, and the canonical journey. |
-| [`observability.md`](./observability.md) | What logs, traces, metrics, and readiness report; span names. |
-| [`bench-plan.md`](./bench-plan.md) | How graph quality is validated across backends (invariant judge, `run-light`). |
+| [vision.md](vision.md) | Product and graph goals, claims-not-payloads, anti-goals. |
+| [architecture.md](architecture.md) | Product/library ownership, runtime modes, RPC, setup/status, packaging. |
+| [cli-flow.md](cli-flow.md) | Exact workflow-first commands, JSON, exits, migration. |
+| [ontology.md](ontology.md) | Entity, predicate, record, truth, and view contracts. |
+| [querying.md](querying.md) | Context resolution, search, evidence, and graph reads. |
+| [writing.md](writing.md) | Semantic mutations and propose/commit writes. |
+| [ingestion-nudge.md](ingestion-nudge.md) | Event ingestion, reconciliation, and nudges. |
+| [skills.md](skills.md) | Root-owned harness resources and installation. |
+| [observability.md](observability.md) | Generic engine observability. |
+| [package-boundary-migration-plan.md](package-boundary-migration-plan.md) | Commit-by-commit implementation evidence. |
+
+## Stable surfaces
+
+- Product interaction: `PotpieRuntime`.
+- Engine interaction: asynchronous `runtime.engine.*` / `EngineClient`.
+- Supported library imports: `potpie_context_engine` and
+  `potpie_context_engine.contracts`.
+- MCP: exactly `context_resolve`, `context_search`, `context_record`, and
+  `context_status` from root `potpie-mcp`.
+- Graph writes: `potpie graph propose` then `potpie graph commit`.
+- Daemon transport: protocol-v1, typed, allowlisted `engine.*` RPC only.
 
 ## Vocabulary
 
 | Term | Meaning |
 |---|---|
-| **Pot** | Unit of isolation/tenancy. Every query, source, inbox item, claim, semantic mutation, and graph operation is scoped to one pot; the pot id **is** the storage `group_id`. A pot is local or managed; the active pot determines routing. Cross-pot federation is an anti-goal. |
-| **Daemon** | Local background process (`host/daemon.py`) for lifecycle, IPC, health, and logs — **not** the business layer. Default host mode is detached (`daemon`); it also serves the read-only `potpie ui` explorer. |
-| **Services** | Pot Management (control plane: pots, sources, readiness), Graph Service (data plane: reads, semantic mutations, workbench), and Skill Manager. The same modules run in the local daemon or a managed backend API. |
-| **GraphBackend** | Swappable capability bundle of 6 ports — canonical `mutation` + `claim_query`, plus rebuildable projections `semantic`, `inspection`, `analytics`, `snapshot` — with `capabilities()`/`provision()`. Default profile `falkordb_lite`. |
-| **Skill Manager** | CLI-managed skill catalog/installer for agent harnesses. Skills teach agents how to use the CLI; they are not graph facts or new tools. |
-| **Event Ledger** | Separate managed-or-self-hostable source-event service (webhooks, polling, replay cursors). Graph consumers *pull* and track their own cursor/apply state; the ledger is **not** the graph source of truth. (External clients are stubs — roadmap.) |
-| **Claim** | A compact, sourced fact — the graph stores claims + source refs, **never** full payloads (diffs, doc bodies, transcripts). Each claim carries a truth class that feeds the ranker. |
-| **Retrieval card** | The single text a claim is embedded and searched as (agent-authored `description` leads). One builder is shared by the embed-on-write and read paths, so retrieval quality tracks the description the agent writes. |
+| Pot | Unit of graph, source, claim, and operation isolation. |
+| PotpieRuntime | Root product facade containing the engine client and product services. |
+| ContextEngine | Standalone library facade over engine application services. |
+| EngineClient | Async local/remote operation protocol used by the product runtime. |
+| Claim | Compact sourced fact; raw payloads remain at their source. |
+| Projection | Rebuildable semantic, inspection, analytics, or snapshot view. |
 
-The active package lives under
-[`../../potpie/context-engine/`](../../potpie/context-engine/). Where any older
-note disagrees with these docs, these docs (code-verified on `main`) win.
+Where an older design note conflicts with the accepted spec or these verified
+architecture/CLI documents, the accepted spec wins.

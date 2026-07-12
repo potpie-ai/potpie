@@ -22,8 +22,8 @@ plane is `GRAPH_CONTRACT_VERSION="v1.5"`, `ONTOLOGY_VERSION="2026-06-graph"`).
 
 | Altitude | Surface | Who | Commands |
 |---|---|---|---|
-| **4-tool agent contract** | MCP `context_*` tools (`adapters/inbound/mcp/server.py`) bound by `AgentContextService` (`application/services/agent_context.py`) | harnesses over MCP | `context_resolve`, `context_search`, `context_record`, `context_status` |
-| **Graph Surface Lite** | the `potpie graph …` workbench (`adapters/inbound/cli/commands/graph.py`) over `DefaultGraphService` | humans + harnesses over the CLI | `graph catalog/read/search-entities/neighborhood/describe/status/history` (+ the write/inbox/quality commands in [`writing.md`](./writing.md)) |
+| **4-tool agent contract** | root MCP tools (`potpie/mcp/server.py`) routed through `runtime.engine.context` | harnesses over MCP | `context_resolve`, `context_search`, `context_record`, `context_status` |
+| **Graph Surface Lite** | root `potpie graph …` handlers routed through `runtime.engine.graph` | humans + harnesses over the CLI | `graph catalog/read/search-entities/inspect/status/history` (+ the write/inbox/quality commands in [`writing.md`](./writing.md)) |
 
 The MCP surface is **exactly four tools** — `context_record` is its only write. The
 richer workbench is **CLI-only**; it is not mirrored onto MCP. `resolve`/`search`/
@@ -235,7 +235,7 @@ first-class today**; Traverse is no longer "buried inside a view."
 |---|---|---|---|
 | **Retrieve** | `graph read --subgraph <s> --view <v>` | `DefaultGraphService.read()` → read trunk | "What preferences apply here?" "Has this symptom been seen before?" "What changed recently?" |
 | **Filter** | `graph search-entities` | `DefaultGraphService.search_entities()` → `claim_query.find_claims` **directly** | "Which adapter is wired in prod?" "List active decisions for this repo." Identity resolution before a write. |
-| **Traverse** | `graph neighborhood` | `backend.inspection.neighborhood` | "What depends on `payments-api`, two hops out?" "Walk this bug to its fix and the PR that shipped it." |
+| **Traverse** | named `graph read` view with depth/direction | read trunk and backend inspection | "What depends on `payments-api`, two hops out?" "Walk this bug to its fix and the PR that shipped it." |
 
 **Retrieve** goes through the read trunk over a named view. **Filter** does *not* hit the
 read trunk — it queries `claim_query.find_claims` with structured filters (type/predicate/
@@ -377,11 +377,10 @@ Full flag lists live in [`cli-flow.md`](./cli-flow.md); this is the read-side or
 |---|---|
 | `graph status` | data-plane status for the active pot |
 | `graph catalog [--subgraph] [--profile full\|read]` | **contract discovery** — returns `GraphCatalogResult`: versions, commands, truth classes, mutation ops (+ empty review/deferred), source authorities, `match_mode`, views, public entity types & predicates. Derived entirely from the ontology + view map + constants ("no docs needed"). `--task` is **accepted but ignored in V1.5**. |
-| `graph describe [subgraph] [--view] [--examples]` | in-process `describe_contract()` (not a host call); returns a subgraph and optionally one view. |
 | `graph read --subgraph <s> --view <v>` | **Retrieve** axis (§7/§8); `--detail compact\|full`, `--relations summary\|full`, `--query`, `--scope k:v`, `--since/--until`, `--depth/--direction`, `--limit`, `--sort`, `--format`. |
 | `timeline recent` | sugar for `graph read --subgraph recent_changes --view timeline`. |
 | `graph search-entities` | **Filter** axis (§7); structured typed lookup for identity resolution. |
-| `graph neighborhood --entity <key>` | **Traverse** axis (§7); `graph inspect <key>` is a legacy alias. |
+| `graph inspect <key>` | Inspect one selected graph entity/claim using the typed engine surface. |
 | `graph history` | mutation/claim/entity history (audit trail). |
 
 At the MCP altitude, `context_resolve`/`context_search` cover Retrieve, and

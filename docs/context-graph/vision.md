@@ -1,12 +1,7 @@
 # Context Graph Vision
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
->
-> Target package ownership:
-> [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) is proposed and
-> not yet implemented. Current references to `HostShell` and engine-owned MCP
-> remain historical descriptions until the
-> [migration](./package-boundary-migration-plan.md) reaches them.
+> Package ownership verified at `f435fb4` on 2026-07-13. See the accepted
+> [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md).
 
 The Context Graph is Potpie's **durable, shared project memory for AI agents** — a
 compact, sourced store of facts about a project (decisions, ownership, topology,
@@ -67,18 +62,16 @@ entity; an entity exists only if an edge needs it as an endpoint.
 
 ## One CLI surface for humans and agents
 
-There is **no separate human-vs-agent API**. Both users and agents talk to the same
-`potpie` CLI, described in its own spine (`adapters/inbound/cli/host_cli.py`) as
-"the architecture's single spine": every command routes `CLI → HostShell →
-service(s) → ports`.
+There is **no separate human-vs-agent domain model**. CLI commands route through
+root `PotpieRuntime`; engine work crosses the visible `runtime.engine.*` seam.
 
 Agents reach the same system two ways:
 
 - **Directly via the CLI**, including the full `potpie graph …` workbench.
-- **Via the in-process MCP tools** — exactly four: `context_resolve`,
+- **Via the root-owned MCP process** — exactly four: `context_resolve`,
   `context_search`, `context_record`, `context_status` (`context_record` is the
-  only MCP write). These are compatibility adapters over the *same* graph
-  internals, not a second engine.
+  only MCP write). These call the same runtime and engine operations as the CLI,
+  not a second engine.
 
 The richer **Graph Surface Lite** (`potpie graph catalog/read/search-entities/
 propose/commit/…`) is **CLI-only**; the MCP/agent surface stays at exactly four
@@ -95,7 +88,8 @@ LLM/reconciliation agent as the canonical source of graph intelligence."*
 
 The code honors this:
 
-- The **nudge brain is deterministic** (`NudgeService`, wired in `host_wiring.py`;
+- The **nudge brain is deterministic** (`NudgeService`, wired in engine
+  composition;
   no model on this path).
 - Retrieval ships a **bundled local embedder by default**, so semantic search needs
   no API key (disable with `CONTEXT_ENGINE_EMBEDDER=none`).
@@ -114,14 +108,15 @@ skills teach.
 ```mermaid
 flowchart TB
   cg_agent["agent harness<br/>(skills + CLI / 4 MCP tools)"]
-  cg_cli["potpie CLI → HostShell → services → ports"]
+  cg_cli["potpie CLI / MCP → PotpieRuntime"]
+  cg_engine["runtime.engine → ContextEngine"]
   cg_graph[("Context Graph<br/>compact claims + source refs")]
   cg_managed["Managed Potpie graph<br/>(roadmap: not yet wired)"]
   cg_ledger["External Event Ledger<br/>(roadmap: client stubs)"]
 
   cg_agent --> cg_cli
-  cg_cli --> cg_graph
-  cg_graph --> cg_cli
+  cg_cli --> cg_engine --> cg_graph
+  cg_graph --> cg_engine
   cg_cli -. "swap wiring (unbuilt)" .-> cg_managed
   cg_ledger -. "pull / consume (unbuilt)" .-> cg_graph
 ```
@@ -130,13 +125,12 @@ There are three intended product boundaries. Only the first is shipped today.
 
 | Boundary | Status | Description |
 |---|---|---|
-| **Local OSS self-serve** | **Shipped (V1.5)** | Installed with the CLI. `potpie setup` provisions config, local stores, the active `default` pot, source registration, the daemon, and skills. State stays local by default. Default backend `falkordb_lite` (no Docker/Neo4j/cloud needed). |
-| **Managed Potpie graph** | **Roadmap** | A managed backend API hosting the *same* service modules on hosted stores with hosted auth/collaboration. The graph model is identical — `HostShell` "swaps the wiring without changing the facade." |
+| **Local OSS self-serve** | **Shipped (V1.5)** | Installed with root Potpie. `potpie setup` provisions config, local stores, the active `default` pot, source registration, the daemon, and skills. State stays local by default. The default `embedded` backend needs no Docker, Neo4j, or cloud key. |
+| **Managed Potpie graph** | **Roadmap** | A future typed engine client/adapter can host the same graph contract on managed stores; product auth and collaboration remain root concerns. |
 | **Event Ledger** | **Roadmap** | A separate managed-or-self-hostable source-event service (webhooks, polling, replay cursors) that local or managed graphs *pull* from; it is never the graph source of truth. |
 
-> **Roadmap (not yet wired):** Managed routing is designed and wired-for but not
-> functional — `potpie use --managed`, `pot list --managed`, and the entire `cloud`
-> command group raise `CapabilityNotImplemented`. The external Event Ledger clients
+> **Roadmap:** There is no public `cloud` command surface or silent managed
+> fallback. The external Event Ledger clients
 > (`managed_client.py` / `self_hosted_client.py`) are TODO stubs, so `potpie ledger
 > pull/query` is non-functional against any real provider. The live "ledger" today
 > is the internal Postgres event store used by ingestion — see
@@ -185,14 +179,14 @@ Concretely, the live contract constants are:
 So "v2" survives solely as the envelope version on workbench responses. What ships:
 
 - **Reads:** the 4-tool MCP contract *and* `potpie graph catalog/read/search-entities/
-  neighborhood/history` over the single read trunk; reads return ranked evidence
+  history` over the single read trunk; reads return ranked evidence
   (an `AgentEnvelope`) — **there is no server-side answer synthesis**, the agent
   reasons over the evidence ([querying.md](./querying.md)).
 - **Writes:** the canonical write door is **`graph propose` → `graph commit
-  --verify`**. `graph mutate` is a **legacy wrapper** that internally calls
-  propose+commit; `record` / `context_record` remain live as the only MCP write
+  --verify`**. The old `graph mutate` path is removed; `record` /
+  `context_record` remain live as the only MCP write
   path ([writing.md](./writing.md)).
-- **Defaults:** `falkordb_lite` embedded backend, a detached `daemon` host mode, the
+- **Defaults:** the `embedded` backend, detached `daemon` runtime mode, the
   bundled local embedder, installed skills, and the zero-token nudge hooks — all
   with no mandatory Docker, Neo4j, Postgres, or cloud service.
 

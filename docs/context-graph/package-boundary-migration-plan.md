@@ -1,14 +1,13 @@
 # Potpie / Context Engine Package-Boundary Migration
 
-> Status: Commits 1-13 complete; Commit 14 not started. This document implements the
+> Status: all 14 commits complete. This document implements the
 > sequencing contract for [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) and
 > [ADR-0002](../../spec/decisions/ADR-0002-potpie-context-engine-boundary.md).
-> The target architecture is proposed; current-state docs remain authoritative
-> until the corresponding commit lands.
+> The accepted architecture is implemented and verified at `f435fb4`.
 
 ## Outcome
 
-The migration ends with root `potpie` as the sole product/runtime distribution
+The migration established root `potpie` as the sole product/runtime distribution
 and `potpie-context-engine` as a root-independent library. Product interaction
 goes through `PotpieRuntime`; engine interaction is visible as
 `runtime.engine.*`. The migration provides no compatibility aliases for old
@@ -68,8 +67,8 @@ verifying the baseline remains intact.
 | 10 | `refactor(engine): remove product residue and legacy queue wiring` | `PKG-OWN-002`, `PKG-QUEUE-001`, `PKG-OBS-001` | Complete | `ebad0d77` | Engine-only composition, injected queue, zero residue scans, and full suites pass |
 | 11 | `refactor(cli): apply the workflow-first command contract` | `PKG-CLI-001`, `PKG-CLI-002` | Complete | `e16e6be` | Exact command tree, removed paths, JSON envelope, exit-code, and full-suite gates pass |
 | 12 | `refactor(mcp): move the public MCP server into potpie` | `PKG-MCP-001`, `PKG-STATUS-001` | Complete | `aa89ad5` | Four-tool discovery, schema, runtime-routing, status-parity, and full-suite tests pass |
-| 13 | `build(packaging): finalize distribution boundaries` | `PKG-DIST-001`, `PKG-API-001` | Complete | This commit | Wheels, sdists, metadata, entrypoints, dependency extras, and isolated installs pass |
-| 14 | `docs(architecture): publish the completed package split` | `PKG-VERIFY-001` and all IDs | Not started | — | Full suite, docs, final verification record |
+| 13 | `build(packaging): finalize distribution boundaries` | `PKG-DIST-001`, `PKG-API-001` | Complete | `f435fb4` | Wheels, sdists, metadata, entrypoints, dependency extras, and isolated installs pass |
+| 14 | `docs(architecture): publish the completed package split` | `PKG-VERIFY-001` and all IDs | Complete | This commit | Full suites, current docs, accepted spec 1.0.0, verification record, links, and residue scans pass |
 
 The actual SHA for a completed commit is recorded during the following commit or
 in the final verification record; a commit cannot contain its own stable SHA.
@@ -531,6 +530,21 @@ Changes:
 
 Gate: full root and engine suites, static checks, package builds, isolated
 installs, docs links, cross-spec checks, and final residue scans pass.
+
+Evidence recorded on 2026-07-13:
+
+- Architecture, CLI flow, skills, telemetry, package installation, CLI package,
+  context-graph index, and vision docs describe the landed product/library split.
+- Clean-break notes cover imports, entrypoints, daemon protocol restart, command
+  moves, and commands removed without replacement.
+- `SPEC-PACKAGE-BOUNDARY` is accepted at `1.0.0`; its verification metadata and
+  `spec/verification/package-boundary-1.0.0.md` cover every stable behavior at
+  `f435fb4` with a passed cross-spec review and no known boundary gap.
+- Final full suites, Ruff/pre-commit, artifact builds, isolated installs,
+  metadata/namespace checks, local Markdown links, spec metadata/backlinks, and
+  forbidden import/name scans pass.
+- The protected telemetry baseline remains byte-for-byte outside all migration
+  commits.
 
 ## Final Release Gate
 

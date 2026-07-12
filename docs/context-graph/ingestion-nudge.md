@@ -256,9 +256,8 @@ similarity via the **local embedder only**) plus a per-session
 - **Instruction events** — return the directive string verbatim.
 - Returns `silent=True` when nothing is fresh/relevant.
 
-`NudgeService` is wired in `host_wiring.py` as `NudgeService(graph=graph,
-ledger=LocalInjectionLedger())` and exposed on `HostShell.nudge`; it runs
-**in-process**.
+`NudgeService` is wired by engine-only composition with a graph service and
+injection ledger. Root CLI calls it through `runtime.engine.graph.nudge`.
 
 ### 7.3 Dedup ledger (`adapters/outbound/session/injection_ledger.py`)
 
@@ -273,12 +272,12 @@ ledger=LocalInjectionLedger())` and exposed on `HostShell.nudge`; it runs
 potpie graph nudge --event <e> --session <id> [--path --query --scope --pot --limit]
 ```
 
-routes to `host.nudge.nudge(GraphNudgeRequest)`. Full flags are in
+routes to the typed engine nudge operation. Full flags are in
 [cli-flow.md](./cli-flow.md).
 
 ### 7.5 The fail-safe Claude Code hook
 
-`adapters/inbound/cli/templates/claude_plugin/hooks/potpie_nudge.py` is the thin
+`potpie/skills/resources/templates/claude_plugin/hooks/potpie_nudge.py` is the thin
 adapter that turns harness lifecycle events into nudge events and shells
 `potpie --json graph nudge`. Event mapping:
 

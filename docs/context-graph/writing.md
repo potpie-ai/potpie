@@ -14,9 +14,9 @@ Two framing rules up front:
   (`GRAPH_CONTRACT_VERSION="v1.5"`, `ONTOLOGY_VERSION="2026-06-graph"`; the workbench *envelope*
   stamps `graph_contract_version="v2"` only as a transport version string). There is no
   "future Graph V2" write surface — propose/commit are live.
-- **The canonical write door is `graph propose` → `graph commit --verify`.** `graph mutate` is a
-  **legacy wrapper** that internally calls propose+commit; the immediate-apply path
-  (`DefaultGraphService.mutate`) is now reached only through `record` / `context_record`.
+- **The canonical write door is `graph propose` → `graph commit --verify`.** The
+  old `graph mutate` command is removed; the immediate-apply service path is
+  reached only through `record` / `context_record`.
 
 ---
 
@@ -311,13 +311,11 @@ REPRODUCES + RESOLVED/ATTEMPTED_FIX_FAILED (`debugging`); verification → VERIF
 decision → DECIDED (+AFFECTS, truth=user_decision); unknown types → free-form `RELATED_TO`. It
 sets `allow_review_required=True, approved_by="context_record"` so a deliberate record write
 (including medium-risk decisions) auto-applies; it never generates supersede/merge.
-`context_record` is the **only MCP write tool** (`adapters/inbound/mcp/server.py`); the MCP surface
+`context_record` is the **only MCP write tool** (`potpie/mcp/server.py`); the MCP surface
 stays at exactly four tools (see [querying.md](./querying.md)).
 
-> **`graph mutate` is a legacy wrapper, not Spine B.** The CLI `graph mutate`
-> (`commands/graph.py`) internally calls workbench **propose → commit** and emits a legacy
-> warning steering you to propose/commit. So `DefaultGraphService.mutate` is reached *only* via
-> `record`/`context_record`, never via `graph mutate`.
+`DefaultGraphService.mutate` is reached only through `record`/`context_record`;
+there is no direct CLI mutation command.
 
 ---
 
@@ -433,7 +431,6 @@ Full flags live in [cli-flow.md](./cli-flow.md); the write loop discipline is ta
 | `graph propose --file mutation.json [--ttl 1h]` | Spine A — validate + persist plan (no write) |
 | `graph commit <plan_id> --verify [--approved-by]` | Spine A — apply persisted plan, read-back verify |
 | `graph bulk apply --file <ndjson> [--chunk-size] [--verify]` | Spine A — chunked multi-plan apply |
-| `graph mutate --file … [--dry-run] [--allow-review-required] [--approved-by]` | **legacy wrapper** over propose+commit |
 | `graph mutation-template --kind <…>` | static schema-only skeleton (no host call) |
 | `record --type … --summary …` / MCP `context_record` | Spine B — record→semantic bridge (only MCP write) |
 | `graph history [--entity\|--claim\|--plan\|--mutation\|--subgraph]` | committed-write audit trail |

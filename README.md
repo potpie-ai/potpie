@@ -78,10 +78,10 @@ The main CLI commands are:
 | --- | --- |
 | `potpie setup` | Run first-time local setup for config, daemon, default pot, and agent skills. |
 | `potpie login` | Sign in to Potpie for account-backed and managed features. |
-| `potpie github login` / `potpie linear login` | Connect source integrations you want agents to use. |
+| `potpie integration github login` / `potpie integration linear login` | Connect source integrations you want agents to use. |
 | `potpie status` | Show context readiness for the active pot, including daemon, graph, and skill checks. |
-| `potpie auth status` | Show configured integration auth status. |
-| `potpie auth status --verify` | Verify integration credentials with lightweight API checks. |
+| `potpie integration status` | Show configured integration auth status. |
+| `potpie integration status --verify` | Verify integration credentials with lightweight API checks. |
 | `potpie doctor` | Run local diagnostics for daemon, backend capabilities, and skill drift. |
 | `potpie source add repo .` | Register the current repo as a source for the resolved pot. |
 | `potpie pot list` / `potpie pot use <id-or-name>` | List pots and choose the active workspace. |
@@ -96,8 +96,8 @@ Examples:
 
 ```bash
 potpie setup --repo . --agent claude
-potpie github login
-potpie auth status
+potpie integration github login
+potpie integration status
 potpie status
 potpie source add repo .
 potpie resolve "what should I know before working in this repository?"
@@ -142,7 +142,17 @@ If your team needs a new integration or harness, please
 
 ## Architecture
 
-Potpie's current architecture is CLI-first. CLI is designed to be used by both humans and agents. Read the deeper architecture notes in [`docs/context-graph/architecture.md`](https://github.com/potpie-ai/potpie/blob/main/docs/context-graph/architecture.md).
+Root `potpie` owns the CLI, daemon, MCP, authentication, setup, skills,
+installation, configuration, status, and product telemetry. Engine operations
+cross the visible `PotpieRuntime.engine` boundary into the independently
+installable `potpie-context-engine` library. Read the verified architecture in
+[`docs/context-graph/architecture.md`](https://github.com/potpie-ai/potpie/blob/main/docs/context-graph/architecture.md).
+
+Library embedders can install the engine without product executables:
+
+```bash
+python -m pip install potpie-context-engine==0.2.0
+```
 
 ## License
 

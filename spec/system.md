@@ -36,8 +36,8 @@ verification:
 
 ## Purpose
 
-This draft is the cross-system entrypoint. The first fully described system
-boundary is the proposed
+This draft is the cross-system entrypoint. The first fully described and
+accepted system boundary is the
 [Potpie / Context Engine Package Boundary](modules/package-boundary.md).
 
 ## Ownership And Boundaries
@@ -48,7 +48,7 @@ Normative ownership is defined in `SPEC-PACKAGE-BOUNDARY`.
 ## Scope And Non-Goals
 
 This initial draft covers only cross-system concepts necessary to locate the
-package-boundary proposal. It does not yet specify every datastore, hosted
+accepted package boundary. It does not yet specify every datastore, hosted
 service, integration, or deployment topology.
 
 ## Terminology
@@ -63,27 +63,27 @@ and engine embedders. Detailed permissions remain within the owning module spec.
 ## Normative Requirements
 
 Not applicable: no independent system-wide requirements are accepted in this
-initial draft; `SPEC-PACKAGE-BOUNDARY` owns the proposed requirements.
+initial draft; `SPEC-PACKAGE-BOUNDARY` owns the accepted requirements.
 
 ## Global Guarantees
 
-Not applicable: global guarantees will be added as module contracts are accepted.
+The accepted package-level guarantees are delegated to `SPEC-PACKAGE-BOUNDARY`.
 
 ## Cross-Module Interfaces
 
-The initial proposed interface is `PotpieRuntime` to `EngineClient`, defined in
+The initial implemented interface is `PotpieRuntime` to `EngineClient`, defined in
 `SPEC-PACKAGE-BOUNDARY`.
 
 ## Invariants
 
-Not applicable: proposed package invariants are owned by
+Package invariants are owned by
 `SPEC-PACKAGE-BOUNDARY`.
 
 ## Failure Philosophy
 
 Expected failures should be typed and actionable. Product runtime failures must
-not be hidden by silently selecting a different execution mode. This statement
-is descriptive until the package-boundary proposal is accepted.
+not be hidden by silently selecting a different execution mode. The accepted
+boundary makes this normative for product runtime behavior.
 
 ## Security And Privacy
 
@@ -93,7 +93,7 @@ receive only the identity and capability data required for the operation.
 ## Observability And Auditability
 
 Product crash and usage telemetry is distinct from generic engine observability.
-Detailed guarantees remain in the package-boundary proposal and future
+Detailed guarantees remain in the accepted package-boundary spec and future
 observability specs.
 
 ## Compatibility And Migration

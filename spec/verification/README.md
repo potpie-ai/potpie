@@ -31,11 +31,8 @@ verification:
 Verification records connect an accepted spec version to code and cross-spec
 evidence at a named commit.
 
-`SPEC-PACKAGE-BOUNDARY` is proposed and not implemented, so it has no code
-verification record yet. Commit 14 of the migration will add a record containing:
+## Records
 
-- the accepted spec version and verified commit;
-- every behavior ID in scope;
-- tests, package builds, isolated-install checks, and import-boundary evidence;
-- cross-spec consistency results;
-- known gaps and the final result.
+| Spec | Version | Verified commit | Result | Record |
+|---|---:|---|---|---|
+| `SPEC-PACKAGE-BOUNDARY` | 1.0.0 | `f435fb4` | passed | [package-boundary-1.0.0.md](package-boundary-1.0.0.md) |
