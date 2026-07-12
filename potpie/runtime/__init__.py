@@ -19,6 +19,14 @@ from potpie_context_engine.domain.ports.observability import ObservabilityPort
 from potpie_context_engine.host.shell import HostShell
 
 from potpie.daemon.lifecycle import Daemon
+from potpie.runtime.composition import (
+    LocalEngineClient,
+    PotpieRuntime,
+    create_runtime,
+    get_runtime,
+    reset_runtime,
+)
+from potpie.runtime.settings import ProductSettings
 
 
 def build_potpie_host_shell(
@@ -52,4 +60,13 @@ def cli_template_resources() -> TemplateResourceProvider:
     return PackageTemplateResources("potpie.cli")
 
 
-__all__ = ["build_potpie_host_shell", "cli_template_resources"]
+__all__ = [
+    "LocalEngineClient",
+    "PotpieRuntime",
+    "ProductSettings",
+    "build_potpie_host_shell",
+    "cli_template_resources",
+    "create_runtime",
+    "get_runtime",
+    "reset_runtime",
+]

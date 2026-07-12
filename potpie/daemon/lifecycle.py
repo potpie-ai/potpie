@@ -79,6 +79,9 @@ class Daemon:
         }
         if base_url:
             status["url"] = base_url
+        discovered_backend = discovery.get("backend")
+        if isinstance(discovered_backend, str):
+            status["backend"] = discovered_backend
         if up:
             health = self.health()
             if "backend" in health:
@@ -94,7 +97,7 @@ class Daemon:
             try:
                 import httpx
 
-                response = httpx.get(f"{base_url.rstrip('/')}/health", timeout=3.0)
+                response = httpx.get(f"{base_url.rstrip('/')}/healthz", timeout=3.0)
                 data = response.json()
                 return {
                     "live": 200 <= response.status_code < 300,

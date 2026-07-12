@@ -63,8 +63,8 @@ def start_detached(
         _load_daemon_child_runtime_settings(),
         os.environ,
         overrides={
-            "CONTEXT_ENGINE_HOME": str(home),
-            **({"CONTEXT_ENGINE_BACKEND": backend} if backend else {}),
+            "POTPIE_HOME": str(home),
+            **({"POTPIE_GRAPH_BACKEND": backend} if backend else {}),
         },
     )
     try:

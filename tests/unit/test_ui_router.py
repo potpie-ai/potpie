@@ -132,52 +132,26 @@ def test_pots_api_includes_counts_for_selector() -> None:
     assert body["pots"][1]["counts"] == {"claims": 82, "entities": 46}
 
 
-def test_daemon_app_mounts_ui_api_and_static(monkeypatch) -> None:
+def test_daemon_app_mounts_ui_api_and_static(tmp_path) -> None:
     from potpie.daemon import main as daemon_main
+    from potpie_context_engine import EngineConfig, create_engine
 
-    class Pot:
-        pot_id = "p1"
-        name = "default"
-        active = True
-
-    class Pots:
-        def list_pots(self):
-            return [Pot()]
-
-        def active_pot(self):
-            return Pot()
-
-        def list_sources(self, *, pot_id):
-            return []
-
-    class Status:
-        counts = {"claims": 1}
-
-    class Graph:
-        def data_plane_status(self, pot_id):
-            return Status()
-
-    class Backend:
-        profile = "in_memory"
-
-    class Host:
-        pots = Pots()
-        graph = Graph()
-        backend = Backend()
-
-    monkeypatch.setattr(daemon_main, "build_potpie_host_shell", lambda: Host())
+    engine = create_engine(EngineConfig.in_memory())
+    pot = engine._shell.pots.create_pot(name="default", use=True)
 
     app = daemon_main.create_app(
         token="test-token",
         base_url="http://127.0.0.1:1",
         pid=123,
         log_file="/tmp/potpie-daemon.log",
+        engine=engine,
+        data_dir=tmp_path,
     )
     client = TestClient(app)
 
     pots = client.get("/ui/api/pots")
     assert pots.status_code == 200
-    assert pots.json()["pots"][0]["id"] == "p1"
+    assert pots.json()["pots"][0]["id"] == pot.pot_id
 
     ui = client.get("/ui")
     assert ui.status_code == 200

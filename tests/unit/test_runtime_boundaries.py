@@ -93,24 +93,17 @@ def test_root_runtime_imports_context_engine_env_bootstrap_only_from_wrapper() -
     assert bootstrap_import_offenders == []
 
 
-def test_root_daemon_rpc_does_not_own_engine_contract_tables() -> None:
+def test_root_daemon_rpc_owns_only_typed_public_engine_registry() -> None:
     root_rpc = (ROOT / "potpie" / "daemon" / "rpc.py").read_text(encoding="utf-8")
-    engine_contract = (
-        CONTEXT_ENGINE
-        / "src"
-        / "potpie_context_engine"
-        / "domain"
-        / "ports"
-        / "daemon"
-        / "rpc_contract.py"
-    ).read_text(encoding="utf-8")
 
     assert "_ALLOWED_RPC_CLASS_REFS" not in root_rpc
     assert "RPC_DTO_MODULES" not in root_rpc
     assert "RPC_SURFACES: Mapping" not in root_rpc
+    assert "__potpie_rpc_type__" not in root_rpc
     assert "potpie_context_engine.domain.actor" not in root_rpc
-    assert "RPC_DTO_MODULES" in engine_contract
-    assert "RPC_SURFACES: Mapping" in engine_contract
+    assert "ENGINE_RPC_REGISTRY" in root_rpc
+    assert 'RpcMethodSpec("engine.context.resolve"' in root_rpc
+    assert "engine.auth" not in root_rpc
 
 
 def test_root_and_context_engine_env_bootstrap_core_behavior_stays_in_sync() -> None:

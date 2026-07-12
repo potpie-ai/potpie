@@ -1,132 +1,291 @@
-"""Local daemon RPC serialization helpers.
-
-The daemon transport is deliberately thin: it moves calls to the in-daemon
-``HostShell`` without teaching the CLI about every service DTO. Dataclasses keep
-their module/class identity across the wire so command code can keep using
-normal attribute access and local helper methods such as ``to_dict()``.
-"""
+"""Protocol-v1 typed, allowlisted RPC registry for engine operations only."""
 
 from __future__ import annotations
 
-from dataclasses import fields, is_dataclass
-from datetime import datetime
-from enum import Enum
-from pathlib import Path
-from typing import Any, Mapping
+from dataclasses import dataclass
+from typing import Any
 
-from potpie_context_engine.domain.ports.daemon.rpc_contract import (
-    RPC_SURFACES,
-    RpcSurfaceSpec,
-    assert_rpc_class_allowed,
-    class_ref,
-    load_rpc_class,
+from pydantic import TypeAdapter, ValidationError
+
+from potpie_context_engine import EngineClient
+from potpie_context_engine.contracts import (
+    AgentEnvelope,
+    BackendReadiness,
+    EmptyRequest,
+    EngineStatusReport,
+    EngineStatusRequest,
+    GraphCatalogRequest,
+    GraphCatalogResult,
+    GraphCommitRequest,
+    GraphEntitySearchRequest,
+    GraphEntitySearchResult,
+    GraphHistoryRequest,
+    GraphHistoryResult,
+    GraphMutationCommitResult,
+    GraphMutationProposal,
+    GraphProposeRequest,
+    GraphQualityRequest,
+    GraphQualityResult,
+    GraphReadRequest,
+    GraphReadResult,
+    GraphStatusRequest,
+    LedgerHealth,
+    LedgerPage,
+    LedgerPullRequest,
+    LedgerQueryRequest,
+    LedgerSourcesRequest,
+    LedgerSourcesResult,
+    LedgerStatusRequest,
+    OperationResult,
+    PotArchiveRequest,
+    PotCreateRequest,
+    PotInfo,
+    PotInfoRequest,
+    PotListResult,
+    PotRenameRequest,
+    PotResetRequest,
+    PotUseRequest,
+    ProvisionApplyRequest,
+    ProvisionInspectRequest,
+    ProvisionPlan,
+    ProvisionReport,
+    RecordReceipt,
+    RecordRequest,
+    ResolveRequest,
+    SearchRequest,
+    SourceAddRequest,
+    SourceInfo,
+    SourceListRequest,
+    SourceListResult,
+    SourceRemoveRequest,
+    SourceStatusRequest,
+    TimelineRecentRequest,
+)
+from potpie_context_engine.domain.errors import CapabilityNotImplemented, PotNotFound
+
+RPC_PROTOCOL_VERSION = "1"
+
+
+@dataclass(frozen=True, slots=True)
+class RpcMethodSpec:
+    method: str
+    request_type: Any
+    result_type: Any
+
+    def __post_init__(self) -> None:
+        if not self.method.startswith("engine."):
+            raise ValueError("RPC methods must be namespaced under engine.*")
+
+    @property
+    def request_adapter(self) -> TypeAdapter[Any]:
+        return TypeAdapter(self.request_type)
+
+    @property
+    def result_adapter(self) -> TypeAdapter[Any]:
+        return TypeAdapter(self.result_type)
+
+    async def invoke(self, engine: EngineClient, params: Any) -> Any:
+        request = self.request_adapter.validate_python(params)
+        _, surface, operation = self.method.split(".", 2)
+        handler = getattr(getattr(engine, surface), operation)
+        result = await handler(request)
+        return self.result_adapter.dump_python(result, mode="json")
+
+
+class EngineRpcRegistry:
+    def __init__(self, specs: tuple[RpcMethodSpec, ...]) -> None:
+        self._specs = {spec.method: spec for spec in specs}
+        if len(self._specs) != len(specs):
+            raise ValueError("duplicate engine RPC method")
+
+    def get(self, method: str) -> RpcMethodSpec:
+        try:
+            return self._specs[method]
+        except KeyError as exc:
+            raise KeyError(f"unknown engine RPC method {method!r}") from exc
+
+    def methods(self) -> tuple[str, ...]:
+        return tuple(sorted(self._specs))
+
+    def encode_request(self, method: str, request: Any) -> Any:
+        return self.get(method).request_adapter.dump_python(request, mode="json")
+
+    def decode_result(self, method: str, result: Any) -> Any:
+        return self.get(method).result_adapter.validate_python(result)
+
+
+ENGINE_RPC_REGISTRY = EngineRpcRegistry(
+    (
+        RpcMethodSpec("engine.context.resolve", ResolveRequest, AgentEnvelope),
+        RpcMethodSpec("engine.context.search", SearchRequest, AgentEnvelope),
+        RpcMethodSpec("engine.context.record", RecordRequest, RecordReceipt),
+        RpcMethodSpec("engine.context.status", EngineStatusRequest, EngineStatusReport),
+        RpcMethodSpec("engine.pots.list", EmptyRequest, PotListResult),
+        RpcMethodSpec("engine.pots.info", PotInfoRequest, PotInfo | None),
+        RpcMethodSpec("engine.pots.create", PotCreateRequest, PotInfo),
+        RpcMethodSpec("engine.pots.use", PotUseRequest, PotInfo),
+        RpcMethodSpec("engine.pots.rename", PotRenameRequest, PotInfo),
+        RpcMethodSpec("engine.pots.reset", PotResetRequest, PotInfo),
+        RpcMethodSpec("engine.pots.archive", PotArchiveRequest, PotInfo),
+        RpcMethodSpec("engine.sources.add", SourceAddRequest, SourceInfo),
+        RpcMethodSpec("engine.sources.list", SourceListRequest, SourceListResult),
+        RpcMethodSpec("engine.sources.status", SourceStatusRequest, SourceInfo),
+        RpcMethodSpec("engine.sources.remove", SourceRemoveRequest, OperationResult),
+        RpcMethodSpec("engine.graph.catalog", GraphCatalogRequest, GraphCatalogResult),
+        RpcMethodSpec("engine.graph.read", GraphReadRequest, GraphReadResult),
+        RpcMethodSpec(
+            "engine.graph.search_entities",
+            GraphEntitySearchRequest,
+            GraphEntitySearchResult,
+        ),
+        RpcMethodSpec("engine.graph.status", GraphStatusRequest, BackendReadiness),
+        RpcMethodSpec(
+            "engine.graph.propose", GraphProposeRequest, GraphMutationProposal
+        ),
+        RpcMethodSpec(
+            "engine.graph.commit", GraphCommitRequest, GraphMutationCommitResult
+        ),
+        RpcMethodSpec("engine.graph.history", GraphHistoryRequest, GraphHistoryResult),
+        RpcMethodSpec("engine.graph.quality", GraphQualityRequest, GraphQualityResult),
+        RpcMethodSpec("engine.ledger.status", LedgerStatusRequest, LedgerHealth),
+        RpcMethodSpec(
+            "engine.ledger.sources", LedgerSourcesRequest, LedgerSourcesResult
+        ),
+        RpcMethodSpec("engine.ledger.query", LedgerQueryRequest, LedgerPage),
+        RpcMethodSpec("engine.ledger.pull", LedgerPullRequest, LedgerPage),
+        RpcMethodSpec("engine.timeline.recent", TimelineRecentRequest, GraphReadResult),
+        RpcMethodSpec(
+            "engine.provision.inspect", ProvisionInspectRequest, ProvisionPlan
+        ),
+        RpcMethodSpec("engine.provision.apply", ProvisionApplyRequest, ProvisionReport),
+    )
 )
 
-TYPE_KEY = "__potpie_rpc_type__"
 
-
-def rpc_child_surface(surface: str, name: str) -> str | None:
-    """Return the nested RPC surface for ``surface.name`` when exposed."""
-    return _surface_spec(surface).children.get(name)
-
-
-def is_rpc_method_allowed(surface: str, method: str) -> bool:
-    """Return whether ``surface.method`` is part of the daemon RPC contract."""
-    return method in _surface_spec(surface).methods
-
-
-def is_rpc_attr_allowed(surface: str, name: str) -> bool:
-    """Return whether ``surface.name`` is an exposed remote attribute."""
-    return name in _surface_spec(surface).attrs
-
-
-def validate_rpc_method(surface: str, method: str) -> None:
-    """Fail closed when a caller asks for a method outside the RPC contract."""
-    if not is_rpc_method_allowed(surface, method):
-        raise ValueError(f"invalid RPC method: {surface}.{method}")
-
-
-def validate_rpc_attr(surface: str, name: str) -> None:
-    """Fail closed when a caller asks for an attribute outside the RPC contract."""
-    if not is_rpc_attr_allowed(surface, name):
-        raise ValueError(f"invalid RPC attribute: {surface}.{name}")
-
-
-def _surface_spec(surface: str) -> RpcSurfaceSpec:
+async def dispatch_rpc(engine: EngineClient, payload: Any) -> dict[str, Any]:
+    request_id = _request_id(payload)
+    if not isinstance(payload, dict):
+        return rpc_failure(
+            request_id,
+            code="RPC_INVALID_REQUEST",
+            message="RPC request must be a JSON object.",
+        )
+    version = payload.get("protocol_version")
+    if version != RPC_PROTOCOL_VERSION:
+        return rpc_failure(
+            request_id,
+            code="RPC_PROTOCOL_MISMATCH",
+            message="The daemon RPC protocol is incompatible with this client.",
+            details={"expected": RPC_PROTOCOL_VERSION, "actual": version},
+            retryable=True,
+        )
+    method = payload.get("method")
+    if not isinstance(method, str):
+        return rpc_failure(
+            request_id,
+            code="RPC_INVALID_REQUEST",
+            message="RPC method must be a string.",
+        )
     try:
-        return RPC_SURFACES[surface]
-    except KeyError as exc:
-        raise ValueError(f"invalid RPC surface: {surface}") from exc
+        spec = ENGINE_RPC_REGISTRY.get(method)
+    except KeyError:
+        return rpc_failure(
+            request_id,
+            code="RPC_METHOD_NOT_FOUND",
+            message=f"Unknown engine RPC method {method!r}.",
+        )
+    try:
+        result = await spec.invoke(engine, payload.get("params") or {})
+    except ValidationError as exc:
+        return rpc_failure(
+            request_id,
+            code="RPC_INVALID_PARAMS",
+            message="RPC parameters failed schema validation.",
+            details={"errors": exc.errors(include_url=False)},
+        )
+    except CapabilityNotImplemented as exc:
+        return rpc_failure(
+            request_id,
+            code="ENGINE_CAPABILITY_NOT_IMPLEMENTED",
+            message=str(exc),
+            details={"capability": exc.capability, "detail": exc.detail},
+        )
+    except PotNotFound as exc:
+        return rpc_failure(
+            request_id,
+            code="ENGINE_POT_NOT_FOUND",
+            message=str(exc),
+        )
+    except ValueError as exc:
+        return rpc_failure(
+            request_id,
+            code="ENGINE_VALIDATION_ERROR",
+            message=str(exc),
+            details={"detail": getattr(exc, "detail", None)},
+        )
+    except Exception as exc:
+        _capture_unexpected_daemon_error(exc)
+        return rpc_failure(
+            request_id,
+            code="ENGINE_INTERNAL_ERROR",
+            message="An internal engine error occurred.",
+        )
+    return {
+        "protocol_version": RPC_PROTOCOL_VERSION,
+        "request_id": request_id,
+        "ok": True,
+        "result": result,
+    }
 
 
-def encode(value: Any) -> Any:
-    """Encode common domain values into JSON-compatible data."""
-    if is_dataclass(value) and not isinstance(value, type):
-        cls = value.__class__
-        assert_rpc_class_allowed(cls)
-        return {
-            TYPE_KEY: "dataclass",
-            "class": class_ref(cls),
-            "value": {
-                field.name: encode(getattr(value, field.name))
-                for field in fields(value)
-            },
-        }
-    if isinstance(value, datetime):
-        return {TYPE_KEY: "datetime", "value": value.isoformat()}
-    if isinstance(value, Enum):
-        enum_cls = value.__class__
-        assert_rpc_class_allowed(enum_cls)
-        return {
-            TYPE_KEY: "enum",
-            "class": class_ref(enum_cls),
-            "value": value.value,
-        }
-    if isinstance(value, Path):
-        return {TYPE_KEY: "path", "value": str(value)}
-    if isinstance(value, tuple):
-        return {TYPE_KEY: "tuple", "items": [encode(item) for item in value]}
-    if isinstance(value, (list, set, frozenset)):
-        return [encode(item) for item in value]
-    if isinstance(value, Mapping):
-        return {str(key): encode(item) for key, item in value.items()}
-    return value
+def rpc_failure(
+    request_id: str | None,
+    *,
+    code: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+    retryable: bool = False,
+) -> dict[str, Any]:
+    return {
+        "protocol_version": RPC_PROTOCOL_VERSION,
+        "request_id": request_id,
+        "ok": False,
+        "error": {
+            "code": code,
+            "message": message,
+            "details": details or {},
+            "retryable": retryable,
+        },
+    }
 
 
-def decode(value: Any) -> Any:
-    """Decode values produced by :func:`encode`."""
-    if isinstance(value, list):
-        return [decode(item) for item in value]
-    if not isinstance(value, dict):
-        return value
+def _request_id(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("request_id")
+    return value if isinstance(value, str) and value else None
 
-    marker = value.get(TYPE_KEY)
-    if marker == "dataclass":
-        cls = load_rpc_class(value["class"])
-        raw = value.get("value") or {}
-        return cls(**{key: decode(item) for key, item in raw.items()})
-    if marker == "datetime":
-        return datetime.fromisoformat(value["value"])
-    if marker == "enum":
-        cls = load_rpc_class(value["class"])
-        return cls(value["value"])
-    if marker == "path":
-        return Path(value["value"])
-    if marker == "tuple":
-        return tuple(decode(item) for item in value.get("items") or [])
 
-    return {key: decode(item) for key, item in value.items()}
+def _capture_unexpected_daemon_error(exc: Exception) -> None:
+    try:
+        from potpie.daemon.telemetry.sentry_runtime import (
+            capture_unexpected_daemon_error,
+        )
+
+        capture_unexpected_daemon_error(
+            exc,
+            error_code="ENGINE_INTERNAL_ERROR",
+            error_kind="unexpected",
+        )
+    except Exception:
+        return
 
 
 __all__ = [
-    "RPC_SURFACES",
-    "TYPE_KEY",
-    "RpcSurfaceSpec",
-    "decode",
-    "encode",
-    "is_rpc_attr_allowed",
-    "is_rpc_method_allowed",
-    "rpc_child_surface",
-    "validate_rpc_attr",
-    "validate_rpc_method",
+    "ENGINE_RPC_REGISTRY",
+    "RPC_PROTOCOL_VERSION",
+    "EngineRpcRegistry",
+    "RpcMethodSpec",
+    "dispatch_rpc",
+    "rpc_failure",
 ]

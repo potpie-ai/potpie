@@ -138,13 +138,26 @@ class ProvisionClient(Protocol):
 
 
 class EngineClient(Protocol):
-    context: ContextClient
-    pots: PotsClient
-    sources: SourcesClient
-    graph: GraphClient
-    ledger: LedgerClient
-    timeline: TimelineClient
-    provision: ProvisionClient
+    @property
+    def context(self) -> ContextClient: ...
+
+    @property
+    def pots(self) -> PotsClient: ...
+
+    @property
+    def sources(self) -> SourcesClient: ...
+
+    @property
+    def graph(self) -> GraphClient: ...
+
+    @property
+    def ledger(self) -> LedgerClient: ...
+
+    @property
+    def timeline(self) -> TimelineClient: ...
+
+    @property
+    def provision(self) -> ProvisionClient: ...
 
     async def aclose(self) -> None: ...
 

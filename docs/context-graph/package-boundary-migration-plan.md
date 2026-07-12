@@ -1,6 +1,6 @@
 # Potpie / Context Engine Package-Boundary Migration
 
-> Status: Commits 1-4 complete; Commit 5 not started. This document implements the
+> Status: Commits 1-5 complete; Commit 6 not started. This document implements the
 > sequencing contract for [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) and
 > [ADR-0002](../../spec/decisions/ADR-0002-potpie-context-engine-boundary.md).
 > The target architecture is proposed; current-state docs remain authoritative
@@ -59,8 +59,8 @@ verifying the baseline remains intact.
 | 1 | `docs(spec): define the potpie package boundary` | All IDs as proposed contract | Complete | `322bccacf4c9b91bf7d8b3cd10ae043c443302e6` | 11 spec files, 18 behavior IDs, metadata/backlink/link validation, diff checks |
 | 2 | `test(boundary): characterize engine and product behavior` | `PKG-VERIFY-001` | Complete | `d691ea06fc7e642125c2e106c9807f55331f1d7d` | 10 characterization tests; root/engine suites and premerge journey pass separately |
 | 3 | `refactor(engine): namespace the context engine package` | `PKG-OWN-002`, `PKG-API-001`, `PKG-DIST-001` | Complete | `5f22bd0` | 1,151 engine tests, 999 root unit tests, isolated wheel/import and namespace scans pass |
-| 4 | `refactor(engine): add the standalone ContextEngine API` | `PKG-API-001`, `PKG-CONFIG-001`, `PKG-SETUP-001`, `PKG-STATUS-001` | Complete | This commit | Public API, explicit paths, no-home-write, HTTP factory, full-suite, and isolated-wheel tests pass |
-| 5 | `refactor(runtime): introduce PotpieRuntime and typed daemon RPC` | `PKG-RUNTIME-001`, `PKG-MODE-001`, `PKG-RPC-001` | Not started | — | DTO registry, mode, protocol, parity tests |
+| 4 | `refactor(engine): add the standalone ContextEngine API` | `PKG-API-001`, `PKG-CONFIG-001`, `PKG-SETUP-001`, `PKG-STATUS-001` | Complete | `e00b4cb` | Public API, explicit paths, no-home-write, HTTP factory, full-suite, and isolated-wheel tests pass |
+| 5 | `refactor(runtime): introduce PotpieRuntime and typed daemon RPC` | `PKG-RUNTIME-001`, `PKG-MODE-001`, `PKG-RPC-001` | Complete | This commit | 30-method schema registry, mode precedence, no fallback, local/daemon parity, and detached-daemon tests pass |
 | 6 | `refactor(cli): route engine workflows through runtime.engine` | `PKG-RUNTIME-001` | Not started | — | Context/graph/pot/source/ledger/timeline parity |
 | 7 | `refactor(product): extract auth integrations and configuration` | `PKG-AUTH-001`, `PKG-CONFIG-001`, `PKG-OWN-001` | Not started | — | Auth, credential, provider, config tests |
 | 8 | `refactor(product): extract skills and installation` | `PKG-SKILL-001`, `PKG-OWN-001` | Not started | — | Installed-wheel skill and manifest tests |
@@ -220,6 +220,30 @@ Changes:
 
 Gate: every engine RPC has request/result schema coverage; local and daemon
 results match after transport metadata is removed.
+
+Evidence recorded on 2026-07-12:
+
+- `ProductSettings`, `PotpieRuntime`, `LocalEngineClient`,
+  `DaemonEngineClient`, `create_runtime`, and `get_runtime` are root-owned.
+- Runtime precedence tests cover explicit override, `POTPIE_RUNTIME_MODE`,
+  persisted configuration, and daemon default; invalid values fail closed.
+- Daemon unavailability raises `RUNTIME_DAEMON_UNAVAILABLE` with
+  `potpie daemon start` and never constructs a local engine.
+- The protocol-v1 registry declares 30 `engine.*` methods. Every entry has a
+  request adapter, result adapter, and allowlisted handler; product methods and
+  dynamic attributes are absent.
+- Protocol mismatch, unknown method, malformed parameters, authorization, and
+  removed `/attr` behavior fail deterministically before dispatch.
+- Representative context, pot, source, graph, ledger, timeline, and provision
+  results are equal between direct local calls and typed RPC encode/dispatch/
+  decode.
+- A real detached daemon starts with one `ContextEngine`; typed client calls and
+  backend-preserving restart pass.
+- Root unit tests: 994 passed. Root non-journey suite: 1,049 passed, 4 skipped,
+  and 1 separately gated journey deselected after the isolated-wheel package
+  marker fix.
+- Focused mypy, Ruff, pre-commit, isolated-wheel, and `git diff --check` gates
+  pass.
 
 ## Commit 6 — Engine Workflow Routing
 

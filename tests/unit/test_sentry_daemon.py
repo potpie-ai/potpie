@@ -4,13 +4,13 @@ import json
 
 import pytest
 from fastapi import HTTPException
+from typer.testing import CliRunner
+
 from potpie.cli import host_cli
 from potpie.cli.commands import _common
 from potpie.cli.telemetry.context import current_telemetry_context
 from potpie.daemon import main as daemon_main
-from potpie.daemon.rpc import validate_rpc_attr
-from typer.testing import CliRunner
-
+from potpie.daemon.rpc import dispatch_rpc
 from potpie_context_engine.domain.errors import CapabilityNotImplemented
 
 
@@ -45,9 +45,8 @@ def test_daemon_unexpected_failure_is_captured_with_session_id(
         ),
     )
     _common.set_host(_FakeHost())
-    runner = CliRunner()
 
-    result = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
+    result = CliRunner().invoke(host_cli.app, ["--json", "daemon", "status"])
 
     payload = json.loads(result.stdout)
     assert result.exit_code == _common.EXIT_VALIDATION
@@ -72,9 +71,8 @@ def test_daemon_expected_not_implemented_is_not_captured(
         lambda exc, *, error_code, error_kind: captured.append(exc),
     )
     _common.set_host(_FakeHost())
-    runner = CliRunner()
 
-    result = runner.invoke(host_cli.app, ["--json", "daemon", "stop"])
+    result = CliRunner().invoke(host_cli.app, ["--json", "daemon", "stop"])
 
     payload = json.loads(result.stdout)
     assert result.exit_code == _common.EXIT_UNAVAILABLE
@@ -82,7 +80,8 @@ def test_daemon_expected_not_implemented_is_not_captured(
     assert captured == []
 
 
-def test_daemon_rpc_unexpected_failure_is_captured(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_daemon_rpc_unexpected_failure_is_captured(monkeypatch) -> None:
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
         "potpie.daemon.telemetry.sentry_runtime.capture_unexpected_daemon_error",
@@ -91,71 +90,54 @@ def test_daemon_rpc_unexpected_failure_is_captured(monkeypatch) -> None:
         ),
     )
 
-    payload = daemon_main._error_payload(RuntimeError("daemon exploded"))
+    class Context:
+        async def status(self, _request):
+            raise RuntimeError("daemon exploded")
 
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "daemon_error"
-    assert captured == [("daemon_error", "unexpected")]
+    class Engine:
+        context = Context()
+
+    payload = await dispatch_rpc(
+        Engine(),
+        {
+            "protocol_version": "1",
+            "request_id": "boom",
+            "method": "engine.context.status",
+            "params": {},
+        },
+    )
+
+    assert payload["error"]["code"] == "ENGINE_INTERNAL_ERROR"
+    assert captured == [("ENGINE_INTERNAL_ERROR", "unexpected")]
 
 
-def test_daemon_rpc_expected_error_is_not_captured(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_daemon_rpc_expected_error_is_not_captured(monkeypatch) -> None:
     captured: list[BaseException] = []
     monkeypatch.setattr(
         "potpie.daemon.telemetry.sentry_runtime.capture_unexpected_daemon_error",
         lambda exc, *, error_code, error_kind: captured.append(exc),
     )
 
-    payload = daemon_main._error_payload(
-        CapabilityNotImplemented("graph.neo4j.snapshot.export")
+    class Context:
+        async def status(self, _request):
+            raise CapabilityNotImplemented("graph.snapshot.export")
+
+    class Engine:
+        context = Context()
+
+    payload = await dispatch_rpc(
+        Engine(),
+        {
+            "protocol_version": "1",
+            "request_id": "expected",
+            "method": "engine.context.status",
+            "params": {},
+        },
     )
 
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "not_implemented"
+    assert payload["error"]["code"] == "ENGINE_CAPABILITY_NOT_IMPLEMENTED"
     assert captured == []
-
-
-def test_daemon_rpc_validation_error_guidance_round_trips() -> None:
-    # UnknownGraphViewError's did_you_mean must survive the daemon RPC
-    # boundary so remote reads error exactly like in-process ones.
-    from potpie_context_engine.domain.graph_views import (
-        UnknownGraphViewError,
-        include_guess_guidance,
-    )
-    from potpie.daemon import client as daemon_client
-
-    guidance = include_guess_guidance("docs", "relevant")
-    payload = daemon_main._error_payload(
-        UnknownGraphViewError(
-            "unknown graph view 'docs.relevant'",
-            did_you_mean=guidance,
-            recommended_next_action=guidance["read_command"],
-        )
-    )
-
-    assert payload["error"]["code"] == "validation_error"
-    assert payload["error"]["detail"] == {"did_you_mean": guidance}
-    assert payload["error"]["recommended_next_action"] == guidance["read_command"]
-
-    with pytest.raises(ValueError) as exc_info:
-        daemon_client._raise_remote_error(payload)
-    assert getattr(exc_info.value, "detail") == {"did_you_mean": guidance}
-    assert (
-        getattr(exc_info.value, "recommended_next_action") == (guidance["read_command"])
-    )
-
-
-def test_daemon_rpc_plain_validation_error_has_no_guidance() -> None:
-    from potpie.daemon import client as daemon_client
-
-    payload = daemon_main._error_payload(ValueError("--subgraph is required"))
-
-    assert payload["error"]["code"] == "validation_error"
-    assert payload["error"]["detail"] is None
-    assert payload["error"]["recommended_next_action"] is None
-
-    with pytest.raises(ValueError) as exc_info:
-        daemon_client._raise_remote_error(payload)
-    assert not hasattr(exc_info.value, "detail")
 
 
 def test_daemon_rpc_authorize_uses_compare_digest(monkeypatch) -> None:
@@ -173,11 +155,3 @@ def test_daemon_rpc_authorize_uses_compare_digest(monkeypatch) -> None:
     with pytest.raises(HTTPException) as exc_info:
         daemon_main._authorize(None, "token")
     assert exc_info.value.status_code == 401
-
-
-def test_daemon_rpc_rejects_private_targets() -> None:
-    with pytest.raises(ValueError, match="invalid RPC attribute"):
-        validate_rpc_attr("backend", "_profile")
-
-    with pytest.raises(ValueError, match="invalid RPC surface"):
-        validate_rpc_attr("backend.__class__", "profile")

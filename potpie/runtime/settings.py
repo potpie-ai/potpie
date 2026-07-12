@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 from typing import Final
 
@@ -13,6 +15,7 @@ from potpie.runtime.env import (
     env_value,
     flag_value,
 )
+from potpie.runtime.paths import product_data_dir
 
 _CODE_DEFAULT_ENVIRONMENT: Final[str] = "dev"
 _CODE_DEFAULT_API_URL: Final[str] = "http://localhost:8001"
@@ -52,6 +55,38 @@ class RuntimeSettings:
     github_client_id: str | None
     context_engine_github_token: str | None
     github_webhook_secret: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProductSettings:
+    """Root-owned runtime selection and product filesystem configuration."""
+
+    data_dir: Path
+    runtime_mode: str
+    backend: str
+
+    @classmethod
+    def load(
+        cls,
+        *,
+        runtime_override: str | None = None,
+        environ: Mapping[str, str] | None = None,
+    ) -> ProductSettings:
+        values = os.environ if environ is None else environ
+        data_dir = product_data_dir(dict(values))
+        persisted = _load_product_config(data_dir / "config.json")
+        mode = _normalize_runtime_mode(
+            runtime_override
+            or _env(values, "POTPIE_RUNTIME_MODE")
+            or _clean(persisted.get("runtime_mode"))
+            or "daemon"
+        )
+        backend = (
+            _env(values, "POTPIE_GRAPH_BACKEND")
+            or _clean(persisted.get("backend"))
+            or "embedded"
+        )
+        return cls(data_dir=data_dir, runtime_mode=mode, backend=backend)
 
 
 def load_runtime_settings(
@@ -251,7 +286,25 @@ def _set_if_present(target: dict[str, str], name: str, value: str | None) -> Non
         target[name] = value
 
 
+def _load_product_config(path: Path) -> dict[str, object]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _normalize_runtime_mode(value: str) -> str:
+    mode = value.strip().lower()
+    if mode not in {"daemon", "in-process"}:
+        raise ValueError(
+            f"invalid Potpie runtime mode {value!r}; expected 'daemon' or 'in-process'"
+        )
+    return mode
+
+
 __all__ = [
+    "ProductSettings",
     "RuntimeSettings",
     "build_git_sha",
     "ensure_runtime_environment_loaded",

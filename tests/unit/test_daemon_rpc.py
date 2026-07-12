@@ -1,143 +1,208 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
-from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from potpie_context_engine.domain.lifecycle import SetupPlan
-from potpie_context_engine.host.shell import HostShell
-from potpie.daemon import main as daemon_main
-from potpie.daemon.client import RemoteSurface
+from potpie_context_engine import EngineConfig, create_engine
+from potpie_context_engine.contracts import (
+    EmptyRequest,
+    EngineStatusRequest,
+    GraphCatalogRequest,
+    GraphReadRequest,
+    LedgerStatusRequest,
+    PotCreateRequest,
+    ProvisionInspectRequest,
+    ResolveRequest,
+    SourceAddRequest,
+    SourceListRequest,
+    TimelineRecentRequest,
+)
+
+from potpie.daemon.main import create_app
 from potpie.daemon.rpc import (
-    RPC_SURFACES,
-    TYPE_KEY,
-    decode,
-    encode,
-    validate_rpc_attr,
-    validate_rpc_method,
+    ENGINE_RPC_REGISTRY,
+    RPC_PROTOCOL_VERSION,
+    dispatch_rpc,
 )
 
 
-def test_daemon_rpc_roundtrips_domain_dataclasses() -> None:
-    plan = SetupPlan(
-        backend="embedded",
-        repo="potpie",
-        pot="default",
-        agent="claude",
-        assume_yes=True,
+def _payload(method: str, params: dict, request_id: str = "request-1") -> dict:
+    return {
+        "protocol_version": RPC_PROTOCOL_VERSION,
+        "request_id": request_id,
+        "method": method,
+        "params": params,
+    }
+
+
+def test_registry_is_explicit_engine_only_and_fully_typed() -> None:
+    methods = ENGINE_RPC_REGISTRY.methods()
+
+    assert len(methods) == 30
+    assert all(method.startswith("engine.") for method in methods)
+    assert "engine.context.resolve" in methods
+    assert "engine.provision.apply" in methods
+    for method in methods:
+        spec = ENGINE_RPC_REGISTRY.get(method)
+        assert spec.request_type is not None
+        assert spec.result_type is not None
+        assert spec.request_adapter is not None
+        assert spec.result_adapter is not None
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rejects_protocol_unknown_method_and_malformed_params(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine(EngineConfig.in_memory())
+
+    mismatch = await dispatch_rpc(
+        engine,
+        {
+            "protocol_version": "0",
+            "request_id": "mismatch",
+            "method": "engine.context.status",
+            "params": {},
+        },
+    )
+    unknown = await dispatch_rpc(engine, _payload("engine.auth.login", {}))
+    malformed = await dispatch_rpc(
+        engine, _payload("engine.context.resolve", {"pot_id": 3})
+    )
+    await engine.aclose()
+
+    assert mismatch["error"]["code"] == "RPC_PROTOCOL_MISMATCH"
+    assert unknown["error"]["code"] == "RPC_METHOD_NOT_FOUND"
+    assert malformed["error"]["code"] == "RPC_INVALID_PARAMS"
+
+
+@pytest.mark.asyncio
+async def test_local_and_registry_dispatch_have_capability_parity() -> None:
+    engine = create_engine(EngineConfig.in_memory())
+    create_request = PotCreateRequest(name="parity", use=True)
+    local_pot = await engine.pots.create(create_request)
+    source_request = SourceAddRequest(
+        pot_id=local_pot.pot_id,
+        kind="repo",
+        location="acme/widgets",
+    )
+    source_response = await dispatch_rpc(
+        engine,
+        _payload(
+            "engine.sources.add",
+            ENGINE_RPC_REGISTRY.encode_request("engine.sources.add", source_request),
+            "source-add",
+        ),
+    )
+    assert source_response["ok"] is True
+
+    cases = (
+        ("engine.pots.list", EmptyRequest(), await engine.pots.list(EmptyRequest())),
+        (
+            "engine.context.status",
+            EngineStatusRequest(pot_id=local_pot.pot_id),
+            await engine.context.status(EngineStatusRequest(pot_id=local_pot.pot_id)),
+        ),
+        (
+            "engine.context.resolve",
+            ResolveRequest(pot_id=local_pot.pot_id, task="parity"),
+            await engine.context.resolve(
+                ResolveRequest(pot_id=local_pot.pot_id, task="parity")
+            ),
+        ),
+        (
+            "engine.graph.catalog",
+            GraphCatalogRequest(pot_id=local_pot.pot_id),
+            await engine.graph.catalog(GraphCatalogRequest(pot_id=local_pot.pot_id)),
+        ),
+        (
+            "engine.graph.read",
+            GraphReadRequest(
+                pot_id=local_pot.pot_id,
+                subgraph="recent_changes",
+                view="timeline",
+            ),
+            await engine.graph.read(
+                GraphReadRequest(
+                    pot_id=local_pot.pot_id,
+                    subgraph="recent_changes",
+                    view="timeline",
+                )
+            ),
+        ),
+        (
+            "engine.ledger.status",
+            LedgerStatusRequest(),
+            await engine.ledger.status(LedgerStatusRequest()),
+        ),
+        (
+            "engine.timeline.recent",
+            TimelineRecentRequest(pot_id=local_pot.pot_id),
+            await engine.timeline.recent(
+                TimelineRecentRequest(pot_id=local_pot.pot_id)
+            ),
+        ),
+        (
+            "engine.provision.inspect",
+            ProvisionInspectRequest(pot_id=local_pot.pot_id),
+            await engine.provision.inspect(
+                ProvisionInspectRequest(pot_id=local_pot.pot_id)
+            ),
+        ),
+    )
+    source_list = SourceListRequest(pot_id=local_pot.pot_id)
+    cases += (
+        (
+            "engine.sources.list",
+            source_list,
+            await engine.sources.list(source_list),
+        ),
     )
 
-    assert decode(encode(plan)) == plan
-
-
-def test_daemon_rpc_rejects_non_domain_class_references() -> None:
-    with pytest.raises(TypeError, match="RPC class not allowed"):
-        decode(
-            {
-                TYPE_KEY: "dataclass",
-                "class": "os:stat_result",
-                "value": {},
-            }
+    for index, (method, request, local_result) in enumerate(cases):
+        response = await dispatch_rpc(
+            engine,
+            _payload(
+                method,
+                ENGINE_RPC_REGISTRY.encode_request(method, request),
+                f"parity-{index}",
+            ),
         )
+        assert response["ok"] is True, response
+        remote_result = ENGINE_RPC_REGISTRY.decode_result(method, response["result"])
+        assert remote_result == local_result
+
+    await engine.aclose()
 
 
-def test_daemon_rpc_rejects_unregistered_dataclasses() -> None:
-    @dataclass(frozen=True)
-    class PrivatePayload:
-        value: str
-
-    with pytest.raises(TypeError, match="RPC class not allowed"):
-        encode(PrivatePayload(value="secret"))
-
-
-def test_daemon_rpc_rejects_unregistered_domain_references() -> None:
-    with pytest.raises(TypeError, match="RPC class not allowed"):
-        decode(
-            {
-                TYPE_KEY: "dataclass",
-                "class": "potpie_context_engine.domain.errors:CapabilityNotImplemented",
-                "value": {},
-            }
-        )
-
-
-def test_daemon_rpc_contract_allows_known_methods_and_attrs() -> None:
-    validate_rpc_method("graph", "read")
-    validate_rpc_method("backend.mutation", "readiness")
-    validate_rpc_attr("backend", "profile")
-
-
-def test_daemon_rpc_top_level_contract_tracks_host_shell_surfaces() -> None:
-    expected = {field.name for field in fields(HostShell)} - {"daemon", "profile"}
-    actual = {surface for surface in RPC_SURFACES if "." not in surface}
-
-    assert actual == expected
-
-
-def test_daemon_rpc_contract_rejects_unknown_members() -> None:
-    with pytest.raises(ValueError, match="invalid RPC method: graph.delete_all"):
-        validate_rpc_method("graph", "delete_all")
-    with pytest.raises(ValueError, match="invalid RPC attribute: graph.profile"):
-        validate_rpc_attr("graph", "profile")
-    with pytest.raises(ValueError, match="invalid RPC surface: graph.private"):
-        validate_rpc_method("graph.private", "read")
-
-
-def test_remote_surface_only_exposes_registered_members() -> None:
-    class _Client:
-        def __init__(self) -> None:
-            self.calls: list[tuple[str, str, tuple, dict]] = []
-
-        def call(self, surface: str, method: str, *args, **kwargs):
-            self.calls.append((surface, method, args, kwargs))
-            return "called"
-
-        def attr(self, surface: str, name: str):
-            return f"{surface}.{name}"
-
-    client = _Client()
-    backend = RemoteSurface(client, "backend")
-
-    assert backend.profile == "backend.profile"
-    assert backend.mutation.readiness("pot-1") == "called"
-    assert client.calls == [
-        ("backend.mutation", "readiness", ("pot-1",), {}),
-    ]
-    with pytest.raises(AttributeError, match="has no RPC member"):
-        backend.delete_all()
-
-
-def test_daemon_http_rpc_rejects_unregistered_method(monkeypatch, tmp_path) -> None:
-    host = SimpleNamespace(
-        backend=SimpleNamespace(profile="test"),
-        graph=SimpleNamespace(delete_all=lambda: "should not run"),
-    )
-    monkeypatch.setattr(daemon_main, "build_potpie_host_shell", lambda: host)
-    monkeypatch.setattr(daemon_main, "default_home", lambda: tmp_path)
-
-    app = daemon_main.create_app(
+def test_daemon_http_exposes_healthz_and_typed_rpc_only(tmp_path: Path) -> None:
+    engine = create_engine(EngineConfig.in_memory())
+    app = create_app(
         token="secret",
         base_url="http://127.0.0.1:1",
         pid=123,
         log_file=str(tmp_path / "daemon.log"),
+        engine=engine,
+        data_dir=tmp_path,
     )
 
     with TestClient(app) as client:
+        health = client.get("/healthz")
+        unauthorized = client.post("/rpc", json=_payload("engine.context.status", {}))
         response = client.post(
             "/rpc",
             headers={"Authorization": "Bearer secret"},
-            json={"surface": "graph", "method": "delete_all"},
+            json=_payload("engine.context.status", {}),
+        )
+        removed_attr = client.post(
+            "/attr",
+            headers={"Authorization": "Bearer secret"},
+            json={"surface": "backend", "name": "profile"},
         )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "ok": False,
-        "error": {
-            "code": "validation_error",
-            "message": "invalid RPC method: graph.delete_all",
-            "detail": None,
-            "recommended_next_action": None,
-        },
-    }
+    assert health.json()["protocol_version"] == "1"
+    assert unauthorized.status_code == 401
+    assert response.json()["ok"] is True
+    assert removed_attr.status_code == 404

@@ -74,7 +74,7 @@ def _captured_child_env(
         ) -> None:
             del stdout, stderr, start_new_session, close_fds
             captured["env"] = env
-            home = pathlib.Path(env["CONTEXT_ENGINE_HOME"])
+            home = pathlib.Path(env["POTPIE_HOME"])
             (home / "discovery.json").write_text(
                 json.dumps(
                     {

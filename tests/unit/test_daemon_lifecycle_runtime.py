@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
-from potpie.cli import host_cli as cli_main
+from potpie_context_engine.contracts import (
+    EngineStatusRequest,
+    PotCreateRequest,
+)
 from potpie_context_engine.domain.lifecycle import DONE, SKIPPED, SetupPlan
+from potpie.daemon.client import DaemonEngineClient, DaemonRpcTransport
 from potpie.daemon.lifecycle import Daemon
-from potpie.daemon.client import DaemonRpcClient, RemoteHostShell
 
 
 def test_daemon_ensure_starts_and_reuses(tmp_path: Path, monkeypatch) -> None:
@@ -64,67 +65,20 @@ def test_daemon_restart_refuses_when_running_backend_unknown(
     assert calls == []
 
 
-def test_remote_host_runs_setup_inside_daemon(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+@pytest.mark.asyncio
+async def test_typed_engine_client_runs_inside_daemon(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("POTPIE_HOME", str(tmp_path))
     daemon = Daemon(home=tmp_path, in_process=False, startup_timeout_s=15)
     try:
         daemon.ensure(SetupPlan(backend="embedded"))
-        host = RemoteHostShell(rpc=DaemonRpcClient(daemon=daemon))
+        engine = DaemonEngineClient(DaemonRpcTransport(data_dir=tmp_path))
+        pot = await engine.pots.create(PotCreateRequest(name="default", use=True))
+        status = await engine.context.status(EngineStatusRequest(pot_id=pot.pot_id))
 
-        report = host.setup.run(
-            SetupPlan(
-                host_mode="daemon",
-                backend="embedded",
-                repo="potpie",
-                pot="default",
-                agent="claude",
-                assume_yes=True,
-            )
-        )
-
-        assert report.ok
-        assert any(
-            step.step == "daemon" and step.state == SKIPPED for step in report.steps
-        )
-        active = host.pots.active_pot()
-        assert active is not None
-        assert active.name == "default"
+        assert status.pot_id == pot.pot_id
+        assert status.pot_name == "default"
+        assert status.backend == "embedded"
     finally:
         daemon.stop()
-
-
-def test_cli_setup_starts_detached_daemon(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
-    monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "daemon")
-    monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "embedded")
-    runner = CliRunner()
-
-    result = runner.invoke(
-        cli_main.app,
-        [
-            "--json",
-            "setup",
-            "--backend",
-            "embedded",
-            "--repo",
-            "potpie",
-            "--pot",
-            "default",
-            "--agent",
-            "claude",
-            "--yes",
-        ],
-    )
-    try:
-        assert result.exit_code == 0, result.output
-        payload = json.loads(result.output)
-        assert payload["ok"] is True
-        assert payload["plan"]["host_mode"] == "daemon"
-
-        status_result = runner.invoke(cli_main.app, ["--json", "daemon", "status"])
-        assert status_result.exit_code == 0, status_result.output
-        status = json.loads(status_result.output)
-        assert status["up"] is True
-        assert status["mode"] == "detached"
-    finally:
-        runner.invoke(cli_main.app, ["--json", "daemon", "stop"])
