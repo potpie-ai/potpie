@@ -1,6 +1,11 @@
 # Skills & Harness-Led Intelligence
 
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
+>
+> Target ownership: [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md)
+> moves user-installed skill resources, targets, and validation into root
+> Potpie. This file describes current ownership until Commit 8 of the
+> [migration plan](./package-boundary-migration-plan.md) lands.
 
 Potpie does not own the reasoning that turns a repo, PR, ticket, or bug into
 durable memory. That intelligence lives in the **user's coding harness** (Claude

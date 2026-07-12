@@ -1,6 +1,12 @@
 # Context Graph Vision
 
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
+>
+> Target package ownership:
+> [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) is proposed and
+> not yet implemented. Current references to `HostShell` and engine-owned MCP
+> remain historical descriptions until the
+> [migration](./package-boundary-migration-plan.md) reaches them.
 
 The Context Graph is Potpie's **durable, shared project memory for AI agents** — a
 compact, sourced store of facts about a project (decisions, ownership, topology,

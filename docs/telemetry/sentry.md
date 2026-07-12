@@ -1,5 +1,10 @@
 # Context-Engine CLI Sentry Telemetry
 
+> Target ownership: [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md)
+> keeps product Sentry/PostHog telemetry in root Potpie and generic observability
+> in the engine. This file describes current behavior until the corresponding
+> [migration commits](../context-graph/package-boundary-migration-plan.md) land.
+
 Sentry is used only for unexpected Potpie context-engine CLI failures. It is a
 small CLI-owned integration under `potpie/context-engine`, independent of
 the context-engine telemetry path and `legacy/deploy/observability`.

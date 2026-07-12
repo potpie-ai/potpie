@@ -1,5 +1,11 @@
 # Potpie CLI (`potpie`)
 
+> Target architecture: [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md)
+> replaces `HostShell` with `PotpieRuntime`, routes engine calls through
+> `runtime.engine.*`, and moves public MCP ownership into root Potpie. This file
+> remains a current-state reference until the
+> [migration](../../docs/context-graph/package-boundary-migration-plan.md) lands.
+
 The host-routed command-line entrypoint for the context graph. Every command
 routes `CLI → HostShell → service(s) → ports`; the in-process `HostShell` is the
 single composition root for the agent surface (shared with the MCP server).

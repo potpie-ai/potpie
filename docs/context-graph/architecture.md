@@ -1,6 +1,11 @@
 # Context Graph Architecture
 
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
+>
+> Target boundary: [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md)
+> is proposed and not yet implemented. This file continues to describe current
+> `HostShell` behavior until the corresponding
+> [migration commits](./package-boundary-migration-plan.md) land.
 
 This is the implementation map for the Context Graph: the layered code, the
 composition roots that wire it, the daemon that hosts it, the swappable

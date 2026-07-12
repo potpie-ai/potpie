@@ -1,6 +1,11 @@
 # Potpie CLI Flow & Command Reference
 
 > Status: reflects code on `main` @ `49e12528`, last reviewed 2026-07-02.
+>
+> Target boundary and command hierarchy:
+> [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) is proposed and
+> not yet implemented. This reference remains a current-state document until the
+> corresponding [migration commits](./package-boundary-migration-plan.md) land.
 
 This is the **command reference** for the `potpie` CLI — the full, grouped surface
 with flags, the shared plumbing every command goes through, and the canonical
