@@ -1,6 +1,6 @@
 # Potpie / Context Engine Package-Boundary Migration
 
-> Status: Commits 1-3 complete; Commit 4 not started. This document implements the
+> Status: Commits 1-4 complete; Commit 5 not started. This document implements the
 > sequencing contract for [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) and
 > [ADR-0002](../../spec/decisions/ADR-0002-potpie-context-engine-boundary.md).
 > The target architecture is proposed; current-state docs remain authoritative
@@ -58,8 +58,8 @@ verifying the baseline remains intact.
 |---:|---|---|---|---|---|
 | 1 | `docs(spec): define the potpie package boundary` | All IDs as proposed contract | Complete | `322bccacf4c9b91bf7d8b3cd10ae043c443302e6` | 11 spec files, 18 behavior IDs, metadata/backlink/link validation, diff checks |
 | 2 | `test(boundary): characterize engine and product behavior` | `PKG-VERIFY-001` | Complete | `d691ea06fc7e642125c2e106c9807f55331f1d7d` | 10 characterization tests; root/engine suites and premerge journey pass separately |
-| 3 | `refactor(engine): namespace the context engine package` | `PKG-OWN-002`, `PKG-API-001`, `PKG-DIST-001` | Complete | This commit | 1,151 engine tests, 999 root unit tests, isolated wheel/import and namespace scans pass |
-| 4 | `refactor(engine): add the standalone ContextEngine API` | `PKG-API-001`, `PKG-CONFIG-001`, `PKG-SETUP-001`, `PKG-STATUS-001` | Not started | — | Public API and no-home-write tests |
+| 3 | `refactor(engine): namespace the context engine package` | `PKG-OWN-002`, `PKG-API-001`, `PKG-DIST-001` | Complete | `5f22bd0` | 1,151 engine tests, 999 root unit tests, isolated wheel/import and namespace scans pass |
+| 4 | `refactor(engine): add the standalone ContextEngine API` | `PKG-API-001`, `PKG-CONFIG-001`, `PKG-SETUP-001`, `PKG-STATUS-001` | Complete | This commit | Public API, explicit paths, no-home-write, HTTP factory, full-suite, and isolated-wheel tests pass |
 | 5 | `refactor(runtime): introduce PotpieRuntime and typed daemon RPC` | `PKG-RUNTIME-001`, `PKG-MODE-001`, `PKG-RPC-001` | Not started | — | DTO registry, mode, protocol, parity tests |
 | 6 | `refactor(cli): route engine workflows through runtime.engine` | `PKG-RUNTIME-001` | Not started | — | Context/graph/pot/source/ledger/timeline parity |
 | 7 | `refactor(product): extract auth integrations and configuration` | `PKG-AUTH-001`, `PKG-CONFIG-001`, `PKG-OWN-001` | Not started | — | Auth, credential, provider, config tests |
@@ -188,6 +188,22 @@ Changes:
 
 Gate: a clean environment installs the engine wheel and runs in-memory
 resolve/status without root Potpie or home-directory writes.
+
+Evidence recorded on 2026-07-12:
+
+- The package exports `ContextEngine`, `EngineClient`, `EngineConfig`,
+  `EngineDependencies`, and `create_engine`; request/result DTOs are declared
+  under `potpie_context_engine.contracts`.
+- Five focused API tests cover configuration validation, in-memory no-home
+  construction, caller-owned persistent paths, typed async operations, pure
+  status/provision results, and optional HTTP application injection.
+- `uv run --project . pytest tests -m "not premerge_journey" -q`: 1,156 passed
+  and 32 skipped.
+- `uv run pytest tests/unit -q`: 999 root unit tests passed.
+- A newly built engine wheel installed into a clean virtual environment and ran
+  in-memory resolve/status without root Potpie installed or creating the
+  deliberately nonexistent `HOME` path.
+- Engine Ruff checks and `git diff --check` pass.
 
 ## Commit 5 — Product Runtime and RPC
 

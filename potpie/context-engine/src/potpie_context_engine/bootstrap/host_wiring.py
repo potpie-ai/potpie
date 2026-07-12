@@ -16,6 +16,7 @@ Profile selection:
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from potpie_context_engine.adapters.outbound.daemon_lifecycle import (
@@ -79,6 +80,7 @@ from potpie_context_engine.domain.ports.daemon.lifecycle import DaemonLifecycleP
 from potpie_context_engine.domain.ports.graph.backend import GraphBackend
 from potpie_context_engine.domain.ports.ledger.client import EventLedgerClientPort
 from potpie_context_engine.domain.ports.observability import ObservabilityPort
+from potpie_context_engine.domain.ports.services.skill_manager import SkillManager
 from potpie_context_engine.host.shell import HostShell, LedgerFacade
 
 
@@ -111,6 +113,8 @@ def build_host_shell(
     settings: Any = None,
     daemon_lifecycle: DaemonLifecyclePort | None = None,
     template_resources: TemplateResourceProvider | None = None,
+    data_dir: Path | None = None,
+    skill_manager: SkillManager | None = None,
 ) -> HostShell:
     """Compose a ``HostShell`` from the default local services + adapters.
 
@@ -123,17 +127,27 @@ def build_host_shell(
     with correlation_scope(source="host_shell"):
         template_resources = resolve_template_resources(template_resources)
         backend = backend or build_backend(default_backend_profile(), settings=settings)
-        pot_store = LocalPotStore()
+        pot_store = (
+            LocalPotStore(home=data_dir) if data_dir is not None else LocalPotStore()
+        )
 
         graph = DefaultGraphService(backend=backend)
         graph_workbench = GraphWorkbenchService(
             backend=backend,
-            plan_store=LocalJsonGraphPlanStore(),
-            inbox_store=LocalJsonGraphInboxStore(),
+            plan_store=(
+                LocalJsonGraphPlanStore(home=data_dir)
+                if data_dir is not None
+                else LocalJsonGraphPlanStore()
+            ),
+            inbox_store=(
+                LocalJsonGraphInboxStore(home=data_dir)
+                if data_dir is not None
+                else LocalJsonGraphInboxStore()
+            ),
         )
         assert_runtime_coherence(reader_backed_includes=graph.backed_includes)
         pots = LocalPotManagementService(store=pot_store, backend=backend)
-        skills = DefaultSkillManager(
+        skills = skill_manager or DefaultSkillManager(
             targets={
                 "claude": ClaudeAgentTarget(template_resources=template_resources),
                 "codex": CodexAgentTarget(template_resources=template_resources),
@@ -148,16 +162,35 @@ def build_host_shell(
 
         ledger = LedgerFacade(
             client=ledger_client or ManagedEventLedgerClient(),
-            cursors=LocalLedgerCursorStore(),
+            cursors=(
+                LocalLedgerCursorStore(home=data_dir)
+                if data_dir is not None
+                else LocalLedgerCursorStore()
+            ),
         )
 
         # The nudge brain reads through the graph service and dedups via a local
         # per-session injection ledger (both deterministic; no model on this path).
-        nudge = NudgeService(graph=graph, ledger=LocalInjectionLedger())
+        nudge = NudgeService(
+            graph=graph,
+            ledger=(
+                LocalInjectionLedger(path=data_dir / "nudge_sessions.json")
+                if data_dir is not None
+                else LocalInjectionLedger()
+            ),
+        )
 
         # Lifecycle components (each independently ownable; see the setup orchestrator).
-        daemon = daemon_lifecycle or InProcessDaemonLifecycle()
-        config = LocalConfigService()
+        daemon = daemon_lifecycle or (
+            InProcessDaemonLifecycle(home=data_dir)
+            if data_dir is not None
+            else InProcessDaemonLifecycle()
+        )
+        config = (
+            LocalConfigService(home=data_dir)
+            if data_dir is not None
+            else LocalConfigService()
+        )
         installer = LocalInstaller()
         auth = LocalAuthService()
         setup = DefaultSetupOrchestrator(

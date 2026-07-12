@@ -1,0 +1,161 @@
+"""Asynchronous client protocol shared by local and daemon implementations."""
+
+from __future__ import annotations
+
+from typing import Protocol
+
+from potpie_context_engine.contracts import (
+    AgentEnvelope,
+    BackendReadiness,
+    EmptyRequest,
+    EngineStatusReport,
+    EngineStatusRequest,
+    GraphCatalogRequest,
+    GraphCatalogResult,
+    GraphCommitRequest,
+    GraphEntitySearchRequest,
+    GraphEntitySearchResult,
+    GraphHistoryRequest,
+    GraphHistoryResult,
+    GraphMutationCommitResult,
+    GraphMutationProposal,
+    GraphProposeRequest,
+    GraphQualityRequest,
+    GraphQualityResult,
+    GraphReadRequest,
+    GraphReadResult,
+    GraphStatusRequest,
+    LedgerHealth,
+    LedgerPage,
+    LedgerPullRequest,
+    LedgerQueryRequest,
+    LedgerSourcesRequest,
+    LedgerSourcesResult,
+    LedgerStatusRequest,
+    OperationResult,
+    PotArchiveRequest,
+    PotCreateRequest,
+    PotInfo,
+    PotInfoRequest,
+    PotListResult,
+    PotRenameRequest,
+    PotResetRequest,
+    PotUseRequest,
+    ProvisionApplyRequest,
+    ProvisionInspectRequest,
+    ProvisionPlan,
+    ProvisionReport,
+    RecordReceipt,
+    RecordRequest,
+    ResolveRequest,
+    SearchRequest,
+    SourceAddRequest,
+    SourceInfo,
+    SourceListRequest,
+    SourceListResult,
+    SourceRemoveRequest,
+    SourceStatusRequest,
+    TimelineRecentRequest,
+)
+
+
+class ContextClient(Protocol):
+    async def resolve(self, request: ResolveRequest) -> AgentEnvelope: ...
+
+    async def search(self, request: SearchRequest) -> AgentEnvelope: ...
+
+    async def record(self, request: RecordRequest) -> RecordReceipt: ...
+
+    async def status(self, request: EngineStatusRequest) -> EngineStatusReport: ...
+
+
+class PotsClient(Protocol):
+    async def list(self, request: EmptyRequest) -> PotListResult: ...
+
+    async def info(self, request: PotInfoRequest) -> PotInfo | None: ...
+
+    async def create(self, request: PotCreateRequest) -> PotInfo: ...
+
+    async def use(self, request: PotUseRequest) -> PotInfo: ...
+
+    async def rename(self, request: PotRenameRequest) -> PotInfo: ...
+
+    async def reset(self, request: PotResetRequest) -> PotInfo: ...
+
+    async def archive(self, request: PotArchiveRequest) -> PotInfo: ...
+
+
+class SourcesClient(Protocol):
+    async def add(self, request: SourceAddRequest) -> SourceInfo: ...
+
+    async def list(self, request: SourceListRequest) -> SourceListResult: ...
+
+    async def status(self, request: SourceStatusRequest) -> SourceInfo: ...
+
+    async def remove(self, request: SourceRemoveRequest) -> OperationResult: ...
+
+
+class GraphClient(Protocol):
+    async def catalog(self, request: GraphCatalogRequest) -> GraphCatalogResult: ...
+
+    async def read(self, request: GraphReadRequest) -> GraphReadResult: ...
+
+    async def search_entities(
+        self, request: GraphEntitySearchRequest
+    ) -> GraphEntitySearchResult: ...
+
+    async def status(self, request: GraphStatusRequest) -> BackendReadiness: ...
+
+    async def propose(self, request: GraphProposeRequest) -> GraphMutationProposal: ...
+
+    async def commit(
+        self, request: GraphCommitRequest
+    ) -> GraphMutationCommitResult: ...
+
+    async def history(self, request: GraphHistoryRequest) -> GraphHistoryResult: ...
+
+    async def quality(self, request: GraphQualityRequest) -> GraphQualityResult: ...
+
+
+class LedgerClient(Protocol):
+    async def status(self, request: LedgerStatusRequest) -> LedgerHealth: ...
+
+    async def sources(self, request: LedgerSourcesRequest) -> LedgerSourcesResult: ...
+
+    async def query(self, request: LedgerQueryRequest) -> LedgerPage: ...
+
+    async def pull(self, request: LedgerPullRequest) -> LedgerPage: ...
+
+
+class TimelineClient(Protocol):
+    async def recent(self, request: TimelineRecentRequest) -> GraphReadResult: ...
+
+
+class ProvisionClient(Protocol):
+    async def inspect(self, request: ProvisionInspectRequest) -> ProvisionPlan: ...
+
+    async def apply(self, request: ProvisionApplyRequest) -> ProvisionReport: ...
+
+
+class EngineClient(Protocol):
+    context: ContextClient
+    pots: PotsClient
+    sources: SourcesClient
+    graph: GraphClient
+    ledger: LedgerClient
+    timeline: TimelineClient
+    provision: ProvisionClient
+
+    async def aclose(self) -> None: ...
+
+
+__all__ = [
+    "ContextClient",
+    "EngineClient",
+    "GraphClient",
+    "LedgerClient",
+    "PotsClient",
+    "ProvisionClient",
+    "SourcesClient",
+    "TimelineClient",
+]

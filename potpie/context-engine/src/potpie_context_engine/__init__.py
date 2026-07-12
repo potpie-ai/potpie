@@ -1,6 +1,14 @@
-"""Potpie context engine library namespace.
+"""Public API for embedding the Potpie Context Engine."""
 
-The explicit public API is introduced in the next migration phase. This module
-exists now so all implementation imports live under one distribution-owned
-namespace instead of generic top-level packages.
-"""
+from potpie_context_engine.client import EngineClient
+from potpie_context_engine.config import EngineConfig
+from potpie_context_engine.dependencies import EngineDependencies
+from potpie_context_engine.engine import ContextEngine, create_engine
+
+__all__ = [
+    "ContextEngine",
+    "EngineClient",
+    "EngineConfig",
+    "EngineDependencies",
+    "create_engine",
+]
