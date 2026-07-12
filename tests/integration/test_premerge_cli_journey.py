@@ -74,6 +74,9 @@ def _run_json_cli(
 
 
 def _unwrap_result(payload: dict[str, Any]) -> dict[str, Any]:
+    data = payload.get("data")
+    if isinstance(data, dict):
+        payload = data
     result = payload.get("result")
     if isinstance(result, dict):
         return result
@@ -89,6 +92,9 @@ def _isolated_env(tmp_path: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["XDG_CONFIG_HOME"] = str(xdg)
     env["HOME"] = str(home)
+    env["POTPIE_HOME"] = str(tmp_path / "potpie-runtime")
+    env["POTPIE_RUNTIME_MODE"] = "in-process"
+    env["POTPIE_GRAPH_BACKEND"] = "embedded"
     env["CONTEXT_ENGINE_HOST_MODE"] = "in_process"
     env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
     # Keep rustup/cargo on the host toolchain when HOME is redirected for Potpie
@@ -223,18 +229,33 @@ def test_premerge_journey_from_fresh_clone_creates_context_graph(
         encoding="utf-8",
     )
 
-    mutate_payload = _run_json_cli(
+    proposal_payload = _run_json_cli(
         clone_root,
         env,
         "graph",
-        "mutate",
+        "propose",
         "--file",
         str(mutation_file),
         timeout=60,
     )
-    mutate = _unwrap_result(mutate_payload)
-    assert mutate.get("status") in {"applied", "committed"}
-    diff_counts = mutate.get("diff") or {}
+    proposal = _unwrap_result(proposal_payload)
+    assert proposal.get("status") == "validated"
+    plan_id = proposal.get("plan_id")
+    assert isinstance(plan_id, str) and plan_id
+
+    commit_payload = _run_json_cli(
+        clone_root,
+        env,
+        "graph",
+        "commit",
+        plan_id,
+        "--verify",
+        timeout=60,
+    )
+    commit = _unwrap_result(commit_payload)
+    assert commit.get("status") == "committed"
+    assert (commit.get("verification") or {}).get("ok") is True
+    diff_counts = commit.get("diff") or {}
     assert int(diff_counts.get("edge_upserts", 0)) >= 1
 
     read_payload = _run_json_cli(
