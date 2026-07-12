@@ -12,7 +12,7 @@ import typer
 from potpie.cli.commands._common import (
     contract,
     emit,
-    get_host,
+    get_engine_view,
     resolve_pot_id,
 )
 from potpie.cli.telemetry.onboarding_events import (
@@ -21,7 +21,7 @@ from potpie.cli.telemetry.onboarding_events import (
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
-from potpie_context_engine.domain.ports.agent_context import (
+from potpie.runtime.contracts import (
     RecordRequest,
     ResolveRequest,
     SearchRequest,
@@ -49,7 +49,7 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """context_resolve — a bounded context wrap for a task."""
         with contract():
-            host = get_host()
+            host = get_engine_view()
             pot_id = resolve_pot_id(host, pot)
             env = host.agent_context.resolve(
                 ResolveRequest(
@@ -71,7 +71,7 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """context_search — narrow follow-up lookup."""
         with contract():
-            host = get_host()
+            host = get_engine_view()
             pot_id = resolve_pot_id(host, pot)
             env = host.agent_context.search(
                 SearchRequest(pot_id=pot_id, query=query, include=_split(include))
@@ -92,7 +92,7 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """context_record — write a durable project learning."""
         with contract():
-            host = get_host()
+            host = get_engine_view()
             pot_id = resolve_pot_id(host, pot)
             receipt = host.agent_context.record(
                 RecordRequest(

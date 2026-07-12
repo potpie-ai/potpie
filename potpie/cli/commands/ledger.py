@@ -15,6 +15,7 @@ from potpie.cli.commands._common import (
     contract,
     emit,
     fail,
+    get_engine_view,
     get_host,
     resolve_pot_id,
 )
@@ -46,7 +47,7 @@ def _parse_instant(value: str | None) -> datetime | None:
 @ledger_app.command("status")
 def ledger_status() -> None:
     with contract():
-        health = get_host().ledger.status()
+        health = get_engine_view().ledger.status()
         emit(
             {
                 "available": health.available,
@@ -61,7 +62,7 @@ def ledger_status() -> None:
 @sources_app.command("list")
 def ledger_sources_list(pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
-        host = get_host()
+        host = get_engine_view()
         pot_id = resolve_pot_id(host, pot)
         sources = host.ledger.sources(pot_id=pot_id)
         emit(
@@ -82,7 +83,7 @@ def ledger_query(
 ) -> None:
     """Inspect ledger event history (read-only; does not advance the cursor)."""
     with contract():
-        host = get_host()
+        host = get_engine_view()
         pot_id = resolve_pot_id(host, pot)
         page = host.ledger.query(
             pot_id=pot_id,
@@ -172,7 +173,7 @@ def ledger_pull(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with contract():
-        host = get_host()
+        host = get_engine_view()
         pot_id = resolve_pot_id(host, pot)
         page = host.ledger.pull(pot_id=pot_id, source_id=source)
         emit(

@@ -11,12 +11,13 @@ import json
 from typing import Any
 
 import typer
-from potpie_context_engine.application.services.graph_workbench import (
+from potpie.runtime.graph_compat import (
+    CapabilityNotImplemented,
+    KNOWN_PROFILES,
+    NUDGE_EVENT_HELP,
     graph_success_envelope,
     normalize_catalog_result,
 )
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
-from potpie_context_engine.domain.nudge import NUDGE_EVENT_HELP
 
 from potpie.cli.commands._common import (
     EXIT_VALIDATION,
@@ -24,7 +25,7 @@ from potpie.cli.commands._common import (
     emit,
     empty_pot_warnings,
     fail,
-    get_host,
+    get_engine_view as get_host,
     pot_scope_human,
     resolve_pot_id,
 )
@@ -114,7 +115,7 @@ def graph_catalog(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Discover the graph contract: versions, views, mutation ops, ontology."""
-    from potpie_context_engine.domain.ports.services.graph_service import (
+    from potpie.runtime.contracts import (
         GraphCatalogRequest,
     )
 
@@ -196,7 +197,7 @@ def graph_read(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """V2-style read over a named view (routes through the read trunk)."""
-    from potpie_context_engine.domain.ports.services.graph_service import (
+    from potpie.runtime.contracts import (
         GraphReadRequest,
     )
 
@@ -297,7 +298,7 @@ def timeline_recent(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Recent project events from the active/current pot, across all repo sources."""
-    from potpie_context_engine.domain.ports.services.graph_service import (
+    from potpie.runtime.contracts import (
         GraphReadRequest,
     )
 
@@ -371,7 +372,7 @@ def graph_search_entities(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Narrow entity/claim lookup for identity resolution before a write."""
-    from potpie_context_engine.domain.ports.services.graph_service import (
+    from potpie.runtime.contracts import (
         GraphEntitySearchRequest,
     )
 
@@ -559,7 +560,7 @@ def graph_nudge(
     Deterministic and free — reads via the local embedder, never calls a model.
     Hooks forward their event + path here and inject the result.
     """
-    from potpie_context_engine.domain.nudge import GraphNudgeRequest
+    from potpie.runtime.contracts import GraphNudgeRequest
 
     with _graph_command("graph.nudge") as ctx:
         host = get_host()
@@ -631,7 +632,7 @@ def graph_describe(
     examples: bool = typer.Option(False, "--examples"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
-    from potpie_context_engine.domain.ports.services.graph_service import (
+    from potpie.runtime.contracts import (
         GraphDescribeRequest,
     )
 
@@ -1420,10 +1421,6 @@ def graph_repair(
 @backend_app.command("list")
 def backend_list() -> None:
     with contract():
-        from potpie_context_engine.adapters.outbound.graph.backends import (
-            KNOWN_PROFILES,
-        )
-
         active = get_host().backend.profile
         emit(
             {"profiles": list(KNOWN_PROFILES), "active": active},

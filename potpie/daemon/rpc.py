@@ -10,24 +10,40 @@ from pydantic import TypeAdapter, ValidationError
 from potpie_context_engine import EngineClient
 from potpie_context_engine.contracts import (
     AgentEnvelope,
-    BackendReadiness,
+    DataPlaneStatus,
     EmptyRequest,
     EngineStatusReport,
     EngineStatusRequest,
+    GraphBackendInfo,
+    GraphBackendInfoRequest,
     GraphCatalogRequest,
     GraphCatalogResult,
     GraphCommitRequest,
+    GraphDescribeRequest,
     GraphEntitySearchRequest,
     GraphEntitySearchResult,
     GraphHistoryRequest,
     GraphHistoryResult,
+    GraphInboxAddRequest,
+    GraphInboxClaimRequest,
+    GraphInboxCloseRequest,
+    GraphInboxItemRequest,
+    GraphInboxListRequest,
+    GraphInboxResult,
     GraphMutationCommitResult,
     GraphMutationProposal,
+    GraphNeighborhoodRequest,
+    GraphNudgeRequest,
+    GraphNudgeResult,
     GraphProposeRequest,
     GraphQualityRequest,
     GraphQualityResult,
     GraphReadRequest,
     GraphReadResult,
+    GraphRepairRequest,
+    GraphSlice,
+    GraphSnapshotExportRequest,
+    GraphSnapshotImportRequest,
     GraphStatusRequest,
     LedgerHealth,
     LedgerPage,
@@ -45,12 +61,19 @@ from potpie_context_engine.contracts import (
     PotRenameRequest,
     PotResetRequest,
     PotUseRequest,
+    RepoDefaultClearRequest,
+    RepoDefaultClearResult,
+    RepoDefaultGetRequest,
+    RepoDefaultListResult,
+    RepoDefaultResult,
+    RepoDefaultSetRequest,
     ProvisionApplyRequest,
     ProvisionInspectRequest,
     ProvisionPlan,
     ProvisionReport,
     RecordReceipt,
     RecordRequest,
+    RepairReport,
     ResolveRequest,
     SearchRequest,
     SourceAddRequest,
@@ -59,6 +82,7 @@ from potpie_context_engine.contracts import (
     SourceListResult,
     SourceRemoveRequest,
     SourceStatusRequest,
+    SnapshotManifest,
     TimelineRecentRequest,
 )
 from potpie_context_engine.domain.errors import CapabilityNotImplemented, PotNotFound
@@ -127,18 +151,33 @@ ENGINE_RPC_REGISTRY = EngineRpcRegistry(
         RpcMethodSpec("engine.pots.rename", PotRenameRequest, PotInfo),
         RpcMethodSpec("engine.pots.reset", PotResetRequest, PotInfo),
         RpcMethodSpec("engine.pots.archive", PotArchiveRequest, PotInfo),
+        RpcMethodSpec(
+            "engine.pots.repo_default", RepoDefaultGetRequest, RepoDefaultResult
+        ),
+        RpcMethodSpec(
+            "engine.pots.set_repo_default", RepoDefaultSetRequest, OperationResult
+        ),
+        RpcMethodSpec(
+            "engine.pots.clear_repo_default",
+            RepoDefaultClearRequest,
+            RepoDefaultClearResult,
+        ),
+        RpcMethodSpec(
+            "engine.pots.list_repo_defaults", EmptyRequest, RepoDefaultListResult
+        ),
         RpcMethodSpec("engine.sources.add", SourceAddRequest, SourceInfo),
         RpcMethodSpec("engine.sources.list", SourceListRequest, SourceListResult),
         RpcMethodSpec("engine.sources.status", SourceStatusRequest, SourceInfo),
         RpcMethodSpec("engine.sources.remove", SourceRemoveRequest, OperationResult),
         RpcMethodSpec("engine.graph.catalog", GraphCatalogRequest, GraphCatalogResult),
+        RpcMethodSpec("engine.graph.describe", GraphDescribeRequest, dict[str, Any]),
         RpcMethodSpec("engine.graph.read", GraphReadRequest, GraphReadResult),
         RpcMethodSpec(
             "engine.graph.search_entities",
             GraphEntitySearchRequest,
             GraphEntitySearchResult,
         ),
-        RpcMethodSpec("engine.graph.status", GraphStatusRequest, BackendReadiness),
+        RpcMethodSpec("engine.graph.status", GraphStatusRequest, DataPlaneStatus),
         RpcMethodSpec(
             "engine.graph.propose", GraphProposeRequest, GraphMutationProposal
         ),
@@ -147,6 +186,37 @@ ENGINE_RPC_REGISTRY = EngineRpcRegistry(
         ),
         RpcMethodSpec("engine.graph.history", GraphHistoryRequest, GraphHistoryResult),
         RpcMethodSpec("engine.graph.quality", GraphQualityRequest, GraphQualityResult),
+        RpcMethodSpec("engine.graph.nudge", GraphNudgeRequest, GraphNudgeResult),
+        RpcMethodSpec(
+            "engine.graph.neighborhood", GraphNeighborhoodRequest, GraphSlice
+        ),
+        RpcMethodSpec("engine.graph.inbox_add", GraphInboxAddRequest, GraphInboxResult),
+        RpcMethodSpec(
+            "engine.graph.inbox_list", GraphInboxListRequest, GraphInboxResult
+        ),
+        RpcMethodSpec(
+            "engine.graph.inbox_show", GraphInboxItemRequest, GraphInboxResult
+        ),
+        RpcMethodSpec(
+            "engine.graph.inbox_claim", GraphInboxClaimRequest, GraphInboxResult
+        ),
+        RpcMethodSpec(
+            "engine.graph.inbox_close", GraphInboxCloseRequest, GraphInboxResult
+        ),
+        RpcMethodSpec(
+            "engine.graph.snapshot_export",
+            GraphSnapshotExportRequest,
+            SnapshotManifest,
+        ),
+        RpcMethodSpec(
+            "engine.graph.snapshot_import",
+            GraphSnapshotImportRequest,
+            SnapshotManifest,
+        ),
+        RpcMethodSpec("engine.graph.repair", GraphRepairRequest, RepairReport),
+        RpcMethodSpec(
+            "engine.graph.backend_info", GraphBackendInfoRequest, GraphBackendInfo
+        ),
         RpcMethodSpec("engine.ledger.status", LedgerStatusRequest, LedgerHealth),
         RpcMethodSpec(
             "engine.ledger.sources", LedgerSourcesRequest, LedgerSourcesResult

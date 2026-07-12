@@ -5,14 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
-from potpie_context_engine.domain.graph_contract import (
+from potpie.runtime.graph_compat import (
     GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION,
-)
-from potpie_context_engine.domain.graph_contract import ONTOLOGY_VERSION
-from potpie_context_engine.domain.graph_views import INCLUDE_TO_VIEW
-from potpie_context_engine.domain.graph_workbench import (
     GRAPH_WORKBENCH_COMMANDS,
+    INCLUDE_TO_VIEW,
+    ONTOLOGY_VERSION,
+    CapabilityNotImplemented,
     GraphWorkbenchStatus,
 )
 

@@ -1,6 +1,6 @@
 # Potpie / Context Engine Package-Boundary Migration
 
-> Status: Commits 1-5 complete; Commit 6 not started. This document implements the
+> Status: Commits 1-6 complete; Commit 7 not started. This document implements the
 > sequencing contract for [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) and
 > [ADR-0002](../../spec/decisions/ADR-0002-potpie-context-engine-boundary.md).
 > The target architecture is proposed; current-state docs remain authoritative
@@ -60,8 +60,8 @@ verifying the baseline remains intact.
 | 2 | `test(boundary): characterize engine and product behavior` | `PKG-VERIFY-001` | Complete | `d691ea06fc7e642125c2e106c9807f55331f1d7d` | 10 characterization tests; root/engine suites and premerge journey pass separately |
 | 3 | `refactor(engine): namespace the context engine package` | `PKG-OWN-002`, `PKG-API-001`, `PKG-DIST-001` | Complete | `5f22bd0` | 1,151 engine tests, 999 root unit tests, isolated wheel/import and namespace scans pass |
 | 4 | `refactor(engine): add the standalone ContextEngine API` | `PKG-API-001`, `PKG-CONFIG-001`, `PKG-SETUP-001`, `PKG-STATUS-001` | Complete | `e00b4cb` | Public API, explicit paths, no-home-write, HTTP factory, full-suite, and isolated-wheel tests pass |
-| 5 | `refactor(runtime): introduce PotpieRuntime and typed daemon RPC` | `PKG-RUNTIME-001`, `PKG-MODE-001`, `PKG-RPC-001` | Complete | This commit | 30-method schema registry, mode precedence, no fallback, local/daemon parity, and detached-daemon tests pass |
-| 6 | `refactor(cli): route engine workflows through runtime.engine` | `PKG-RUNTIME-001` | Not started | — | Context/graph/pot/source/ledger/timeline parity |
+| 5 | `refactor(runtime): introduce PotpieRuntime and typed daemon RPC` | `PKG-RUNTIME-001`, `PKG-MODE-001`, `PKG-RPC-001` | Complete | `2d94671` | 30-method schema registry, mode precedence, no fallback, local/daemon parity, and detached-daemon tests pass |
+| 6 | `refactor(cli): route engine workflows through runtime.engine` | `PKG-RUNTIME-001` | Complete | This commit | Context, pot/source, graph, ledger, and timeline local/daemon CLI parity passes |
 | 7 | `refactor(product): extract auth integrations and configuration` | `PKG-AUTH-001`, `PKG-CONFIG-001`, `PKG-OWN-001` | Not started | — | Auth, credential, provider, config tests |
 | 8 | `refactor(product): extract skills and installation` | `PKG-SKILL-001`, `PKG-OWN-001` | Not started | — | Installed-wheel skill and manifest tests |
 | 9 | `refactor(product): split setup doctor and status` | `PKG-SETUP-001`, `PKG-STATUS-001` | Not started | — | Setup/status scenario matrix |
@@ -258,6 +258,25 @@ Changes:
 - Retain current command placement until Commit 11.
 
 Gate: migrated commands pass in explicit daemon and in-process modes.
+
+Evidence recorded on 2026-07-12:
+
+- Context, pot/source, graph, ledger, and timeline handlers obtain the root
+  runtime engine through a synchronous Typer bridge; none of those CLI modules
+  import context-engine modules directly.
+- The typed registry now covers 46 named methods, including repo-default
+  routing, graph describe/nudge/neighborhood/inbox/snapshot/repair/backend
+  operations required by the existing workflow surface.
+- Dynamic daemon classes and attribute RPC are absent repository-wide.
+- Focused CLI contract tests: 140 passed.
+- A fresh subprocess smoke covered in-process pot create, resolve, and graph
+  catalog; the same commands plus graph status succeeded through a real daemon.
+- The automated local/daemon CLI journey compares pot list, resolve, graph
+  catalog, timeline recent, and ledger status after removing transport-only
+  metadata and passes.
+- Full gates: 1,156 engine tests passed with 32 skipped; 1,050 root tests passed
+  with 4 skipped and the separately gated premerge journey deselected.
+- Engine and root mypy/Ruff checks, `git diff --check`, and pre-commit pass.
 
 ## Commit 7 — Auth, Integrations, and Config
 

@@ -40,7 +40,7 @@ def _payload(method: str, params: dict, request_id: str = "request-1") -> dict:
 def test_registry_is_explicit_engine_only_and_fully_typed() -> None:
     methods = ENGINE_RPC_REGISTRY.methods()
 
-    assert len(methods) == 30
+    assert len(methods) == 46
     assert all(method.startswith("engine.") for method in methods)
     assert "engine.context.resolve" in methods
     assert "engine.provision.apply" in methods

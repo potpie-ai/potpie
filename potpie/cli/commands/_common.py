@@ -15,7 +15,6 @@ This module owns the cross-cutting concerns so the command bodies stay thin:
 from __future__ import annotations
 
 import json
-import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -23,12 +22,13 @@ from typing import Any, Callable, Final, Iterator, NoReturn, Sequence
 
 import click
 import typer
-from potpie_context_engine.domain.errors import (
+from potpie.runtime.contracts import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
     PotNotFound,
 )
 from potpie.cli.auth.credentials import CredentialStore
+from potpie.runtime.errors import RuntimeBoundaryError
 
 from potpie.cli.repo_location import (
     current_git_remote as shared_current_git_remote,
@@ -52,6 +52,8 @@ _state: dict[str, Any] = {
     "verbose": False,
     "host": None,
     "store": None,
+    "runtime": None,
+    "engine_view": None,
     "json_error_formatter": None,
 }
 _CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
@@ -99,23 +101,38 @@ def is_verbose() -> bool:
 
 
 def get_host():
-    """Return the process-wide ``HostShell`` (built lazily)."""
-    if _state["host"] is None:
-        mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "").strip().lower()
-        if mode != "in_process":
-            try:
-                from potpie.daemon.client import RemoteHostShell
-            except ModuleNotFoundError as exc:
-                if exc.name != "potpie.daemon.client":
-                    raise
-            else:
-                _state["host"] = RemoteHostShell()
-                return _state["host"]
+    """Return the temporary root-owned product-service shell.
 
+    Engine workflows use :func:`get_engine_view`; product services stay local
+    and never cross daemon RPC.
+    """
+    if _state["host"] is None:
         from potpie.runtime import build_potpie_host_shell
 
         _state["host"] = build_potpie_host_shell()
     return _state["host"]
+
+
+def get_cli_runtime():
+    """Return the process-wide root runtime for engine-backed commands."""
+
+    if _state["runtime"] is None:
+        from potpie.runtime import get_runtime
+
+        _state["runtime"] = get_runtime()
+    return _state["runtime"]
+
+
+def get_engine_view():
+    """Synchronous view used while Typer handlers migrate to async clients."""
+
+    if _state["host"] is not None:
+        return _state["host"]
+    if _state["engine_view"] is None:
+        from potpie.runtime.sync_view import runtime_engine_view
+
+        _state["engine_view"] = runtime_engine_view(get_cli_runtime())
+    return _state["engine_view"]
 
 
 def set_host(host: Any) -> None:
@@ -239,6 +256,16 @@ def contract() -> Iterator[None]:
             code="unavailable",
             message=str(exc),
             next_action="check backend/daemon readiness with 'potpie doctor'",
+            exit_code=EXIT_UNAVAILABLE,
+        )
+    except RuntimeBoundaryError as exc:
+        result = "runtime_error"
+        error_code = exc.code
+        fail(
+            code=exc.code,
+            message=exc.message,
+            detail=dict(exc.details),
+            next_action=exc.recommended_command,
             exit_code=EXIT_UNAVAILABLE,
         )
     except PotNotFound as exc:
@@ -916,6 +943,8 @@ __all__ = [
     "emit",
     "fail",
     "get_host",
+    "get_cli_runtime",
+    "get_engine_view",
     "get_store",
     "current_repo_identity_for_cli",
     "empty_pot_guidance",

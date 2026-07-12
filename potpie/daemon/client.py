@@ -11,18 +11,31 @@ import httpx
 
 from potpie_context_engine.contracts import (
     AgentEnvelope,
-    BackendReadiness,
+    DataPlaneStatus,
     EmptyRequest,
     EngineStatusRequest,
     EngineStatusReport,
+    GraphBackendInfo,
+    GraphBackendInfoRequest,
     GraphCatalogResult,
     GraphCatalogRequest,
     GraphCommitRequest,
+    GraphDescribeRequest,
     GraphEntitySearchRequest,
     GraphHistoryRequest,
+    GraphInboxAddRequest,
+    GraphInboxClaimRequest,
+    GraphInboxCloseRequest,
+    GraphInboxItemRequest,
+    GraphInboxListRequest,
+    GraphNeighborhoodRequest,
+    GraphNudgeRequest,
     GraphProposeRequest,
     GraphQualityRequest,
     GraphReadRequest,
+    GraphRepairRequest,
+    GraphSnapshotExportRequest,
+    GraphSnapshotImportRequest,
     GraphStatusRequest,
     LedgerPullRequest,
     LedgerQueryRequest,
@@ -34,6 +47,9 @@ from potpie_context_engine.contracts import (
     PotRenameRequest,
     PotResetRequest,
     PotUseRequest,
+    RepoDefaultClearRequest,
+    RepoDefaultGetRequest,
+    RepoDefaultSetRequest,
     ProvisionApplyRequest,
     ProvisionInspectRequest,
     RecordRequest,
@@ -48,10 +64,13 @@ from potpie_context_engine.contracts import (
 from potpie_context_engine.contracts import (
     GraphEntitySearchResult,
     GraphHistoryResult,
+    GraphInboxResult,
     GraphMutationCommitResult,
     GraphMutationProposal,
+    GraphNudgeResult,
     GraphQualityResult,
     GraphReadResult,
+    GraphSlice,
     LedgerHealth,
     LedgerPage,
     LedgerSourcesResult,
@@ -61,8 +80,13 @@ from potpie_context_engine.contracts import (
     ProvisionPlan,
     ProvisionReport,
     RecordReceipt,
+    RepairReport,
+    SnapshotManifest,
     SourceInfo,
     SourceListResult,
+    RepoDefaultClearResult,
+    RepoDefaultListResult,
+    RepoDefaultResult,
 )
 
 from potpie.daemon.lifecycle import Daemon
@@ -190,6 +214,20 @@ class _PotsClient:
     async def archive(self, request: PotArchiveRequest) -> PotInfo:
         return await self.rpc.call("engine.pots.archive", request)
 
+    async def repo_default(self, request: RepoDefaultGetRequest) -> RepoDefaultResult:
+        return await self.rpc.call("engine.pots.repo_default", request)
+
+    async def set_repo_default(self, request: RepoDefaultSetRequest) -> OperationResult:
+        return await self.rpc.call("engine.pots.set_repo_default", request)
+
+    async def clear_repo_default(
+        self, request: RepoDefaultClearRequest
+    ) -> RepoDefaultClearResult:
+        return await self.rpc.call("engine.pots.clear_repo_default", request)
+
+    async def list_repo_defaults(self, request: EmptyRequest) -> RepoDefaultListResult:
+        return await self.rpc.call("engine.pots.list_repo_defaults", request)
+
 
 @dataclass(slots=True)
 class _SourcesClient:
@@ -215,6 +253,9 @@ class _GraphClient:
     async def catalog(self, request: GraphCatalogRequest) -> GraphCatalogResult:
         return await self.rpc.call("engine.graph.catalog", request)
 
+    async def describe(self, request: GraphDescribeRequest) -> dict[str, Any]:
+        return await self.rpc.call("engine.graph.describe", request)
+
     async def read(self, request: GraphReadRequest) -> GraphReadResult:
         return await self.rpc.call("engine.graph.read", request)
 
@@ -223,7 +264,7 @@ class _GraphClient:
     ) -> GraphEntitySearchResult:
         return await self.rpc.call("engine.graph.search_entities", request)
 
-    async def status(self, request: GraphStatusRequest) -> BackendReadiness:
+    async def status(self, request: GraphStatusRequest) -> DataPlaneStatus:
         return await self.rpc.call("engine.graph.status", request)
 
     async def propose(self, request: GraphProposeRequest) -> GraphMutationProposal:
@@ -237,6 +278,43 @@ class _GraphClient:
 
     async def quality(self, request: GraphQualityRequest) -> GraphQualityResult:
         return await self.rpc.call("engine.graph.quality", request)
+
+    async def nudge(self, request: GraphNudgeRequest) -> GraphNudgeResult:
+        return await self.rpc.call("engine.graph.nudge", request)
+
+    async def neighborhood(self, request: GraphNeighborhoodRequest) -> GraphSlice:
+        return await self.rpc.call("engine.graph.neighborhood", request)
+
+    async def inbox_add(self, request: GraphInboxAddRequest) -> GraphInboxResult:
+        return await self.rpc.call("engine.graph.inbox_add", request)
+
+    async def inbox_list(self, request: GraphInboxListRequest) -> GraphInboxResult:
+        return await self.rpc.call("engine.graph.inbox_list", request)
+
+    async def inbox_show(self, request: GraphInboxItemRequest) -> GraphInboxResult:
+        return await self.rpc.call("engine.graph.inbox_show", request)
+
+    async def inbox_claim(self, request: GraphInboxClaimRequest) -> GraphInboxResult:
+        return await self.rpc.call("engine.graph.inbox_claim", request)
+
+    async def inbox_close(self, request: GraphInboxCloseRequest) -> GraphInboxResult:
+        return await self.rpc.call("engine.graph.inbox_close", request)
+
+    async def snapshot_export(
+        self, request: GraphSnapshotExportRequest
+    ) -> SnapshotManifest:
+        return await self.rpc.call("engine.graph.snapshot_export", request)
+
+    async def snapshot_import(
+        self, request: GraphSnapshotImportRequest
+    ) -> SnapshotManifest:
+        return await self.rpc.call("engine.graph.snapshot_import", request)
+
+    async def repair(self, request: GraphRepairRequest) -> RepairReport:
+        return await self.rpc.call("engine.graph.repair", request)
+
+    async def backend_info(self, request: GraphBackendInfoRequest) -> GraphBackendInfo:
+        return await self.rpc.call("engine.graph.backend_info", request)
 
 
 @dataclass(slots=True)

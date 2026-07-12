@@ -74,9 +74,14 @@ def root_test_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
-def _default_in_process_cli_host(monkeypatch: pytest.MonkeyPatch) -> None:
+def _default_in_process_cli_host(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Keep existing CLI unit tests on the direct host unless they opt into daemon mode."""
     monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "in_process")
+    monkeypatch.setenv("POTPIE_RUNTIME_MODE", "in-process")
+    monkeypatch.setenv("POTPIE_GRAPH_BACKEND", "in_memory")
+    monkeypatch.setenv("POTPIE_HOME", str(tmp_path / "potpie-runtime"))
 
 
 @pytest.fixture(autouse=True)
@@ -88,8 +93,13 @@ def _reset_cli_state():
 
         _common._state["store"] = None
         _common._state["host"] = None
+        _common._state["runtime"] = None
+        _common._state["engine_view"] = None
         _common._state["json"] = False
         _common._state["verbose"] = False
+        from potpie.runtime import reset_runtime
+
+        reset_runtime()
     except Exception:
         logging.getLogger(__name__).debug(
             "failed to reset CLI test state", exc_info=True

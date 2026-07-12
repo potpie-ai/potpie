@@ -18,24 +18,40 @@ from potpie_context_engine.bootstrap.host_wiring import build_host_shell
 from potpie_context_engine.config import EngineConfig
 from potpie_context_engine.contracts import (
     AgentEnvelope,
-    BackendReadiness,
+    DataPlaneStatus,
     EmptyRequest,
     EngineStatusReport,
     EngineStatusRequest,
     GraphCatalogRequest,
     GraphCatalogResult,
+    GraphBackendInfo,
+    GraphBackendInfoRequest,
     GraphCommitRequest,
     GraphEntitySearchRequest,
     GraphEntitySearchResult,
+    GraphDescribeRequest,
     GraphHistoryRequest,
     GraphHistoryResult,
+    GraphInboxAddRequest,
+    GraphInboxClaimRequest,
+    GraphInboxCloseRequest,
+    GraphInboxItemRequest,
+    GraphInboxListRequest,
+    GraphInboxResult,
     GraphMutationCommitResult,
     GraphMutationProposal,
+    GraphNeighborhoodRequest,
+    GraphNudgeRequest,
+    GraphNudgeResult,
     GraphProposeRequest,
     GraphQualityRequest,
     GraphQualityResult,
     GraphReadRequest,
     GraphReadResult,
+    GraphRepairRequest,
+    GraphSlice,
+    GraphSnapshotExportRequest,
+    GraphSnapshotImportRequest,
     GraphStatusRequest,
     LedgerHealth,
     LedgerPage,
@@ -53,12 +69,19 @@ from potpie_context_engine.contracts import (
     PotRenameRequest,
     PotResetRequest,
     PotUseRequest,
+    RepoDefaultClearRequest,
+    RepoDefaultClearResult,
+    RepoDefaultGetRequest,
+    RepoDefaultListResult,
+    RepoDefaultResult,
+    RepoDefaultSetRequest,
     ProvisionApplyRequest,
     ProvisionInspectRequest,
     ProvisionPlan,
     ProvisionReport,
     ProvisionStep,
     RecordReceipt,
+    RepairReport,
     RecordRequest,
     ResolveRequest,
     SearchRequest,
@@ -69,6 +92,7 @@ from potpie_context_engine.contracts import (
     SourceRemoveRequest,
     SourceStatusRequest,
     TimelineRecentRequest,
+    SnapshotManifest,
 )
 from potpie_context_engine.dependencies import EngineDependencies
 from potpie_context_engine.domain.lifecycle import SetupPlan
@@ -169,6 +193,28 @@ class _PotOperations:
     async def archive(self, request: PotArchiveRequest) -> PotInfo:
         return self.engine._shell.pots.archive_pot(ref=request.ref)
 
+    async def repo_default(self, request: RepoDefaultGetRequest) -> RepoDefaultResult:
+        return RepoDefaultResult(
+            pot_id=self.engine._shell.pots.repo_default(repo=request.repo)
+        )
+
+    async def set_repo_default(self, request: RepoDefaultSetRequest) -> OperationResult:
+        self.engine._shell.pots.set_repo_default(
+            repo=request.repo, pot_id=request.pot_id
+        )
+        return OperationResult()
+
+    async def clear_repo_default(
+        self, request: RepoDefaultClearRequest
+    ) -> RepoDefaultClearResult:
+        return RepoDefaultClearResult(
+            cleared=self.engine._shell.pots.clear_repo_default(repo=request.repo)
+        )
+
+    async def list_repo_defaults(self, request: EmptyRequest) -> RepoDefaultListResult:
+        del request
+        return RepoDefaultListResult(items=self.engine._shell.pots.list_repo_defaults())
+
 
 @dataclass(slots=True)
 class _SourceOperations:
@@ -205,6 +251,9 @@ class _GraphOperations:
     async def catalog(self, request: GraphCatalogRequest) -> GraphCatalogResult:
         return self.engine._shell.graph.catalog(request)
 
+    async def describe(self, request: GraphDescribeRequest) -> dict[str, Any]:
+        return self.engine._shell.graph.describe(request)
+
     async def read(self, request: GraphReadRequest) -> GraphReadResult:
         return self.engine._shell.graph.read(request)
 
@@ -213,8 +262,8 @@ class _GraphOperations:
     ) -> GraphEntitySearchResult:
         return self.engine._shell.graph.search_entities(request)
 
-    async def status(self, request: GraphStatusRequest) -> BackendReadiness:
-        return self.engine._shell.backend.mutation.readiness(request.pot_id)
+    async def status(self, request: GraphStatusRequest) -> DataPlaneStatus:
+        return self.engine._shell.graph.data_plane_status(request.pot_id)
 
     async def propose(self, request: GraphProposeRequest) -> GraphMutationProposal:
         return self.engine._shell.graph_workbench.propose(
@@ -252,6 +301,103 @@ class _GraphOperations:
             subgraph=filters.get("subgraph"),
             limit=int(filters.get("limit", 50)),
             confidence_threshold=float(filters.get("confidence_threshold", 0.5)),
+        )
+
+    async def nudge(self, request: GraphNudgeRequest) -> GraphNudgeResult:
+        return self.engine._shell.nudge.nudge(request)
+
+    async def neighborhood(self, request: GraphNeighborhoodRequest) -> GraphSlice:
+        return self.engine._shell.backend.inspection.neighborhood(
+            pot_id=request.pot_id,
+            entity_key=request.entity_key,
+            depth=request.depth,
+        )
+
+    async def inbox_add(self, request: GraphInboxAddRequest) -> GraphInboxResult:
+        return self.engine._shell.graph_workbench.inbox_add(
+            pot_id=request.pot_id,
+            summary=request.summary,
+            details=request.details,
+            evidence=request.evidence,
+            source_refs=request.source_refs,
+            suspected_subgraphs=request.suspected_subgraphs,
+            created_by=request.created_by,
+        )
+
+    async def inbox_list(self, request: GraphInboxListRequest) -> GraphInboxResult:
+        return self.engine._shell.graph_workbench.inbox_list(
+            pot_id=request.pot_id,
+            status=request.status,
+            claimed_by=request.claimed_by,
+            suspected_subgraph=request.suspected_subgraph,
+            source_ref=request.source_ref,
+            since=request.since,
+            until=request.until,
+            limit=request.limit,
+        )
+
+    async def inbox_show(self, request: GraphInboxItemRequest) -> GraphInboxResult:
+        return self.engine._shell.graph_workbench.inbox_show(
+            pot_id=request.pot_id, item_id=request.item_id
+        )
+
+    async def inbox_claim(self, request: GraphInboxClaimRequest) -> GraphInboxResult:
+        return self.engine._shell.graph_workbench.inbox_claim(
+            pot_id=request.pot_id,
+            item_id=request.item_id,
+            claimed_by=request.claimed_by,
+        )
+
+    async def inbox_close(self, request: GraphInboxCloseRequest) -> GraphInboxResult:
+        if request.action == "mark-applied":
+            return self.engine._shell.graph_workbench.inbox_mark_applied(
+                pot_id=request.pot_id,
+                item_id=request.item_id,
+                closed_by=request.closed_by,
+                linked_plan_id=request.linked_plan_id,
+                linked_mutation_id=request.linked_mutation_id,
+            )
+        if request.action == "mark-rejected":
+            return self.engine._shell.graph_workbench.inbox_mark_rejected(
+                pot_id=request.pot_id,
+                item_id=request.item_id,
+                closed_by=request.closed_by,
+                rejection_reason=request.rejection_reason or "",
+            )
+        return self.engine._shell.graph_workbench.inbox_close(
+            pot_id=request.pot_id,
+            item_id=request.item_id,
+            closed_by=request.closed_by,
+            linked_plan_id=request.linked_plan_id,
+            linked_mutation_id=request.linked_mutation_id,
+            rejection_reason=request.rejection_reason,
+        )
+
+    async def snapshot_export(
+        self, request: GraphSnapshotExportRequest
+    ) -> SnapshotManifest:
+        return self.engine._shell.backend.snapshot.export(
+            pot_id=request.pot_id, destination=request.destination
+        )
+
+    async def snapshot_import(
+        self, request: GraphSnapshotImportRequest
+    ) -> SnapshotManifest:
+        return self.engine._shell.backend.snapshot.import_(
+            pot_id=request.pot_id, source=request.source
+        )
+
+    async def repair(self, request: GraphRepairRequest) -> RepairReport:
+        return self.engine._shell.backend.analytics.repair(
+            request.pot_id, targets=request.targets
+        )
+
+    async def backend_info(self, request: GraphBackendInfoRequest) -> GraphBackendInfo:
+        del request
+        capabilities = self.engine._shell.backend.capabilities()
+        return GraphBackendInfo(
+            profile=self.engine._shell.backend.profile,
+            capabilities=capabilities.implemented(),
         )
 
 

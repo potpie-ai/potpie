@@ -13,7 +13,7 @@ from potpie.cli.commands._common import (
     enrich_with_pot_guidance,
     empty_pot_warnings,
     fail,
-    get_host,
+    get_engine_view as get_host,
     pot_graph_counts,
     pot_scope_info,
     pot_scope_resolution_human,
@@ -32,7 +32,7 @@ from potpie.cli.telemetry.onboarding_events import (
     sanitized_failure_kind,
 )
 from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
+from potpie.runtime.contracts import CapabilityNotImplemented
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
 default_app = typer.Typer(help="Repo-local default pot routing.")
