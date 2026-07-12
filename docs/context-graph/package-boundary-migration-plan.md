@@ -1,6 +1,6 @@
 # Potpie / Context Engine Package-Boundary Migration
 
-> Status: Commits 1-11 complete; Commit 12 not started. This document implements the
+> Status: Commits 1-12 complete; Commit 13 not started. This document implements the
 > sequencing contract for [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) and
 > [ADR-0002](../../spec/decisions/ADR-0002-potpie-context-engine-boundary.md).
 > The target architecture is proposed; current-state docs remain authoritative
@@ -66,8 +66,8 @@ verifying the baseline remains intact.
 | 8 | `refactor(product): extract skills and installation` | `PKG-SKILL-001`, `PKG-OWN-001` | Complete | `daebbb5` | Installed-wheel lifecycle, static-manifest, snippet-validation, and full-suite gates pass |
 | 9 | `refactor(product): split setup doctor and status` | `PKG-SETUP-001`, `PKG-STATUS-001` | Complete | `adf7c08` | Root setup/status scenario matrix, real CLI journey, and full root suite pass |
 | 10 | `refactor(engine): remove product residue and legacy queue wiring` | `PKG-OWN-002`, `PKG-QUEUE-001`, `PKG-OBS-001` | Complete | `ebad0d77` | Engine-only composition, injected queue, zero residue scans, and full suites pass |
-| 11 | `refactor(cli): apply the workflow-first command contract` | `PKG-CLI-001`, `PKG-CLI-002` | Complete | This commit | Exact command tree, removed paths, JSON envelope, exit-code, and full-suite gates pass |
-| 12 | `refactor(mcp): move the public MCP server into potpie` | `PKG-MCP-001`, `PKG-STATUS-001` | Not started | — | Four-tool discovery and parity tests |
+| 11 | `refactor(cli): apply the workflow-first command contract` | `PKG-CLI-001`, `PKG-CLI-002` | Complete | `e16e6be` | Exact command tree, removed paths, JSON envelope, exit-code, and full-suite gates pass |
+| 12 | `refactor(mcp): move the public MCP server into potpie` | `PKG-MCP-001`, `PKG-STATUS-001` | Complete | This commit | Four-tool discovery, schema, runtime-routing, status-parity, and full-suite tests pass |
 | 13 | `build(packaging): finalize distribution boundaries` | `PKG-DIST-001`, `PKG-API-001` | Not started | — | Wheels, sdists, metadata, entrypoints, isolated installs |
 | 14 | `docs(architecture): publish the completed package split` | `PKG-VERIFY-001` and all IDs | Not started | — | Full suite, docs, final verification record |
 
@@ -461,6 +461,21 @@ Changes:
 
 Gate: MCP discovery reports exactly four tools and local/daemon/schema tests
 pass.
+
+Evidence recorded on 2026-07-13:
+
+- Root `potpie.mcp` owns the server, access policy, logging entrypoint, and all
+  four declarations; the engine MCP package and console entrypoint are absent.
+- Resolve, search, and record preserve their characterized argument schemas and
+  route through `get_runtime().engine.context` in both daemon and in-process
+  modes without importing the engine package directly.
+- `context_status` delegates to the root `ProductStatusService`; its flat data
+  is identical to `potpie status --json` data while retaining the MCP
+  protocol-native result rather than nesting the CLI envelope.
+- The MCP runtime dependency moved from engine metadata to root metadata with
+  only ownership lines changed in the lockfile; no dependency versions moved.
+- Four-tool discovery, project access, characterization, routing, error, CLI
+  status, full root, and full engine suites pass; Ruff and residue scans pass.
 
 ## Commit 13 — Distribution Metadata
 

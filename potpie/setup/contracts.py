@@ -115,6 +115,7 @@ class ProductStatusResult:
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
+        data["issues"] = list(self.issues)
         timestamp = data.get("last_ingestion_at")
         if timestamp is not None and hasattr(timestamp, "isoformat"):
             data["last_ingestion_at"] = timestamp.isoformat()

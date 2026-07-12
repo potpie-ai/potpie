@@ -8,12 +8,11 @@ path = "distribution_defaults_hook.py"
 [project]
 name = "potpie-context-engine"
 version = "0.1.0"
-description = "Reusable context graph engine library, HTTP API, webhooks, and MCP."
+description = "Reusable context graph engine library and optional HTTP adapters."
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
-    "mcp>=1.0.0",
     "pillow>=10.0.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.0",
@@ -80,9 +79,6 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",
 ]
-
-[project.scripts]
-potpie-mcp = "potpie_context_engine.adapters.inbound.mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/potpie_context_engine"]
