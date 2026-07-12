@@ -11,7 +11,7 @@ import sys
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-CLI_TOOL_NAME = "potpie-context-engine"
+CLI_TOOL_NAME = "potpie"
 CLI_EXECUTABLE = "potpie"
 
 _DIAGNOSTIC_COMMANDS = (
@@ -47,7 +47,7 @@ def collect_cli_install_status() -> dict[str, Any]:
         "install_method": "uv_tool" if uv_tool.get("installed") else None,
         "diagnostic_commands": list(_DIAGNOSTIC_COMMANDS),
         "pip_show_note": (
-            "Do not use `python -m pip show potpie-context-engine` for local dev "
+            "Do not use `python -m pip show potpie` for local dev "
             "installs: `python` may be absent from PATH and the package lives in "
             "the uv tool environment. Prefer `uv tool list`, `which -a potpie`, "
             "and `make cli-status`."

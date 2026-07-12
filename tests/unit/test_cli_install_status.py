@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from typer.testing import CliRunner
 
-from potpie.cli import cli_install_status as cis
+from potpie.install import status as cis
 from potpie.cli import host_cli as cli_main
 from potpie.cli.commands import bootstrap
 
@@ -31,18 +31,16 @@ def test_collect_cli_install_status_from_uv_tool(
     monkeypatch.setattr(
         cis,
         "_python_from_script",
-        lambda _path: (
-            "/Users/me/.local/share/uv/tools/potpie-context-engine/bin/python3"
-        ),
+        lambda _path: ("/Users/me/.local/share/uv/tools/potpie/bin/python3"),
     )
     monkeypatch.setattr(cis, "_python_version", lambda _path: "3.12.12")
-    monkeypatch.setattr(cis, "_installed_package_version", lambda: "0.1.0")
+    monkeypatch.setattr(cis, "_installed_package_version", lambda: "2.0.0")
     monkeypatch.setattr(
         cis.subprocess,
         "run",
         lambda *args, **kwargs: MagicMock(
             returncode=0,
-            stdout="potpie-context-engine v0.1.0\n- potpie\n",
+            stdout="potpie v2.0.0\n- potpie\n",
             stderr="",
         ),
     )
@@ -52,7 +50,7 @@ def test_collect_cli_install_status_from_uv_tool(
     assert status["on_path"] is True
     assert status["primary_path"] == "/Users/me/.local/bin/potpie"
     assert status["uv_tool_installed"] is True
-    assert status["uv_tool_version"] == "0.1.0"
+    assert status["uv_tool_version"] == "2.0.0"
     assert status["install_method"] == "uv_tool"
     assert status["python_version"] == "3.12.12"
     assert "uv tool list" in status["diagnostic_commands"]
@@ -89,11 +87,10 @@ def test_doctor_includes_cli_install(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_host.ledger.status.return_value = MagicMock(available=True, binding="local")
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
-        bootstrap,
-        "collect_cli_install_status",
+        "potpie.setup.status.collect_cli_install_status",
         lambda: {
-            "package_name": "potpie-context-engine",
-            "package_version": "0.1.0",
+            "package_name": "potpie",
+            "package_version": "2.0.0",
             "on_path": True,
             "primary_path": "/Users/me/.local/bin/potpie",
             "python_version": "3.12.12",
@@ -110,5 +107,5 @@ def test_doctor_includes_cli_install(monkeypatch: pytest.MonkeyPatch) -> None:
 
     result = runner.invoke(cli_main.app, ["doctor"])
     assert result.exit_code == 0, result.stdout
-    assert "cli: potpie-context-engine 0.1.0" in result.stdout
+    assert "cli: potpie 2.0.0" in result.stdout
     assert "via=uv_tool" in result.stdout

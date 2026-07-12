@@ -8,6 +8,7 @@ from all three services via ``context_status``.
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import typer
@@ -25,10 +26,9 @@ from potpie_context_engine.domain.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
 )
-from potpie_context_engine.domain.lifecycle import SetupPlan, SetupReport
 from potpie_context_engine.domain.ports.agent_context import StatusRequest
 
-from potpie.cli.cli_install_status import (
+from potpie.install.status import (
     cli_install_human,
     collect_cli_install_status,
 )
@@ -39,6 +39,7 @@ from potpie.cli.commands._common import (
     current_repo_identity_for_cli,
     emit,
     fail,
+    get_cli_runtime,
     get_host,
     is_json,
     repo_default_pot_id,
@@ -59,6 +60,7 @@ from potpie.cli.telemetry.onboarding_events import (
 )
 from potpie.cli.ui import setup_ux
 from potpie.runtime.telemetry import sentry_metrics
+from potpie.setup import SetupPlan, SetupReport
 
 
 def _effective_current_repo_pot_id(
@@ -121,6 +123,19 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """Idempotent first-run: provision config, storage, daemon, default pot, skills."""
         with contract():
+            _run_product_setup_command(
+                repo=repo,
+                pot=pot,
+                agent=agent,
+                backend=backend,
+                scan=scan,
+                dry_run=dry_run,
+                yes=yes,
+                daemon=daemon,
+                embeddings=embeddings,
+                embedding_model=embedding_model,
+            )
+            return
             json_output = is_json()
             human_output = not json_output
             interactive_onboarding = (
@@ -354,6 +369,11 @@ def register(root: typer.Typer) -> None:
             )
 
         with contract():
+            runtime = get_cli_runtime()
+            report = runtime.status.get(pot_id=pot, harness=harness)
+            _capture_host_status_activation()
+            emit(report.to_dict(), human=_product_status_human(report))
+            return
             shell = get_host()
             pot_id = resolve_pot_id(shell, pot)
             report = shell.agent_context.status(
@@ -378,6 +398,10 @@ def register(root: typer.Typer) -> None:
     def doctor() -> None:
         """Local diagnostics: daemon, backend capabilities, skill drift."""
         with contract():
+            runtime = get_cli_runtime()
+            report = runtime.status.doctor()
+            emit(report, human=_product_doctor_human(report))
+            return
             host = get_host()
             try:
                 caps = host.backend.capabilities()
@@ -578,6 +602,158 @@ def _preview_human(preview) -> str:
             line += f" — skip: {s.skip_reason}"
         lines.append(line)
     lines.append("  (no changes made; run without --dry-run to execute)")
+    return "\n".join(lines)
+
+
+def _run_product_setup_command(
+    *,
+    repo: str,
+    pot: str,
+    agent: str,
+    backend: str | None,
+    scan: bool,
+    dry_run: bool,
+    yes: bool,
+    daemon: bool | None,
+    embeddings: str | None,
+    embedding_model: str | None,
+) -> None:
+    runtime = get_cli_runtime()
+    json_output = is_json()
+    human_output = not json_output
+    interactive_onboarding = (
+        human_output
+        and setup_ux.interactive_onboarding_enabled(as_json=json_output)
+        and not yes
+    )
+    use_live = human_output and setup_ux.rich_enabled(as_json=json_output) and not yes
+    stream_plain_progress = human_output and not use_live
+    selected_embeddings = _setup_embeddings_choice(embeddings)
+    selected_embedding_model = _setup_embedding_model(embedding_model)
+    selected_mode = (
+        "daemon"
+        if daemon is True
+        else "in-process"
+        if daemon is False
+        else runtime.settings.runtime_mode
+    )
+    selected_backend = backend or runtime.settings.backend
+    if (
+        selected_mode != runtime.settings.runtime_mode
+        or selected_backend != runtime.settings.backend
+    ):
+        from potpie.runtime.composition import create_runtime
+
+        runtime = create_runtime(
+            settings=replace(
+                runtime.settings,
+                runtime_mode=selected_mode,
+                backend=selected_backend,
+            )
+        )
+    plan = SetupPlan(
+        host_mode=selected_mode,
+        backend=selected_backend,
+        repo=repo,
+        pot=pot,
+        agent=agent,
+        scan=scan,
+        assume_yes=yes,
+        defer_default_pot=interactive_onboarding,
+        defer_skills=interactive_onboarding,
+        embeddings=selected_embeddings,
+        embedding_model=selected_embedding_model,
+    )
+    setup_started_ms = now_ms()
+    begin_setup_run()
+    capture_setup_started(
+        plan,
+        interactive=interactive_onboarding,
+        json_output=json_output,
+    )
+    runtime.setup.set_observer(CliSetupAnalyticsObserver())
+
+    if dry_run:
+        preview = runtime.setup.preview(plan)
+        capture_setup_dry_run_completed(
+            plan=plan,
+            planned_step_count=len(preview.steps),
+            hard_step_count=sum(1 for step in preview.steps if step.hard),
+        )
+        emit(preview.to_dict(), human=_preview_human(preview))
+        _emit_setup_run_metric(plan, result="dry_run", dry_run=True)
+        return
+
+    if use_live:
+        report = setup_ux.run_setup_live(
+            runtime.setup,
+            plan,
+            repo=Path(repo),
+            agent=agent,
+            scan=scan,
+            use_rich=True,
+            config_home=runtime.settings.data_dir,
+            observer=CliSetupAnalyticsObserver(),
+        )
+    elif stream_plain_progress:
+        report = setup_ux.run_setup_plain(
+            runtime.setup,
+            plan,
+            repo=Path(repo),
+            agent=agent,
+            scan=scan,
+            observer=CliSetupAnalyticsObserver(),
+        )
+    else:
+        report = runtime.setup.run(plan)
+
+    capture_setup_completed(
+        plan=plan,
+        ok=report.ok,
+        duration_ms=elapsed_ms(setup_started_ms),
+        hard_failed_step=_first_hard_failed_step(report),
+        soft_warning_count=_soft_warning_count(report),
+    )
+    _emit_setup_run_metric(
+        report.plan,
+        result="ok" if report.ok else "degraded",
+        dry_run=False,
+    )
+    _emit_setup_step_metrics(report)
+    if not use_live:
+        emit(
+            report.to_dict(),
+            human=_setup_human(report, include_steps=not stream_plain_progress),
+        )
+    if interactive_onboarding and report.ok:
+        setup_ux.maybe_prompt_github_login(
+            repo=Path(repo), setup_agent=agent, default_pot_name=pot
+        )
+    if not report.ok:
+        raise typer.Exit(code=EXIT_DEGRADED)
+
+
+def _product_status_human(report) -> str:
+    lines = [
+        f"ready={report.ready} runtime={report.runtime_mode} daemon={report.daemon_state}",
+        f"pot={report.pot_name or report.pot_id or '(none)'} backend={report.backend} ready={report.backend_ready}",
+        f"storage={report.storage_ready} ingestion={report.ingestion_ready} sources={report.source_count}",
+        f"skills={report.skills_state} setup={report.setup_state}",
+    ]
+    lines.extend(f"issue: {issue}" for issue in report.issues)
+    if report.recommended_next_action:
+        lines.append(f"next: {report.recommended_next_action.get('command')}")
+    return "\n".join(lines)
+
+
+def _product_doctor_human(report: dict[str, object]) -> str:
+    lines = [
+        f"ready={report.get('ready')} runtime={report.get('runtime_mode')} daemon={report.get('daemon_state')}",
+        f"backend={report.get('backend')} ready={report.get('backend_ready')}",
+        cli_install_human(report.get("cli_install", {})),
+    ]
+    issues = report.get("issues") or ()
+    lines.extend(f"issue: {issue}" for issue in issues)
     return "\n".join(lines)
 
 

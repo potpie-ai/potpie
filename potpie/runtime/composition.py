@@ -91,9 +91,11 @@ def create_runtime(
     from potpie.config import ProductConfigService
     from potpie.install import LocalInstaller
     from potpie.skills import create_skill_service
+    from potpie.daemon.lifecycle import Daemon
+    from potpie.setup import ProductSetupService, ProductStatusService
 
     credentials = build_credential_store()
-    return PotpieRuntime(
+    runtime = PotpieRuntime(
         settings=settings,
         engine=engine,
         auth=AccountAuthService(credentials),
@@ -101,7 +103,14 @@ def create_runtime(
         config=ProductConfigService(settings.data_dir),
         skills=create_skill_service(data_dir=settings.data_dir),
         installer=LocalInstaller(),
+        daemon=Daemon(
+            home=settings.data_dir,
+            in_process=settings.runtime_mode == "in-process",
+        ),
     )
+    runtime.setup = ProductSetupService(runtime)
+    runtime.status = ProductStatusService(runtime)
+    return runtime
 
 
 def engine_actor_for_identity(identity: Any) -> EngineActor:

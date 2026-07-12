@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
 from potpie.cli import host_cli
 from potpie.cli.commands import _common, bootstrap
 from potpie.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
-from potpie_context_engine.domain.lifecycle import (
+from potpie.setup import (
     SKIPPED,
     PlannedSetupStep,
     SetupPlan,
@@ -19,6 +20,21 @@ from potpie_context_engine.domain.lifecycle import (
 )
 
 runner = CliRunner()
+
+
+def _patch_setup_runtime(monkeypatch, host: "_SetupHost") -> None:
+    monkeypatch.setattr(
+        bootstrap,
+        "get_cli_runtime",
+        lambda: SimpleNamespace(
+            settings=SimpleNamespace(
+                data_dir=host.home,
+                backend=host.backend.profile,
+                runtime_mode="daemon",
+            ),
+            setup=host.setup,
+        ),
+    )
 
 
 @dataclass
@@ -171,7 +187,7 @@ def test_setup_daemon_dry_run_marks_daemon_host_mode(
     tmp_path: Path,
 ) -> None:
     host = _SetupHost(home=tmp_path)
-    monkeypatch.setattr(bootstrap, "get_host", lambda: host)
+    _patch_setup_runtime(monkeypatch, host)
     monkeypatch.setattr(
         "potpie.cli.ui.setup_ux.rich_enabled",
         lambda **_kwargs: False,
@@ -184,14 +200,14 @@ def test_setup_daemon_dry_run_marks_daemon_host_mode(
     assert json.loads(result.stdout)["plan"]["host_mode"] == "daemon"
 
 
-def test_setup_daemon_uses_daemon_status_for_backend_validation(
+def test_setup_daemon_passes_backend_to_product_setup(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     host = _SetupHost(home=tmp_path)
-    host.backend.profile = "falkordb_lite"
+    host.backend.profile = "embedded"
     host.daemon.backend = "embedded"
-    monkeypatch.setattr(bootstrap, "get_host", lambda: host)
+    _patch_setup_runtime(monkeypatch, host)
     monkeypatch.setattr(
         "potpie.cli.ui.setup_ux.rich_enabled",
         lambda **_kwargs: False,
@@ -204,15 +220,15 @@ def test_setup_daemon_uses_daemon_status_for_backend_validation(
 
     assert result.exit_code == 0, result.stdout
     assert host.setup.host_mode == "daemon"
-    assert host.daemon.calls == ["ensure:embedded", "status"]
+    assert host.setup.backend == "embedded"
 
 
-def test_setup_daemon_fails_when_requested_backend_cannot_be_verified(
+def test_setup_daemon_passes_requested_backend_to_root_setup(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     host = _SetupHost(home=tmp_path)
-    monkeypatch.setattr(bootstrap, "get_host", lambda: host)
+    _patch_setup_runtime(monkeypatch, host)
     monkeypatch.setattr(
         "potpie.cli.ui.setup_ux.rich_enabled",
         lambda **_kwargs: False,
@@ -223,20 +239,20 @@ def test_setup_daemon_fails_when_requested_backend_cannot_be_verified(
         ["--json", "setup", "--backend", "embedded", "--repo", "potpie", "--yes"],
     )
 
-    assert result.exit_code == _common.EXIT_VALIDATION
-    payload = json.loads(result.stdout)
-    assert payload["code"] == "validation_error"
-    assert "backend could not be verified" in payload["message"]
+    assert result.exit_code == 0, result.stdout
+    assert host.setup.backend == "embedded"
 
 
 class _Setup:
     host_mode: str | None = None
+    backend: str | None = None
 
     def set_observer(self, observer: CliSetupAnalyticsObserver) -> None:
         return None
 
     def preview(self, plan: SetupPlan) -> SetupPreview:
         self.host_mode = plan.host_mode
+        self.backend = plan.backend
         return SetupPreview(
             plan,
             (
@@ -251,6 +267,7 @@ class _Setup:
 
     def run(self, plan: SetupPlan) -> SetupReport:
         self.host_mode = plan.host_mode
+        self.backend = plan.backend
         return SetupReport(
             plan,
             (

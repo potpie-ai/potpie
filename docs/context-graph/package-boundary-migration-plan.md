@@ -1,6 +1,6 @@
 # Potpie / Context Engine Package-Boundary Migration
 
-> Status: Commits 1-8 complete; Commit 9 not started. This document implements the
+> Status: Commits 1-9 complete; Commit 10 not started. This document implements the
 > sequencing contract for [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) and
 > [ADR-0002](../../spec/decisions/ADR-0002-potpie-context-engine-boundary.md).
 > The target architecture is proposed; current-state docs remain authoritative
@@ -63,8 +63,8 @@ verifying the baseline remains intact.
 | 5 | `refactor(runtime): introduce PotpieRuntime and typed daemon RPC` | `PKG-RUNTIME-001`, `PKG-MODE-001`, `PKG-RPC-001` | Complete | `2d94671` | 30-method schema registry, mode precedence, no fallback, local/daemon parity, and detached-daemon tests pass |
 | 6 | `refactor(cli): route engine workflows through runtime.engine` | `PKG-RUNTIME-001` | Complete | `94e8fec` | Context, pot/source, graph, ledger, and timeline local/daemon CLI parity passes |
 | 7 | `refactor(product): extract auth integrations and configuration` | `PKG-AUTH-001`, `PKG-CONFIG-001`, `PKG-OWN-001` | Complete | `92f24ad` | Auth, credential, provider, config, actor-boundary, and backend-persistence tests pass |
-| 8 | `refactor(product): extract skills and installation` | `PKG-SKILL-001`, `PKG-OWN-001` | Complete | This commit | Installed-wheel lifecycle, static-manifest, snippet-validation, and full-suite gates pass |
-| 9 | `refactor(product): split setup doctor and status` | `PKG-SETUP-001`, `PKG-STATUS-001` | Not started | — | Setup/status scenario matrix |
+| 8 | `refactor(product): extract skills and installation` | `PKG-SKILL-001`, `PKG-OWN-001` | Complete | `daebbb5` | Installed-wheel lifecycle, static-manifest, snippet-validation, and full-suite gates pass |
+| 9 | `refactor(product): split setup doctor and status` | `PKG-SETUP-001`, `PKG-STATUS-001` | Complete | This commit | Root setup/status scenario matrix, real CLI journey, and full root suite pass |
 | 10 | `refactor(engine): remove product residue and legacy queue wiring` | `PKG-OWN-002`, `PKG-QUEUE-001`, `PKG-OBS-001` | Not started | — | Forbidden import/name scans and engine suite |
 | 11 | `refactor(cli): apply the workflow-first command contract` | `PKG-CLI-001`, `PKG-CLI-002` | Not started | — | Command snapshots, removed paths, JSON tests |
 | 12 | `refactor(mcp): move the public MCP server into potpie` | `PKG-MCP-001`, `PKG-STATUS-001` | Not started | — | Four-tool discovery and parity tests |
@@ -356,6 +356,25 @@ Changes:
 
 Gate: fresh, already configured, daemon unavailable, provision failed, missing
 skills, and degraded backend scenarios pass in human and JSON modes.
+
+Evidence recorded on 2026-07-12:
+
+- `ProductSetupService` owns product configuration, install/account checks,
+  daemon reconciliation, engine provision inspect/apply, default-pot/source
+  setup, and skill installation. The daemon step precedes every daemon-mode
+  engine call.
+- `ProductStatusService` composes the pure `EngineStatusReport` with runtime,
+  daemon, setup, and skill facts into the specified flat public status object;
+  it remains diagnostic and does not call the engine when the selected daemon
+  is unavailable.
+- `potpie setup`, `status`, and `doctor` now use `PotpieRuntime` services. The
+  former host-shell status snapshots were replaced with flat-contract tests.
+- Scenario tests cover fresh and already-configured setup, unavailable daemon,
+  failed provision, missing skills, and degraded backend. A real isolated
+  in-process CLI setup followed by status and doctor reports `ready: true`.
+- The complete root non-journey gate passes with 1,095 tests, four skips, and
+  one intentional deselection; focused engine public-status/provision tests and
+  root mypy/Ruff gates pass.
 
 ## Commit 10 — Engine Residue Removal
 
