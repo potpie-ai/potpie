@@ -119,11 +119,13 @@ def test_emit_error_json_mode(capsys) -> None:
     configure_error_output(as_json=True)
     try:
         emit_error("Bad thing", "use a better thing", hint="try again")
-        err = capsys.readouterr().err
-        assert '"code": "bad_thing"' in err
-        assert '"message": "use a better thing"' in err
-        assert '"detail": "try again"' in err
-        assert '"recommended_next_action": null' in err
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        assert '"ok": false' in captured.out
+        assert '"code": "bad_thing"' in captured.out
+        assert '"message": "use a better thing"' in captured.out
+        assert '"details": "try again"' in captured.out
+        assert '"recommended_next_action": null' in captured.out
     finally:
         configure_error_output(as_json=False)
 

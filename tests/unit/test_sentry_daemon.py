@@ -11,7 +11,7 @@ from potpie.cli.commands import _common
 from potpie.cli.telemetry.context import current_telemetry_context
 from potpie.daemon import main as daemon_main
 from potpie.daemon.rpc import dispatch_rpc
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
+from potpie.runtime.contracts import CapabilityNotImplemented
 
 
 class _CrashingDaemon:
@@ -48,8 +48,8 @@ def test_daemon_unexpected_failure_is_captured_with_session_id(
 
     result = CliRunner().invoke(host_cli.app, ["--json", "daemon", "status"])
 
-    payload = json.loads(result.stdout)
-    assert result.exit_code == _common.EXIT_VALIDATION
+    payload = json.loads(result.stdout)["error"]
+    assert result.exit_code == _common.EXIT_INTERNAL
     assert payload["code"] == "unexpected_cli_error"
     assert captured == [
         (
@@ -74,8 +74,8 @@ def test_daemon_expected_not_implemented_is_not_captured(
 
     result = CliRunner().invoke(host_cli.app, ["--json", "daemon", "stop"])
 
-    payload = json.loads(result.stdout)
-    assert result.exit_code == _common.EXIT_UNAVAILABLE
+    payload = json.loads(result.stdout)["error"]
+    assert result.exit_code == _common.EXIT_OPERATION
     assert payload["code"] == "not_implemented"
     assert captured == []
 

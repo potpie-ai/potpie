@@ -22,7 +22,7 @@ Use the CLI when available:
 ```bash
 potpie graph status
 potpie graph catalog --task "<task>" --profile read
-potpie graph describe <subgraph> --view <view> --examples
+potpie graph catalog --subgraph <subgraph>
 potpie graph read --subgraph <subgraph> --view <view> [--query "..."] [--scope key:value] [--limit N]
 potpie graph search-entities "text" [--type Service] [--environment prod]
 potpie --json graph propose --file mutation.json

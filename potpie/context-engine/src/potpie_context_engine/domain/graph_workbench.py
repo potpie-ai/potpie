@@ -18,16 +18,17 @@ GRAPH_WORKBENCH_ONTOLOGY_VERSION = ONTOLOGY_VERSION
 GRAPH_WORKBENCH_COMMANDS: tuple[str, ...] = (
     "status",
     "catalog",
-    "describe",
     "search-entities",
     "read",
-    "neighborhood",
+    "mutation-template",
+    "nudge",
     "propose",
     "commit",
     "bulk",
     "history",
     "inbox",
     "quality",
+    "inspect",
 )
 
 GRAPH_WORKBENCH_ADMIN_COMMANDS: tuple[str, ...] = (
@@ -36,12 +37,7 @@ GRAPH_WORKBENCH_ADMIN_COMMANDS: tuple[str, ...] = (
     "import",
 )
 
-GRAPH_WORKBENCH_LEGACY_COMMANDS: tuple[str, ...] = (
-    "mutate",
-    "inspect",
-    "mutation-template",
-    "nudge",
-)
+GRAPH_WORKBENCH_LEGACY_COMMANDS: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

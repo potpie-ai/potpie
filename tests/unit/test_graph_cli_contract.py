@@ -706,6 +706,20 @@ def _assert_graph_envelope(
     return payload["result"] or {}
 
 
+def _assert_cli_error_envelope(
+    output: str,
+    command: str,
+    *,
+    code: str = "validation_error",
+) -> dict:
+    payload = json.loads(output)
+    assert payload["ok"] is False
+    assert payload["meta"]["schema_version"] == "1"
+    assert payload["meta"]["command"] == command
+    assert payload["error"]["code"] == code
+    return payload["error"]
+
+
 def test_graph_entity_search_result_includes_summary() -> None:
     result = GraphEntitySearchResult(
         entities=(
@@ -741,12 +755,6 @@ def test_graph_repair_accepts_entity_summaries_target() -> None:
 @pytest.mark.parametrize(
     ("command", "required_marker", "optional_marker", "missing_message"),
     [
-        (
-            "neighborhood",
-            "--entity",
-            None,
-            "Missing option '--entity'",
-        ),
         (
             "inspect",
             "ENTITY_KEY",
@@ -793,7 +801,6 @@ def test_graph_required_inputs_are_declared_in_help(
     ("args", "capability", "method"),
     [
         (["inspect", "service:web"], "inspection", "neighborhood"),
-        (["neighborhood", "--entity", "service:web"], "inspection", "neighborhood"),
         (["export", "out.json"], "snapshot", "export"),
         (["import", "in.json"], "snapshot", "import_"),
     ],
@@ -809,48 +816,14 @@ def test_graph_capability_commands_precheck_backend_capabilities(
 
     result = CliRunner().invoke(graph.graph_app, args)
 
-    assert result.exit_code == _common.EXIT_UNAVAILABLE
+    assert result.exit_code == _common.EXIT_OPERATION
     emitted = json.loads(result.output)
-    _assert_graph_envelope(emitted, f"graph.{args[0]}", ok=False)
+    assert emitted["ok"] is False
+    assert emitted["meta"]["command"] == f"graph.{args[0]}"
     assert emitted["error"]["code"] == "not_implemented"
     assert f"graph.neo4j.{capability}.{method}" in emitted["error"]["message"]
-    assert emitted["recommended_next_action"]
+    assert emitted["error"]["recommended_next_action"]
     assert backend.accessed_ports == []
-
-
-def test_graph_mutate_rejection_emits_result_and_exits_nonzero(tmp_path) -> None:
-    _common.set_json(True)
-    proposal = _proposal(
-        ok=False,
-        status="invalid",
-        issues=(
-            {
-                "code": "invalid_endpoints",
-                "message": "invalid endpoint pair",
-                "severity": "error",
-                "op_index": 0,
-            },
-        ),
-    )
-    workbench = _Workbench(proposal=proposal)
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
-    payload_file = tmp_path / "mutation.json"
-    payload_file.write_text(json.dumps(_valid_mutation_payload()), encoding="utf-8")
-
-    result = CliRunner().invoke(
-        graph.graph_app,
-        ["mutate", "--file", str(payload_file)],
-    )
-
-    assert result.exit_code == 1
-    emitted = json.loads(result.output)
-    detail = _assert_graph_envelope(emitted, "graph.mutate", ok=False)
-    assert detail == {}
-    assert emitted["error"]["code"] == "invalid_endpoints"
-    assert emitted["error"]["detail"]["status"] == "invalid"
-    assert emitted["error"]["detail"]["issues"][0]["code"] == "invalid_endpoints"
-    assert "legacy transition command" in emitted["warnings"][0]
-    assert workbench.commit_calls == []
 
 
 def test_graph_propose_returns_persisted_plan_envelope(tmp_path) -> None:
@@ -866,7 +839,7 @@ def test_graph_propose_returns_persisted_plan_envelope(tmp_path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.propose")
     assert body["plan_id"] == "mutation-plan:test"
     assert body["status"] == "validated"
@@ -989,7 +962,7 @@ def test_graph_commit_applies_plan_id_only() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.commit")
     assert body["status"] == "committed"
     assert body["mutation_id"] == "mutation-1"
@@ -1007,7 +980,7 @@ def test_graph_commit_verify_passes_hard_gate_flag() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.commit")
     assert body["status"] == "committed"
     assert workbench.commit_calls == [("mutation-plan:test", "p", None, True)]
@@ -1035,7 +1008,7 @@ def test_graph_commit_verify_exits_nonzero_when_gate_fails() -> None:
     )
 
     assert result.exit_code == 1
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.commit")
     assert body["status"] == "committed"
     assert body["verification"]["ok"] is False
@@ -1081,7 +1054,7 @@ def test_graph_bulk_apply_chunks_and_commits(tmp_path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.bulk.apply")
     assert body["status"] == "committed"
     assert body["chunks_total"] == 2
@@ -1122,7 +1095,7 @@ def test_graph_bulk_apply_dry_run_does_not_commit(tmp_path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.bulk.apply")
     assert body["status"] == "validated"
     assert body["chunks_validated"] == 2
@@ -1162,7 +1135,7 @@ def test_graph_bulk_apply_stops_on_failed_proposal(tmp_path) -> None:
     )
 
     assert result.exit_code == 1
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.bulk.apply", ok=False)
     assert body == {}
     assert emitted["error"]["code"] == "invalid_endpoints"
@@ -1182,7 +1155,7 @@ def test_graph_history_plan_returns_envelope() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.history")
     assert emitted["subgraph_versions"] == {"_global": 1}
     assert body["entry_count"] == 1
@@ -1210,7 +1183,7 @@ def test_graph_quality_summary_returns_envelope() -> None:
     result = CliRunner().invoke(graph.graph_app, ["quality", "summary"])
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.quality.summary")
     assert emitted["subgraph_versions"] == {"_global": 3}
     assert body["report"] == "summary"
@@ -1248,7 +1221,7 @@ def test_graph_quality_low_confidence_passes_filters() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.quality.low-confidence")
     assert body["finding_count"] == 1
     assert body["findings"][0]["kind"] == "low-confidence"
@@ -1287,7 +1260,7 @@ def test_graph_inbox_add_returns_pending_item_envelope() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.inbox.add")
     assert body["action"] == "add"
     assert body["item"]["item_id"] == "graph-inbox:test"
@@ -1332,7 +1305,7 @@ def test_graph_inbox_list_passes_filters() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.inbox.list")
     assert body["item_count"] == 1
     assert workbench.inbox_calls[0] == (
@@ -1361,7 +1334,7 @@ def test_graph_inbox_claim_passes_actor() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.inbox.claim")
     assert body["item"]["status"] == "claimed"
     assert workbench.inbox_calls == [
@@ -1399,7 +1372,7 @@ def test_graph_inbox_mark_applied_passes_plan_and_mutation() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.inbox.mark-applied")
     assert body["item"]["status"] == "applied"
     assert workbench.inbox_calls == [
@@ -1437,7 +1410,7 @@ def test_graph_inbox_mark_rejected_and_close_record_reasons() -> None:
     )
 
     assert rejected.exit_code == 0, rejected.output
-    emitted = json.loads(rejected.output)
+    emitted = json.loads(rejected.output)["data"]
     _assert_graph_envelope(emitted, "graph.inbox.mark-rejected")
     assert workbench.inbox_calls == [
         (
@@ -1467,7 +1440,7 @@ def test_graph_inbox_mark_rejected_and_close_record_reasons() -> None:
     )
 
     assert closed.exit_code == 0, closed.output
-    emitted = json.loads(closed.output)
+    emitted = json.loads(closed.output)["data"]
     _assert_graph_envelope(emitted, "graph.inbox.close")
     assert workbench.inbox_calls[0][1]["rejection_reason"] == "superseded"
 
@@ -1491,12 +1464,10 @@ def test_graph_read_rejects_malformed_scope_before_service_call(scope: str) -> N
         ],
     )
 
-    assert result.exit_code == 1
+    assert result.exit_code == _common.EXIT_VALIDATION
     assert graph_service.read_called is False
-    emitted = json.loads(result.output)
-    _assert_graph_envelope(emitted, "graph.read", ok=False)
-    assert emitted["error"]["code"] == "validation_error"
-    assert "invalid --scope entry" in emitted["error"]["message"]
+    error = _assert_cli_error_envelope(result.output, "graph.read")
+    assert "invalid --scope entry" in error["message"]
 
 
 def test_graph_read_unknown_view_uses_error_envelope() -> None:
@@ -1509,12 +1480,10 @@ def test_graph_read_unknown_view_uses_error_envelope() -> None:
         ["read", "--subgraph", "missing", "--view", "view"],
     )
 
-    assert result.exit_code == 1
+    assert result.exit_code == _common.EXIT_VALIDATION
     assert graph_service.read_called is True
-    emitted = json.loads(result.output)
-    _assert_graph_envelope(emitted, "graph.read", ok=False)
-    assert emitted["error"]["code"] == "validation_error"
-    assert "unknown graph view" in emitted["error"]["message"]
+    error = _assert_cli_error_envelope(result.output, "graph.read")
+    assert "unknown graph view" in error["message"]
 
 
 def test_graph_read_missing_required_scope_result_is_error_envelope() -> None:
@@ -1556,7 +1525,7 @@ def test_graph_read_missing_required_scope_result_is_error_envelope() -> None:
 
     assert result.exit_code == 1
     assert graph_service.read_called is True
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     _assert_graph_envelope(emitted, "graph.read", ok=False)
     assert emitted["error"]["code"] == "missing_required_scope"
     assert emitted["unsupported"][0]["reason"] == "missing_required_scope"
@@ -1587,14 +1556,12 @@ def test_graph_read_include_guess_error_carries_did_you_mean() -> None:
         ["read", "--subgraph", "docs", "--view", "relevant"],
     )
 
-    assert result.exit_code == 1
-    emitted = json.loads(result.output)
-    _assert_graph_envelope(emitted, "graph.read", ok=False)
-    assert emitted["error"]["code"] == "validation_error"
-    did_you_mean = emitted["error"]["detail"]["did_you_mean"]
+    assert result.exit_code == _common.EXIT_VALIDATION
+    error = _assert_cli_error_envelope(result.output, "graph.read")
+    did_you_mean = error["details"]["did_you_mean"]
     assert did_you_mean["view"] == "knowledge.document_context"
     assert did_you_mean["matched_include"] == "docs"
-    assert emitted["recommended_next_action"] == (
+    assert error["recommended_next_action"]["command"] == (
         "potpie graph read --subgraph knowledge --view document_context"
     )
 
@@ -1609,12 +1576,10 @@ def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:
         ["read", "--subgraph", "debugging", "--view", "debugging.prior_occurrences"],
     )
 
-    assert result.exit_code == 1
+    assert result.exit_code == _common.EXIT_VALIDATION
     assert graph_service.read_called is False
-    emitted = json.loads(result.output)
-    _assert_graph_envelope(emitted, "graph.read", ok=False)
-    assert emitted["error"]["code"] == "validation_error"
-    assert "--subgraph <name> --view <view>" in emitted["error"]["message"]
+    error = _assert_cli_error_envelope(result.output, "graph.read")
+    assert "--subgraph <name> --view <view>" in error["message"]
 
 
 def _timeline_env() -> GraphReadResult:
@@ -1696,7 +1661,7 @@ def test_graph_read_timeline_defaults_to_deduped_event_json() -> None:
 
     assert result.exit_code == 0
     assert graph_service.read_request.limit == 40
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.read")
     assert "subgraph_versions" not in body
     assert "unsupported" not in body
@@ -1752,7 +1717,7 @@ def test_graph_read_raw_json_defaults_to_compact_relations() -> None:
     assert result.exit_code == 0
     assert graph_service.read_request.detail == "compact"
     assert graph_service.read_request.relations == "summary"
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.read")
     assert body["detail"] == "compact"
     assert body["relations_detail"] == "summary"
@@ -1785,7 +1750,7 @@ def test_graph_read_full_detail_preserves_relation_payload() -> None:
     assert result.exit_code == 0
     assert graph_service.read_request.detail == "full"
     assert graph_service.read_request.relations == "full"
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.read")
     assert body["detail"] == "full"
     assert body["items"][0]["relations"][0]["predicate"] == "TOUCHED"
@@ -1803,7 +1768,7 @@ def test_graph_search_entities_omits_supporting_claims_by_default() -> None:
 
     assert result.exit_code == 0
     assert graph_service.search_request.supporting_claims == 0
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.search-entities")
     assert body["entities"][0]["supporting_claims"] == []
 
@@ -1820,7 +1785,7 @@ def test_graph_search_entities_supporting_claims_is_opt_in() -> None:
 
     assert result.exit_code == 0
     assert graph_service.search_request.supporting_claims == 1
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.search-entities")
     assert body["entities"][0]["supporting_claims"][0]["predicate"] == "PROVIDES"
 
@@ -1899,7 +1864,7 @@ def test_graph_validation_error_does_not_record_usage_analytics(
         ["read", "--subgraph", "recent_changes"],
     )
 
-    assert result.exit_code == 1
+    assert result.exit_code == _common.EXIT_VALIDATION
     assert [
         event for event in sink.events if event.name == "cli_usage_command_succeeded"
     ] == []
@@ -1917,10 +1882,10 @@ def test_graph_nudge_accepts_dash_event_alias() -> None:
 
     assert result.exit_code == 0
     assert nudge_service.request.event == "pre-edit"
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.nudge")
     assert body["event"] == "pre_edit"
-    assert "legacy transition command" in emitted["warnings"][0]
+    assert emitted["warnings"] == []
 
 
 def test_graph_catalog_json_advertises_v2_workbench_commands() -> None:
@@ -1930,12 +1895,12 @@ def test_graph_catalog_json_advertises_v2_workbench_commands() -> None:
     result = CliRunner().invoke(graph.graph_app, ["catalog"])
 
     assert result.exit_code == 0
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.catalog")
     assert "propose" in body["commands"]
     assert "commit" in body["commands"]
     assert "mutate" not in body["commands"]
-    assert "mutate" in body["legacy_commands"]
+    assert body["legacy_commands"] == []
     assert body["data_plane_graph_contract_version"] == "v1.5"
 
 
@@ -1949,7 +1914,7 @@ def test_graph_catalog_task_ranks_relevant_views() -> None:
     )
 
     assert result.exit_code == 0
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.catalog")
     ranking = body["task_ranking"]
     ranked_subgraphs = [entry["subgraph"] for entry in ranking]
@@ -1971,7 +1936,7 @@ def test_graph_catalog_read_profile_returns_compact_contract() -> None:
     )
 
     assert result.exit_code == 0
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.catalog")
     assert body["profile"] == "read"
     assert "read" in body["commands"]
@@ -2038,11 +2003,9 @@ def test_graph_catalog_unknown_subgraph_uses_error_envelope() -> None:
 
     result = CliRunner().invoke(graph.graph_app, ["catalog", "--subgraph", "missing"])
 
-    assert result.exit_code == 1
-    emitted = json.loads(result.output)
-    _assert_graph_envelope(emitted, "graph.catalog", ok=False)
-    assert emitted["error"]["code"] == "validation_error"
-    assert "unknown graph subgraph" in emitted["error"]["message"]
+    assert result.exit_code == _common.EXIT_VALIDATION
+    error = _assert_cli_error_envelope(result.output, "graph.catalog")
+    assert "unknown graph subgraph" in error["message"]
 
 
 def test_graph_catalog_include_guess_error_carries_did_you_mean() -> None:
@@ -2069,14 +2032,12 @@ def test_graph_catalog_include_guess_error_carries_did_you_mean() -> None:
 
     result = CliRunner().invoke(graph.graph_app, ["catalog", "--subgraph", "docs"])
 
-    assert result.exit_code == 1
-    emitted = json.loads(result.output)
-    _assert_graph_envelope(emitted, "graph.catalog", ok=False)
-    assert emitted["error"]["code"] == "validation_error"
-    did_you_mean = emitted["error"]["detail"]["did_you_mean"]
+    assert result.exit_code == _common.EXIT_VALIDATION
+    error = _assert_cli_error_envelope(result.output, "graph.catalog")
+    did_you_mean = error["details"]["did_you_mean"]
     assert did_you_mean["view"] == "knowledge.document_context"
     assert did_you_mean["matched_include"] == "docs"
-    assert emitted["recommended_next_action"] == (
+    assert error["recommended_next_action"]["command"] == (
         "potpie graph read --subgraph knowledge --view document_context"
     )
 
@@ -2091,7 +2052,7 @@ def test_graph_status_json_uses_workbench_envelope() -> None:
     result = CliRunner().invoke(graph.graph_app, ["status"])
 
     assert result.exit_code == 0
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.status")
     assert emitted["subgraph_versions"] == {"_global": 3}
     assert body["pot"]["name"] == "default"
@@ -2123,7 +2084,7 @@ def test_graph_status_not_ready_recommends_backend_doctor() -> None:
     result = CliRunner().invoke(graph.graph_app, ["status"])
 
     assert result.exit_code == 0
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.status")
     assert body["backend"]["ready"] is False
     assert body["backend"]["detail"] == "mutation store is unavailable"
@@ -2173,111 +2134,12 @@ def test_graph_status_warns_when_active_repo_pot_is_empty(monkeypatch) -> None:
     result = CliRunner().invoke(graph.graph_app, ["status"])
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     body = _assert_graph_envelope(emitted, "graph.status", pot_id="p1")
     assert body["pot"]["id"] == "p1"
     assert emitted["warnings"]
     assert "p2" in emitted["warnings"][0]
     assert "82 claims" in emitted["warnings"][0]
-
-
-def test_graph_neighborhood_returns_inspection_slice() -> None:
-    _common.set_json(True)
-    _common.set_host(_Host(_Graph(), backend=_Backend()))
-
-    result = CliRunner().invoke(
-        graph.graph_app,
-        [
-            "neighborhood",
-            "--entity",
-            "service:web",
-            "--predicate",
-            "DEPENDS_ON",
-            "--direction",
-            "out",
-            "--depth",
-            "2",
-            "--limit",
-            "5",
-            "--detail",
-            "full",
-        ],
-    )
-
-    assert result.exit_code == 0
-    emitted = json.loads(result.output)
-    body = _assert_graph_envelope(emitted, "graph.neighborhood")
-    assert body["entity_key"] == "service:web"
-    assert body["predicates"] == ["DEPENDS_ON"]
-    assert body["detail"] == "full"
-    assert body["edges"][0]["from"] == "service:web"
-
-
-def test_graph_neighborhood_defaults_to_relation_summary() -> None:
-    _common.set_json(True)
-    _common.set_host(_Host(_Graph(), backend=_Backend()))
-
-    result = CliRunner().invoke(
-        graph.graph_app,
-        ["neighborhood", "--entity", "service:web", "--predicate", "DEPENDS_ON"],
-    )
-
-    assert result.exit_code == 0
-    emitted = json.loads(result.output)
-    body = _assert_graph_envelope(emitted, "graph.neighborhood")
-    assert body["detail"] == "summary"
-    assert body["relation_count"] == 1
-    assert "edges" not in body
-    assert body["relations"][0]["from_key"] == "service:web"
-    assert body["relations"][0]["to_key"] == "service:api"
-    assert body["relations"][0]["source_refs"] == ["repo:manifest"]
-    assert body["relations"][0]["truth"] == "source_observation"
-
-
-def test_graph_describe_returns_executable_view_contract() -> None:
-    _common.set_json(True)
-    graph_service = _Graph()
-    _common.set_host(_Host(graph_service))
-
-    result = CliRunner().invoke(
-        graph.graph_app,
-        ["describe", "debugging", "--view", "prior_occurrences", "--examples"],
-    )
-
-    assert result.exit_code == 0
-    emitted = json.loads(result.output)
-    body = _assert_graph_envelope(emitted, "graph.describe")
-    assert body["contract_kind"] == "graph_workbench_ontology"
-    assert body["view"]["name"] == "debugging.prior_occurrences"
-    assert body["view"]["result_shape"] == "entity_relations"
-    assert "REPRODUCES" in body["view"]["inline_relations"]
-    assert body["view"]["examples"][0]["command"].startswith("potpie graph read")
-    assert (
-        emitted["recommended_next_action"]
-        == "Use `potpie graph read --subgraph debugging --view prior_occurrences --json` after choosing a scope."
-    )
-    # The CLI is a thin client: the contract must be answered through the
-    # service request, never a CLI-local domain call.
-    assert graph_service.describe_request is not None
-    assert graph_service.describe_request.subgraph == "debugging"
-    assert graph_service.describe_request.view == "prior_occurrences"
-    assert graph_service.describe_request.include_examples is True
-
-
-def test_graph_describe_unknown_view_uses_error_envelope() -> None:
-    _common.set_json(True)
-    _common.set_host(_Host(_Graph()))
-
-    result = CliRunner().invoke(
-        graph.graph_app,
-        ["describe", "debugging", "--view", "missing"],
-    )
-
-    assert result.exit_code == 1
-    emitted = json.loads(result.output)
-    _assert_graph_envelope(emitted, "graph.describe", ok=False)
-    assert emitted["error"]["code"] == "validation_error"
-    assert "unknown graph view" in emitted["error"]["message"]
 
 
 def test_timeline_recent_passes_project_scope_and_time_window() -> None:
@@ -2297,5 +2159,5 @@ def test_timeline_recent_passes_project_scope_and_time_window() -> None:
     assert req.scope == {}
     assert req.limit == 40
     assert req.since is not None
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     assert emitted["event_count"] == 2

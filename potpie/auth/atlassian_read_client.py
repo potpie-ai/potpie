@@ -87,7 +87,7 @@ def _cloud_id_from_credentials(credentials: dict[str, Any]) -> str:
     cloud_id = str(site.get("cloud_id") or credentials.get("cloud_id") or "").strip()
     if not cloud_id:
         raise AtlassianReadError(
-            "Missing cloud_id. Run: potpie jira login or potpie confluence login"
+            "Missing cloud_id. Run: potpie integration jira login or potpie integration confluence login"
         )
     return cloud_id
 
@@ -99,7 +99,7 @@ def _site_url_from_credentials(credentials: dict[str, Any]) -> str:
     )
     if not site_url:
         raise AtlassianReadError(
-            "Missing site_url. Run: potpie jira login or potpie confluence login"
+            "Missing site_url. Run: potpie integration jira login or potpie integration confluence login"
         )
     return site_url
 

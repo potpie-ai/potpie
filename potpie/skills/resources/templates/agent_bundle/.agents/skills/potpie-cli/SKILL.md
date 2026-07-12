@@ -22,7 +22,7 @@ potpie pot list
 potpie pot use <pot-id-or-alias>
 potpie --json pot info
 potpie pot linked --repo current
-potpie pot default set --repo current <pot-id-or-alias>
+potpie pot default --repo current --set <pot-id-or-alias>
 potpie --json source list
 potpie source add repo .
 potpie source add repo <owner/repo> --pot <pot>
@@ -60,7 +60,7 @@ potpie search "query" --pot <pot-id-or-alias>
 ```bash
 potpie --json graph status
 potpie --json graph catalog --task "<task>"
-potpie --json graph describe <subgraph> --view <view> --examples
+potpie --json graph catalog --subgraph <subgraph>
 potpie graph read --subgraph <subgraph> --view <view> --limit 20
 potpie graph search-entities "<name>" --type Service --limit 10
 potpie --json graph propose --file mutation.json

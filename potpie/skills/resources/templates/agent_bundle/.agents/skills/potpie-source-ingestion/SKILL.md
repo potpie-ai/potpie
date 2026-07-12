@@ -49,11 +49,11 @@ potpie source add repo . --pot <pot-id-or-name>
 4. Describe the views you expect to write/read before authoring mutations:
 
 ```bash
-potpie --json graph describe features --view feature_context --examples
-potpie --json graph describe infra_topology --view service_neighborhood --examples
-potpie --json graph describe recent_changes --view timeline --examples
-potpie --json graph describe decisions --view preferences_for_scope --examples
-potpie --json graph describe debugging --view prior_occurrences --examples
+potpie --json graph catalog --subgraph features
+potpie --json graph catalog --subgraph infra_topology
+potpie --json graph catalog --subgraph recent_changes
+potpie --json graph catalog --subgraph decisions
+potpie --json graph catalog --subgraph debugging
 ```
 
 5. If the CLI is unavailable or broken, continue discovery, build the proposed

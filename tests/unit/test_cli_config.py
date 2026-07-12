@@ -71,7 +71,7 @@ def test_config_list_returns_all_non_secret_entries(
     result = runner.invoke(cli_main.app, ["--json", "config", "list"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["config"]["profile"] == "local"
     assert payload["config"]["backend"] == "falkordb"
     assert "runtime_mode" in payload["known_keys"]
@@ -88,7 +88,7 @@ def test_config_get_without_key_lists_all(
     result = runner.invoke(cli_main.app, ["--json", "config", "get"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["config"]["profile"] == "local"
     assert payload["config"]["backend"] == "falkordb"
 
@@ -104,7 +104,7 @@ def test_config_get_with_key_returns_single_value(
     result = runner.invoke(cli_main.app, ["--json", "config", "get", "profile"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload == {"profile": "local"}
 
 
@@ -119,7 +119,7 @@ def test_config_get_redacts_secret_like_keys(
     result = runner.invoke(cli_main.app, ["--json", "config", "get", "api_key"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["api_key"] == "<redacted>"
 
 
@@ -137,7 +137,7 @@ def test_config_list_redacts_secret_like_keys(
     result = runner.invoke(cli_main.app, ["--json", "config", "list"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["config"]["profile"] == "local"
     assert payload["config"]["github_token"] == "<redacted>"
 
@@ -202,5 +202,5 @@ def test_config_get_redacts_camelcase_api_key(monkeypatch: pytest.MonkeyPatch) -
     result = runner.invoke(cli_main.app, ["--json", "config", "get", "service.apiKey"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["service.apiKey"] == "<redacted>"

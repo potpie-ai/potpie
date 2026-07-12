@@ -18,6 +18,7 @@ TRANSPORT_ONLY_KEYS = frozenset(
     {
         "protocol_version",
         "request_id",
+        "runtime_mode",
         "transport_metadata",
     }
 )

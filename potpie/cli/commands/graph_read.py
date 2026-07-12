@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
-
-import typer
 
 from potpie.cli.commands._common import emit
 from potpie.cli.commands.graph_common import (
@@ -35,8 +32,10 @@ def _emit_read(
         rows = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
         if not rows:
             rows = _raw_item_rows(result)
-        for row in rows:
-            typer.echo(json.dumps(row, default=str))
+        emit(
+            {"items": rows, "count": len(rows), "next_cursor": None},
+            human="\n".join(str(row) for row in rows) or "(no rows)",
+        )
         return
     payload = _read_payload(
         result,

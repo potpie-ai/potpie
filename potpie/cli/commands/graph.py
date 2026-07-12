@@ -20,7 +20,7 @@ from potpie.runtime.graph_compat import (
 )
 
 from potpie.cli.commands._common import (
-    EXIT_VALIDATION,
+    EXIT_OPERATION,
     contract,
     emit,
     empty_pot_warnings,
@@ -47,7 +47,6 @@ from potpie.cli.commands.graph_bulk import (
 )
 from potpie.cli.commands.graph_common import (
     _parse_created_by,
-    _parse_predicates,
     _parse_scope,
     _parse_ttl_seconds,
     _resolve_repo_scope,
@@ -67,7 +66,6 @@ from potpie.cli.commands.graph_runtime import (
     _emit_inbox_result,
     _emit_quality_result,
     _graph_command,
-    _legacy_warning,
 )
 from potpie.cli.commands.graph_templates import _MUTATION_TEMPLATES
 from potpie.cli.commands.graph_render import (
@@ -75,11 +73,8 @@ from potpie.cli.commands.graph_render import (
     _catalog_payload_for_profile,
     _commit_human,
     _data_plane_status_payload,
-    _describe_human,
     _graph_status_payload,
     _history_human,
-    _neighborhood_human,
-    _neighborhood_relation,
     _nudge_human,
     _proposal_human,
 )
@@ -94,6 +89,7 @@ timeline_app = typer.Typer(help="Timeline reads over the active project pot.")
 graph_app.add_typer(inbox_app, name="inbox")
 graph_app.add_typer(quality_app, name="quality")
 graph_app.add_typer(bulk_app, name="bulk")
+graph_app.add_typer(backend_app, name="backend")
 
 
 # --- Graph Surface Lite (V1.5) ----------------------------------------------
@@ -429,72 +425,6 @@ def graph_search_entities(
         )
 
 
-@graph_app.command("mutate")
-def graph_mutate(
-    file: str = typer.Option(
-        None, "--file", help="mutation JSON path; omit to read stdin"
-    ),
-    dry_run: bool = typer.Option(False, "--dry-run"),
-    allow_review_required: bool = typer.Option(False, "--allow-review-required"),
-    approved_by: str = typer.Option(
-        None, "--approved-by", help="user-ref for medium-risk approval"
-    ),
-    pot: str = typer.Option(None, "--pot"),
-) -> None:
-    """Legacy transition wrapper over graph propose + commit."""
-    with _graph_command("graph.mutate") as ctx:
-        host = get_host()
-        pot_id = resolve_pot_id(host, pot)
-        ctx.set_pot_id(pot_id)
-        payload = _load_json(file)
-        proposal = host.graph_workbench.propose(payload, pot_id=pot_id)
-        legacy_warning = _legacy_warning(
-            "graph.mutate", "graph.propose and graph.commit"
-        )
-        if dry_run or not proposal.ok:
-            _emit_graph_result(
-                ctx,
-                proposal.to_dict(),
-                human=_proposal_human(proposal),
-                warnings=legacy_warning,
-            )
-            if not proposal.ok:
-                raise typer.Exit(code=EXIT_VALIDATION)
-            return
-        if proposal.status == "review_required" and not (
-            allow_review_required and approved_by
-        ):
-            _emit_graph_result(
-                ctx,
-                proposal.to_dict(),
-                human=_proposal_human(proposal),
-                warnings=legacy_warning,
-                recommended_next_action=(
-                    f"Review the plan, then run `potpie graph commit {proposal.plan_id} "
-                    "--approved-by <user-ref> --json` when policy allows."
-                ),
-            )
-            return
-
-        result = host.graph_workbench.commit(
-            proposal.plan_id,
-            pot_id=pot_id,
-            approved_by=approved_by if allow_review_required else None,
-        )
-        _emit_graph_result(
-            ctx,
-            result.to_dict(),
-            human=_commit_human(result),
-            warnings=legacy_warning,
-            recommended_next_action=(
-                "Use `potpie graph propose --file <mutation.json> --json` followed "
-                "by `potpie graph commit <plan_id> --json`."
-            ),
-        )
-        if not result.ok:
-            raise typer.Exit(code=EXIT_VALIDATION)
-
-
 @graph_app.command("mutation-template")
 def graph_mutation_template(
     kind: str = typer.Option(
@@ -524,12 +454,9 @@ def graph_mutation_template(
                 request_id=ctx.request_id,
                 pot_id=ctx.pot_id,
                 result={"kind": kind, "template": template},
-                warnings=_legacy_warning(
-                    "graph.mutation-template", "graph.describe mutation examples"
-                ),
                 recommended_next_action=(
-                    "Use `potpie graph describe <subgraph> --examples --json` once "
-                    "describe is implemented."
+                    "Fill the template from source evidence, then run "
+                    "`potpie graph propose --file <mutation.json>`."
                 ),
             ).to_dict(),
             human=rendered,
@@ -582,7 +509,7 @@ def graph_nudge(
             ctx,
             result.to_dict(),
             human=_nudge_human(result),
-            warnings=_legacy_warning("graph.nudge", "the installed hook adapter"),
+            warnings=(),
             recommended_next_action=(
                 "Hooks should read the `result` object from this workbench envelope."
             ),
@@ -626,119 +553,6 @@ def graph_status(pot: str = typer.Option(None, "--pot")) -> None:
         )
 
 
-@graph_app.command("describe")
-def graph_describe(
-    subgraph: str = typer.Argument(None),
-    view: str = typer.Option(None, "--view"),
-    examples: bool = typer.Option(False, "--examples"),
-    pot: str = typer.Option(None, "--pot"),
-) -> None:
-    from potpie.runtime.contracts import (
-        GraphDescribeRequest,
-    )
-
-    with _graph_command("graph.describe") as ctx:
-        _set_optional_pot(ctx, pot)
-        payload = get_host().graph.describe(
-            GraphDescribeRequest(
-                subgraph=subgraph,
-                view=view,
-                include_examples=examples,
-            )
-        )
-        subgraph_name = payload["subgraph"]["name"]
-        described = payload["view"]["name"] if view else subgraph_name
-        described_view = described.split(".", 1)[1] if "." in described else described
-        _emit_graph_result(
-            ctx,
-            payload,
-            human=_describe_human(payload),
-            recommended_next_action=(
-                f"Use `potpie graph read --subgraph {subgraph_name} --view {described_view} --json` after choosing a scope."
-                if view
-                else "Use `potpie graph describe <subgraph> --view <view> --json` for one backed view."
-            ),
-        )
-
-
-@graph_app.command("neighborhood")
-def graph_neighborhood(
-    entity: str = typer.Option(..., "--entity"),
-    predicate: str = typer.Option(None, "--predicate"),
-    depth: int = typer.Option(2, "--depth"),
-    direction: str = typer.Option("both", "--direction"),
-    limit: int = typer.Option(50, "--limit"),
-    detail: str = typer.Option("summary", "--detail", help="summary | full"),
-    pot: str = typer.Option(None, "--pot"),
-) -> None:
-    with _graph_command("graph.neighborhood") as ctx:
-        if not entity:
-            raise ValueError("--entity is required")
-        normalized_direction = (direction or "both").strip().lower()
-        if normalized_direction not in {"out", "in", "both"}:
-            raise ValueError("--direction must be one of: out, in, both")
-        if depth < 1:
-            raise ValueError("--depth must be >= 1")
-        if limit < 1:
-            raise ValueError("--limit must be >= 1")
-        detail_mode = (detail or "summary").strip().lower()
-        if detail_mode not in {"summary", "full"}:
-            raise ValueError("--detail must be one of: summary, full")
-        host = get_host()
-        _require_backend_capability(
-            host,
-            capability="inspection",
-            method="neighborhood",
-            command="graph neighborhood",
-        )
-        pot_id = resolve_pot_id(host, pot)
-        ctx.set_pot_id(pot_id)
-        predicates = _parse_predicates(predicate)
-        sl = host.backend.inspection.neighborhood(
-            pot_id=pot_id,
-            entity_key=entity,
-            depth=depth,
-            direction=normalized_direction,
-            predicates=predicates,
-            limit=limit,
-        )
-        relations = [_neighborhood_relation(edge) for edge in sl.edges]
-        payload = {
-            "entity_key": entity,
-            "depth": depth,
-            "direction": normalized_direction,
-            "predicates": list(predicates),
-            "detail": detail_mode,
-            "node_count": len(sl.nodes),
-            "relation_count": len(relations),
-            "relations": relations,
-            "truncated": sl.truncated,
-        }
-        if detail_mode == "full":
-            payload["nodes"] = [
-                {
-                    "key": n.key,
-                    "labels": list(n.labels),
-                    "properties": dict(n.properties),
-                }
-                for n in sl.nodes
-            ]
-            payload["edges"] = [
-                {
-                    "predicate": e.predicate,
-                    "from": e.from_key,
-                    "to": e.to_key,
-                    "properties": dict(e.properties),
-                }
-                for e in sl.edges
-            ]
-        _emit_graph_result(
-            ctx,
-            payload,
-            human=_neighborhood_human(payload),
-        )
-
-
 @graph_app.command("propose")
 def graph_propose(
     file: str = typer.Option(
@@ -763,7 +577,7 @@ def graph_propose(
             human=_proposal_human(result),
         )
         if not result.ok:
-            raise typer.Exit(code=EXIT_VALIDATION)
+            raise typer.Exit(code=EXIT_OPERATION)
 
 
 @graph_app.command("commit")
@@ -797,9 +611,9 @@ def graph_commit(
             human=_commit_human(result),
         )
         if not result.ok:
-            raise typer.Exit(code=EXIT_VALIDATION)
+            raise typer.Exit(code=EXIT_OPERATION)
         if verify and result.verification is not None and not result.verification.ok:
-            raise typer.Exit(code=EXIT_VALIDATION)
+            raise typer.Exit(code=EXIT_OPERATION)
 
 
 @bulk_app.command("apply")
@@ -988,7 +802,7 @@ def graph_bulk_apply(
             recommended_next_action=_bulk_next_action(run),
         )
         if not ok:
-            raise typer.Exit(code=EXIT_VALIDATION)
+            raise typer.Exit(code=EXIT_OPERATION)
 
 
 @graph_app.command("history")
@@ -1341,8 +1155,11 @@ def graph_inspect(
                 ],
             },
             human=f"{len(sl.nodes)} nodes, {len(sl.edges)} edges around {entity_key}",
-            warnings=_legacy_warning("graph.inspect", "graph.neighborhood"),
-            recommended_next_action="Use `potpie graph neighborhood --entity <key> --json` once implemented.",
+            warnings=(),
+            recommended_next_action=(
+                "Use `potpie graph read --subgraph infra_topology "
+                "--view service_neighborhood --query <entity>`."
+            ),
         )
 
 

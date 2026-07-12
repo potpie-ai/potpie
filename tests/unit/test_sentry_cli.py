@@ -187,15 +187,25 @@ def test_contract_records_success_metrics_without_command_metadata(
 @pytest.mark.parametrize(
     ("raised", "result", "error_code", "exit_code"),
     [
-        (ValueError("bad input"), "validation_error", "validation_error", 1),
+        (
+            ValueError("bad input"),
+            "validation_error",
+            "validation_error",
+            _common.EXIT_VALIDATION,
+        ),
         (
             CapabilityNotImplemented("graph.inspect", detail="not wired"),
             "not_implemented",
             "not_implemented",
-            2,
+            _common.EXIT_OPERATION,
         ),
         (PotNotFound("missing pot"), "pot_not_found", "pot_not_found", 1),
-        (ContextEngineDisabled("disabled"), "unavailable", "unavailable", 2),
+        (
+            ContextEngineDisabled("disabled"),
+            "unavailable",
+            "unavailable",
+            _common.EXIT_UNAVAILABLE,
+        ),
         (typer.Exit(code=7), "exit", "exit", 7),
     ],
 )
@@ -234,7 +244,7 @@ def test_contract_preserves_expected_typer_exit_from_fail(
                 next_action="run 'potpie setup'",
             )
 
-    payload = json.loads(capsys.readouterr().out)
+    payload = json.loads(capsys.readouterr().out)["error"]
     assert exc_info.value.exit_code == _common.EXIT_VALIDATION
     assert payload["code"] == "no_active_pot"
     assert captured == []
@@ -259,8 +269,8 @@ def test_unexpected_contract_error_is_captured_and_rendered_json(
         with _common.contract():
             raise RuntimeError("boom with /Users/dsantra/private/path")
 
-    payload = json.loads(capsys.readouterr().out)
-    assert exc_info.value.exit_code == _common.EXIT_VALIDATION
+    payload = json.loads(capsys.readouterr().out)["error"]
+    assert exc_info.value.exit_code == _common.EXIT_INTERNAL
     assert payload["code"] == "unexpected_cli_error"
     assert payload["message"] == "Unexpected internal error."
     assert captured == [("RuntimeError", "unexpected_cli_error", "unexpected")]

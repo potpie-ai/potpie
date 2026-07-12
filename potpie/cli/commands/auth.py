@@ -3,14 +3,14 @@
 This registrar bolts the credential-acquisition surface onto the runtime-routed
 root app:
 
-- ``potpie github|linear|jira|confluence …`` — integration OAuth/API-token flows;
-- ``potpie auth status [--verify]`` — local integration auth status;
+- ``potpie integration <provider> …`` — integration OAuth/API-token flows;
+- ``potpie integration status [PROVIDER]`` — local integration auth status;
 - top-level ``potpie login`` / ``potpie logout`` — Potpie account (Firebase/API key);
-- ``potpie auth …`` — deprecated aliases for the provider commands above.
 
-These flows are inbound-adapter credential acquisition (OAuth/device-flow/local files),
-so they do NOT route through ``PotpieRuntime``; they read the shared ``--json`` /
-``--verbose`` state from ``commands/_common`` like every other command.
+These flows are inbound-adapter credential acquisition
+(OAuth/device-flow/local files), so they do not cross engine RPC; they read the
+shared ``--json`` / ``--verbose`` state from ``commands/_common`` like every
+other command.
 """
 
 from __future__ import annotations

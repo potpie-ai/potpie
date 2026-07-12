@@ -321,7 +321,7 @@ def test_github_login_stores_token_only_after_verification(
         ),
     )
 
-    result = runner.invoke(cli_main.app, ["auth", "github", "login"])
+    result = runner.invoke(cli_main.app, ["integration", "github", "login"])
 
     assert result.exit_code == 0, result.stdout
     stored = cs.get_provider_credentials("github")
@@ -386,7 +386,7 @@ def test_github_login_prints_verification_url_when_browser_open_fails(
         ),
     )
 
-    result = runner.invoke(cli_main.app, ["auth", "github", "login"])
+    result = runner.invoke(cli_main.app, ["integration", "github", "login"])
 
     assert result.exit_code == 0, result.stdout
     assert "Could not open a browser automatically. Open this URL:" in result.stdout
@@ -498,7 +498,7 @@ def test_github_login_ctrl_c_at_enter_prompt_exits_cleanly(
         lambda _device: pytest.fail("cancelled login must not poll for a token"),
     )
 
-    result = runner.invoke(cli_main.app, ["auth", "github", "login"])
+    result = runner.invoke(cli_main.app, ["integration", "github", "login"])
 
     assert result.exit_code == gh_cmds.EXIT_CANCELLED
     assert "Copy this code: ABCD-EFGH" in result.stdout
@@ -535,7 +535,7 @@ def test_github_login_click_abort_from_prompt_exits_cleanly(
         lambda _device: pytest.fail("cancelled login must not poll for a token"),
     )
 
-    result = runner.invoke(cli_main.app, ["auth", "github", "login"])
+    result = runner.invoke(cli_main.app, ["integration", "github", "login"])
 
     assert result.exit_code == gh_cmds.EXIT_CANCELLED
     assert "\nGitHub login cancelled." in result.stdout
@@ -573,7 +573,7 @@ def test_github_login_abort_named_exception_exits_cleanly(
         lambda _device: pytest.fail("cancelled login must not poll for a token"),
     )
 
-    result = runner.invoke(cli_main.app, ["auth", "github", "login"])
+    result = runner.invoke(cli_main.app, ["integration", "github", "login"])
 
     assert result.exit_code == gh_cmds.EXIT_CANCELLED
     assert "\nGitHub login cancelled." in result.stdout
@@ -618,19 +618,12 @@ def test_github_login_json_mode_does_not_open_browser_or_print_countdown(
         ),
     )
 
-    result = runner.invoke(cli_main.app, ["--json", "auth", "github", "login"])
+    result = runner.invoke(cli_main.app, ["--json", "integration", "github", "login"])
 
     assert result.exit_code == 0, result.stdout
     assert "Opening GitHub in" not in result.stdout
     assert "Copy this code" not in result.stdout
     assert '"provider": "github"' in result.stdout
-
-
-def test_deprecated_git_login_alias(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(gh_cmds, "github_login_impl", lambda: None)
-    result = runner.invoke(cli_main.app, ["git", "login"])
-    assert result.exit_code == 0, result.stdout
 
 
 def test_github_logout_clears_github_credentials(
@@ -648,7 +641,7 @@ def test_github_logout_clears_github_credentials(
     )
     assert cs._read_integration_secrets_file()["github_token"] == "plaintext-token"
 
-    result = runner.invoke(cli_main.app, ["auth", "github", "logout"])
+    result = runner.invoke(cli_main.app, ["integration", "github", "logout"])
 
     assert result.exit_code == 0, result.stdout
     assert cs.get_integration_metadata("github") == {}
@@ -656,7 +649,7 @@ def test_github_logout_clears_github_credentials(
     assert "github" not in (cs.read_credentials().get("integrations") or {})
 
 
-def test_git_login_does_not_store_when_account_verification_fails(
+def test_github_login_does_not_store_when_account_verification_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
@@ -688,13 +681,13 @@ def test_git_login_does_not_store_when_account_verification_fails(
 
     monkeypatch.setattr(gh_cmds, "verify_account", _fail)
 
-    result = runner.invoke(cli_main.app, ["auth", "github", "login"])
+    result = runner.invoke(cli_main.app, ["integration", "github", "login"])
 
     assert result.exit_code == 4, result.stdout
     assert cs.get_integration_metadata("github") == {}
 
 
-def test_github_repos_lists_stored_account_repositories(
+def test_github_list_lists_stored_account_repositories(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
@@ -722,7 +715,7 @@ def test_github_repos_lists_stored_account_repositories(
         ),
     )
 
-    result = runner.invoke(cli_main.app, ["github", "repos"])
+    result = runner.invoke(cli_main.app, ["integration", "github", "list"])
 
     assert result.exit_code == 0, result.stdout
     assert "octocat/widgets" in result.stdout
@@ -730,41 +723,17 @@ def test_github_repos_lists_stored_account_repositories(
     assert "main" in result.stdout
 
 
-def test_github_test_repos_deprecated_alias(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    cs.write_provider_credentials(
-        "github",
-        {
-            "provider": "github",
-            "provider_host": "github.com",
-            "access_token": "plaintext-token",
-        },
-    )
-    monkeypatch.setattr(
-        gh_cmds,
-        "list_user_owned_repositories",
-        lambda token: [{"full_name": "octocat/widgets", "private": False}],
-    )
-
-    result = runner.invoke(cli_main.app, ["github", "test", "repos"])
-
-    assert result.exit_code == 0, result.stdout
-    assert "octocat/widgets" in result.stdout
-
-
-def test_github_repos_requires_stored_github_credentials(
+def test_github_list_requires_stored_github_credentials(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
-    result = runner.invoke(cli_main.app, ["github", "repos"])
+    result = runner.invoke(cli_main.app, ["integration", "github", "list"])
 
     assert result.exit_code == 4
     assert (
         f"GitHub token not found in {cs._integration_secret_store_label()}. "
-        "Run: potpie github login" in result.output
+        "Run: potpie integration github login" in result.output.replace("\n", "")
     )
 
 

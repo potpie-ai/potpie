@@ -1011,5 +1011,5 @@ def test_linear_refresh_emits_single_json_document(
     assert len(lines) == 1
     payload = json.loads(lines[0])
     assert payload["ok"] is True
-    assert payload["provider"] == "linear"
-    assert payload.get("refreshed") is True
+    assert payload["data"]["provider"] == "linear"
+    assert payload["data"].get("refreshed") is True

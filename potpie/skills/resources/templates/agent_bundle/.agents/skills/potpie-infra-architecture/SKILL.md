@@ -32,8 +32,8 @@ potpie graph read \
 ```
 
 Omit `--environment` only when the task is environment-agnostic. For broad
-architecture work, run `potpie --json graph describe infra_topology --view
-service_neighborhood --examples` before choosing the read shape.
+architecture work, run `potpie --json graph catalog --subgraph infra_topology`
+before choosing the read shape.
 
 ## Apply Results
 
@@ -56,7 +56,7 @@ Use the workbench write flow:
 ```bash
 potpie --json graph catalog --task "record infra architecture"
 potpie graph search-entities "<service>" --type Service --limit 10
-potpie --json graph describe infra_topology --view service_neighborhood --examples
+potpie --json graph catalog --subgraph infra_topology
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>

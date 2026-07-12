@@ -10,7 +10,6 @@ from __future__ import annotations
 from potpie.cli.commands import (
     auth,
     bootstrap,
-    cloud,
     daemon,
     graph,
     ledger,
@@ -22,7 +21,6 @@ from potpie.cli.commands import (
 __all__ = [
     "auth",
     "bootstrap",
-    "cloud",
     "daemon",
     "graph",
     "ledger",

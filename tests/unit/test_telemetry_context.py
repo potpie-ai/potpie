@@ -46,7 +46,7 @@ def test_cli_context_does_not_include_command_args(monkeypatch, tmp_path) -> Non
     result = runner.invoke(host_cli.app, ["--json", "pot", "use", "private-name"])
     ctx = current_telemetry_context()
 
-    assert result.exit_code in {_common.EXIT_OK, _common.EXIT_VALIDATION}
+    assert result.exit_code in {_common.EXIT_OK, _common.EXIT_OPERATION}
     assert ctx is not None
     assert ctx.command == "pot"
     assert ctx.subcommand is None

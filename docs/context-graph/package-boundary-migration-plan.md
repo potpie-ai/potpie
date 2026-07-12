@@ -1,6 +1,6 @@
 # Potpie / Context Engine Package-Boundary Migration
 
-> Status: Commits 1-10 complete; Commit 11 not started. This document implements the
+> Status: Commits 1-11 complete; Commit 12 not started. This document implements the
 > sequencing contract for [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) and
 > [ADR-0002](../../spec/decisions/ADR-0002-potpie-context-engine-boundary.md).
 > The target architecture is proposed; current-state docs remain authoritative
@@ -65,8 +65,8 @@ verifying the baseline remains intact.
 | 7 | `refactor(product): extract auth integrations and configuration` | `PKG-AUTH-001`, `PKG-CONFIG-001`, `PKG-OWN-001` | Complete | `92f24ad` | Auth, credential, provider, config, actor-boundary, and backend-persistence tests pass |
 | 8 | `refactor(product): extract skills and installation` | `PKG-SKILL-001`, `PKG-OWN-001` | Complete | `daebbb5` | Installed-wheel lifecycle, static-manifest, snippet-validation, and full-suite gates pass |
 | 9 | `refactor(product): split setup doctor and status` | `PKG-SETUP-001`, `PKG-STATUS-001` | Complete | `adf7c08` | Root setup/status scenario matrix, real CLI journey, and full root suite pass |
-| 10 | `refactor(engine): remove product residue and legacy queue wiring` | `PKG-OWN-002`, `PKG-QUEUE-001`, `PKG-OBS-001` | Complete | This commit | Engine-only composition, injected queue, zero residue scans, and full suites pass |
-| 11 | `refactor(cli): apply the workflow-first command contract` | `PKG-CLI-001`, `PKG-CLI-002` | Not started | — | Command snapshots, removed paths, JSON tests |
+| 10 | `refactor(engine): remove product residue and legacy queue wiring` | `PKG-OWN-002`, `PKG-QUEUE-001`, `PKG-OBS-001` | Complete | `ebad0d77` | Engine-only composition, injected queue, zero residue scans, and full suites pass |
+| 11 | `refactor(cli): apply the workflow-first command contract` | `PKG-CLI-001`, `PKG-CLI-002` | Complete | This commit | Exact command tree, removed paths, JSON envelope, exit-code, and full-suite gates pass |
 | 12 | `refactor(mcp): move the public MCP server into potpie` | `PKG-MCP-001`, `PKG-STATUS-001` | Not started | — | Four-tool discovery and parity tests |
 | 13 | `build(packaging): finalize distribution boundaries` | `PKG-DIST-001`, `PKG-API-001` | Not started | — | Wheels, sdists, metadata, entrypoints, isolated installs |
 | 14 | `docs(architecture): publish the completed package split` | `PKG-VERIFY-001` and all IDs | Not started | — | Full suite, docs, final verification record |
@@ -425,6 +425,27 @@ Changes:
 
 Gate: command-tree snapshots, removed-command failures, JSON envelope tests, and
 CLI journeys pass.
+
+Evidence recorded on 2026-07-13:
+
+- The checked-in command manifest and an independent exact-tree test contain
+  only the workflow-first hierarchy. Provider flows live under `integration`,
+  backend selection under `graph backend`, and service lifecycle under
+  `daemon service`.
+- `cloud`, top-level `use`, top-level provider/auth/backend/service groups,
+  `graph mutate`, `graph describe`, `graph neighborhood`, and the old nested
+  pot-default/ledger-sources paths fail as unknown or invalid usage. No
+  compatibility command is registered.
+- Every JSON success and failure uses schema version 1 with `ok`, `data` or
+  `error`, and `meta`; list commands use `items`, `count`, and `next_cursor`.
+  JSON errors write one document to stdout, diagnostics stay on stderr, and
+  exit codes are fixed at `0`, `1`, `2`, `3`, `4`, `5`, `70`, and `130`.
+- Bundled skills and command references were migrated to `graph catalog`, named
+  `graph read` views, explicit propose/commit writes, and the new provider and
+  pot-default paths. Static manifest and installed-resource validation pass.
+- The complete gates pass with 1,100 root tests plus 1,092 engine tests; Ruff,
+  exact command-tree, removed-command, local/daemon parity, and JSON-envelope
+  checks pass.
 
 ## Commit 12 — Root MCP
 

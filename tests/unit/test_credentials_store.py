@@ -484,7 +484,8 @@ def test_get_provider_credentials_raises_when_integration_secret_missing(
         cs.get_provider_credentials("github")
 
     assert str(exc.value) == (
-        "GitHub token not found in local credentials file. Run: potpie github login"
+        "GitHub token not found in local credentials file. "
+        "Run: potpie integration github login"
     )
 
 

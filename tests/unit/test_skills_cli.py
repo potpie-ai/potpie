@@ -92,7 +92,7 @@ def test_skills_remove_all_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     assert emitted["agent"] == "codex"
     assert emitted["scope"] == "global"
     assert emitted["removed"] == ["potpie-graph", "potpie-cli"]

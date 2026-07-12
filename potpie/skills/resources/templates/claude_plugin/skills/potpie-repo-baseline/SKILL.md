@@ -25,9 +25,9 @@ Source registration records metadata only. It does not ingest or scan.
 ```bash
 potpie --json graph status
 potpie --json graph catalog --task "deep repo baseline"
-potpie --json graph describe features --view feature_context --examples
-potpie --json graph describe infra_topology --view service_neighborhood --examples
-potpie --json graph describe decisions --view preferences_for_scope --examples
+potpie --json graph catalog --subgraph features
+potpie --json graph catalog --subgraph infra_topology
+potpie --json graph catalog --subgraph decisions
 ```
 
 3. Create todos for the baseline lanes: docs/product, repo map,

@@ -17,7 +17,7 @@ import typer
 from typer.testing import CliRunner
 
 from potpie.cli import repo_location
-from potpie.cli.commands import _common, bootstrap, graph, pots, ui
+from potpie.cli.commands import _common, graph, pots, ui
 from potpie_context_engine.application.services.semantic_mutation_validator import (
     validate_semantic_request,
 )
@@ -138,7 +138,7 @@ def test_source_add_repo_dot_resolves_before_storing(monkeypatch) -> None:
     result = CliRunner().invoke(pots.source_app, ["add", "repo", "."])
     assert result.exit_code == 0, result.output
     assert pots_service.added[0]["location"] == "github.com/acme/shop"
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["location"] == "github.com/acme/shop"
     assert payload["repo_default_set"] is True
     assert payload["registration_only"] is True
@@ -184,7 +184,7 @@ def test_source_add_repo_no_default_skips_repo_default(monkeypatch) -> None:
     result = CliRunner().invoke(pots.source_app, ["add", "repo", ".", "--no-default"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["repo_default_set"] is False
     assert pots_service.repo_defaults == {}
 
@@ -199,8 +199,8 @@ def test_source_list_includes_location() -> None:
 
     result = CliRunner().invoke(pots.source_app, ["list"])
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["sources"][0]["location"] == "github.com/acme/shop"
+    payload = json.loads(result.output)["data"]
+    assert payload["items"][0]["location"] == "github.com/acme/shop"
 
 
 def test_source_list_plain_output_includes_location() -> None:
@@ -268,7 +268,7 @@ def test_source_list_json_includes_resolved_via(monkeypatch) -> None:
     result = CliRunner().invoke(pots.source_app, ["list"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["resolved_via"] == "repo_default"
     assert payload["repo"] == "github.com/acme/shop"
     assert payload["pot_id"] == "p2"
@@ -316,10 +316,10 @@ def test_resolve_pot_fails_structured_when_repo_matches_multiple_pots(
 
     result = CliRunner().invoke(pots.source_app, ["list"])
     assert result.exit_code != 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["error"]
     assert payload["code"] == "ambiguous_pot"
     assert "shop" in payload["message"] and "shop-fork" in payload["message"]
-    assert "--pot" in payload["recommended_next_action"]
+    assert "--pot" in payload["recommended_next_action"]["command"]
 
 
 def test_resolve_pot_uses_repo_default_before_ambiguous_matches(monkeypatch) -> None:
@@ -346,18 +346,18 @@ def test_pot_default_set_and_clear_current_repo(monkeypatch) -> None:
     _common.set_host(_Host(pots_service))
     _common.set_json(True)
 
-    result = CliRunner().invoke(pots.pot_app, ["default", "set", "p1"])
+    result = CliRunner().invoke(pots.pot_app, ["default", "--set", "p1"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["repo"] == "github.com/acme/shop"
     assert payload["default_pot"]["id"] == "p1"
     assert pots_service.repo_defaults == {"github.com/acme/shop": "p1"}
 
-    result = CliRunner().invoke(pots.pot_app, ["default", "clear"])
+    result = CliRunner().invoke(pots.pot_app, ["default", "--clear"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["cleared"] is True
     assert pots_service.repo_defaults == {}
 
@@ -379,7 +379,7 @@ def test_pot_linked_lists_candidates_and_default(monkeypatch) -> None:
     result = CliRunner().invoke(pots.pot_app, ["linked"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["repo"] == "github.com/acme/shop"
     assert payload["default_pot_id"] == "p2"
     assert [row["pot_id"] for row in payload["candidates"]] == ["p1", "p2"]
@@ -404,7 +404,7 @@ def test_pot_info_shows_current_repo_effective_pot(monkeypatch) -> None:
     result = CliRunner().invoke(pots.pot_app, ["info"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["active_pot"]["id"] == "p1"
     assert payload["current_repo"]["effective_pot"]["id"] == "p2"
     assert payload["current_repo"]["reason"] == "repo_default"
@@ -427,7 +427,7 @@ def test_pot_use_warns_when_repo_default_differs(monkeypatch) -> None:
     result = CliRunner().invoke(pots.pot_app, ["use", "p1"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["id"] == "p1"
     assert payload["current_repo"]["effective_pot"]["id"] == "p2"
     assert payload["warnings"]
@@ -435,32 +435,6 @@ def test_pot_use_warns_when_repo_default_differs(monkeypatch) -> None:
         "repo github.com/acme/shop default remains repo-default (p2)"
         in payload["warnings"][0]
     )
-    assert payload["recommended_next_action"] == payload["warnings"][0]
-
-
-def test_top_level_use_alias_warns_when_repo_default_differs(monkeypatch) -> None:
-    monkeypatch.setattr(
-        _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
-    )
-    match = _Source("repo", "github.com/acme/shop")
-    pots_service = _Pots(
-        [_Pot("p1", "fresh"), _Pot("p2", "repo-default")],
-        {"p1": [match], "p2": [match]},
-        active=None,
-    )
-    pots_service.repo_defaults["github.com/acme/shop"] = "p2"
-    _common.set_host(_Host(pots_service))
-    _common.set_json(True)
-    app = typer.Typer()
-    bootstrap.register(app)
-
-    result = CliRunner().invoke(app, ["use", "p1"])
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["id"] == "p1"
-    assert payload["origin"] == "local"
-    assert payload["warnings"]
     assert payload["recommended_next_action"] == payload["warnings"][0]
 
 
@@ -483,7 +457,7 @@ def test_pot_use_can_also_set_current_repo_default(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["repo_default_set"] is True
     assert payload["warnings"] == []
     assert pots_service.repo_defaults == {"github.com/acme/shop": "p1"}
@@ -500,8 +474,8 @@ def test_pot_use_also_default_requires_current_repo(monkeypatch) -> None:
         pots.pot_app, ["use", "p1", "--also-default-for-current-repo"]
     )
 
-    assert result.exit_code == 1
-    payload = json.loads(result.output)
+    assert result.exit_code == _common.EXIT_VALIDATION
+    payload = json.loads(result.output)["error"]
     assert payload["code"] == "validation_error"
     assert "--also-default-for-current-repo requires a repo" in payload["message"]
     assert pots_service._active is None
@@ -524,7 +498,7 @@ def test_pot_linked_summary_skips_graph_counts(monkeypatch) -> None:
     result = CliRunner().invoke(pots.pot_app, ["linked", "--summary"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["counts_included"] is False
     assert "counts" not in payload["candidates"][0]
     assert graph.status_calls == []
@@ -543,7 +517,7 @@ def test_ui_pot_option_opens_selected_pot_url(monkeypatch) -> None:
     result = CliRunner().invoke(app, ["--pot", "p1", "--no-open"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["pot_id"] == "p1"
     assert payload["url"] == "http://127.0.0.1:8765/ui?pot=p1"
 
@@ -574,9 +548,9 @@ def test_resolve_pot_error_mentions_source_add_when_nothing_resolves(
 
     result = CliRunner().invoke(pots.source_app, ["list"])
     assert result.exit_code != 0
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["error"]
     assert payload["code"] == "no_active_pot"
-    assert "source add repo ." in payload["recommended_next_action"]
+    assert "source add repo ." in payload["recommended_next_action"]["command"]
 
 
 # --- mutation templates --------------------------------------------------------
@@ -619,7 +593,7 @@ def test_mutation_template_command_emits_json() -> None:
         graph.graph_app, ["mutation-template", "--kind", "repo-baseline"]
     )
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["result"]["kind"] == "repo-baseline"
     ops = payload["result"]["template"]["operations"]
     assert any(op.get("predicate") == "PROVIDES" for op in ops)
@@ -631,6 +605,6 @@ def test_mutation_template_unknown_kind_fails_with_next_action() -> None:
         graph.graph_app, ["mutation-template", "--kind", "nope"]
     )
     assert result.exit_code != 0
-    payload = json.loads(result.output)
-    assert payload["error"]["code"] == "unknown_template_kind"
-    assert "repo-baseline" in payload["recommended_next_action"]
+    payload = json.loads(result.output)["error"]
+    assert payload["code"] == "unknown_template_kind"
+    assert "repo-baseline" in payload["recommended_next_action"]["command"]

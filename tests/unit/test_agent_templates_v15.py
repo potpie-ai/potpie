@@ -131,7 +131,7 @@ def test_agents_md_advertises_graph_surface() -> None:
     for verb in (
         "graph status",
         "graph catalog --task",
-        "graph describe",
+        "graph catalog --subgraph",
         "graph read --subgraph",
         "graph search-entities",
         "graph propose",
@@ -232,7 +232,7 @@ def test_recommended_skills_teach_v2_workflow() -> None:
         "graph status",
         "graph catalog --task",
         "--profile read",
-        "graph describe",
+        "graph catalog --subgraph",
         "graph search-entities",
         "graph read --subgraph",
         "graph propose",

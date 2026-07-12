@@ -94,9 +94,9 @@ def test_daemon_lifecycle_commands_use_detached_daemon(tmp_path: Path) -> None:
     stop = runner.invoke(host_cli.app, ["--json", "daemon", "stop"])
 
     assert start.exit_code == 0, start.stdout
-    assert json.loads(start.stdout)["pid"] == 123
+    assert json.loads(start.stdout)["data"]["pid"] == 123
     assert status.exit_code == 0, status.stdout
-    assert json.loads(status.stdout)["mode"] == "detached"
+    assert json.loads(status.stdout)["data"]["mode"] == "detached"
     assert restart.exit_code == 0, restart.stdout
     assert stop.exit_code == 0, stop.stdout
     assert daemon.calls == ["start", "status", "stop", "start", "stop"]
@@ -109,7 +109,7 @@ def test_daemon_logs_follow_reports_unsupported_output_path(tmp_path: Path) -> N
     result = runner.invoke(host_cli.app, ["--json", "daemon", "logs", "--follow"])
 
     assert result.exit_code == _common.EXIT_VALIDATION
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout)["error"]
     assert payload["code"] == "validation_error"
     assert "--follow is only supported for human output" in payload["message"]
     assert daemon.calls == []
@@ -149,10 +149,10 @@ def test_service_status_reports_http_admin_surface_not_implemented(
 ) -> None:
     _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
 
-    result = runner.invoke(host_cli.app, ["--json", "service", "status"])
+    result = runner.invoke(host_cli.app, ["--json", "daemon", "service", "status"])
 
     assert result.exit_code == _common.EXIT_UNAVAILABLE
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout)["error"]
     assert payload["code"] == "not_implemented"
     assert "HTTP daemon" in payload["message"]
 
@@ -165,10 +165,12 @@ def test_service_logs_reports_http_admin_surface_not_implemented(
     (log_dir / "service-graph.log").write_text("hello\n", encoding="utf-8")
     _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
 
-    result = runner.invoke(host_cli.app, ["--json", "service", "logs", "graph"])
+    result = runner.invoke(
+        host_cli.app, ["--json", "daemon", "service", "logs", "graph"]
+    )
 
     assert result.exit_code == _common.EXIT_UNAVAILABLE
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout)["error"]
     assert payload["code"] == "not_implemented"
 
 
@@ -177,7 +179,9 @@ def test_service_logs_follow_reports_http_admin_surface_not_implemented(
 ) -> None:
     _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
 
-    result = runner.invoke(host_cli.app, ["service", "logs", "graph", "--follow"])
+    result = runner.invoke(
+        host_cli.app, ["daemon", "service", "logs", "graph", "--follow"]
+    )
 
     assert result.exit_code == _common.EXIT_UNAVAILABLE
 
@@ -197,7 +201,7 @@ def test_setup_daemon_dry_run_marks_daemon_host_mode(
 
     assert result.exit_code == 0, result.stdout
     assert host.setup.host_mode == "daemon"
-    assert json.loads(result.stdout)["plan"]["host_mode"] == "daemon"
+    assert json.loads(result.stdout)["data"]["plan"]["host_mode"] == "daemon"
 
 
 def test_setup_daemon_passes_backend_to_product_setup(

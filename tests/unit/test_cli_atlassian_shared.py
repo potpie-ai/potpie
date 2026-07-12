@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from __future__ import annotations
-import typer
 import pytest
 from typer.testing import CliRunner
 from potpie.auth import auth_commands
@@ -43,29 +42,10 @@ def _isolated_xdg_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
 
 
 def test_auth_help_is_wired_into_main_cli() -> None:
-    result = runner.invoke(cli_main.app, ["auth", "--help"])
+    result = runner.invoke(cli_main.app, ["integration", "--help"])
 
     assert result.exit_code == 0, result.stdout
-    assert "Deprecated" in result.stdout
-
-
-def test_register_provider_app_normalizes_name(monkeypatch) -> None:
-    calls: list[tuple[typer.Typer, str]] = []
-
-    def add_typer(provider_app: typer.Typer, *, name: str) -> None:
-        calls.append((provider_app, name))
-
-    monkeypatch.setattr(auth_commands.auth_app, "add_typer", add_typer)
-
-    provider_app = typer.Typer()
-    auth_commands.register_provider_app(" Example ", provider_app)
-
-    assert calls == [(provider_app, "example")]
-
-
-def test_register_provider_app_rejects_empty_name() -> None:
-    with pytest.raises(ValueError, match="provider app name must be non-empty"):
-        auth_commands.register_provider_app(" ", typer.Typer())
+    assert "Provider integrations" in result.stdout
 
 
 def test_esc_handles_none_and_markup() -> None:
@@ -91,30 +71,18 @@ def test_auth_status_json(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
 
-    result = runner.invoke(auth_commands.auth_app, ["status"])
+    result = runner.invoke(auth_commands.integration_app, ["status"])
 
     assert result.exit_code == 0, result.stdout
     assert '"integrations"' in result.stdout
     assert '"jira"' in result.stdout
 
 
-def test_auth_logout_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        auth_commands, "ensure_runtime_environment_loaded", lambda: None
-    )
-    monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
-    captured: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        auth_commands,
-        "emit_error",
-        lambda title, message, **kwargs: captured.append((title, message)),
-    )
+def test_integration_status_rejects_unknown_provider() -> None:
+    result = runner.invoke(auth_commands.integration_app, ["status", "unknown"])
 
-    result = runner.invoke(auth_commands.auth_app, ["logout", "unknown"])
-
-    assert result.exit_code == 1
-    assert captured
-    assert "Unknown provider" in captured[0][0]
+    assert result.exit_code == 2
+    assert isinstance(result.exception, SystemExit)
 
 
 def test_flags_delegates_to_common(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,50 +110,11 @@ def test_auth_logout_not_authenticated_still_clears_stale_state(
     store.clear_integration_tokens = lambda provider: cleared.append(provider)  # type: ignore[method-assign]
     set_store(store)
 
-    result = runner.invoke(auth_commands.auth_app, ["logout", "jira"])
+    result = runner.invoke(auth_commands.jira_app, ["logout"])
 
     assert result.exit_code == 0
     assert cleared == ["jira"]
     assert "stale" in result.stdout.lower()
-
-
-def test_auth_logout_wiki_alias(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        auth_commands, "ensure_runtime_environment_loaded", lambda: None
-    )
-    monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
-    monkeypatch.setattr(
-        auth_commands,
-        "get_integration_status",
-        lambda _p: {"authenticated": True},
-    )
-    cleared: list[str] = []
-    store = InMemoryCredentialStore()
-    store.clear_integration_tokens = lambda provider: cleared.append(provider)  # type: ignore[method-assign]
-    set_store(store)
-
-    result = runner.invoke(auth_commands.auth_app, ["logout", "wiki"])
-
-    assert result.exit_code == 0
-    assert cleared == ["confluence"]
-
-
-def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        auth_commands, "ensure_runtime_environment_loaded", lambda: None
-    )
-    monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
-    monkeypatch.setattr(
-        auth_commands,
-        "get_integration_status",
-        lambda _p: {"authenticated": True},
-    )
-    set_store(InMemoryCredentialStore())
-
-    result = runner.invoke(auth_commands.auth_app, ["revoke", "jira"])
-
-    assert result.exit_code == 0
-    assert '"ok": true' in result.stdout
 
 
 def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -209,7 +138,7 @@ def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     store.clear_integration_tokens = _fail_clear  # type: ignore[method-assign]
     set_store(store)
 
-    result = runner.invoke(auth_commands.auth_app, ["logout", "jira"])
+    result = runner.invoke(auth_commands.jira_app, ["logout"])
 
     assert result.exit_code == 4
 
@@ -229,7 +158,7 @@ def test_auth_logout_jira(monkeypatch: pytest.MonkeyPatch) -> None:
     store.clear_integration_tokens = lambda provider: cleared.append(provider)  # type: ignore[method-assign]
     set_store(store)
 
-    result = runner.invoke(auth_commands.auth_app, ["logout", "jira"])
+    result = runner.invoke(auth_commands.jira_app, ["logout"])
 
     assert result.exit_code == 0, result.stdout
     assert cleared == ["jira"]
@@ -311,7 +240,7 @@ def test_auth_status_verify_token_error(monkeypatch: pytest.MonkeyPatch) -> None
         "get_integration_tokens",
         lambda _p: (_ for _ in ()).throw(RuntimeError("token load broke")),
     )
-    result = runner.invoke(auth_commands.auth_app, ["status", "--verify"])
+    result = runner.invoke(auth_commands.integration_app, ["status", "--verify"])
     assert result.exit_code == 0
     assert '"verified": false' in result.stdout
     assert "token load broke" in result.stdout
@@ -416,7 +345,7 @@ def test_auth_status_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
             "auth_type": "api_token",
         },
     )
-    result = runner.invoke(auth_commands.auth_app, ["status"])
+    result = runner.invoke(auth_commands.integration_app, ["status"])
 
     assert result.exit_code == 0
     assert "jira: authenticated" in result.stdout
@@ -424,7 +353,7 @@ def test_auth_status_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_jira_login_help() -> None:
-    result = runner.invoke(auth_commands.auth_app, ["jira", "login", "--help"])
+    result = runner.invoke(auth_commands.integration_app, ["jira", "login", "--help"])
     assert result.exit_code == 0
     assert "api-token" in result.stdout.lower() or "token" in result.stdout.lower()
 
@@ -461,7 +390,7 @@ def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> Non
         lambda _p, _c: (False, "gateway down"),
     )
 
-    result = runner.invoke(auth_commands.auth_app, ["status", "--verify"])
+    result = runner.invoke(auth_commands.integration_app, ["status", "--verify"])
 
     # Normalize whitespace: the long status line soft-wraps at the console width.
     out = " ".join(result.stdout.split())
@@ -503,7 +432,7 @@ def test_auth_status_human_verify_ok(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _p, _c: (True, "ok (Ada)"),
     )
 
-    result = runner.invoke(auth_commands.auth_app, ["status", "--verify"])
+    result = runner.invoke(auth_commands.integration_app, ["status", "--verify"])
 
     assert result.exit_code == 0
     assert "verify=ok (Ada)" in result.stdout

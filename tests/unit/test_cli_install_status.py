@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -71,24 +72,15 @@ def test_python_from_script_ignores_binary_executable(tmp_path) -> None:
 
 
 def test_doctor_includes_cli_install(monkeypatch: pytest.MonkeyPatch) -> None:
-    mock_host = MagicMock()
-    mock_host.daemon.status.return_value = {"mode": "in_process", "up": True}
-    mock_host.backend.profile = "falkordb"
-    mock_host.backend.capabilities.return_value.implemented.return_value = [
-        "graph.read"
-    ]
-    mock_host.backend.mutation.readiness.return_value = MagicMock(
-        ready=True,
-        profile="falkordb",
-        capability_ready={"mutation": True},
-        detail=None,
-    )
-    mock_host.pots.active_pot.return_value = None
-    mock_host.ledger.status.return_value = MagicMock(available=True, binding="local")
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
-    monkeypatch.setattr(
-        "potpie.setup.status.collect_cli_install_status",
-        lambda: {
+    status = MagicMock()
+    status.doctor.return_value = {
+        "ready": True,
+        "runtime_mode": "in-process",
+        "daemon_state": "up",
+        "backend": "falkordb",
+        "backend_ready": True,
+        "issues": [],
+        "cli_install": {
             "package_name": "potpie",
             "package_version": "2.0.0",
             "on_path": True,
@@ -96,12 +88,17 @@ def test_doctor_includes_cli_install(monkeypatch: pytest.MonkeyPatch) -> None:
             "python_version": "3.12.12",
             "install_method": "uv_tool",
         },
+    }
+    monkeypatch.setattr(
+        bootstrap,
+        "get_cli_runtime",
+        lambda: SimpleNamespace(status=status),
     )
 
     result = runner.invoke(cli_main.app, ["--json", "doctor"])
 
     assert result.exit_code == 0, result.stdout
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout)["data"]
     assert payload["cli_install"]["install_method"] == "uv_tool"
     assert payload["cli_install"]["primary_path"] == "/Users/me/.local/bin/potpie"
 

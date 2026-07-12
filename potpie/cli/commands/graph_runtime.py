@@ -22,7 +22,7 @@ from potpie.runtime.graph_compat import (
 
 from potpie.cli.commands._common import (
     EXIT_UNAVAILABLE,
-    EXIT_VALIDATION,
+    EXIT_OPERATION,
     contract,
     emit,
     is_json,
@@ -83,18 +83,14 @@ class _GraphCliCommandContext:
         self.subgraph_versions = clean
 
     def format_error(self, payload: dict[str, Any]) -> dict[str, Any]:
-        code = str(payload.get("code") or "error")
+        error = payload.get("error")
+        code = str(error.get("code") if isinstance(error, dict) else "error")
         self.mark_result(result=code, error_code=code)
-        return graph_error_envelope(
-            command=self.command,
-            request_id=self.request_id,
-            pot_id=self.pot_id,
-            code=code,
-            message=str(payload.get("message") or "Graph command failed."),
-            detail=payload.get("detail"),
-            subgraph_versions=self.subgraph_versions,
-            recommended_next_action=payload.get("recommended_next_action"),
-        ).to_dict()
+        meta = payload.get("meta")
+        if isinstance(meta, dict):
+            meta["command"] = self.command
+            meta["request_id"] = self.request_id
+        return payload
 
     def mark_result(
         self,
@@ -379,13 +375,13 @@ def _with_graph_warnings(human: str, warnings: tuple[str, ...]) -> str:
 def _emit_inbox_result(ctx: _GraphCliCommandContext, result: Any) -> None:
     _emit_graph_result(ctx, result.to_dict(), human=_inbox_human(result))
     if not result.ok:
-        raise typer.Exit(code=EXIT_VALIDATION)
+        raise typer.Exit(code=EXIT_OPERATION)
 
 
 def _emit_quality_result(ctx: _GraphCliCommandContext, result: Any) -> None:
     _emit_graph_result(ctx, result.to_dict(), human=_quality_human(result))
     if not result.ok:
-        raise typer.Exit(code=EXIT_VALIDATION)
+        raise typer.Exit(code=EXIT_OPERATION)
 
 
 def _emit_graph_not_implemented(
@@ -426,12 +422,6 @@ def _error_message_from_result(payload: Mapping[str, Any]) -> str:
     return f"Graph command failed with status {status!r}."
 
 
-def _legacy_warning(command: str, replacement: str) -> tuple[str, ...]:
-    return (
-        f"{command} is a legacy transition command and is not part of the canonical V2 workbench command set; use {replacement}.",
-    )
-
-
 def _emit_graph_read(
     ctx: _GraphCliCommandContext,
     result: Any,
@@ -454,7 +444,7 @@ def _emit_graph_read(
             warnings=warnings,
         )
         if result.to_dict().get("ok", True) is False:
-            raise typer.Exit(code=EXIT_VALIDATION)
+            raise typer.Exit(code=EXIT_OPERATION)
         return
 
     normalized_format = _effective_read_format(result, format_)
@@ -500,4 +490,4 @@ def _emit_graph_read(
         warnings=warnings,
     )
     if failed:
-        raise typer.Exit(code=EXIT_VALIDATION)
+        raise typer.Exit(code=EXIT_OPERATION)

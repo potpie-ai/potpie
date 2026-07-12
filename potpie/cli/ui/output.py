@@ -99,23 +99,25 @@ def emit_error(
 ) -> None:
     """Emit a structured error.
 
-    JSON mode mirrors the host-routed error contract (``commands/_common.fail``):
-    ``{code, message, detail, recommended_next_action}`` — one schema across the
-    whole CLI. Human mode keeps the rich title/message/hint rendering used by the
+    JSON mode uses the same versioned envelope as ``commands/_common.fail``.
+    Human mode keeps the rich title/message/hint rendering used by the
     interactive auth flows.
     """
     if _json_errors:
-        payload: dict[str, Any] = {
-            "code": code or _error_code(title),
-            "message": message,
-            "detail": hint,
-            "recommended_next_action": next_action,
-        }
+        from potpie.cli.output import error_envelope
+
+        payload = error_envelope(
+            code=code or _error_code(title),
+            message=message,
+            details=hint,
+            recommended_next_action=next_action,
+        )
         if verbose and exc is not None:
-            payload["traceback"] = "".join(
-                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            print(
+                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+                file=sys.stderr,
             )
-        print(json.dumps(payload), file=sys.stderr)
+        print(json.dumps(payload))
         return
     print_structured_error(
         title=title,
@@ -148,7 +150,7 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
             "potpie_auth_message": data.potpie_auth_message,
             "summary": data.summary_lines,
         }
-        print(json.dumps(payload))
+        print_json_blob(payload, as_json=True)
         return
 
     ctx_rows: list[tuple[str, str]] = [
@@ -244,7 +246,7 @@ def print_unified_status_report(
             "pot_status": pot_status,
             "pot_status_error": pot_status_error,
         }
-        print(json.dumps(payload))
+        print_json_blob(payload, as_json=True)
         return
 
     print_doctor_report(data, as_json=False)
@@ -338,7 +340,10 @@ def print_search_results(
     show_provenance: bool = True,
 ) -> None:
     if as_json:
-        print(json.dumps(rows))
+        print_json_blob(
+            {"items": rows, "count": len(rows), "next_cursor": None},
+            as_json=True,
+        )
         return
     if not rows:
         _out.print(
@@ -388,7 +393,7 @@ def print_search_results(
 
 def print_ingest_result(out: dict[str, Any], *, as_json: bool) -> None:
     if as_json:
-        print(json.dumps(out))
+        print_json_blob(out, as_json=True)
         return
     status = out.get("status")
     if status == "reconciliation_rejected":
@@ -444,7 +449,18 @@ def print_ingest_result(out: dict[str, Any], *, as_json: bool) -> None:
 def print_json_blob(data: dict[str, Any], *, as_json: bool) -> None:
     """Generic structured output for add / pot list / pot create."""
     if as_json:
-        print(json.dumps(data))
+        from potpie.cli.output import success_envelope
+
+        request_id = data.get("request_id")
+        print(
+            json.dumps(
+                success_envelope(
+                    data,
+                    request_id=str(request_id) if request_id else None,
+                ),
+                default=str,
+            )
+        )
         return
     _out.print(Syntax(json.dumps(data, indent=2), "json", theme="ansi_dark"))
 
@@ -458,7 +474,7 @@ def print_plain_line(
     tone: str | None = None,
 ) -> None:
     if as_json and json_payload is not None:
-        print(json.dumps(json_payload))
+        print_json_blob(json_payload, as_json=True)
         return
     if not markup:
         _out.print(message, markup=False)

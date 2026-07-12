@@ -94,7 +94,7 @@ def test_source_add_json_marks_registration_only() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["data"]
     assert emitted == {
         "source_id": "src-1",
         "kind": "repo",
@@ -120,7 +120,7 @@ def test_source_add_repo_default_reports_unavailable_host() -> None:
     )
 
     assert result.exit_code != 0
-    emitted = json.loads(result.output)
+    emitted = json.loads(result.output)["error"]
     assert emitted["code"] == "repo_default_unavailable"
     assert fake_pots.calls == []
 
@@ -193,7 +193,7 @@ def test_source_status_no_id_returns_pot_summary() -> None:
     result = CliRunner().invoke(pots.source_app, ["status", "--pot", "pot-1"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["pot_id"] == "pot-1"
     assert payload["source_count"] == 1
     assert len(payload["sources"]) == 1
@@ -223,7 +223,7 @@ def test_source_status_no_id_marks_repo_default() -> None:
     result = CliRunner().invoke(pots.source_app, ["status", "--pot", "pot-1"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["sources"][0]["repo_default"] is True
 
 
@@ -236,7 +236,7 @@ def test_source_status_no_id_no_sources_recommends_add() -> None:
     result = CliRunner().invoke(pots.source_app, ["status", "--pot", "pot-1"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["source_count"] == 0
     assert payload["recommended_next_action"] is not None
     assert "source add repo" in payload["recommended_next_action"]
@@ -260,7 +260,7 @@ def test_source_status_with_id_returns_enriched_row() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["id"] == "src-abc"
     assert payload["kind"] == "repo"
     assert payload["location"] == "/home/user/project"

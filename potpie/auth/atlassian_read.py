@@ -75,7 +75,7 @@ def run_jira_use_flow(
     if not sys.stdin.isatty() and not workspace_key:
         raise AtlassianReadError(
             "Interactive workspace selection requires a terminal. "
-            "Use: potpie jira select --key ENG"
+            "Use: potpie integration jira select --key ENG"
         )
     ctx = load_jira_read_credentials()
     prefs = ctx.get("workspaces") if isinstance(ctx.get("workspaces"), dict) else {}
@@ -106,7 +106,7 @@ def run_confluence_use_flow(
     if not sys.stdin.isatty() and not workspace_key:
         raise AtlassianReadError(
             "Interactive workspace selection requires a terminal. "
-            "Use: potpie confluence select --key DOCS"
+            "Use: potpie integration confluence select --key DOCS"
         )
     ctx = load_confluence_read_credentials()
     prefs = ctx.get("workspaces") if isinstance(ctx.get("workspaces"), dict) else {}

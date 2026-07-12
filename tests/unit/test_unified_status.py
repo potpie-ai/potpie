@@ -28,7 +28,7 @@ def test_unified_status_json(capsys) -> None:
         pot_id="pot-1",
         pot_status={"ready": True},
     )
-    out = json.loads(capsys.readouterr().out)
+    out = json.loads(capsys.readouterr().out)["data"]
     assert out["doctor"]["potpie_health_ok"] is True
     assert out["pot_id"] == "pot-1"
     assert out["pot_status"]["ready"] is True

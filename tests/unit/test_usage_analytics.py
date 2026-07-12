@@ -138,7 +138,7 @@ def test_host_status_activation_does_not_record_usage(fake_sink: _FakeSink) -> N
     ]
 
 
-def test_github_repos_records_usage_after_success(
+def test_github_list_records_usage_after_success(
     fake_sink: _FakeSink,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -153,10 +153,10 @@ def test_github_repos_records_usage_after_success(
     )
 
     with _cli_json_mode():
-        github_commands.github_repos_impl()
+        github_commands.github_list_impl()
 
     assert [event.name for event in fake_sink.events] == ["cli_usage_command_succeeded"]
-    assert fake_sink.events[0].properties["command"] == "github repos"
+    assert fake_sink.events[0].properties["command"] == "integration.github.list"
     assert fake_sink.events[0].properties["provider"] == "github"
     assert fake_sink.events[0].properties["result_kind"] == "provider_list"
     assert fake_sink.events[0].properties["item_count"] == 2
@@ -165,11 +165,11 @@ def test_github_repos_records_usage_after_success(
 @pytest.mark.parametrize(
     ("command", "runner_name", "fetch_name"),
     [
-        ("linear ls", "linear_ls", "fetch_linear_workspaces"),
-        ("jira ls", "jira_ls", "fetch_jira_projects"),
+        ("integration.linear.list", "linear_list", "fetch_linear_workspaces"),
+        ("integration.jira.list", "jira_list", "fetch_jira_projects"),
         (
-            "confluence ls",
-            "confluence_ls",
+            "integration.confluence.list",
+            "confluence_list",
             "fetch_confluence_spaces_sample",
         ),
     ],
@@ -196,7 +196,7 @@ def test_provider_list_commands_record_usage_after_success(
 
     assert [event.name for event in fake_sink.events] == ["cli_usage_command_succeeded"]
     event = fake_sink.events[0]
-    provider = command.split()[0]
+    provider = command.split(".")[1]
     assert event.properties["command"] == command
     assert event.properties["provider"] == provider
     assert event.properties["result_kind"] == "provider_list"

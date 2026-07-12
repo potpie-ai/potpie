@@ -32,7 +32,7 @@ def test_missing_argument_emits_structured_json_via_run_cli(
 
     assert exc_info.value.exit_code == _common.EXIT_VALIDATION
     captured = capsys.readouterr()
-    payload = json.loads(captured.out)
+    payload = json.loads(captured.out)["error"]
     assert payload["code"] == "usage_error"
     assert "NAME" in payload["message"]
     assert payload["recommended_next_action"]
@@ -46,7 +46,7 @@ def test_unknown_subcommand_emits_structured_json_via_run_cli(
 
     assert exc_info.value.exit_code == _common.EXIT_VALIDATION
     captured = capsys.readouterr()
-    payload = json.loads(captured.out)
+    payload = json.loads(captured.out)["error"]
     assert payload["code"] == "usage_error"
     assert "nope" in payload["message"]
     assert payload["recommended_next_action"]
@@ -71,7 +71,7 @@ def test_removed_pot_queue_commands_emit_structured_unknown_command(
 
     assert exc_info.value.exit_code == _common.EXIT_VALIDATION
     captured = capsys.readouterr()
-    payload = json.loads(captured.out)
+    payload = json.loads(captured.out)["error"]
     assert payload["code"] == "usage_error"
     assert expected in payload["message"]
 
@@ -135,7 +135,7 @@ def test_run_cli_abort_exits_cleanly(
         with pytest.raises(typer.Exit) as exc_info:
             host_cli.run_cli(["pot", "list"])
 
-    assert exc_info.value.exit_code == 1
+    assert exc_info.value.exit_code == _common.EXIT_INTERRUPTED
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
@@ -146,4 +146,4 @@ def test_main_converts_abort_to_system_exit() -> None:
         with pytest.raises(SystemExit) as exc_info:
             host_cli.main()
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == _common.EXIT_INTERRUPTED

@@ -1,117 +1,27 @@
 {
   "commands": {
-    "auth confluence login": [
-      "--api-token",
-      "--email",
-      "--force",
-      "--site-subdomain"
-    ],
-    "auth confluence logout": [],
-    "auth confluence ls": [
-      "--limit",
-      "-n"
-    ],
-    "auth confluence select": [
-      "--key",
-      "--limit",
-      "-k",
-      "-n"
-    ],
-    "auth github login": [],
-    "auth github logout": [],
-    "auth github repos": [],
-    "auth jira login": [
-      "--api-token",
-      "--email",
-      "--force",
-      "--site-subdomain"
-    ],
-    "auth jira logout": [],
-    "auth jira ls": [
-      "--limit",
-      "-n"
-    ],
-    "auth jira select": [
-      "--key",
-      "--limit",
-      "-k",
-      "-n"
-    ],
-    "auth linear login": [
-      "--add",
-      "--force"
-    ],
-    "auth linear logout": [],
-    "auth linear ls": [
-      "--limit",
-      "-n"
-    ],
-    "auth linear select": [
-      "--key",
-      "--limit",
-      "--org",
-      "-k",
-      "-n",
-      "-o"
-    ],
-    "auth linear-login": [
-      "--force"
-    ],
-    "auth logout": [],
-    "auth revoke": [],
-    "auth status": [
-      "--verify"
-    ],
-    "backend doctor": [],
-    "backend list": [],
-    "backend status": [],
-    "backend use": [],
-    "cloud login": [],
-    "cloud pull": [
-      "--pot"
-    ],
-    "cloud push": [
-      "--pot"
-    ],
-    "cloud skills sync": [
-      "--agent"
-    ],
-    "cloud status": [],
     "config get": [],
     "config list": [],
     "config set": [],
-    "confluence login": [
-      "--api-token",
-      "--email",
-      "--force",
-      "--site-subdomain"
-    ],
-    "confluence logout": [],
-    "confluence ls": [
-      "--limit",
-      "-n"
-    ],
-    "confluence select": [
-      "--key",
-      "--limit",
-      "-k",
-      "-n"
-    ],
     "daemon logs": [
       "--follow"
     ],
     "daemon restart": [],
+    "daemon service down": [],
+    "daemon service logs": [
+      "--follow",
+      "-f"
+    ],
+    "daemon service status": [],
+    "daemon service up": [],
     "daemon start": [],
     "daemon status": [],
     "daemon stop": [],
     "doctor": [],
-    "git login": [],
-    "git logout": [],
-    "git test repos": [],
-    "github login": [],
-    "github logout": [],
-    "github repos": [],
-    "github test repos": [],
+    "graph backend doctor": [],
+    "graph backend list": [],
+    "graph backend status": [],
+    "graph backend use": [],
     "graph bulk apply": [
       "--approved-by",
       "--chunk-size",
@@ -136,11 +46,6 @@
       "--approved-by",
       "--pot",
       "--verify"
-    ],
-    "graph describe": [
-      "--examples",
-      "--pot",
-      "--view"
     ],
     "graph export": [
       "--pot"
@@ -211,24 +116,8 @@
       "--depth",
       "--pot"
     ],
-    "graph mutate": [
-      "--allow-review-required",
-      "--approved-by",
-      "--dry-run",
-      "--file",
-      "--pot"
-    ],
     "graph mutation-template": [
       "--kind"
-    ],
-    "graph neighborhood": [
-      "--depth",
-      "--detail",
-      "--direction",
-      "--entity",
-      "--limit",
-      "--pot",
-      "--predicate"
     ],
     "graph nudge": [
       "--event",
@@ -328,22 +217,63 @@
     "graph status": [
       "--pot"
     ],
-    "jira login": [
+    "integration confluence list": [
+      "--limit",
+      "-n"
+    ],
+    "integration confluence login": [
       "--api-token",
       "--email",
       "--force",
       "--site-subdomain"
     ],
-    "jira logout": [],
-    "jira ls": [
-      "--limit",
-      "-n"
-    ],
-    "jira select": [
+    "integration confluence logout": [],
+    "integration confluence select": [
       "--key",
       "--limit",
       "-k",
       "-n"
+    ],
+    "integration github list": [],
+    "integration github login": [],
+    "integration github logout": [],
+    "integration jira list": [
+      "--limit",
+      "-n"
+    ],
+    "integration jira login": [
+      "--api-token",
+      "--email",
+      "--force",
+      "--site-subdomain"
+    ],
+    "integration jira logout": [],
+    "integration jira select": [
+      "--key",
+      "--limit",
+      "-k",
+      "-n"
+    ],
+    "integration linear list": [
+      "--limit",
+      "-n"
+    ],
+    "integration linear login": [
+      "--add",
+      "--force"
+    ],
+    "integration linear logout": [],
+    "integration linear select": [
+      "--key",
+      "--limit",
+      "--org",
+      "-k",
+      "-n",
+      "-o"
+    ],
+    "integration list": [],
+    "integration status": [
+      "--verify"
     ],
     "ledger disconnect": [],
     "ledger pull": [
@@ -359,29 +289,12 @@
       "--type",
       "--until"
     ],
-    "ledger sources list": [
+    "ledger sources": [
       "--pot"
     ],
     "ledger status": [],
     "ledger use": [
       "--org"
-    ],
-    "linear login": [
-      "--add",
-      "--force"
-    ],
-    "linear logout": [],
-    "linear ls": [
-      "--limit",
-      "-n"
-    ],
-    "linear select": [
-      "--key",
-      "--limit",
-      "--org",
-      "-k",
-      "-n",
-      "-o"
     ],
     "login": [
       "--api-key",
@@ -396,14 +309,10 @@
       "--repo",
       "--use"
     ],
-    "pot default clear": [
-      "--repo"
-    ],
-    "pot default set": [
-      "--repo"
-    ],
-    "pot default show": [
+    "pot default": [
+      "--clear",
       "--repo",
+      "--set",
       "--with-candidates"
     ],
     "pot info": [],
@@ -439,13 +348,6 @@
       "--include",
       "--pot"
     ],
-    "service down": [],
-    "service logs": [
-      "--follow",
-      "-f"
-    ],
-    "service status": [],
-    "service up": [],
     "setup": [
       "--agent",
       "--backend",
@@ -530,11 +432,6 @@
       "--no-open",
       "--open",
       "--pot"
-    ],
-    "use": [
-      "--also-default-for-current-repo",
-      "--local",
-      "--managed"
     ],
     "whoami": []
   },

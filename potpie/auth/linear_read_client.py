@@ -77,7 +77,9 @@ def _access_token(organization_id: str | None = None) -> str:
         tokens = ensure_valid_integration_tokens("linear")
     access_token = str(tokens.get("access_token") or "").strip()
     if not access_token:
-        raise LinearReadError("Linear is not connected. Run: potpie linear login")
+        raise LinearReadError(
+            "Linear is not connected. Run: potpie integration linear login"
+        )
     return access_token
 
 
@@ -92,7 +94,9 @@ def load_linear_read_credentials(
         else ensure_valid_integration_tokens("linear")
     )
     if not str(tokens.get("access_token") or "").strip():
-        raise LinearReadError("Linear is not connected. Run: potpie linear login")
+        raise LinearReadError(
+            "Linear is not connected. Run: potpie integration linear login"
+        )
     return tokens
 
 
@@ -201,7 +205,9 @@ def fetch_linear_teams(
     """Return teams within a connected Linear workspace."""
     org_id = organization_id or get_active_linear_organization_id()
     if not org_id:
-        raise LinearReadError("No active Linear workspace. Run: potpie linear select")
+        raise LinearReadError(
+            "No active Linear workspace. Run: potpie integration linear select"
+        )
     access_token = _access_token(org_id)
     data = _linear_graphql(access_token, _TEAMS_QUERY)
     viewer = data.get("viewer")
@@ -209,7 +215,7 @@ def fetch_linear_teams(
     if isinstance(org, dict) and str(org.get("id") or "") != str(org_id):
         raise LinearReadError(
             "Linear token does not match the selected workspace. "
-            "Run: potpie linear login --add"
+            "Run: potpie integration linear login --add"
         )
     teams_conn = org.get("teams") if isinstance(org, dict) else None
     nodes = teams_conn.get("nodes") if isinstance(teams_conn, dict) else None
@@ -302,7 +308,9 @@ def resolve_linear_organization(
         return workspaces[0]
     if workspaces:
         return workspaces[0]
-    raise LinearReadError("No Linear workspaces connected. Run: potpie linear login")
+    raise LinearReadError(
+        "No Linear workspaces connected. Run: potpie integration linear login"
+    )
 
 
 def resolve_linear_team(

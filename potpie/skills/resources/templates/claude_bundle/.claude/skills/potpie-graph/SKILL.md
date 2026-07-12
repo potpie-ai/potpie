@@ -32,7 +32,7 @@ catalog's current operation partition over any example in a skill file.
 Describe the subgraph/view before a non-trivial read or write:
 
 ```bash
-potpie graph describe debugging --view prior_occurrences --examples
+potpie graph catalog --subgraph debugging
 ```
 
 ## 2. Read - `graph read --subgraph --view`
@@ -43,7 +43,7 @@ potpie graph read --subgraph decisions --view preferences_for_scope --scope repo
 potpie graph read --subgraph recent_changes --view timeline --time-window 7d --limit 20 --format table
 potpie graph read --subgraph recent_changes --view timeline --source-ref <github-pr-or-issue-ref> --format table
 potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:payments-api --depth 2 --direction out --environment prod
-potpie graph neighborhood --entity service:payments-api --predicate USES --detail summary --limit 20
+potpie graph read --subgraph infra_topology --view service_neighborhood --query service:payments-api --relations USES --detail summary --limit 20
 ```
 
 Views and what they answer:

@@ -7,8 +7,7 @@ This module owns the cross-cutting concerns so the command bodies stay thin:
 - ``--json`` output state + ``emit`` / ``fail`` helpers;
 - the ``contract()`` error boundary that maps domain errors to the documented
   exit codes (0 ok / 1 validation / 2 unavailable / 3 degraded / 4 auth) and the
-  structured JSON error shape (``code``/``message``/``detail``/
-  ``recommended_next_action``);
+    versioned JSON error envelope;
 - active-pot resolution.
 """
 
@@ -42,10 +41,13 @@ from potpie.cli.repo_location import (
 
 # --- exit codes (cli-flow.md output contract) -------------------------------
 EXIT_OK = 0
-EXIT_VALIDATION = 1
-EXIT_UNAVAILABLE = 2
-EXIT_DEGRADED = 3
+EXIT_OPERATION = 1
+EXIT_VALIDATION = 2
+EXIT_UNAVAILABLE = 3
 EXIT_AUTH = 4
+EXIT_DEGRADED = 5
+EXIT_INTERNAL = 70
+EXIT_INTERRUPTED = 130
 
 _state: dict[str, Any] = {
     "json": False,
@@ -181,7 +183,18 @@ def json_error_formatter(
 def emit(payload: dict[str, Any], *, human: str) -> None:
     """Emit a success result: JSON when ``--json``, else a human line."""
     if is_json():
-        typer.echo(json.dumps(payload, default=str))
+        from potpie.cli.output import success_envelope
+
+        request_id = payload.get("request_id")
+        typer.echo(
+            json.dumps(
+                success_envelope(
+                    payload,
+                    request_id=str(request_id) if request_id else None,
+                ),
+                default=str,
+            )
+        )
     else:
         from potpie.cli.ui.format import print_human_block
 
@@ -198,12 +211,15 @@ def fail(
 ) -> NoReturn:
     """Emit the structured error contract and exit with the given code."""
     if is_json():
-        payload = {
-            "code": code,
-            "message": message,
-            "detail": detail,
-            "recommended_next_action": next_action,
-        }
+        from potpie.cli.output import error_envelope
+
+        payload = error_envelope(
+            code=code,
+            message=message,
+            details=detail,
+            retryable=exit_code == EXIT_UNAVAILABLE,
+            recommended_next_action=next_action,
+        )
         formatter = _state.get("json_error_formatter")
         if callable(formatter):
             payload = formatter(payload)
@@ -232,7 +248,7 @@ def contract() -> Iterator[None]:
     """Error boundary: map domain errors to the documented exit codes.
 
     No command should leak a traceback; an unbuilt capability returns the
-    structured not-implemented contract (exit 2) rather than crashing.
+    structured not-implemented contract (exit 1) rather than crashing.
     """
     start = time.perf_counter()
     result = "ok"
@@ -247,7 +263,7 @@ def contract() -> Iterator[None]:
             message=str(exc),
             detail=exc.detail,
             next_action=exc.recommended_next_action,
-            exit_code=EXIT_UNAVAILABLE,
+            exit_code=EXIT_OPERATION,
         )
     except ContextEngineDisabled as exc:
         result = "unavailable"
@@ -275,7 +291,7 @@ def contract() -> Iterator[None]:
             code="pot_not_found",
             message=str(exc),
             next_action="list pots with 'potpie pot list' or create one with 'potpie setup'",
-            exit_code=EXIT_VALIDATION,
+            exit_code=EXIT_OPERATION,
         )
     except ValueError as exc:
         result = "validation_error"
@@ -294,7 +310,7 @@ def contract() -> Iterator[None]:
         error_code = "exit"
         raise
     except (KeyboardInterrupt, EOFError):
-        raise
+        raise typer.Exit(code=EXIT_INTERRUPTED) from None
     except Exception as exc:  # noqa: BLE001
         if isinstance(exc, click.Abort) or type(exc).__name__ == "Abort":
             raise
@@ -312,7 +328,7 @@ def contract() -> Iterator[None]:
         fail(
             code="unexpected_cli_error",
             message="Unexpected internal error.",
-            exit_code=EXIT_VALIDATION,
+            exit_code=EXIT_INTERNAL,
         )
     finally:
         _record_cli_contract_metrics(
@@ -548,7 +564,7 @@ def repo_default_mismatch_warning(
     return (
         f"repo {repo} default remains {default.get('name')} ({default_id}); "
         "repo-scoped commands here use that pot. Run "
-        f"`potpie pot default set --repo current {selected_pot_id}` "
+        f"`potpie pot default --repo current --set {selected_pot_id}` "
         "or retry with `--also-default-for-current-repo` to switch both."
     )
 
@@ -631,7 +647,7 @@ def empty_pot_warnings(
             f"current pot has 0 claims; repo {linked.get('repo')} also links to "
             f"{best.get('name')} ({best.get('pot_id')}) with {claims} claims. "
             f"Retry with --pot {best.get('pot_id')} or run "
-            f"`potpie pot default set --repo current {best.get('pot_id')}`."
+            f"`potpie pot default --repo current --set {best.get('pot_id')}`."
         ),
     )
 
@@ -936,6 +952,9 @@ __all__ = [
     "EXIT_AUTH",
     "EXIT_DEGRADED",
     "EXIT_OK",
+    "EXIT_OPERATION",
+    "EXIT_INTERNAL",
+    "EXIT_INTERRUPTED",
     "EXIT_UNAVAILABLE",
     "EXIT_VALIDATION",
     "bootstrap_output_flags_from_argv",

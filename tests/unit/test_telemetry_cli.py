@@ -6,6 +6,7 @@ import pytest
 from typer.testing import CliRunner
 
 from potpie.cli import main as host_cli
+from potpie.cli.commands import _common
 from potpie.cli.commands import telemetry as telemetry_cmd
 from potpie.cli.telemetry import sentry_runtime
 from potpie.cli.telemetry.preferences import (
@@ -210,7 +211,7 @@ def test_telemetry_status_json(monkeypatch, tmp_path) -> None:
     result = CliRunner().invoke(host_cli.app, ["--json", "telemetry", "status"])
 
     assert result.exit_code == 0, result.stdout
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout)["data"]
     assert payload["telemetry"] == "enabled"
     assert payload["crash_reports"] == "anonymous"
     assert payload["analytics"] == "anonymous"
@@ -230,7 +231,7 @@ def test_telemetry_status_json_reports_persisted_disabled(
 
     assert disabled.exit_code == 0, disabled.stdout
     assert result.exit_code == 0, result.stdout
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout)["data"]
     assert payload == {
         "telemetry": "disabled",
         "crash_reports": "disabled",
@@ -316,7 +317,7 @@ def test_telemetry_status_json_reflects_effective_sink_gates(
     result = CliRunner().invoke(host_cli.app, ["--json", "telemetry", "status"])
 
     assert result.exit_code == 0, result.stdout
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout)["data"]
     assert {
         "telemetry": payload["telemetry"],
         "crash_reports": payload["crash_reports"],
@@ -341,11 +342,11 @@ def test_telemetry_preference_write_failure_uses_error_contract_without_refresh(
 
     result = CliRunner().invoke(host_cli.app, ["--json", "telemetry", "disable"])
 
-    assert result.exit_code == 2, result.stdout
-    payload = json.loads(result.stdout)
+    assert result.exit_code == _common.EXIT_UNAVAILABLE, result.stdout
+    payload = json.loads(result.stdout)["error"]
     assert payload["code"] == "telemetry_preference_write_failed"
     assert payload["message"] == "Could not update telemetry preference."
-    assert "settings.json" in payload["detail"]
+    assert "settings.json" in payload["details"]
     assert calls == []
 
 

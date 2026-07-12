@@ -92,7 +92,7 @@ def test_unexpected_github_repo_credential_lookup_failure_is_captured(
     _common.set_json(True)
 
     with pytest.raises(typer.Exit) as exc_info:
-        github_commands.github_test_repos_cmd()
+        github_commands.github_list_impl()
 
     assert exc_info.value.exit_code == _common.EXIT_AUTH
     assert captured == [("RuntimeError", "unexpected_cli_error", "unexpected")]

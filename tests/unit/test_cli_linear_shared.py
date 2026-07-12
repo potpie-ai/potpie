@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-import typer
 from typer.testing import CliRunner
 
 from potpie.cli import host_cli as cli_main
@@ -53,10 +52,10 @@ def _isolated_xdg_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
 
 
 def test_auth_help_is_wired_into_main_cli() -> None:
-    result = runner.invoke(cli_main.app, ["auth", "--help"])
+    result = runner.invoke(cli_main.app, ["integration", "--help"])
 
     assert result.exit_code == 0, result.stdout
-    assert "Integration auth status" in result.stdout
+    assert "Provider integrations" in result.stdout
 
 
 def test_auth_status_routes_to_integration_auth(
@@ -64,7 +63,10 @@ def test_auth_status_routes_to_integration_auth(
 ) -> None:
     called: list[bool] = []
 
-    def _integration_status(*, verify: bool = False) -> None:
+    def _integration_status(
+        *, verify: bool = False, provider: str | None = None
+    ) -> None:
+        assert provider is None
         called.append(verify)
 
     monkeypatch.setattr(
@@ -73,32 +75,13 @@ def test_auth_status_routes_to_integration_auth(
         _integration_status,
     )
 
-    result = runner.invoke(cli_main.app, ["auth", "status"])
+    result = runner.invoke(cli_main.app, ["integration", "status"])
     assert result.exit_code == 0, result.stdout
     assert called == [False]
 
-    result = runner.invoke(cli_main.app, ["auth", "status", "--verify"])
+    result = runner.invoke(cli_main.app, ["integration", "status", "--verify"])
     assert result.exit_code == 0, result.stdout
     assert called == [False, True]
-
-
-def test_register_provider_app_normalizes_name(monkeypatch) -> None:
-    calls: list[tuple[typer.Typer, str]] = []
-
-    def add_typer(provider_app: typer.Typer, *, name: str) -> None:
-        calls.append((provider_app, name))
-
-    monkeypatch.setattr(auth_commands.auth_app, "add_typer", add_typer)
-
-    provider_app = typer.Typer()
-    auth_commands.register_provider_app(" Example ", provider_app)
-
-    assert calls == [(provider_app, "example")]
-
-
-def test_register_provider_app_rejects_empty_name() -> None:
-    with pytest.raises(ValueError, match="provider app name must be non-empty"):
-        auth_commands.register_provider_app(" ", typer.Typer())
 
 
 def test_esc_handles_none_and_markup() -> None:
@@ -124,7 +107,7 @@ def test_auth_status_json(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
 
-    result = runner.invoke(auth_commands.auth_app, ["status"])
+    result = runner.invoke(auth_commands.integration_app, ["status"])
 
     assert result.exit_code == 0, result.stdout
     assert '"integrations"' in result.stdout
@@ -150,32 +133,20 @@ def test_auth_status_json_keeps_provider_errors_per_row(
     monkeypatch.setattr(auth_commands, "get_integration_status", _status)
     monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
 
-    result = runner.invoke(auth_commands.auth_app, ["status"])
+    result = runner.invoke(auth_commands.integration_app, ["status"])
 
     assert result.exit_code == 0, result.stdout
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout)["data"]
     linear = next(row for row in payload["integrations"] if row["provider"] == "linear")
     assert linear["authenticated"] is False
     assert linear["status_error"] == "keychain locked"
 
 
-def test_auth_logout_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        auth_commands, "ensure_runtime_environment_loaded", lambda: None
-    )
-    monkeypatch.setattr(auth_commands, "_flags", lambda: (False, False))
-    captured: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        auth_commands,
-        "emit_error",
-        lambda title, message, **kwargs: captured.append((title, message)),
-    )
+def test_integration_status_rejects_unknown_provider() -> None:
+    result = runner.invoke(auth_commands.integration_app, ["status", "unknown"])
 
-    result = runner.invoke(auth_commands.auth_app, ["logout", "unknown"])
-
-    assert result.exit_code == 1
-    assert captured
-    assert "Unknown provider" in captured[0][0]
+    assert result.exit_code == 2
+    assert isinstance(result.exception, SystemExit)
 
 
 def test_flags_delegates_to_common(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,29 +179,11 @@ def test_auth_logout_not_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda title, message, **kwargs: captured.append((title, message)),
     )
 
-    result = runner.invoke(auth_commands.auth_app, ["logout", "linear"])
+    result = runner.invoke(auth_commands.linear_app, ["logout"])
 
     assert result.exit_code == 1
     assert captured
     assert "not authenticated" in captured[0][0]
-
-
-def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        auth_commands, "ensure_runtime_environment_loaded", lambda: None
-    )
-    monkeypatch.setattr(auth_commands, "_flags", lambda: (True, False))
-    monkeypatch.setattr(
-        auth_commands,
-        "get_integration_status",
-        lambda _p: {"authenticated": True},
-    )
-    set_store(InMemoryCredentialStore())
-
-    result = runner.invoke(auth_commands.auth_app, ["revoke", "linear"])
-
-    assert result.exit_code == 0
-    assert '"ok": true' in result.stdout
 
 
 def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -254,7 +207,7 @@ def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     store.clear_integration_tokens = _fail_clear  # type: ignore[method-assign]
     set_store(store)
 
-    result = runner.invoke(auth_commands.auth_app, ["logout", "linear"])
+    result = runner.invoke(auth_commands.linear_app, ["logout"])
 
     assert result.exit_code == 4
 
@@ -287,7 +240,7 @@ def test_auth_status_verify_token_error(monkeypatch: pytest.MonkeyPatch) -> None
         "ensure_valid_integration_tokens",
         lambda _p: (_ for _ in ()).throw(RuntimeError("refresh broke")),
     )
-    result = runner.invoke(auth_commands.auth_app, ["status", "--verify"])
+    result = runner.invoke(auth_commands.integration_app, ["status", "--verify"])
     assert result.exit_code == 0
     assert '"verified": false' in result.stdout
     assert "refresh broke" in result.stdout
@@ -399,7 +352,7 @@ def test_auth_status_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
             "auth_type": "oauth",
         },
     )
-    result = runner.invoke(auth_commands.auth_app, ["status"])
+    result = runner.invoke(auth_commands.integration_app, ["status"])
 
     assert result.exit_code == 0
     assert "linear: authenticated" in result.stdout
@@ -424,14 +377,14 @@ def test_auth_status_includes_github_authenticated(
             "auth_type": "oauth",
         },
     )
-    result = runner.invoke(auth_commands.auth_app, ["status"])
+    result = runner.invoke(auth_commands.integration_app, ["status"])
 
     assert result.exit_code == 0
     assert "github: authenticated" in result.stdout
     assert "login=octocat" in result.stdout
 
 
-def test_linear_ls_lists_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_linear_list_lists_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         auth_commands, "ensure_runtime_environment_loaded", lambda: None
     )
@@ -449,11 +402,11 @@ def test_linear_ls_lists_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
         ],
     )
 
-    result = runner.invoke(auth_commands.auth_app, ["linear", "ls"])
+    result = runner.invoke(auth_commands.integration_app, ["linear", "list"])
 
     assert result.exit_code == 0
     assert "Potpie AI CLI" in result.stdout
-    assert "potpie linear login --add" in result.stdout
+    assert "potpie integration linear login --add" in result.stdout
 
 
 def test_linear_select_fetches_issues(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -482,7 +435,7 @@ def test_linear_select_fetches_issues(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     result = runner.invoke(
-        auth_commands.auth_app,
+        auth_commands.integration_app,
         ["linear", "select", "--org", "potpie-ai-cli", "--key", "ENG"],
     )
 
@@ -520,7 +473,7 @@ def test_auth_status_verify_linear(
         lambda _provider, _creds: (True, "ok (Ada)"),
     )
 
-    result = runner.invoke(auth_commands.auth_app, ["status", "--verify"])
+    result = runner.invoke(auth_commands.integration_app, ["status", "--verify"])
 
     assert result.exit_code == 0, result.stdout
     assert '"verified": true' in result.stdout
@@ -565,10 +518,10 @@ def test_auth_status_verify_linear_refresh_error_stays_in_row(
         lambda _provider, _creds: (True, "ok (Ada)"),
     )
 
-    result = runner.invoke(auth_commands.auth_app, ["status", "--verify"])
+    result = runner.invoke(auth_commands.integration_app, ["status", "--verify"])
 
     assert result.exit_code == 0, result.stdout
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout)["data"]
     linear = next(row for row in payload["integrations"] if row["provider"] == "linear")
     assert linear["verified"] is False
     assert linear["verify_message"] == "keychain locked"
@@ -605,7 +558,7 @@ def test_auth_status_human_verify_failed(monkeypatch: pytest.MonkeyPatch) -> Non
         lambda _p, _c: (False, "Linear API request failed"),
     )
 
-    result = runner.invoke(auth_commands.auth_app, ["status", "--verify"])
+    result = runner.invoke(auth_commands.integration_app, ["status", "--verify"])
 
     assert result.exit_code == 0
     assert "verify failed" in result.stdout
@@ -640,7 +593,7 @@ def test_auth_status_human_verify_ok(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _p, _c: (True, "ok (Ada)"),
     )
 
-    result = runner.invoke(auth_commands.auth_app, ["status", "--verify"])
+    result = runner.invoke(auth_commands.integration_app, ["status", "--verify"])
 
     assert result.exit_code == 0
     assert "verify=ok (Ada)" in result.stdout

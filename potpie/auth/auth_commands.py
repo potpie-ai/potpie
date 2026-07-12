@@ -72,12 +72,7 @@ from potpie.auth.provider_config import (
 )
 from potpie.auth.token_exchange import exchange_authorization_code
 
-auth_app = typer.Typer(
-    help=(
-        "Integration auth status and deprecated provider aliases. "
-        "Use `potpie <provider>` for provider login/logout."
-    ),
-)
+integration_app = typer.Typer(help="Provider integrations and authentication.")
 linear_app = typer.Typer(help="Linear integration.")
 jira_app = typer.Typer(help="Jira integration and read.")
 confluence_app = typer.Typer(help="Confluence integration and read.")
@@ -93,14 +88,6 @@ def _canonical_provider_for_json(product: str) -> str:
     if key in {"wiki", "conf", "confluence"}:
         return "confluence"
     return key
-
-
-def register_provider_app(name: str, provider_app: typer.Typer) -> None:
-    """Register a provider app under the deprecated ``auth`` namespace."""
-    key = str(name or "").strip().lower()
-    if not key:
-        raise ValueError("provider app name must be non-empty")
-    auth_app.add_typer(provider_app, name=key)
 
 
 def _print_standard_logout(
@@ -285,7 +272,7 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
             )
             print_plain_line(
                 "Linear OAuth authorizes one workspace per login. "
-                "Run `potpie linear login --add` and choose another workspace "
+                "Run `potpie integration linear login --add` and choose another workspace "
                 "in the browser (e.g. Potpie).",
                 as_json=False,
             )
@@ -476,13 +463,25 @@ def run_integration_login(provider: str, *, force: bool = False) -> None:
 
 def integration_status(
     verify: bool = False,
+    provider: str | None = None,
 ) -> None:
     """Show local integration auth status."""
     ensure_runtime_environment_loaded()
     j, _ = _flags()
     rows: list[dict[str, Any]] = []
 
-    for provider in _ALL_PROVIDERS:
+    providers: tuple[Provider, ...]
+    if provider is None:
+        providers = _ALL_PROVIDERS
+    else:
+        normalized = _canonical_provider_for_json(provider)
+        if normalized not in _ALL_PROVIDERS:
+            raise typer.BadParameter(
+                f"provider must be one of: {', '.join(_ALL_PROVIDERS)}"
+            )
+        providers = (normalized,)  # type: ignore[assignment]
+
+    for provider in providers:
         try:
             meta = get_integration_status(provider)
         except ProviderCredentialError as exc:
@@ -559,8 +558,12 @@ def integration_status(
         _print_remote_line("  ".join(parts))
 
 
-@auth_app.command("status")
-def auth_status(
+@integration_app.command("status")
+def integration_status_command(
+    provider: str | None = typer.Argument(
+        None,
+        help="Optional provider: github, linear, jira, or confluence.",
+    ),
     verify: bool = typer.Option(
         False,
         "--verify",
@@ -568,7 +571,13 @@ def auth_status(
     ),
 ) -> None:
     """Show local integration auth status."""
-    integration_status(verify=verify)
+    integration_status(verify=verify, provider=provider)
+
+
+@integration_app.command("list")
+def integration_list() -> None:
+    """List configured provider integrations."""
+    integration_status(verify=False)
 
 
 def linear_logout_impl() -> None:
@@ -604,7 +613,7 @@ def linear_logout_impl() -> None:
         as_json=False,
     )
     print_plain_line(
-        "Connect another workspace: potpie linear login --add",
+        "Connect another workspace: potpie integration linear login --add",
         as_json=False,
     )
 
@@ -650,44 +659,6 @@ def auth_logout(provider: str) -> None:
     )
 
 
-@auth_app.command("logout")
-def auth_logout_cmd(
-    provider: str = typer.Argument(
-        ...,
-        help="Deprecated. Provider to log out: github, linear, jira, or confluence.",
-    ),
-) -> None:
-    """Deprecated: use ``potpie <provider> logout``."""
-    auth_logout(provider)
-
-
-@auth_app.command("revoke", hidden=True)
-def auth_revoke(
-    provider: str = typer.Argument(
-        ...,
-        help="Deprecated. Use `potpie <provider> logout`.",
-    ),
-) -> None:
-    """Deprecated alias for provider logout."""
-    auth_logout(provider)
-
-
-@auth_app.command("linear-login", hidden=True)
-def auth_linear(
-    force: bool = typer.Option(
-        False,
-        "--force",
-        help="Re-authenticate even if Linear is already connected.",
-    ),
-) -> None:
-    """Authenticate with Linear via OAuth (PKCE)."""
-    _run_tracked_integration_login(
-        "linear",
-        entrypoint="direct_integration_auth",
-        runner=lambda: _run_linear_oauth_flow(force=force),
-    )
-
-
 def _esc(value: Any) -> str:
     """Escape provider-controlled text before Rich markup interpretation."""
     if value is None:
@@ -727,8 +698,8 @@ def linear_logout() -> None:
     linear_logout_impl()
 
 
-@linear_app.command("ls")
-def linear_ls(
+@linear_app.command("list")
+def linear_list(
     limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
 ) -> None:
     """List Linear workspaces connected to this CLI."""
@@ -740,7 +711,7 @@ def linear_ls(
         emit_error("Linear workspace list failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
     capture_usage_command_succeeded(
-        command="linear ls",
+        command="integration.linear.list",
         result_kind="provider_list",
         item_count=len(rows),
         provider="linear",
@@ -752,7 +723,9 @@ def linear_ls(
         return
     print_plain_line("Linear workspaces:", as_json=False)
     if not rows:
-        print_plain_line("  (none — run: potpie linear login)", as_json=False)
+        print_plain_line(
+            "  (none — run: potpie integration linear login)", as_json=False
+        )
         return
     for row in rows:
         active_suffix = "  (active)" if row.get("active") else ""
@@ -761,10 +734,10 @@ def linear_ls(
             f"\t{_esc(row.get('type'))}{active_suffix}",
         )
     print_plain_line(
-        "\nConnect another workspace: potpie linear login --add",
+        "\nConnect another workspace: potpie integration linear login --add",
         as_json=False,
     )
-    print_plain_line("Fetch issues: potpie linear select", as_json=False)
+    print_plain_line("Fetch issues: potpie integration linear select", as_json=False)
 
 
 @linear_app.command("select")
@@ -807,58 +780,18 @@ def _print_linear_issue_row(row: dict[str, Any]) -> None:
         _print_remote_line(f"  URL: {_esc(row.get('url'))}")
 
 
-def _build_auth_compat_linear() -> typer.Typer:
-    app = typer.Typer(help="[Deprecated] use `potpie linear`.")
-    app.command("login")(linear_login)
-    app.command("logout")(linear_logout)
-    app.command("ls")(linear_ls)
-    app.command("select")(linear_select)
-    return app
-
-
-def _build_auth_compat_jira() -> typer.Typer:
-    app = typer.Typer(help="[Deprecated] use `potpie jira`.")
-    app.command("login")(jira_login)
-    app.command("logout")(jira_logout)
-    app.command("ls")(jira_ls)
-    app.command("select")(jira_select)
-    return app
-
-
-def _build_auth_compat_confluence() -> typer.Typer:
-    app = typer.Typer(help="[Deprecated] use `potpie confluence`.")
-    app.command("login")(confluence_login)
-    app.command("logout")(confluence_logout)
-    app.command("ls")(confluence_ls)
-    app.command("select")(confluence_select)
-    return app
-
-
-def _register_auth_compat_providers() -> None:
-    """Mount deprecated ``potpie auth <provider>`` mirrors on ``auth_app``."""
-    from potpie.auth.github_commands import (
-        _build_auth_compat_github,
-    )
-
-    register_provider_app("github", _build_auth_compat_github())
-    register_provider_app("linear", _build_auth_compat_linear())
-    register_provider_app("jira", _build_auth_compat_jira())
-    register_provider_app("confluence", _build_auth_compat_confluence())
-
-
 def register_integration_commands(root: typer.Typer) -> None:
-    """Mount provider commands at the CLI root and the deprecated ``auth`` group."""
+    """Mount the workflow-first provider hierarchy under ``integration``."""
     from potpie.auth.github_commands import (
-        git_app,
         github_app,
     )
 
-    root.add_typer(github_app, name="github")
-    root.add_typer(git_app, name="git")
-    root.add_typer(linear_app, name="linear")
-    root.add_typer(jira_app, name="jira")
-    root.add_typer(confluence_app, name="confluence")
-    root.add_typer(auth_app, name="auth")
+    if not integration_app.registered_groups:
+        integration_app.add_typer(github_app, name="github")
+        integration_app.add_typer(linear_app, name="linear")
+        integration_app.add_typer(jira_app, name="jira")
+        integration_app.add_typer(confluence_app, name="confluence")
+    root.add_typer(integration_app, name="integration")
 
 
 def _print_jira_issue_row(row: dict[str, Any]) -> None:
@@ -1007,8 +940,8 @@ def jira_logout() -> None:
     auth_logout("jira")
 
 
-@jira_app.command("ls")
-def jira_ls(
+@jira_app.command("list")
+def jira_list(
     limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
 ) -> None:
     """List Jira projects you can access."""
@@ -1020,7 +953,7 @@ def jira_ls(
         emit_error("Jira workspace list failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
     capture_usage_command_succeeded(
-        command="jira ls",
+        command="integration.jira.list",
         result_kind="provider_list",
         item_count=len(rows),
         provider="jira",
@@ -1039,7 +972,7 @@ def jira_ls(
         )
         if row.get("url"):
             _print_remote_line(f"    {_esc(row.get('url'))}")
-    print_plain_line("\nFetch issues: potpie jira select", as_json=False)
+    print_plain_line("\nFetch issues: potpie integration jira select", as_json=False)
 
 
 @jira_app.command("select")
@@ -1109,8 +1042,8 @@ def confluence_logout() -> None:
     auth_logout("confluence")
 
 
-@confluence_app.command("ls")
-def confluence_ls(
+@confluence_app.command("list")
+def confluence_list(
     limit: int = typer.Option(50, "--limit", "-n", min=1, max=50),
 ) -> None:
     """List Confluence spaces you can access."""
@@ -1122,7 +1055,7 @@ def confluence_ls(
         emit_error("Confluence workspace list failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
     capture_usage_command_succeeded(
-        command="confluence ls",
+        command="integration.confluence.list",
         result_kind="provider_list",
         item_count=len(rows),
         provider="confluence",
@@ -1139,7 +1072,9 @@ def confluence_ls(
         _print_remote_line(
             f"  {_esc(row.get('key'))}\t{_esc(row.get('name'))}\t{_esc(row.get('type'))}",
         )
-    print_plain_line("\nFetch pages: potpie confluence select", as_json=False)
+    print_plain_line(
+        "\nFetch pages: potpie integration confluence select", as_json=False
+    )
 
 
 @confluence_app.command("select")
@@ -1156,6 +1091,3 @@ def confluence_select(
         emit_error("Confluence fetch failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
     _run_product_use_result(result, product_label="Confluence")
-
-
-_register_auth_compat_providers()

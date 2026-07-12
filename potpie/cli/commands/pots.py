@@ -35,11 +35,9 @@ from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
 from potpie.runtime.contracts import CapabilityNotImplemented
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
-default_app = typer.Typer(help="Repo-local default pot routing.")
 source_app = typer.Typer(
     help="Source registry for a pot; registration does not ingest or scan."
 )
-pot_app.add_typer(default_app, name="default")
 
 
 @pot_app.command("list")
@@ -335,23 +333,53 @@ def pot_linked(
         emit(linked, human="\n".join(lines))
 
 
-@default_app.command("show")
-def pot_default_show(
+@pot_app.command("default")
+def pot_default(
+    ref: str | None = typer.Option(
+        None,
+        "--set",
+        help="Pot name/id to set as the repo default; omit to show the default.",
+    ),
     repo: str = typer.Option("current", "--repo"),
+    clear: bool = typer.Option(False, "--clear", help="Clear the repo default."),
     with_candidates: bool = typer.Option(
         False,
         "--with-candidates",
         help="Include the full candidates list (see `pot linked` for details).",
     ),
 ) -> None:
-    """Show the repo-local default pot. Use --with-candidates for the full list."""
+    """Show, set, or clear the repo-local default pot."""
     with contract():
         host = get_host()
+        repo_key = _repo_key_from_option(repo)
+        if clear:
+            if ref is not None:
+                raise ValueError("REF cannot be combined with --clear")
+            cleared = host.pots.clear_repo_default(repo=repo_key)
+            emit(
+                {"repo": repo_key, "cleared": cleared},
+                human=(
+                    f"repo {repo_key} default cleared"
+                    if cleared
+                    else f"repo {repo_key} default was not set"
+                ),
+            )
+            return
+        if ref is not None:
+            pot_id = resolve_pot_id(host, ref, infer_from_repo=False)
+            host.pots.set_repo_default(repo=repo_key, pot_id=pot_id)
+            info = pot_scope_info(host, pot_id)
+            emit(
+                {"repo": repo_key, "default_pot": info},
+                human=f"repo {repo_key} default → {info['name']} ({pot_id})",
+            )
+            return
+
         linked = repo_pot_candidates(host, repo)
         default_id = linked.get("default_pot_id")
-        repo_key = linked.get("repo")
+        linked_repo_key = linked.get("repo")
         payload: dict = {
-            "repo": repo_key,
+            "repo": linked_repo_key,
             "default_pot_id": default_id,
         }
         if with_candidates:
@@ -361,7 +389,7 @@ def pot_default_show(
                 payload["hint"] = "run `potpie pot linked` to see all candidates"
             emit(
                 payload,
-                human=f"repo {repo_key or '(unknown)'} default: (unset)",
+                human=f"repo {linked_repo_key or '(unknown)'} default: (unset)",
             )
             return
         info = pot_scope_info(host, default_id)
@@ -370,37 +398,7 @@ def pot_default_show(
             payload["hint"] = "run `potpie pot linked` to see all candidates"
         emit(
             payload,
-            human=f"repo {repo_key} default: {info['name']} ({default_id})",
-        )
-
-
-@default_app.command("set")
-def pot_default_set(ref: str, repo: str = typer.Option("current", "--repo")) -> None:
-    with contract():
-        host = get_host()
-        pot_id = resolve_pot_id(host, ref, infer_from_repo=False)
-        repo_key = _repo_key_from_option(repo)
-        host.pots.set_repo_default(repo=repo_key, pot_id=pot_id)
-        info = pot_scope_info(host, pot_id)
-        emit(
-            {"repo": repo_key, "default_pot": info},
-            human=f"repo {repo_key} default → {info['name']} ({pot_id})",
-        )
-
-
-@default_app.command("clear")
-def pot_default_clear(repo: str = typer.Option("current", "--repo")) -> None:
-    with contract():
-        host = get_host()
-        repo_key = _repo_key_from_option(repo)
-        cleared = host.pots.clear_repo_default(repo=repo_key)
-        emit(
-            {"repo": repo_key, "cleared": cleared},
-            human=(
-                f"repo {repo_key} default cleared"
-                if cleared
-                else f"repo {repo_key} default was not set"
-            ),
+            human=f"repo {linked_repo_key} default: {info['name']} ({default_id})",
         )
 
 

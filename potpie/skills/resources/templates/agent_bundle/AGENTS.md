@@ -25,7 +25,7 @@ Prefer the graph CLI when shell is available:
 ```bash
 potpie graph status
 potpie graph catalog --task "<task>" --profile read
-potpie graph describe <subgraph> --view <view> --examples
+potpie graph catalog --subgraph <subgraph>
 potpie graph read --subgraph <subgraph> --view <view> [--query "..."] [--scope key:value] [--limit N]
 potpie graph search-entities "text" [--type Service] [--predicate DEPENDS_ON] [--environment prod] [--limit N]
 potpie --json graph propose --file mutation.json

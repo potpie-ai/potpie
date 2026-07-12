@@ -116,7 +116,7 @@ def test_source_add_uses_registered_repo_for_sibling_guidance(monkeypatch) -> No
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert any("p2" in warning for warning in payload.get("warnings", ()))
 
 
@@ -133,7 +133,7 @@ def test_pot_create_uses_repo_option_for_sibling_guidance(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert any("p2" in warning for warning in payload.get("warnings", ()))
 
 
@@ -147,7 +147,7 @@ def test_source_list_emits_empty_pot_guidance_json(monkeypatch) -> None:
     result = CliRunner().invoke(pots.source_app, ["list"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["warnings"]
     assert payload["recommended_next_action"]
     assert "harness-led ingestion" in payload["warnings"][-1]
@@ -163,7 +163,7 @@ def test_pot_create_emits_empty_pot_guidance(monkeypatch) -> None:
     result = CliRunner().invoke(pots.pot_app, ["create", "fresh", "--use"])
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["warnings"]
     assert "0 claims" in payload["recommended_next_action"]
 

@@ -187,7 +187,7 @@ def test_status_host_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
     result = runner.invoke(cli_main.app, ["--json", "status"])
 
     assert result.exit_code == 0, result.stdout
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout)["data"]
     assert payload["runtime_mode"] == "daemon"
     assert payload["daemon_state"] == "up"
     assert "profile" not in payload
@@ -196,10 +196,13 @@ def test_status_host_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_status_verify_points_to_auth_status() -> None:
     result = runner.invoke(cli_main.app, ["--json", "status", "--verify"])
 
-    assert result.exit_code == 1, result.stdout
-    payload = json.loads(result.stdout)
+    assert result.exit_code == 2, result.stdout
+    payload = json.loads(result.stdout)["error"]
     assert payload["code"] == "validation_error"
-    assert "potpie auth status --verify" in payload["recommended_next_action"]
+    assert (
+        "potpie integration status --verify"
+        in payload["recommended_next_action"]["command"]
+    )
 
 
 def test_doctor_json_includes_backend_readiness(
@@ -219,7 +222,7 @@ def test_doctor_json_includes_backend_readiness(
     result = runner.invoke(cli_main.app, ["--json", "doctor"])
 
     assert result.exit_code == 0, result.stdout
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout)["data"]
     assert payload["backend_ready"] is False
     assert payload["issues"] == ["mutation store is unavailable"]
     assert payload["recommended_next_action"]["command"] == (
@@ -414,7 +417,7 @@ def test_doctor_reuses_flat_public_status_fields(
     result = runner.invoke(cli_main.app, ["--json", "doctor"])
 
     assert result.exit_code == 0, result.stdout
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout)["data"]
     for key, value in report.to_dict().items():
         assert payload[key] == (list(value) if isinstance(value, tuple) else value)
     assert "active_pot" not in payload

@@ -714,7 +714,7 @@ def set_active_linear_organization(org_id: str) -> None:
     if not isinstance(orgs, dict) or org_id not in orgs:
         raise ProviderCredentialError(
             f"Linear workspace {org_id!r} is not connected. "
-            "Run: potpie linear login --add"
+            "Run: potpie integration linear login --add"
         )
     org_entry = orgs[org_id]
     _write_metadata_entry(
@@ -1051,7 +1051,9 @@ def clear_atlassian_credentials() -> None:
 def save_jira_workspace_prefs(*, project_key: str) -> None:
     prior = get_jira_credentials()
     if not prior.get("api_token"):
-        raise ProviderCredentialError("Jira is not connected. Run: potpie jira login")
+        raise ProviderCredentialError(
+            "Jira is not connected. Run: potpie integration jira login"
+        )
     workspaces = dict(prior.get("workspaces") or {})
     workspaces["jira_project"] = project_key.strip().upper()
     save_jira_credentials({**prior, "workspaces": workspaces})
@@ -1061,7 +1063,7 @@ def save_confluence_workspace_prefs(*, space_key: str) -> None:
     prior = get_confluence_credentials()
     if not prior.get("api_token"):
         raise ProviderCredentialError(
-            "Confluence is not connected. Run: potpie confluence login"
+            "Confluence is not connected. Run: potpie integration confluence login"
         )
     workspaces = dict(prior.get("workspaces") or {})
     workspaces["confluence_space"] = space_key.strip().upper()
@@ -1078,12 +1080,12 @@ def save_linear_workspace_prefs(
     metadata = _read_linear_metadata()
     if not metadata:
         raise ProviderCredentialError(
-            "Linear is not connected. Run: potpie linear login"
+            "Linear is not connected. Run: potpie integration linear login"
         )
     if not get_linear_tokens(organization_id).get("access_token"):
         raise ProviderCredentialError(
             f"Linear token not found in {_integration_secret_store_label()}. "
-            "Run: potpie linear login"
+            "Run: potpie integration linear login"
         )
     workspaces = dict(metadata.get("workspaces") or {})
     workspaces["linear_organization_id"] = organization_id.strip()
@@ -1370,7 +1372,7 @@ def get_provider_credentials(provider: str) -> dict[str, Any]:
         token_storage = str(result.get("token_storage") or "").strip()
         raise ProviderCredentialError(
             f"GitHub token not found in {_storage_label(token_storage)}. "
-            "Run: potpie github login"
+            "Run: potpie integration github login"
         )
     result["access_token"] = token
     return result

@@ -29,13 +29,13 @@ def run_linear_use_flow(
     if not sys.stdin.isatty() and not (org_key or team_key):
         raise LinearReadError(
             "Interactive workspace selection requires a terminal. "
-            "Use: potpie linear select --org potpie --team ENG"
+            "Use: potpie integration linear select --org potpie --team ENG"
         )
     ctx = load_linear_read_credentials()
     workspaces = fetch_linear_workspaces()
     if not workspaces:
         raise LinearReadError(
-            "No Linear workspaces connected. Run: potpie linear login"
+            "No Linear workspaces connected. Run: potpie integration linear login"
         )
 
     default_org = str(org_key or "").strip()
@@ -54,7 +54,7 @@ def run_linear_use_flow(
     if not org_id:
         raise LinearReadError(
             f"Could not resolve Linear workspace {picked_org.get('key')!r}. "
-            "Run: potpie linear login --add"
+            "Run: potpie integration linear login --add"
         )
     activate_linear_organization(org_id)
     ctx = load_linear_read_credentials(organization_id=org_id)
@@ -77,7 +77,7 @@ def run_linear_use_flow(
     team_id = str(picked_team.get("id") or "").strip()
     if not team_id:
         raise LinearReadError(
-            f"Could not resolve Linear team {team_key_value!r}. Run: potpie linear ls"
+            f"Could not resolve Linear team {team_key_value!r}. Run: potpie integration linear ls"
         )
     rows = fetch_linear_issues_in_team(
         team_id,

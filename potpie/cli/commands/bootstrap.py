@@ -15,8 +15,6 @@ from potpie.config import (
     KNOWN_CONFIG_KEYS,
     public_config_value,
 )
-from potpie.runtime.contracts import CapabilityNotImplemented
-
 from potpie.install.status import (
     cli_install_human,
 )
@@ -27,9 +25,7 @@ from potpie.cli.commands._common import (
     emit,
     fail,
     get_cli_runtime,
-    get_host,
     is_json,
-    use_pot_selection,
 )
 from potpie.cli.telemetry.onboarding_events import (
     CliSetupAnalyticsObserver,
@@ -105,7 +101,7 @@ def register(root: typer.Typer) -> None:
         verify: bool = typer.Option(
             False,
             "--verify",
-            help="Moved to `potpie auth status --verify`.",
+            help="Moved to `potpie integration status --verify`.",
         ),
         host: bool = typer.Option(
             False,
@@ -133,11 +129,8 @@ def register(root: typer.Typer) -> None:
         if verify:
             fail(
                 code="validation_error",
-                message="`--verify` moved to `potpie auth status --verify`.",
-                next_action=(
-                    "Run `potpie auth status --verify` for integration auth status, "
-                    "or `potpie status` for context readiness."
-                ),
+                message="`--verify` moved to `potpie integration status --verify`.",
+                next_action=("potpie integration status --verify"),
                 exit_code=EXIT_VALIDATION,
             )
 
@@ -170,39 +163,6 @@ def register(root: typer.Typer) -> None:
                 },
                 human=f"{ident.subject} (auth={ident.auth_type})",
             )
-
-    # NOTE: top-level `login` / `logout` are the real Potpie-account flows,
-    # registered in commands/auth.py. Managed-backend auth remains `cloud login`.
-
-    @root.command()
-    def use(
-        ref: str,
-        local: bool = typer.Option(False, "--local", help="Force local-origin pot."),
-        managed: bool = typer.Option(
-            False, "--managed", help="Select a managed-origin pot."
-        ),
-        also_default_for_current_repo: bool = typer.Option(
-            False,
-            "--also-default-for-current-repo",
-            help="Also set the current repo's local default pot to this pot.",
-        ),
-    ) -> None:
-        """Select the active pot by name/id (top-level alias for `pot use`)."""
-        with contract():
-            if managed:
-                raise CapabilityNotImplemented(
-                    "host.pots.use_managed",
-                    detail="managed pot routing is not implemented",
-                    recommended_next_action="select a local pot; managed routing lands in HU3",
-                )
-            host = get_host()
-            payload, human = use_pot_selection(
-                host,
-                ref,
-                also_default_for_current_repo=also_default_for_current_repo,
-                origin="local",
-            )
-            emit(payload, human=human)
 
     config_app = typer.Typer(
         help=(

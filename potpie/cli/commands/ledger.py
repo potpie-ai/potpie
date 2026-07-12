@@ -2,7 +2,7 @@
 
 The ledger is a separate source-event service. ``ledger query`` and
 ``ledger pull`` inspect event history only; graph updates are intentionally left
-to the harness-facing ``context_record`` / ``graph mutate`` path.
+to ``context_record`` or the explicit ``graph propose`` / ``graph commit`` path.
 """
 
 from __future__ import annotations
@@ -21,8 +21,6 @@ from potpie.cli.commands._common import (
 )
 
 ledger_app = typer.Typer(help="Event Ledger binding + query/pull/reconcile.")
-sources_app = typer.Typer(help="Ledger source connectors.")
-ledger_app.add_typer(sources_app, name="sources")
 
 _BINDINGS = {
     "managed": "managed",
@@ -59,8 +57,8 @@ def ledger_status() -> None:
         )
 
 
-@sources_app.command("list")
-def ledger_sources_list(pot: str = typer.Option(None, "--pot")) -> None:
+@ledger_app.command("sources")
+def ledger_sources(pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
         host = get_engine_view()
         pot_id = resolve_pot_id(host, pot)

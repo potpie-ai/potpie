@@ -20,18 +20,17 @@ import typer
 from potpie.cli.commands import auth as auth_cmds
 from potpie.cli.commands import (
     bootstrap,
-    cloud,
     daemon,
     graph,
     ledger,
     pots,
-    service,
     telemetry,
 )
 from potpie.cli.commands import query as query_cmds
 from potpie.cli.commands import skills as skills_cmds
 from potpie.cli.commands import ui as ui_cmds
 from potpie.cli.commands._common import (
+    EXIT_INTERRUPTED,
     EXIT_VALIDATION,
     bootstrap_output_flags_from_argv,
     fail,
@@ -115,14 +114,15 @@ def build_app() -> typer.Typer:
     app.add_typer(pots.pot_app, name="pot")
     app.add_typer(pots.source_app, name="source")
     app.add_typer(daemon.daemon_app, name="daemon")
-    app.add_typer(service.service_app, name="service")
     app.add_typer(ledger.ledger_app, name="ledger")
     app.add_typer(graph.graph_app, name="graph")
     app.add_typer(graph.timeline_app, name="timeline")
-    app.add_typer(graph.backend_app, name="backend")
     app.add_typer(skills_cmds.skills_app, name="skills")
-    app.add_typer(cloud.cloud_app, name="cloud")
     app.add_typer(telemetry.telemetry_app, name="telemetry")
+
+    from potpie.cli.output.contracts import bind_command_paths
+
+    bind_command_paths(app)
 
     return app
 
@@ -153,7 +153,7 @@ def run_cli(argv: list[str] | None = None) -> None:
     try:
         app(args, standalone_mode=False)
     except (Abort, click.Abort):
-        raise typer.Exit(code=1) from None
+        raise typer.Exit(code=EXIT_INTERRUPTED) from None
     except ClickException as exc:
         if is_json():
             fail(

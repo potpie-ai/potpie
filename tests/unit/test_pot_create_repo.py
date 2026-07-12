@@ -99,7 +99,7 @@ def test_pot_create_repo_dot_uses_source_add_normalization(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["id"] == "pot-new"
     assert payload["repo_default_set"] is True
     assert payload["repo_key"] == "github.com/acme/shop"
@@ -179,7 +179,7 @@ def test_pot_create_repo_no_default_skips_repo_default(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.output)["data"]
     assert payload["repo_default_set"] is False
     assert payload["repo_key"] == "github.com/acme/shop"
     assert payload["source"]["repo_key"] == "github.com/acme/shop"
