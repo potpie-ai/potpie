@@ -32,7 +32,7 @@ def test_current_engine_home_fixture_loads_without_migration(
 
     host = build_host_shell(
         backend=EmbeddedGraphBackend(home=home),
-        template_resources=PackageTemplateResources("potpie.cli"),
+        template_resources=PackageTemplateResources("potpie.skills.resources"),
     )
 
     active = host.pots.active_pot()

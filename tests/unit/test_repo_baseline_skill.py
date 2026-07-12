@@ -15,12 +15,12 @@ from pathlib import Path
 
 import pytest
 
-import potpie.cli as _clipkg
+import potpie.skills.resources as _skill_resources
 from potpie_context_engine.domain.ontology import CANONICAL_EDGE_TYPES, CANONICAL_LABELS
 
 pytestmark = pytest.mark.unit
 
-TEMPLATES = Path(_clipkg.__file__).resolve().parent / "templates"
+TEMPLATES = Path(_skill_resources.__file__).resolve().parent / "templates"
 AGENT_SKILL = (
     TEMPLATES
     / "agent_bundle"

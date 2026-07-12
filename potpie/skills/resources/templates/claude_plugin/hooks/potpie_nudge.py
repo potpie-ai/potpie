@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: S603
 """Potpie nudge adapter — the thin, model-free hook forwarder.
 
 A harness (Claude Code, Codex, Cursor) fires a hook event; this adapter reads the

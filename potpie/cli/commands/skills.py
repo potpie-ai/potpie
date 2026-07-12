@@ -1,4 +1,4 @@
-"""Skill commands → ``HostShell.skills`` (SkillManager).
+"""Root-owned skill commands.
 
 Skills are CLI-managed recipes; agents only ever see the advisory nudge in
 ``context_status``. These commands manage the catalog and per-harness installs.
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import typer
 
-from potpie.cli.commands._common import contract, emit, get_host
+from potpie.cli.commands._common import contract, emit, get_cli_runtime
 from potpie.cli.telemetry.onboarding_events import (
     capture_project_binding_event,
     elapsed_ms,
@@ -27,7 +27,9 @@ def skills_list(
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
-        items = get_host().skills.list(agent=agent, scope=effective_scope, path=path)
+        items = get_cli_runtime().skills.list(
+            agent=agent, scope=effective_scope, path=path
+        )
         emit(
             {
                 "agent": agent,
@@ -59,7 +61,7 @@ def skills_install(
             properties={"agent": agent, "scope": effective_scope},
         )
         try:
-            res = get_host().skills.install(
+            res = get_cli_runtime().skills.install(
                 agent=agent,
                 skill_id=skill_id,
                 path=path,
@@ -109,7 +111,7 @@ def skills_update(
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
-        res = get_host().skills.update(
+        res = get_cli_runtime().skills.update(
             agent=agent, all_=all_, path=path, scope=effective_scope
         )
         emit(
@@ -139,7 +141,7 @@ def skills_remove(
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
-        res = get_host().skills.remove(
+        res = get_cli_runtime().skills.remove(
             agent=agent,
             skill_id=skill_id,
             all_=all_,
@@ -165,7 +167,9 @@ def skills_status(
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
-        st = get_host().skills.status(agent=agent, path=path, scope=effective_scope)
+        st = get_cli_runtime().skills.status(
+            agent=agent, path=path, scope=effective_scope
+        )
         emit(
             {
                 "agent": st.agent,
@@ -184,7 +188,7 @@ def skills_status(
 @skills_app.command("add")
 def skills_add(source: str) -> None:
     with contract():
-        res = get_host().skills.add(source=source)
+        res = get_cli_runtime().skills.add(source=source)
         emit({"detail": res.detail}, human=res.detail or "added")
 
 

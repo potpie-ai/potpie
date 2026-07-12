@@ -9,9 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from potpie.cli.commands import _common, skills
-from potpie_context_engine.domain.ports.services.skill_manager import (
-    SkillOperationResult,
-)
+from potpie.skills import SkillOperationResult
 
 
 @pytest.fixture(autouse=True)
@@ -53,13 +51,16 @@ class _Skills:
 
 
 @dataclass
-class _Host:
+class _Runtime:
     skills: _Skills
 
 
-def test_skills_remove_all_defaults_to_global_scope() -> None:
+def test_skills_remove_all_defaults_to_global_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     fake_skills = _Skills()
-    _common.set_host(_Host(skills=fake_skills))
+    runtime = _Runtime(skills=fake_skills)
+    monkeypatch.setattr(skills, "get_cli_runtime", lambda: runtime)
 
     result = CliRunner().invoke(
         skills.skills_app,
@@ -79,9 +80,10 @@ def test_skills_remove_all_defaults_to_global_scope() -> None:
     assert "removed Potpie skills for codex" in result.output
 
 
-def test_skills_remove_all_json_output() -> None:
+def test_skills_remove_all_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_skills = _Skills()
-    _common.set_host(_Host(skills=fake_skills))
+    runtime = _Runtime(skills=fake_skills)
+    monkeypatch.setattr(skills, "get_cli_runtime", lambda: runtime)
     _common.set_json(True)
 
     result = CliRunner().invoke(

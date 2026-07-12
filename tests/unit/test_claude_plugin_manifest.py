@@ -13,11 +13,11 @@ from pathlib import Path
 
 import pytest
 
-import potpie.cli as _clipkg
+import potpie.skills.resources as _skill_resources
 
 pytestmark = pytest.mark.unit
 
-TEMPLATES = Path(_clipkg.__file__).resolve().parent / "templates"
+TEMPLATES = Path(_skill_resources.__file__).resolve().parent / "templates"
 PLUGIN = TEMPLATES / "claude_plugin"
 
 

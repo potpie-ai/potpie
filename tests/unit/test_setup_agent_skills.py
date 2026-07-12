@@ -62,7 +62,7 @@ def test_globally_installed_harnesses_reports_all_agents_with_skills(
             return SimpleNamespace(installed=skills)
 
     monkeypatch.setattr(
-        "potpie.cli.commands._common.get_host",
+        "potpie.cli.commands._common.get_cli_runtime",
         lambda: SimpleNamespace(skills=_Skills()),
     )
 

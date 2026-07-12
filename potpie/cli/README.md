@@ -51,11 +51,11 @@ the live commands.
 ## Agent harness install
 
 `potpie skills install [<id>] --agent claude` materializes the packaged skill
-bundle into an agent harness (`commands/skills.py` → `HostShell.skills`). The
+bundle through the root `PotpieRuntime.skills` service. The
 default scope is global, so skills are installed once into the selected
 harness's user-level skills directory:
 
-The shipped templates live under `potpie/cli/templates/`: project bundles in
+The shipped templates live under `potpie/skills/resources/templates/`: project bundles in
 `agent_bundle/` and `claude_bundle/`, compact global instruction blocks in
 `global_agent_bundle/`, and the Claude Code plugin in `claude_plugin/`.
 

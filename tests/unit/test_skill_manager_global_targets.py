@@ -6,24 +6,20 @@ from pathlib import Path
 
 import pytest
 
-from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
-    InMemoryGraphBackend,
-)
-from potpie_context_engine.adapters.outbound.skills.bundle_catalog import (
+from types import SimpleNamespace
+
+from potpie.skills import create_skill_service
+from potpie.skills.catalog import (
     recommended_skill_ids,
 )
-from potpie_context_engine.adapters.outbound.skills.template_resources import (
-    PackageTemplateResources,
-)
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie.skills.resource_provider import ROOT_TEMPLATE_RESOURCES
 
-TEMPLATE_RESOURCES = PackageTemplateResources("potpie.cli")
+TEMPLATE_RESOURCES = ROOT_TEMPLATE_RESOURCES
 
 
 def _build_host_shell():
-    return build_host_shell(
-        backend=InMemoryGraphBackend(),
-        template_resources=TEMPLATE_RESOURCES,
+    return SimpleNamespace(
+        skills=create_skill_service(template_resources=TEMPLATE_RESOURCES)
     )
 
 

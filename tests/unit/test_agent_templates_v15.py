@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-import potpie.cli as _clipkg
+import potpie.skills.resources as _skill_resources
 from potpie_context_engine.domain.agent_context_port import (
     CONTEXT_INCLUDE_VALUES,
     CONTEXT_RECORD_TYPES,
@@ -23,7 +23,7 @@ from potpie_context_engine.domain.agent_context_port import (
 
 pytestmark = pytest.mark.unit
 
-TEMPLATES = Path(_clipkg.__file__).resolve().parent / "templates"
+TEMPLATES = Path(_skill_resources.__file__).resolve().parent / "templates"
 MD_FILES = sorted(TEMPLATES.rglob("*.md"))
 
 # Stale include names from the pre-V1.5 templates. Underscored → unambiguous, so a

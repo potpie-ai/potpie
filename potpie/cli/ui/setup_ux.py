@@ -382,7 +382,7 @@ POST_SETUP_AGENT_ORDER: tuple[str, ...] = tuple(
 
 def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any]]:
     """Copy packaged skill bundles into *repo* for each harness id."""
-    from potpie_context_engine.adapters.outbound.skills.agent_installer import (
+    from potpie.skills.installer import (
         AGENT_TYPES,
         install_agent_bundle,
     )
@@ -409,18 +409,16 @@ def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any
 
 def install_agents_globally(agents: list[str]) -> list[tuple[str, Any]]:
     """Install packaged skill bundles into each harness's global skill location."""
-    from potpie.cli.commands._common import get_host
-    from potpie_context_engine.adapters.outbound.skills.agent_installer import (
-        AGENT_TYPES,
-    )
+    from potpie.cli.commands._common import get_cli_runtime
+    from potpie.skills.installer import AGENT_TYPES
 
-    host = get_host()
+    runtime = get_cli_runtime()
     results: list[tuple[str, Any]] = []
     for agent in agents:
         key = agent.strip().lower()
         if key not in AGENT_TYPES or key == "default":
             continue
-        results.append((key, host.skills.install(agent=key, scope="global")))
+        results.append((key, runtime.skills.install(agent=key, scope="global")))
     return results
 
 
@@ -519,15 +517,15 @@ def _agent_usage_hint(agent_ids: list[str]) -> str | None:
 
 def _globally_installed_harnesses() -> list[str]:
     """Harnesses that already have Potpie skills on disk (any prior setup run)."""
-    from potpie.cli.commands._common import get_host
+    from potpie.cli.commands._common import get_cli_runtime
 
-    host = get_host()
+    runtime = get_cli_runtime()
     installed: list[str] = []
     for agent in POST_SETUP_AGENT_ORDER:
         if agent == "default":
             continue
         try:
-            status = host.skills.status(agent=agent, scope="global")
+            status = runtime.skills.status(agent=agent, scope="global")
         except ValueError:
             continue
         if status.installed:

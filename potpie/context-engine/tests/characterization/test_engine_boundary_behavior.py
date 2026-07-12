@@ -56,7 +56,7 @@ def boundary_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return build_host_shell(
         backend=InMemoryGraphBackend(),
         ledger_client=ledger,
-        template_resources=PackageTemplateResources("potpie.cli"),
+        template_resources=PackageTemplateResources("potpie.skills.resources"),
     )
 
 

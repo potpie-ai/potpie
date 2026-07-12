@@ -46,7 +46,7 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     return build_host_shell(
         backend=InMemoryGraphBackend(),
-        template_resources=PackageTemplateResources("potpie.cli"),
+        template_resources=PackageTemplateResources("potpie.skills.resources"),
     )
 
 

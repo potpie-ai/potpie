@@ -1,6 +1,6 @@
 # Potpie / Context Engine Package-Boundary Migration
 
-> Status: Commits 1-7 complete; Commit 8 not started. This document implements the
+> Status: Commits 1-8 complete; Commit 9 not started. This document implements the
 > sequencing contract for [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) and
 > [ADR-0002](../../spec/decisions/ADR-0002-potpie-context-engine-boundary.md).
 > The target architecture is proposed; current-state docs remain authoritative
@@ -62,8 +62,8 @@ verifying the baseline remains intact.
 | 4 | `refactor(engine): add the standalone ContextEngine API` | `PKG-API-001`, `PKG-CONFIG-001`, `PKG-SETUP-001`, `PKG-STATUS-001` | Complete | `e00b4cb` | Public API, explicit paths, no-home-write, HTTP factory, full-suite, and isolated-wheel tests pass |
 | 5 | `refactor(runtime): introduce PotpieRuntime and typed daemon RPC` | `PKG-RUNTIME-001`, `PKG-MODE-001`, `PKG-RPC-001` | Complete | `2d94671` | 30-method schema registry, mode precedence, no fallback, local/daemon parity, and detached-daemon tests pass |
 | 6 | `refactor(cli): route engine workflows through runtime.engine` | `PKG-RUNTIME-001` | Complete | `94e8fec` | Context, pot/source, graph, ledger, and timeline local/daemon CLI parity passes |
-| 7 | `refactor(product): extract auth integrations and configuration` | `PKG-AUTH-001`, `PKG-CONFIG-001`, `PKG-OWN-001` | Complete | This commit | Auth, credential, provider, config, actor-boundary, and backend-persistence tests pass |
-| 8 | `refactor(product): extract skills and installation` | `PKG-SKILL-001`, `PKG-OWN-001` | Not started | — | Installed-wheel skill and manifest tests |
+| 7 | `refactor(product): extract auth integrations and configuration` | `PKG-AUTH-001`, `PKG-CONFIG-001`, `PKG-OWN-001` | Complete | `92f24ad` | Auth, credential, provider, config, actor-boundary, and backend-persistence tests pass |
+| 8 | `refactor(product): extract skills and installation` | `PKG-SKILL-001`, `PKG-OWN-001` | Complete | This commit | Installed-wheel lifecycle, static-manifest, snippet-validation, and full-suite gates pass |
 | 9 | `refactor(product): split setup doctor and status` | `PKG-SETUP-001`, `PKG-STATUS-001` | Not started | — | Setup/status scenario matrix |
 | 10 | `refactor(engine): remove product residue and legacy queue wiring` | `PKG-OWN-002`, `PKG-QUEUE-001`, `PKG-OBS-001` | Not started | — | Forbidden import/name scans and engine suite |
 | 11 | `refactor(cli): apply the workflow-first command contract` | `PKG-CLI-001`, `PKG-CLI-002` | Not started | — | Command snapshots, removed paths, JSON tests |
@@ -326,6 +326,22 @@ Changes:
 
 Gate: install/update/remove/status work from an installed root wheel; invalid
 template commands fail before release.
+
+Evidence recorded on 2026-07-12:
+
+- Bundled agent, Claude, global, and plugin resources moved from `potpie.cli`
+  into `potpie.skills.resources`; root wheel inspection confirms every bundle
+  and the static command manifest are packaged.
+- Root `SkillService`, catalog, target adapters, resource provider, and local
+  installer now compose on `PotpieRuntime`; skill CLI and setup helpers use that
+  runtime capability rather than engine-owned `HostShell.skills`.
+- Runtime snippet validation reads only the checked-in versioned manifest. A
+  separate generator and test compare it exactly with Typer registration; the
+  installed runtime contains no Typer introspection path.
+- A no-dependency root-wheel smoke from `/tmp` passes skill validation and the
+  install, status, update, and remove lifecycle with isolated HOME/data paths.
+- 1,092 root tests pass with four skips and one intentional deselection; 1,121
+  engine tests pass with 32 skips. Ruff and focused mypy gates pass.
 
 ## Commit 9 — Setup, Doctor, and Status
 

@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-import potpie_context_engine.adapters.outbound.skills.agent_installer as agent_installer
-from potpie_context_engine.adapters.outbound.skills.agent_installer import (
+import potpie.skills.installer as agent_installer
+from potpie.skills.installer import (
     install_global_agent_instructions as _install_global_agent_instructions,
     install_agent_bundle as _install_agent_bundle,
     install_skill_bundle as _install_skill_bundle,
@@ -16,18 +16,16 @@ from potpie_context_engine.adapters.outbound.skills.agent_installer import (
     resolve_install_root,
     validate_packaged_skill_command_snippets as _validate_packaged_skill_command_snippets,
 )
-from potpie_context_engine.adapters.outbound.skills.claude_target import (
+from potpie.skills.targets import (
     FileBackedAgentTarget,
 )
-from potpie_context_engine.application.services.skill_manager import DefaultSkillManager
-from potpie_context_engine.adapters.outbound.skills.bundle_catalog import (
+from potpie.skills.service import DefaultSkillManager
+from potpie.skills.catalog import (
     catalog_by_id as _catalog_by_id,
 )
-from potpie_context_engine.adapters.outbound.skills.template_resources import (
-    PackageTemplateResources,
-)
+from potpie.skills.resource_provider import ROOT_TEMPLATE_RESOURCES
 
-TEMPLATE_RESOURCES = PackageTemplateResources("potpie.cli")
+TEMPLATE_RESOURCES = ROOT_TEMPLATE_RESOURCES
 
 
 def install_agent_bundle(*args: Any, **kwargs: Any):

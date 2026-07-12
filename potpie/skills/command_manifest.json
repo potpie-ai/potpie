@@ -1,0 +1,548 @@
+{
+  "commands": {
+    "auth confluence login": [
+      "--api-token",
+      "--email",
+      "--force",
+      "--site-subdomain"
+    ],
+    "auth confluence logout": [],
+    "auth confluence ls": [
+      "--limit",
+      "-n"
+    ],
+    "auth confluence select": [
+      "--key",
+      "--limit",
+      "-k",
+      "-n"
+    ],
+    "auth github login": [],
+    "auth github logout": [],
+    "auth github repos": [],
+    "auth jira login": [
+      "--api-token",
+      "--email",
+      "--force",
+      "--site-subdomain"
+    ],
+    "auth jira logout": [],
+    "auth jira ls": [
+      "--limit",
+      "-n"
+    ],
+    "auth jira select": [
+      "--key",
+      "--limit",
+      "-k",
+      "-n"
+    ],
+    "auth linear login": [
+      "--add",
+      "--force"
+    ],
+    "auth linear logout": [],
+    "auth linear ls": [
+      "--limit",
+      "-n"
+    ],
+    "auth linear select": [
+      "--key",
+      "--limit",
+      "--org",
+      "-k",
+      "-n",
+      "-o"
+    ],
+    "auth linear-login": [
+      "--force"
+    ],
+    "auth logout": [],
+    "auth revoke": [],
+    "auth status": [
+      "--verify"
+    ],
+    "backend doctor": [],
+    "backend list": [],
+    "backend status": [],
+    "backend use": [],
+    "cloud login": [],
+    "cloud pull": [
+      "--pot"
+    ],
+    "cloud push": [
+      "--pot"
+    ],
+    "cloud skills sync": [
+      "--agent"
+    ],
+    "cloud status": [],
+    "config get": [],
+    "config list": [],
+    "config set": [],
+    "confluence login": [
+      "--api-token",
+      "--email",
+      "--force",
+      "--site-subdomain"
+    ],
+    "confluence logout": [],
+    "confluence ls": [
+      "--limit",
+      "-n"
+    ],
+    "confluence select": [
+      "--key",
+      "--limit",
+      "-k",
+      "-n"
+    ],
+    "daemon logs": [
+      "--follow"
+    ],
+    "daemon restart": [],
+    "daemon start": [],
+    "daemon status": [],
+    "daemon stop": [],
+    "doctor": [],
+    "git login": [],
+    "git logout": [],
+    "git test repos": [],
+    "github login": [],
+    "github logout": [],
+    "github repos": [],
+    "github test repos": [],
+    "graph bulk apply": [
+      "--approved-by",
+      "--chunk-size",
+      "--continue-on-error",
+      "--dry-run",
+      "--file",
+      "--idempotency-key",
+      "--manifest",
+      "--pot",
+      "--start-chunk",
+      "--ttl",
+      "--verify"
+    ],
+    "graph catalog": [
+      "--format",
+      "--pot",
+      "--profile",
+      "--subgraph",
+      "--task"
+    ],
+    "graph commit": [
+      "--approved-by",
+      "--pot",
+      "--verify"
+    ],
+    "graph describe": [
+      "--examples",
+      "--pot",
+      "--view"
+    ],
+    "graph export": [
+      "--pot"
+    ],
+    "graph history": [
+      "--claim",
+      "--entity",
+      "--limit",
+      "--mutation",
+      "--plan",
+      "--pot",
+      "--since",
+      "--subgraph",
+      "--until"
+    ],
+    "graph import": [
+      "--pot"
+    ],
+    "graph inbox add": [
+      "--created-by",
+      "--details",
+      "--evidence",
+      "--pot",
+      "--source-ref",
+      "--subgraph",
+      "--summary"
+    ],
+    "graph inbox claim": [
+      "--by",
+      "--claimed-by",
+      "--pot"
+    ],
+    "graph inbox close": [
+      "--by",
+      "--closed-by",
+      "--mutation",
+      "--plan",
+      "--pot",
+      "--reason"
+    ],
+    "graph inbox list": [
+      "--claimed-by",
+      "--limit",
+      "--pot",
+      "--since",
+      "--source-ref",
+      "--status",
+      "--subgraph",
+      "--until"
+    ],
+    "graph inbox mark-applied": [
+      "--by",
+      "--closed-by",
+      "--mutation",
+      "--plan",
+      "--pot"
+    ],
+    "graph inbox mark-rejected": [
+      "--by",
+      "--closed-by",
+      "--pot",
+      "--reason"
+    ],
+    "graph inbox show": [
+      "--pot"
+    ],
+    "graph inspect": [
+      "--depth",
+      "--pot"
+    ],
+    "graph mutate": [
+      "--allow-review-required",
+      "--approved-by",
+      "--dry-run",
+      "--file",
+      "--pot"
+    ],
+    "graph mutation-template": [
+      "--kind"
+    ],
+    "graph neighborhood": [
+      "--depth",
+      "--detail",
+      "--direction",
+      "--entity",
+      "--limit",
+      "--pot",
+      "--predicate"
+    ],
+    "graph nudge": [
+      "--event",
+      "--limit",
+      "--path",
+      "--pot",
+      "--query",
+      "--scope",
+      "--session"
+    ],
+    "graph propose": [
+      "--file",
+      "--pot",
+      "--ttl"
+    ],
+    "graph quality conflicting-claims": [
+      "--limit",
+      "--pot",
+      "--subgraph"
+    ],
+    "graph quality duplicate-candidates": [
+      "--limit",
+      "--pot",
+      "--subgraph"
+    ],
+    "graph quality low-confidence": [
+      "--limit",
+      "--pot",
+      "--subgraph",
+      "--threshold"
+    ],
+    "graph quality orphan-entities": [
+      "--limit",
+      "--pot",
+      "--subgraph"
+    ],
+    "graph quality projection-drift": [
+      "--limit",
+      "--pot",
+      "--subgraph"
+    ],
+    "graph quality stale-facts": [
+      "--limit",
+      "--pot",
+      "--subgraph"
+    ],
+    "graph quality summary": [
+      "--pot"
+    ],
+    "graph read": [
+      "--current",
+      "--dedupe",
+      "--depth",
+      "--detail",
+      "--direction",
+      "--environment",
+      "--format",
+      "--limit",
+      "--pot",
+      "--query",
+      "--relations",
+      "--repo",
+      "--scope",
+      "--since",
+      "--sort",
+      "--source-ref",
+      "--subgraph",
+      "--time-window",
+      "--until",
+      "--view",
+      "--window"
+    ],
+    "graph repair": [
+      "--all",
+      "--entity-summaries",
+      "--pot",
+      "--semantic-index"
+    ],
+    "graph search-entities": [
+      "--environment",
+      "--external-id",
+      "--limit",
+      "--pot",
+      "--predicate",
+      "--query",
+      "--scope",
+      "--since",
+      "--source-family",
+      "--source-ref",
+      "--source-system",
+      "--subgraph",
+      "--supporting-claims",
+      "--truth",
+      "--type",
+      "--until"
+    ],
+    "graph status": [
+      "--pot"
+    ],
+    "jira login": [
+      "--api-token",
+      "--email",
+      "--force",
+      "--site-subdomain"
+    ],
+    "jira logout": [],
+    "jira ls": [
+      "--limit",
+      "-n"
+    ],
+    "jira select": [
+      "--key",
+      "--limit",
+      "-k",
+      "-n"
+    ],
+    "ledger disconnect": [],
+    "ledger pull": [
+      "--filter",
+      "--pot",
+      "--source"
+    ],
+    "ledger query": [
+      "--limit",
+      "--pot",
+      "--since",
+      "--source",
+      "--type",
+      "--until"
+    ],
+    "ledger sources list": [
+      "--pot"
+    ],
+    "ledger status": [],
+    "ledger use": [
+      "--org"
+    ],
+    "linear login": [
+      "--add",
+      "--force"
+    ],
+    "linear logout": [],
+    "linear ls": [
+      "--limit",
+      "-n"
+    ],
+    "linear select": [
+      "--key",
+      "--limit",
+      "--org",
+      "-k",
+      "-n",
+      "-o"
+    ],
+    "login": [
+      "--api-key",
+      "--url",
+      "-k",
+      "-u"
+    ],
+    "logout": [],
+    "pot archive": [],
+    "pot create": [
+      "--no-default",
+      "--repo",
+      "--use"
+    ],
+    "pot default clear": [
+      "--repo"
+    ],
+    "pot default set": [
+      "--repo"
+    ],
+    "pot default show": [
+      "--repo",
+      "--with-candidates"
+    ],
+    "pot info": [],
+    "pot linked": [
+      "--repo",
+      "--summary"
+    ],
+    "pot list": [
+      "--all",
+      "--local",
+      "--managed"
+    ],
+    "pot rename": [],
+    "pot reset": [
+      "--confirm"
+    ],
+    "pot use": [
+      "--also-default-for-current-repo"
+    ],
+    "record": [
+      "--pot",
+      "--scope",
+      "--summary",
+      "--type"
+    ],
+    "resolve": [
+      "--include",
+      "--intent",
+      "--mode",
+      "--pot"
+    ],
+    "search": [
+      "--include",
+      "--pot"
+    ],
+    "service down": [],
+    "service logs": [
+      "--follow",
+      "-f"
+    ],
+    "service status": [],
+    "service up": [],
+    "setup": [
+      "--agent",
+      "--backend",
+      "--daemon",
+      "--dry-run",
+      "--embedding-model",
+      "--embeddings",
+      "--in-process",
+      "--pot",
+      "--repo",
+      "--scan",
+      "--yes",
+      "-y"
+    ],
+    "skills add": [],
+    "skills install": [
+      "--agent",
+      "--path",
+      "--scope"
+    ],
+    "skills list": [
+      "--agent",
+      "--path",
+      "--scope"
+    ],
+    "skills remove": [
+      "--agent",
+      "--all",
+      "--path",
+      "--scope"
+    ],
+    "skills status": [
+      "--agent",
+      "--path",
+      "--scope"
+    ],
+    "skills update": [
+      "--agent",
+      "--all",
+      "--path",
+      "--scope"
+    ],
+    "source add": [
+      "--default",
+      "--name",
+      "--no-default",
+      "--pot"
+    ],
+    "source list": [
+      "--pot"
+    ],
+    "source remove": [
+      "--pot"
+    ],
+    "source status": [
+      "--pot"
+    ],
+    "status": [
+      "--harness",
+      "--host",
+      "--intent",
+      "--pot",
+      "--verify"
+    ],
+    "telemetry disable": [],
+    "telemetry enable": [],
+    "telemetry status": [],
+    "timeline recent": [
+      "--detail",
+      "--format",
+      "--limit",
+      "--pot",
+      "--query",
+      "--relations",
+      "--service",
+      "--since",
+      "--time-window",
+      "--until",
+      "--window"
+    ],
+    "ui": [
+      "--no-open",
+      "--open",
+      "--pot"
+    ],
+    "use": [
+      "--also-default-for-current-repo",
+      "--local",
+      "--managed"
+    ],
+    "whoami": []
+  },
+  "root_options": [
+    "--json",
+    "--verbose",
+    "--version",
+    "-v"
+  ],
+  "schema_version": "1"
+}

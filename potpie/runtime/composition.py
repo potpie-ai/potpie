@@ -89,6 +89,8 @@ def create_runtime(
     from potpie.auth.services import AccountAuthService, IntegrationAuthService
     from potpie.auth.wiring import build_credential_store
     from potpie.config import ProductConfigService
+    from potpie.install import LocalInstaller
+    from potpie.skills import create_skill_service
 
     credentials = build_credential_store()
     return PotpieRuntime(
@@ -97,6 +99,8 @@ def create_runtime(
         auth=AccountAuthService(credentials),
         integrations=IntegrationAuthService(credentials),
         config=ProductConfigService(settings.data_dir),
+        skills=create_skill_service(data_dir=settings.data_dir),
+        installer=LocalInstaller(),
     )
 
 

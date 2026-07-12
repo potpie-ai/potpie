@@ -24,12 +24,12 @@ from pathlib import Path
 
 import pytest
 
-import potpie.cli as _clipkg
+import potpie.skills.resources as _skill_resources
 
 pytestmark = pytest.mark.unit
 
 ADAPTER_PATH = (
-    Path(_clipkg.__file__).resolve().parent
+    Path(_skill_resources.__file__).resolve().parent
     / "templates"
     / "claude_plugin"
     / "hooks"
