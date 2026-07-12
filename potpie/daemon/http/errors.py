@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from domain.ports.daemon.operations import OperationError
+from potpie_context_engine.domain.ports.daemon.operations import OperationError
 
 _STATUS_MAP = {
     "invalid_input": 400,

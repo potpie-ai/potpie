@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from adapters.inbound.mcp.server import mcp
+from potpie_context_engine.adapters.inbound.mcp.server import mcp
 
 pytestmark = pytest.mark.unit
 

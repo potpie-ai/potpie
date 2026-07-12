@@ -40,7 +40,9 @@ from integrations.domain.integrations_schema import (
     IntegrationSaveRequest,
     IntegrationSaveResponse,
 )
-from adapters.inbound.http.api.v1.context.router import create_context_router
+from potpie_context_engine.adapters.inbound.http.api.v1.context.router import (
+    create_context_router,
+)
 from app.modules.context_graph.context_engine_http import (
     POTPIE_CONTEXT_GRAPH_MUTATIONS,
     get_context_engine_container_for_api_key,

@@ -6,7 +6,7 @@ from integrations.adapters.outbound.postgres.integration_model import Integratio
 from integrations.adapters.outbound.postgres.project_source_model import (  # noqa
     ProjectSource,
 )
-from adapters.outbound.postgres.models import (  # noqa
+from potpie_context_engine.adapters.outbound.postgres.models import (  # noqa
     ContextSyncState,
     ContextEventModel,
     ContextReconciliationRun,

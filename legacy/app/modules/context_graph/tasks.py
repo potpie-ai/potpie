@@ -5,7 +5,7 @@ from celery import Task
 from app.celery.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.modules.context_graph.wiring import build_container_for_session
-from application.use_cases.context_graph_jobs import (
+from potpie_context_engine.application.use_cases.context_graph_jobs import (
     handle_apply_episode,
     handle_backfill_pot,
     handle_ingest_pr,

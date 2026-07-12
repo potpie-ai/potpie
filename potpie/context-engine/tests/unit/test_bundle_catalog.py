@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.skills.agent_installer import iter_template_files
-from adapters.outbound.skills.bundle_catalog import (
+from potpie_context_engine.adapters.outbound.skills.agent_installer import (
+    iter_template_files,
+)
+from potpie_context_engine.adapters.outbound.skills.bundle_catalog import (
     catalog_by_id,
     load_bundle_skills,
     recommended_skill_ids,
 )
-from adapters.outbound.skills.template_resources import PackageTemplateResources
-from domain.errors import CapabilityNotImplemented
+from potpie_context_engine.adapters.outbound.skills.template_resources import (
+    PackageTemplateResources,
+)
+from potpie_context_engine.domain.errors import CapabilityNotImplemented
 
 TEMPLATE_RESOURCES = PackageTemplateResources("potpie.cli")
 

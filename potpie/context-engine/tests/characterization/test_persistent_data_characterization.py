@@ -6,10 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from adapters.outbound.graph.backends.embedded_backend import EmbeddedGraphBackend
-from adapters.outbound.skills.template_resources import PackageTemplateResources
-from bootstrap.host_wiring import build_host_shell
-from domain.ports.services.graph_service import GraphReadRequest
+from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
+    EmbeddedGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.skills.template_resources import (
+    PackageTemplateResources,
+)
+from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie_context_engine.domain.ports.services.graph_service import GraphReadRequest
 
 pytestmark = pytest.mark.unit
 

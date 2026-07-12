@@ -5,12 +5,14 @@ from dataclasses import dataclass
 
 import pytest
 
-from adapters.outbound.graph import Neo4jGraphWriter
-from application.services.source_connector_registry import SourceConnectorRegistry
-from bootstrap import ingestion_server, standalone_container
-from bootstrap.http_projects import ExplicitPotResolution
-from domain.ports.observability import NoOpObservability
-from domain.ports.telemetry import NoOpTelemetry
+from potpie_context_engine.adapters.outbound.graph import Neo4jGraphWriter
+from potpie_context_engine.application.services.source_connector_registry import (
+    SourceConnectorRegistry,
+)
+from potpie_context_engine.bootstrap import ingestion_server, standalone_container
+from potpie_context_engine.bootstrap.http_projects import ExplicitPotResolution
+from potpie_context_engine.domain.ports.observability import NoOpObservability
+from potpie_context_engine.domain.ports.telemetry import NoOpTelemetry
 
 
 @dataclass(frozen=True)
@@ -115,7 +117,7 @@ def test_standalone_container_delegates_to_ingestion_server_build(
 
 
 def _patch_container_graph(monkeypatch: pytest.MonkeyPatch) -> None:
-    import domain.coherence as coherence
+    import potpie_context_engine.domain.coherence as coherence
 
     monkeypatch.setattr(
         ingestion_server,

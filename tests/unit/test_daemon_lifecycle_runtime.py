@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from potpie.cli import host_cli as cli_main
-from domain.lifecycle import DONE, SKIPPED, SetupPlan
+from potpie_context_engine.domain.lifecycle import DONE, SKIPPED, SetupPlan
 from potpie.daemon.lifecycle import Daemon
 from potpie.daemon.client import DaemonRpcClient, RemoteHostShell
 

@@ -1,6 +1,6 @@
 # Potpie / Context Engine Package-Boundary Migration
 
-> Status: Commits 1-2 complete; Commit 3 not started. This document implements the
+> Status: Commits 1-3 complete; Commit 4 not started. This document implements the
 > sequencing contract for [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) and
 > [ADR-0002](../../spec/decisions/ADR-0002-potpie-context-engine-boundary.md).
 > The target architecture is proposed; current-state docs remain authoritative
@@ -57,8 +57,8 @@ verifying the baseline remains intact.
 | # | Planned commit | Behavior scope | Status | Commit | Evidence |
 |---:|---|---|---|---|---|
 | 1 | `docs(spec): define the potpie package boundary` | All IDs as proposed contract | Complete | `322bccacf4c9b91bf7d8b3cd10ae043c443302e6` | 11 spec files, 18 behavior IDs, metadata/backlink/link validation, diff checks |
-| 2 | `test(boundary): characterize engine and product behavior` | `PKG-VERIFY-001` | Complete | This commit | 10 characterization tests; root/engine suites and premerge journey pass separately |
-| 3 | `refactor(engine): namespace the context engine package` | `PKG-OWN-002`, `PKG-API-001`, `PKG-DIST-001` | Not started | — | Engine tests, root tests, isolated wheel import |
+| 2 | `test(boundary): characterize engine and product behavior` | `PKG-VERIFY-001` | Complete | `d691ea06fc7e642125c2e106c9807f55331f1d7d` | 10 characterization tests; root/engine suites and premerge journey pass separately |
+| 3 | `refactor(engine): namespace the context engine package` | `PKG-OWN-002`, `PKG-API-001`, `PKG-DIST-001` | Complete | This commit | 1,151 engine tests, 999 root unit tests, isolated wheel/import and namespace scans pass |
 | 4 | `refactor(engine): add the standalone ContextEngine API` | `PKG-API-001`, `PKG-CONFIG-001`, `PKG-SETUP-001`, `PKG-STATUS-001` | Not started | — | Public API and no-home-write tests |
 | 5 | `refactor(runtime): introduce PotpieRuntime and typed daemon RPC` | `PKG-RUNTIME-001`, `PKG-MODE-001`, `PKG-RPC-001` | Not started | — | DTO registry, mode, protocol, parity tests |
 | 6 | `refactor(cli): route engine workflows through runtime.engine` | `PKG-RUNTIME-001` | Not started | — | Context/graph/pot/source/ledger/timeline parity |
@@ -153,6 +153,24 @@ Changes:
 
 Gate: engine unit/conformance tests, root unit tests, and isolated engine-wheel
 import pass.
+
+Evidence recorded on 2026-07-12:
+
+- `uv run --project . pytest tests -m "not premerge_journey" -q` from
+  `potpie/context-engine`: 1,151 passed and 32 skipped.
+- `uv run pytest tests/unit -q`: 999 root unit tests passed.
+- `uv run pytest tests -m "not premerge_journey" -q`: 1,054 passed, 4 skipped,
+  and 1 separately gated journey deselected.
+- The engine wheel contains `potpie_context_engine` only; benchmarks and the
+  former generic top-level packages are absent.
+- A clean interpreter imports `potpie_context_engine` and its domain namespace
+  from the built wheel.
+- Engine and root Ruff checks, `git diff --check`, and the repository-wide scan
+  for legacy generic imports pass.
+- A supplemental legacy suite ran 49 of 50 tests successfully. Its remaining
+  import-only test fails inside NetworkX under Python 3.14 before application
+  code loads (`wrapper_descriptor` has no `__annotate__`); this is outside the
+  namespace gate and does not reproduce in the supported root/engine suites.
 
 ## Commit 4 — Standalone Engine API
 

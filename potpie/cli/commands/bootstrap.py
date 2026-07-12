@@ -11,16 +11,22 @@ import os
 from pathlib import Path
 
 import typer
-from adapters.outbound.intelligence.local_embedder import (
+from potpie_context_engine.adapters.outbound.intelligence.local_embedder import (
     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
     configured_embedder_choice,
     configured_embedding_model,
 )
-from application.services.config_service import KNOWN_CONFIG_KEYS, public_config_value
-from domain.embedding_modes import normalize_embedding_mode
-from domain.errors import CapabilityNotImplemented, ContextEngineDisabled
-from domain.lifecycle import SetupPlan, SetupReport
-from domain.ports.agent_context import StatusRequest
+from potpie_context_engine.application.services.config_service import (
+    KNOWN_CONFIG_KEYS,
+    public_config_value,
+)
+from potpie_context_engine.domain.embedding_modes import normalize_embedding_mode
+from potpie_context_engine.domain.errors import (
+    CapabilityNotImplemented,
+    ContextEngineDisabled,
+)
+from potpie_context_engine.domain.lifecycle import SetupPlan, SetupReport
+from potpie_context_engine.domain.ports.agent_context import StatusRequest
 
 from potpie.cli.cli_install_status import (
     cli_install_human,
@@ -134,7 +140,9 @@ def register(root: typer.Typer) -> None:
                 explicit_embeddings=embeddings is not None,
                 explicit_model=embedding_model is not None,
             )
-            from bootstrap.host_wiring import default_backend_profile
+            from potpie_context_engine.bootstrap.host_wiring import (
+                default_backend_profile,
+            )
 
             if human_output:
                 host, selected_backend, in_process = _build_local_setup_host(
@@ -159,7 +167,9 @@ def register(root: typer.Typer) -> None:
                 and backend
                 and backend != host.backend.profile
             ):
-                from adapters.outbound.graph.backends import build_backend
+                from potpie_context_engine.adapters.outbound.graph.backends import (
+                    build_backend,
+                )
 
                 from potpie.cli.commands._common import set_host
                 from potpie.runtime import build_potpie_host_shell
@@ -177,7 +187,9 @@ def register(root: typer.Typer) -> None:
             ):
                 import os
 
-                from adapters.outbound.graph.backends import build_backend
+                from potpie_context_engine.adapters.outbound.graph.backends import (
+                    build_backend,
+                )
 
                 from potpie.cli.commands._common import set_host
                 from potpie.runtime import build_potpie_host_shell
@@ -673,7 +685,7 @@ def _build_local_setup_host(
     """Build a local setup host so the Rich wizard can observe real steps."""
     import os
 
-    from adapters.outbound.graph.backends import build_backend
+    from potpie_context_engine.adapters.outbound.graph.backends import build_backend
 
     from potpie.cli.commands._common import set_host
     from potpie.runtime import build_potpie_host_shell

@@ -16,7 +16,10 @@ from pathlib import Path
 import pytest
 
 import potpie.cli as _clipkg
-from domain.agent_context_port import CONTEXT_INCLUDE_VALUES, CONTEXT_RECORD_TYPES
+from potpie_context_engine.domain.agent_context_port import (
+    CONTEXT_INCLUDE_VALUES,
+    CONTEXT_RECORD_TYPES,
+)
 
 pytestmark = pytest.mark.unit
 

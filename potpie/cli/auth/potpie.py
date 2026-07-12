@@ -16,7 +16,7 @@ from urllib.parse import urlencode, urlparse
 
 from potpie.cli.auth.errors import CliAuthError
 from potpie.cli.auth.http import AuthHttpClient, AuthHttpError, HttpClient
-from bootstrap.runtime_settings import load_runtime_settings
+from potpie_context_engine.bootstrap.runtime_settings import load_runtime_settings
 
 _DEFAULT_PORT_MIN = 9000
 _DEFAULT_PORT_MAX = 9999

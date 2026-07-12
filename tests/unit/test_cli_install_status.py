@@ -31,7 +31,9 @@ def test_collect_cli_install_status_from_uv_tool(
     monkeypatch.setattr(
         cis,
         "_python_from_script",
-        lambda _path: "/Users/me/.local/share/uv/tools/potpie-context-engine/bin/python3",
+        lambda _path: (
+            "/Users/me/.local/share/uv/tools/potpie-context-engine/bin/python3"
+        ),
     )
     monkeypatch.setattr(cis, "_python_version", lambda _path: "3.12.12")
     monkeypatch.setattr(cis, "_installed_package_version", lambda: "0.1.0")

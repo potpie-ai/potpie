@@ -82,64 +82,53 @@ dev = [
 ]
 
 [project.scripts]
-potpie-mcp = "adapters.inbound.mcp.server:main"
+potpie-mcp = "potpie_context_engine.adapters.inbound.mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["domain", "application", "adapters", "bootstrap", "benchmarks", "host"]
+packages = ["src/potpie_context_engine"]
 exclude = [
-    "adapters/inbound/cli/**",
-    "adapters/inbound/daemon_http/**",
-    "adapters/inbound/http/ui/**",
-    "adapters/outbound/daemon_process/**",
-    "adapters/outbound/managed_services/**",
-    "host/daemon_runtime/**",
-    "host/daemon.py",
-    "host/daemon_client.py",
-    "host/daemon_main.py",
-    "host/daemon_rpc.py",
+    "src/potpie_context_engine/adapters/inbound/cli/**",
+    "src/potpie_context_engine/adapters/inbound/daemon_http/**",
+    "src/potpie_context_engine/adapters/inbound/http/ui/**",
+    "src/potpie_context_engine/adapters/outbound/daemon_process/**",
+    "src/potpie_context_engine/adapters/outbound/managed_services/**",
+    "src/potpie_context_engine/host/daemon_runtime/**",
+    "src/potpie_context_engine/host/daemon.py",
+    "src/potpie_context_engine/host/daemon_client.py",
+    "src/potpie_context_engine/host/daemon_main.py",
+    "src/potpie_context_engine/host/daemon_rpc.py",
 ]
 include = [
-    "domain/playbooks/**/*.md",
-    "scripts/**/*.py",
-    "scripts/**/*.json",
-    "scripts/**/*.mjs",
-    "benchmarks/use_cases/**/*.yaml",
-    "benchmarks/fixtures/raw_events/**/*.json",
-    "benchmarks/_legacy/data/**/*.json",
+    "src/potpie_context_engine/domain/playbooks/**/*.md",
+    "src/potpie_context_engine/adapters/outbound/reconciliation/skills/**/*.md",
 ]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "build_config_values.py",
     "distribution_defaults_hook.py",
-    "domain",
-    "domain/playbooks/**/*.md",
-    "application",
-    "adapters",
-    "bootstrap",
+    "src/potpie_context_engine",
     "benchmarks",
-    "host",
-    "domain/playbooks/**/*.md",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
 ]
 exclude = [
-    "adapters/inbound/cli/**",
-    "adapters/inbound/daemon_http/**",
-    "adapters/inbound/http/ui/**",
-    "adapters/outbound/daemon_process/**",
-    "adapters/outbound/managed_services/**",
-    "host/daemon_runtime/**",
-    "host/daemon.py",
-    "host/daemon_client.py",
-    "host/daemon_main.py",
-    "host/daemon_rpc.py",
+    "src/potpie_context_engine/adapters/inbound/cli/**",
+    "src/potpie_context_engine/adapters/inbound/daemon_http/**",
+    "src/potpie_context_engine/adapters/inbound/http/ui/**",
+    "src/potpie_context_engine/adapters/outbound/daemon_process/**",
+    "src/potpie_context_engine/adapters/outbound/managed_services/**",
+    "src/potpie_context_engine/host/daemon_runtime/**",
+    "src/potpie_context_engine/host/daemon.py",
+    "src/potpie_context_engine/host/daemon_client.py",
+    "src/potpie_context_engine/host/daemon_main.py",
+    "src/potpie_context_engine/host/daemon_rpc.py",
 ]
 
 [tool.ruff]
 target-version = "py310"
-src = [".", "tests"]
+src = ["src", "tests", "benchmarks", "scripts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -172,26 +161,26 @@ constraint-dependencies = [
 
 [tool.mypy]
 python_version = "3.12"
-mypy_path = "."
+mypy_path = "src"
 files = [
-    "domain/actor.py",
-    "domain/semantic_mutations.py",
-    "domain/ports/agent_execution_log.py",
-    "domain/ports/daemon/shell.py",
-    "domain/ports/daemon/rpc_contract.py",
-    "domain/ports/ingestion_config.py",
-    "application/use_cases/record_durable_context.py",
-    "application/use_cases/process_batch.py",
-    "adapters/inbound/http/api/v1/context/router.py",
-    "adapters/outbound/graph/backends/embedded_backend.py",
-    "adapters/outbound/graph/backends/neo4j_backend.py",
-    "adapters/outbound/daemon_lifecycle.py",
-    "adapters/outbound/postgres/agent_execution_log.py",
-    "adapters/outbound/postgres/batch_repository.py",
-    "adapters/outbound/postgres/ingestion_config.py",
-    "adapters/outbound/postgres/ingestion_event_store.py",
-    "adapters/outbound/postgres/models.py",
-    "adapters/outbound/reconciliation/pydantic_deep_agent.py",
+    "src/potpie_context_engine/domain/actor.py",
+    "src/potpie_context_engine/domain/semantic_mutations.py",
+    "src/potpie_context_engine/domain/ports/agent_execution_log.py",
+    "src/potpie_context_engine/domain/ports/daemon/shell.py",
+    "src/potpie_context_engine/domain/ports/daemon/rpc_contract.py",
+    "src/potpie_context_engine/domain/ports/ingestion_config.py",
+    "src/potpie_context_engine/application/use_cases/record_durable_context.py",
+    "src/potpie_context_engine/application/use_cases/process_batch.py",
+    "src/potpie_context_engine/adapters/inbound/http/api/v1/context/router.py",
+    "src/potpie_context_engine/adapters/outbound/graph/backends/embedded_backend.py",
+    "src/potpie_context_engine/adapters/outbound/graph/backends/neo4j_backend.py",
+    "src/potpie_context_engine/adapters/outbound/daemon_lifecycle.py",
+    "src/potpie_context_engine/adapters/outbound/postgres/agent_execution_log.py",
+    "src/potpie_context_engine/adapters/outbound/postgres/batch_repository.py",
+    "src/potpie_context_engine/adapters/outbound/postgres/ingestion_config.py",
+    "src/potpie_context_engine/adapters/outbound/postgres/ingestion_event_store.py",
+    "src/potpie_context_engine/adapters/outbound/postgres/models.py",
+    "src/potpie_context_engine/adapters/outbound/reconciliation/pydantic_deep_agent.py",
 ]
 check_untyped_defs = true
 disallow_incomplete_defs = true

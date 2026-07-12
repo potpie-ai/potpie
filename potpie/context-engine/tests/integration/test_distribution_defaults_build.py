@@ -77,9 +77,13 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
     sdist = next(path for path in artifacts if path.name.endswith(".tar.gz"))
     for artifact in (wheel, sdist):
         distribution_defaults = _archive_text(
-            artifact, "bootstrap/_distribution_defaults.py"
+            artifact,
+            "potpie_context_engine/bootstrap/_distribution_defaults.py",
         )
-        build_info = _archive_text(artifact, "bootstrap/_build_info.py")
+        build_info = _archive_text(
+            artifact,
+            "potpie_context_engine/bootstrap/_build_info.py",
+        )
         assert "DISTRIBUTION_DEFAULTS = {" in distribution_defaults
         assert "'environment': 'prod_oss'" in distribution_defaults
         assert "'linear_client_id': 'linear-smoke-client'" in distribution_defaults
@@ -88,5 +92,6 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
         assert "posthog" not in distribution_defaults.lower()
         assert "GIT_SHA = 'smoke-sha'" in build_info
         assert "BUILD_TIME = '2026-06-28T00:00:00Z'" in build_info
-    assert not (context_engine / "bootstrap" / "_distribution_defaults.py").exists()
-    assert not (context_engine / "bootstrap" / "_build_info.py").exists()
+    generated_source = context_engine / "src" / "potpie_context_engine" / "bootstrap"
+    assert not (generated_source / "_distribution_defaults.py").exists()
+    assert not (generated_source / "_build_info.py").exists()

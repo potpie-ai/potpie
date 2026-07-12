@@ -8,21 +8,25 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.modules.context_graph.wiring import build_container_for_user_session
-from domain.actor import Actor
-from domain.agent_context_port import (
+from potpie_context_engine.domain.actor import Actor
+from potpie_context_engine.domain.agent_context_port import (
     build_context_record_source_id,
     context_port_manifest,
     context_recipe_for_intent,
     normalize_record_type,
 )
-from domain.graph_query import (
+from potpie_context_engine.domain.graph_query import (
     ContextGraphGoal,
     ContextGraphQuery,
     ContextGraphScope,
     ContextGraphStrategy,
 )
-from domain.ingestion_event_models import IngestionSubmissionRequest
-from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
+from potpie_context_engine.domain.ingestion_event_models import (
+    IngestionSubmissionRequest,
+)
+from potpie_context_engine.domain.ingestion_kinds import (
+    INGESTION_KIND_AGENT_RECONCILIATION,
+)
 
 
 def _split_csv(value: Optional[str]) -> list[str]:

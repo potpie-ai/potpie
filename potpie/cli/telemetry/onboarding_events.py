@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Iterator
 
-from domain.lifecycle import FAILED, SetupPlan, StepResult
+from potpie_context_engine.domain.lifecycle import FAILED, SetupPlan, StepResult
 
 from .product_analytics import AnalyticsValue, capture_event
 

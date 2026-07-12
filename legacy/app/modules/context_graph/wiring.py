@@ -9,11 +9,11 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from bootstrap.queue_factory import get_context_graph_job_queue
-from adapters.outbound.reconciliation.factory import (
+from potpie_context_engine.bootstrap.queue_factory import get_context_graph_job_queue
+from potpie_context_engine.adapters.outbound.reconciliation.factory import (
     try_pydantic_deep_reconciliation_agent,
 )
-from adapters.outbound.settings_env import (
+from potpie_context_engine.adapters.outbound.settings_env import (
     context_engine_falkordb_graph_name,
     context_engine_falkordb_lite_path,
     context_engine_falkordb_mode,
@@ -34,22 +34,25 @@ from app.modules.context_graph.context_graph_pot_repository_model import (
 from app.modules.context_graph.context_graph_pot_source_model import (
     ContextGraphPotSource,
 )
-from adapters.outbound.source_resolvers import (
+from potpie_context_engine.adapters.outbound.source_resolvers import (
     CompositeSourceResolver,
     DocumentationUriResolver,
     GitHubPullRequestResolver,
 )
-from bootstrap.container import ContextEngineContainer, build_container
-from domain.context_status import StatusSource
-from domain.source_references import SourceReferenceRecord
-from domain.ports.pot_resolution import (
+from potpie_context_engine.bootstrap.container import (
+    ContextEngineContainer,
+    build_container,
+)
+from potpie_context_engine.domain.context_status import StatusSource
+from potpie_context_engine.domain.source_references import SourceReferenceRecord
+from potpie_context_engine.domain.ports.pot_resolution import (
     PotResolutionPort,
     RepoRef,
     ResolvedPot,
     ResolvedPotRepo,
 )
-from domain.ports.pot_source_listing import PotSourceListingPort
-from domain.ports.settings import ContextEngineSettingsPort
+from potpie_context_engine.domain.ports.pot_source_listing import PotSourceListingPort
+from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 
 
 class PotpieContextEngineSettings(ContextEngineSettingsPort):

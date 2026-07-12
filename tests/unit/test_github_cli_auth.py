@@ -709,15 +709,17 @@ def test_github_repos_lists_stored_account_repositories(
     monkeypatch.setattr(
         gh_cmds,
         "list_user_owned_repositories",
-        lambda token: [
-            {
-                "full_name": "octocat/widgets",
-                "private": False,
-                "default_branch": "main",
-            }
-        ]
-        if token == "plaintext-token"
-        else [],
+        lambda token: (
+            [
+                {
+                    "full_name": "octocat/widgets",
+                    "private": False,
+                    "default_branch": "main",
+                }
+            ]
+            if token == "plaintext-token"
+            else []
+        ),
     )
 
     result = runner.invoke(cli_main.app, ["github", "repos"])

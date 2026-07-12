@@ -14,7 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 
-from domain.ports.daemon.rpc_contract import (
+from potpie_context_engine.domain.ports.daemon.rpc_contract import (
     RPC_SURFACES,
     RpcSurfaceSpec,
     assert_rpc_class_allowed,

@@ -1202,8 +1202,12 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         """
         from app.modules.context_graph.pot_access import require_pot_raw_ingest
         from app.modules.context_graph.wiring import build_container_for_user_session
-        from domain.ingestion_kinds import INGESTION_KIND_RAW_EPISODE
-        from domain.ingestion_event_models import IngestionSubmissionRequest
+        from potpie_context_engine.domain.ingestion_kinds import (
+            INGESTION_KIND_RAW_EPISODE,
+        )
+        from potpie_context_engine.domain.ingestion_event_models import (
+            IngestionSubmissionRequest,
+        )
 
         uid = _uid(user)
         require_pot_raw_ingest(db, uid, pot_id)

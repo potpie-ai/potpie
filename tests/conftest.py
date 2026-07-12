@@ -12,7 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
 from potpie.daemon.runtime.context import ServiceEndpoints, ShellContext
 from potpie.runtime import build_potpie_host_shell
 

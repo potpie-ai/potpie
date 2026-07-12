@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from adapters.outbound.http.potpie_context_api_client import (
+from potpie_context_engine.adapters.outbound.http.potpie_context_api_client import (
     PotpieContextApiClient,
     PotpieContextApiError,
 )

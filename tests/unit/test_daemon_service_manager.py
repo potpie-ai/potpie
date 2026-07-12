@@ -9,7 +9,7 @@ from potpie.daemon.runtime.service_manager import (
     ServiceNotFound,
     ServiceStatus,
 )
-from domain.ports.daemon.shell import (
+from potpie_context_engine.domain.ports.daemon.shell import (
     HealthStatus,
     ReadyProbe,
     ServiceBackend,

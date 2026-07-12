@@ -28,8 +28,11 @@ from potpie.cli.ui.setup_wizard_ui import (
     is_interactive_tty,
     live_ui_enabled,
 )
-from domain.lifecycle import SetupPlan, SetupReport
-from domain.ports.services.setup import SetupObserver, SetupOrchestrator
+from potpie_context_engine.domain.lifecycle import SetupPlan, SetupReport
+from potpie_context_engine.domain.ports.services.setup import (
+    SetupObserver,
+    SetupOrchestrator,
+)
 
 # Real orchestrator step_id -> (running label, done label). See
 # application/services/setup_orchestrator.py for the canonical step list.
@@ -379,7 +382,7 @@ POST_SETUP_AGENT_ORDER: tuple[str, ...] = tuple(
 
 def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any]]:
     """Copy packaged skill bundles into *repo* for each harness id."""
-    from adapters.outbound.skills.agent_installer import (
+    from potpie_context_engine.adapters.outbound.skills.agent_installer import (
         AGENT_TYPES,
         install_agent_bundle,
     )
@@ -407,7 +410,9 @@ def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any
 def install_agents_globally(agents: list[str]) -> list[tuple[str, Any]]:
     """Install packaged skill bundles into each harness's global skill location."""
     from potpie.cli.commands._common import get_host
-    from adapters.outbound.skills.agent_installer import AGENT_TYPES
+    from potpie_context_engine.adapters.outbound.skills.agent_installer import (
+        AGENT_TYPES,
+    )
 
     host = get_host()
     results: list[tuple[str, Any]] = []

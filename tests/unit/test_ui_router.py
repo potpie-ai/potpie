@@ -12,7 +12,11 @@ from potpie.daemon.http.ui.router import (
     _slice_to_graph,
     build_ui_api_router,
 )
-from domain.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
+from potpie_context_engine.domain.ports.graph.inspection import (
+    GraphEdge,
+    GraphNode,
+    GraphSlice,
+)
 
 
 def test_node_type_prefers_canonical_key_prefix_over_stray_label() -> None:

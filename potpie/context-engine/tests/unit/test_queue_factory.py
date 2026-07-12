@@ -5,8 +5,10 @@ from types import ModuleType
 
 import pytest
 
-from bootstrap.queue_factory import get_context_graph_job_queue
-from domain.ports.context_graph_job_queue import NoOpContextGraphJobQueue
+from potpie_context_engine.bootstrap.queue_factory import get_context_graph_job_queue
+from potpie_context_engine.domain.ports.context_graph_job_queue import (
+    NoOpContextGraphJobQueue,
+)
 
 
 def _register_stub_celery_queue() -> type:

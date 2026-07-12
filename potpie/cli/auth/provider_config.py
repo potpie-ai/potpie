@@ -7,7 +7,7 @@ from urllib.parse import urlparse, urlunparse
 
 import os
 
-from bootstrap.runtime_settings import load_runtime_settings
+from potpie_context_engine.bootstrap.runtime_settings import load_runtime_settings
 
 Provider = Literal["linear", "github", "atlassian", "jira", "confluence"]
 OAuthProvider = Literal["linear"]

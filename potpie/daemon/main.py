@@ -22,13 +22,13 @@ from potpie.daemon.process.pidfile import (
     write_discovery,
     write_pid_file,
 )
-from adapters.outbound.pots.local_pot_store import default_home
-from bootstrap.logging_setup import configure_logging
-from bootstrap.observability_context import correlation_scope
-from bootstrap.observability_runtime import get_observability
+from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
+from potpie_context_engine.bootstrap.logging_setup import configure_logging
+from potpie_context_engine.bootstrap.observability_context import correlation_scope
+from potpie_context_engine.bootstrap.observability_runtime import get_observability
 from potpie.runtime import build_potpie_host_shell
-from domain.errors import CapabilityNotImplemented, PotNotFound
-from domain.ports.observability import SPAN_KIND_SERVER
+from potpie_context_engine.domain.errors import CapabilityNotImplemented, PotNotFound
+from potpie_context_engine.domain.ports.observability import SPAN_KIND_SERVER
 from potpie.daemon.rpc import decode, encode, validate_rpc_attr, validate_rpc_method
 
 logger = logging.getLogger(__name__)

@@ -9,12 +9,12 @@ from types import ModuleType
 import anyio
 import pytest
 
-from adapters.outbound.reconciliation.pydantic_deep_agent import (
+from potpie_context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
     PydanticDeepReconciliationAgent,
 )
-from domain.context_events import ContextEvent
-from domain.ports.observability import NoOpObservability
-from domain.reconciliation_batch import BatchAgentContext
+from potpie_context_engine.domain.context_events import ContextEvent
+from potpie_context_engine.domain.ports.observability import NoOpObservability
+from potpie_context_engine.domain.reconciliation_batch import BatchAgentContext
 
 pytestmark = pytest.mark.unit
 
@@ -146,7 +146,8 @@ def test_run_batch_timeout_emits_observability_metric(
 ) -> None:
     obs = _RecordingObservability()
     monkeypatch.setattr(
-        "bootstrap.observability_runtime.get_observability", lambda: obs
+        "potpie_context_engine.bootstrap.observability_runtime.get_observability",
+        lambda: obs,
     )
     monkeypatch.setenv("CONTEXT_ENGINE_AGENT_RUN_TIMEOUT_SECS", "0.001")
 

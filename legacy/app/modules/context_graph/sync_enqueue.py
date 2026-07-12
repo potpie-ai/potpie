@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from bootstrap.container import ContextEngineContainer
+from potpie_context_engine.bootstrap.container import ContextEngineContainer
 
 logger = logging.getLogger(__name__)
 

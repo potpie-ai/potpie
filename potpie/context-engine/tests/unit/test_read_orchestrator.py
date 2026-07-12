@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
-from application.services.read_orchestrator import ReadOrchestrator
-from domain.ports.claim_query import ClaimRow
+from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
+    InMemoryClaimQueryStore,
+)
+from potpie_context_engine.application.services.read_orchestrator import (
+    ReadOrchestrator,
+)
+from potpie_context_engine.domain.ports.claim_query import ClaimRow
 
 pytestmark = pytest.mark.unit
 

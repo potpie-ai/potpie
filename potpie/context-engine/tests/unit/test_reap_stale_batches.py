@@ -13,9 +13,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from application.use_cases.reap_stale_batches import reap_stale_batches
-from domain.ports.observability import NoOpObservability
-from domain.reconciliation_batch import BatchEventRef, ReconciliationBatch
+from potpie_context_engine.application.use_cases.reap_stale_batches import (
+    reap_stale_batches,
+)
+from potpie_context_engine.domain.ports.observability import NoOpObservability
+from potpie_context_engine.domain.reconciliation_batch import (
+    BatchEventRef,
+    ReconciliationBatch,
+)
 
 
 class _RecordingObservability(NoOpObservability):
@@ -60,7 +65,8 @@ class TestReapStaleBatches:
     ) -> None:
         obs = _RecordingObservability()
         monkeypatch.setattr(
-            "bootstrap.observability_runtime.get_observability", lambda: obs
+            "potpie_context_engine.bootstrap.observability_runtime.get_observability",
+            lambda: obs,
         )
         batches = MagicMock()
         batches.list_stale_in_flight_batches.return_value = [

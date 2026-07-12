@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from potpie.cli import host_cli
 from potpie.cli.commands import _common, bootstrap
 from potpie.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
-from domain.lifecycle import (
+from potpie_context_engine.domain.lifecycle import (
     SKIPPED,
     PlannedSetupStep,
     SetupPlan,

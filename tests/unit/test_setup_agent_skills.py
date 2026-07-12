@@ -40,8 +40,9 @@ def test_maybe_prompt_agent_skills_installs_selected(
     monkeypatch.setattr(
         setup_ux,
         "install_agents_globally",
-        lambda agents: globally_installed.extend(agents)
-        or [(agent, object()) for agent in agents],
+        lambda agents: (
+            globally_installed.extend(agents) or [(agent, object()) for agent in agents]
+        ),
     )
 
     setup_ux._maybe_prompt_agent_skills(setup_agent="claude")

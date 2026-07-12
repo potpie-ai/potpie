@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from adapters.outbound.http.potpie_context_api_client import (
+from potpie_context_engine.adapters.outbound.http.potpie_context_api_client import (
     PotpieContextApiClient,
     PotpieContextApiError,
 )

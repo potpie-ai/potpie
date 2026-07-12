@@ -11,13 +11,13 @@ import pytest
 from pydantic import BaseModel
 
 from potpie.daemon.http.transport import HttpTransport
-from domain.ports.daemon.operations import (
+from potpie_context_engine.domain.ports.daemon.operations import (
     AuthRequirement,
     OperationContext,
     OperationRegistry,
     OperationSpec,
 )
-from domain.ports.daemon.shell import HealthStatus
+from potpie_context_engine.domain.ports.daemon.shell import HealthStatus
 from potpie.daemon.runtime.context import ServiceEndpoints, ShellContext
 from potpie.daemon.runtime.health import HealthRegistrar
 from potpie.daemon.runtime.ipc_auth import IpcAuthGate

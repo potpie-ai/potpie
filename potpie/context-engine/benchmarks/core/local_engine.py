@@ -107,7 +107,9 @@ class InProcessEngineClient:
 
     @staticmethod
     def _build_container(db):
-        from domain.ports.context_graph_job_queue import NoOpContextGraphJobQueue
+        from potpie_context_engine.domain.ports.context_graph_job_queue import (
+            NoOpContextGraphJobQueue,
+        )
         from app.modules.context_graph.wiring import build_container_for_session
 
         container = build_container_for_session(db)
@@ -213,7 +215,9 @@ class InProcessEngineClient:
         """
         from datetime import datetime, timezone
 
-        from domain.ingestion_event_models import IngestionSubmissionRequest
+        from potpie_context_engine.domain.ingestion_event_models import (
+            IngestionSubmissionRequest,
+        )
 
         occurred_raw = body.get("occurred_at")
         occurred_at = None
@@ -249,7 +253,9 @@ class InProcessEngineClient:
 
     def process_pending(self, pot_id: str, *, max_batches: int = 200) -> int:
         """Reconcile every pending batch for the pot, inline. Returns count."""
-        from application.use_cases.context_graph_jobs import handle_process_batch
+        from potpie_context_engine.application.use_cases.context_graph_jobs import (
+            handle_process_batch,
+        )
         from app.modules.context_graph.wiring import build_container_for_session
 
         processed = 0
@@ -284,10 +290,10 @@ class InProcessEngineClient:
         return processed
 
     def get_event(self, event_id: str) -> dict[str, Any]:
-        from adapters.inbound.http.api.v1.context.event_payload import (
+        from potpie_context_engine.adapters.inbound.http.api.v1.context.event_payload import (
             ingestion_event_to_payload,
         )
-        from adapters.outbound.postgres.reconciliation_ledger import (
+        from potpie_context_engine.adapters.outbound.postgres.reconciliation_ledger import (
             SqlAlchemyReconciliationLedger,
         )
 
@@ -321,7 +327,7 @@ class InProcessEngineClient:
     # Reads (snapshot + resolve)
     # ------------------------------------------------------------------
     def context_graph_query(self, body: dict[str, Any]) -> dict[str, Any]:
-        from domain.graph_query import ContextGraphQuery
+        from potpie_context_engine.domain.graph_query import ContextGraphQuery
 
         query = ContextGraphQuery(**body)
         db = self._session()

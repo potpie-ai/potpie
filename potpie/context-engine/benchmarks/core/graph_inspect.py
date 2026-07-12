@@ -15,7 +15,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from adapters.outbound.http.potpie_context_api_client import PotpieContextApiClient
+from potpie_context_engine.adapters.outbound.http.potpie_context_api_client import (
+    PotpieContextApiClient,
+)
 
 
 @dataclass(frozen=True)

@@ -1,9 +1,9 @@
 """Hatch build hook: generate packaged distribution defaults.
 
 During ``hatch build`` / ``uv build``, this writes public packaged defaults for
-installed wheels to ``bootstrap/_distribution_defaults.py`` and runtime build
-metadata to ``bootstrap/_build_info.py``. Process environment variables still
-win at runtime.
+installed wheels to ``potpie_context_engine/bootstrap/_distribution_defaults.py``
+and runtime build metadata to ``potpie_context_engine/bootstrap/_build_info.py``.
+Process environment variables still win at runtime.
 """
 
 from __future__ import annotations
@@ -58,10 +58,12 @@ class DistributionDefaultsHook(BuildHookInterface):
             )
             build_data.setdefault("force_include", {}).update(
                 {
-                    str(
-                        distribution_defaults_out
-                    ): config_values.DISTRIBUTION_DEFAULTS_OUT.as_posix(),
-                    str(build_info_out): config_values.BUILD_INFO_OUT.as_posix(),
+                    str(distribution_defaults_out): _wheel_destination(
+                        config_values.DISTRIBUTION_DEFAULTS_OUT
+                    ).as_posix(),
+                    str(build_info_out): _wheel_destination(
+                        config_values.BUILD_INFO_OUT
+                    ).as_posix(),
                 }
             )
             build_data.setdefault(_GENERATED_BUILD_DIRS_KEY, []).append(
@@ -84,6 +86,15 @@ def _load_config_values_module() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _wheel_destination(source_path: Path) -> Path:
+    try:
+        return source_path.relative_to("src")
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Generated package file must live under src/: {source_path}"
+        ) from exc
 
 
 def _remove_generated_artifacts(build_data: dict) -> None:

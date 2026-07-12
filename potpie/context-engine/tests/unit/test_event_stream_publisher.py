@@ -17,14 +17,14 @@ from typing import Any
 
 import pytest
 
-from adapters.outbound.event_stream.inmemory_publisher import (
+from potpie_context_engine.adapters.outbound.event_stream.inmemory_publisher import (
     InMemoryEventStreamPublisher,
 )
-from adapters.outbound.event_stream.redis_publisher import (
+from potpie_context_engine.adapters.outbound.event_stream.redis_publisher import (
     RedisEventStreamPublisher,
     _format_entry,
 )
-from domain.ports.event_stream import NoOpEventStreamPublisher
+from potpie_context_engine.domain.ports.event_stream import NoOpEventStreamPublisher
 
 
 # ----- InMemory adapter -----

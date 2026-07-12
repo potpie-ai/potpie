@@ -23,7 +23,7 @@ from typing import Any, Callable, Final, Iterator, NoReturn, Sequence
 
 import click
 import typer
-from domain.errors import (
+from potpie_context_engine.domain.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
     PotNotFound,

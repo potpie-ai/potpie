@@ -15,7 +15,11 @@ from potpie.cli.telemetry_context import (
 from potpie.runtime.telemetry.sentry_settings import SentrySettings
 from typer.testing import CliRunner
 
-from domain.errors import CapabilityNotImplemented, ContextEngineDisabled, PotNotFound
+from potpie_context_engine.domain.errors import (
+    CapabilityNotImplemented,
+    ContextEngineDisabled,
+    PotNotFound,
+)
 
 _SAFE_CLI_ATTRS: Final[frozenset[str]] = frozenset(
     {

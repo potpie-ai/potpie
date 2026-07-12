@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 
-from bootstrap import env_bootstrap as _engine_env_bootstrap
+from potpie_context_engine.bootstrap import env_bootstrap as _engine_env_bootstrap
 
 _PROTECTED_DOTENV_KEYS = _engine_env_bootstrap._PROTECTED_DOTENV_KEYS
 _PROJECT_ROOT_MARKERS = _engine_env_bootstrap._PROJECT_ROOT_MARKERS

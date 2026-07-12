@@ -17,14 +17,14 @@ from potpie.daemon.runtime.service_manager import (
     DependencyCycle,
     ServiceNotFound,
 )
-from domain.ports.daemon.operations import (
+from potpie_context_engine.domain.ports.daemon.operations import (
     AuthRequirement,
     OperationContext,
     OperationError,
     OperationRegistry,
     Principal,
 )
-from domain.ports.daemon.shell import HealthStatus
+from potpie_context_engine.domain.ports.daemon.shell import HealthStatus
 from potpie.daemon.runtime.context import ShellContext
 from potpie.daemon.runtime.health import HealthRegistrar
 from potpie.daemon.runtime.ipc_auth import AuthFailure, IpcAuthGate

@@ -12,8 +12,10 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
-from application.readers import (
+from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
+    InMemoryClaimQueryStore,
+)
+from potpie_context_engine.application.readers import (
     CodingPreferencesReader,
     DecisionsReader,
     DocsReader,
@@ -23,9 +25,12 @@ from application.readers import (
     PriorBugsReader,
     TimelineReader,
 )
-from application.readers._common import ReadRequest, dedupe_claim_rows
-from domain.ports.claim_query import ClaimRow
-from domain.ranking import RankingService
+from potpie_context_engine.application.readers._common import (
+    ReadRequest,
+    dedupe_claim_rows,
+)
+from potpie_context_engine.domain.ports.claim_query import ClaimRow
+from potpie_context_engine.domain.ranking import RankingService
 
 
 _NOW = datetime(2026, 5, 20, tzinfo=timezone.utc)

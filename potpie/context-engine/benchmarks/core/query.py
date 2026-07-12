@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from adapters.outbound.http.potpie_context_api_client import PotpieContextApiClient
+from potpie_context_engine.adapters.outbound.http.potpie_context_api_client import (
+    PotpieContextApiClient,
+)
 
 from benchmarks.core.scenario import QuerySpec
 

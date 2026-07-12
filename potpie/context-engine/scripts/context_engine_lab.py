@@ -14,6 +14,8 @@ Run from repo root with:
 
 from __future__ import annotations
 
+# ruff: noqa: E402
+
 import argparse
 import asyncio
 import json
@@ -28,26 +30,35 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-if str(PACKAGE_ROOT) not in sys.path:
-    sys.path.insert(0, str(PACKAGE_ROOT))
+SRC_ROOT = PACKAGE_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
-from adapters.inbound.http.api.v1.context.router import create_context_router  # noqa: E402
-from adapters.outbound.http.potpie_context_api_client import (  # noqa: E402
+from potpie_context_engine.adapters.inbound.http.api.v1.context.router import (
+    create_context_router,
+)  # noqa: E402
+from potpie_context_engine.adapters.outbound.http.potpie_context_api_client import (  # noqa: E402
     IngestRejectedError,
     PotpieContextApiClient,
     PotpieContextApiError,
 )
-from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore  # noqa: E402
-from application.services.envelope_builder import envelope_to_dict  # noqa: E402
-from application.services.read_orchestrator import ReadOrchestrator  # noqa: E402
-from bootstrap.ingestion_server import IngestionServerContainer  # noqa: E402
-from bootstrap.http_projects import ExplicitPotResolution  # noqa: E402
-from domain.agent_context_port import (  # noqa: E402
+from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
+    InMemoryClaimQueryStore,
+)  # noqa: E402
+from potpie_context_engine.application.services.envelope_builder import envelope_to_dict  # noqa: E402
+from potpie_context_engine.application.services.read_orchestrator import (
+    ReadOrchestrator,
+)  # noqa: E402
+from potpie_context_engine.bootstrap.ingestion_server import IngestionServerContainer  # noqa: E402
+from potpie_context_engine.bootstrap.http_projects import ExplicitPotResolution  # noqa: E402
+from potpie_context_engine.domain.agent_context_port import (  # noqa: E402
     build_context_record_source_id,
     context_recipe_for_intent,
     normalize_record_type,
 )
-from domain.ports.context_graph_job_queue import NoOpContextGraphJobQueue  # noqa: E402
+from potpie_context_engine.domain.ports.context_graph_job_queue import (
+    NoOpContextGraphJobQueue,
+)  # noqa: E402
 
 DEFAULT_DATA = Path(__file__).with_name("mock_context_data.json")
 DEFAULT_REPORT = PACKAGE_ROOT / ".tmp" / "context-engine-lab-report.json"

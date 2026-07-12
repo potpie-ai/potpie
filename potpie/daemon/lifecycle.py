@@ -19,9 +19,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
-from adapters.outbound.pots.local_pot_store import default_home
-from domain.lifecycle import DONE, SKIPPED, SetupPlan, StepResult
-from domain.ports.daemon.lifecycle import (
+from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
+from potpie_context_engine.domain.lifecycle import DONE, SKIPPED, SetupPlan, StepResult
+from potpie_context_engine.domain.ports.daemon.lifecycle import (
     DaemonDiscovery,
     DaemonHealth,
     DaemonInstallResult,

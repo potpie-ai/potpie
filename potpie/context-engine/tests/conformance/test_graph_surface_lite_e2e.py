@@ -9,18 +9,27 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.graph.backends.embedded_backend import EmbeddedGraphBackend
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.intelligence.local_embedder import HashingEmbedder
-from application.services.graph_service import DefaultGraphService
-from domain.ports.agent_context import RecordRequest, ResolveRequest
-from domain.ports.claim_query import ClaimQueryFilter
-from domain.ports.services.graph_service import (
+from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
+    EmbeddedGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.intelligence.local_embedder import (
+    HashingEmbedder,
+)
+from potpie_context_engine.application.services.graph_service import DefaultGraphService
+from potpie_context_engine.domain.ports.agent_context import (
+    RecordRequest,
+    ResolveRequest,
+)
+from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.domain.ports.services.graph_service import (
     GraphCatalogRequest,
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
-from domain.semantic_mutations import SemanticMutationRequest
+from potpie_context_engine.domain.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
 

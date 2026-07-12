@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from application.use_cases import context_graph_jobs
-from bootstrap.ingestion_server import IngestionServerContainer
-from domain.ports.observability import NoOpObservability
+from potpie_context_engine.application.use_cases import context_graph_jobs
+from potpie_context_engine.bootstrap.ingestion_server import IngestionServerContainer
+from potpie_context_engine.domain.ports.observability import NoOpObservability
 
 pytestmark = pytest.mark.unit
 

@@ -8,7 +8,9 @@ hijacked agent cannot exfiltrate a foreign private repo.
 
 from __future__ import annotations
 
-from adapters.outbound.connectors.github.agent_tools import build_github_tools
+from potpie_context_engine.adapters.outbound.connectors.github.agent_tools import (
+    build_github_tools,
+)
 
 
 class _State:

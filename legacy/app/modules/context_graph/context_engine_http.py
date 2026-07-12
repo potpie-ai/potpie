@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from adapters.inbound.http.api.v1.context.router import (
+from potpie_context_engine.adapters.inbound.http.api.v1.context.router import (
     IngestPrRequest,
     SyncRequest,
     create_context_router,
@@ -20,7 +20,7 @@ from app.modules.context_graph.context_pot_routes import make_pot_router
 from app.modules.context_graph.pot_access import api_key_user_id, require_pot_ingest
 from app.modules.context_graph.sync_enqueue import enqueue_backfill_with_container
 from app.modules.context_graph.wiring import build_container_for_user_session
-from bootstrap.container import ContextEngineContainer
+from potpie_context_engine.bootstrap.container import ContextEngineContainer
 
 logger = logging.getLogger(__name__)
 

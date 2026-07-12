@@ -4,16 +4,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from bootstrap.host_wiring import build_host_shell, default_host_mode
-from adapters.outbound.skills.template_resources import (
+from potpie_context_engine.bootstrap.host_wiring import (
+    build_host_shell,
+    default_host_mode,
+)
+from potpie_context_engine.adapters.outbound.skills.template_resources import (
     PackageTemplateResources,
     TemplateResourceProvider,
 )
-from domain.ports.daemon.lifecycle import DaemonLifecyclePort
-from domain.ports.graph.backend import GraphBackend
-from domain.ports.ledger.client import EventLedgerClientPort
-from domain.ports.observability import ObservabilityPort
-from host.shell import HostShell
+from potpie_context_engine.domain.ports.daemon.lifecycle import DaemonLifecyclePort
+from potpie_context_engine.domain.ports.graph.backend import GraphBackend
+from potpie_context_engine.domain.ports.ledger.client import EventLedgerClientPort
+from potpie_context_engine.domain.ports.observability import ObservabilityPort
+from potpie_context_engine.host.shell import HostShell
 
 from potpie.daemon.lifecycle import Daemon
 

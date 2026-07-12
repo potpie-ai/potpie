@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from domain.ports.daemon.lifecycle import (
+from potpie_context_engine.domain.ports.daemon.lifecycle import (
     DaemonDiscovery,
     DaemonStartResult,
     DaemonStatus,
@@ -26,7 +26,7 @@ def _python_sources(root: Path) -> list[Path]:
 def test_context_engine_source_has_no_product_telemetry_imports() -> None:
     forbidden = (
         "sentry_sdk",
-        "bootstrap.sentry_",
+        "potpie_context_engine.bootstrap.sentry_",
         "potpie.runtime.telemetry.sentry",
         "potpie.cli.telemetry.product_analytics",
         "potpie.cli.telemetry.sentry",
@@ -45,10 +45,10 @@ def test_context_engine_source_has_no_root_cli_or_daemon_imports() -> None:
     forbidden = (
         "potpie.cli",
         "potpie.daemon",
-        "adapters.inbound.cli",
-        "adapters.outbound." + "cli_auth",
-        "domain.ports." + "cli_auth",
-        "bootstrap." + "cli_auth_wiring",
+        "potpie_context_engine.adapters.inbound.cli",
+        "potpie_context_engine.adapters.outbound." + "cli_auth",
+        "potpie_context_engine.domain.ports." + "cli_auth",
+        "potpie_context_engine.bootstrap." + "cli_auth_wiring",
         "host.daemon",
     )
 
@@ -70,7 +70,7 @@ def test_context_engine_metadata_has_no_cli_auth_dependencies() -> None:
 
 def test_root_runtime_imports_context_engine_env_bootstrap_only_from_wrapper() -> None:
     forbidden = (
-        "bootstrap._build_info",
+        "potpie_context_engine.bootstrap._build_info",
         "potpie.cli.auth.credentials_store",
     )
 
@@ -86,7 +86,8 @@ def test_root_runtime_imports_context_engine_env_bootstrap_only_from_wrapper() -
         str(path.relative_to(ROOT))
         for path in _python_sources(ROOT / "potpie" / "runtime")
         if path.name != "env_bootstrap.py"
-        and "bootstrap.env_bootstrap" in path.read_text(encoding="utf-8")
+        and "potpie_context_engine.bootstrap.env_bootstrap"
+        in path.read_text(encoding="utf-8")
     ]
 
     assert bootstrap_import_offenders == []
@@ -95,19 +96,25 @@ def test_root_runtime_imports_context_engine_env_bootstrap_only_from_wrapper() -
 def test_root_daemon_rpc_does_not_own_engine_contract_tables() -> None:
     root_rpc = (ROOT / "potpie" / "daemon" / "rpc.py").read_text(encoding="utf-8")
     engine_contract = (
-        CONTEXT_ENGINE / "domain" / "ports" / "daemon" / "rpc_contract.py"
+        CONTEXT_ENGINE
+        / "src"
+        / "potpie_context_engine"
+        / "domain"
+        / "ports"
+        / "daemon"
+        / "rpc_contract.py"
     ).read_text(encoding="utf-8")
 
     assert "_ALLOWED_RPC_CLASS_REFS" not in root_rpc
     assert "RPC_DTO_MODULES" not in root_rpc
     assert "RPC_SURFACES: Mapping" not in root_rpc
-    assert "domain.actor" not in root_rpc
+    assert "potpie_context_engine.domain.actor" not in root_rpc
     assert "RPC_DTO_MODULES" in engine_contract
     assert "RPC_SURFACES: Mapping" in engine_contract
 
 
 def test_root_and_context_engine_env_bootstrap_core_behavior_stays_in_sync() -> None:
-    from bootstrap import env_bootstrap as engine_env_bootstrap
+    from potpie_context_engine.bootstrap import env_bootstrap as engine_env_bootstrap
     from potpie.runtime import env_bootstrap as root_env_bootstrap
 
     lines = [

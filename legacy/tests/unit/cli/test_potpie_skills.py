@@ -6,9 +6,13 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import main as cli_main
-from adapters.inbound.cli import skill_catalog, skill_lock, skill_targets
-from adapters.inbound.cli.skill_manager import SkillManager
+from potpie_context_engine.adapters.inbound.cli import main as cli_main
+from potpie_context_engine.adapters.inbound.cli import (
+    skill_catalog,
+    skill_lock,
+    skill_targets,
+)
+from potpie_context_engine.adapters.inbound.cli.skill_manager import SkillManager
 
 pytestmark = pytest.mark.unit
 
@@ -156,7 +160,9 @@ def test_agent_recommendation_matrix_matches_spec() -> None:
     ]
 
 
-def test_cli_list_available_json_contract(packaged_catalog: Path, tmp_path: Path) -> None:
+def test_cli_list_available_json_contract(
+    packaged_catalog: Path, tmp_path: Path
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     code, payload = _invoke_skills(["list", "--available", "--path", str(repo)])
@@ -231,7 +237,9 @@ def test_json_error_envelopes_unknown_skill_needs_yes_locally_modified_unowned(
     repo.mkdir()
 
     # UNKNOWN_SKILL
-    code, payload = _invoke_skills(["install", "does-not-exist", "--yes", "--path", str(repo)])
+    code, payload = _invoke_skills(
+        ["install", "does-not-exist", "--yes", "--path", str(repo)]
+    )
     assert code == 1
     assert payload["ok"] is False
     assert payload["schemaVersion"] == skill_catalog.SCHEMA_VERSION
@@ -244,7 +252,9 @@ def test_json_error_envelopes_unknown_skill_needs_yes_locally_modified_unowned(
     # NEEDS_YES when overwriting without --yes in non-interactive mode.
     # (If nothing changed, install is a no-op; force an overwrite by changing
     # the bundled template hash.)
-    (packaged_catalog / "alpha" / "extra.txt").write_text("template changed\n", encoding="utf-8")
+    (packaged_catalog / "alpha" / "extra.txt").write_text(
+        "template changed\n", encoding="utf-8"
+    )
     code, payload = _invoke_skills(["install", "alpha", "--path", str(repo)])
     assert code == 1
     assert payload["ok"] is False
@@ -252,7 +262,9 @@ def test_json_error_envelopes_unknown_skill_needs_yes_locally_modified_unowned(
 
     # LOCALLY_MODIFIED_REFUSED for update of an owned locally modified skill.
     alpha_md = repo / ".agents" / "skills" / "alpha" / "SKILL.md"
-    alpha_md.write_text(alpha_md.read_text(encoding="utf-8") + "\nlocal edit\n", encoding="utf-8")
+    alpha_md.write_text(
+        alpha_md.read_text(encoding="utf-8") + "\nlocal edit\n", encoding="utf-8"
+    )
     code, payload = _invoke_skills(["update", "alpha", "--yes", "--path", str(repo)])
     assert code == 1
     assert payload["ok"] is False
@@ -265,7 +277,9 @@ def test_json_error_envelopes_unknown_skill_needs_yes_locally_modified_unowned(
     lock_path = repo / ".agents" / "skills-lock.json"
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     lock["skills"].pop("beta", None)
-    lock_path.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    lock_path.write_text(
+        json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     code, payload = _invoke_skills(["remove", "beta", "--yes", "--path", str(repo)])
     assert code == 1
     assert payload["ok"] is False
@@ -289,7 +303,9 @@ def test_status_computation_missing_outdated_locally_modified_and_lock_diagnosti
 
     # Make it locally modified.
     alpha_md = repo / ".agents" / "skills" / "alpha" / "SKILL.md"
-    alpha_md.write_text(alpha_md.read_text(encoding="utf-8") + "\nlocal edit\n", encoding="utf-8")
+    alpha_md.write_text(
+        alpha_md.read_text(encoding="utf-8") + "\nlocal edit\n", encoding="utf-8"
+    )
     status2 = SkillManager(repo, agent="default").status()
     assert any(row["id"] == "alpha" for row in status2["installed"])
     assert any(row["id"] == "alpha" for row in status2["locallyModified"])
@@ -297,4 +313,6 @@ def test_status_computation_missing_outdated_locally_modified_and_lock_diagnosti
     # Break lockfile -> diagnostics should include INVALID_LOCKFILE.
     (repo / ".agents" / "skills-lock.json").write_text("{not json", encoding="utf-8")
     status3 = SkillManager(repo, agent="default").status()
-    assert any(d.get("code") == "INVALID_LOCKFILE" for d in status3.get("diagnostics", []))
+    assert any(
+        d.get("code") == "INVALID_LOCKFILE" for d in status3.get("diagnostics", [])
+    )

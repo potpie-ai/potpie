@@ -18,9 +18,21 @@ from potpie.daemon.managed_services.container_backend import ContainerBackend
 from potpie.daemon.managed_services.external_backend import ExternalBackend
 from potpie.daemon.managed_services.subprocess_backend import SubprocessBackend
 from potpie.daemon.runtime.service_manager import ServiceManager
-from domain.ports.daemon.operations import OperationRegistry, OperationSpec
-from domain.ports.daemon.service import ReadyProbe, RestartPolicy, ServiceSpec
-from domain.ports.daemon.shell import Component, HealthStatus, ServiceBackend, Transport
+from potpie_context_engine.domain.ports.daemon.operations import (
+    OperationRegistry,
+    OperationSpec,
+)
+from potpie_context_engine.domain.ports.daemon.service import (
+    ReadyProbe,
+    RestartPolicy,
+    ServiceSpec,
+)
+from potpie_context_engine.domain.ports.daemon.shell import (
+    Component,
+    HealthStatus,
+    ServiceBackend,
+    Transport,
+)
 from potpie.daemon.runtime.config import DaemonConfig
 from potpie.daemon.runtime.context import ServiceEndpoints, ShellContext
 from potpie.daemon.runtime.health import HealthRegistrar

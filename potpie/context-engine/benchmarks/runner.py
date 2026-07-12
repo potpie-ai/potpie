@@ -29,7 +29,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from adapters.outbound.http.potpie_context_api_client import PotpieContextApiClient
+from potpie_context_engine.adapters.outbound.http.potpie_context_api_client import (
+    PotpieContextApiClient,
+)
 
 from benchmarks.core.graph_inspect import snapshot_graph
 from benchmarks.core.ingestion import IngestionOutcome, replay_all

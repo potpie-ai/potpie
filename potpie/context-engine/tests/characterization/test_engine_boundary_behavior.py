@@ -6,13 +6,23 @@ from pathlib import Path
 
 import pytest
 
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.ledger.self_hosted_client import FixtureEventLedgerClient
-from adapters.outbound.skills.template_resources import PackageTemplateResources
-from bootstrap.host_wiring import build_host_shell
-from domain.ports.agent_context import RecordRequest, ResolveRequest, SearchRequest
-from domain.ports.ledger.client import LedgerEvent
-from domain.ports.services.graph_service import GraphReadRequest
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.ledger.self_hosted_client import (
+    FixtureEventLedgerClient,
+)
+from potpie_context_engine.adapters.outbound.skills.template_resources import (
+    PackageTemplateResources,
+)
+from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie_context_engine.domain.ports.agent_context import (
+    RecordRequest,
+    ResolveRequest,
+    SearchRequest,
+)
+from potpie_context_engine.domain.ports.ledger.client import LedgerEvent
+from potpie_context_engine.domain.ports.services.graph_service import GraphReadRequest
 
 pytestmark = pytest.mark.unit
 

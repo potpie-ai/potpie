@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from domain.lifecycle import SetupPlan
-from host.shell import HostShell
+from potpie_context_engine.domain.lifecycle import SetupPlan
+from potpie_context_engine.host.shell import HostShell
 from potpie.daemon import main as daemon_main
 from potpie.daemon.client import RemoteSurface
 from potpie.daemon.rpc import (
@@ -57,7 +57,7 @@ def test_daemon_rpc_rejects_unregistered_domain_references() -> None:
         decode(
             {
                 TYPE_KEY: "dataclass",
-                "class": "domain.errors:CapabilityNotImplemented",
+                "class": "potpie_context_engine.domain.errors:CapabilityNotImplemented",
                 "value": {},
             }
         )

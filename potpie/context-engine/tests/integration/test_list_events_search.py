@@ -8,7 +8,9 @@ from unittest.mock import MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from adapters.inbound.http.api.v1.context.router import create_context_router
+from potpie_context_engine.adapters.inbound.http.api.v1.context.router import (
+    create_context_router,
+)
 
 
 def _build_container() -> MagicMock:

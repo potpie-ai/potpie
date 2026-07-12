@@ -327,8 +327,12 @@ class WebhookEventHandler:
         payload: Dict[str, Any],
     ) -> Dict[str, Any]:
         from app.modules.context_graph.wiring import build_container_for_session
-        from domain.ingestion_kinds import INGESTION_KIND_GITHUB_MERGED_PR
-        from domain.ingestion_event_models import IngestionSubmissionRequest
+        from potpie_context_engine.domain.ingestion_kinds import (
+            INGESTION_KIND_GITHUB_MERGED_PR,
+        )
+        from potpie_context_engine.domain.ingestion_event_models import (
+            IngestionSubmissionRequest,
+        )
 
         container = build_container_for_session(self.db)
         request = IngestionSubmissionRequest(

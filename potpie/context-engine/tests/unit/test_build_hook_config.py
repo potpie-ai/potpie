@@ -217,8 +217,8 @@ def test_distribution_defaults_hook_uses_field_aware_preservation(
     tmp_path: Path,
 ) -> None:
     distribution_defaults_hook = _load_distribution_defaults_hook(monkeypatch)
-    bootstrap_dir = tmp_path / "bootstrap"
-    bootstrap_dir.mkdir()
+    bootstrap_dir = tmp_path / "src" / "potpie_context_engine" / "bootstrap"
+    bootstrap_dir.mkdir(parents=True)
     build_config_values.write_python_mapping(
         bootstrap_dir / "_distribution_defaults.py",
         "DISTRIBUTION_DEFAULTS",
@@ -243,7 +243,7 @@ def test_distribution_defaults_hook_uses_field_aware_preservation(
 
     generated_defaults_path = _force_include_source(
         build_data,
-        "bootstrap/_distribution_defaults.py",
+        "potpie_context_engine/bootstrap/_distribution_defaults.py",
     )
     generated = build_config_values._read_python_mapping(
         generated_defaults_path,
@@ -255,13 +255,18 @@ def test_distribution_defaults_hook_uses_field_aware_preservation(
         "github_client_id": "old-github",
     }
     assert build_data["force_include"][str(generated_defaults_path)] == (
-        "bootstrap/_distribution_defaults.py"
+        "potpie_context_engine/bootstrap/_distribution_defaults.py"
     )
     assert (
         build_data["force_include"][
-            str(_force_include_source(build_data, "bootstrap/_build_info.py"))
+            str(
+                _force_include_source(
+                    build_data,
+                    "potpie_context_engine/bootstrap/_build_info.py",
+                )
+            )
         ]
-        == "bootstrap/_build_info.py"
+        == "potpie_context_engine/bootstrap/_build_info.py"
     )
 
 
@@ -270,8 +275,8 @@ def test_distribution_defaults_hook_uses_temp_artifacts_and_cleans_them(
     tmp_path: Path,
 ) -> None:
     distribution_defaults_hook = _load_distribution_defaults_hook(monkeypatch)
-    bootstrap_dir = tmp_path / "bootstrap"
-    bootstrap_dir.mkdir()
+    bootstrap_dir = tmp_path / "src" / "potpie_context_engine" / "bootstrap"
+    bootstrap_dir.mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("POTPIE_VALIDATE_DISTRIBUTION_DEFAULTS", raising=False)
     hook = object.__new__(distribution_defaults_hook.DistributionDefaultsHook)
@@ -280,9 +285,12 @@ def test_distribution_defaults_hook_uses_temp_artifacts_and_cleans_them(
     hook.initialize("wheel", build_data)
     distribution_defaults_source = _force_include_source(
         build_data,
-        "bootstrap/_distribution_defaults.py",
+        "potpie_context_engine/bootstrap/_distribution_defaults.py",
     )
-    build_info_source = _force_include_source(build_data, "bootstrap/_build_info.py")
+    build_info_source = _force_include_source(
+        build_data,
+        "potpie_context_engine/bootstrap/_build_info.py",
+    )
     assert distribution_defaults_source.is_file()
     assert build_info_source.is_file()
     assert not (bootstrap_dir / "_distribution_defaults.py").exists()
@@ -302,9 +310,11 @@ def test_distribution_defaults_hook_cleans_temp_dir_when_initialize_fails(
     generated_dir = tmp_path / "generated-build-dir"
     fake_config_values = ModuleType("fake_config_values")
     fake_config_values.DISTRIBUTION_DEFAULTS_OUT = Path(
-        "bootstrap/_distribution_defaults.py"
+        "src/potpie_context_engine/bootstrap/_distribution_defaults.py"
     )
-    fake_config_values.BUILD_INFO_OUT = Path("bootstrap/_build_info.py")
+    fake_config_values.BUILD_INFO_OUT = Path(
+        "src/potpie_context_engine/bootstrap/_build_info.py"
+    )
     fake_config_values.distribution_default_values = lambda: {"environment": "prod_oss"}
     fake_config_values.build_info_values = lambda: {"GIT_SHA": "abc123"}
     fake_config_values.prefer_existing_distribution_default_values = (
@@ -350,8 +360,8 @@ def test_distribution_defaults_hook_finalize_preserves_unowned_source_files(
     tmp_path: Path,
 ) -> None:
     distribution_defaults_hook = _load_distribution_defaults_hook(monkeypatch)
-    bootstrap_dir = tmp_path / "bootstrap"
-    bootstrap_dir.mkdir()
+    bootstrap_dir = tmp_path / "src" / "potpie_context_engine" / "bootstrap"
+    bootstrap_dir.mkdir(parents=True)
     distribution_defaults = bootstrap_dir / "_distribution_defaults.py"
     build_info = bootstrap_dir / "_build_info.py"
     distribution_defaults.write_text("DISTRIBUTION_DEFAULTS = {}\n", encoding="utf-8")

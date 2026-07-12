@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from potpie.daemon.managed_services.external_backend import ExternalBackend
-from domain.ports.daemon.shell import HealthStatus, ReadyProbe, ServiceSpec
+from potpie_context_engine.domain.ports.daemon.shell import (
+    HealthStatus,
+    ReadyProbe,
+    ServiceSpec,
+)
 from potpie.daemon.runtime.context import ServiceEndpoints, ShellContext
 
 

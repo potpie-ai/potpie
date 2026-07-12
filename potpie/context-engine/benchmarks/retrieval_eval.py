@@ -16,8 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
-from application.services.graph_service import DefaultGraphService
-from domain.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.application.services.graph_service import DefaultGraphService
+from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +166,7 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
 
 def seed_golden(service: DefaultGraphService, *, pot_id: str) -> None:
     """Seed the golden claims through the real write path (embed-on-write)."""
-    from domain.semantic_mutations import SemanticMutationRequest
+    from potpie_context_engine.domain.semantic_mutations import SemanticMutationRequest
 
     ops = [
         {

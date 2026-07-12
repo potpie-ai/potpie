@@ -9,16 +9,16 @@ import logging
 from typing import Any
 
 import typer
-from application.services.graph_workbench import (
+from potpie_context_engine.application.services.graph_workbench import (
     graph_error_envelope,
     graph_not_implemented_envelope,
     graph_success_envelope,
     new_graph_request_id,
     normalize_workbench_result,
 )
-from bootstrap.observability_runtime import get_observability
-from domain.graph_workbench import GraphUnsupported
-from domain.ports.observability import SPAN_KIND_INTERNAL
+from potpie_context_engine.bootstrap.observability_runtime import get_observability
+from potpie_context_engine.domain.graph_workbench import GraphUnsupported
+from potpie_context_engine.domain.ports.observability import SPAN_KIND_INTERNAL
 
 from potpie.cli.commands._common import (
     EXIT_UNAVAILABLE,
