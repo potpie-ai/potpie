@@ -10,9 +10,10 @@ tools and there will only ever be four:
 
 New use cases become new ``intent`` / ``include`` families, ``record_type``
 values, or skills — **never** new tools. ``AgentContextPort`` composes the
-three services: ``resolve``/``search``/``record`` delegate to ``GraphService``;
-``status`` composes ``GraphService`` data-plane status + ``PotManagementService``
-aggregate status + a ``SkillManager`` nudge.
+two services: ``resolve``/``search``/``record`` delegate to ``GraphService``;
+``status`` composes ``GraphService`` data-plane status with
+``PotManagementService`` aggregate status. Product skill readiness is added by
+root Potpie.
 
 Request fields mirror the documented contract: ``pot_id``, ``intent``,
 ``include``, ``scope``, ``mode`` (fast/balanced/verify/deep — retrieval depth),
@@ -31,23 +32,6 @@ from potpie_context_engine.domain.agent_envelope import AgentEnvelope
 # Retrieval depth. Replaces the old ``goal=ANSWER/INVESTIGATE`` surface: depth
 # is a dial on one read path, not a different read path.
 ResolveMode = str  # "fast" | "balanced" | "verify" | "deep"
-
-
-@dataclass(frozen=True, slots=True)
-class SkillNudge:
-    """Advisory skills block embedded in ``context_status``.
-
-    The only skill signal an agent ever sees: missing/outdated skills for its
-    harness plus the exact CLI command a human runs to close the gap.
-    Installation is never an agent action. Owned here (not in
-    ``skill_manager``) because it is part of the status contract — defining it
-    here keeps the ports layer acyclic.
-    """
-
-    agent: str
-    missing: tuple[str, ...] = ()
-    outdated: tuple[str, ...] = ()
-    install_command: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +118,6 @@ class StatusReport:
     backend_ready: bool
     data_plane: Mapping[str, Any] = field(default_factory=dict)
     pot_summary: Mapping[str, Any] = field(default_factory=dict)
-    skills: SkillNudge | None = None
     recommended_next_action: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -158,7 +141,6 @@ __all__ = [
     "ResolveMode",
     "ResolveRequest",
     "SearchRequest",
-    "SkillNudge",
     "StatusReport",
     "StatusRequest",
 ]

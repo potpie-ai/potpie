@@ -1,6 +1,6 @@
 """Graph Surface Lite end-to-end acceptance tests (Graph V1.5 Step 13).
 
-Exercises the surface through ``HostShell`` / ``DefaultGraphService`` the way an
+Exercises the surface through ``EngineComponents`` / ``DefaultGraphService`` the way an
 agent would: discover → read → search → mutate → record, plus cross-process
 embedded persistence and paraphrase retrieval through the bundled local embedder.
 """

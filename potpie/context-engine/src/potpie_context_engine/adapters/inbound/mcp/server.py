@@ -1,7 +1,7 @@
-"""MCP server: the four-tool context surface, served in-process via HostShell.
+"""MCP server: the four-tool context surface, served in-process via EngineComponents.
 
 CLI, HTTP, and MCP all bind to the same ``AgentContextPort``; this module is the
-MCP binding. It runs the engine **in-process** (``build_host_shell``) rather than
+MCP binding. It runs the engine **in-process** (``build_engine_components``) rather than
 as an HTTP client to a managed API — a local agent (claude-code, cursor) talks
 straight to the local context graph through the same services the CLI uses.
 
@@ -23,7 +23,7 @@ from mcp.server.fastmcp import FastMCP
 from potpie_context_engine.adapters.inbound.mcp.project_access import (
     assert_mcp_pot_allowed,
 )
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie_context_engine.composition import build_engine_components
 from potpie_context_engine.domain.errors import CapabilityNotImplemented
 from potpie_context_engine.domain.ports.agent_context import (
     RecordRequest,
@@ -31,17 +31,17 @@ from potpie_context_engine.domain.ports.agent_context import (
     SearchRequest,
     StatusRequest,
 )
-from potpie_context_engine.host.shell import HostShell
+from potpie_context_engine.composition import EngineComponents
 
 logger = logging.getLogger(__name__)
 mcp = FastMCP("potpie")
 
 
 @lru_cache(maxsize=1)
-def _host() -> HostShell:
-    """One in-process ``HostShell`` per server process (the embedded backend is
+def _components() -> EngineComponents:
+    """One in-process ``EngineComponents`` per server process (the embedded backend is
     persistent, so this survives across tool calls within a session)."""
-    return build_host_shell()
+    return build_engine_components()
 
 
 def _split_csv(value: str | None) -> tuple[str, ...]:
@@ -75,17 +75,6 @@ def _envelope_dict(env: Any) -> dict[str, Any]:
     return payload
 
 
-def _nudge_dict(nudge: Any) -> dict[str, Any] | None:
-    if nudge is None:
-        return None
-    return {
-        "agent": nudge.agent,
-        "missing": list(nudge.missing),
-        "outdated": list(nudge.outdated),
-        "install_command": nudge.install_command,
-    }
-
-
 @mcp.tool()
 def context_resolve(
     pot_id: str,
@@ -113,7 +102,7 @@ def context_resolve(
     """Primary agent context tool: resolve a bounded task context wrap with evidence and coverage."""
     try:
         assert_mcp_pot_allowed(pot_id)
-        env = _host().agent_context.resolve(
+        env = _components().agent_context.resolve(
             ResolveRequest(
                 pot_id=pot_id,
                 task=query,
@@ -156,7 +145,7 @@ def context_search(
     """Narrow follow-up memory search on a known phrase or entity. Prefer context_resolve for task wraps."""
     try:
         assert_mcp_pot_allowed(pot_id)
-        env = _host().agent_context.search(
+        env = _components().agent_context.search(
             SearchRequest(
                 pot_id=pot_id,
                 query=query,
@@ -191,7 +180,7 @@ def context_record(
         }
         if details:
             detail_payload["text"] = details
-        receipt = _host().agent_context.record(
+        receipt = _components().agent_context.record(
             RecordRequest(
                 pot_id=pot_id,
                 record_type=record_type,
@@ -222,7 +211,7 @@ def context_status(
     """Return cheap pot readiness plus the recommended next action for an intent."""
     try:
         assert_mcp_pot_allowed(pot_id)
-        report = _host().agent_context.status(
+        report = _components().agent_context.status(
             StatusRequest(pot_id=pot_id, intent=intent, harness=harness)
         )
         return {
@@ -234,7 +223,6 @@ def context_status(
             "backend_ready": report.backend_ready,
             "data_plane": dict(report.data_plane),
             "pot_summary": dict(report.pot_summary),
-            "skills": _nudge_dict(report.skills),
             "recommended_next_action": report.recommended_next_action,
         }
     except (ValueError, CapabilityNotImplemented) as exc:

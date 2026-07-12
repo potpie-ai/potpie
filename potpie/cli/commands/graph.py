@@ -1,4 +1,4 @@
-"""Graph + backend commands → ``HostShell.graph`` and the active ``GraphBackend``.
+"""Graph + backend commands → ``PotpieRuntime.graph`` and the active ``GraphBackend``.
 
 CLI code never touches a store directly; everything goes through the capability
 ports. Unbuilt projections (semantic/inspection/analytics/snapshot on profiles

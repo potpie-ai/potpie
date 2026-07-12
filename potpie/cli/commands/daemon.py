@@ -1,4 +1,4 @@
-"""Daemon admin commands -> ``HostShell.daemon`` local recovery tools."""
+"""Daemon admin commands -> ``PotpieRuntime.daemon`` local recovery tools."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 """Minimal composition root for legacy Potpie host wiring.
 
-The standalone context-engine server uses ``ingestion_server`` / ``host_wiring``.
+The standalone context-engine server uses ``ingestion_server`` and engine composition.
 The legacy FastAPI app still imports ``build_container`` when mounting agent tools;
 this shim preserves that contract without the removed legacy episodic/Neo4j DI graph.
 """

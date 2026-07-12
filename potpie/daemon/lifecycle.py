@@ -3,7 +3,7 @@
 The daemon shell is the local background process for lifecycle, IPC, health,
 and logs. It is not the business layer. When ``in_process`` is true, the host
 runs in the CLI process and reports synthetic liveness. When detached, the
-daemon process runs ``potpie.daemon.main`` and serves HostShell RPC over loopback
+daemon process runs ``potpie.daemon.main`` and serves PotpieRuntime RPC over loopback
 HTTP. Legacy UDS operation-runtime helpers are intentionally not part of this
 lifecycle contract.
 
@@ -19,9 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
-from potpie_context_engine.domain.lifecycle import DONE, SKIPPED, SetupPlan, StepResult
-from potpie_context_engine.domain.ports.daemon.lifecycle import (
+from potpie.daemon.contracts import (
     DaemonDiscovery,
     DaemonHealth,
     DaemonInstallResult,
@@ -30,6 +28,8 @@ from potpie_context_engine.domain.ports.daemon.lifecycle import (
     DaemonStatus,
     DaemonStopResult,
 )
+from potpie.runtime.paths import product_data_dir
+from potpie.setup import DONE, SKIPPED, SetupPlan, StepResult
 
 
 def _pid_alive(pid: int) -> bool:
@@ -44,7 +44,7 @@ def _pid_alive(pid: int) -> bool:
 class Daemon:
     """Local daemon lifecycle: in-process stand-in or detached process."""
 
-    home: Path = field(default_factory=default_home)
+    home: Path = field(default_factory=product_data_dir)
     in_process: bool = True
     startup_timeout_s: float = 60.0
 

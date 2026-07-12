@@ -3,6 +3,7 @@
 from potpie.setup.contracts import (
     DONE,
     FAILED,
+    NOT_IMPLEMENTED,
     PLANNED,
     SKIPPED,
     PlannedSetupStep,
@@ -20,6 +21,7 @@ from potpie.setup.status import ProductStatusService
 __all__ = [
     "DONE",
     "FAILED",
+    "NOT_IMPLEMENTED",
     "NoOpSetupObserver",
     "PlannedSetupStep",
     "PLANNED",

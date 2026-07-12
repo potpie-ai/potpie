@@ -13,8 +13,8 @@ from potpie_context_engine.adapters.outbound.graph.backends import (
 from potpie_context_engine.adapters.outbound.graph.backends.falkordb_backend import (
     FalkorDBGraphBackend,
 )
-from potpie_context_engine.bootstrap.host_wiring import (
-    build_host_shell,
+from potpie_context_engine.composition import (
+    build_engine_components,
     default_backend_profile,
 )
 from potpie_context_engine.bootstrap.ingestion_server import build_ingestion_server
@@ -24,7 +24,6 @@ from potpie_context_engine.domain.graph_mutations import (
     EntityUpsert,
     ProvenanceRef,
 )
-from potpie_context_engine.domain.lifecycle import SetupPlan
 from potpie_context_engine.domain.ports.graph.backend import GraphBackend
 from potpie_context_engine.domain.reconciliation import ReconciliationPlan
 
@@ -191,7 +190,7 @@ def test_host_shell_accepts_falkordb_env(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "falkordb")
 
-    host = build_host_shell()
+    host = build_engine_components()
 
     assert host.backend.profile == "falkordb"
 
@@ -201,11 +200,10 @@ def test_host_shell_defaults_to_falkordb_lite(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("CONTEXT_ENGINE_BACKEND", raising=False)
     monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)
 
-    host = build_host_shell()
+    host = build_engine_components()
 
     assert default_backend_profile() == "falkordb_lite"
     assert host.backend.profile == "falkordb_lite"
-    assert SetupPlan().backend == "falkordb_lite"
 
 
 def test_default_backend_ignores_blank_primary_env(monkeypatch) -> None:
@@ -220,7 +218,7 @@ def test_host_shell_accepts_falkordb_lite_env(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "falkordb_lite")
     monkeypatch.setenv("FALKORDB_MODE", "server")
 
-    host = build_host_shell()
+    host = build_engine_components()
 
     assert host.backend.profile == "falkordb_lite"
 

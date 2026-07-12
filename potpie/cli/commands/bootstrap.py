@@ -7,51 +7,34 @@ from all three services via ``context_status``.
 
 from __future__ import annotations
 
-import os
 from dataclasses import replace
 from pathlib import Path
 
 import typer
-from potpie_context_engine.adapters.outbound.intelligence.local_embedder import (
-    DEFAULT_SENTENCE_TRANSFORMER_MODEL,
-    configured_embedder_choice,
-    configured_embedding_model,
-)
-from potpie_context_engine.application.services.config_service import (
+from potpie.config import (
     KNOWN_CONFIG_KEYS,
     public_config_value,
 )
-from potpie_context_engine.domain.embedding_modes import normalize_embedding_mode
-from potpie_context_engine.domain.errors import (
-    CapabilityNotImplemented,
-    ContextEngineDisabled,
-)
-from potpie_context_engine.domain.ports.agent_context import StatusRequest
+from potpie.runtime.contracts import CapabilityNotImplemented
 
 from potpie.install.status import (
     cli_install_human,
-    collect_cli_install_status,
 )
 from potpie.cli.commands._common import (
     EXIT_DEGRADED,
     EXIT_VALIDATION,
     contract,
-    current_repo_identity_for_cli,
     emit,
     fail,
     get_cli_runtime,
     get_host,
     is_json,
-    repo_default_pot_id,
-    repo_effective_pot_info,
-    resolve_pot_id,
     use_pot_selection,
 )
 from potpie.cli.telemetry.onboarding_events import (
     CliSetupAnalyticsObserver,
     begin_setup_run,
     capture_activation_succeeded,
-    capture_project_binding_event,
     capture_setup_completed,
     capture_setup_dry_run_completed,
     capture_setup_started,
@@ -61,26 +44,6 @@ from potpie.cli.telemetry.onboarding_events import (
 from potpie.cli.ui import setup_ux
 from potpie.runtime.telemetry import sentry_metrics
 from potpie.setup import SetupPlan, SetupReport
-
-
-def _effective_current_repo_pot_id(
-    host, *, repo_identity: str | None, active_pot_id: str | None
-) -> str | None:
-    """Mirror CLI repo-pot resolution without raising structured command errors."""
-    if not repo_identity:
-        return None
-
-    routing = repo_effective_pot_info(host)
-    effective = routing.get("effective_pot") or {}
-    effective_id = effective.get("id")
-    if effective_id:
-        return str(effective_id)
-    if routing.get("status") == "ambiguous":
-        candidate_ids = {
-            str(row.get("id")) for row in routing.get("candidates", ()) if row.get("id")
-        }
-        return active_pot_id if active_pot_id in candidate_ids else None
-    return active_pot_id
 
 
 def register(root: typer.Typer) -> None:
@@ -136,196 +99,6 @@ def register(root: typer.Typer) -> None:
                 embedding_model=embedding_model,
             )
             return
-            json_output = is_json()
-            human_output = not json_output
-            interactive_onboarding = (
-                human_output
-                and setup_ux.interactive_onboarding_enabled(as_json=json_output)
-                and not yes
-            )
-            use_live = (
-                human_output and setup_ux.rich_enabled(as_json=json_output) and not yes
-            )
-            stream_plain_progress = human_output and not use_live
-            selected_embeddings = _setup_embeddings_choice(embeddings)
-            selected_embedding_model = _setup_embedding_model(embedding_model)
-            _apply_setup_embedding_env(
-                embeddings=selected_embeddings,
-                embedding_model=selected_embedding_model,
-                explicit_embeddings=embeddings is not None,
-                explicit_model=embedding_model is not None,
-            )
-            from potpie_context_engine.bootstrap.host_wiring import (
-                default_backend_profile,
-            )
-
-            if human_output:
-                host, selected_backend, in_process = _build_local_setup_host(
-                    backend=backend,
-                    daemon=daemon,
-                    default_backend=default_backend_profile(),
-                )
-            else:
-                host = get_host()
-                in_process = getattr(host.daemon, "in_process", False)
-                selected_backend = backend or (
-                    getattr(host.backend, "profile", default_backend_profile())
-                    if in_process
-                    else default_backend_profile()
-                )
-            # --backend selects the storage profile for this run. Backend
-            # selection happens at wiring time, so rebuild the host on the chosen
-            # profile when it differs from the active one (keeps the report honest).
-            if (
-                not use_live
-                and in_process
-                and backend
-                and backend != host.backend.profile
-            ):
-                from potpie_context_engine.adapters.outbound.graph.backends import (
-                    build_backend,
-                )
-
-                from potpie.cli.commands._common import set_host
-                from potpie.runtime import build_potpie_host_shell
-
-                host = build_potpie_host_shell(
-                    backend=build_backend(backend), profile=host.profile
-                )
-                set_host(host)
-                in_process = getattr(host.daemon, "in_process", False)
-                selected_backend = host.backend.profile
-            if (
-                not use_live
-                and daemon is not None
-                and host.daemon.in_process != (not daemon)
-            ):
-                import os
-
-                from potpie_context_engine.adapters.outbound.graph.backends import (
-                    build_backend,
-                )
-
-                from potpie.cli.commands._common import set_host
-                from potpie.runtime import build_potpie_host_shell
-
-                os.environ["CONTEXT_ENGINE_HOST_MODE"] = (
-                    "daemon" if daemon else "in_process"
-                )
-                host = build_potpie_host_shell(
-                    backend=build_backend(selected_backend), profile=host.profile
-                )
-                set_host(host)
-                in_process = getattr(host.daemon, "in_process", False)
-                selected_backend = host.backend.profile
-            plan = SetupPlan(
-                mode=host.profile if host.profile in ("local", "managed") else "local",
-                host_mode="in_process" if in_process else "daemon",
-                backend=selected_backend,
-                repo=repo,
-                pot=pot,
-                agent=agent,
-                scan=scan,
-                assume_yes=yes,
-                defer_default_pot=interactive_onboarding,
-                defer_skills=interactive_onboarding,
-                embeddings=selected_embeddings,
-                embedding_model=selected_embedding_model,
-            )
-            setup_started_ms = now_ms()
-            begin_setup_run()
-            if in_process:
-                host.setup.set_observer(CliSetupAnalyticsObserver())
-            capture_setup_started(
-                plan,
-                interactive=interactive_onboarding,
-                json_output=json_output,
-            )
-
-            if dry_run:
-                if in_process or host.daemon.status().get("up"):
-                    preview = host.setup.preview(plan)
-                else:
-                    from potpie.runtime import build_potpie_host_shell
-
-                    preview_host = build_potpie_host_shell()
-                    preview = preview_host.setup.preview(plan)
-                capture_setup_dry_run_completed(
-                    plan=plan,
-                    planned_step_count=len(preview.steps),
-                    hard_step_count=sum(1 for step in preview.steps if step.hard),
-                )
-                emit(preview.to_dict(), human=_preview_human(preview))
-                _emit_setup_run_metric(plan, result="dry_run", dry_run=True)
-                return
-
-            if not in_process and not human_output:
-                host.daemon.ensure(plan)
-                daemon_status = host.daemon.status()
-                running_backend = daemon_status.get("backend")
-                if backend:
-                    _raise_if_backend_mismatch(running_backend, backend)
-
-            if not in_process and human_output:
-                _validate_existing_daemon_backend(host, requested_backend=backend)
-
-            if use_live:
-                report = setup_ux.run_setup_live(
-                    host.setup,
-                    plan,
-                    repo=Path(repo),
-                    agent=agent,
-                    scan=scan,
-                    use_rich=True,
-                    config_home=getattr(host.daemon, "home", None),
-                    observer=CliSetupAnalyticsObserver(),
-                )
-            elif stream_plain_progress:
-                report = setup_ux.run_setup_plain(
-                    host.setup,
-                    plan,
-                    repo=Path(repo),
-                    agent=agent,
-                    scan=scan,
-                    observer=CliSetupAnalyticsObserver(),
-                )
-            else:
-                report = host.setup.run(plan)
-            capture_setup_completed(
-                plan=plan,
-                ok=report.ok,
-                duration_ms=elapsed_ms(setup_started_ms),
-                hard_failed_step=_first_hard_failed_step(report),
-                soft_warning_count=_soft_warning_count(report),
-            )
-            if report.ok and not interactive_onboarding:
-                _capture_plain_project_binding(report)
-            _emit_setup_run_metric(
-                report.plan,
-                result="ok" if report.ok else "degraded",
-                dry_run=False,
-            )
-            _emit_setup_step_metrics(report)
-
-            # Setup progress streams live or line-by-line for humans; --json remains
-            # machine-readable. Onboarding prompts are independent of live rendering.
-            if not use_live:
-                emit(
-                    report.to_dict(),
-                    human=_setup_human(
-                        report,
-                        include_steps=not stream_plain_progress,
-                    ),
-                )
-            if interactive_onboarding and report.ok:
-                setup_ux.maybe_prompt_github_login(
-                    repo=Path(repo),
-                    setup_agent=agent,
-                    default_pot_name=pot,
-                )
-
-            if not report.ok:
-                raise typer.Exit(code=EXIT_DEGRADED)
 
     @root.command()
     def status(
@@ -374,25 +147,6 @@ def register(root: typer.Typer) -> None:
             _capture_host_status_activation()
             emit(report.to_dict(), human=_product_status_human(report))
             return
-            shell = get_host()
-            pot_id = resolve_pot_id(shell, pot)
-            report = shell.agent_context.status(
-                StatusRequest(pot_id=pot_id, intent=intent, harness=harness)
-            )
-            _capture_host_status_activation()
-            emit(
-                {
-                    "profile": report.profile,
-                    "daemon_up": report.daemon_up,
-                    "active_pot": report.active_pot,
-                    "backend_ready": report.backend_ready,
-                    "data_plane": dict(report.data_plane),
-                    "pot_summary": dict(report.pot_summary),
-                    "skills": _nudge_dict(report.skills),
-                    "recommended_next_action": report.recommended_next_action,
-                },
-                human=_status_human(report),
-            )
 
     @root.command()
     def doctor() -> None:
@@ -402,86 +156,19 @@ def register(root: typer.Typer) -> None:
             report = runtime.status.doctor()
             emit(report, human=_product_doctor_human(report))
             return
-            host = get_host()
-            try:
-                caps = host.backend.capabilities()
-                pot = host.pots.active_pot()
-                pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
-                readiness = host.backend.mutation.readiness(pot_id)
-                daemon_status = host.daemon.status()
-                cli_install = collect_cli_install_status()
-            except ContextEngineDisabled:
-                from potpie.runtime import build_potpie_host_shell
-
-                host = build_potpie_host_shell()
-                caps = host.backend.capabilities()
-                pot = host.pots.active_pot()
-                pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
-                readiness = host.backend.mutation.readiness(pot_id)
-                daemon_status = host.daemon.status()
-                cli_install = collect_cli_install_status()
-
-            repo_identity = current_repo_identity_for_cli()
-            effective_current_repo_pot = _effective_current_repo_pot_id(
-                host,
-                repo_identity=repo_identity,
-                active_pot_id=pot_id or None,
-            )
-            default_pot_id = repo_default_pot_id(host, repo_identity)
-
-            emit(
-                {
-                    "daemon": daemon_status,
-                    "cli_install": cli_install,
-                    "backend_profile": host.backend.profile,
-                    "backend_ready": readiness.ready,
-                    "backend_readiness": {
-                        "profile": readiness.profile,
-                        "ready": readiness.ready,
-                        "capability_ready": dict(readiness.capability_ready),
-                        "detail": readiness.detail,
-                    },
-                    "backend_capabilities": list(caps.implemented()),
-                    "active_pot": pot_id or None,
-                    "effective_current_repo_pot": effective_current_repo_pot,
-                    "repo_default_pot": default_pot_id,
-                    "recommended_next_action": None
-                    if readiness.ready
-                    else "Run `potpie backend doctor` or inspect `potpie graph status --json`.",
-                    "ledger": {
-                        "available": host.ledger.status().available,
-                        "binding": host.ledger.status().binding,
-                    },
-                },
-                human=(
-                    f"daemon: {daemon_status['mode']} (up={daemon_status.get('up')})\n"
-                    f"{cli_install_human(cli_install)}\n"
-                    f"backend: {host.backend.profile} ready={readiness.ready} "
-                    f"caps={', '.join(caps.implemented())}\n"
-                    f"ledger: {host.ledger.status().binding} "
-                    f"available={host.ledger.status().available}"
-                    + (
-                        f"\nrepo: {repo_identity} → {effective_current_repo_pot}"
-                        + (
-                            f" (default={default_pot_id})"
-                            if default_pot_id
-                            else " (no repo default set)"
-                        )
-                        if repo_identity
-                        else ""
-                    )
-                ),
-            )
 
     @root.command()
     def whoami() -> None:
-        """Show the current host identity (local OSS reports a 'none' identity)."""
+        """Show the current Potpie account identity."""
         with contract():
-            ident = get_host().auth.whoami()
+            ident = get_cli_runtime().auth.whoami()
             emit(
-                {"subject": ident.subject, "mode": ident.mode, "detail": ident.detail},
-                human=f"{ident.subject} (mode={ident.mode})"
-                + (f" — {ident.detail}" if ident.detail else ""),
+                {
+                    "subject": ident.subject,
+                    "authenticated": ident.authenticated,
+                    "auth_type": ident.auth_type,
+                },
+                human=f"{ident.subject} (auth={ident.auth_type})",
             )
 
     # NOTE: top-level `login` / `logout` are the real Potpie-account flows,
@@ -525,7 +212,7 @@ def register(root: typer.Typer) -> None:
     )
 
     def _emit_config_list() -> None:
-        config = get_host().config.list_public()
+        config = get_cli_runtime().config.list_public()
         payload = {
             "config": config,
             "known_keys": list(KNOWN_CONFIG_KEYS),
@@ -557,14 +244,14 @@ def register(root: typer.Typer) -> None:
             if key is None:
                 _emit_config_list()
                 return
-            value = get_host().config.get(key)
+            value = get_cli_runtime().config.get(key)
             value = public_config_value(key, value)
             emit({key: value}, human=f"{key}={value}")
 
     @config_app.command("set")
     def config_set(key: str, value: str) -> None:
         with contract():
-            get_host().config.set(key, value)
+            get_cli_runtime().config.set(key, value)
             emit(
                 {"key": key, "value": value, "persisted": True},
                 human=f"set {key}={value}",
@@ -809,11 +496,7 @@ def _emit_setup_step_metrics(report: SetupReport) -> None:
 
 
 def _setup_embeddings_choice(raw: str | None) -> str:
-    if raw is not None:
-        choice = normalize_embedding_mode(raw)
-    else:
-        configured = configured_embedder_choice()
-        choice = normalize_embedding_mode(configured or "sentence-transformers")
+    choice = (raw or "sentence-transformers").strip().lower().replace("_", "-")
     aliases = {
         "legacy": "sentence-transformers",
         "sbert": "sentence-transformers",
@@ -831,71 +514,7 @@ def _setup_embeddings_choice(raw: str | None) -> str:
 def _setup_embedding_model(raw: str | None) -> str:
     if raw is not None and raw.strip():
         return raw.strip()
-    configured = configured_embedding_model()
-    return configured or DEFAULT_SENTENCE_TRANSFORMER_MODEL
-
-
-def _apply_setup_embedding_env(
-    *,
-    embeddings: str,
-    embedding_model: str,
-    explicit_embeddings: bool,
-    explicit_model: bool,
-) -> None:
-    if explicit_embeddings:
-        os.environ["CONTEXT_ENGINE_EMBEDDER"] = embeddings
-    else:
-        os.environ.setdefault("CONTEXT_ENGINE_EMBEDDER", embeddings)
-    if explicit_model:
-        os.environ["CONTEXT_ENGINE_EMBEDDING_MODEL"] = embedding_model
-    else:
-        os.environ.setdefault("CONTEXT_ENGINE_EMBEDDING_MODEL", embedding_model)
-
-
-def _build_local_setup_host(
-    *,
-    backend: str | None,
-    daemon: bool | None,
-    default_backend: str,
-):
-    """Build a local setup host so the Rich wizard can observe real steps."""
-    import os
-
-    from potpie_context_engine.adapters.outbound.graph.backends import build_backend
-
-    from potpie.cli.commands._common import set_host
-    from potpie.runtime import build_potpie_host_shell
-
-    selected_backend = backend or default_backend
-    if daemon is not None:
-        os.environ["CONTEXT_ENGINE_HOST_MODE"] = "daemon" if daemon else "in_process"
-    host = build_potpie_host_shell(backend=build_backend(selected_backend))
-    set_host(host)
-    return host, host.backend.profile, getattr(host.daemon, "in_process", False)
-
-
-def _validate_existing_daemon_backend(host, *, requested_backend: str | None) -> None:
-    if not requested_backend:
-        return
-    daemon_status = host.daemon.status()
-    if not daemon_status.get("up"):
-        return
-    running_backend = daemon_status.get("backend")
-    _raise_if_backend_mismatch(running_backend, requested_backend)
-
-
-def _raise_if_backend_mismatch(running_backend: object, requested_backend: str) -> None:
-    if not isinstance(running_backend, str):
-        raise ValueError(
-            "daemon is running but its backend could not be verified; "
-            "stop it with 'potpie daemon stop' before changing backend"
-        )
-    if running_backend != requested_backend:
-        raise ValueError(
-            "daemon is already running with backend "
-            f"{running_backend!r}; stop it with 'potpie daemon stop' "
-            f"before running setup with backend {requested_backend!r}"
-        )
+    return "all-MiniLM-L6-v2"
 
 
 __all__ = ["register"]
@@ -910,39 +529,6 @@ def _first_hard_failed_step(report) -> str | None:
 
 def _soft_warning_count(report) -> int:
     return sum(1 for step in report.steps if not step.hard and not step.ok)
-
-
-def _capture_plain_project_binding(report) -> None:
-    source = _step_state(report, "source")
-    skills = _step_state(report, "skills")
-    if source is None and skills is None:
-        return
-    capture_project_binding_event(
-        "cli_onboarding_project_binding_started",
-        entrypoint="setup",
-        properties={
-            "repo_provided": report.plan.repo is not None,
-            "agent": report.plan.agent,
-        },
-    )
-    completed = source in {"done", "skipped"} and skills in {"done", "skipped"}
-    capture_project_binding_event(
-        "cli_onboarding_project_binding_completed"
-        if completed
-        else "cli_onboarding_project_binding_incomplete",
-        entrypoint="setup",
-        properties={
-            "source_state": source or "missing",
-            "skills_state": skills or "missing",
-        },
-    )
-
-
-def _step_state(report, step_id: str) -> str | None:
-    for step in report.steps:
-        if step.step == step_id:
-            return step.state
-    return None
 
 
 def _capture_host_status_activation() -> None:

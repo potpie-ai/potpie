@@ -14,7 +14,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytic
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie_context_engine.composition import build_engine_components
 from potpie_context_engine.domain.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
@@ -24,7 +24,7 @@ from potpie_context_engine.domain.ports.agent_context import (
 @pytest.fixture()
 def host(tmp_path, monkeypatch):
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
-    return build_host_shell(backend=InMemoryGraphBackend())
+    return build_engine_components(backend=InMemoryGraphBackend())
 
 
 def test_recorded_preference_surfaces_in_coding_preferences(host):

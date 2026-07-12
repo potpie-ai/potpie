@@ -14,7 +14,7 @@ from potpie.daemon.runtime.service_manager import (
     ServiceNotFound,
     ServiceStatus,
 )
-from potpie_context_engine.domain.ports.daemon.operations import (
+from potpie.daemon.ports.operations import (
     AuthRequirement,
     OperationContext,
     OperationRegistry,

@@ -1,4 +1,4 @@
-"""Event Ledger commands → ``HostShell.ledger`` (LedgerFacade).
+"""Event Ledger commands → ``PotpieRuntime.ledger`` (LedgerFacade).
 
 The ledger is a separate source-event service. ``ledger query`` and
 ``ledger pull`` inspect event history only; graph updates are intentionally left

@@ -27,7 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from potpie_context_engine.domain.lifecycle import SetupPlan, StepResult
+from potpie_context_engine.domain.provisioning import StepResult
 from potpie_context_engine.domain.ports.claim_query import ClaimQueryPort
 from potpie_context_engine.domain.ports.graph.analytics import GraphAnalyticsPort
 from potpie_context_engine.domain.ports.graph.inspection import GraphInspectionPort
@@ -103,7 +103,7 @@ class GraphBackend(Protocol):
 
     def capabilities(self) -> BackendCapabilities: ...
 
-    def provision(self, plan: SetupPlan) -> StepResult:
+    def provision(self) -> StepResult:
         """Stand up this backend's own store, idempotently (the setup seam).
 
         A backend self-provisions: ``embedded`` ensures its local file, a

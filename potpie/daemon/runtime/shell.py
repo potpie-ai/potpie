@@ -1,7 +1,7 @@
 """DaemonRuntime: assembles registries, plugins, transports, components, services. Runs until shutdown.
 
 This is the async runtime the detached daemon process executes (``python -m potpie.daemon.runtime``).
-It is distinct from ``host.shell.HostShell`` (the in-process service facade) — the runtime
+It is distinct from ``root PotpieRuntime`` (the in-process service facade) — the runtime
 *hosts* services and exposes them over a transport.
 """
 
@@ -18,16 +18,16 @@ from potpie.daemon.managed_services.container_backend import ContainerBackend
 from potpie.daemon.managed_services.external_backend import ExternalBackend
 from potpie.daemon.managed_services.subprocess_backend import SubprocessBackend
 from potpie.daemon.runtime.service_manager import ServiceManager
-from potpie_context_engine.domain.ports.daemon.operations import (
+from potpie.daemon.ports.operations import (
     OperationRegistry,
     OperationSpec,
 )
-from potpie_context_engine.domain.ports.daemon.service import (
+from potpie.daemon.ports.service import (
     ReadyProbe,
     RestartPolicy,
     ServiceSpec,
 )
-from potpie_context_engine.domain.ports.daemon.shell import (
+from potpie.daemon.ports.shell import (
     Component,
     HealthStatus,
     ServiceBackend,
@@ -131,7 +131,7 @@ class DaemonRuntime:
         self._loader = plugins_loader or BuiltinPluginsLoader()
         self._on_ready = on_ready
         self._deps = (
-            deps  # opaque wired deps (e.g. HostShell) handed to components + ops
+            deps  # opaque wired deps (e.g. PotpieRuntime) handed to components + ops
         )
         self._stop = asyncio.Event()
         self._tasks: list[asyncio.Task[None]] = []

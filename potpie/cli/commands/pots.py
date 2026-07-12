@@ -1,4 +1,4 @@
-"""Pot + source commands → ``HostShell.pots`` (PotManagementService)."""
+"""Pot + source commands → ``PotpieRuntime.pots`` (PotManagementService)."""
 
 from __future__ import annotations
 

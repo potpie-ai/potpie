@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 
-from potpie_context_engine.domain.ports.daemon.shell import HealthStatus
+from potpie.daemon.ports.shell import HealthStatus
 
 
 class HealthRegistrar:

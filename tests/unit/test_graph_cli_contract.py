@@ -14,7 +14,7 @@ from potpie.cli.telemetry import product_analytics
 from potpie.cli.telemetry.context import TelemetryContext
 from typer.testing import CliRunner
 
-from potpie_context_engine.bootstrap import observability_runtime
+from potpie.runtime import observability as observability_runtime
 from potpie_context_engine.domain.graph_history import (
     GraphHistoryEntry,
     GraphHistoryResult,

@@ -95,3 +95,24 @@ async def test_optional_http_application_factory_is_injected() -> None:
 
     assert engine.create_http_application() is marker
     await engine.aclose()
+
+
+@pytest.mark.asyncio
+async def test_job_queue_is_injected_through_engine_dependencies() -> None:
+    class RecordingQueue:
+        def __init__(self) -> None:
+            self.batch_ids: list[str] = []
+
+        def enqueue_batch(self, batch_id: str) -> None:
+            self.batch_ids.append(batch_id)
+
+    queue = RecordingQueue()
+    engine = create_engine(
+        EngineConfig.in_memory(),
+        EngineDependencies(job_queue=queue),
+    )
+
+    assert engine._components.job_queue is queue
+    engine._components.job_queue.enqueue_batch("batch-1")
+    assert queue.batch_ids == ["batch-1"]
+    await engine.aclose()

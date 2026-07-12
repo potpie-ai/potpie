@@ -1,9 +1,9 @@
 """Host-routed ``potpie`` CLI — the architecture's single spine.
 
 Assembles the per-group command sub-apps (``commands/``) into one Typer app and
-binds them to a ``HostShell``. Every command routes
-``CLI -> HostShell -> service(s) -> ports``. This is the ``potpie`` console
-entrypoint (see ``[project.scripts]``); the in-process ``HostShell`` is the only
+binds them to a ``PotpieRuntime``. Every command routes
+``CLI -> PotpieRuntime -> service(s) -> ports``. This is the ``potpie`` console
+entrypoint (see ``[project.scripts]``); the in-process ``PotpieRuntime`` is the only
 composition root for the agent surface.
 
     Run: ``potpie --help`` (or ``python -m potpie.cli.main --help``)
@@ -64,7 +64,7 @@ def _version_callback(value: bool) -> None:
 def build_app() -> typer.Typer:
     app = typer.Typer(
         name="potpie",
-        help="Potpie context graph CLI (host-routed: CLI → HostShell → services → ports).",
+        help="Potpie context graph CLI (runtime-routed: CLI → PotpieRuntime → services → ports).",
         no_args_is_help=True,
         add_completion=False,
     )

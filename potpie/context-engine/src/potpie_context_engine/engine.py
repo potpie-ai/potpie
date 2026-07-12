@@ -14,7 +14,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend imp
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie_context_engine.composition import EngineComponents, build_engine_components
 from potpie_context_engine.config import EngineConfig
 from potpie_context_engine.contracts import (
     AgentEnvelope,
@@ -95,46 +95,6 @@ from potpie_context_engine.contracts import (
     SnapshotManifest,
 )
 from potpie_context_engine.dependencies import EngineDependencies
-from potpie_context_engine.domain.lifecycle import SetupPlan
-from potpie_context_engine.domain.ports.agent_context import SkillNudge
-from potpie_context_engine.domain.ports.services.skill_manager import (
-    SkillInfo,
-    SkillOperationResult,
-    SkillStatus,
-)
-from potpie_context_engine.host.shell import HostShell
-
-
-class _EngineOnlySkillManager:
-    """Temporary private bridge while product skill ownership migrates to root."""
-
-    def list(
-        self, *, agent: str = "claude", scope: str = "global", path: str | None = None
-    ) -> list[SkillInfo]:
-        del agent, scope, path
-        return []
-
-    def install(self, **_kwargs: Any) -> SkillOperationResult:
-        raise RuntimeError("skill installation belongs to root Potpie")
-
-    def update(self, **_kwargs: Any) -> SkillOperationResult:
-        raise RuntimeError("skill updates belong to root Potpie")
-
-    def remove(self, **_kwargs: Any) -> SkillOperationResult:
-        raise RuntimeError("skill removal belongs to root Potpie")
-
-    def status(
-        self, *, agent: str, path: str | None = None, scope: str = "global"
-    ) -> SkillStatus:
-        del path, scope
-        return SkillStatus(agent=agent)
-
-    def nudge(self, *, agent: str) -> SkillNudge:
-        return SkillNudge(agent=agent)
-
-    def add(self, *, source: str) -> SkillOperationResult:
-        del source
-        raise RuntimeError("skill registration belongs to root Potpie")
 
 
 @dataclass(slots=True)
@@ -142,13 +102,13 @@ class _ContextOperations:
     engine: ContextEngine
 
     async def resolve(self, request: ResolveRequest) -> AgentEnvelope:
-        return self.engine._shell.agent_context.resolve(request)
+        return self.engine._components.agent_context.resolve(request)
 
     async def search(self, request: SearchRequest) -> AgentEnvelope:
-        return self.engine._shell.agent_context.search(request)
+        return self.engine._components.agent_context.search(request)
 
     async def record(self, request: RecordRequest) -> RecordReceipt:
-        return self.engine._shell.agent_context.record(request)
+        return self.engine._components.agent_context.record(request)
 
     async def status(self, request: EngineStatusRequest) -> EngineStatusReport:
         return self.engine._status(request)
@@ -160,11 +120,11 @@ class _PotOperations:
 
     async def list(self, request: EmptyRequest) -> PotListResult:
         del request
-        items = tuple(self.engine._shell.pots.list_pots())
+        items = tuple(self.engine._components.pots.list_pots())
         return PotListResult(items=items, count=len(items))
 
     async def info(self, request: PotInfoRequest) -> PotInfo | None:
-        pots = self.engine._shell.pots
+        pots = self.engine._components.pots
         if request.ref is None:
             return pots.active_pot()
         return next(
@@ -173,33 +133,33 @@ class _PotOperations:
         )
 
     async def create(self, request: PotCreateRequest) -> PotInfo:
-        return self.engine._shell.pots.create_pot(
+        return self.engine._components.pots.create_pot(
             name=request.name, repo=request.repo, use=request.use
         )
 
     async def use(self, request: PotUseRequest) -> PotInfo:
-        return self.engine._shell.pots.use_pot(ref=request.ref)
+        return self.engine._components.pots.use_pot(ref=request.ref)
 
     async def rename(self, request: PotRenameRequest) -> PotInfo:
-        return self.engine._shell.pots.rename_pot(
+        return self.engine._components.pots.rename_pot(
             ref=request.ref, new_name=request.new_name
         )
 
     async def reset(self, request: PotResetRequest) -> PotInfo:
-        return self.engine._shell.pots.reset_pot(
+        return self.engine._components.pots.reset_pot(
             ref=request.ref, confirm=request.confirm
         )
 
     async def archive(self, request: PotArchiveRequest) -> PotInfo:
-        return self.engine._shell.pots.archive_pot(ref=request.ref)
+        return self.engine._components.pots.archive_pot(ref=request.ref)
 
     async def repo_default(self, request: RepoDefaultGetRequest) -> RepoDefaultResult:
         return RepoDefaultResult(
-            pot_id=self.engine._shell.pots.repo_default(repo=request.repo)
+            pot_id=self.engine._components.pots.repo_default(repo=request.repo)
         )
 
     async def set_repo_default(self, request: RepoDefaultSetRequest) -> OperationResult:
-        self.engine._shell.pots.set_repo_default(
+        self.engine._components.pots.set_repo_default(
             repo=request.repo, pot_id=request.pot_id
         )
         return OperationResult()
@@ -208,12 +168,14 @@ class _PotOperations:
         self, request: RepoDefaultClearRequest
     ) -> RepoDefaultClearResult:
         return RepoDefaultClearResult(
-            cleared=self.engine._shell.pots.clear_repo_default(repo=request.repo)
+            cleared=self.engine._components.pots.clear_repo_default(repo=request.repo)
         )
 
     async def list_repo_defaults(self, request: EmptyRequest) -> RepoDefaultListResult:
         del request
-        return RepoDefaultListResult(items=self.engine._shell.pots.list_repo_defaults())
+        return RepoDefaultListResult(
+            items=self.engine._components.pots.list_repo_defaults()
+        )
 
 
 @dataclass(slots=True)
@@ -221,7 +183,7 @@ class _SourceOperations:
     engine: ContextEngine
 
     async def add(self, request: SourceAddRequest) -> SourceInfo:
-        return self.engine._shell.pots.add_source(
+        return self.engine._components.pots.add_source(
             pot_id=request.pot_id,
             kind=request.kind,
             location=request.location,
@@ -229,16 +191,16 @@ class _SourceOperations:
         )
 
     async def list(self, request: SourceListRequest) -> SourceListResult:
-        items = tuple(self.engine._shell.pots.list_sources(pot_id=request.pot_id))
+        items = tuple(self.engine._components.pots.list_sources(pot_id=request.pot_id))
         return SourceListResult(items=items, count=len(items))
 
     async def status(self, request: SourceStatusRequest) -> SourceInfo:
-        return self.engine._shell.pots.source_status(
+        return self.engine._components.pots.source_status(
             pot_id=request.pot_id, source_id=request.source_id
         )
 
     async def remove(self, request: SourceRemoveRequest) -> OperationResult:
-        self.engine._shell.pots.remove_source(
+        self.engine._components.pots.remove_source(
             pot_id=request.pot_id, source_id=request.source_id
         )
         return OperationResult()
@@ -249,31 +211,31 @@ class _GraphOperations:
     engine: ContextEngine
 
     async def catalog(self, request: GraphCatalogRequest) -> GraphCatalogResult:
-        return self.engine._shell.graph.catalog(request)
+        return self.engine._components.graph.catalog(request)
 
     async def describe(self, request: GraphDescribeRequest) -> dict[str, Any]:
-        return self.engine._shell.graph.describe(request)
+        return self.engine._components.graph.describe(request)
 
     async def read(self, request: GraphReadRequest) -> GraphReadResult:
-        return self.engine._shell.graph.read(request)
+        return self.engine._components.graph.read(request)
 
     async def search_entities(
         self, request: GraphEntitySearchRequest
     ) -> GraphEntitySearchResult:
-        return self.engine._shell.graph.search_entities(request)
+        return self.engine._components.graph.search_entities(request)
 
     async def status(self, request: GraphStatusRequest) -> DataPlaneStatus:
-        return self.engine._shell.graph.data_plane_status(request.pot_id)
+        return self.engine._components.graph.data_plane_status(request.pot_id)
 
     async def propose(self, request: GraphProposeRequest) -> GraphMutationProposal:
-        return self.engine._shell.graph_workbench.propose(
+        return self.engine._components.graph_workbench.propose(
             request.payload,
             pot_id=request.pot_id,
             ttl_seconds=request.ttl_seconds,
         )
 
     async def commit(self, request: GraphCommitRequest) -> GraphMutationCommitResult:
-        return self.engine._shell.graph_workbench.commit(
+        return self.engine._components.graph_workbench.commit(
             request.plan_id,
             pot_id=request.pot_id,
             approved_by=request.approved_by,
@@ -281,7 +243,7 @@ class _GraphOperations:
         )
 
     async def history(self, request: GraphHistoryRequest) -> GraphHistoryResult:
-        return self.engine._shell.graph_workbench.history(
+        return self.engine._components.graph_workbench.history(
             pot_id=request.pot_id,
             entity_key=request.entity_key,
             claim_key=request.claim_key,
@@ -295,7 +257,7 @@ class _GraphOperations:
 
     async def quality(self, request: GraphQualityRequest) -> GraphQualityResult:
         filters = dict(request.filters)
-        return self.engine._shell.graph_workbench.quality(
+        return self.engine._components.graph_workbench.quality(
             pot_id=request.pot_id,
             report=request.report,
             subgraph=filters.get("subgraph"),
@@ -304,17 +266,17 @@ class _GraphOperations:
         )
 
     async def nudge(self, request: GraphNudgeRequest) -> GraphNudgeResult:
-        return self.engine._shell.nudge.nudge(request)
+        return self.engine._components.nudge.nudge(request)
 
     async def neighborhood(self, request: GraphNeighborhoodRequest) -> GraphSlice:
-        return self.engine._shell.backend.inspection.neighborhood(
+        return self.engine._components.backend.inspection.neighborhood(
             pot_id=request.pot_id,
             entity_key=request.entity_key,
             depth=request.depth,
         )
 
     async def inbox_add(self, request: GraphInboxAddRequest) -> GraphInboxResult:
-        return self.engine._shell.graph_workbench.inbox_add(
+        return self.engine._components.graph_workbench.inbox_add(
             pot_id=request.pot_id,
             summary=request.summary,
             details=request.details,
@@ -325,7 +287,7 @@ class _GraphOperations:
         )
 
     async def inbox_list(self, request: GraphInboxListRequest) -> GraphInboxResult:
-        return self.engine._shell.graph_workbench.inbox_list(
+        return self.engine._components.graph_workbench.inbox_list(
             pot_id=request.pot_id,
             status=request.status,
             claimed_by=request.claimed_by,
@@ -337,12 +299,12 @@ class _GraphOperations:
         )
 
     async def inbox_show(self, request: GraphInboxItemRequest) -> GraphInboxResult:
-        return self.engine._shell.graph_workbench.inbox_show(
+        return self.engine._components.graph_workbench.inbox_show(
             pot_id=request.pot_id, item_id=request.item_id
         )
 
     async def inbox_claim(self, request: GraphInboxClaimRequest) -> GraphInboxResult:
-        return self.engine._shell.graph_workbench.inbox_claim(
+        return self.engine._components.graph_workbench.inbox_claim(
             pot_id=request.pot_id,
             item_id=request.item_id,
             claimed_by=request.claimed_by,
@@ -350,7 +312,7 @@ class _GraphOperations:
 
     async def inbox_close(self, request: GraphInboxCloseRequest) -> GraphInboxResult:
         if request.action == "mark-applied":
-            return self.engine._shell.graph_workbench.inbox_mark_applied(
+            return self.engine._components.graph_workbench.inbox_mark_applied(
                 pot_id=request.pot_id,
                 item_id=request.item_id,
                 closed_by=request.closed_by,
@@ -358,13 +320,13 @@ class _GraphOperations:
                 linked_mutation_id=request.linked_mutation_id,
             )
         if request.action == "mark-rejected":
-            return self.engine._shell.graph_workbench.inbox_mark_rejected(
+            return self.engine._components.graph_workbench.inbox_mark_rejected(
                 pot_id=request.pot_id,
                 item_id=request.item_id,
                 closed_by=request.closed_by,
                 rejection_reason=request.rejection_reason or "",
             )
-        return self.engine._shell.graph_workbench.inbox_close(
+        return self.engine._components.graph_workbench.inbox_close(
             pot_id=request.pot_id,
             item_id=request.item_id,
             closed_by=request.closed_by,
@@ -376,27 +338,27 @@ class _GraphOperations:
     async def snapshot_export(
         self, request: GraphSnapshotExportRequest
     ) -> SnapshotManifest:
-        return self.engine._shell.backend.snapshot.export(
+        return self.engine._components.backend.snapshot.export(
             pot_id=request.pot_id, destination=request.destination
         )
 
     async def snapshot_import(
         self, request: GraphSnapshotImportRequest
     ) -> SnapshotManifest:
-        return self.engine._shell.backend.snapshot.import_(
+        return self.engine._components.backend.snapshot.import_(
             pot_id=request.pot_id, source=request.source
         )
 
     async def repair(self, request: GraphRepairRequest) -> RepairReport:
-        return self.engine._shell.backend.analytics.repair(
+        return self.engine._components.backend.analytics.repair(
             request.pot_id, targets=request.targets
         )
 
     async def backend_info(self, request: GraphBackendInfoRequest) -> GraphBackendInfo:
         del request
-        capabilities = self.engine._shell.backend.capabilities()
+        capabilities = self.engine._components.backend.capabilities()
         return GraphBackendInfo(
-            profile=self.engine._shell.backend.profile,
+            profile=self.engine._components.backend.profile,
             capabilities=capabilities.implemented(),
         )
 
@@ -407,14 +369,14 @@ class _LedgerOperations:
 
     async def status(self, request: LedgerStatusRequest) -> LedgerHealth:
         del request
-        return self.engine._shell.ledger.status()
+        return self.engine._components.ledger.status()
 
     async def sources(self, request: LedgerSourcesRequest) -> LedgerSourcesResult:
-        items = tuple(self.engine._shell.ledger.sources(pot_id=request.pot_id))
+        items = tuple(self.engine._components.ledger.sources(pot_id=request.pot_id))
         return LedgerSourcesResult(items=items, count=len(items))
 
     async def query(self, request: LedgerQueryRequest) -> LedgerPage:
-        return self.engine._shell.ledger.query(
+        return self.engine._components.ledger.query(
             pot_id=request.pot_id,
             source_id=request.source_id,
             kind=request.kind,
@@ -424,7 +386,7 @@ class _LedgerOperations:
         )
 
     async def pull(self, request: LedgerPullRequest) -> LedgerPage:
-        return self.engine._shell.ledger.pull(
+        return self.engine._components.ledger.pull(
             pot_id=request.pot_id,
             source_id=request.source_id,
             limit=request.limit,
@@ -436,7 +398,7 @@ class _TimelineOperations:
     engine: ContextEngine
 
     async def recent(self, request: TimelineRecentRequest) -> GraphReadResult:
-        return self.engine._shell.graph.read(
+        return self.engine._components.graph.read(
             GraphReadRequest(
                 pot_id=request.pot_id,
                 subgraph="recent_changes",
@@ -458,7 +420,7 @@ class _ProvisionOperations:
         del request
         config = self.engine.config
         return ProvisionPlan(
-            backend=self.engine._shell.backend.profile,
+            backend=self.engine._components.backend.profile,
             data_dir=str(config.data_dir) if config.data_dir is not None else None,
             steps=(
                 ProvisionStep(
@@ -489,15 +451,8 @@ class _ProvisionOperations:
             steps.append(
                 ProvisionStep(name="storage.prepare", required=False, state="skipped")
             )
-        plan = SetupPlan(
-            mode=config.profile,
-            host_mode="in_process",
-            backend=self.engine._shell.backend.profile,
-            pot=request.pot_id or "default",
-            defer_default_pot=True,
-            defer_skills=True,
-        )
-        result = self.engine._shell.backend.provision(plan)
+        del request
+        result = self.engine._components.backend.provision()
         steps.append(
             ProvisionStep(
                 name=result.step,
@@ -508,7 +463,7 @@ class _ProvisionOperations:
         )
         return ProvisionReport(
             ok=all(step.state in {"done", "skipped", "planned"} for step in steps),
-            backend=self.engine._shell.backend.profile,
+            backend=self.engine._components.backend.profile,
             steps=tuple(steps),
         )
 
@@ -518,7 +473,7 @@ class ContextEngine:
     """In-process implementation of the public asynchronous ``EngineClient``."""
 
     config: EngineConfig
-    _shell: HostShell
+    _components: EngineComponents
     _temporary_home: TemporaryDirectory[str] | None = None
     _http_application_factory: Any = None
     context: _ContextOperations = field(init=False)
@@ -548,7 +503,7 @@ class ContextEngine:
         if self._closed:
             return
         self._closed = True
-        close = getattr(self._shell.backend, "aclose", None)
+        close = getattr(self._components.backend, "aclose", None)
         if close is not None:
             result = close()
             if hasattr(result, "__await__"):
@@ -563,7 +518,7 @@ class ContextEngine:
         await self.aclose()
 
     def _status(self, request: EngineStatusRequest) -> EngineStatusReport:
-        pots = self._shell.pots
+        pots = self._components.pots
         active = pots.active_pot()
         pot_id = request.pot_id or (active.pot_id if active else None)
         pot = next(
@@ -571,7 +526,9 @@ class ContextEngine:
             active if active and active.pot_id == pot_id else None,
         )
         sources = pots.list_sources(pot_id=pot_id) if pot_id else []
-        readiness = self._shell.backend.mutation.readiness(pot_id) if pot_id else None
+        readiness = (
+            self._components.backend.mutation.readiness(pot_id) if pot_id else None
+        )
         ready = bool(readiness and readiness.ready)
         reasons: list[str] = []
         if pot_id is None:
@@ -582,7 +539,7 @@ class ContextEngine:
             schema_version="1",
             pot_id=pot_id,
             pot_name=pot.name if pot else None,
-            backend=self._shell.backend.profile,
+            backend=self._components.backend.profile,
             backend_ready=ready,
             storage_ready=ready,
             ingestion_ready=ready,
@@ -615,17 +572,17 @@ def create_engine(
         else:
             backend = build_backend(config.backend)
 
-    shell = build_host_shell(
+    components = build_engine_components(
         backend=backend,
         profile=config.profile,
         ledger_client=dependencies.ledger_client,
         observability=dependencies.observability,
+        job_queue=dependencies.job_queue,
         data_dir=data_dir,
-        skill_manager=_EngineOnlySkillManager(),
     )
     return ContextEngine(
         config=config,
-        _shell=shell,
+        _components=components,
         _temporary_home=temporary_home,
         _http_application_factory=dependencies.http_application_factory,
     )

@@ -12,10 +12,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 from potpie_context_engine.adapters.outbound.ledger.self_hosted_client import (
     FixtureEventLedgerClient,
 )
-from potpie_context_engine.adapters.outbound.skills.template_resources import (
-    PackageTemplateResources,
-)
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie_context_engine.composition import build_engine_components
 from potpie_context_engine.domain.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
@@ -53,10 +50,10 @@ def boundary_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             ),
         ],
     )
-    return build_host_shell(
+    return build_engine_components(
         backend=InMemoryGraphBackend(),
         ledger_client=ledger,
-        template_resources=PackageTemplateResources("potpie.skills.resources"),
+        data_dir=tmp_path,
     )
 
 

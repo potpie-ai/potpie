@@ -5,12 +5,12 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
-from potpie_context_engine.domain.ports.daemon.operations import (
+from potpie.daemon.ports.operations import (
     AuthRequirement,
     OperationContext,
     OperationSpec,
 )
-from potpie_context_engine.domain.ports.daemon.shell import HealthStatus
+from potpie.daemon.ports.shell import HealthStatus
 from potpie.daemon.runtime.config import (
     ComponentEntry,
     DaemonConfig,

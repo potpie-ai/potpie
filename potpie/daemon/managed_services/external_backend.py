@@ -7,8 +7,8 @@ from potpie.daemon.managed_services.subprocess_backend import (
     _http_probe,
     _tcp_probe,
 )
-from potpie_context_engine.domain.ports.daemon.service import ServiceSpec
-from potpie_context_engine.domain.ports.daemon.shell import HealthStatus
+from potpie.daemon.ports.service import ServiceSpec
+from potpie.daemon.ports.shell import HealthStatus
 from potpie.daemon.runtime.context import ShellContext
 
 

@@ -85,7 +85,7 @@ from potpie_context_engine.contracts import (
     SnapshotManifest,
     TimelineRecentRequest,
 )
-from potpie_context_engine.domain.errors import CapabilityNotImplemented, PotNotFound
+from potpie_context_engine.contracts import CapabilityNotImplemented, PotNotFound
 
 RPC_PROTOCOL_VERSION = "1"
 

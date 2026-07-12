@@ -13,7 +13,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
     InMemoryGraphBackend,
 )
 from potpie_context_engine.bootstrap.ingestion_server import _default_observability
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie_context_engine.composition import build_engine_components
 from potpie_context_engine.bootstrap.observability_context import (
     bind_correlation,
     correlation_scope,
@@ -116,7 +116,7 @@ def test_host_shell_wires_process_observability() -> None:
     original = get_observability()
 
     try:
-        build_host_shell(backend=InMemoryGraphBackend(), observability=obs)
+        build_engine_components(backend=InMemoryGraphBackend(), observability=obs)
         assert get_observability() is obs
     finally:
         set_observability(original)

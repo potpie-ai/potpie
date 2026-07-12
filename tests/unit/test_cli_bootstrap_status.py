@@ -17,7 +17,6 @@ from potpie.cli.commands import bootstrap
 from potpie.cli.commands._common import EXIT_DEGRADED
 from typer.testing import CliRunner
 
-from potpie_context_engine.bootstrap.host_wiring import default_host_mode
 from potpie.setup import (
     DONE,
     FAILED,
@@ -114,8 +113,6 @@ def _patch_local_setup_host(
             setup=mock_host.setup,
         ),
     )
-    monkeypatch.setattr(bootstrap, "configured_embedder_choice", lambda: "local")
-    monkeypatch.setattr(bootstrap, "configured_embedding_model", lambda: "test-model")
 
 
 def test_root_version_option_exits_with_cli_and_python_details() -> None:
@@ -228,13 +225,6 @@ def test_doctor_json_includes_backend_readiness(
     assert payload["recommended_next_action"]["command"] == (
         "potpie graph backend doctor"
     )
-
-
-def test_default_host_mode_rejects_invalid_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "deamon")
-
-    with pytest.raises(ValueError, match="CONTEXT_ENGINE_HOST_MODE"):
-        default_host_mode()
 
 
 def test_setup_dry_run_preview(monkeypatch: pytest.MonkeyPatch) -> None:

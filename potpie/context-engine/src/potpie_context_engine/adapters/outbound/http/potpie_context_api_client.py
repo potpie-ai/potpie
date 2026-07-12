@@ -365,7 +365,7 @@ class PotpieContextApiClient:
             "http.context_graph_query",
             detail=(
                 "remote ContextGraphQuery is no longer a supported client "
-                "surface; use the local HostShell/GraphService path."
+                "surface; use the local ContextEngine path."
             ),
             recommended_next_action="Use context_resolve/context_search or graph read locally.",
         )
@@ -455,7 +455,7 @@ class PotpieContextApiClient:
             "http.context_graph_query_async",
             detail=(
                 "remote ContextGraphQuery is no longer a supported client "
-                "surface; use the local HostShell/GraphService path."
+                "surface; use the local ContextEngine path."
             ),
             recommended_next_action="Use context_resolve/context_search or graph read locally.",
         )

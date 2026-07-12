@@ -8,7 +8,6 @@ import os
 import sys
 import types
 import warnings
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,11 +16,6 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
     HashingEmbedder,
     SentenceTransformerEmbedder,
 )
-from potpie_context_engine.application.services.config_service import LocalConfigService
-from potpie_context_engine.application.services.setup_orchestrator import (
-    DefaultSetupOrchestrator,
-)
-from potpie_context_engine.domain.lifecycle import DONE, FAILED, SetupPlan
 
 pytestmark = pytest.mark.unit
 
@@ -185,63 +179,3 @@ def test_quiet_transformer_progress_suppresses_loader_noise(
 
     assert records == []
     assert list(recwarn) == []
-
-
-def test_setup_config_persists_embedding_defaults(tmp_path) -> None:
-    service = LocalConfigService(home=tmp_path)
-
-    service.write_defaults(
-        SetupPlan(
-            embeddings="sentence-transformers",
-            embedding_model="all-MiniLM-L6-v2",
-        )
-    )
-
-    data = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
-    assert data["embedder"] == "sentence-transformers"
-    assert data["embedding_model"] == "all-MiniLM-L6-v2"
-    assert data["embedding_cache"] == str(tmp_path / "models" / "sentence-transformers")
-
-
-def test_setup_reports_semantic_alias_hashing_fallback() -> None:
-    orchestrator = _setup_orchestrator_with_embedder(HashingEmbedder())
-
-    step = orchestrator._embedding_model(SetupPlan(embeddings="auto"))  # noqa: SLF001
-
-    assert step.state == FAILED
-    assert step.detail == "sentence-transformers is unavailable; using local-hashing-v1"
-    assert step.metadata["fallback"] == "local-hashing-v1"
-
-
-def test_setup_embedding_model_metadata_preserves_resolved_model() -> None:
-    class _PreparedEmbedder:
-        name = "prepared-embedder"
-
-        def prepare(self) -> dict[str, object]:
-            return {"model": "", "cache_folder": None}
-
-    orchestrator = _setup_orchestrator_with_embedder(_PreparedEmbedder())
-
-    step = orchestrator._embedding_model(  # noqa: SLF001
-        SetupPlan(embeddings="sentence-transformers", embedding_model="fallback-model")
-    )
-
-    assert step.state == DONE
-    assert step.detail == "fallback-model ready"
-    assert step.metadata["model"] == "fallback-model"
-
-
-def _setup_orchestrator_with_embedder(embedder: object) -> DefaultSetupOrchestrator:
-    backend = MagicMock()
-    backend.embedder = embedder
-    return DefaultSetupOrchestrator(
-        config=MagicMock(),
-        installer=MagicMock(),
-        backend=backend,
-        pots=MagicMock(),
-        state_store=MagicMock(),
-        migrator=MagicMock(),
-        daemon=MagicMock(),
-        auth=MagicMock(),
-        skills=MagicMock(),
-    )

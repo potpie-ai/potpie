@@ -42,7 +42,7 @@ from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import 
 )
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
 from potpie_context_engine.domain.graph_mutations import ProvenanceContext
-from potpie_context_engine.domain.lifecycle import SetupPlan, StepResult
+from potpie_context_engine.domain.provisioning import StepResult
 from potpie_context_engine.domain.ports.claim_query import ClaimQueryPort
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.ports.graph.analytics import GraphAnalyticsPort
@@ -246,8 +246,8 @@ class Neo4jGraphBackend:
             snapshot=False,
         )
 
-    def provision(self, plan: SetupPlan) -> StepResult:
-        from potpie_context_engine.domain.lifecycle import DONE, FAILED
+    def provision(self) -> StepResult:
+        from potpie_context_engine.domain.provisioning import DONE, FAILED
 
         if not self.enabled:
             return StepResult(

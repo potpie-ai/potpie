@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
 from potpie.cli import host_cli as cli_main
 from potpie.cli.commands import bootstrap
-from potpie_context_engine.application.services.config_service import LocalConfigService
+from potpie.config import (
+    ProductConfigService,
+    is_secret_config_key,
+    public_config_value,
+)
 
 runner = CliRunner()
 
@@ -23,10 +27,6 @@ class _FakeConfig:
         return self._values.get(key)
 
     def list_public(self) -> dict[str, str | None]:
-        from potpie_context_engine.application.services.config_service import (
-            public_config_value,
-        )
-
         return {
             key: public_config_value(key, value)
             for key, value in sorted(self._values.items())
@@ -43,9 +43,11 @@ def _reset_json(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _mock_host(config: _FakeConfig, monkeypatch: pytest.MonkeyPatch) -> None:
-    mock_host = MagicMock()
-    mock_host.config = config
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(
+        bootstrap,
+        "get_cli_runtime",
+        lambda: SimpleNamespace(config=config),
+    )
 
 
 def test_config_list_returns_all_non_secret_entries(
@@ -72,7 +74,7 @@ def test_config_list_returns_all_non_secret_entries(
     payload = json.loads(result.output)
     assert payload["config"]["profile"] == "local"
     assert payload["config"]["backend"] == "falkordb"
-    assert "profile" in payload["known_keys"]
+    assert "runtime_mode" in payload["known_keys"]
 
 
 def test_config_get_without_key_lists_all(
@@ -152,7 +154,7 @@ def test_local_config_service_list_public_redacts_secrets(tmp_path) -> None:
         ),
         encoding="utf-8",
     )
-    service = LocalConfigService(home=tmp_path)
+    service = ProductConfigService(data_dir=tmp_path)
 
     public = service.list_public()
 
@@ -188,10 +190,6 @@ def test_local_config_service_list_public_redacts_secrets(tmp_path) -> None:
 def test_is_secret_config_key_handles_camelcase_and_separators(
     key: str, secret: bool
 ) -> None:
-    from potpie_context_engine.application.services.config_service import (
-        is_secret_config_key,
-    )
-
     assert is_secret_config_key(key) is secret
 
 

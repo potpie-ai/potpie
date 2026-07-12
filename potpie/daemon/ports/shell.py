@@ -8,11 +8,11 @@ from logging import Logger
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from potpie_context_engine.domain.ports.daemon.operations import (
+from potpie.daemon.ports.operations import (
     OperationRegistry,
     OperationSpec,
 )
-from potpie_context_engine.domain.ports.daemon.service import (
+from potpie.daemon.ports.service import (
     ReadyProbe,
     RestartPolicy,
     ServiceSpec,

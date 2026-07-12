@@ -9,10 +9,7 @@ import pytest
 from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
     EmbeddedGraphBackend,
 )
-from potpie_context_engine.adapters.outbound.skills.template_resources import (
-    PackageTemplateResources,
-)
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie_context_engine.composition import build_engine_components
 from potpie_context_engine.domain.ports.services.graph_service import GraphReadRequest
 
 pytestmark = pytest.mark.unit
@@ -30,9 +27,9 @@ def test_current_engine_home_fixture_loads_without_migration(
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(home))
     monkeypatch.setenv("HOME", str(tmp_path / "user-home"))
 
-    host = build_host_shell(
+    host = build_engine_components(
         backend=EmbeddedGraphBackend(home=home),
-        template_resources=PackageTemplateResources("potpie.skills.resources"),
+        data_dir=home,
     )
 
     active = host.pots.active_pot()

@@ -1,6 +1,6 @@
 # Potpie / Context Engine Package-Boundary Migration
 
-> Status: Commits 1-9 complete; Commit 10 not started. This document implements the
+> Status: Commits 1-10 complete; Commit 11 not started. This document implements the
 > sequencing contract for [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) and
 > [ADR-0002](../../spec/decisions/ADR-0002-potpie-context-engine-boundary.md).
 > The target architecture is proposed; current-state docs remain authoritative
@@ -64,8 +64,8 @@ verifying the baseline remains intact.
 | 6 | `refactor(cli): route engine workflows through runtime.engine` | `PKG-RUNTIME-001` | Complete | `94e8fec` | Context, pot/source, graph, ledger, and timeline local/daemon CLI parity passes |
 | 7 | `refactor(product): extract auth integrations and configuration` | `PKG-AUTH-001`, `PKG-CONFIG-001`, `PKG-OWN-001` | Complete | `92f24ad` | Auth, credential, provider, config, actor-boundary, and backend-persistence tests pass |
 | 8 | `refactor(product): extract skills and installation` | `PKG-SKILL-001`, `PKG-OWN-001` | Complete | `daebbb5` | Installed-wheel lifecycle, static-manifest, snippet-validation, and full-suite gates pass |
-| 9 | `refactor(product): split setup doctor and status` | `PKG-SETUP-001`, `PKG-STATUS-001` | Complete | This commit | Root setup/status scenario matrix, real CLI journey, and full root suite pass |
-| 10 | `refactor(engine): remove product residue and legacy queue wiring` | `PKG-OWN-002`, `PKG-QUEUE-001`, `PKG-OBS-001` | Not started | — | Forbidden import/name scans and engine suite |
+| 9 | `refactor(product): split setup doctor and status` | `PKG-SETUP-001`, `PKG-STATUS-001` | Complete | `adf7c08` | Root setup/status scenario matrix, real CLI journey, and full root suite pass |
+| 10 | `refactor(engine): remove product residue and legacy queue wiring` | `PKG-OWN-002`, `PKG-QUEUE-001`, `PKG-OBS-001` | Complete | This commit | Engine-only composition, injected queue, zero residue scans, and full suites pass |
 | 11 | `refactor(cli): apply the workflow-first command contract` | `PKG-CLI-001`, `PKG-CLI-002` | Not started | — | Command snapshots, removed paths, JSON tests |
 | 12 | `refactor(mcp): move the public MCP server into potpie` | `PKG-MCP-001`, `PKG-STATUS-001` | Not started | — | Four-tool discovery and parity tests |
 | 13 | `build(packaging): finalize distribution boundaries` | `PKG-DIST-001`, `PKG-API-001` | Not started | — | Wheels, sdists, metadata, entrypoints, isolated installs |
@@ -390,6 +390,25 @@ Changes:
 - Delete `HostShell`, `RemoteHostShell`, `RemoteSurface`, and dynamic RPC.
 
 Gate: forbidden import/name scans are zero and the complete engine suite passes.
+
+Evidence recorded on 2026-07-12:
+
+- `ContextEngine` is built from engine-only `EngineComponents`; the old host
+  shell, dynamic remote surfaces, product lifecycle ports, and product-owned
+  auth/config/setup/skills/install implementations are deleted from the engine.
+- `EngineDependencies.job_queue` is the sole embedding seam for background-job
+  delivery. The standalone default is broker-free, Hatchet remains an optional
+  engine adapter, and Celery requires caller injection; the legacy application
+  import and path mutation helper are absent.
+- Daemon contracts and lifecycle ports now live in root Potpie. Root CLI and
+  daemon code import only the engine's declared public contracts, while generic
+  engine observability remains independent from root Sentry/PostHog telemetry.
+- Forbidden scans find zero legacy shell/proxy names, root imports in the
+  engine, product telemetry imports in the engine, and engine-private imports
+  from root Potpie.
+- The complete gates pass: 1,092 engine tests with 32 skips and 1,105 root tests
+  with four skips and one intentional deselection. Engine/root Ruff checks also
+  pass.
 
 ## Commit 11 — CLI Contract
 

@@ -3,9 +3,23 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+KNOWN_CONFIG_KEYS: tuple[str, ...] = (
+    "runtime_mode",
+    "backend",
+    "ledger.binding",
+    "ledger.org",
+    "ledger.url",
+)
+
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_SEPARATOR_RE = re.compile(r"[_\-.\s]+")
+_SINGLE_WORD_SECRET_MARKERS = frozenset({"token", "secret", "password", "credential"})
+_COMPOUND_SECRET_MARKERS = ("apikey",)
 
 
 @dataclass(slots=True)
@@ -53,11 +67,27 @@ class ProductConfigService:
 
 
 def _secret_key(key: str) -> bool:
-    normalized = key.lower().replace("-", "_")
-    return any(
-        marker in normalized
-        for marker in ("token", "secret", "password", "api_key", "credential")
-    )
+    spaced = _CAMEL_BOUNDARY_RE.sub(" ", _SEPARATOR_RE.sub(" ", key))
+    words = [word for word in spaced.lower().split() if word]
+    if any(word in _SINGLE_WORD_SECRET_MARKERS for word in words):
+        return True
+    joined = "".join(words)
+    return any(marker in joined for marker in _COMPOUND_SECRET_MARKERS)
 
 
-__all__ = ["ProductConfigService"]
+def is_secret_config_key(key: str) -> bool:
+    return _secret_key(key)
+
+
+def public_config_value(key: str, value: Any) -> str | None:
+    if value is None:
+        return None
+    return "<redacted>" if _secret_key(key) else str(value)
+
+
+__all__ = [
+    "KNOWN_CONFIG_KEYS",
+    "ProductConfigService",
+    "is_secret_config_key",
+    "public_config_value",
+]

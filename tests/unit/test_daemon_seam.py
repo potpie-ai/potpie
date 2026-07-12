@@ -6,7 +6,7 @@ import pathlib
 
 import pytest
 
-from potpie_context_engine.domain.lifecycle import DONE, SKIPPED
+from potpie.setup import DONE, SKIPPED
 from potpie.daemon.lifecycle import Daemon
 
 

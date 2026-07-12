@@ -9,9 +9,9 @@ class ContextGraphJobQueuePort(Protocol):
     """
     Outbound port: enqueue context-graph work without binding to a specific broker.
 
-    Implementations may use Celery (default), Hatchet (optional; self-hosted per
-    https://docs.hatchet.run/self-hosting), or another backend; hosts select via
-    ``bootstrap.queue_factory.get_context_graph_job_queue`` and ``CONTEXT_GRAPH_JOB_QUEUE_BACKEND``.
+    Embedding applications inject their queue implementation through
+    ``EngineDependencies.job_queue``. The standalone engine defaults to an
+    inline/no-op adapter and optionally supports its own Hatchet adapter.
     """
 
     def enqueue_batch(self, batch_id: str) -> None:

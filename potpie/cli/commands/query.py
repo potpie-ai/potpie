@@ -1,6 +1,6 @@
 """Query + memory commands: ``resolve`` / ``search`` / ``record``.
 
-Routes ``CLI -> HostShell.agent_context -> GraphService -> readers/mutation``.
+Routes ``CLI -> PotpieRuntime.agent_context -> GraphService -> readers/mutation``.
 These three (plus ``status``) are the four-tool agent contract; new use cases
 become new ``--intent`` / ``--include`` / ``--type`` values, never new commands.
 """

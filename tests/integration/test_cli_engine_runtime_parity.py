@@ -9,7 +9,7 @@ from potpie.cli import host_cli
 from potpie.cli.commands import _common
 from potpie.daemon.lifecycle import Daemon
 from potpie.runtime import reset_runtime
-from potpie_context_engine.domain.lifecycle import SetupPlan
+from potpie.setup import SetupPlan
 from tests.boundary.normalization import normalize_engine_result
 
 

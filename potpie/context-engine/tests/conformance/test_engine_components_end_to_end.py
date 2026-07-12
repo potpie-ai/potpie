@@ -1,7 +1,7 @@
-"""End-to-end: the whole architecture through the HostShell.
+"""End-to-end: the whole architecture through the EngineComponents.
 
 Proves the wiring holds together: CLI-equivalent calls route
-``HostShell -> services -> ports -> backend/ledger`` and the documented journey
+``EngineComponents -> services -> ports -> backend/ledger`` and the documented journey
 (setup → record → resolve → status, plus ledger pull → reconcile) works on the
 in-memory backend. This is the "feel of things / find anything missing" check.
 """
@@ -16,19 +16,8 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 from potpie_context_engine.adapters.outbound.ledger.self_hosted_client import (
     FixtureEventLedgerClient,
 )
-from potpie_context_engine.adapters.outbound.skills.template_resources import (
-    PackageTemplateResources,
-)
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie_context_engine.composition import build_engine_components
 from potpie_context_engine.domain.context_records import ContextRecordValidationError
-from potpie_context_engine.domain.lifecycle import (
-    DONE,
-    NOT_IMPLEMENTED,
-    PLANNED,
-    SKIPPED,
-    SetupPlan,
-    SetupPreview,
-)
 from potpie_context_engine.domain.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
@@ -44,38 +33,14 @@ def host(tmp_path, monkeypatch):
     # so record→resolve round-trips within the test process.
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    return build_host_shell(
+    return build_engine_components(
         backend=InMemoryGraphBackend(),
-        template_resources=PackageTemplateResources("potpie.skills.resources"),
+        data_dir=tmp_path,
     )
-
-
-class _PreparedEmbedder:
-    name = "prepared-test-embedder"
-    dimensions = 3
-
-    def __init__(self) -> None:
-        self.prepared = False
-
-    def embed(self, text: str) -> tuple[float, ...]:
-        return (0.1, 0.2, 0.3)
-
-    def embed_many(self, texts):
-        return [self.embed(t) for t in texts]
-
-    def prepare(self) -> dict[str, object]:
-        self.prepared = True
-        return {
-            "provider": "sentence-transformers",
-            "model": "all-MiniLM-L6-v2",
-            "dimensions": self.dimensions,
-            "cache_folder": "/tmp/potpie-model-cache",
-        }
 
 
 def test_setup_record_resolve_status_journey(host):
     pot = host.pots.create_pot(name="default", repo="potpie", use=True)
-    host.skills.install(agent="claude")
 
     receipt = host.agent_context.record(
         RecordRequest(
@@ -102,7 +67,7 @@ def test_setup_record_resolve_status_journey(host):
     )
     assert report.backend_ready
     assert report.data_plane["counts"]["claims"] == 1
-    assert report.skills is not None and not report.skills.missing
+    assert not hasattr(report, "skills")
 
 
 def test_context_record_rejects_malformed_known_record_details(host):
@@ -138,86 +103,6 @@ def test_context_record_rejects_summary_only_known_record(host):
     assert status.counts.get("claims", 0) == 0
 
 
-def test_setup_orchestrator_provisions_and_creates_default_pot(host):
-    report = host.setup.run(SetupPlan(repo="potpie", agent="claude"))
-    assert report.ok  # every hard step succeeded
-    states = {s.step: s.state for s in report.steps}
-    assert states["config"] == DONE
-    assert states["backend.provision"] == DONE
-    assert states["pot.default"] == DONE
-    assert states["daemon"] == SKIPPED  # in-process host: nothing to start
-    assert states["auth"] == NOT_IMPLEMENTED  # soft gap; does not fail setup
-    active = host.pots.active_pot()
-    assert active is not None and active.name == "default"
-
-
-def test_setup_prepares_backend_embedder(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    embedder = _PreparedEmbedder()
-    local_host = build_host_shell(backend=InMemoryGraphBackend(embedder=embedder))
-
-    report = local_host.setup.run(
-        SetupPlan(repo=None, embeddings="sentence-transformers")
-    )
-
-    step = next(s for s in report.steps if s.step == "embeddings.model")
-    assert step.state == DONE
-    assert step.metadata["model"] == "all-MiniLM-L6-v2"
-    assert embedder.prepared is True
-
-
-def test_setup_is_idempotent(host):
-    host.setup.run(SetupPlan(repo="potpie"))
-    report = host.setup.run(SetupPlan(repo="potpie"))
-    assert report.ok
-    source = next(s for s in report.steps if s.step == "source")
-    assert source.state == SKIPPED  # repo already registered on re-run
-
-
-def test_setup_dry_run_executes_nothing(host):
-    steps = host.setup.plan(SetupPlan())
-    assert [s.step for s in steps][:4] == [
-        "config",
-        "installer",
-        "embeddings.model",
-        "backend.provision",
-    ]
-    assert all(s.state == PLANNED for s in steps)
-    assert host.pots.active_pot() is None  # plan() creates nothing
-
-
-def test_setup_preview_classifies_owners_and_host_gated_hardness(host):
-    # preview() is the dry-run primary: per-step owner + hard/soft + skip reason.
-    daemon = host.setup.preview(SetupPlan(host_mode="daemon"))
-    in_proc = host.setup.preview(SetupPlan(host_mode="in_process"))
-    assert isinstance(daemon, SetupPreview) and daemon.ok_to_run
-
-    by_step = {s.step: s for s in daemon.steps}
-    assert by_step["config"].owner and by_step["config"].hard is True
-    assert by_step["embeddings.model"].hard is False
-    assert by_step["auth"].hard is False  # soft step
-    # HU16 seams are present in the plan and hard for the flat-file profile.
-    assert "state_store.provision" in by_step and by_step["state_store.provision"].hard
-    assert "migrator.migrate" in by_step
-
-    # host_mode flips daemon/installer hardness + carries a skip reason.
-    assert by_step["daemon"].hard is True
-    ip = {s.step: s for s in in_proc.steps}
-    assert ip["daemon"].hard is False and ip["daemon"].skip_reason
-    assert ip["installer"].hard is False and ip["installer"].skip_reason
-
-    assert host.pots.active_pot() is None  # preview executes nothing
-
-
-def test_setup_run_state_store_and_migrator_skip_cleanly(host):
-    report = host.setup.run(SetupPlan(repo="potpie"))
-    states = {s.step: s.state for s in report.steps}
-    assert states["state_store.provision"] == SKIPPED  # flat-file: nothing to provision
-    assert states["migrator.migrate"] == SKIPPED  # flat-file: no migrations
-    assert report.ok  # the new hard steps do not block a clean run
-
-
 def test_stub_backend_profiles_registered_and_fail_closed():
     from potpie_context_engine.adapters.outbound.graph.backends import (
         KNOWN_PROFILES,
@@ -236,7 +121,7 @@ def test_stub_backend_profiles_registered_and_fail_closed():
         with pytest.raises(CapabilityNotImplemented):
             backend.inspection.neighborhood(pot_id="p", entity_key="e")
         with pytest.raises(CapabilityNotImplemented):
-            backend.provision(SetupPlan(backend=profile))
+            backend.provision()
 
 
 def test_search_returns_envelope(host):
@@ -288,7 +173,9 @@ def test_ledger_pull_is_read_only(tmp_path, monkeypatch):
             )
         ],
     )
-    host = build_host_shell(backend=InMemoryGraphBackend(), ledger_client=fixture)
+    host = build_engine_components(
+        backend=InMemoryGraphBackend(), ledger_client=fixture
+    )
     pot = host.pots.create_pot(name="default", use=True)
 
     assert host.ledger.status().available
@@ -323,7 +210,9 @@ def test_ledger_query_inspects_history_without_advancing_cursor(tmp_path, monkey
             ),
         ],
     )
-    host = build_host_shell(backend=InMemoryGraphBackend(), ledger_client=fixture)
+    host = build_engine_components(
+        backend=InMemoryGraphBackend(), ledger_client=fixture
+    )
     pot = host.pots.create_pot(name="default", use=True)
 
     # query filters by kind and is read-only (no cursor advance).
@@ -350,7 +239,9 @@ def test_ledger_pull_does_not_write(tmp_path, monkeypatch):
             )
         ],
     )
-    host = build_host_shell(backend=InMemoryGraphBackend(), ledger_client=fixture)
+    host = build_engine_components(
+        backend=InMemoryGraphBackend(), ledger_client=fixture
+    )
     pot = host.pots.create_pot(name="default", use=True)
 
     page = host.ledger.pull(pot_id=pot.pot_id, source_id="github")

@@ -16,7 +16,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
     InMemoryGraphBackend,
 )
 from potpie.daemon.runtime.context import ServiceEndpoints, ShellContext
-from potpie.runtime import build_potpie_host_shell
+from potpie.runtime import build_product_shell
 
 
 @pytest.fixture()
@@ -70,7 +70,7 @@ def root_test_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Build a root product HostShell with deterministic in-memory engine state."""
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    return build_potpie_host_shell(backend=InMemoryGraphBackend())
+    return build_product_shell(backend=InMemoryGraphBackend())
 
 
 @pytest.fixture(autouse=True)

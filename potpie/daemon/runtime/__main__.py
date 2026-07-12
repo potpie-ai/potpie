@@ -27,7 +27,7 @@ def _serve(home: pathlib.Path) -> None:
         write_discovery,
         write_pid_file,
     )
-    from potpie.runtime import build_potpie_host_shell
+    from potpie.runtime import build_product_shell
     from potpie.daemon.runtime.config import build_daemon_config
     from potpie.daemon.runtime.shell import (
         DaemonRuntime,
@@ -35,7 +35,7 @@ def _serve(home: pathlib.Path) -> None:
         default_registries,
     )
 
-    host = build_potpie_host_shell()
+    host = build_product_shell()
     cfg = build_daemon_config(home)
     pid_file = home / "daemon.pid"
     disc_file = home / "legacy-runtime-discovery.json"

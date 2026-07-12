@@ -137,7 +137,7 @@ def test_daemon_app_mounts_ui_api_and_static(tmp_path) -> None:
     from potpie_context_engine import EngineConfig, create_engine
 
     engine = create_engine(EngineConfig.in_memory())
-    pot = engine._shell.pots.create_pot(name="default", use=True)
+    pot = engine._components.pots.create_pot(name="default", use=True)
 
     app = daemon_main.create_app(
         token="test-token",

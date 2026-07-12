@@ -2,7 +2,7 @@
 
 A read-only browser surface served by the daemon: select the active pot and
 explore the project-memory graph interactively. Talks to the same
-``HostShell`` surfaces (``pots`` / ``graph`` / ``backend.inspection``) the CLI
+``PotpieRuntime`` surfaces (``pots`` / ``graph`` / ``backend.inspection``) the CLI
 uses — no new application logic, just an HTTP + SPA projection.
 """
 

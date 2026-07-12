@@ -21,7 +21,7 @@ from potpie.cli.telemetry.product_analytics import (
     ProductAnalyticsEvent,
     set_product_analytics_sink,
 )
-from potpie_context_engine.domain.lifecycle import SetupPlan
+from potpie.setup import SetupPlan
 
 
 @dataclass

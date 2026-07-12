@@ -1525,7 +1525,7 @@ def create_context_router(
         summary="Unsupported legacy ContextGraphQuery endpoint",
         description=(
             "Legacy remote graph-query clients are no longer supported. Use the "
-            "local HostShell / AgentContextPort / GraphService surfaces."
+            "local ContextEngine / AgentContextPort / GraphService surfaces."
         ),
     )
     async def post_context_graph_query(

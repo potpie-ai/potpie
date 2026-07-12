@@ -8,6 +8,9 @@ from typing import Any, Callable
 from potpie_context_engine.domain.ports.graph.backend import GraphBackend
 from potpie_context_engine.domain.ports.ledger.client import EventLedgerClientPort
 from potpie_context_engine.domain.ports.observability import ObservabilityPort
+from potpie_context_engine.domain.ports.context_graph_job_queue import (
+    ContextGraphJobQueuePort,
+)
 
 HttpApplicationFactory = Callable[[Any], Any]
 
@@ -23,6 +26,7 @@ class EngineDependencies:
     backend: GraphBackend | None = None
     ledger_client: EventLedgerClientPort | None = None
     observability: ObservabilityPort | None = None
+    job_queue: ContextGraphJobQueuePort | None = None
     http_application_factory: HttpApplicationFactory | None = None
 
 

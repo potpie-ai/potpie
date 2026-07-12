@@ -39,7 +39,7 @@ from potpie_context_engine.domain.graph_entity_summary import (
     normalize_entity_properties,
 )
 from potpie_context_engine.domain.graph_mutations import ProvenanceContext
-from potpie_context_engine.domain.lifecycle import DONE, SetupPlan, StepResult
+from potpie_context_engine.domain.provisioning import DONE, StepResult
 from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.ports.graph.analytics import RepairReport
@@ -661,7 +661,7 @@ class InMemoryGraphBackend:
             snapshot=True,
         )
 
-    def provision(self, plan: SetupPlan) -> StepResult:
+    def provision(self) -> StepResult:
         # Ephemeral store: nothing durable to stand up.
         return StepResult(
             step="backend.provision",

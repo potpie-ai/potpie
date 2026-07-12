@@ -1,9 +1,9 @@
-"""Shared CLI plumbing for the host-routed command surface.
+"""Shared CLI plumbing for the runtime-routed command surface.
 
-Every command in this package routes ``CLI -> HostShell -> service(s) -> ports``.
+Every command in this package routes ``CLI -> PotpieRuntime -> service(s) -> ports``.
 This module owns the cross-cutting concerns so the command bodies stay thin:
 
-- one cached ``HostShell`` per process (``get_host``);
+- one cached ``PotpieRuntime`` per process (``get_host``);
 - ``--json`` output state + ``emit`` / ``fail`` helpers;
 - the ``contract()`` error boundary that maps domain errors to the documented
   exit codes (0 ok / 1 validation / 2 unavailable / 3 degraded / 4 auth) and the
@@ -107,9 +107,9 @@ def get_host():
     and never cross daemon RPC.
     """
     if _state["host"] is None:
-        from potpie.runtime import build_potpie_host_shell
+        from potpie.runtime import build_product_shell
 
-        _state["host"] = build_potpie_host_shell()
+        _state["host"] = build_product_shell()
     return _state["host"]
 
 

@@ -1,7 +1,4 @@
-"""Context graph job queue factory (``bootstrap.queue_factory``)."""
-
-import sys
-from types import ModuleType
+"""Injected context graph job queue construction."""
 
 import pytest
 
@@ -11,46 +8,27 @@ from potpie_context_engine.domain.ports.context_graph_job_queue import (
 )
 
 
-def _register_stub_celery_queue() -> type:
-    """Minimal stand-in for the host Celery adapter (no ``app`` import)."""
-
-    class StubCeleryQueue:
-        def enqueue_batch(self, batch_id: str) -> None:
-            return None
-
-    mod = ModuleType("stub_celery_queue")
-    mod.CeleryContextGraphJobQueue = StubCeleryQueue
-    sys.modules["stub_celery_queue"] = mod
-    return StubCeleryQueue
+class _InjectedQueue:
+    def enqueue_batch(self, batch_id: str) -> None:
+        del batch_id
 
 
-@pytest.fixture(autouse=True)
-def _clear_stub_module(monkeypatch: pytest.MonkeyPatch) -> None:
-    yield
-    sys.modules.pop("stub_celery_queue", None)
-
-
-def test_queue_factory_defaults_to_celery(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unset backend defaults to Celery (host adapter)."""
-    Stub = _register_stub_celery_queue()
+def test_queue_factory_defaults_to_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CONTEXT_GRAPH_JOB_QUEUE_BACKEND", raising=False)
-    monkeypatch.setenv("CONTEXT_GRAPH_CELERY_QUEUE_MODULE", "stub_celery_queue")
-    q = get_context_graph_job_queue()
-    assert isinstance(q, Stub)
+    assert isinstance(get_context_graph_job_queue(), NoOpContextGraphJobQueue)
 
 
-def test_queue_factory_explicit_celery(monkeypatch: pytest.MonkeyPatch) -> None:
-    Stub = _register_stub_celery_queue()
+def test_queue_factory_returns_injected_port(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTEXT_GRAPH_JOB_QUEUE_BACKEND", "celery")
-    monkeypatch.setenv("CONTEXT_GRAPH_CELERY_QUEUE_MODULE", "stub_celery_queue")
-    q = get_context_graph_job_queue()
-    assert isinstance(q, Stub)
+    injected = _InjectedQueue()
+    assert get_context_graph_job_queue(injected) is injected
 
 
-def test_queue_factory_noop(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CONTEXT_GRAPH_JOB_QUEUE_BACKEND", "noop")
-    q = get_context_graph_job_queue()
-    assert isinstance(q, NoOpContextGraphJobQueue)
+def test_celery_requires_dependency_injection(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONTEXT_GRAPH_JOB_QUEUE_BACKEND", "celery")
+    monkeypatch.setenv("CONTEXT_GRAPH_" + "CELERY_QUEUE_MODULE", "legacy.module")
+    with pytest.raises(ValueError, match="EngineDependencies.job_queue"):
+        get_context_graph_job_queue()
 
 
 def test_unknown_backend_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -63,25 +41,4 @@ def test_explicit_hatchet_without_token_raises(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("CONTEXT_GRAPH_JOB_QUEUE_BACKEND", "hatchet")
     monkeypatch.delenv("HATCHET_CLIENT_TOKEN", raising=False)
     with pytest.raises(Exception):
-        get_context_graph_job_queue()
-
-
-def test_default_celery_fallback_to_noop_when_host_module_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Implicit celery (default): if host ``app`` adapter is not importable, use noop (standalone CLI)."""
-    monkeypatch.delenv("CONTEXT_GRAPH_JOB_QUEUE_BACKEND", raising=False)
-    monkeypatch.setenv(
-        "CONTEXT_GRAPH_CELERY_QUEUE_MODULE", "module_that_does_not_exist_12345"
-    )
-    q = get_context_graph_job_queue()
-    assert isinstance(q, NoOpContextGraphJobQueue)
-
-
-def test_explicit_celery_import_error_has_message(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("CONTEXT_GRAPH_JOB_QUEUE_BACKEND", "celery")
-    monkeypatch.setenv("CONTEXT_GRAPH_CELERY_QUEUE_MODULE", "missing_celery_module_xyz")
-    with pytest.raises(ImportError, match="CONTEXT_GRAPH_CELERY_QUEUE_MODULE"):
         get_context_graph_job_queue()

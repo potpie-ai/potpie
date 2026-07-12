@@ -9,7 +9,7 @@ import pytest
 from pydantic import BaseModel
 
 from potpie.daemon.http.transport import HttpTransport
-from potpie_context_engine.domain.ports.daemon.operations import (
+from potpie.daemon.ports.operations import (
     AuthRequirement,
     OperationContext,
     OperationRegistry,

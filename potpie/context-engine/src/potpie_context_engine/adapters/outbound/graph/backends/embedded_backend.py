@@ -30,7 +30,7 @@ from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
     InMemoryClaimQueryStore,
 )
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
-from potpie_context_engine.domain.lifecycle import DONE, SetupPlan, StepResult
+from potpie_context_engine.domain.provisioning import DONE, StepResult
 from potpie_context_engine.domain.ports.claim_query import ClaimQueryPort
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.ports.graph.analytics import GraphAnalyticsPort
@@ -124,7 +124,7 @@ class EmbeddedGraphBackend:
             snapshot=True,
         )
 
-    def provision(self, plan: SetupPlan) -> StepResult:
+    def provision(self) -> StepResult:
         # Stand up the local store: ensure the home dir + persist the (possibly
         # empty) store file so resolve works immediately after setup. Idempotent.
         self.home.mkdir(parents=True, exist_ok=True)

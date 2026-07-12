@@ -9,6 +9,7 @@ DONE = "done"
 SKIPPED = "skipped"
 FAILED = "failed"
 PLANNED = "planned"
+NOT_IMPLEMENTED = "not_implemented"
 _OK_STATES = frozenset({DONE, SKIPPED, PLANNED})
 
 
@@ -137,6 +138,7 @@ class SetupOrchestrator(Protocol):
 __all__ = [
     "DONE",
     "FAILED",
+    "NOT_IMPLEMENTED",
     "PLANNED",
     "SKIPPED",
     "PlannedSetupStep",

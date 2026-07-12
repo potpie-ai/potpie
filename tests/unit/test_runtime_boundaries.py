@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from potpie_context_engine.domain.ports.daemon.lifecycle import (
+from potpie.daemon.contracts import (
     DaemonDiscovery,
     DaemonStartResult,
     DaemonStatus,

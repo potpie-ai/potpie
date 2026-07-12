@@ -10,7 +10,7 @@ from potpie_context_engine.contracts import (
     EngineStatusRequest,
     PotCreateRequest,
 )
-from potpie_context_engine.domain.lifecycle import DONE, SKIPPED, SetupPlan
+from potpie.setup import DONE, SKIPPED, SetupPlan
 from potpie.daemon.client import DaemonEngineClient, DaemonRpcTransport
 from potpie.daemon.lifecycle import Daemon
 

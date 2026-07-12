@@ -11,7 +11,7 @@ import pathlib
 
 import httpx
 
-from potpie_context_engine.domain.ports.daemon.lifecycle import DaemonDiscovery
+from potpie.daemon.contracts import DaemonDiscovery
 
 
 def discovery_path(home: pathlib.Path) -> pathlib.Path:

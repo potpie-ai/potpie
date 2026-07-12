@@ -92,16 +92,14 @@ def create_app(
         async with rpc_lock:
             return await dispatch_rpc(engine, payload)
 
-    # The local UI remains root-owned. Until its handlers migrate to the async
-    # runtime in Commit 6, bind it to the same engine's internal legacy shell;
-    # no second product/engine facade is constructed in the daemon process.
-    app.include_router(build_ui_api_router(engine._shell), prefix="/ui")
+    # The local UI remains root-owned and reads the daemon's engine components.
+    app.include_router(build_ui_api_router(engine._components), prefix="/ui")
     mount_ui_static(app)
     return app
 
 
 def main() -> None:
-    from potpie_context_engine.bootstrap.logging_setup import configure_logging
+    from potpie.runtime.logging import configure_logging
 
     configure_logging()
     from potpie.daemon.telemetry.sentry_runtime import configure_daemon_sentry

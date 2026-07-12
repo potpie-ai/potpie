@@ -6,7 +6,7 @@ import os
 import pathlib
 import secrets
 
-from potpie_context_engine.domain.ports.daemon.operations import Principal
+from potpie.daemon.ports.operations import Principal
 
 
 class AuthFailure(Exception):

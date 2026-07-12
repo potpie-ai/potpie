@@ -1,7 +1,7 @@
 """Read-only JSON API for the local graph-explorer UI.
 
 Every route resolves a pot (explicit ``?pot=`` or the active pot) and delegates
-to a ``HostShell`` surface. Nothing here mutates the graph — the UI is a
+to the daemon's engine components. Nothing here mutates the graph — the UI is a
 browse/select surface, in keeping with the "harness is the intelligence" model.
 """
 
@@ -11,19 +11,39 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
-from potpie_context_engine.domain.errors import CapabilityNotImplemented, PotNotFound
-from potpie_context_engine.domain.graph_entity_summary import (
-    normalize_entity_properties,
-)
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter
-from potpie_context_engine.domain.ports.services.graph_service import (
+from potpie_context_engine.contracts import (
+    CapabilityNotImplemented,
+    ClaimQueryFilter,
     GraphCatalogRequest,
     GraphEntitySearchRequest,
     GraphReadRequest,
+    PotNotFound,
 )
 
 # Labels that carry no display meaning (every node has the base :Entity label).
 _BASE_LABELS = {"Entity"}
+
+
+def normalize_entity_properties(
+    properties: dict[str, Any], *, entity_key: str
+) -> dict[str, Any]:
+    props = dict(properties)
+    name = " ".join(str(props.get("name") or entity_key).strip().split())
+    summary = " ".join(
+        str(
+            props.get("summary")
+            or props.get("description")
+            or props.get("title")
+            or name
+        )
+        .strip()
+        .split()
+    )
+    props["name"] = name
+    props["summary"] = summary
+    props.setdefault("description", summary)
+    return props
+
 
 # Authoritative entity-key prefix → type label (the V1.5 ontology identity
 # policy). Preferred over node labels for display, since labels can accumulate

@@ -1,11 +1,8 @@
-"""Local daemon lifecycle port used by setup and host status surfaces."""
+"""Root-owned daemon process and discovery contracts."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Literal, NotRequired, Protocol, TypedDict
-
-from potpie_context_engine.domain.lifecycle import SetupPlan, StepResult
+from typing import Literal, NotRequired, TypedDict
 
 
 class DaemonDiscovery(TypedDict, total=False):
@@ -55,26 +52,10 @@ class DaemonRestartResult(DaemonStartResult, total=False):
     started: DaemonStartResult
 
 
-class DaemonLifecyclePort(Protocol):
-    home: Path
-    in_process: bool
-
-    def discovery(self) -> DaemonDiscovery | None: ...
-    def status(self) -> DaemonStatus: ...
-    def health(self) -> DaemonHealth: ...
-    def logs(self) -> list[str]: ...
-    def ensure(self, plan: SetupPlan | None = None) -> StepResult: ...
-    def install(self) -> DaemonInstallResult: ...
-    def start(self, *, backend: str | None = None) -> DaemonStartResult: ...
-    def stop(self) -> DaemonStopResult: ...
-    def restart(self) -> DaemonRestartResult: ...
-
-
 __all__ = [
     "DaemonDiscovery",
     "DaemonHealth",
     "DaemonInstallResult",
-    "DaemonLifecyclePort",
     "DaemonRestartResult",
     "DaemonStartResult",
     "DaemonStatus",

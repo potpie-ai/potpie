@@ -3,7 +3,7 @@
 This is the public four-tool surface. ``resolve``/``search``/``record`` delegate
 straight to the ``GraphService`` data plane; ``status`` is the only composite —
 it joins ``GraphService`` data-plane status, ``PotManagementService`` control-
-plane status, and a ``SkillManager`` nudge into one ``StatusReport``.
+plane status into one engine-only ``StatusReport``.
 
 CLI and MCP bind here. The managed HTTP ingestion surface is a legacy adapter
 while it migrates onto the host shell; it must not define new agent tools.
@@ -27,7 +27,6 @@ from potpie_context_engine.domain.ports.services.graph_service import GraphServi
 from potpie_context_engine.domain.ports.services.pot_management import (
     PotManagementService,
 )
-from potpie_context_engine.domain.ports.services.skill_manager import SkillManager
 
 
 @dataclass(slots=True)
@@ -36,7 +35,6 @@ class AgentContextService:
 
     graph: GraphService
     pots: PotManagementService
-    skills: SkillManager
     profile: str = "local"
 
     def resolve(self, request: ResolveRequest) -> AgentEnvelope:
@@ -53,7 +51,6 @@ class AgentContextService:
         active = agg.active_pot
         pot_id = request.pot_id or (active.pot_id if active else "")
         data_plane = self.graph.data_plane_status(pot_id) if pot_id else None
-        nudge = self.skills.nudge(agent=request.harness) if request.harness else None
         backend_ready = bool(data_plane and data_plane.backend_ready)
         return StatusReport(
             pot_id=pot_id,
@@ -66,7 +63,6 @@ class AgentContextService:
                 "pot_count": agg.pot_count,
                 "sources": [s.name for s in agg.sources],
             },
-            skills=nudge,
             recommended_next_action=_next_action(active is not None, backend_ready),
             metadata={"intent": normalize_context_intent(request.intent)},
         )

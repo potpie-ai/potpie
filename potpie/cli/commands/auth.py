@@ -1,6 +1,6 @@
 """Integration-auth command surface: provider logins + Potpie account auth.
 
-This registrar bolts the credential-acquisition surface onto the host-routed
+This registrar bolts the credential-acquisition surface onto the runtime-routed
 root app:
 
 - ``potpie github|linear|jira|confluence …`` — integration OAuth/API-token flows;
@@ -9,7 +9,7 @@ root app:
 - ``potpie auth …`` — deprecated aliases for the provider commands above.
 
 These flows are inbound-adapter credential acquisition (OAuth/device-flow/local files),
-so they do NOT route through ``HostShell``; they read the shared ``--json`` /
+so they do NOT route through ``PotpieRuntime``; they read the shared ``--json`` /
 ``--verbose`` state from ``commands/_common`` like every other command.
 """
 

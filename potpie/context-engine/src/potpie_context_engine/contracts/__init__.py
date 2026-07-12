@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Mapping
 
+from potpie_context_engine.domain.errors import (
+    CapabilityNotImplemented,
+    ContextEngineDisabled,
+    PotNotFound,
+)
 from potpie_context_engine.domain.agent_envelope import AgentEnvelope
 from potpie_context_engine.domain.graph_history import (
     GraphHistoryRequest,
@@ -27,6 +32,7 @@ from potpie_context_engine.domain.ports.agent_context import (
     ResolveRequest,
     SearchRequest,
 )
+from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter
 from potpie_context_engine.domain.ports.graph.mutation import BackendReadiness
 from potpie_context_engine.domain.ports.ledger.client import (
     LedgerHealth,
@@ -375,6 +381,9 @@ class ProvisionReport:
 __all__ = [
     "AgentEnvelope",
     "BackendReadiness",
+    "CapabilityNotImplemented",
+    "ClaimQueryFilter",
+    "ContextEngineDisabled",
     "DataPlaneStatus",
     "EmptyRequest",
     "EngineActor",
@@ -425,6 +434,7 @@ __all__ = [
     "PotInfo",
     "PotInfoRequest",
     "PotListResult",
+    "PotNotFound",
     "PotRenameRequest",
     "PotResetRequest",
     "PotUseRequest",

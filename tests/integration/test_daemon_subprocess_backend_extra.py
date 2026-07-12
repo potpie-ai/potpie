@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from potpie.daemon.managed_services.subprocess_backend import SubprocessBackend
-from potpie_context_engine.domain.ports.daemon.shell import (
+from potpie.daemon.ports.shell import (
     HealthStatus,
     ReadyProbe,
     ServiceSpec,

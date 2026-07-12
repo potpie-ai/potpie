@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import LocalPotStore
 from potpie_context_engine.domain.errors import PotNotFound
-from potpie_context_engine.domain.lifecycle import DONE, StepResult
+from potpie_context_engine.domain.provisioning import DONE, StepResult
 from potpie_context_engine.domain.ports.graph.backend import GraphBackend
 from potpie_context_engine.domain.ports.services.pot_management import (
     PotAggregateStatus,
