@@ -2,45 +2,33 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatch.build.hooks.custom]
-path = "distribution_defaults_hook.py"
-
 [project]
 name = "potpie-context-engine"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reusable context graph engine library and optional HTTP adapters."
 requires-python = ">=3.12,<3.15"
 dependencies = [
-    "fastapi>=0.115.0",
-    "httpx>=0.28.0",
-    "pillow>=10.0.0",
-    "uvicorn[standard]>=0.32.0",
     "pydantic>=2.0",
-    # Default CLI backend is FalkorDBLite on Python 3.12+.
-    "falkordblite>=0.10.0; python_version >= '3.12'",
-    # redis 8 enables maintenance notifications that break FalkorDBLite's
-    # hostless embedded connection; keep the bound wherever falkordblite ships.
-    "redis>=7.1,<8; python_version >= '3.12'",
 ]
 
 [project.optional-dependencies]
+embedded = [
+    "falkordb>=1.6.1",
+    "falkordblite>=0.10.0; python_version >= '3.12'",
+    "redis>=7.1,<8",
+]
+http = [
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    "sqlalchemy>=2.0",
+    "uvicorn[standard]>=0.32.0",
+]
 postgres = [
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
 ]
-benchmarks = [
-    "pyyaml>=6.0",
-    "openai>=1.50.0",
-]
-graph = [
+neo4j = [
     "neo4j>=5.28.0",
-]
-falkordb = [
-    "falkordb>=1.6.1",
-    # Keep this marker for dependency metadata consumers even though Potpie
-    # itself supports Python 3.12+.
-    "falkordblite>=0.10.0; python_version >= '3.12'",
-    "redis>=7.1,<8",
 ]
 embeddings = [
     "sentence-transformers>=5.1.2",
@@ -48,7 +36,7 @@ embeddings = [
 github = [
     "pygithub>=2.8.0",
 ]
-reconciliation-agent = [
+reconciliation = [
     "pydantic-deep>=0.3.0",
 ]
 hatchet = [
@@ -59,41 +47,8 @@ observability = [
     "opentelemetry-exporter-otlp>=1.27.0",
     "opentelemetry-instrumentation-openai>=0.40b0",
 ]
-all = [
-    "sqlalchemy>=2.0",
-    "psycopg[binary]>=3.2",
-    "neo4j>=5.28.0",
-    "falkordb>=1.6.1",
-    "falkordblite>=0.10.0; python_version >= '3.12'",
-    "redis>=7.1,<8",
-    "sentence-transformers>=5.1.2",
-    "pygithub>=2.8.0",
-    "pydantic-deep>=0.3.0",
-    "hatchet-sdk>=1.29.0",
-    "opentelemetry-sdk>=1.27.0",
-    "opentelemetry-exporter-otlp>=1.27.0",
-    "opentelemetry-instrumentation-openai>=0.40b0",
-]
-dev = [
-    "pytest>=9.0.3",
-    "pytest-asyncio>=0.24.0",
-    "ruff>=0.8.0",
-]
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/potpie_context_engine"]
-exclude = [
-    "src/potpie_context_engine/adapters/inbound/cli/**",
-    "src/potpie_context_engine/adapters/inbound/daemon_http/**",
-    "src/potpie_context_engine/adapters/inbound/http/ui/**",
-    "src/potpie_context_engine/adapters/outbound/daemon_process/**",
-    "src/potpie_context_engine/adapters/outbound/managed_services/**",
-    "src/potpie_context_engine/host/daemon_runtime/**",
-    "src/potpie_context_engine/host/daemon.py",
-    "src/potpie_context_engine/host/daemon_client.py",
-    "src/potpie_context_engine/host/daemon_main.py",
-    "src/potpie_context_engine/host/daemon_rpc.py",
-]
 include = [
     "src/potpie_context_engine/domain/playbooks/**/*.md",
     "src/potpie_context_engine/adapters/outbound/reconciliation/skills/**/*.md",
@@ -101,27 +56,14 @@ include = [
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "build_config_values.py",
-    "distribution_defaults_hook.py",
+    "pyproject.toml",
     "src/potpie_context_engine",
+    "tests",
     "benchmarks",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
 ]
-exclude = [
-    "src/potpie_context_engine/adapters/inbound/cli/**",
-    "src/potpie_context_engine/adapters/inbound/daemon_http/**",
-    "src/potpie_context_engine/adapters/inbound/http/ui/**",
-    "src/potpie_context_engine/adapters/outbound/daemon_process/**",
-    "src/potpie_context_engine/adapters/outbound/managed_services/**",
-    "src/potpie_context_engine/host/daemon_runtime/**",
-    "src/potpie_context_engine/host/daemon.py",
-    "src/potpie_context_engine/host/daemon_client.py",
-    "src/potpie_context_engine/host/daemon_main.py",
-    "src/potpie_context_engine/host/daemon_rpc.py",
-]
-
 [tool.ruff]
 target-version = "py310"
 src = ["src", "tests", "benchmarks", "scripts"]
@@ -140,7 +82,12 @@ markers = [
 [dependency-groups]
 dev = [
     "mypy>=1.19.0",
+    "openai>=1.50.0",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=0.24.0",
     "pytest-cov>=7.1.0",
+    "pyyaml>=6.0",
+    "ruff>=0.8.0",
 ]
 
 [tool.uv]

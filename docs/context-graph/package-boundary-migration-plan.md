@@ -1,6 +1,6 @@
 # Potpie / Context Engine Package-Boundary Migration
 
-> Status: Commits 1-12 complete; Commit 13 not started. This document implements the
+> Status: Commits 1-13 complete; Commit 14 not started. This document implements the
 > sequencing contract for [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) and
 > [ADR-0002](../../spec/decisions/ADR-0002-potpie-context-engine-boundary.md).
 > The target architecture is proposed; current-state docs remain authoritative
@@ -67,8 +67,8 @@ verifying the baseline remains intact.
 | 9 | `refactor(product): split setup doctor and status` | `PKG-SETUP-001`, `PKG-STATUS-001` | Complete | `adf7c08` | Root setup/status scenario matrix, real CLI journey, and full root suite pass |
 | 10 | `refactor(engine): remove product residue and legacy queue wiring` | `PKG-OWN-002`, `PKG-QUEUE-001`, `PKG-OBS-001` | Complete | `ebad0d77` | Engine-only composition, injected queue, zero residue scans, and full suites pass |
 | 11 | `refactor(cli): apply the workflow-first command contract` | `PKG-CLI-001`, `PKG-CLI-002` | Complete | `e16e6be` | Exact command tree, removed paths, JSON envelope, exit-code, and full-suite gates pass |
-| 12 | `refactor(mcp): move the public MCP server into potpie` | `PKG-MCP-001`, `PKG-STATUS-001` | Complete | This commit | Four-tool discovery, schema, runtime-routing, status-parity, and full-suite tests pass |
-| 13 | `build(packaging): finalize distribution boundaries` | `PKG-DIST-001`, `PKG-API-001` | Not started | — | Wheels, sdists, metadata, entrypoints, isolated installs |
+| 12 | `refactor(mcp): move the public MCP server into potpie` | `PKG-MCP-001`, `PKG-STATUS-001` | Complete | `aa89ad5` | Four-tool discovery, schema, runtime-routing, status-parity, and full-suite tests pass |
+| 13 | `build(packaging): finalize distribution boundaries` | `PKG-DIST-001`, `PKG-API-001` | Complete | This commit | Wheels, sdists, metadata, entrypoints, dependency extras, and isolated installs pass |
 | 14 | `docs(architecture): publish the completed package split` | `PKG-VERIFY-001` and all IDs | Not started | — | Full suite, docs, final verification record |
 
 The actual SHA for a completed commit is recorded during the following commit or
@@ -492,6 +492,28 @@ Changes:
 
 Gate: wheels/sdists build, metadata validates, entrypoints and wheel contents are
 exact, and clean-environment smokes pass.
+
+Evidence recorded on 2026-07-13:
+
+- Root remains version `2.0.0`, owns `potpie`, `potpie-daemon`, and
+  `potpie-mcp`, packages all product modules and skill resources, and depends on
+  `potpie-context-engine[embedded]==0.2.0` without `[all]`.
+- The engine is version `0.2.0`, exports no console script, has only Pydantic in
+  core, and declares exactly `embedded`, `http`, `postgres`, `neo4j`,
+  `embeddings`, `github`, `reconciliation`, `hatchet`, and `observability`
+  capability extras.
+- Unused engine distribution-default hooks and their product OAuth/runtime
+  settings residue are deleted. Benchmarks remain in the sdist and are absent
+  from the runtime wheel; their dependencies are development-only.
+- Both wheels and sdists build and parse as valid metadata. The engine wheel has
+  only `potpie_context_engine`; the root wheel has only root `potpie` product
+  code and all three exact entrypoints.
+- A clean engine-only environment installs the core wheel, runs in-memory
+  create/resolve/status, creates no user-home path, and exposes no Potpie
+  executable. A separate clean root environment exposes exactly all three
+  executables and imports each entrypoint from installed wheels.
+- The lockfile reflects the intended ownership/version/extras changes and drops
+  the unused Pillow dependency without unrelated package-version churn.
 
 ## Commit 14 — Current Documentation and Verification
 

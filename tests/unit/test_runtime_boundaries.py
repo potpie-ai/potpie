@@ -68,7 +68,7 @@ def test_context_engine_metadata_has_no_cli_auth_dependencies() -> None:
     assert "cli_auth_e2e" not in pyproject
 
 
-def test_root_runtime_imports_context_engine_env_bootstrap_only_from_wrapper() -> None:
+def test_root_runtime_has_no_context_engine_product_bootstrap_dependency() -> None:
     forbidden = (
         "potpie_context_engine.bootstrap._build_info",
         "potpie.auth.credentials_store",
@@ -91,6 +91,12 @@ def test_root_runtime_imports_context_engine_env_bootstrap_only_from_wrapper() -
     ]
 
     assert bootstrap_import_offenders == []
+    assert not (
+        CONTEXT_ENGINE / "src/potpie_context_engine/bootstrap/env_bootstrap.py"
+    ).exists()
+    assert not (
+        CONTEXT_ENGINE / "src/potpie_context_engine/bootstrap/runtime_settings.py"
+    ).exists()
 
 
 def test_root_daemon_rpc_owns_only_typed_public_engine_registry() -> None:
@@ -104,29 +110,6 @@ def test_root_daemon_rpc_owns_only_typed_public_engine_registry() -> None:
     assert "ENGINE_RPC_REGISTRY" in root_rpc
     assert 'RpcMethodSpec("engine.context.resolve"' in root_rpc
     assert "engine.auth" not in root_rpc
-
-
-def test_root_and_context_engine_env_bootstrap_core_behavior_stays_in_sync() -> None:
-    from potpie_context_engine.bootstrap import env_bootstrap as engine_env_bootstrap
-    from potpie.runtime import env_bootstrap as root_env_bootstrap
-
-    lines = [
-        "",
-        "# comment",
-        "PLAIN=value",
-        " export EXPORTED = quoted ",
-        "SINGLE='one two'",
-        'DOUBLE="three four"',
-        "NO_EQUALS",
-        "=missing_key",
-    ]
-
-    assert root_env_bootstrap._PROJECT_ROOT_MARKERS == (
-        engine_env_bootstrap._PROJECT_ROOT_MARKERS
-    )
-    assert [root_env_bootstrap._parse_env_line(line) for line in lines] == [
-        engine_env_bootstrap._parse_env_line(line) for line in lines
-    ]
 
 
 def test_public_daemon_lifecycle_uses_active_http_discovery_contract() -> None:

@@ -30,7 +30,7 @@ dependencies = [
     "httpx>=0.28.0",
     "keyring>=25.0.0",
     "mcp>=1.0.0",
-    "potpie-context-engine[all]==0.1.0",
+    "potpie-context-engine[embedded]==0.2.0",
     "rich>=13.0",
     "sentry-sdk>=2.61.1,<3.0.0",
     "typer>=0.15.0",
@@ -40,6 +40,18 @@ dependencies = [
 [project.scripts]
 potpie = "potpie.cli.main:main"
 potpie-daemon = "potpie.daemon.main:main"
+potpie-mcp = "potpie.mcp.main:main"
+
+[project.optional-dependencies]
+embedded = ["potpie-context-engine[embedded]==0.2.0"]
+http = ["potpie-context-engine[http]==0.2.0"]
+postgres = ["potpie-context-engine[postgres]==0.2.0"]
+neo4j = ["potpie-context-engine[neo4j]==0.2.0"]
+embeddings = ["potpie-context-engine[embeddings]==0.2.0"]
+github = ["potpie-context-engine[github]==0.2.0"]
+reconciliation = ["potpie-context-engine[reconciliation]==0.2.0"]
+hatchet = ["potpie-context-engine[hatchet]==0.2.0"]
+observability = ["potpie-context-engine[observability]==0.2.0"]
 
 [project.urls]
 Homepage = "https://potpie.ai"
@@ -53,8 +65,8 @@ path = "telemetry_build_hook.py"
 [tool.hatch.build.targets.wheel]
 packages = ["potpie"]
 include = [
-    "potpie/cli/templates/**/*",
     "potpie/cli/ui/assets/**/*",
+    "potpie/skills/resources/**/*",
 ]
 exclude = [
     "/potpie/context-engine",
@@ -72,9 +84,15 @@ include = [
     "/telemetry_build_config_values.py",
     "/telemetry_build_hook.py",
     "/potpie/__init__.py",
+    "/potpie/auth",
     "/potpie/cli",
+    "/potpie/config",
     "/potpie/daemon",
+    "/potpie/install",
+    "/potpie/mcp",
     "/potpie/runtime",
+    "/potpie/setup",
+    "/potpie/skills",
 ]
 exclude = [
     "/.gitignore",
