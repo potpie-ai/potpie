@@ -71,7 +71,7 @@ def test_context_engine_metadata_has_no_cli_auth_dependencies() -> None:
 def test_root_runtime_imports_context_engine_env_bootstrap_only_from_wrapper() -> None:
     forbidden = (
         "potpie_context_engine.bootstrap._build_info",
-        "potpie.cli.auth.credentials_store",
+        "potpie.auth.credentials_store",
     )
 
     offenders = [

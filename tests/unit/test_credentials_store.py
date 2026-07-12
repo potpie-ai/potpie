@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from potpie.cli.auth import credentials_store as cs
+from potpie.auth import credentials_store as cs
 
 
 def test_config_dir_respects_xdg(

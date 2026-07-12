@@ -1,5 +1,7 @@
 """Persist Potpie API token for the Potpie CLI (user config dir)."""
 
+# ruff: noqa: S105, S110
+
 from __future__ import annotations
 
 import json
@@ -10,7 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from potpie.cli.auth.errors import CliAuthError
+from potpie.auth.errors import CliAuthError
 
 _CREDENTIALS_FILENAME = "credentials.json"
 _INTEGRATION_SECRETS_FILENAME = "integration_secrets.json"
@@ -739,7 +741,7 @@ def save_linear_organization_tokens(
     organization: dict[str, Any],
     account: dict[str, Any] | None = None,
 ) -> None:
-    from potpie.cli.auth.integration_profile import utc_now_iso
+    from potpie.auth.integration_profile import utc_now_iso
 
     prior = _read_linear_metadata()
     orgs = dict(prior.get("organizations") or {})
@@ -855,7 +857,7 @@ def save_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
     if key != _LINEAR_CREDENTIALS_KEY:
         raise ValueError(f"{provider!r} does not use OAuth token storage.")
 
-    from potpie.cli.auth.integration_profile import fetch_linear_viewer
+    from potpie.auth.integration_profile import fetch_linear_viewer
 
     access_token = str(tokens.get("access_token") or "").strip()
     if not access_token:
@@ -934,7 +936,7 @@ def clear_confluence_credentials() -> None:
 def _save_atlassian_product_credentials(
     product: str, credentials: dict[str, Any]
 ) -> None:
-    from potpie.cli.auth.integration_profile import (
+    from potpie.auth.integration_profile import (
         atlassian_site_from_entry,
         build_product_integration_record,
     )
@@ -993,7 +995,7 @@ def _clear_atlassian_product_credentials(product: str) -> None:
 
 def save_atlassian_credentials(credentials: dict[str, Any]) -> None:
     """Legacy combined Atlassian record retained for compatibility."""
-    from potpie.cli.auth.integration_profile import (
+    from potpie.auth.integration_profile import (
         atlassian_site_from_entry,
         build_atlassian_integration_record,
     )
@@ -1174,7 +1176,7 @@ def list_integration_providers() -> list[str]:
 
 
 def get_integration_status(provider: str) -> dict[str, Any]:
-    from potpie.cli.auth.integration_profile import (
+    from potpie.auth.integration_profile import (
         atlassian_account_from_entry,
         atlassian_site_from_entry,
         linear_account_from_entry,

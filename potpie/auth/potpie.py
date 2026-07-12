@@ -14,9 +14,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
-from potpie.cli.auth.errors import CliAuthError
-from potpie.cli.auth.http import AuthHttpClient, AuthHttpError, HttpClient
-from potpie_context_engine.bootstrap.runtime_settings import load_runtime_settings
+from potpie.auth.errors import CliAuthError
+from potpie.auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from potpie.runtime.settings import load_runtime_settings
 
 _DEFAULT_PORT_MIN = 9000
 _DEFAULT_PORT_MAX = 9999

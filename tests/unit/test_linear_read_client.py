@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from potpie.cli.auth.http import AuthHttpError
-from potpie.cli.auth import linear_read_client as lrc
+from potpie.auth.http import AuthHttpError
+from potpie.auth import linear_read_client as lrc
 
 
 def test_fetch_linear_workspaces_from_organizations(

@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 import typer
 
-from potpie.cli.auth import _login_impl, github_commands
+from potpie.auth import _login_impl, github_commands
 from potpie.cli.commands import _common
-from potpie.cli.auth.github import GitHubDeviceFlowError
+from potpie.auth.github import GitHubDeviceFlowError
 from tests._auth_fakes import InMemoryCredentialStore
 
 

@@ -13,24 +13,24 @@ from html import unescape
 from typing import Any
 from urllib.parse import quote
 
-from potpie.cli.auth.atlassian_client import (
+from potpie.auth.atlassian_client import (
     AtlassianProduct,
     atlassian_basic_auth_header,
     atlassian_bearer_auth_header,
     normalize_site_url,
 )
-from potpie.cli.auth.credentials_store import (
+from potpie.auth.credentials_store import (
     ProviderCredentialError,
     get_confluence_credentials,
     get_jira_credentials,
 )
-from potpie.cli.auth.integration_profile import (
+from potpie.auth.integration_profile import (
     atlassian_site_from_entry,
     atlassian_workspaces_from_entry,
 )
-from potpie.cli.auth.errors import CliAuthError
-from potpie.cli.auth.http import AuthHttpClient, AuthHttpError, HttpClient
-from potpie.cli.auth.provider_config import (
+from potpie.auth.errors import CliAuthError
+from potpie.auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from potpie.auth.provider_config import (
     atlassian_confluence_gateway_url,
     atlassian_jira_gateway_url,
 )

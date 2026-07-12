@@ -143,7 +143,7 @@ def test_status_non_default_pot_triggers_host_path(
         called.append(True)
 
     monkeypatch.setattr(
-        "potpie.cli.auth.auth_commands.integration_status",
+        "potpie.auth.auth_commands.integration_status",
         _integration_status,
     )
     report = StatusReport(

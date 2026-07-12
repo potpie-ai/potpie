@@ -33,11 +33,11 @@ def test_maybe_prompt_github_login_runs_selected_integrations(
         lambda *_a, **_k: ["linear", "atlassian"],
     )
     monkeypatch.setattr(
-        "potpie.cli.auth.github_commands.github_login_impl",
+        "potpie.auth.github_commands.github_login_impl",
         lambda: calls.append("github"),
     )
     monkeypatch.setattr(
-        "potpie.cli.auth.auth_commands.run_integration_login",
+        "potpie.auth.auth_commands.run_integration_login",
         lambda provider, *, force=False: calls.append(provider),
     )
 
@@ -71,7 +71,7 @@ def test_maybe_prompt_github_login_runs_github_when_confirmed(
         lambda *_a, **_k: [],
     )
     monkeypatch.setattr(
-        "potpie.cli.auth.github_commands.github_login_impl",
+        "potpie.auth.github_commands.github_login_impl",
         lambda: calls.append("github"),
     )
 
@@ -104,7 +104,7 @@ def test_maybe_prompt_github_login_skips_integration_on_ctrl_c_and_continues(
         calls.append(provider)
 
     monkeypatch.setattr(
-        "potpie.cli.auth.auth_commands.run_integration_login",
+        "potpie.auth.auth_commands.run_integration_login",
         _login,
     )
     monkeypatch.setattr(setup_ux, "_maybe_prompt_first_pot", lambda **_k: None)
@@ -127,7 +127,7 @@ def test_maybe_prompt_github_login_cancel_exits_setup_flow(
         lambda *_a, **_k: pytest.fail("setup should exit before integration picker"),
     )
     monkeypatch.setattr(
-        "potpie.cli.auth.github_commands.github_login_impl",
+        "potpie.auth.github_commands.github_login_impl",
         lambda: (_ for _ in ()).throw(typer.Exit(code=130)),
     )
     monkeypatch.setattr(
@@ -171,7 +171,7 @@ def test_maybe_prompt_github_login_skips_when_already_authenticated(
         lambda *_a, **_k: [],
     )
     monkeypatch.setattr(
-        "potpie.cli.auth.github_commands.github_login_impl",
+        "potpie.auth.github_commands.github_login_impl",
         lambda: pytest.fail("GitHub login should be skipped"),
     )
 
@@ -201,7 +201,7 @@ def test_maybe_prompt_github_login_prompts_when_status_check_fails(
         lambda *_a, **_k: [],
     )
     monkeypatch.setattr(
-        "potpie.cli.auth.github_commands.github_login_impl",
+        "potpie.auth.github_commands.github_login_impl",
         lambda: calls.append("github"),
     )
 
@@ -234,7 +234,7 @@ def test_maybe_prompt_github_login_skips_integration_on_click_abort(
         calls.append(provider)
 
     monkeypatch.setattr(
-        "potpie.cli.auth.auth_commands.run_integration_login",
+        "potpie.auth.auth_commands.run_integration_login",
         _login,
     )
     monkeypatch.setattr(setup_ux, "_maybe_prompt_first_pot", lambda **_k: None)
@@ -255,11 +255,11 @@ def test_try_integration_login_skips_when_atlassian_confirm_aborts(
 
     monkeypatch.setattr("typer.confirm", _confirm_abort)
     monkeypatch.setattr(
-        "potpie.cli.auth.atlassian_auth._get_product_credentials",
+        "potpie.auth.atlassian_auth._get_product_credentials",
         lambda _product: {},
     )
     monkeypatch.setattr(
-        "potpie.cli.auth.atlassian_auth.sys.stdin.isatty",
+        "potpie.auth.atlassian_auth.sys.stdin.isatty",
         lambda: True,
     )
 
@@ -283,7 +283,7 @@ def test_maybe_prompt_github_login_skips_when_not_tty(
         called = True
 
     monkeypatch.setattr(
-        "potpie.cli.auth.github_commands.github_login_impl",
+        "potpie.auth.github_commands.github_login_impl",
         _boom,
     )
     setup_ux.maybe_prompt_github_login()

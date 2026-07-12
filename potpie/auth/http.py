@@ -17,7 +17,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import httpx
 
-from potpie.cli.auth.errors import CliAuthError
+from potpie.auth.errors import CliAuthError
 
 _DEFAULT_TIMEOUT = 30.0
 

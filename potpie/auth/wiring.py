@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from potpie.cli.auth.credentials import CredentialStore, FileCredentialStore
+from potpie.auth.credentials import CredentialStore, FileCredentialStore
 
 
 def build_credential_store() -> CredentialStore:

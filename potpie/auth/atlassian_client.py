@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from potpie.cli.auth.http import AuthHttpClient, AuthHttpError, HttpClient
-from potpie.cli.auth.provider_config import (
+from potpie.auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from potpie.auth.provider_config import (
     ATLASSIAN_ACCESSIBLE_RESOURCES_URL,
     AtlassianProduct,
     atlassian_confluence_gateway_url,

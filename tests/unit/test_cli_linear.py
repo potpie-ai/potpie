@@ -10,7 +10,7 @@ import urllib.request
 import pytest
 from potpie.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
-from potpie.cli.auth.callback_server import (
+from potpie.auth.callback_server import (
     OAuthCallbackResult,
     _first,
     _oauth_callback_failure_html,
@@ -19,13 +19,13 @@ from potpie.cli.auth.callback_server import (
 )
 import base64
 import hashlib
-from potpie.cli.auth.pkce import generate_pkce_pair
+from potpie.auth.pkce import generate_pkce_pair
 from unittest.mock import MagicMock, patch
-from potpie.cli.auth import token_exchange as tx
-from potpie.cli.auth import integration_session as session
+from potpie.auth import token_exchange as tx
+from potpie.auth import integration_session as session
 import typer
-from potpie.cli.auth import auth_commands
-from potpie.cli.auth.provider_config import (
+from potpie.auth import auth_commands
+from potpie.auth.provider_config import (
     DEFAULT_CALLBACK_PORT,
     DEFAULT_FALLBACK_CALLBACK_PORTS,
 )
@@ -559,7 +559,7 @@ def test_run_linear_oauth_flow_already_connected(
     )
     monkeypatch.setattr(auth_commands, "token_needs_refresh", lambda _x: False)
     monkeypatch.setattr(
-        "potpie.cli.auth.credentials_store.list_linear_organizations",
+        "potpie.auth.credentials_store.list_linear_organizations",
         lambda: [{"id": "org-1", "name": "Potpie AI CLI", "key": "potpie-ai-cli"}],
     )
 

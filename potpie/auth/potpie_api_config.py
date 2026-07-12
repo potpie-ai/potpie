@@ -6,14 +6,14 @@ import os
 import time
 from dataclasses import dataclass
 
-from potpie_context_engine.bootstrap.runtime_settings import load_runtime_settings
-from potpie.cli.auth.firebase_session import (
+from potpie.runtime.settings import load_runtime_settings
+from potpie.auth.firebase_session import (
     FirebaseSessionError,
     FirebaseSession,
     id_token_expires_at,
     refresh_id_token,
 )
-from potpie.cli.auth.credentials_store import (
+from potpie.auth.credentials_store import (
     get_potpie_auth_type,
     get_potpie_firebase_api_key,
     get_potpie_firebase_id_token,

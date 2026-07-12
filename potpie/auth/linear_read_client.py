@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from potpie.cli.auth.credentials_store import (
+from potpie.auth.credentials_store import (
     get_active_linear_organization_id,
     get_linear_tokens,
     list_linear_organizations,
     set_active_linear_organization,
 )
-from potpie.cli.auth.errors import CliAuthError
-from potpie.cli.auth.http import AuthHttpClient, AuthHttpError, HttpClient
-from potpie.cli.auth.integration_profile import linear_workspaces_from_entry
-from potpie.cli.auth.integration_session import ensure_valid_integration_tokens
+from potpie.auth.errors import CliAuthError
+from potpie.auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from potpie.auth.integration_profile import linear_workspaces_from_entry
+from potpie.auth.integration_session import ensure_valid_integration_tokens
 
 LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql"
 _HTTP_TIMEOUT = 30.0

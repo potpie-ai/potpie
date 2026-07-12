@@ -55,6 +55,13 @@ class EngineStatusRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class EngineActor:
+    subject: str
+    auth_mode: str
+    provider_ids: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class EngineStatusReport:
     schema_version: str
     pot_id: str | None
@@ -370,6 +377,7 @@ __all__ = [
     "BackendReadiness",
     "DataPlaneStatus",
     "EmptyRequest",
+    "EngineActor",
     "EngineStatusReport",
     "EngineStatusRequest",
     "GraphCatalogRequest",

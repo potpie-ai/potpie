@@ -1,5 +1,7 @@
 """OAuth and Atlassian API configuration for CLI integration auth."""
 
+# ruff: noqa: S105
+
 from __future__ import annotations
 
 from typing import Literal
@@ -7,7 +9,7 @@ from urllib.parse import urlparse, urlunparse
 
 import os
 
-from potpie_context_engine.bootstrap.runtime_settings import load_runtime_settings
+from potpie.runtime.settings import load_runtime_settings
 
 Provider = Literal["linear", "github", "atlassian", "jira", "confluence"]
 OAuthProvider = Literal["linear"]

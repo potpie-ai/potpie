@@ -5,9 +5,9 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-from potpie.cli.auth.atlassian_read import _prompt_workspace
-from potpie.cli.auth.credentials_store import save_linear_workspace_prefs
-from potpie.cli.auth.linear_read_client import (
+from potpie.auth.atlassian_read import _prompt_workspace
+from potpie.auth.credentials_store import save_linear_workspace_prefs
+from potpie.auth.linear_read_client import (
     LinearReadError,
     activate_linear_organization,
     fetch_linear_issues_in_team,

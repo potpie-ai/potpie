@@ -5,11 +5,11 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from potpie.cli.auth.http import AuthHttpClient, AuthHttpError, HttpClient
-from potpie.cli.auth.oauth_client_id_messages import (
+from potpie.auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from potpie.auth.oauth_client_id_messages import (
     missing_linear_client_id_message,
 )
-from potpie.cli.auth.provider_config import (
+from potpie.auth.provider_config import (
     OAuthProvider,
     get_client_id,
     get_redirect_uri,

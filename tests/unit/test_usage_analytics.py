@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import pytest
 
 import potpie.cli.telemetry.product_analytics as product_analytics
-from potpie.cli.auth import auth_commands, github_commands
+from potpie.auth import auth_commands, github_commands
 from potpie.cli.commands import _common, bootstrap, query
 from potpie.cli.telemetry.context import TelemetryContext
 from potpie.cli.telemetry.product_analytics import ProductAnalyticsEvent

@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from potpie.cli.auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from potpie.auth.http import AuthHttpClient, AuthHttpError, HttpClient
 
 _LINEAR_VIEWER_QUERY = (
     "query { viewer { id name email organization { id name urlKey } } }"

@@ -5,12 +5,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from potpie.cli.auth.credentials_store import (
+from potpie.auth.credentials_store import (
     get_integration_tokens,
     save_integration_tokens,
 )
-from potpie.cli.auth.provider_config import Provider
-from potpie.cli.auth.token_exchange import refresh_access_token
+from potpie.auth.provider_config import Provider
+from potpie.auth.token_exchange import refresh_access_token
 
 REFRESH_BUFFER_SECONDS = 300
 

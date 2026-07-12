@@ -27,7 +27,7 @@ from potpie.runtime.contracts import (
     ContextEngineDisabled,
     PotNotFound,
 )
-from potpie.cli.auth.credentials import CredentialStore
+from potpie.auth.credentials import CredentialStore
 from potpie.runtime.errors import RuntimeBoundaryError
 
 from potpie.cli.repo_location import (
@@ -144,12 +144,12 @@ def get_store() -> CredentialStore:
     """Return the process-wide ``CredentialStore`` (built lazily).
 
     The auth/credential subsystem persists through this domain port; the concrete
-    is chosen at the composition root (``potpie.cli.auth.wiring``), so this
+    is chosen at the composition root (``potpie.auth.wiring``), so this
     inbound module never imports an adapter. The default is the real
     file-backed store; tests inject an in-memory fake via ``set_store``.
     """
     if _state["store"] is None:
-        from potpie.cli.auth.wiring import build_credential_store
+        from potpie.auth.wiring import build_credential_store
 
         _state["store"] = build_credential_store()
     return _state["store"]

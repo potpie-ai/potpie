@@ -581,7 +581,7 @@ def _integration_login_aborted(exc: BaseException) -> bool:
 
 def _try_integration_login(provider: str) -> None:
     """Run one post-setup integration login; Ctrl+C skips without aborting setup."""
-    from potpie.cli.auth.auth_commands import run_integration_login
+    from potpie.auth.auth_commands import run_integration_login
 
     import typer
 
@@ -696,7 +696,7 @@ def maybe_prompt_github_login(
         capture_github_prompt_outcome("skipped", duration_ms=0)
         return
 
-    from potpie.cli.auth.github_commands import github_login_impl
+    from potpie.auth.github_commands import github_login_impl
     from potpie.cli.ui.interactive_prompts import prompt_multi_checkbox
 
     import typer

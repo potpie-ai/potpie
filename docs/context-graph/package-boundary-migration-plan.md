@@ -1,6 +1,6 @@
 # Potpie / Context Engine Package-Boundary Migration
 
-> Status: Commits 1-6 complete; Commit 7 not started. This document implements the
+> Status: Commits 1-7 complete; Commit 8 not started. This document implements the
 > sequencing contract for [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md) and
 > [ADR-0002](../../spec/decisions/ADR-0002-potpie-context-engine-boundary.md).
 > The target architecture is proposed; current-state docs remain authoritative
@@ -61,8 +61,8 @@ verifying the baseline remains intact.
 | 3 | `refactor(engine): namespace the context engine package` | `PKG-OWN-002`, `PKG-API-001`, `PKG-DIST-001` | Complete | `5f22bd0` | 1,151 engine tests, 999 root unit tests, isolated wheel/import and namespace scans pass |
 | 4 | `refactor(engine): add the standalone ContextEngine API` | `PKG-API-001`, `PKG-CONFIG-001`, `PKG-SETUP-001`, `PKG-STATUS-001` | Complete | `e00b4cb` | Public API, explicit paths, no-home-write, HTTP factory, full-suite, and isolated-wheel tests pass |
 | 5 | `refactor(runtime): introduce PotpieRuntime and typed daemon RPC` | `PKG-RUNTIME-001`, `PKG-MODE-001`, `PKG-RPC-001` | Complete | `2d94671` | 30-method schema registry, mode precedence, no fallback, local/daemon parity, and detached-daemon tests pass |
-| 6 | `refactor(cli): route engine workflows through runtime.engine` | `PKG-RUNTIME-001` | Complete | This commit | Context, pot/source, graph, ledger, and timeline local/daemon CLI parity passes |
-| 7 | `refactor(product): extract auth integrations and configuration` | `PKG-AUTH-001`, `PKG-CONFIG-001`, `PKG-OWN-001` | Not started | — | Auth, credential, provider, config tests |
+| 6 | `refactor(cli): route engine workflows through runtime.engine` | `PKG-RUNTIME-001` | Complete | `94e8fec` | Context, pot/source, graph, ledger, and timeline local/daemon CLI parity passes |
+| 7 | `refactor(product): extract auth integrations and configuration` | `PKG-AUTH-001`, `PKG-CONFIG-001`, `PKG-OWN-001` | Complete | This commit | Auth, credential, provider, config, actor-boundary, and backend-persistence tests pass |
 | 8 | `refactor(product): extract skills and installation` | `PKG-SKILL-001`, `PKG-OWN-001` | Not started | — | Installed-wheel skill and manifest tests |
 | 9 | `refactor(product): split setup doctor and status` | `PKG-SETUP-001`, `PKG-STATUS-001` | Not started | — | Setup/status scenario matrix |
 | 10 | `refactor(engine): remove product residue and legacy queue wiring` | `PKG-OWN-002`, `PKG-QUEUE-001`, `PKG-OBS-001` | Not started | — | Forbidden import/name scans and engine suite |
@@ -292,6 +292,25 @@ Changes:
 
 Gate: account/provider/credential/config tests pass without engine-private
 imports or engine credential access.
+
+Evidence recorded on 2026-07-12:
+
+- The complete authentication implementation moved from `potpie.cli.auth` to
+  root `potpie.auth`; repository imports and monkeypatch targets were updated
+  with no compatibility package left behind.
+- `AccountAuthService` and `IntegrationAuthService` own account identity,
+  provider status/logout, and injected credential persistence.
+- `ProductConfigService` owns atomic product configuration persistence and
+  public-value redaction. `ProductSettings` consumes its backend/runtime keys.
+- `PotpieRuntime` composes account, integration, and product-config services;
+  root maps account identity to `EngineActor` only in runtime composition.
+- `backend use` validates and persists the product backend choice instead of
+  printing an environment-variable advisory.
+- 322 focused account, provider, credential, Atlassian, Linear, GitHub, and
+  configuration tests pass; root/engine import scans show no engine dependency
+  on root auth.
+- The complete root non-journey gate passes with 1,054 tests, four skips, and
+  one intentionally deselected journey test; Ruff and focused mypy gates pass.
 
 ## Commit 8 — Skills and Installation
 

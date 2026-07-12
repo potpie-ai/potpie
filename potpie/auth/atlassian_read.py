@@ -1,7 +1,7 @@
 """Interactive Atlassian read flows (Jira project / Confluence space pickers).
 
 The HTTP/data layer (fetchers, parsers, credential loaders) lives in
-``potpie.cli.auth.atlassian_read_client``; this inbound module owns the
+``potpie.auth.atlassian_read_client``; this inbound module owns the
 interactive workspace-selection flow (prompts, output, terminal guards) and
 re-exports the client symbols for callers that historically imported them here.
 """
@@ -13,7 +13,7 @@ from typing import Any
 
 import typer
 
-from potpie.cli.auth.atlassian_read_client import (  # noqa: F401  (re-export)
+from potpie.auth.atlassian_read_client import (  # noqa: F401  (re-export)
     AtlassianReadError,
     _auth_header_variants,
     _cloud_id_from_credentials,
@@ -30,7 +30,7 @@ from potpie.cli.auth.atlassian_read_client import (  # noqa: F401  (re-export)
     load_confluence_read_credentials,
     load_jira_read_credentials,
 )
-from potpie.cli.auth.credentials_store import (
+from potpie.auth.credentials_store import (
     save_confluence_workspace_prefs,
     save_jira_workspace_prefs,
 )

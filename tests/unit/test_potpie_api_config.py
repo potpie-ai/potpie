@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from potpie.cli.auth import potpie_api_config as config
-from potpie.cli.auth.firebase_session import FirebaseSession
+from potpie.auth import potpie_api_config as config
+from potpie.auth.firebase_session import FirebaseSession
 
 
 def test_resolve_api_base_url_uses_canonical_env(monkeypatch) -> None:

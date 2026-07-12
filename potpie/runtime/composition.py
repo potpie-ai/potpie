@@ -12,6 +12,7 @@ from potpie_context_engine import (
     EngineDependencies,
     create_engine,
 )
+from potpie_context_engine.contracts import EngineActor
 
 from potpie.runtime.settings import ProductSettings
 
@@ -85,7 +86,27 @@ def create_runtime(
             engine_dependencies,
         )
         engine = LocalEngineClient(context_engine)
-    return PotpieRuntime(settings=settings, engine=engine)
+    from potpie.auth.services import AccountAuthService, IntegrationAuthService
+    from potpie.auth.wiring import build_credential_store
+    from potpie.config import ProductConfigService
+
+    credentials = build_credential_store()
+    return PotpieRuntime(
+        settings=settings,
+        engine=engine,
+        auth=AccountAuthService(credentials),
+        integrations=IntegrationAuthService(credentials),
+        config=ProductConfigService(settings.data_dir),
+    )
+
+
+def engine_actor_for_identity(identity: Any) -> EngineActor:
+    """Translate root account identity only at the engine request boundary."""
+
+    return EngineActor(
+        subject=str(identity.subject),
+        auth_mode=str(identity.auth_type),
+    )
 
 
 def get_runtime(*, runtime_override: str | None = None) -> PotpieRuntime:
@@ -107,5 +128,6 @@ __all__ = [
     "PotpieRuntime",
     "create_runtime",
     "get_runtime",
+    "engine_actor_for_identity",
     "reset_runtime",
 ]

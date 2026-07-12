@@ -25,6 +25,7 @@ from potpie.cli.commands._common import (
     emit,
     empty_pot_warnings,
     fail,
+    get_cli_runtime,
     get_engine_view as get_host,
     pot_scope_human,
     resolve_pot_id,
@@ -1443,12 +1444,16 @@ def backend_status() -> None:
 
 @backend_app.command("use")
 def backend_use(profile: str) -> None:
-    # TODO(stage-N): persist the selected profile to local config; the host
-    # rebuilds per process from $CONTEXT_ENGINE_BACKEND today.
     with contract():
+        selected = profile.strip().lower().replace("-", "_")
+        if selected not in KNOWN_PROFILES:
+            raise ValueError(
+                f"unknown backend {profile!r}; expected one of {', '.join(KNOWN_PROFILES)}"
+            )
+        get_cli_runtime().config.set("backend", selected)
         emit(
-            {"profile": profile, "persisted": False},
-            human=f"(advisory) set CONTEXT_ENGINE_BACKEND={profile}; persistence is TODO",
+            {"profile": selected, "persisted": True},
+            human=f"backend selection saved: {selected} (restart the daemon to apply)",
         )
 
 

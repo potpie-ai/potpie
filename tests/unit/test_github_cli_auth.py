@@ -9,9 +9,9 @@ import pytest
 from typer.testing import CliRunner
 
 from potpie.cli import host_cli as cli_main
-from potpie.cli.auth import github as gh_auth
-from potpie.cli.auth import github_commands as gh_cmds
-from potpie.cli.auth import credentials_store as cs
+from potpie.auth import github as gh_auth
+from potpie.auth import github_commands as gh_cmds
+from potpie.auth import credentials_store as cs
 
 pytestmark = pytest.mark.unit
 
@@ -772,7 +772,7 @@ def test_potpie_login_delegates_to_impl(monkeypatch: pytest.MonkeyPatch) -> None
     called: list[bool] = []
 
     monkeypatch.setattr(
-        "potpie.cli.auth._login_impl.potpie_login_impl",
+        "potpie.auth._login_impl.potpie_login_impl",
         lambda: called.append(True),
     )
 
@@ -785,14 +785,14 @@ def test_potpie_login_delegates_to_impl(monkeypatch: pytest.MonkeyPatch) -> None
 def test_verify_integration_access_github_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from potpie.cli.auth.integration_verify import verify_integration_access
+    from potpie.auth.integration_verify import verify_integration_access
 
     class _Account:
         login = "octocat"
         email = "octo@example.com"
 
     monkeypatch.setattr(
-        "potpie.cli.auth.github.verify_account",
+        "potpie.auth.github.verify_account",
         lambda _token, **_: _Account(),
     )
 
@@ -805,7 +805,7 @@ def test_verify_integration_access_github_success(
 
 
 def test_verify_integration_access_github_no_token() -> None:
-    from potpie.cli.auth.integration_verify import verify_integration_access
+    from potpie.auth.integration_verify import verify_integration_access
 
     ok, message = verify_integration_access("github", {})
     assert ok is False

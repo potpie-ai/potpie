@@ -7,7 +7,7 @@ class CliAuthError(Exception):
     """Base for all expected CLI auth and credential failures.
 
     Provider flows (GitHub device flow, Firebase, Potpie, Atlassian), the HTTP
-    transport (:class:`~potpie.cli.auth.http.AuthHttpError`), and the
+    transport (:class:`~potpie.auth.http.AuthHttpError`), and the
     credential store all subclass this, so a command boundary can catch the whole
     subsystem with a single ``except CliAuthError`` instead of enumerating types.
     """

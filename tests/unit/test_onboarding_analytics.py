@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from potpie.cli.auth import auth_commands
+from potpie.auth import auth_commands
 from potpie.cli.telemetry.onboarding_events import (
     CliSetupAnalyticsObserver,
     begin_setup_run,

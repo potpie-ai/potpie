@@ -1,3 +1,5 @@
+# ruff: noqa: S105, S106
+
 from __future__ import annotations
 
 import time
@@ -6,13 +8,13 @@ from typing import Any
 
 import httpx
 
-from potpie.cli.auth.oauth_client_id_messages import (
+from potpie.auth.oauth_client_id_messages import (
     missing_github_client_id_message,
 )
-from potpie_context_engine.bootstrap.runtime_settings import load_runtime_settings
-from potpie.cli.auth.errors import CliAuthError
-from potpie.cli.auth.http import AuthHttpClient, AuthHttpError, HttpClient
-from potpie.cli.auth.models import (
+from potpie.runtime.settings import load_runtime_settings
+from potpie.auth.errors import CliAuthError
+from potpie.auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from potpie.auth.models import (
     AccessToken,
     DeviceCode,
     GitHubAccount,

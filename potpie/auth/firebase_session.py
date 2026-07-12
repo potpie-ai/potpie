@@ -12,8 +12,8 @@ from urllib.parse import quote_plus
 
 import httpx
 
-from potpie.cli.auth.errors import CliAuthError
-from potpie.cli.auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from potpie.auth.errors import CliAuthError
+from potpie.auth.http import AuthHttpClient, AuthHttpError, HttpClient
 
 
 class FirebaseSessionError(CliAuthError):

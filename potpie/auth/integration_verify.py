@@ -5,14 +5,14 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from potpie.cli.auth.http import AuthHttpClient, AuthHttpError, HttpClient
-from potpie.cli.auth.atlassian_client import (
+from potpie.auth.http import AuthHttpClient, AuthHttpError, HttpClient
+from potpie.auth.atlassian_client import (
     AtlassianAuthErrorKind,
     fetch_cloud_id_for_site,
     normalize_site_url,
     verify_gateway_product,
 )
-from potpie.cli.auth.provider_config import Provider
+from potpie.auth.provider_config import Provider
 
 
 def verify_integration_access(
@@ -98,7 +98,7 @@ def _verify_github(
     *,
     http: HttpClient | None = None,
 ) -> tuple[bool, str]:
-    from potpie.cli.auth.github import GitHubDeviceFlowError, verify_account
+    from potpie.auth.github import GitHubDeviceFlowError, verify_account
 
     access_token = str(credentials.get("access_token") or "").strip()
     if not access_token:

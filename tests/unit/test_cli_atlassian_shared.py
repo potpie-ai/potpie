@@ -6,28 +6,28 @@ from __future__ import annotations
 import typer
 import pytest
 from typer.testing import CliRunner
-from potpie.cli.auth import auth_commands
+from potpie.auth import auth_commands
 from potpie.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
 from potpie.cli import host_cli as cli_main
 import json
 import stat
 from pathlib import Path
-from potpie.cli.auth import credentials_store as cs
-from potpie.cli.auth.integration_profile import (
+from potpie.auth import credentials_store as cs
+from potpie.auth.integration_profile import (
     build_atlassian_integration_record,
     build_product_integration_record,
 )
-from potpie.cli.auth.atlassian_auth import (
+from potpie.auth.atlassian_auth import (
     AtlassianAuthErrorKind,
     AtlassianVerifyResult,
 )
-from potpie.cli.auth.integration_verify import (
+from potpie.auth.integration_verify import (
     _verify_atlassian_product,
     _verify_message_for_kind,
     verify_integration_access,
 )
-from potpie.cli.auth.provider_config import (
+from potpie.auth.provider_config import (
     ATLASSIAN_API_GATEWAY,
     atlassian_confluence_gateway_url,
     atlassian_jira_gateway_url,
@@ -189,7 +189,7 @@ def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    from potpie.cli.auth.credentials_store import ProviderCredentialError
+    from potpie.auth.credentials_store import ProviderCredentialError
 
     monkeypatch.setattr(
         auth_commands, "ensure_runtime_environment_loaded", lambda: None
@@ -1107,7 +1107,7 @@ def test_clear_atlassian_credentials_removes_shared_legacy(
 
 
 def test_atlassian_account_from_entry_email_only() -> None:
-    from potpie.cli.auth.integration_profile import (
+    from potpie.auth.integration_profile import (
         atlassian_account_from_entry,
     )
 
@@ -1136,11 +1136,11 @@ def test_verify_integration_access_unknown_provider() -> None:
 
 def test_verify_atlassian_product_success(monkeypatch) -> None:
     monkeypatch.setattr(
-        "potpie.cli.auth.integration_verify.fetch_cloud_id_for_site",
+        "potpie.auth.integration_verify.fetch_cloud_id_for_site",
         lambda _url: "cloud-1",
     )
     monkeypatch.setattr(
-        "potpie.cli.auth.integration_verify.verify_gateway_product",
+        "potpie.auth.integration_verify.verify_gateway_product",
         lambda *args, **kwargs: AtlassianVerifyResult(
             ok=True,
             display_name="Ada",
@@ -1162,7 +1162,7 @@ def test_verify_atlassian_product_success(monkeypatch) -> None:
 
 def test_verify_integration_access_jira(monkeypatch) -> None:
     monkeypatch.setattr(
-        "potpie.cli.auth.integration_verify._verify_atlassian_product",
+        "potpie.auth.integration_verify._verify_atlassian_product",
         lambda _p, _c: (True, "ok (Ada @ team)"),
     )
     ok, message = verify_integration_access(

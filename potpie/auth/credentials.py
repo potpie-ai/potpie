@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional, Protocol, runtime_checkable
 
-from potpie.cli.auth import credentials_store as _store
+from potpie.auth import credentials_store as _store
 
 
 @runtime_checkable
