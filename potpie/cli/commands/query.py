@@ -21,6 +21,7 @@ from potpie.cli.telemetry.onboarding_events import (
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
+from domain.agent_context_port import detect_context_intent
 from domain.ports.agent_context import RecordRequest, ResolveRequest, SearchRequest
 
 
@@ -30,11 +31,33 @@ def _split(value: str | None) -> tuple[str, ...]:
     return tuple(v.strip() for v in value.split(",") if v.strip())
 
 
+def _select_intent(explicit: str | None, task: str | None) -> tuple[str, str]:
+    """Resolve the effective intent and how it was chosen.
+
+    Precedence, mirroring the ``(value, resolved_via)`` pattern used by
+    ``resolve_pot_id`` / ``resolve_pot_scope``:
+
+    - ``--intent`` supplied     → (that value, ``"explicit"``)
+    - detected from the task    → (detected intent, ``"detected"``)
+    - nothing matched           → (``"unknown"``, ``"default"``)
+    """
+    if explicit:
+        return explicit, "explicit"
+    detected = detect_context_intent(task)
+    if detected:
+        return detected, "detected"
+    return "unknown", "default"
+
+
 def register(root: typer.Typer) -> None:
     @root.command()
     def resolve(
         task: str = typer.Argument(..., help="The task to pull context for."),
-        intent: str = typer.Option("feature", "--intent"),
+        intent: str = typer.Option(
+            None,
+            "--intent",
+            help="Override intent. Omit to detect it from the task (falls back to 'unknown').",
+        ),
         include: str = typer.Option(
             None, "--include", help="Comma-separated include families."
         ),
@@ -47,13 +70,15 @@ def register(root: typer.Typer) -> None:
         with contract():
             host = get_host()
             pot_id = resolve_pot_id(host, pot)
+            resolved_intent, intent_source = _select_intent(intent, task)
             env = host.agent_context.resolve(
                 ResolveRequest(
                     pot_id=pot_id,
                     task=task,
-                    intent=intent,
+                    intent=resolved_intent,
                     include=_split(include),
                     mode=mode,
+                    metadata={"intent_source": intent_source},
                 )
             )
             _capture_context_activation(command="resolve", item_count=len(env.items))
@@ -128,6 +153,7 @@ def _envelope_payload(env) -> dict[str, object]:
     return {
         "pot_id": env.pot_id,
         "intent": env.intent,
+        "intent_source": dict(env.metadata).get("intent_source", "default"),
         "overall_confidence": env.overall_confidence,
         "items": [
             {"include": i.include, "score": i.score, "payload": dict(i.payload)}
@@ -146,8 +172,10 @@ def _envelope_payload(env) -> dict[str, object]:
 
 
 def _envelope_human(env) -> str:
+    intent_source = dict(env.metadata).get("intent_source", "default")
     lines = [
-        f"pot={env.pot_id} intent={env.intent} confidence={env.overall_confidence} items={len(env.items)}"
+        f"pot={env.pot_id} intent={env.intent} (source={intent_source}) "
+        f"confidence={env.overall_confidence} items={len(env.items)}"
     ]
     for item in env.items[:10]:
         fact = dict(item.payload).get("fact") or dict(item.payload).get("summary") or ""

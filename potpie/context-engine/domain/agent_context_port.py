@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from domain.ontology import (
@@ -170,6 +171,131 @@ CONTEXT_RESOLVE_RECIPES: dict[str, dict[str, Any]] = {
         "when": "When the task does not match a more specific recipe.",
     },
 }
+
+
+# --- Deterministic intent detection -----------------------------------------
+# A dependency-free keyword/phrase matcher over the free-text task, mirroring
+# the "no-guess" discipline of ``domain.ontology_classifier``: when nothing
+# matches confidently it returns ``None`` (the caller surfaces that as the
+# neutral ``unknown`` intent) rather than guessing an intent. The tables are
+# seeded from the natural-language trigger phrases in each recipe's ``"when"``
+# field (see :data:`CONTEXT_RESOLVE_RECIPES`). ``unknown`` is intentionally
+# absent — it is the fallback, never a detected result.
+#
+# Detection runs *before* ``normalize_context_intent`` and does not modify the
+# intent vocabulary, recipes, or default-include map.
+_INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "security": (
+        "vulnerability",
+        "vulnerabilities",
+        "cve",
+        "exploit",
+        "security",
+        "audit",
+        "hardening",
+        "injection",
+        "auth bypass",
+    ),
+    "debugging": (
+        "bug",
+        "error",
+        "errors",
+        "crash",
+        "crashing",
+        "incident",
+        "failing",
+        "failure",
+        "exception",
+        "traceback",
+        "stack trace",
+        "flaky",
+        "500",
+        "throwing",
+        "broken",
+    ),
+    "operations": (
+        "deploy",
+        "deployment",
+        "runbook",
+        "production",
+        "rollback",
+        "outage",
+        "on-call",
+        "oncall",
+        "alert",
+    ),
+    "refactor": (
+        "refactor",
+        "technical debt",
+        "tech debt",
+        "migrate",
+        "migration",
+        "cleanup",
+        "clean up",
+        "restructure",
+    ),
+    "test": ("test", "tests", "pytest", "coverage", "test suite"),
+    "review": (
+        "review",
+        "pull request",
+        "what changed",
+        "recently",
+        "recent changes",
+        "latest changes",
+        "risky",
+    ),
+    "docs": ("documentation", "docs", "readme", "document"),
+    "onboarding": (
+        "onboard",
+        "onboarding",
+        "unfamiliar",
+        "getting started",
+        "new to",
+        "up to speed",
+    ),
+    "planning": ("roadmap", "sprint", "architecture", "design doc", "milestone"),
+    "feature": ("feature", "implement", "add support", "endpoint", "behavior change"),
+}
+
+# Most specific / highest-risk intents win when a task matches several. Only
+# intents present here are ever returned by detection.
+_INTENT_DETECTION_PRIORITY: tuple[str, ...] = (
+    "security",
+    "debugging",
+    "operations",
+    "refactor",
+    "test",
+    "review",
+    "docs",
+    "onboarding",
+    "planning",
+    "feature",
+)
+
+_INTENT_MATCHERS: dict[str, re.Pattern[str]] = {
+    intent: re.compile(
+        r"|".join(r"\b" + re.escape(kw) + r"\b" for kw in keywords),
+        re.IGNORECASE,
+    )
+    for intent, keywords in _INTENT_KEYWORDS.items()
+}
+
+
+def detect_context_intent(task: str | None) -> str | None:
+    """Map a free-text task to a canonical intent, or ``None`` if unsure.
+
+    Deterministic, case-insensitive, word-boundary keyword match. When the
+    task triggers more than one intent, :data:`_INTENT_DETECTION_PRIORITY`
+    breaks the tie (most specific / highest-risk first). Returns ``None`` when
+    nothing matches — favouring "no guess" over a wrong guess — which the CLI
+    surfaces as the neutral ``unknown`` intent with ``intent_source=default``.
+    """
+    if not task or not task.strip():
+        return None
+    for intent in _INTENT_DETECTION_PRIORITY:
+        if _INTENT_MATCHERS[intent].search(task):
+            return intent
+    return None
 
 
 def normalize_context_intent(intent: str | None) -> str:
