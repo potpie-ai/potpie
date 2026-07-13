@@ -44,7 +44,7 @@ class BackendCapabilities:
     """Static declaration of which capability ports a backend really
     implements vs. raises ``CapabilityNotImplemented``.
 
-    The CLI ``backend status`` / ``backend doctor`` commands read this so a
+    The CLI ``graph store status`` / ``graph store doctor`` commands read this so a
     user can see, per profile, what is real today without triggering errors.
     """
 

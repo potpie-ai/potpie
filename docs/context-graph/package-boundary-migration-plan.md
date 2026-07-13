@@ -561,3 +561,11 @@ The migration is incomplete until all acceptance criteria in
 - root and engine wheels expose their exact intended scripts and namespaces;
 - existing persistent-data fixtures remain compatible;
 - a commit-scoped verification record proves every stable behavior ID.
+
+## Post-migration CLI vocabulary update — 2026-07-13
+
+The public backend-selection group was renamed from `potpie graph backend` to
+`potpie graph store`. The internal `GraphBackend` abstraction, persisted
+`backend` configuration key, and existing backend/profile result fields remain
+unchanged. The old `graph backend` path is not registered as a compatibility
+alias.

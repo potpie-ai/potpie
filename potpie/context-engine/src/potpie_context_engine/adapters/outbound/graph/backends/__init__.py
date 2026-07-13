@@ -16,7 +16,7 @@ ports behind it — never changing the services that depend on ``GraphBackend``.
 ``postgres``/``chroma``/``hosted`` are documented profiles whose owners have not
 landed a body yet: they resolve to a ``StubGraphBackend`` whose capability ports
 and ``provision`` raise ``CapabilityNotImplemented`` — a real (if unbuilt) seam,
-so ``backend list`` shows them and selecting one is the structured
+so ``graph store list`` shows them and selecting one is the structured
 not-implemented contract, not a crash.
 """
 

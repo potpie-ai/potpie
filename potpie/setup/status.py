@@ -144,7 +144,7 @@ class ProductStatusService:
             return {"command": "potpie setup", "reason": "Setup is incomplete."}
         if not backend_ready:
             return {
-                "command": "potpie graph backend doctor",
+                "command": "potpie graph store doctor",
                 "reason": "The active engine backend is degraded.",
             }
         if skills_state in {"missing", "outdated"}:

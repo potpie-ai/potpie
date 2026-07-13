@@ -57,14 +57,14 @@ implemented product/library split.
 | `SPEC-GLOSSARY` | [glossary.md](glossary.md) | proposed | 0.1.0 | Canonical package-boundary and runtime terms. | not applicable |
 | `SPEC-PRODUCT` | [product.md](product.md) | draft | 0.1.0 | Product goals, users, workflows, constraints, and non-goals. | not applicable |
 | `SPEC-SYSTEM` | [system.md](system.md) | draft | 0.1.0 | Cross-system guarantees and interfaces; initially scoped to the package-boundary proposal. | not implemented |
-| `SPEC-PACKAGE-BOUNDARY` | [modules/package-boundary.md](modules/package-boundary.md) | accepted | 1.0.0 | Ownership and interaction boundary between root Potpie and the standalone context engine. | verified at `f435fb4` |
+| `SPEC-PACKAGE-BOUNDARY` | [modules/package-boundary.md](modules/package-boundary.md) | accepted | 2.0.0 | Ownership and interaction boundary between root Potpie and the standalone context engine. | implementation claimed; verification stale |
 
 ## Decisions
 
 | ID | File | Status | Version | Summary |
 |---|---|---:|---:|---|
 | `ADR-0001` | [ADR-0001: Adopt a Living Spec Process](decisions/ADR-0001-spec-process.md) | accepted | 1.0.0 | Establishes this spec tree and maintenance rules. |
-| `ADR-0002` | [ADR-0002: Separate Product Runtime from Context Engine](decisions/ADR-0002-potpie-context-engine-boundary.md) | accepted | 1.0.0 | Establishes root product ownership and a standalone engine library. |
+| `ADR-0002` | [ADR-0002: Separate Product Runtime from Context Engine](decisions/ADR-0002-potpie-context-engine-boundary.md) | accepted | 1.0.1 | Establishes root product ownership and a standalone engine library. |
 
 ## Open Questions
 

@@ -2077,7 +2077,7 @@ def test_graph_status_json_uses_workbench_envelope() -> None:
     ]
 
 
-def test_graph_status_not_ready_recommends_backend_doctor() -> None:
+def test_graph_status_not_ready_recommends_store_doctor() -> None:
     _common.set_json(True)
     _common.set_host(_Host(_NotReadyGraph(), backend=_Backend()))
 
@@ -2088,8 +2088,8 @@ def test_graph_status_not_ready_recommends_backend_doctor() -> None:
     body = _assert_graph_envelope(emitted, "graph.status")
     assert body["backend"]["ready"] is False
     assert body["backend"]["detail"] == "mutation store is unavailable"
-    assert body["backend"]["readiness_command"] == "potpie backend doctor"
-    assert "potpie backend doctor" in emitted["recommended_next_action"]
+    assert body["backend"]["readiness_command"] == "potpie graph store doctor"
+    assert "potpie graph store doctor" in emitted["recommended_next_action"]
 
 
 def test_graph_status_warns_when_active_repo_pot_is_empty(monkeypatch) -> None:

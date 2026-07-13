@@ -3,7 +3,7 @@ id: SPEC-PACKAGE-BOUNDARY
 title: Potpie / Context Engine Package Boundary
 kind: module-spec
 status: accepted
-version: 1.0.0
+version: 2.0.0
 owners:
   - Potpie Engineering
 depends_on:
@@ -19,39 +19,19 @@ affects:
   - SPEC-SYSTEM
 open_questions: []
 verification:
-  code_status: verified
-  verified_commit: f435fb4
-  verified_at: 2026-07-13
-  verified_by: Codex
-  behavior_scope:
-    - PKG-OWN-001
-    - PKG-OWN-002
-    - PKG-API-001
-    - PKG-RUNTIME-001
-    - PKG-MODE-001
-    - PKG-RPC-001
-    - PKG-CONFIG-001
-    - PKG-AUTH-001
-    - PKG-SKILL-001
-    - PKG-SETUP-001
-    - PKG-STATUS-001
-    - PKG-MCP-001
-    - PKG-CLI-001
-    - PKG-CLI-002
-    - PKG-QUEUE-001
-    - PKG-OBS-001
-    - PKG-DIST-001
-    - PKG-VERIFY-001
-  evidence:
-    - spec/verification/package-boundary-1.0.0.md
-    - docs/context-graph/package-boundary-migration-plan.md
+  code_status: implementation_claimed
+  verified_commit: null
+  verified_at: null
+  verified_by: null
+  behavior_scope: []
+  evidence: []
   cross_spec_status: passed
   cross_spec_checked_against:
     - SPEC-GLOSSARY
     - SPEC-PRODUCT
     - SPEC-SYSTEM
     - ADR-0002
-  drift_status: current
+  drift_status: stale
 ---
 
 # Potpie / Context Engine Package Boundary
@@ -64,8 +44,11 @@ library distribution.
 
 It is the normative source for the migration tracked in
 [package-boundary-migration-plan.md](../../docs/context-graph/package-boundary-migration-plan.md).
-The boundary is implemented and verified at `f435fb4`; detailed evidence is in
-[the verification record](../verification/package-boundary-1.0.0.md).
+Version 1.0.0 of the boundary was implemented and verified at `f435fb4`; its
+detailed evidence remains in
+[the 1.0.0 verification record](../verification/package-boundary-1.0.0.md).
+Version 2.0.0 changes the public graph-store command vocabulary and awaits
+commit-scoped verification.
 
 Decision: [ADR-0002: Separate Product Runtime from Context Engine](../decisions/ADR-0002-potpie-context-engine-boundary.md).
 
@@ -567,7 +550,7 @@ potpie graph propose|commit|history|inspect|export|import|repair
 potpie graph inbox ...
 potpie graph quality ...
 potpie graph bulk ...
-potpie graph backend list|status|use|doctor
+potpie graph store list|status|use|doctor
 
 potpie ledger status|query|use|disconnect|pull|sources
 
@@ -597,7 +580,7 @@ Command migration:
 | `potpie jira ...` | `potpie integration jira ...` |
 | `potpie confluence ...` | `potpie integration confluence ...` |
 | `potpie auth ...` | account `login/logout/whoami` or `integration status` |
-| `potpie backend ...` | `potpie graph backend ...` |
+| `potpie backend ...` | `potpie graph store ...` |
 | `potpie service ...` | `potpie daemon service ...` |
 | `potpie cloud ...` | removed; no replacement for unfinished sync operations |
 | `potpie graph mutate ...` | `graph propose` then `graph commit` |
@@ -829,8 +812,13 @@ Additional release gates:
 - `ADR-0002` records the ownership, clean-break, MCP, runtime-mode, and interface
   decisions and links back to this spec.
 - `spec/questions/open.md` records no unresolved package-boundary question.
+- The version 2.0.0 `graph store` vocabulary was reviewed against the glossary,
+  product spec, system spec, and ADR-0002. It changes only the public CLI label;
+  the internal `GraphBackend` abstraction and persisted `backend` setting remain
+  unchanged.
 
-No contradiction was found in the final cross-spec and implementation review.
+No cross-spec contradiction was found. Commit-scoped implementation verification
+for version 2.0.0 remains pending.
 
 ## Open Questions
 

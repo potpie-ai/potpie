@@ -310,4 +310,4 @@ def test_flat_status_enriches_degraded_engine_and_missing_skills(
         "recommended_next_action",
     }
     assert data["skills_state"] == "missing"
-    assert data["recommended_next_action"]["command"] == "potpie graph backend doctor"
+    assert data["recommended_next_action"]["command"] == "potpie graph store doctor"

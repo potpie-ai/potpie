@@ -1,7 +1,7 @@
 """``StubGraphBackend`` — a registered-but-unbuilt ``GraphBackend`` profile.
 
 Profiles named in the docs (`postgres`/pgvector, `chroma`, the `hosted` managed
-profile) need a real seam *now* so `backend list` shows them and selecting one
+profile) need a real seam *now* so `graph store list` shows them and selecting one
 returns the structured not-implemented contract instead of crashing on an
 unknown name. This backend composes the six fail-closed capability stubs and a
 ``provision`` that raises ``CapabilityNotImplemented`` — the profile owner swaps

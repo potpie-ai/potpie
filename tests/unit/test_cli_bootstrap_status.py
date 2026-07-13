@@ -213,7 +213,7 @@ def test_doctor_json_includes_backend_readiness(
         backend_ready=False,
         issues=("mutation store is unavailable",),
         recommended_next_action={
-            "command": "potpie graph backend doctor",
+            "command": "potpie graph store doctor",
             "reason": "The active engine backend is degraded.",
         },
     )
@@ -226,7 +226,7 @@ def test_doctor_json_includes_backend_readiness(
     assert payload["backend_ready"] is False
     assert payload["issues"] == ["mutation store is unavailable"]
     assert payload["recommended_next_action"]["command"] == (
-        "potpie graph backend doctor"
+        "potpie graph store doctor"
     )
 
 

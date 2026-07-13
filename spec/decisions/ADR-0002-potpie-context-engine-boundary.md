@@ -3,7 +3,7 @@ id: ADR-0002
 title: Separate Product Runtime from Context Engine
 kind: decision
 status: accepted
-version: 1.0.0
+version: 1.0.1
 owners:
   - Potpie Engineering
 depends_on:
@@ -175,8 +175,10 @@ prevents accidental shadowing by generic top-level packages.
 
 ## Follow-Up Status
 
-- `SPEC-PACKAGE-BOUNDARY` is accepted at `1.0.0`.
+- `SPEC-PACKAGE-BOUNDARY` version 2.0.0 is accepted with the public graph-store
+  command vocabulary; version 1.0.0 remains verified at `f435fb4`.
 - Implementation evidence is recorded commit by commit in the migration plan.
-- The verification record covers every behavior at `f435fb4` with no known gap.
+- The 1.0.0 verification record covers every behavior at `f435fb4` with no known
+  gap. Version 2.0.0 awaits commit-scoped verification.
 - Future auth, daemon, setup, CLI, MCP, and observability module specs link back
   to this ADR when they are introduced.

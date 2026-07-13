@@ -1,6 +1,7 @@
 # Potpie CLI Flow and Command Contract
 
-> Verified at `f435fb4` on 2026-07-13. This document describes the live
+> Updated on 2026-07-13 for the accepted version 2.0.0 command vocabulary.
+> Commit-scoped verification is pending. This document describes the live
 > workflow-first CLI established by
 > [SPEC-PACKAGE-BOUNDARY](../../spec/modules/package-boundary.md).
 
@@ -61,7 +62,7 @@ potpie graph inbox add|claim|close|list|mark-applied|mark-rejected|show
 potpie graph quality conflicting-claims|duplicate-candidates|low-confidence
 potpie graph quality orphan-entities|projection-drift|stale-facts|summary
 potpie graph bulk apply
-potpie graph backend list|status|use|doctor
+potpie graph store list|status|use|doctor
 
 potpie ledger status|query|use|disconnect|pull|sources
 
@@ -238,7 +239,7 @@ return degraded data, and still use a nonzero health exit.
 | top-level `github`, `linear`, `jira`, `confluence` | `potpie integration <provider>` |
 | `potpie auth` | `potpie integration status`, provider groups, `login`, `whoami` |
 | `github repos`, provider `ls` | provider `list` |
-| `potpie backend` | `potpie graph backend` |
+| `potpie backend` | `potpie graph store` |
 | `potpie service` | `potpie daemon service` |
 | `potpie cloud` | removed; unfinished push/pull/skills operations have no replacement |
 | `potpie graph mutate` | `graph propose` then `graph commit` |

@@ -29,7 +29,7 @@ def _raise(profile: str, capability: str, method: str) -> Any:
     raise CapabilityNotImplemented(
         f"graph.{profile}.{capability}.{method}",
         detail=f"the '{profile}' backend has not implemented {capability}.{method} yet",
-        recommended_next_action=f"use 'potpie backend use in_memory' or implement {capability} for '{profile}'",
+        recommended_next_action=f"use 'potpie graph store use in_memory' or implement {capability} for '{profile}'",
     )
 
 

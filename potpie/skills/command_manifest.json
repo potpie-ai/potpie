@@ -18,10 +18,6 @@
     "daemon status": [],
     "daemon stop": [],
     "doctor": [],
-    "graph backend doctor": [],
-    "graph backend list": [],
-    "graph backend status": [],
-    "graph backend use": [],
     "graph bulk apply": [
       "--approved-by",
       "--chunk-size",
@@ -217,6 +213,10 @@
     "graph status": [
       "--pot"
     ],
+    "graph store doctor": [],
+    "graph store list": [],
+    "graph store status": [],
+    "graph store use": [],
     "integration confluence list": [
       "--limit",
       "-n"

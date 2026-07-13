@@ -80,7 +80,7 @@ class GraphMutationPort(Protocol):
         ...
 
     def readiness(self, pot_id: str) -> BackendReadiness:
-        """Cheap readiness probe for ``context_status`` / ``backend status``."""
+        """Cheap readiness probe for ``context_status`` / ``graph store status``."""
         ...
 
 

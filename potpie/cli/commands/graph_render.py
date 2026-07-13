@@ -48,10 +48,10 @@ def _graph_status_payload(host: Any, pot_id: str, dp: Any) -> dict[str, Any]:
             "profile": dp.backend_profile,
             "ready": dp.backend_ready,
             "detail": dp.detail,
-            "readiness_command": "potpie backend doctor",
+            "readiness_command": "potpie graph store doctor",
             "recommended_next_action": (
                 (
-                    "Run `potpie backend doctor` to inspect graph backend readiness "
+                    "Run `potpie graph store doctor` to inspect graph store readiness "
                     "and capability-specific failures."
                 )
                 if not dp.backend_ready

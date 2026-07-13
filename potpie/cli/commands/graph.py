@@ -83,13 +83,13 @@ graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
 inbox_app = typer.Typer(help="Pending graph-work inbox.")
 quality_app = typer.Typer(help="Read-only graph quality reports.")
 bulk_app = typer.Typer(help="Chunked semantic graph mutation application.")
-backend_app = typer.Typer(help="GraphBackend profile selection + health.")
+store_app = typer.Typer(help="Graph store profile selection + health.")
 timeline_app = typer.Typer(help="Timeline reads over the active project pot.")
 
 graph_app.add_typer(inbox_app, name="inbox")
 graph_app.add_typer(quality_app, name="quality")
 graph_app.add_typer(bulk_app, name="bulk")
-graph_app.add_typer(backend_app, name="backend")
+graph_app.add_typer(store_app, name="store")
 
 
 # --- Graph Surface Lite (V1.5) ----------------------------------------------
@@ -530,7 +530,7 @@ def graph_status(pot: str = typer.Option(None, "--pot")) -> None:
         recommended = None
         if not dp.backend_ready:
             recommended = (
-                "Run `potpie backend doctor` to inspect graph backend readiness "
+                "Run `potpie graph store doctor` to inspect graph store readiness "
                 "and capability-specific failures."
             )
         elif warnings:
@@ -1236,8 +1236,8 @@ def graph_repair(
         )
 
 
-@backend_app.command("list")
-def backend_list() -> None:
+@store_app.command("list")
+def store_list() -> None:
     with contract():
         active = get_host().backend.profile
         emit(
@@ -1248,8 +1248,8 @@ def backend_list() -> None:
         )
 
 
-@backend_app.command("status")
-def backend_status() -> None:
+@store_app.command("status")
+def store_status() -> None:
     with contract():
         host = get_host()
         caps = host.backend.capabilities()
@@ -1259,23 +1259,23 @@ def backend_status() -> None:
         )
 
 
-@backend_app.command("use")
-def backend_use(profile: str) -> None:
+@store_app.command("use")
+def store_use(profile: str) -> None:
     with contract():
         selected = profile.strip().lower().replace("-", "_")
         if selected not in KNOWN_PROFILES:
             raise ValueError(
-                f"unknown backend {profile!r}; expected one of {', '.join(KNOWN_PROFILES)}"
+                f"unknown graph store {profile!r}; expected one of {', '.join(KNOWN_PROFILES)}"
             )
         get_cli_runtime().config.set("backend", selected)
         emit(
             {"profile": selected, "persisted": True},
-            human=f"backend selection saved: {selected} (restart the daemon to apply)",
+            human=f"graph store selection saved: {selected} (restart the daemon to apply)",
         )
 
 
-@backend_app.command("doctor")
-def backend_doctor() -> None:
+@store_app.command("doctor")
+def store_doctor() -> None:
     with contract():
         host = get_host()
         pot = host.pots.active_pot()
@@ -1317,12 +1317,12 @@ def _require_backend_capability(
     profile = getattr(caps, "profile", getattr(host.backend, "profile", "unknown"))
     raise CapabilityNotImplemented(
         f"graph.{profile}.{capability}.{method}",
-        detail=f"{command} is not supported by the active '{profile}' backend",
+        detail=f"{command} is not supported by the active '{profile}' graph store",
         recommended_next_action=(
-            "run 'potpie backend status' to inspect capabilities, or switch to "
-            f"a backend that implements {capability}"
+            "run 'potpie graph store status' to inspect capabilities, or switch to "
+            f"a graph store that implements {capability}"
         ),
     )
 
 
-__all__ = ["backend_app", "graph_app", "timeline_app"]
+__all__ = ["graph_app", "store_app", "timeline_app"]

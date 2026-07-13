@@ -85,7 +85,7 @@ def _next_action(has_pot: bool, backend_ready: bool) -> str:
     if not has_pot:
         return "Run 'potpie setup' to create and activate a pot."
     if not backend_ready:
-        return "Backend not ready — run 'potpie backend doctor'."
+        return "Graph store not ready — run 'potpie graph store doctor'."
     return "Run 'potpie resolve \"<task>\"' to pull context for your work."
 
 
