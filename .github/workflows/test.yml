@@ -113,7 +113,9 @@ jobs:
           version: "0.10.7"
 
       - name: Install dependencies
-        run: uv sync --frozen --all-packages --no-cache
+        # The package suite imports optional HTTP, Postgres, GitHub, and other
+        # adapter modules, so install their declared extras before collection.
+        run: uv sync --frozen --all-packages --all-extras --no-cache
 
       - name: Run root runtime scoped type checks
         run: uv run --project . mypy

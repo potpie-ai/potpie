@@ -22,7 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-    "potpie-context-engine[all]>=0.1.0,<0.2.0",
+    "potpie-context-engine[reconciliation]>=0.2.0,<0.3.0",
     "potpie-integrations>=0.1.0,<0.2.0",
     "aiohttp>=3.14.1",
     "alembic>=1.17.1",
