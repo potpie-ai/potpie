@@ -16,6 +16,7 @@ from application.readers._common import (
     claim_candidate_key,
     claim_corroboration,
     claim_payload,
+    claim_semantic_similarity,
     coverage_status_from_count,
     dedupe_claim_rows,
     rank_candidates,
@@ -48,7 +49,6 @@ class FeaturesReader:
             overlap = _scope_overlap(row, anchor_keys=anchor_keys)
             if anchor_keys and overlap == 0.0:
                 continue
-            sim = row.properties.get("semantic_similarity")
             candidates.append(
                 Candidate(
                     candidate_key=claim_candidate_key(row),
@@ -57,9 +57,7 @@ class FeaturesReader:
                     valid_at=row.valid_at,
                     corroboration_count=claim_corroboration(row),
                     scope_overlap=overlap if anchor_keys else None,
-                    semantic_similarity=float(sim)
-                    if isinstance(sim, (int, float))
-                    else None,
+                    semantic_similarity=claim_semantic_similarity(row),
                 )
             )
 

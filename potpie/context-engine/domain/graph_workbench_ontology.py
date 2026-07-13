@@ -639,6 +639,7 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
             "direction",
             "environment",
             "include_unqualified_environment",
+            "query",
         ),
         "supported_filters": (
             "service",
@@ -647,6 +648,7 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
             "direction",
             "environment",
             "include_unqualified_environment",
+            "query",
         ),
         "keywords": (
             "service",

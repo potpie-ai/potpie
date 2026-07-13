@@ -24,6 +24,7 @@ from application.readers._common import (
     ReadResponse,
     claim_corroboration,
     claim_payload,
+    claim_semantic_similarity,
     coverage_status_from_count,
     dedupe_claim_rows,
     rank_candidates,
@@ -67,7 +68,6 @@ class TimelineReader:
             overlap = (
                 1.0 if (not anchor_keys) or row_in_anchor_set(row, anchor_keys) else 0.4
             )
-            sim = row.properties.get("semantic_similarity")
             candidates.append(
                 Candidate(
                     candidate_key=_activity_key(row),
@@ -76,9 +76,7 @@ class TimelineReader:
                     valid_at=event_time,
                     scope_overlap=overlap,
                     corroboration_count=claim_corroboration(row),
-                    semantic_similarity=float(sim)
-                    if isinstance(sim, (int, float))
-                    else None,
+                    semantic_similarity=claim_semantic_similarity(row),
                 )
             )
 
@@ -268,8 +266,7 @@ def _representative_activity_row(
             "PERFORMED": 1,
             "AUTHORED": 1,
         }.get(predicate, 0)
-        sim = row.properties.get("semantic_similarity")
-        similarity = float(sim) if isinstance(sim, (int, float)) else 0.0
+        similarity = claim_semantic_similarity(row) or 0.0
         event_time = _event_datetime(row)
         event_ts = event_time.timestamp() if event_time else 0.0
         return (direct_anchor, predicate_priority, similarity, event_ts)
