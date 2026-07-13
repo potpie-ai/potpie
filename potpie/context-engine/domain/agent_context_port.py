@@ -257,20 +257,8 @@ _INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
     "feature": ("feature", "implement", "add support", "endpoint", "behavior change"),
 }
 
-# Most specific / highest-risk intents win when a task matches several. Only
-# intents present here are ever returned by detection.
-_INTENT_DETECTION_PRIORITY: tuple[str, ...] = (
-    "security",
-    "debugging",
-    "operations",
-    "refactor",
-    "test",
-    "review",
-    "docs",
-    "onboarding",
-    "planning",
-    "feature",
-)
+
+_INTENT_DETECTION_PRIORITY: tuple[str, ...] = tuple(_INTENT_KEYWORDS)
 
 _INTENT_MATCHERS: dict[str, re.Pattern[str]] = {
     intent: re.compile(
