@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 
-from potpie.daemon.process.ipc_client import parse_discovery
+from potpie.daemon.process.discovery import parse_discovery
 from potpie.daemon.process.pidfile import read_pid_file
 from potpie.daemon.contracts import DaemonStartResult
 from potpie.runtime.settings import RuntimeSettings, project_child_environment

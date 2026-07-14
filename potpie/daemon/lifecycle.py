@@ -50,7 +50,7 @@ class Daemon:
 
     def discovery(self) -> DaemonDiscovery | None:
         """Return active HTTP/RPC daemon discovery metadata."""
-        from potpie.daemon.process.ipc_client import load_discovery
+        from potpie.daemon.process.discovery import load_discovery
 
         return load_discovery(self.home)
 

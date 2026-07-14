@@ -7,13 +7,6 @@
       "--follow"
     ],
     "daemon restart": [],
-    "daemon service down": [],
-    "daemon service logs": [
-      "--follow",
-      "-f"
-    ],
-    "daemon service status": [],
-    "daemon service up": [],
     "daemon start": [],
     "daemon status": [],
     "daemon stop": [],

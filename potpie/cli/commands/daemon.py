@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import typer
 
-from potpie.cli.commands.service import service_app
 from potpie.cli.commands._common import (
     EXIT_VALIDATION,
     EXIT_UNAVAILABLE,
@@ -18,7 +17,6 @@ from potpie.daemon.process.launcher import DaemonStartError
 from potpie.daemon.lifecycle import Daemon
 
 daemon_app = typer.Typer(help="Local daemon lifecycle (recovery tools).")
-daemon_app.add_typer(service_app, name="service")
 
 
 def _detached_daemon() -> Daemon:
