@@ -2281,3 +2281,94 @@ def test_timeline_recent_passes_project_scope_and_time_window() -> None:
     assert req.since is not None
     emitted = json.loads(result.output)
     assert emitted["event_count"] == 2
+
+
+def _invoke_timeline_read_text(*args: str) -> str:
+    _common.set_json(False)
+    graph_service = _Graph(read_result=_timeline_env())
+    _common.set_host(_Host(graph_service))
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["read", "--subgraph", "recent_changes", "--view", "timeline", *args],
+    )
+    assert result.exit_code == 0
+    return _plain_cli_output(result.output)
+
+
+def test_graph_read_table_format_renders_pipe_table() -> None:
+    output = _invoke_timeline_read_text("--format", "table", "--limit", "2")
+    assert "occurred_at |" in output
+    assert "--- | ---" in output
+    data_lines = [
+        line
+        for line in output.splitlines()
+        if line.strip()
+        and not line.startswith("view=")
+        and not line.startswith("scope=")
+        and not line.startswith("occurred_at |")
+        and not line.startswith("--- |")
+    ]
+    assert data_lines
+    assert not any(line.lstrip().startswith("•") for line in data_lines)
+
+
+def test_graph_read_events_format_uses_bullets_not_table() -> None:
+    output = _invoke_timeline_read_text("--format", "events", "--limit", "2")
+    assert "  • " in output
+    assert "--- | ---" not in output
+
+
+def test_graph_read_table_vs_events_produce_different_output() -> None:
+    events_output = _invoke_timeline_read_text("--format", "events", "--limit", "2")
+    table_output = _invoke_timeline_read_text("--format", "table", "--limit", "2")
+    assert events_output != table_output
+
+
+def test_graph_read_text_detail_full_shows_claim_or_breakdown() -> None:
+    compact_output = _invoke_timeline_read_text(
+        "--format", "events", "--detail", "compact", "--limit", "1"
+    )
+    full_output = _invoke_timeline_read_text(
+        "--format", "events", "--detail", "full", "--limit", "1"
+    )
+    assert "truth=" in full_output
+    assert "truth=" not in compact_output
+
+
+def test_graph_read_text_relations_summary_shows_counts() -> None:
+    output = _invoke_timeline_read_text(
+        "--format", "events", "--relations", "summary", "--limit", "1"
+    )
+    assert "relations:" in output
+    assert "TOUCHED" in output
+
+
+def test_graph_read_text_relations_full_lists_edges() -> None:
+    output = _invoke_timeline_read_text(
+        "--format",
+        "events",
+        "--relations",
+        "full",
+        "--detail",
+        "full",
+        "--limit",
+        "1",
+    )
+    assert "↳ TOUCHED" in output
+    assert "↳ PERFORMED" in output
+
+
+def test_timeline_recent_table_format() -> None:
+    _common.set_json(False)
+    graph_service = _Graph(read_result=_timeline_env())
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.timeline_app,
+        ["--format", "table", "--limit", "2"],
+    )
+
+    assert result.exit_code == 0
+    output = _plain_cli_output(result.output)
+    assert "occurred_at |" in output
+    assert "--- | ---" in output

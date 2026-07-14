@@ -41,6 +41,14 @@ from adapters.inbound.cli.commands._common import (
     pot_scope_info,
     resolve_pot_id,
 )
+from adapters.inbound.cli.read_presenter import (
+    build_presentation_context,
+    prepare_items,
+    render_items_bullets,
+    render_items_table,
+    render_timeline_events,
+    render_timeline_table,
+)
 from adapters.inbound.cli.telemetry.product_analytics import AnalyticsValue
 from adapters.inbound.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
@@ -504,6 +512,11 @@ def graph_read(
         None, "--view", help="View name within --subgraph, e.g. prior_occurrences"
     ),
     query: str = typer.Option(None, "--query"),
+    query_threshold: float = typer.Option(
+        0.70,
+        "--query-threshold",
+        help="Minimum semantic similarity for --query matches (0.0-1.0).",
+    ),
     scope: str = typer.Option(None, "--scope", help="key:value[,key:value]"),
     current: bool = typer.Option(
         False,
@@ -579,6 +592,7 @@ def graph_read(
         since_dt, until_dt = _resolve_time_bounds(
             since=since, until=until, window=time_window
         )
+        query_threshold = _normalize_query_threshold(query_threshold)
         parsed_scope = _parse_scope(scope)
         if repo:
             parsed_scope["repo"] = _resolve_repo_scope(repo)
@@ -607,6 +621,7 @@ def graph_read(
                 limit=read_limit,
                 detail=detail,
                 relations=relations,
+                query_threshold=query_threshold,
                 freshness_preference=(
                     "fresh"
                     if _is_timeline_view(f"{subgraph}.{view}") and not query
@@ -629,6 +644,11 @@ def graph_read(
 @timeline_app.command("recent")
 def timeline_recent(
     query: str = typer.Option(None, "--query"),
+    query_threshold: float = typer.Option(
+        0.70,
+        "--query-threshold",
+        help="Minimum semantic similarity for --query matches (0.0-1.0).",
+    ),
     since: str = typer.Option(None, "--since", help="ISO instant lower bound."),
     until: str = typer.Option(None, "--until", help="ISO instant upper bound."),
     time_window: str = typer.Option(
@@ -667,6 +687,7 @@ def timeline_recent(
         since_dt, until_dt = _resolve_time_bounds(
             since=since, until=until, window=time_window
         )
+        query_threshold = _normalize_query_threshold(query_threshold)
         scope = {"service": service} if service else {}
         read_limit = _service_limit_for_read(
             subgraph="recent_changes",
@@ -686,6 +707,7 @@ def timeline_recent(
                 limit=read_limit,
                 detail=detail,
                 relations=relations,
+                query_threshold=query_threshold,
                 freshness_preference="fresh" if not query else "balanced",
             )
         )
@@ -3056,20 +3078,23 @@ def _read_human(
     dedupe: str = "auto",
     event_limit: int | None = None,
 ) -> str:
-    if format_ in ("events", "table"):
-        return _timeline_human(
-            result, sort=sort, dedupe=dedupe, event_limit=event_limit
-        )
-    payload = result.to_dict()
-    items = payload.get("items", [])
-    lines = [
-        f"view={payload.get('view')} backed={payload.get('backed')} "
-        f"items={len(items)} quality={payload.get('quality', {}).get('status')}"
-    ]
-    for item in items[:10]:
-        fact = item.get("summary") or item.get("entity_key") or ""
-        lines.append(f"  • [{item.get('entity_type') or '?'}] {fact}")
-    return "\n".join(lines)
+    ctx = build_presentation_context(
+        result,
+        format_=format_,
+        sort=sort,
+        dedupe=dedupe,
+        event_limit=event_limit,
+    )
+    shaped_items = prepare_items(result)
+    if _is_timeline_view(ctx.view):
+        events = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
+        if format_ == "table":
+            return render_timeline_table(result, events, shaped_items, ctx)
+        if format_ == "events":
+            return render_timeline_events(result, events, shaped_items, ctx)
+    if format_ == "table":
+        return render_items_table(shaped_items, ctx, result=result)
+    return render_items_bullets(result, shaped_items, ctx)
 
 
 def _raw_item_rows(result) -> list[dict[str, Any]]:
@@ -3311,24 +3336,6 @@ def _timeline_freshness(events: list[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _timeline_human(
-    result, *, sort: str, dedupe: str, event_limit: int | None = None
-) -> str:
-    events = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
-    payload = result.to_dict()
-    lines = [
-        f"view={payload.get('view')} events={len(events)} "
-        f"quality={payload.get('quality', {}).get('status')}",
-        "scope=project-wide pot timeline across registered repo sources; local uncommitted worktree is not included",
-    ]
-    for event in events[:20]:
-        refs = ", ".join(_string_list(event.get("source_refs"))) or "no-source-ref"
-        when = event.get("occurred_at") or "unknown-date"
-        fact = event.get("fact") or event.get("activity_key") or "(no fact)"
-        lines.append(f"  • {when} [{refs}] {fact}")
-    return "\n".join(lines)
-
-
 def _resolve_time_bounds(
     *, since: str | None, until: str | None, window: str | None
 ) -> tuple[datetime | None, datetime | None]:
@@ -3340,6 +3347,13 @@ def _resolve_time_bounds(
         end = until_dt or datetime.now(timezone.utc)
         return end - _parse_duration(window), until_dt
     return None, until_dt
+
+
+def _normalize_query_threshold(value: float) -> float:
+    threshold = float(value)
+    if threshold < 0.0 or threshold > 1.0:
+        raise ValueError("--query-threshold must be between 0.0 and 1.0")
+    return threshold
 
 
 def _parse_instant(value: str) -> datetime:

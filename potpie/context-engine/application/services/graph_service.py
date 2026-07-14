@@ -77,8 +77,8 @@ from domain.ports.services.graph_service import (
     GraphEntitySearchResult,
     GraphReadRequest,
     GraphReadResult,
-    _normalize_read_detail,
-    _normalize_read_relations,
+    normalize_read_detail,
+    normalize_read_relations,
 )
 from domain.semantic_mutations import (
     SemanticMutationRequest,
@@ -223,8 +223,8 @@ class DefaultGraphService:
         )
 
     def read(self, request: GraphReadRequest) -> GraphReadResult:
-        detail = _normalize_read_detail(request.detail)
-        relations = _normalize_read_relations(request.relations)
+        detail = normalize_read_detail(request.detail)
+        relations = normalize_read_relations(request.relations)
         view_name = _qualified_view_name(request.subgraph, request.view)
         contract = ontology_contract().view(view_name)
         spec = view_spec(view_name)
@@ -300,6 +300,7 @@ class DefaultGraphService:
             freshness_preference=request.freshness_preference,
             include_invalidated=request.include_invalidated,
             source_refs=request.source_refs,
+            query_threshold=request.query_threshold,
             depth=request.depth,
             direction=request.direction,
         )

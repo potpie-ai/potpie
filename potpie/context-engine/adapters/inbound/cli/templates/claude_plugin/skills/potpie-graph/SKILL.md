@@ -39,6 +39,7 @@ potpie graph describe debugging --view prior_occurrences --examples
 
 ```bash
 potpie graph read --subgraph debugging --view prior_occurrences --query "refund race timeout" --limit 8
+potpie graph read --subgraph debugging --view prior_occurrences --query "refund race timeout" --query-threshold 0.55 --limit 8
 potpie graph read --subgraph decisions --view preferences_for_scope --scope repo:acme/x,path:src/payments/client.py
 potpie graph read --subgraph recent_changes --view timeline --time-window 7d --limit 20 --format table
 potpie graph read --subgraph recent_changes --view timeline --source-ref <github-pr-or-issue-ref> --format table
