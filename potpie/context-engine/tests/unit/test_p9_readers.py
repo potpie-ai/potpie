@@ -27,6 +27,7 @@ from application.readers._common import (
     ReadRequest,
     claim_semantic_similarity,
     dedupe_claim_rows,
+    row_matches_query,
 )
 from domain.ports.claim_query import ClaimRow
 from domain.ranking import RankingService
@@ -107,6 +108,7 @@ def test_claim_semantic_similarity_ignores_booleans() -> None:
         properties={"semantic_similarity": True},
     )
     assert claim_semantic_similarity(row) is None
+    assert not row_matches_query(row, "unrelated query")
 
 
 # ---------------------------------------------------------------------------

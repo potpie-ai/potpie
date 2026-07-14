@@ -310,8 +310,8 @@ def row_matches_query(
         return True
     if _query_text_matches(row, clean_query):
         return True
-    similarity = row.properties.get("semantic_similarity")
-    return isinstance(similarity, (int, float)) and float(similarity) >= threshold
+    similarity = claim_semantic_similarity(row)
+    return similarity is not None and similarity >= threshold
 
 
 def _endpoints(row: ClaimRow) -> tuple[str, str]:
