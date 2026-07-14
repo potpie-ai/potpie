@@ -281,7 +281,7 @@ def _timeline_header_lines(
     lines = [
         f"view={payload.get('view')} events={event_count} "
         f"quality={quality.get('status')}",
-        "scope=project-wide pot timeline across registered repo sources; "
+        "scope=applied graph-read scope across registered repo sources; "
         "local uncommitted worktree is not included",
     ]
     if quality.get("status") == "unsupported":

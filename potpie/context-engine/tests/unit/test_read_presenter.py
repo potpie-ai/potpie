@@ -110,6 +110,8 @@ def test_render_timeline_table_includes_headers_and_relations_column() -> None:
     output = render_timeline_table(result, events, shaped, ctx)
     assert "occurred_at | source_ref | activity | fact | score | relations" in output
     assert "TOUCHED" in output
+    assert "scope=applied graph-read scope" in output
+    assert "project-wide" not in output
 
 
 def test_render_items_table_handles_empty_rows() -> None:
