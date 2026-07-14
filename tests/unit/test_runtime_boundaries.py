@@ -8,7 +8,7 @@ from potpie.daemon.contracts import (
     DaemonStartResult,
     DaemonStatus,
 )
-from potpie.daemon.process.ipc_client import parse_discovery
+from potpie.daemon.process.discovery import parse_discovery
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -136,19 +136,38 @@ def test_public_daemon_lifecycle_uses_active_http_discovery_contract() -> None:
     }
 
 
-def test_public_cli_daemon_paths_do_not_use_legacy_operation_client() -> None:
-    active_paths = (
+def test_legacy_daemon_architecture_is_deleted() -> None:
+    deleted_paths = (
         ROOT / "potpie" / "cli" / "commands" / "service.py",
-        ROOT / "potpie" / "daemon" / "lifecycle.py",
-        ROOT / "potpie" / "daemon" / "process" / "launcher.py",
+        ROOT / "potpie" / "daemon" / "runtime",
+        ROOT / "potpie" / "daemon" / "ports",
+        ROOT / "potpie" / "daemon" / "managed_services",
+        ROOT / "potpie" / "daemon" / "http" / "transport.py",
+        ROOT / "potpie" / "daemon" / "http" / "errors.py",
+        ROOT / "potpie" / "daemon" / "process" / "ipc_client.py",
     )
-
+    forbidden_imports = (
+        "potpie.daemon.runtime",
+        "potpie.daemon.ports",
+        "potpie.daemon.managed_services",
+        "potpie.daemon.http.transport",
+        "potpie.daemon.http.errors",
+        "potpie.daemon.process.ipc_client",
+        "potpie.cli.commands.service",
+    )
     offenders = [
         str(path.relative_to(ROOT))
-        for path in active_paths
-        if "legacy_client_for" in path.read_text(encoding="utf-8")
+        for path in _python_sources(ROOT / "potpie")
+        if any(
+            forbidden in path.read_text(encoding="utf-8")
+            for forbidden in forbidden_imports
+        )
     ]
 
+    assert not any(
+        path.is_file() or (path.is_dir() and any(path.rglob("*.py")))
+        for path in deleted_paths
+    )
     assert offenders == []
 
 

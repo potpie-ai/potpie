@@ -178,7 +178,6 @@ files = [
     "potpie/daemon/rpc.py",
     "potpie/daemon/client.py",
     "potpie/daemon/main.py",
-    "potpie/daemon/process/ipc_client.py",
     "potpie/daemon/process/launcher.py",
     "potpie/daemon/process/pidfile.py",
     "potpie/daemon/telemetry/sentry_runtime.py",

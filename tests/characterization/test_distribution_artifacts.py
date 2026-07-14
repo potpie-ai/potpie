@@ -33,6 +33,17 @@ ROOT_SCRIPTS = {
     "potpie-daemon": "potpie.daemon.main:main",
     "potpie-mcp": "potpie.mcp.main:main",
 }
+REMOVED_ROOT_MODULES = {
+    "potpie/cli/commands/service.py",
+    "potpie/daemon/http/errors.py",
+    "potpie/daemon/http/transport.py",
+    "potpie/daemon/process/ipc_client.py",
+}
+REMOVED_ROOT_PREFIXES = {
+    "potpie/daemon/managed_services/",
+    "potpie/daemon/ports/",
+    "potpie/daemon/runtime/",
+}
 
 
 def _build(project: Path, output: Path) -> tuple[Path, Path]:
@@ -86,7 +97,12 @@ def test_built_distributions_have_exact_package_ownership(tmp_path: Path) -> Non
         assert any(name.startswith("potpie/skills/resources/") for name in names)
         assert not any(name.startswith("potpie_context_engine/") for name in names)
         assert "potpie/runtime/sync_view.py" not in names
-        assert "potpie/daemon/runtime/__main__.py" not in names
+        assert not REMOVED_ROOT_MODULES.intersection(names)
+        assert not any(
+            name.startswith(prefix)
+            for name in names
+            for prefix in REMOVED_ROOT_PREFIXES
+        )
         requirements = metadata.get_all("Requires-Dist") or []
         assert "potpie-context-engine[embedded]==0.2.0" in requirements
         assert not any("[all]" in requirement for requirement in requirements)
@@ -115,6 +131,14 @@ def test_built_distributions_have_exact_package_ownership(tmp_path: Path) -> Non
         root_names = archive.getnames()
         for owned in ("auth", "config", "install", "mcp", "setup", "skills"):
             assert any(f"/potpie/{owned}/" in name for name in root_names)
+        assert not any(
+            name.endswith(module) for name in root_names for module in REMOVED_ROOT_MODULES
+        )
+        assert not any(
+            f"/{prefix}" in name
+            for name in root_names
+            for prefix in REMOVED_ROOT_PREFIXES
+        )
 
     with tarfile.open(engine_sdist) as archive:
         engine_names = archive.getnames()
@@ -132,6 +156,12 @@ def test_built_distributions_have_exact_package_ownership(tmp_path: Path) -> Non
         "assert not hasattr(runtime, 'ProductShell'); "
         "assert not hasattr(runtime, 'build_product_shell'); "
         "assert importlib.util.find_spec('potpie.runtime.sync_view') is None; "
+        "assert importlib.util.find_spec('potpie.cli.commands.service') is None; "
+        "assert importlib.util.find_spec('potpie.daemon.runtime') is None; "
+        "assert importlib.util.find_spec('potpie.daemon.ports') is None; "
+        "assert importlib.util.find_spec('potpie.daemon.managed_services') is None; "
+        "assert importlib.util.find_spec('potpie.daemon.http.transport') is None; "
+        "assert importlib.util.find_spec('potpie.daemon.process.ipc_client') is None; "
         "print(PotpieRuntime.__name__)",
         import_roots=(root_wheel, engine_wheel),
         cwd=tmp_path,

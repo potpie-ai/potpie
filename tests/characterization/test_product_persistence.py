@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from potpie.auth import credentials_store
-from potpie.daemon.process.ipc_client import load_discovery
+from potpie.daemon.process.discovery import load_discovery
 
 FIXTURES = Path(__file__).parent / "fixtures" / "current_product_state"
 

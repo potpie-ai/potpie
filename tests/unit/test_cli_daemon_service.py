@@ -137,52 +137,20 @@ def test_daemon_logs_follow_exits_cleanly_on_keyboard_interrupt(
     assert daemon.calls == ["iter_logs"]
 
 
-def test_service_status_reports_http_admin_surface_not_implemented(
-    tmp_path: Path,
-) -> None:
-    _common.set_cli_runtime(
-        runtime_from_services(daemon=_FakeDaemon(home=tmp_path), data_dir=tmp_path)
-    )
+def test_daemon_help_exposes_only_lifecycle_commands() -> None:
+    result = runner.invoke(host_cli.app, ["daemon", "--help"])
 
-    result = runner.invoke(host_cli.app, ["--json", "daemon", "service", "status"])
-
-    assert result.exit_code == _common.EXIT_UNAVAILABLE
-    payload = json.loads(result.stdout)["error"]
-    assert payload["code"] == "not_implemented"
-    assert "HTTP daemon" in payload["message"]
+    assert result.exit_code == 0, result.output
+    for command in ("start", "status", "logs", "restart", "stop"):
+        assert command in result.output
+    assert "service" not in result.output
 
 
-def test_service_logs_reports_http_admin_surface_not_implemented(
-    tmp_path: Path,
-) -> None:
-    log_dir = tmp_path / "logs"
-    log_dir.mkdir()
-    (log_dir / "service-graph.log").write_text("hello\n", encoding="utf-8")
-    _common.set_cli_runtime(
-        runtime_from_services(daemon=_FakeDaemon(home=tmp_path), data_dir=tmp_path)
-    )
+def test_daemon_service_is_unknown_in_human_output() -> None:
+    result = runner.invoke(host_cli.app, ["daemon", "service"])
 
-    result = runner.invoke(
-        host_cli.app, ["--json", "daemon", "service", "logs", "graph"]
-    )
-
-    assert result.exit_code == _common.EXIT_UNAVAILABLE
-    payload = json.loads(result.stdout)["error"]
-    assert payload["code"] == "not_implemented"
-
-
-def test_service_logs_follow_reports_http_admin_surface_not_implemented(
-    tmp_path: Path,
-) -> None:
-    _common.set_cli_runtime(
-        runtime_from_services(daemon=_FakeDaemon(home=tmp_path), data_dir=tmp_path)
-    )
-
-    result = runner.invoke(
-        host_cli.app, ["daemon", "service", "logs", "graph", "--follow"]
-    )
-
-    assert result.exit_code == _common.EXIT_UNAVAILABLE
+    assert result.exit_code == _common.EXIT_VALIDATION
+    assert "No such command 'service'" in result.output
 
 
 def test_setup_daemon_dry_run_marks_daemon_host_mode(
