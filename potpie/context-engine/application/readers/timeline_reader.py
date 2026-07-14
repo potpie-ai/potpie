@@ -342,7 +342,7 @@ def _activity_group_matches_scope(
     rows: Iterable[ClaimRow], *, scope_filters: Mapping[str, str]
 ) -> bool:
     scoped_edges = [
-        row for row in rows if row.predicate.upper() in {"TOUCHED", "MENTIONS"}
+        row for row in rows if row.predicate.upper() in _TIMELINE_PREDICATES
     ]
     for key in _scope_filter_keys(scope_filters):
         if not any(scope_ref_matches(row, scope_filters, key) for row in scoped_edges):

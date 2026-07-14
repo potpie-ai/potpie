@@ -935,6 +935,28 @@ class TestTimelineReader:
 
         assert _timeline_activity_keys(response) == {"activity:github:pr:alpha"}
 
+    def test_timeline_scope_includes_performed_edges(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="PERFORMED",
+                subject_key="repo:github.com/mock/alpha-checkout",
+                object_key="activity:github:pr:alpha",
+                fact="alpha checkout team performed the activity",
+            )
+        )
+        reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"repo": "github.com/mock/alpha-checkout"},
+                max_items=10,
+            )
+        )
+
+        assert _timeline_activity_keys(response) == {"activity:github:pr:alpha"}
+
     def test_timeline_source_ref_filter_still_narrows_events(self) -> None:
         store = _timeline_scope_store()
         reader = TimelineReader(claim_query=store, ranker=RankingService())
