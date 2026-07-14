@@ -76,7 +76,6 @@ potpie integration confluence login|logout|list|select
 potpie skills list|install|update|remove|status|add
 
 potpie daemon start|status|logs|restart|stop
-potpie daemon service up|down|status|logs
 
 potpie config list|get|set
 potpie telemetry status|enable|disable
@@ -240,7 +239,7 @@ return degraded data, and still use a nonzero health exit.
 | `potpie auth` | `potpie integration status`, provider groups, `login`, `whoami` |
 | `github repos`, provider `ls` | provider `list` |
 | `potpie backend` | `potpie graph store` |
-| `potpie service` | `potpie daemon service` |
+| `potpie service` | removed; V1 has no daemon-managed supporting services |
 | `potpie cloud` | removed; unfinished push/pull/skills operations have no replacement |
 | `potpie graph mutate` | `graph propose` then `graph commit` |
 | `potpie graph describe` | `graph catalog --subgraph ...` |

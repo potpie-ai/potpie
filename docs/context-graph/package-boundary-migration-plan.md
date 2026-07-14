@@ -417,8 +417,7 @@ Changes:
 
 - Add the shared success/error JSON envelope and exit-code mapping.
 - Apply the exact command tree in `SPEC-PACKAGE-BOUNDARY`.
-- Nest providers under `integration`, backend under `graph`, and local service
-  lifecycle under `daemon`.
+- Nest providers under `integration` and backend under `graph`.
 - Remove cloud, top-level use, legacy provider/auth groups, and graph aliases.
 - Normalize provider resource enumeration to `list`.
 
@@ -428,9 +427,8 @@ CLI journeys pass.
 Evidence recorded on 2026-07-13:
 
 - The checked-in command manifest and an independent exact-tree test contain
-  only the workflow-first hierarchy. Provider flows live under `integration`,
-  backend selection under `graph backend`, and service lifecycle under
-  `daemon service`.
+  only the workflow-first hierarchy. Provider flows live under `integration`
+  and backend selection under `graph backend`.
 - `cloud`, top-level `use`, top-level provider/auth/backend/service groups,
   `graph mutate`, `graph describe`, `graph neighborhood`, and the old nested
   pot-default/ledger-sources paths fail as unknown or invalid usage. No
@@ -578,13 +576,23 @@ the root `PotpieRuntime`, construct public request DTOs at the command boundary,
 and invoke typed `runtime.engine.*` clients through the internal `run_sync`
 bridge. Product capabilities remain typed sibling services on the runtime.
 
-The experimental `python -m potpie.daemon.runtime` entrypoint was removed; the
-non-executable service-management primitives under `potpie.daemon.runtime`
-remain for focused transport tests. The sole product daemon is
-`potpie.daemon.main`.
+The experimental `python -m potpie.daemon.runtime` entrypoint was removed. The
+sole product daemon is `potpie.daemon.main`.
 
 Worktree verification passed with 1,119 root tests and 1,050 engine tests, plus
 root and engine mypy, Ruff, artifact/isolated-wheel imports, `git diff --check`,
 and zero-result shell/view or CLI engine-private-import scans. Commit-scoped
 2.0.0 verification remains pending until these preserved worktree changes have
 a commit SHA.
+
+## Post-migration single-daemon consolidation — 2026-07-14
+
+The unsupported `potpie daemon service` placeholder and the legacy generic
+service-management runtime were removed. V1 has no daemon-managed supporting
+services: graph backends are constructed by the active engine runtime, and the
+only daemon command group is `start|status|logs|restart|stop`.
+
+The former top-level `potpie service` command is removed without replacement.
+No alias, placeholder, service-admin route, operation registry, or compatibility
+transport remains. Removed paths fail through the standard unknown-command
+usage contract.

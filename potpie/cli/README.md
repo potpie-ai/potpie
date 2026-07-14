@@ -43,7 +43,7 @@ the engine package as a CLI adapter.
 - `query.py`, `pots.py`, `graph*.py`, `ledger.py`: typed engine workflows.
 - `bootstrap.py`: setup, doctor, status, config, and identity product workflows.
 - root auth modules: account and provider integration workflows.
-- `daemon.py`, `service.py`: product daemon lifecycle.
+- `daemon.py`: product daemon lifecycle.
 - `skills.py`: root resource installation and drift.
 - `telemetry.py`: root product telemetry controls.
 - `output/contracts.py`: JSON success/error envelopes and exit codes.

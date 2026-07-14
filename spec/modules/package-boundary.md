@@ -564,7 +564,6 @@ potpie integration confluence login|logout|list|select
 potpie skills list|install|update|remove|status|add
 
 potpie daemon start|status|logs|restart|stop
-potpie daemon service up|down|status|logs
 
 potpie config list|get|set
 potpie telemetry status|enable|disable
@@ -581,7 +580,7 @@ Command migration:
 | `potpie confluence ...` | `potpie integration confluence ...` |
 | `potpie auth ...` | account `login/logout/whoami` or `integration status` |
 | `potpie backend ...` | `potpie graph store ...` |
-| `potpie service ...` | `potpie daemon service ...` |
+| `potpie service ...` | removed; V1 has no daemon-managed supporting services |
 | `potpie cloud ...` | removed; no replacement for unfinished sync operations |
 | `potpie graph mutate ...` | `graph propose` then `graph commit` |
 | `potpie graph describe ...` | `graph catalog --subgraph ...` |
