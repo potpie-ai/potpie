@@ -1,8 +1,7 @@
-"""DaemonRuntime: assembles registries, plugins, transports, components, services. Runs until shutdown.
+"""Legacy transport and service-management runtime used by focused tests.
 
-This is the async runtime the detached daemon process executes (``python -m potpie.daemon.runtime``).
-It is distinct from ``root PotpieRuntime`` (the in-process service facade) — the runtime
-*hosts* services and exposes them over a transport.
+The product daemon is implemented by :mod:`potpie.daemon.main`; this module has
+no executable package entrypoint.
 """
 
 from __future__ import annotations

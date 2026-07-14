@@ -46,6 +46,7 @@ from potpie_context_engine.domain.ports.services.graph_service import (
     GraphEntitySearchResult,
     GraphReadResult,
 )
+from tests.runtime_fakes import runtime_from_services
 
 pytestmark = pytest.mark.unit
 
@@ -380,19 +381,19 @@ class _Workbench:
         return self.quality_result
 
 
-class _Host:
-    def __init__(
-        self,
-        graph_service: _Graph,
-        nudge_service: _Nudge | None = None,
-        backend=None,
-        graph_workbench: _Workbench | None = None,
-    ) -> None:
-        self.graph = graph_service
-        self.graph_workbench = graph_workbench or _Workbench()
-        self.nudge = nudge_service or _Nudge()
-        self.pots = _Pots()
-        self.backend = backend
+def _runtime(
+    graph_service: _Graph,
+    nudge_service: _Nudge | None = None,
+    backend=None,
+    graph_workbench: _Workbench | None = None,
+):
+    return runtime_from_services(
+        pots=_Pots(),
+        graph=graph_service,
+        graph_workbench=graph_workbench or _Workbench(),
+        nudge=nudge_service or _Nudge(),
+        backend=backend,
+    )
 
 
 class _Analytics:
@@ -743,7 +744,7 @@ def test_graph_entity_search_result_includes_summary() -> None:
 
 def test_graph_repair_accepts_entity_summaries_target() -> None:
     backend = _Backend()
-    _common.set_host(_Host(_Graph(), backend=backend))
+    _common.set_cli_runtime(_runtime(_Graph(), backend=backend))
 
     result = CliRunner().invoke(graph.graph_app, ["repair", "--entity-summaries"])
 
@@ -812,7 +813,7 @@ def test_graph_capability_commands_precheck_backend_capabilities(
 ) -> None:
     _common.set_json(True)
     backend = _UnsupportedBackend()
-    _common.set_host(_Host(_Graph(), backend=backend))
+    _common.set_cli_runtime(_runtime(_Graph(), backend=backend))
 
     result = CliRunner().invoke(graph.graph_app, args)
 
@@ -829,7 +830,7 @@ def test_graph_capability_commands_precheck_backend_capabilities(
 def test_graph_propose_returns_persisted_plan_envelope(tmp_path) -> None:
     _common.set_json(True)
     workbench = _Workbench(proposal=_proposal())
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
     payload_file = tmp_path / "mutation.json"
     payload_file.write_text(json.dumps(_valid_mutation_payload()), encoding="utf-8")
 
@@ -874,15 +875,15 @@ def test_graph_workbench_commands_emit_v2_observability(
     payload_file = tmp_path / "mutation.json"
     payload_file.write_text(json.dumps(_valid_mutation_payload()), encoding="utf-8")
 
-    _common.set_host(_Host(_Graph(), graph_workbench=_Workbench(proposal=_proposal())))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=_Workbench(proposal=_proposal())))
     propose = CliRunner().invoke(
         graph.graph_app,
         ["propose", "--file", str(payload_file)],
     )
     assert propose.exit_code == 0, propose.output
 
-    _common.set_host(
-        _Host(_Graph(), graph_workbench=_Workbench(inbox_result=_inbox_result()))
+    _common.set_cli_runtime(
+        _runtime(_Graph(), graph_workbench=_Workbench(inbox_result=_inbox_result()))
     )
     inbox = CliRunner().invoke(
         graph.graph_app,
@@ -890,8 +891,8 @@ def test_graph_workbench_commands_emit_v2_observability(
     )
     assert inbox.exit_code == 0, inbox.output
 
-    _common.set_host(
-        _Host(
+    _common.set_cli_runtime(
+        _runtime(
             _Graph(),
             graph_workbench=_Workbench(
                 quality_result=_quality_result(report="summary")
@@ -954,7 +955,7 @@ def test_graph_workbench_commands_emit_v2_observability(
 def test_graph_commit_applies_plan_id_only() -> None:
     _common.set_json(True)
     workbench = _Workbench(commit_result=_commit_result())
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -972,7 +973,7 @@ def test_graph_commit_applies_plan_id_only() -> None:
 def test_graph_commit_verify_passes_hard_gate_flag() -> None:
     _common.set_json(True)
     workbench = _Workbench(commit_result=_commit_result())
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1000,7 +1001,7 @@ def test_graph_commit_verify_exits_nonzero_when_gate_fails() -> None:
         recommended_next_action="Inspect graph history for the plan.",
     )
     workbench = _Workbench(commit_result=_commit_result(verification=verification))
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1018,7 +1019,7 @@ def test_graph_commit_verify_exits_nonzero_when_gate_fails() -> None:
 def test_graph_commit_rejects_raw_payload_option() -> None:
     _common.set_json(True)
     workbench = _Workbench(commit_result=_commit_result())
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1033,7 +1034,7 @@ def test_graph_bulk_apply_chunks_and_commits(tmp_path) -> None:
     _common.set_json(True)
     workbench = _Workbench(proposal=_proposal(), commit_result=_commit_result())
     graph_service = _Graph()
-    _common.set_host(_Host(graph_service, graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(graph_service, graph_workbench=workbench))
     payload_file = tmp_path / "bulk.json"
     manifest_file = tmp_path / "manifest.json"
     payload_file.write_text(json.dumps(_bulk_mutation_payload(3)), encoding="utf-8")
@@ -1076,7 +1077,7 @@ def test_graph_bulk_apply_chunks_and_commits(tmp_path) -> None:
 def test_graph_bulk_apply_dry_run_does_not_commit(tmp_path) -> None:
     _common.set_json(True)
     workbench = _Workbench(proposal=_proposal(), commit_result=_commit_result())
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
     payload_file = tmp_path / "bulk.ndjson"
     lines = [json.dumps(op) for op in _bulk_mutation_payload(2)["operations"]]
     payload_file.write_text("\n".join(lines), encoding="utf-8")
@@ -1118,7 +1119,7 @@ def test_graph_bulk_apply_stops_on_failed_proposal(tmp_path) -> None:
         ),
     )
     workbench = _Workbench(proposal=proposal, commit_result=_commit_result())
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
     payload_file = tmp_path / "bulk.json"
     payload_file.write_text(json.dumps(_bulk_mutation_payload(3)), encoding="utf-8")
 
@@ -1147,7 +1148,7 @@ def test_graph_bulk_apply_stops_on_failed_proposal(tmp_path) -> None:
 def test_graph_history_plan_returns_envelope() -> None:
     _common.set_json(True)
     workbench = _Workbench(history_result=_history_result())
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1178,7 +1179,7 @@ def test_graph_history_plan_returns_envelope() -> None:
 def test_graph_quality_summary_returns_envelope() -> None:
     _common.set_json(True)
     workbench = _Workbench(quality_result=_quality_result(report="summary"))
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
 
     result = CliRunner().invoke(graph.graph_app, ["quality", "summary"])
 
@@ -1204,7 +1205,7 @@ def test_graph_quality_low_confidence_passes_filters() -> None:
     workbench = _Workbench(
         quality_result=_quality_result(report="low-confidence", status="watch")
     )
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1239,7 +1240,7 @@ def test_graph_quality_low_confidence_passes_filters() -> None:
 def test_graph_inbox_add_returns_pending_item_envelope() -> None:
     _common.set_json(True)
     workbench = _Workbench(inbox_result=_inbox_result())
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1284,7 +1285,7 @@ def test_graph_inbox_add_returns_pending_item_envelope() -> None:
 def test_graph_inbox_list_passes_filters() -> None:
     _common.set_json(True)
     workbench = _Workbench(inbox_result=_inbox_result(action="list"))
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1326,7 +1327,7 @@ def test_graph_inbox_list_passes_filters() -> None:
 def test_graph_inbox_claim_passes_actor() -> None:
     _common.set_json(True)
     workbench = _Workbench(inbox_result=_inbox_result(action="claim", status="claimed"))
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1354,7 +1355,7 @@ def test_graph_inbox_mark_applied_passes_plan_and_mutation() -> None:
     workbench = _Workbench(
         inbox_result=_inbox_result(action="mark-applied", status="applied")
     )
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1394,7 +1395,7 @@ def test_graph_inbox_mark_rejected_and_close_record_reasons() -> None:
     workbench = _Workbench(
         inbox_result=_inbox_result(action="mark-rejected", status="rejected")
     )
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
 
     rejected = CliRunner().invoke(
         graph.graph_app,
@@ -1425,7 +1426,7 @@ def test_graph_inbox_mark_rejected_and_close_record_reasons() -> None:
     ]
 
     workbench = _Workbench(inbox_result=_inbox_result(action="close", status="closed"))
-    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), graph_workbench=workbench))
     closed = CliRunner().invoke(
         graph.graph_app,
         [
@@ -1449,7 +1450,7 @@ def test_graph_inbox_mark_rejected_and_close_record_reasons() -> None:
 def test_graph_read_rejects_malformed_scope_before_service_call(scope: str) -> None:
     _common.set_json(True)
     graph_service = _Graph()
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1473,7 +1474,7 @@ def test_graph_read_rejects_malformed_scope_before_service_call(scope: str) -> N
 def test_graph_read_unknown_view_uses_error_envelope() -> None:
     _common.set_json(True)
     graph_service = _Graph(read_error=ValueError("unknown graph view 'missing.view'"))
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1516,7 +1517,7 @@ def test_graph_read_missing_required_scope_result_is_error_envelope() -> None:
             ),
         )
     )
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1549,7 +1550,7 @@ def test_graph_read_include_guess_error_carries_did_you_mean() -> None:
             recommended_next_action=guidance["read_command"],
         )
     )
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1569,7 +1570,7 @@ def test_graph_read_include_guess_error_carries_did_you_mean() -> None:
 def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:
     _common.set_json(True)
     graph_service = _Graph()
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1644,7 +1645,7 @@ def _timeline_env() -> GraphReadResult:
 def test_graph_read_timeline_defaults_to_deduped_event_json() -> None:
     _common.set_json(True)
     graph_service = _Graph(read_result=_timeline_env())
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1675,7 +1676,7 @@ def test_graph_read_timeline_defaults_to_deduped_event_json() -> None:
 def test_graph_read_threads_source_ref_filter() -> None:
     _common.set_json(True)
     graph_service = _Graph(read_result=_timeline_env())
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1697,7 +1698,7 @@ def test_graph_read_threads_source_ref_filter() -> None:
 def test_graph_read_raw_json_defaults_to_compact_relations() -> None:
     _common.set_json(True)
     graph_service = _Graph(read_result=_timeline_env())
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1728,7 +1729,7 @@ def test_graph_read_raw_json_defaults_to_compact_relations() -> None:
 def test_graph_read_full_detail_preserves_relation_payload() -> None:
     _common.set_json(True)
     graph_service = _Graph(read_result=_timeline_env())
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1759,7 +1760,7 @@ def test_graph_read_full_detail_preserves_relation_payload() -> None:
 def test_graph_search_entities_omits_supporting_claims_by_default() -> None:
     _common.set_json(True)
     graph_service = _Graph()
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1776,7 +1777,7 @@ def test_graph_search_entities_omits_supporting_claims_by_default() -> None:
 def test_graph_search_entities_supporting_claims_is_opt_in() -> None:
     _common.set_json(True)
     graph_service = _Graph()
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1793,7 +1794,7 @@ def test_graph_search_entities_supporting_claims_is_opt_in() -> None:
 def test_graph_search_entities_threads_source_ref_filter() -> None:
     _common.set_json(True)
     graph_service = _Graph()
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1807,7 +1808,7 @@ def test_graph_search_entities_threads_source_ref_filter() -> None:
 def test_graph_search_entities_threads_source_facets() -> None:
     _common.set_json(True)
     graph_service = _Graph()
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1831,7 +1832,7 @@ def test_graph_read_emits_v2_observability(monkeypatch: pytest.MonkeyPatch) -> N
     obs = _RecordingObservability()
     monkeypatch.setattr(observability_runtime, "_OBSERVABILITY", obs)
     graph_service = _Graph(read_result=_timeline_env())
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1857,7 +1858,7 @@ def test_graph_validation_error_does_not_record_usage_analytics(
     _common.set_json(True)
     sink = _bind_graph_product_analytics(monkeypatch)
     graph_service = _Graph(read_result=_timeline_env())
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1873,7 +1874,7 @@ def test_graph_validation_error_does_not_record_usage_analytics(
 def test_graph_nudge_accepts_dash_event_alias() -> None:
     _common.set_json(True)
     nudge_service = _Nudge()
-    _common.set_host(_Host(_Graph(), nudge_service=nudge_service))
+    _common.set_cli_runtime(_runtime(_Graph(), nudge_service=nudge_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1890,7 +1891,7 @@ def test_graph_nudge_accepts_dash_event_alias() -> None:
 
 def test_graph_catalog_json_advertises_v2_workbench_commands() -> None:
     _common.set_json(True)
-    _common.set_host(_Host(_Graph()))
+    _common.set_cli_runtime(_runtime(_Graph()))
 
     result = CliRunner().invoke(graph.graph_app, ["catalog"])
 
@@ -1906,7 +1907,7 @@ def test_graph_catalog_json_advertises_v2_workbench_commands() -> None:
 
 def test_graph_catalog_task_ranks_relevant_views() -> None:
     _common.set_json(True)
-    _common.set_host(_Host(_Graph()))
+    _common.set_cli_runtime(_runtime(_Graph()))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1928,7 +1929,7 @@ def test_graph_catalog_task_ranks_relevant_views() -> None:
 
 def test_graph_catalog_read_profile_returns_compact_contract() -> None:
     _common.set_json(True)
-    _common.set_host(_Host(_Graph()))
+    _common.set_cli_runtime(_runtime(_Graph()))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1963,7 +1964,7 @@ def test_graph_catalog_read_profile_returns_compact_contract() -> None:
 
 def test_graph_catalog_table_format_uses_compact_human_output() -> None:
     _common.set_json(False)
-    _common.set_host(_Host(_Graph()))
+    _common.set_cli_runtime(_runtime(_Graph()))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1977,7 +1978,7 @@ def test_graph_catalog_table_format_uses_compact_human_output() -> None:
 
 def test_graph_catalog_table_format_shows_task_ranking_context() -> None:
     _common.set_json(False)
-    _common.set_host(_Host(_Graph()))
+    _common.set_cli_runtime(_runtime(_Graph()))
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -1999,7 +2000,7 @@ def test_graph_catalog_table_format_shows_task_ranking_context() -> None:
 
 def test_graph_catalog_unknown_subgraph_uses_error_envelope() -> None:
     _common.set_json(True)
-    _common.set_host(_Host(_Graph(catalog_error=ValueError("unknown graph subgraph"))))
+    _common.set_cli_runtime(_runtime(_Graph(catalog_error=ValueError("unknown graph subgraph"))))
 
     result = CliRunner().invoke(graph.graph_app, ["catalog", "--subgraph", "missing"])
 
@@ -2018,8 +2019,8 @@ def test_graph_catalog_include_guess_error_carries_did_you_mean() -> None:
 
     _common.set_json(True)
     guidance = include_guess_guidance("docs", None)
-    _common.set_host(
-        _Host(
+    _common.set_cli_runtime(
+        _runtime(
             _Graph(
                 catalog_error=UnknownGraphViewError(
                     "unknown graph subgraph 'docs'",
@@ -2047,7 +2048,7 @@ def test_graph_status_json_uses_workbench_envelope() -> None:
     workbench = _Workbench(
         quality_result=_quality_result(report="summary", status="watch")
     )
-    _common.set_host(_Host(_Graph(), backend=_Backend(), graph_workbench=workbench))
+    _common.set_cli_runtime(_runtime(_Graph(), backend=_Backend(), graph_workbench=workbench))
 
     result = CliRunner().invoke(graph.graph_app, ["status"])
 
@@ -2079,7 +2080,7 @@ def test_graph_status_json_uses_workbench_envelope() -> None:
 
 def test_graph_status_not_ready_recommends_store_doctor() -> None:
     _common.set_json(True)
-    _common.set_host(_Host(_NotReadyGraph(), backend=_Backend()))
+    _common.set_cli_runtime(_runtime(_NotReadyGraph(), backend=_Backend()))
 
     result = CliRunner().invoke(graph.graph_app, ["status"])
 
@@ -2127,9 +2128,13 @@ def test_graph_status_warns_when_active_repo_pot_is_empty(monkeypatch) -> None:
         _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     _common.set_json(True)
-    host = _Host(_GraphByPot({"p1": {"claims": 0}, "p2": {"claims": 82}}))
-    host.pots = Pots()
-    _common.set_host(host)
+    runtime = runtime_from_services(
+        pots=Pots(),
+        graph=_GraphByPot({"p1": {"claims": 0}, "p2": {"claims": 82}}),
+        graph_workbench=_Workbench(),
+        nudge=_Nudge(),
+    )
+    _common.set_cli_runtime(runtime)
 
     result = CliRunner().invoke(graph.graph_app, ["status"])
 
@@ -2145,7 +2150,7 @@ def test_graph_status_warns_when_active_repo_pot_is_empty(monkeypatch) -> None:
 def test_timeline_recent_passes_project_scope_and_time_window() -> None:
     _common.set_json(True)
     graph_service = _Graph(read_result=_timeline_env())
-    _common.set_host(_Host(graph_service))
+    _common.set_cli_runtime(_runtime(graph_service))
 
     result = CliRunner().invoke(
         graph.timeline_app,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 from potpie.daemon.contracts import (
@@ -147,5 +148,69 @@ def test_public_cli_daemon_paths_do_not_use_legacy_operation_client() -> None:
         for path in active_paths
         if "legacy_client_for" in path.read_text(encoding="utf-8")
     ]
+
+    assert offenders == []
+
+
+def test_executable_source_has_no_shell_or_sync_view_symbols() -> None:
+    forbidden_symbols = {
+        "ProductShell",
+        "RuntimeEngineView",
+        "await_engine",
+        "build_product_shell",
+        "get_engine_view",
+        "get_host",
+        "runtime_engine_view",
+        "set_host",
+    }
+    forbidden_modules = {"potpie.runtime.sync_view"}
+    offenders: list[str] = []
+
+    for path in _python_sources(ROOT / "potpie"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id in forbidden_symbols:
+                offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}:{node.id}")
+            elif isinstance(node, ast.Attribute) and node.attr in forbidden_symbols:
+                offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}:{node.attr}")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in forbidden_modules:
+                        offenders.append(
+                            f"{path.relative_to(ROOT)}:{node.lineno}:{alias.name}"
+                        )
+            elif isinstance(node, ast.ImportFrom):
+                if node.module in forbidden_modules:
+                    offenders.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno}:{node.module}"
+                    )
+                for alias in node.names:
+                    if alias.name in forbidden_symbols:
+                        offenders.append(
+                            f"{path.relative_to(ROOT)}:{node.lineno}:{alias.name}"
+                        )
+
+    assert offenders == []
+    assert not (ROOT / "potpie" / "runtime" / "sync_view.py").exists()
+    assert not (ROOT / "potpie" / "daemon" / "runtime" / "__main__.py").exists()
+
+
+def test_cli_imports_only_root_owned_engine_contract_bridge() -> None:
+    offenders: list[str] = []
+
+    for path in _python_sources(ROOT / "potpie" / "cli"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                modules = [node.module or ""]
+            else:
+                continue
+            for module in modules:
+                if module == "potpie_context_engine" or module.startswith(
+                    "potpie_context_engine."
+                ):
+                    offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}:{module}")
 
     assert offenders == []

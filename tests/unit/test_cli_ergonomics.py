@@ -22,6 +22,7 @@ from potpie_context_engine.application.services.semantic_mutation_validator impo
     validate_semantic_request,
 )
 from potpie_context_engine.domain.semantic_mutations import SemanticMutationRequest
+from tests.runtime_fakes import runtime_from_services
 
 pytestmark = pytest.mark.unit
 
@@ -30,7 +31,7 @@ pytestmark = pytest.mark.unit
 def _reset_state():
     yield
     _common.set_json(False)
-    _common.set_host(None)
+    _common.set_cli_runtime(None)
 
 
 class _Pot:
@@ -92,12 +93,8 @@ class _Pots:
         return dict(self.repo_defaults)
 
 
-class _Host:
-    def __init__(self, pots_service, daemon=None, graph=None) -> None:
-        self.pots = pots_service
-        self.daemon = daemon
-        if graph is not None:
-            self.graph = graph
+def _runtime(pots_service, daemon=None, graph=None):
+    return runtime_from_services(pots=pots_service, daemon=daemon, graph=graph)
 
 
 class _Daemon:
@@ -132,7 +129,7 @@ def test_source_add_repo_dot_resolves_before_storing(monkeypatch) -> None:
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
     )
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.source_app, ["add", "repo", "."])
@@ -151,7 +148,7 @@ def test_source_add_repo_current_falls_back_to_cwd(monkeypatch, tmp_path) -> Non
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
     )
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
 
     result = CliRunner().invoke(pots.source_app, ["add", "repo", "current"])
     assert result.exit_code == 0, result.output
@@ -163,7 +160,7 @@ def test_source_add_non_repo_kind_keeps_location_verbatim() -> None:
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
     )
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
 
     result = CliRunner().invoke(pots.source_app, ["add", "linear", "ENG"])
     assert result.exit_code == 0, result.output
@@ -178,7 +175,7 @@ def test_source_add_repo_no_default_skips_repo_default(monkeypatch) -> None:
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
     )
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.source_app, ["add", "repo", ".", "--no-default"])
@@ -194,7 +191,7 @@ def test_source_list_includes_location() -> None:
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {"p1": [src]}, active=_Pot("p1", "shop", True)
     )
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.source_app, ["list"])
@@ -208,7 +205,7 @@ def test_source_list_plain_output_includes_location() -> None:
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {"p1": [src]}, active=_Pot("p1", "shop", True)
     )
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
 
     result = CliRunner().invoke(pots.source_app, ["list"])
 
@@ -222,7 +219,7 @@ def test_source_list_plain_output_shows_active_pot_resolution(monkeypatch) -> No
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {"p1": [src]}, active=_Pot("p1", "shop", True)
     )
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
 
     result = CliRunner().invoke(pots.source_app, ["list"])
 
@@ -242,7 +239,7 @@ def test_source_list_plain_output_shows_repo_default_resolution(monkeypatch) -> 
         active=active,
     )
     pots_service.repo_defaults["github.com/acme/shop"] = "p2"
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
 
     result = CliRunner().invoke(pots.source_app, ["list"])
 
@@ -262,7 +259,7 @@ def test_source_list_json_includes_resolved_via(monkeypatch) -> None:
         active=None,
     )
     pots_service.repo_defaults["github.com/acme/shop"] = "p2"
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.source_app, ["list"])
@@ -289,7 +286,7 @@ def test_source_add_targets_active_pot_even_when_repo_matches_other_pots(
         {"p1": [match], "p2": [match]},
         active=active,
     )
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
 
     result = CliRunner().invoke(pots.source_app, ["add", "repo", "."])
     assert result.exit_code == 0, result.output
@@ -311,7 +308,7 @@ def test_resolve_pot_fails_structured_when_repo_matches_multiple_pots(
         {"p1": [match], "p2": [match]},
         active=None,
     )
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.source_app, ["list"])
@@ -333,9 +330,9 @@ def test_resolve_pot_uses_repo_default_before_ambiguous_matches(monkeypatch) -> 
         active=None,
     )
     pots_service.repo_defaults["github.com/acme/shop"] = "p2"
-    host = _Host(pots_service)
+    runtime = _runtime(pots_service)
 
-    assert _common.resolve_pot_id(host) == "p2"
+    assert _common.resolve_pot_id(runtime) == "p2"
 
 
 def test_pot_default_set_and_clear_current_repo(monkeypatch) -> None:
@@ -343,7 +340,7 @@ def test_pot_default_set_and_clear_current_repo(monkeypatch) -> None:
         _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     pots_service = _Pots([_Pot("p1", "shop")], {}, active=None)
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.pot_app, ["default", "--set", "p1"])
@@ -373,7 +370,7 @@ def test_pot_linked_lists_candidates_and_default(monkeypatch) -> None:
         active=None,
     )
     pots_service.repo_defaults["github.com/acme/shop"] = "p2"
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.pot_app, ["linked"])
@@ -398,7 +395,7 @@ def test_pot_info_shows_current_repo_effective_pot(monkeypatch) -> None:
         active=active,
     )
     pots_service.repo_defaults["github.com/acme/shop"] = "p2"
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.pot_app, ["info"])
@@ -421,7 +418,7 @@ def test_pot_use_warns_when_repo_default_differs(monkeypatch) -> None:
         active=None,
     )
     pots_service.repo_defaults["github.com/acme/shop"] = "p2"
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.pot_app, ["use", "p1"])
@@ -449,7 +446,7 @@ def test_pot_use_can_also_set_current_repo_default(monkeypatch) -> None:
         active=None,
     )
     pots_service.repo_defaults["github.com/acme/shop"] = "p2"
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
     _common.set_json(True)
 
     result = CliRunner().invoke(
@@ -467,7 +464,7 @@ def test_pot_use_can_also_set_current_repo_default(monkeypatch) -> None:
 def test_pot_use_also_default_requires_current_repo(monkeypatch) -> None:
     monkeypatch.setattr(_common, "_current_repo_identity", lambda: None)
     pots_service = _Pots([_Pot("p1", "fresh")], {}, active=None)
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
     _common.set_json(True)
 
     result = CliRunner().invoke(
@@ -492,7 +489,7 @@ def test_pot_linked_summary_skips_graph_counts(monkeypatch) -> None:
         {"p1": [match], "p2": [match]},
         active=None,
     )
-    _common.set_host(_Host(pots_service, graph=graph))
+    _common.set_cli_runtime(_runtime(pots_service, graph=graph))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.pot_app, ["linked", "--summary"])
@@ -509,7 +506,7 @@ def test_ui_pot_option_opens_selected_pot_url(monkeypatch) -> None:
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
     )
-    _common.set_host(_Host(pots_service, daemon=_Daemon()))
+    _common.set_cli_runtime(_runtime(pots_service, daemon=_Daemon()))
     _common.set_json(True)
 
     app = typer.Typer()
@@ -533,9 +530,9 @@ def test_resolve_pot_prefers_active_when_among_multiple_matches(monkeypatch) -> 
         {"p1": [match], "p2": [match]},
         active=active,
     )
-    host = _Host(pots_service)
-    _common.set_host(host)
-    assert _common.resolve_pot_id(host) == "p2"
+    runtime = _runtime(pots_service)
+    _common.set_cli_runtime(runtime)
+    assert _common.resolve_pot_id(runtime) == "p2"
 
 
 def test_resolve_pot_error_mentions_source_add_when_nothing_resolves(
@@ -543,7 +540,7 @@ def test_resolve_pot_error_mentions_source_add_when_nothing_resolves(
 ) -> None:
     monkeypatch.setattr(_common, "_current_git_remote", lambda cwd: None)
     pots_service = _Pots([_Pot("p1", "shop")], {}, active=None)
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(_runtime(pots_service))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.source_app, ["list"])

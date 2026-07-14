@@ -186,24 +186,24 @@ def test_ingestion_server_accepts_falkordb_lite_backend() -> None:
     assert container.graph_writer is not None
 
 
-def test_host_shell_accepts_falkordb_env(tmp_path, monkeypatch) -> None:
+def test_engine_components_accept_falkordb_env(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "falkordb")
 
-    host = build_engine_components()
+    components = build_engine_components()
 
-    assert host.backend.profile == "falkordb"
+    assert components.backend.profile == "falkordb"
 
 
-def test_host_shell_defaults_to_falkordb_lite(tmp_path, monkeypatch) -> None:
+def test_engine_components_default_to_falkordb_lite(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.delenv("CONTEXT_ENGINE_BACKEND", raising=False)
     monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)
 
-    host = build_engine_components()
+    components = build_engine_components()
 
     assert default_backend_profile() == "falkordb_lite"
-    assert host.backend.profile == "falkordb_lite"
+    assert components.backend.profile == "falkordb_lite"
 
 
 def test_default_backend_ignores_blank_primary_env(monkeypatch) -> None:
@@ -213,14 +213,14 @@ def test_default_backend_ignores_blank_primary_env(monkeypatch) -> None:
     assert default_backend_profile() == "embedded"
 
 
-def test_host_shell_accepts_falkordb_lite_env(tmp_path, monkeypatch) -> None:
+def test_engine_components_accept_falkordb_lite_env(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "falkordb_lite")
     monkeypatch.setenv("FALKORDB_MODE", "server")
 
-    host = build_engine_components()
+    components = build_engine_components()
 
-    assert host.backend.profile == "falkordb_lite"
+    assert components.backend.profile == "falkordb_lite"
 
 
 def test_falkordb_repair_backfills_entity_summaries() -> None:

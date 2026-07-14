@@ -3,7 +3,7 @@
 Every command in this package routes ``CLI -> PotpieRuntime -> service(s) -> ports``.
 This module owns the cross-cutting concerns so the command bodies stay thin:
 
-- one cached ``PotpieRuntime`` per process (``get_host``);
+- one root-owned ``PotpieRuntime`` per process, with an explicit test override;
 - ``--json`` output state + ``emit`` / ``fail`` helpers;
 - the ``contract()`` error boundary that maps domain errors to the documented
   exit codes (0 ok / 1 validation / 2 unavailable / 3 degraded / 4 auth) and the
@@ -24,8 +24,16 @@ import typer
 from potpie.runtime.contracts import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
+    EmptyRequest,
+    GraphStatusRequest,
+    PotInfoRequest,
+    PotUseRequest,
     PotNotFound,
+    RepoDefaultGetRequest,
+    RepoDefaultSetRequest,
+    SourceListRequest,
 )
+from potpie.runtime.async_bridge import run_sync
 from potpie.auth.credentials import CredentialStore
 from potpie.runtime.errors import RuntimeBoundaryError
 
@@ -52,10 +60,8 @@ EXIT_INTERRUPTED = 130
 _state: dict[str, Any] = {
     "json": False,
     "verbose": False,
-    "host": None,
     "store": None,
-    "runtime": None,
-    "engine_view": None,
+    "runtime_override": None,
     "json_error_formatter": None,
 }
 _CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
@@ -102,44 +108,30 @@ def is_verbose() -> bool:
     return bool(_state["verbose"])
 
 
-def get_host():
-    """Return the temporary root-owned product-service shell.
-
-    Engine workflows use :func:`get_engine_view`; product services stay local
-    and never cross daemon RPC.
-    """
-    if _state["host"] is None:
-        from potpie.runtime import build_product_shell
-
-        _state["host"] = build_product_shell()
-    return _state["host"]
-
-
 def get_cli_runtime():
-    """Return the process-wide root runtime for engine-backed commands."""
+    """Return the root runtime or an explicitly injected test runtime."""
 
-    if _state["runtime"] is None:
-        from potpie.runtime import get_runtime
+    override = _state["runtime_override"]
+    if override is not None:
+        return override
+    from potpie.runtime import get_runtime
 
-        _state["runtime"] = get_runtime()
-    return _state["runtime"]
-
-
-def get_engine_view():
-    """Synchronous view used while Typer handlers migrate to async clients."""
-
-    if _state["host"] is not None:
-        return _state["host"]
-    if _state["engine_view"] is None:
-        from potpie.runtime.sync_view import runtime_engine_view
-
-        _state["engine_view"] = runtime_engine_view(get_cli_runtime())
-    return _state["engine_view"]
+    return get_runtime()
 
 
-def set_host(host: Any) -> None:
-    """Inject a host (tests / alternate wiring)."""
-    _state["host"] = host
+def set_cli_runtime(runtime: Any | None) -> None:
+    """Inject a runtime for a test or clear the test override with ``None``."""
+
+    _state["runtime_override"] = runtime
+
+
+def reset_cli_runtime() -> None:
+    """Clear CLI injection and the root process-wide runtime singleton."""
+
+    _state["runtime_override"] = None
+    from potpie.runtime import reset_runtime
+
+    reset_runtime()
 
 
 def get_store() -> CredentialStore:
@@ -157,8 +149,8 @@ def get_store() -> CredentialStore:
     return _state["store"]
 
 
-def set_store(store: CredentialStore) -> None:
-    """Inject a credential store (tests / alternate wiring)."""
+def set_store(store: CredentialStore | None) -> None:
+    """Inject a credential store or clear the test override with ``None``."""
     _state["store"] = store
 
 
@@ -389,7 +381,7 @@ def _cli_metric_attributes(
 
 
 def resolve_pot_scope(
-    host: Any, explicit: str | None = None, *, infer_from_repo: bool = True
+    runtime: Any, explicit: str | None = None, *, infer_from_repo: bool = True
 ) -> tuple[str, str]:
     """Resolve pot id and how it was chosen for CLI scope hints.
 
@@ -402,9 +394,8 @@ def resolve_pot_scope(
     from existing registrations would route the new source to the wrong pot
     (or fail as ambiguous when other pots already track the same repo).
     """
-    pots = host.pots
     if explicit:
-        for pot in pots.list_pots():
+        for pot in _list_pots(runtime):
             if explicit in (pot.pot_id, pot.name):
                 return pot.pot_id, "explicit"
         fail(
@@ -413,11 +404,11 @@ def resolve_pot_scope(
             next_action="run 'potpie pot list'",
         )
     repo_identity = _current_repo_identity() if infer_from_repo else None
-    default_pot = _repo_default_pot_id(host, repo_identity)
+    default_pot = _repo_default_pot_id(runtime, repo_identity)
     if default_pot:
         return default_pot, "repo_default"
-    matches = _pots_matching_current_repo(host) if infer_from_repo else []
-    active = pots.active_pot()
+    matches = _pots_matching_current_repo(runtime) if infer_from_repo else []
+    active = _active_pot(runtime)
     if len(matches) == 1:
         return matches[0][0], "linked_repo"
     if len(matches) > 1:
@@ -439,10 +430,10 @@ def resolve_pot_scope(
 
 
 def resolve_pot_id(
-    host: Any, explicit: str | None = None, *, infer_from_repo: bool = True
+    runtime: Any, explicit: str | None = None, *, infer_from_repo: bool = True
 ) -> str:
     """Resolve ``--pot`` ref → id, else current-repo pot, else active pot."""
-    pot_id, _ = resolve_pot_scope(host, explicit, infer_from_repo=infer_from_repo)
+    pot_id, _ = resolve_pot_scope(runtime, explicit, infer_from_repo=infer_from_repo)
     return pot_id
 
 
@@ -451,16 +442,16 @@ def current_repo_identity_for_cli() -> str | None:
 
 
 def repo_pot_candidates(
-    host: Any, repo: str | None = None, *, include_counts: bool = True
+    runtime: Any, repo: str | None = None, *, include_counts: bool = True
 ) -> dict[str, Any]:
     repo_identity = _repo_identity_from_option(repo)
     matches = (
-        _pots_matching_current_repo(host)
+        _pots_matching_current_repo(runtime)
         if repo in (None, "", ".", "current")
-        else _pots_matching_repo_identity(host, repo_identity)
+        else _pots_matching_repo_identity(runtime, repo_identity)
     )
-    default_pot_id = _repo_default_pot_id(host, repo_identity)
-    active = _safe_call(lambda: host.pots.active_pot(), None)
+    default_pot_id = _repo_default_pot_id(runtime, repo_identity)
+    active = _safe_call(lambda: _active_pot(runtime), None)
     rows: list[dict[str, Any]] = []
     for pot_id, name in matches:
         row = {
@@ -470,10 +461,10 @@ def repo_pot_candidates(
                 active is not None and getattr(active, "pot_id", None) == pot_id
             ),
             "default": bool(default_pot_id == pot_id),
-            "source_count": pot_source_count(host, pot_id),
+            "source_count": pot_source_count(runtime, pot_id),
         }
         if include_counts:
-            row["counts"] = pot_graph_counts(host, pot_id)
+            row["counts"] = pot_graph_counts(runtime, pot_id)
         rows.append(row)
     return {
         "repo": repo_identity,
@@ -482,15 +473,15 @@ def repo_pot_candidates(
     }
 
 
-def repo_effective_pot_info(host: Any, repo: str | None = None) -> dict[str, Any]:
+def repo_effective_pot_info(runtime: Any, repo: str | None = None) -> dict[str, Any]:
     repo_identity = _repo_identity_from_option(repo)
     matches = (
-        _pots_matching_current_repo(host)
+        _pots_matching_current_repo(runtime)
         if repo in (None, "", ".", "current")
-        else _pots_matching_repo_identity(host, repo_identity)
+        else _pots_matching_repo_identity(runtime, repo_identity)
     )
-    default_pot_id = _repo_default_pot_id(host, repo_identity)
-    active = _safe_call(lambda: host.pots.active_pot(), None)
+    default_pot_id = _repo_default_pot_id(runtime, repo_identity)
+    active = _safe_call(lambda: _active_pot(runtime), None)
     active_id = getattr(active, "pot_id", None) if active is not None else None
     match_ids = {pot_id for pot_id, _ in matches}
 
@@ -521,7 +512,7 @@ def repo_effective_pot_info(host: Any, repo: str | None = None) -> dict[str, Any
         "repo": repo_identity,
         "active_pot_id": active_id,
         "default_pot_id": default_pot_id,
-        "effective_pot": _pot_summary(host, effective_id) if effective_id else None,
+        "effective_pot": _pot_summary(runtime, effective_id) if effective_id else None,
         "reason": reason,
         "status": status,
         "candidates": [
@@ -554,13 +545,13 @@ def repo_effective_pot_human(routing: dict[str, Any]) -> str | None:
 
 
 def repo_default_mismatch_warning(
-    host: Any, routing: dict[str, Any], *, selected_pot_id: str
+    runtime: Any, routing: dict[str, Any], *, selected_pot_id: str
 ) -> str | None:
     default_id = routing.get("default_pot_id")
     repo = routing.get("repo")
     if not default_id or default_id == selected_pot_id or not repo:
         return None
-    default = _pot_summary(host, str(default_id))
+    default = _pot_summary(runtime, str(default_id))
     return (
         f"repo {repo} default remains {default.get('name')} ({default_id}); "
         "repo-scoped commands here use that pot. Run "
@@ -569,14 +560,14 @@ def repo_default_mismatch_warning(
     )
 
 
-def pot_scope_info(host: Any, pot_id: str) -> dict[str, Any]:
-    pot = _pot_for_id(host, pot_id)
+def pot_scope_info(runtime: Any, pot_id: str) -> dict[str, Any]:
+    pot = _pot_for_id(runtime, pot_id)
     return {
         "id": pot_id,
         "name": getattr(pot, "name", pot_id) if pot is not None else pot_id,
         "active": bool(getattr(pot, "active", False)) if pot is not None else False,
-        "source_count": pot_source_count(host, pot_id),
-        "counts": pot_graph_counts(host, pot_id),
+        "source_count": pot_source_count(runtime, pot_id),
+        "counts": pot_graph_counts(runtime, pot_id),
     }
 
 
@@ -591,13 +582,13 @@ def pot_scope_resolution_human(resolved_via: str, *, repo: str | None = None) ->
 
 
 def pot_scope_human(
-    host: Any,
+    runtime: Any,
     pot_id: str,
     *,
     resolved_via: str | None = None,
     repo: str | None = None,
 ) -> str:
-    info = pot_scope_info(host, pot_id)
+    info = pot_scope_info(runtime, pot_id)
     counts = info.get("counts") or {}
     claims = counts.get("claims", 0)
     entities = counts.get("entities", 0)
@@ -616,17 +607,17 @@ def _known_claims_count(counts: dict[str, int]) -> int | None:
     return int(counts["claims"])
 
 
-def _pot_claims_count(host: Any, pot_id: str) -> int | None:
-    return _known_claims_count(pot_graph_counts(host, pot_id))
+def _pot_claims_count(runtime: Any, pot_id: str) -> int | None:
+    return _known_claims_count(pot_graph_counts(runtime, pot_id))
 
 
 def empty_pot_warnings(
-    host: Any, pot_id: str, repo: str | None = None
+    runtime: Any, pot_id: str, repo: str | None = None
 ) -> tuple[str, ...]:
-    claims = _pot_claims_count(host, pot_id)
+    claims = _pot_claims_count(runtime, pot_id)
     if claims is None or claims != 0:
         return ()
-    linked = repo_pot_candidates(host, repo)
+    linked = repo_pot_candidates(runtime, repo)
     alternatives = [
         row
         for row in linked.get("candidates", ())
@@ -653,14 +644,14 @@ def empty_pot_warnings(
 
 
 def empty_pot_guidance(
-    host: Any, pot_id: str, repo: str | None = None
+    runtime: Any, pot_id: str, repo: str | None = None
 ) -> tuple[str, ...]:
     """Recovery hints when a pot has no graph claims yet."""
-    warnings = list(empty_pot_warnings(host, pot_id, repo))
-    claims = _pot_claims_count(host, pot_id)
+    warnings = list(empty_pot_warnings(runtime, pot_id, repo))
+    claims = _pot_claims_count(runtime, pot_id)
     if claims is None or claims != 0:
         return tuple(warnings)
-    if pot_source_count(host, pot_id) > 0:
+    if pot_source_count(runtime, pot_id) > 0:
         warnings.append(
             "pot has registered sources but 0 claims; next: run harness-led ingestion "
             "(agent skills + `potpie graph propose/commit`), switch with "
@@ -676,14 +667,14 @@ def empty_pot_guidance(
 
 
 def enrich_with_pot_guidance(
-    host: Any,
+    runtime: Any,
     pot_id: str,
     payload: dict[str, Any],
     *,
     human: str,
     repo: str | None = None,
 ) -> tuple[dict[str, Any], str]:
-    warnings = empty_pot_guidance(host, pot_id, repo)
+    warnings = empty_pot_guidance(runtime, pot_id, repo)
     existing = payload.get("warnings") or []
     existing_warnings = [existing] if isinstance(existing, str) else list(existing)
     combined_warnings = [*existing_warnings, *warnings]
@@ -702,7 +693,7 @@ def enrich_with_pot_guidance(
 
 
 def use_pot_selection(
-    host: Any,
+    runtime: Any,
     ref: str,
     *,
     also_default_for_current_repo: bool = False,
@@ -714,15 +705,21 @@ def use_pot_selection(
         if not repo_key:
             raise ValueError("--also-default-for-current-repo requires a repo")
 
-    pot = host.pots.use_pot(ref=ref)
+    pot = run_sync(lambda: runtime.engine.pots.use(PotUseRequest(ref=ref)))
     repo_default_set = False
     if repo_key:
-        host.pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
+        run_sync(
+            lambda: runtime.engine.pots.set_repo_default(
+                RepoDefaultSetRequest(repo=repo_key, pot_id=pot.pot_id)
+            )
+        )
         repo_default_set = True
 
-    routing = repo_effective_pot_info(host)
+    routing = repo_effective_pot_info(runtime)
     warnings = []
-    warning = repo_default_mismatch_warning(host, routing, selected_pot_id=pot.pot_id)
+    warning = repo_default_mismatch_warning(
+        runtime, routing, selected_pot_id=pot.pot_id
+    )
     if warning:
         warnings.append(warning)
 
@@ -745,7 +742,7 @@ def use_pot_selection(
         payload["origin"] = origin
 
     return enrich_with_pot_guidance(
-        host,
+        runtime,
         pot.pot_id,
         payload,
         human="\n".join(lines),
@@ -753,11 +750,13 @@ def use_pot_selection(
     )
 
 
-def pot_graph_counts(host: Any, pot_id: str) -> dict[str, int]:
-    graph = getattr(host, "graph", None)
-    if graph is None:
-        return {}
-    status = _safe_call(lambda: graph.data_plane_status(pot_id), None)
+def pot_graph_counts(runtime: Any, pot_id: str) -> dict[str, int]:
+    status = _safe_call(
+        lambda: run_sync(
+            lambda: runtime.engine.graph.status(GraphStatusRequest(pot_id=pot_id))
+        ),
+        None,
+    )
     if status is None:
         return {}
     counts = getattr(status, "counts", {}) or {}
@@ -770,8 +769,8 @@ def pot_graph_counts(host: Any, pot_id: str) -> dict[str, int]:
     return out
 
 
-def pot_source_count(host: Any, pot_id: str) -> int:
-    return len(_safe_call(lambda: host.pots.list_sources(pot_id=pot_id), []) or [])
+def pot_source_count(runtime: Any, pot_id: str) -> int:
+    return len(_safe_call(lambda: _list_sources(runtime, pot_id), []) or [])
 
 
 def _repo_identity_from_option(repo: str | None) -> str | None:
@@ -782,10 +781,10 @@ def _repo_identity_from_option(repo: str | None) -> str | None:
     )
 
 
-def _pot_summary(host: Any, pot_id: str | None) -> dict[str, Any] | None:
+def _pot_summary(runtime: Any, pot_id: str | None) -> dict[str, Any] | None:
     if not pot_id:
         return None
-    pot = _pot_for_id(host, pot_id)
+    pot = _pot_for_id(runtime, pot_id)
     return {
         "id": pot_id,
         "name": getattr(pot, "name", pot_id) if pot is not None else pot_id,
@@ -793,7 +792,7 @@ def _pot_summary(host: Any, pot_id: str | None) -> dict[str, Any] | None:
     }
 
 
-def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
+def _pots_matching_current_repo(runtime: Any) -> list[tuple[str, str]]:
     """Return ``(pot_id, name)`` for every pot whose repo source matches cwd.
 
     A pot is the project boundary, not a single repository. This helper only
@@ -811,12 +810,12 @@ def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
     remote = _current_git_remote(cwd)
     matches: list[tuple[str, str]] = []
     try:
-        pots = list(host.pots.list_pots())
+        pots = _list_pots(runtime)
     except Exception:  # noqa: BLE001 - pot resolution should not mask commands
         return []
     for pot in pots:
         try:
-            sources = host.pots.list_sources(pot_id=pot.pot_id)
+            sources = _list_sources(runtime, pot.pot_id)
         except Exception:  # noqa: BLE001
             continue
         for source in sources:
@@ -837,18 +836,18 @@ def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
 
 
 def _pots_matching_repo_identity(
-    host: Any, repo_identity: str | None
+    runtime: Any, repo_identity: str | None
 ) -> list[tuple[str, str]]:
     if not repo_identity:
         return []
     matches: list[tuple[str, str]] = []
     try:
-        pots = list(host.pots.list_pots())
+        pots = _list_pots(runtime)
     except Exception:  # noqa: BLE001
         return []
     for pot in pots:
         try:
-            sources = host.pots.list_sources(pot_id=pot.pot_id)
+            sources = _list_sources(runtime, pot.pot_id)
         except Exception:  # noqa: BLE001
             continue
         for source in sources:
@@ -872,35 +871,56 @@ def _current_repo_identity() -> str | None:
     return _current_git_remote(cwd) or str(cwd)
 
 
-def repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
+def repo_default_pot_id(runtime: Any, repo_identity: str | None) -> str | None:
     """Return the locally persisted default pot id for a repo identity, if valid."""
     if not repo_identity:
         return None
-    getter = getattr(host.pots, "repo_default", None)
-    if not callable(getter):
-        return None
-    pot_id = _safe_call(lambda: getter(repo=repo_identity), None)
+    result = _safe_call(
+        lambda: run_sync(
+            lambda: runtime.engine.pots.repo_default(
+                RepoDefaultGetRequest(repo=repo_identity)
+            )
+        ),
+        None,
+    )
+    pot_id = getattr(result, "pot_id", None)
     if not pot_id:
         return None
     pot_id = str(pot_id)
-    return pot_id if _pot_for_id(host, pot_id) is not None else None
+    return pot_id if _pot_for_id(runtime, pot_id) is not None else None
 
 
-def repo_default_matches(host: Any, repo_key: str | None, pot_id: str) -> bool:
+def repo_default_matches(runtime: Any, repo_key: str | None, pot_id: str) -> bool:
     """True when ``repo_key``'s repo default is set to ``pot_id``."""
-    default_pot = repo_default_pot_id(host, repo_key)
+    default_pot = repo_default_pot_id(runtime, repo_key)
     return bool(default_pot and default_pot == pot_id)
 
 
-def _repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
-    return repo_default_pot_id(host, repo_identity)
+def _repo_default_pot_id(runtime: Any, repo_identity: str | None) -> str | None:
+    return repo_default_pot_id(runtime, repo_identity)
 
 
-def _pot_for_id(host: Any, pot_id: str):
-    for pot in _safe_call(lambda: host.pots.list_pots(), []) or []:
+def _pot_for_id(runtime: Any, pot_id: str):
+    for pot in _safe_call(lambda: _list_pots(runtime), []) or []:
         if getattr(pot, "pot_id", None) == pot_id:
             return pot
     return None
+
+
+def _list_pots(runtime: Any) -> list[Any]:
+    return list(run_sync(lambda: runtime.engine.pots.list(EmptyRequest())).items)
+
+
+def _active_pot(runtime: Any) -> Any | None:
+    return run_sync(lambda: runtime.engine.pots.info(PotInfoRequest()))
+
+
+def _list_sources(runtime: Any, pot_id: str) -> list[Any]:
+    return list(
+        run_sync(
+            lambda: runtime.engine.sources.list(SourceListRequest(pot_id=pot_id))
+        ).items
+    )
 
 
 def _safe_call(fn, default):
@@ -961,9 +981,7 @@ __all__ = [
     "contract",
     "emit",
     "fail",
-    "get_host",
     "get_cli_runtime",
-    "get_engine_view",
     "get_store",
     "current_repo_identity_for_cli",
     "empty_pot_guidance",
@@ -984,7 +1002,8 @@ __all__ = [
     "repo_pot_candidates",
     "resolve_pot_id",
     "resolve_pot_scope",
-    "set_host",
+    "reset_cli_runtime",
+    "set_cli_runtime",
     "set_store",
     "set_json",
     "set_verbose",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from potpie_context_engine import (
     ContextEngine,
@@ -15,6 +15,14 @@ from potpie_context_engine import (
 from potpie_context_engine.contracts import EngineActor
 
 from potpie.runtime.settings import ProductSettings
+
+if TYPE_CHECKING:
+    from potpie.auth.services import AccountAuthService, IntegrationAuthService
+    from potpie.config import ProductConfigService
+    from potpie.daemon.lifecycle import Daemon
+    from potpie.install import LocalInstaller
+    from potpie.setup import ProductSetupService, ProductStatusService
+    from potpie.skills import DefaultSkillManager
 
 
 @dataclass(slots=True)
@@ -47,15 +55,20 @@ class LocalEngineClient:
 class PotpieRuntime:
     settings: ProductSettings
     engine: EngineClient
-    auth: Any = None
-    integrations: Any = None
-    config: Any = None
-    skills: Any = None
-    installer: Any = None
-    setup: Any = None
-    status: Any = None
-    daemon: Any = None
-    telemetry: Any = None
+    auth: AccountAuthService
+    integrations: IntegrationAuthService
+    config: ProductConfigService
+    skills: DefaultSkillManager
+    installer: LocalInstaller
+    daemon: Daemon
+    setup: ProductSetupService = field(init=False)
+    status: ProductStatusService = field(init=False)
+
+    def __post_init__(self) -> None:
+        from potpie.setup import ProductSetupService, ProductStatusService
+
+        self.setup = ProductSetupService(self)
+        self.status = ProductStatusService(self)
 
     async def aclose(self) -> None:
         await self.engine.aclose()
@@ -92,7 +105,6 @@ def create_runtime(
     from potpie.install import LocalInstaller
     from potpie.skills import create_skill_service
     from potpie.daemon.lifecycle import Daemon
-    from potpie.setup import ProductSetupService, ProductStatusService
 
     credentials = build_credential_store()
     runtime = PotpieRuntime(
@@ -108,8 +120,6 @@ def create_runtime(
             in_process=settings.runtime_mode == "in-process",
         ),
     )
-    runtime.setup = ProductSetupService(runtime)
-    runtime.status = ProductStatusService(runtime)
     return runtime
 
 

@@ -569,3 +569,22 @@ The public backend-selection group was renamed from `potpie graph backend` to
 `backend` configuration key, and existing backend/profile result fields remain
 unchanged. The old `graph backend` path is not registered as a compatibility
 alias.
+
+## Post-migration HostShell removal — 2026-07-13
+
+The remaining root `ProductShell` and synchronous `RuntimeEngineView`
+compatibility layers have been removed. Synchronous product surfaces now obtain
+the root `PotpieRuntime`, construct public request DTOs at the command boundary,
+and invoke typed `runtime.engine.*` clients through the internal `run_sync`
+bridge. Product capabilities remain typed sibling services on the runtime.
+
+The experimental `python -m potpie.daemon.runtime` entrypoint was removed; the
+non-executable service-management primitives under `potpie.daemon.runtime`
+remain for focused transport tests. The sole product daemon is
+`potpie.daemon.main`.
+
+Worktree verification passed with 1,119 root tests and 1,050 engine tests, plus
+root and engine mypy, Ruff, artifact/isolated-wheel imports, `git diff --check`,
+and zero-result shell/view or CLI engine-private-import scans. Commit-scoped
+2.0.0 verification remains pending until these preserved worktree changes have
+a commit SHA.

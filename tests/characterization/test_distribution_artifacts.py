@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.boundary.isolated_import import run_isolated_python
+
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE = ROOT / "potpie" / "context-engine"
 ENGINE_EXTRAS = {
@@ -83,6 +85,8 @@ def test_built_distributions_have_exact_package_ownership(tmp_path: Path) -> Non
         assert any(name.startswith("potpie/mcp/") for name in names)
         assert any(name.startswith("potpie/skills/resources/") for name in names)
         assert not any(name.startswith("potpie_context_engine/") for name in names)
+        assert "potpie/runtime/sync_view.py" not in names
+        assert "potpie/daemon/runtime/__main__.py" not in names
         requirements = metadata.get_all("Requires-Dist") or []
         assert "potpie-context-engine[embedded]==0.2.0" in requirements
         assert not any("[all]" in requirement for requirement in requirements)
@@ -120,3 +124,16 @@ def test_built_distributions_have_exact_package_ownership(tmp_path: Path) -> Non
             name.endswith("distribution_defaults_hook.py") for name in engine_names
         )
         assert not any(name.endswith("build_config_values.py") for name in engine_names)
+
+    probe = run_isolated_python(
+        "import importlib.util; "
+        "import potpie.runtime as runtime; "
+        "from potpie.runtime import PotpieRuntime; "
+        "assert not hasattr(runtime, 'ProductShell'); "
+        "assert not hasattr(runtime, 'build_product_shell'); "
+        "assert importlib.util.find_spec('potpie.runtime.sync_view') is None; "
+        "print(PotpieRuntime.__name__)",
+        import_roots=(root_wheel, engine_wheel),
+        cwd=tmp_path,
+    )
+    assert probe.stdout.strip() == "PotpieRuntime"

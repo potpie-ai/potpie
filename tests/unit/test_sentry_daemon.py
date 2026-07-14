@@ -12,6 +12,7 @@ from potpie.cli.telemetry.context import current_telemetry_context
 from potpie.daemon import main as daemon_main
 from potpie.daemon.rpc import dispatch_rpc
 from potpie.runtime.contracts import CapabilityNotImplemented
+from tests.runtime_fakes import runtime_from_services
 
 
 class _CrashingDaemon:
@@ -28,10 +29,6 @@ class _CrashingDaemon:
         )
 
 
-class _FakeHost:
-    daemon = _CrashingDaemon()
-
-
 def test_daemon_unexpected_failure_is_captured_with_session_id(
     monkeypatch,
     tmp_path,
@@ -44,7 +41,7 @@ def test_daemon_unexpected_failure_is_captured_with_session_id(
             (error_code, error_kind, current_telemetry_context().daemon_session_id)
         ),
     )
-    _common.set_host(_FakeHost())
+    _common.set_cli_runtime(runtime_from_services(daemon=_CrashingDaemon()))
 
     result = CliRunner().invoke(host_cli.app, ["--json", "daemon", "status"])
 
@@ -70,7 +67,7 @@ def test_daemon_expected_not_implemented_is_not_captured(
         "potpie.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
         lambda exc, *, error_code, error_kind: captured.append(exc),
     )
-    _common.set_host(_FakeHost())
+    _common.set_cli_runtime(runtime_from_services(daemon=_CrashingDaemon()))
 
     result = CliRunner().invoke(host_cli.app, ["--json", "daemon", "stop"])
 

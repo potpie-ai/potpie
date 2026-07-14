@@ -8,7 +8,7 @@ from typing import Any
 from potpie_context_engine.contracts import EngineStatusRequest
 
 from potpie.install.status import collect_cli_install_status
-from potpie.runtime.sync_view import await_engine
+from potpie.runtime.async_bridge import run_sync
 from potpie.setup.contracts import ProductStatusResult
 
 
@@ -29,8 +29,8 @@ class ProductStatusService:
             issues.append("The Potpie daemon is not reachable.")
         else:
             try:
-                engine_report = await_engine(
-                    self.runtime.engine.context.status(
+                engine_report = run_sync(
+                    lambda: self.runtime.engine.context.status(
                         EngineStatusRequest(pot_id=pot_id)
                     )
                 )

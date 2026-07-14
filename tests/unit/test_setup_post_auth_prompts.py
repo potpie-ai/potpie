@@ -12,8 +12,8 @@ from tests._auth_fakes import InMemoryCredentialStore
 
 
 @pytest.fixture(autouse=True)
-def _reset_store(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(_common._state, "store", None)
+def _reset_store() -> None:
+    _common.set_store(None)
 
 
 def test_maybe_prompt_github_login_runs_selected_integrations(

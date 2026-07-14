@@ -16,7 +16,7 @@ from potpie_context_engine.contracts import (
     SourceListRequest,
 )
 
-from potpie.runtime.sync_view import await_engine
+from potpie.runtime.async_bridge import run_sync
 from potpie.setup.contracts import (
     DONE,
     FAILED,
@@ -175,13 +175,15 @@ class ProductSetupService:
         return StepResult("daemon", DONE, f"daemon started (pid={result.get('pid')})")
 
     def _provision(self, plan: SetupPlan) -> StepResult:
-        inspection = await_engine(
-            self.runtime.engine.provision.inspect(
+        inspection = run_sync(
+            lambda: self.runtime.engine.provision.inspect(
                 ProvisionInspectRequest(pot_id=plan.pot)
             )
         )
-        report = await_engine(
-            self.runtime.engine.provision.apply(ProvisionApplyRequest(pot_id=plan.pot))
+        report = run_sync(
+            lambda: self.runtime.engine.provision.apply(
+                ProvisionApplyRequest(pot_id=plan.pot)
+            )
         )
         state = DONE if report.ok else FAILED
         details = ", ".join(f"{step.name}={step.state}" for step in report.steps)
@@ -193,11 +195,11 @@ class ProductSetupService:
         )
 
     def _pot(self, plan: SetupPlan) -> StepResult:
-        active = await_engine(self.runtime.engine.pots.info(PotInfoRequest()))
+        active = run_sync(lambda: self.runtime.engine.pots.info(PotInfoRequest()))
         if active is not None:
             return StepResult("pot.default", SKIPPED, f"active pot '{active.name}'")
-        created = await_engine(
-            self.runtime.engine.pots.create(
+        created = run_sync(
+            lambda: self.runtime.engine.pots.create(
                 PotCreateRequest(name=plan.pot, repo=plan.repo, use=True)
             )
         )
@@ -206,19 +208,21 @@ class ProductSetupService:
     def _source(self, plan: SetupPlan) -> StepResult:
         if not plan.repo or plan.defer_default_pot:
             return StepResult("source", SKIPPED, "repository registration deferred")
-        active = await_engine(self.runtime.engine.pots.info(PotInfoRequest()))
+        active = run_sync(lambda: self.runtime.engine.pots.info(PotInfoRequest()))
         if active is None:
             return StepResult("source", SKIPPED, "no active pot")
-        sources = await_engine(
-            self.runtime.engine.sources.list(SourceListRequest(pot_id=active.pot_id))
+        sources = run_sync(
+            lambda: self.runtime.engine.sources.list(
+                SourceListRequest(pot_id=active.pot_id)
+            )
         )
         location = str(Path(plan.repo).expanduser().resolve())
         if any(
             item.kind == "repo" and item.location == location for item in sources.items
         ):
             return StepResult("source", SKIPPED, "repository already registered")
-        await_engine(
-            self.runtime.engine.sources.add(
+        run_sync(
+            lambda: self.runtime.engine.sources.add(
                 SourceAddRequest(
                     pot_id=active.pot_id,
                     kind="repo",

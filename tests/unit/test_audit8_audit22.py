@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from potpie.cli.commands import _common, pots
+from tests.runtime_fakes import runtime_from_services
 
 pytestmark = pytest.mark.unit
 
@@ -59,16 +60,11 @@ class _Pots:
         return dict(self.repo_defaults)
 
 
-class _Host:
-    def __init__(self, pots_service) -> None:
-        self.pots = pots_service
-
-
 @pytest.fixture(autouse=True)
 def _reset_state():
     yield
     _common.set_json(False)
-    _common.set_host(None)
+    _common.set_cli_runtime(None)
 
 
 # ============================================================================
@@ -88,7 +84,7 @@ def _setup_default_show(monkeypatch, *, default_pot_id: str | None = None):
     )
     if default_pot_id:
         pots_service.repo_defaults["github.com/acme/shop"] = default_pot_id
-    _common.set_host(_Host(pots_service))
+    _common.set_cli_runtime(runtime_from_services(pots=pots_service))
     _common.set_json(True)
     return pots_service
 

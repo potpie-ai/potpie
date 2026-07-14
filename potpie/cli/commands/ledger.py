@@ -1,4 +1,4 @@
-"""Event Ledger commands → ``PotpieRuntime.ledger`` (LedgerFacade).
+"""Event Ledger commands routed through ``PotpieRuntime.engine.ledger``.
 
 The ledger is a separate source-event service. ``ledger query`` and
 ``ledger pull`` inspect event history only; graph updates are intentionally left
@@ -15,9 +15,15 @@ from potpie.cli.commands._common import (
     contract,
     emit,
     fail,
-    get_engine_view,
-    get_host,
+    get_cli_runtime,
     resolve_pot_id,
+)
+from potpie.runtime.async_bridge import run_sync
+from potpie.runtime.contracts import (
+    LedgerPullRequest,
+    LedgerQueryRequest,
+    LedgerSourcesRequest,
+    LedgerStatusRequest,
 )
 
 ledger_app = typer.Typer(help="Event Ledger binding + query/pull/reconcile.")
@@ -45,7 +51,8 @@ def _parse_instant(value: str | None) -> datetime | None:
 @ledger_app.command("status")
 def ledger_status() -> None:
     with contract():
-        health = get_engine_view().ledger.status()
+        runtime = get_cli_runtime()
+        health = run_sync(lambda: runtime.engine.ledger.status(LedgerStatusRequest()))
         emit(
             {
                 "available": health.available,
@@ -60,9 +67,15 @@ def ledger_status() -> None:
 @ledger_app.command("sources")
 def ledger_sources(pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
-        host = get_engine_view()
-        pot_id = resolve_pot_id(host, pot)
-        sources = host.ledger.sources(pot_id=pot_id)
+        runtime = get_cli_runtime()
+        pot_id = resolve_pot_id(runtime, pot)
+        sources = list(
+            run_sync(
+                lambda: runtime.engine.ledger.sources(
+                    LedgerSourcesRequest(pot_id=pot_id)
+                )
+            ).items
+        )
         emit(
             {"sources": [{"id": s.source_id, "provider": s.provider} for s in sources]},
             human="\n".join(f"  {s.provider}: {s.source_id}" for s in sources)
@@ -81,15 +94,19 @@ def ledger_query(
 ) -> None:
     """Inspect ledger event history (read-only; does not advance the cursor)."""
     with contract():
-        host = get_engine_view()
-        pot_id = resolve_pot_id(host, pot)
-        page = host.ledger.query(
-            pot_id=pot_id,
-            source_id=source,
-            kind=type_,
-            since=_parse_instant(since),
-            until=_parse_instant(until),
-            limit=limit,
+        runtime = get_cli_runtime()
+        pot_id = resolve_pot_id(runtime, pot)
+        page = run_sync(
+            lambda: runtime.engine.ledger.query(
+                LedgerQueryRequest(
+                    pot_id=pot_id,
+                    source_id=source,
+                    kind=type_,
+                    since=_parse_instant(since),
+                    until=_parse_instant(until),
+                    limit=limit,
+                )
+            )
         )
         emit(
             {
@@ -132,7 +149,7 @@ def ledger_use(
                 message="self-hosted ledger requires a URL",
                 next_action="run 'potpie ledger use self-hosted <url>'",
             )
-        config = get_host().config
+        config = get_cli_runtime().config
         config.set("ledger.binding", normalized)
         if org:
             config.set("ledger.org", org)
@@ -158,7 +175,7 @@ def ledger_use(
 def ledger_disconnect() -> None:
     """Clear the Event Ledger binding."""
     with contract():
-        get_host().config.set("ledger.binding", "none")
+        get_cli_runtime().config.set("ledger.binding", "none")
         emit({"binding": "none", "persisted": True}, human="ledger disconnected")
 
 
@@ -171,9 +188,13 @@ def ledger_pull(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with contract():
-        host = get_engine_view()
-        pot_id = resolve_pot_id(host, pot)
-        page = host.ledger.pull(pot_id=pot_id, source_id=source)
+        runtime = get_cli_runtime()
+        pot_id = resolve_pot_id(runtime, pot)
+        page = run_sync(
+            lambda: runtime.engine.ledger.pull(
+                LedgerPullRequest(pot_id=pot_id, source_id=source)
+            )
+        )
         emit(
             {
                 "pulled": len(page.events),

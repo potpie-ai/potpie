@@ -11,7 +11,7 @@ from potpie.cli.commands._common import (
     contract,
     emit,
     fail,
-    get_host,
+    get_cli_runtime,
     is_json,
 )
 from potpie.daemon.process.launcher import DaemonStartError
@@ -22,7 +22,7 @@ daemon_app.add_typer(service_app, name="service")
 
 
 def _detached_daemon() -> Daemon:
-    daemon = get_host().daemon
+    daemon = get_cli_runtime().daemon
     if not daemon.in_process:
         return daemon
     return Daemon(home=daemon.home, in_process=False)

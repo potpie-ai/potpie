@@ -14,6 +14,7 @@ from potpie_context_engine.domain.ports.services.pot_management import (
     PotInfo,
     SourceInfo,
 )
+from tests.runtime_fakes import runtime_from_services
 
 pytestmark = pytest.mark.unit
 
@@ -22,7 +23,7 @@ pytestmark = pytest.mark.unit
 def _reset_cli_state() -> None:
     yield
     _common.set_json(False)
-    _common.set_host(None)
+    _common.set_cli_runtime(None)
 
 
 @dataclass
@@ -80,17 +81,12 @@ class _Pots:
         self.repo_defaults[repo] = pot_id
 
 
-@dataclass
-class _Host:
-    pots: _Pots
-
-
 def test_pot_create_repo_dot_uses_source_add_normalization(monkeypatch) -> None:
     monkeypatch.setattr(
         repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     fake_pots = _Pots()
-    _common.set_host(_Host(pots=fake_pots))
+    _common.set_cli_runtime(runtime_from_services(pots=fake_pots))
     _common.set_json(True)
 
     result = CliRunner().invoke(
@@ -123,7 +119,7 @@ def test_pot_create_repo_is_idempotent_when_pot_and_source_exist(monkeypatch) ->
         repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     fake_pots = _Pots()
-    _common.set_host(_Host(pots=fake_pots))
+    _common.set_cli_runtime(runtime_from_services(pots=fake_pots))
     _common.set_json(True)
     runner = CliRunner()
 
@@ -151,13 +147,13 @@ def test_register_repo_source_skips_duplicate_matching_identity(monkeypatch) -> 
         repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     fake_pots = _Pots()
-    host = _Host(pots=fake_pots)
+    runtime = runtime_from_services(pots=fake_pots)
 
     first = pots.register_repo_source(
-        host, pot_id="pot-new", location="github.com/acme/shop"
+        runtime, pot_id="pot-new", location="github.com/acme/shop"
     )
     second = pots.register_repo_source(
-        host, pot_id="pot-new", location=".", make_default=False
+        runtime, pot_id="pot-new", location=".", make_default=False
     )
 
     assert first["source_id"] == second["source_id"]
@@ -170,7 +166,7 @@ def test_pot_create_repo_no_default_skips_repo_default(monkeypatch) -> None:
         repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     fake_pots = _Pots()
-    _common.set_host(_Host(pots=fake_pots))
+    _common.set_cli_runtime(runtime_from_services(pots=fake_pots))
     _common.set_json(True)
 
     result = CliRunner().invoke(

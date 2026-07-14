@@ -1,4 +1,4 @@
-"""Pot + source commands → ``PotpieRuntime.pots`` (PotManagementService)."""
+"""Pot + source commands routed through ``PotpieRuntime.engine`` clients."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from potpie.cli.commands._common import (
     enrich_with_pot_guidance,
     empty_pot_warnings,
     fail,
-    get_engine_view as get_host,
+    get_cli_runtime,
     pot_graph_counts,
     pot_scope_info,
     pot_scope_resolution_human,
@@ -32,7 +32,22 @@ from potpie.cli.telemetry.onboarding_events import (
     sanitized_failure_kind,
 )
 from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
-from potpie.runtime.contracts import CapabilityNotImplemented
+from potpie.runtime.async_bridge import run_sync
+from potpie.runtime.contracts import (
+    CapabilityNotImplemented,
+    EmptyRequest,
+    PotArchiveRequest,
+    PotCreateRequest,
+    PotInfoRequest,
+    PotRenameRequest,
+    PotResetRequest,
+    RepoDefaultClearRequest,
+    RepoDefaultSetRequest,
+    SourceAddRequest,
+    SourceListRequest,
+    SourceRemoveRequest,
+    SourceStatusRequest,
+)
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
 source_app = typer.Typer(
@@ -54,11 +69,12 @@ def pot_list(
         # and flags managed as pending so it never crashes.
         if managed and not all_:
             raise CapabilityNotImplemented(
-                "host.pots.list_managed",
+                "engine.pots.list_managed",
                 detail="managed pot listing is not implemented",
                 recommended_next_action="run 'potpie login'; managed routing lands in HU3",
             )
-        pots = get_host().pots.list_pots()
+        runtime = get_cli_runtime()
+        pots = list(run_sync(lambda: runtime.engine.pots.list(EmptyRequest())).items)
         payload: dict[str, object] = {
             "pots": [
                 {"id": p.pot_id, "name": p.name, "active": p.active, "origin": "local"}
@@ -76,9 +92,9 @@ def pot_list(
 @pot_app.command("info")
 def pot_info() -> None:
     with contract():
-        host = get_host()
-        active = host.pots.active_pot()
-        routing = repo_effective_pot_info(host)
+        runtime = get_cli_runtime()
+        active = run_sync(lambda: runtime.engine.pots.info(PotInfoRequest()))
+        routing = repo_effective_pot_info(runtime)
         active_payload = (
             {"id": active.pot_id, "name": active.name} if active is not None else None
         )
@@ -108,17 +124,16 @@ def _repo_key_from_option(repo: str) -> str:
 
 
 def _matching_repo_source(
-    host: Any,
+    runtime: Any,
     *,
     pot_id: str,
     resolved_location: str,
     repo_key: str | None,
 ) -> Any | None:
-    list_sources = getattr(host.pots, "list_sources", None)
-    if not callable(list_sources):
-        return None
     try:
-        sources = list_sources(pot_id=pot_id)
+        sources = run_sync(
+            lambda: runtime.engine.sources.list(SourceListRequest(pot_id=pot_id))
+        ).items
     except Exception:  # noqa: BLE001 - duplicate detection must not block registration
         return None
     for source in sources or []:
@@ -138,7 +153,7 @@ def _matching_repo_source(
 
 
 def register_repo_source(
-    host: Any,
+    runtime: Any,
     *,
     pot_id: str,
     location: str,
@@ -154,17 +169,8 @@ def register_repo_source(
     resolved_location = resolve_repo_location(location)
     repo_key = repo_identity_key(resolved_location)
     repo_default_set = False
-    repo_default_setter = None
-    if make_default:
-        repo_default_setter = getattr(host.pots, "set_repo_default", None)
-        if not callable(repo_default_setter):
-            fail(
-                code="repo_default_unavailable",
-                message="This host does not support repo default bindings.",
-                next_action="upgrade the local context-engine host",
-            )
     existing = _matching_repo_source(
-        host,
+        runtime,
         pot_id=pot_id,
         resolved_location=resolved_location,
         repo_key=repo_key,
@@ -172,11 +178,15 @@ def register_repo_source(
     if existing is not None:
         src = existing
     else:
-        src = host.pots.add_source(
-            pot_id=pot_id,
-            kind="repo",
-            location=resolved_location,
-            name=name,
+        src = run_sync(
+            lambda: runtime.engine.sources.add(
+                SourceAddRequest(
+                    pot_id=pot_id,
+                    kind="repo",
+                    location=resolved_location,
+                    name=name,
+                )
+            )
         )
     if make_default:
         if not repo_key:
@@ -185,7 +195,18 @@ def register_repo_source(
                 message="Could not resolve the repository identity.",
                 next_action="pass a repo location such as '<owner>/<repo>'",
             )
-        repo_default_setter(repo=repo_key, pot_id=pot_id)
+        try:
+            run_sync(
+                lambda: runtime.engine.pots.set_repo_default(
+                    RepoDefaultSetRequest(repo=repo_key, pot_id=pot_id)
+                )
+            )
+        except CapabilityNotImplemented:
+            fail(
+                code="repo_default_unavailable",
+                message="This runtime does not support repo default bindings.",
+                next_action="upgrade the local context-engine runtime",
+            )
         repo_default_set = True
     return {
         "source_id": src.source_id,
@@ -215,8 +236,10 @@ def pot_create(
     ),
 ) -> None:
     with contract():
-        host = get_host()
-        pot = host.pots.create_pot(name=name, use=use)
+        runtime = get_cli_runtime()
+        pot = run_sync(
+            lambda: runtime.engine.pots.create(PotCreateRequest(name=name, use=use))
+        )
         payload: dict[str, object] = {
             "id": pot.pot_id,
             "name": pot.name,
@@ -229,7 +252,7 @@ def pot_create(
         guidance_repo: str | None = repo
         if repo is not None:
             source = register_repo_source(
-                host,
+                runtime,
                 pot_id=pot.pot_id,
                 location=repo,
                 make_default=not no_default,
@@ -247,7 +270,7 @@ def pot_create(
                 human = f"{human}\nset repo default -> {pot.pot_id}"
             human = f"{human}\nno ingestion or scan started"
         payload, human = enrich_with_pot_guidance(
-            host,
+            runtime,
             pot.pot_id,
             payload,
             human=human,
@@ -266,9 +289,9 @@ def pot_use(
     ),
 ) -> None:
     with contract():
-        host = get_host()
+        runtime = get_cli_runtime()
         payload, human = use_pot_selection(
-            host,
+            runtime,
             ref,
             also_default_for_current_repo=also_default_for_current_repo,
         )
@@ -286,8 +309,8 @@ def pot_linked(
 ) -> None:
     """Show pots linked to a repo source and the local default, if any."""
     with contract():
-        host = get_host()
-        linked = repo_pot_candidates(host, repo, include_counts=not summary)
+        runtime = get_cli_runtime()
+        linked = repo_pot_candidates(runtime, repo, include_counts=not summary)
         linked["counts_included"] = not summary
         candidates = list(linked.get("candidates", ()))
         repo_key = linked.get("repo")
@@ -350,12 +373,16 @@ def pot_default(
 ) -> None:
     """Show, set, or clear the repo-local default pot."""
     with contract():
-        host = get_host()
+        runtime = get_cli_runtime()
         repo_key = _repo_key_from_option(repo)
         if clear:
             if ref is not None:
                 raise ValueError("REF cannot be combined with --clear")
-            cleared = host.pots.clear_repo_default(repo=repo_key)
+            cleared = run_sync(
+                lambda: runtime.engine.pots.clear_repo_default(
+                    RepoDefaultClearRequest(repo=repo_key)
+                )
+            ).cleared
             emit(
                 {"repo": repo_key, "cleared": cleared},
                 human=(
@@ -366,16 +393,20 @@ def pot_default(
             )
             return
         if ref is not None:
-            pot_id = resolve_pot_id(host, ref, infer_from_repo=False)
-            host.pots.set_repo_default(repo=repo_key, pot_id=pot_id)
-            info = pot_scope_info(host, pot_id)
+            pot_id = resolve_pot_id(runtime, ref, infer_from_repo=False)
+            run_sync(
+                lambda: runtime.engine.pots.set_repo_default(
+                    RepoDefaultSetRequest(repo=repo_key, pot_id=pot_id)
+                )
+            )
+            info = pot_scope_info(runtime, pot_id)
             emit(
                 {"repo": repo_key, "default_pot": info},
                 human=f"repo {repo_key} default → {info['name']} ({pot_id})",
             )
             return
 
-        linked = repo_pot_candidates(host, repo)
+        linked = repo_pot_candidates(runtime, repo)
         default_id = linked.get("default_pot_id")
         linked_repo_key = linked.get("repo")
         payload: dict = {
@@ -392,7 +423,7 @@ def pot_default(
                 human=f"repo {linked_repo_key or '(unknown)'} default: (unset)",
             )
             return
-        info = pot_scope_info(host, default_id)
+        info = pot_scope_info(runtime, default_id)
         payload["default_pot"] = info
         if not with_candidates:
             payload["hint"] = "run `potpie pot linked` to see all candidates"
@@ -405,7 +436,12 @@ def pot_default(
 @pot_app.command("rename")
 def pot_rename(ref: str, new_name: str) -> None:
     with contract():
-        pot = get_host().pots.rename_pot(ref=ref, new_name=new_name)
+        runtime = get_cli_runtime()
+        pot = run_sync(
+            lambda: runtime.engine.pots.rename(
+                PotRenameRequest(ref=ref, new_name=new_name)
+            )
+        )
         emit({"id": pot.pot_id, "name": pot.name}, human=f"renamed → {pot.name}")
 
 
@@ -415,9 +451,13 @@ def pot_reset(
     confirm: bool = typer.Option(False, "--confirm"),
 ) -> None:
     with contract():
-        host = get_host()
-        target = ref or resolve_pot_id(host)
-        pot = host.pots.reset_pot(ref=target, confirm=confirm)
+        runtime = get_cli_runtime()
+        target = ref or resolve_pot_id(runtime)
+        pot = run_sync(
+            lambda: runtime.engine.pots.reset(
+                PotResetRequest(ref=target, confirm=confirm)
+            )
+        )
         emit(
             {"id": pot.pot_id, "reset": True},
             human=f"reset graph state for '{pot.name}'",
@@ -427,7 +467,8 @@ def pot_reset(
 @pot_app.command("archive")
 def pot_archive(ref: str) -> None:
     with contract():
-        pot = get_host().pots.archive_pot(ref=ref)
+        runtime = get_cli_runtime()
+        pot = run_sync(lambda: runtime.engine.pots.archive(PotArchiveRequest(ref=ref)))
         emit({"id": pot.pot_id, "archived": True}, human=f"archived '{pot.name}'")
 
 
@@ -450,12 +491,12 @@ def source_add(
 ) -> None:
     """Register source metadata only; no ingestion or repository scan is started."""
     with contract():
-        host = get_host()
+        runtime = get_cli_runtime()
         source_kind = kind.strip()
         is_repo = source_kind.lower() == "repo"
         # Registration establishes the repo→pot mapping, so the target is the
         # explicit/active pot — never inferred from existing registrations.
-        pot_id = resolve_pot_id(host, pot, infer_from_repo=False)
+        pot_id = resolve_pot_id(runtime, pot, infer_from_repo=False)
         started_ms = now_ms()
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_started",
@@ -465,18 +506,22 @@ def source_add(
         try:
             if is_repo:
                 payload = register_repo_source(
-                    host,
+                    runtime,
                     pot_id=pot_id,
                     location=location,
                     name=name,
                     make_default=make_default,
                 )
             else:
-                src = host.pots.add_source(
-                    pot_id=pot_id,
-                    kind=source_kind,
-                    location=location,
-                    name=name,
+                src = run_sync(
+                    lambda: runtime.engine.sources.add(
+                        SourceAddRequest(
+                            pot_id=pot_id,
+                            kind=source_kind,
+                            location=location,
+                            name=name,
+                        )
+                    )
                 )
                 payload = {
                     "source_id": src.source_id,
@@ -510,7 +555,7 @@ def source_add(
         resolved_location = payload.get("location", location)
         repo_default_set = bool(payload.get("repo_default_set"))
         payload, human = enrich_with_pot_guidance(
-            host,
+            runtime,
             pot_id,
             dict(payload),
             human=(
@@ -527,10 +572,14 @@ def source_add(
 @source_app.command("list")
 def source_list(pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
-        host = get_host()
-        pot_id, resolved_via = resolve_pot_scope(host, pot)
-        sources = host.pots.list_sources(pot_id=pot_id)
-        pot_info = pot_scope_info(host, pot_id)
+        runtime = get_cli_runtime()
+        pot_id, resolved_via = resolve_pot_scope(runtime, pot)
+        sources = list(
+            run_sync(
+                lambda: runtime.engine.sources.list(SourceListRequest(pot_id=pot_id))
+            ).items
+        )
+        pot_info = pot_scope_info(runtime, pot_id)
         repo = (
             current_repo_identity_for_cli()
             if resolved_via in {"repo_default", "linked_repo"}
@@ -563,7 +612,7 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
             else f"{header}\n(no sources)"
         )
         payload, human = enrich_with_pot_guidance(
-            host,
+            runtime,
             pot_id,
             {
                 "pot_id": pot_id,
@@ -587,14 +636,14 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
         emit(payload, human=human)
 
 
-def _enrich_source(host, src, pot_id: str) -> dict:
+def _enrich_source(runtime, src, pot_id: str) -> dict:
     """Build the rich source row used by both per-pot summary and single-source status."""
     location = getattr(src, "location", None)
     kind = getattr(src, "kind", "unknown")
     repo_default = False
     if kind == "repo" and location:
         repo_key = repo_identity_key(location)
-        repo_default = repo_default_matches(host, repo_key, pot_id)
+        repo_default = repo_default_matches(runtime, repo_key, pot_id)
     return {
         "id": src.source_id,
         "kind": kind,
@@ -614,17 +663,23 @@ def source_status(
 ) -> None:
     """Show source status for the pot (all sources) or a single source by ID."""
     with contract():
-        host = get_host()
-        pot_id = resolve_pot_id(host, pot)
+        runtime = get_cli_runtime()
+        pot_id = resolve_pot_id(runtime, pot)
 
         if source_id is None:
             # Per-pot summary: all sources with enriched fields
-            sources = host.pots.list_sources(pot_id=pot_id)
-            pot_info = pot_scope_info(host, pot_id)
-            counts = pot_graph_counts(host, pot_id)
+            sources = list(
+                run_sync(
+                    lambda: runtime.engine.sources.list(
+                        SourceListRequest(pot_id=pot_id)
+                    )
+                ).items
+            )
+            pot_info = pot_scope_info(runtime, pot_id)
+            counts = pot_graph_counts(runtime, pot_id)
             claim_count = counts.get("claims", 0)
 
-            source_rows = [_enrich_source(host, s, pot_id) for s in sources]
+            source_rows = [_enrich_source(runtime, s, pot_id) for s in sources]
 
             recommended = None
             if not sources:
@@ -633,7 +688,7 @@ def source_status(
                     "Run `potpie source add repo .` to register a repository."
                 )
             elif claim_count == 0:
-                warnings = empty_pot_warnings(host, pot_id)
+                warnings = empty_pot_warnings(runtime, pot_id)
                 recommended = (
                     warnings[0]
                     if warnings
@@ -683,8 +738,12 @@ def source_status(
             )
         else:
             # Single-source mode: same enriched shape
-            src = host.pots.source_status(pot_id=pot_id, source_id=source_id)
-            row = _enrich_source(host, src, pot_id)
+            src = run_sync(
+                lambda: runtime.engine.sources.status(
+                    SourceStatusRequest(pot_id=pot_id, source_id=source_id)
+                )
+            )
+            row = _enrich_source(runtime, src, pot_id)
             emit(
                 row,
                 human=(
@@ -698,9 +757,13 @@ def source_status(
 @source_app.command("remove")
 def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
-        host = get_host()
-        pot_id = resolve_pot_id(host, pot)
-        host.pots.remove_source(pot_id=pot_id, source_id=source_id)
+        runtime = get_cli_runtime()
+        pot_id = resolve_pot_id(runtime, pot)
+        run_sync(
+            lambda: runtime.engine.sources.remove(
+                SourceRemoveRequest(pot_id=pot_id, source_id=source_id)
+            )
+        )
         emit({"removed": source_id}, human=f"removed source {source_id}")
 
 

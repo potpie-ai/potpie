@@ -10,17 +10,17 @@ from potpie.cli.ui import interactive_prompts, setup_ux
 
 
 @pytest.fixture()
-def host(root_test_host):
+def runtime(root_test_runtime):
     from potpie.cli.commands import _common
 
-    _common.set_host(root_test_host)
-    return root_test_host
+    _common.set_cli_runtime(root_test_runtime)
+    return root_test_runtime
 
 
 def test_maybe_prompt_first_pot_creates_and_registers_repo(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    host,
+    runtime,
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -37,8 +37,13 @@ def test_maybe_prompt_first_pot_creates_and_registers_repo(
 
     setup_ux._maybe_prompt_first_pot(repo=repo, default_pot_name="default")
 
-    active = host.pots.active_pot()
+    from potpie.runtime.async_bridge import run_sync
+    from potpie.runtime.contracts import PotInfoRequest, SourceListRequest
+
+    active = run_sync(lambda: runtime.engine.pots.info(PotInfoRequest()))
     assert active is not None
     assert active.name == "my-pot"
-    sources = host.pots.list_sources(pot_id=active.pot_id)
+    sources = run_sync(
+        lambda: runtime.engine.sources.list(SourceListRequest(pot_id=active.pot_id))
+    ).items
     assert any(s.kind == "repo" for s in sources)

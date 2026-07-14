@@ -12,11 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
-    InMemoryGraphBackend,
-)
 from potpie.daemon.runtime.context import ServiceEndpoints, ShellContext
-from potpie.runtime import build_product_shell
+from potpie.runtime import ProductSettings, create_runtime
 
 
 @pytest.fixture()
@@ -66,18 +63,24 @@ def daemon_ctx(tmp_path: Path) -> ShellContext:
 
 
 @pytest.fixture()
-def root_test_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Build a root product HostShell with deterministic in-memory engine state."""
+def root_test_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Build a root runtime with deterministic in-memory engine state."""
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    return build_product_shell(backend=InMemoryGraphBackend())
+    return create_runtime(
+        settings=ProductSettings(
+            data_dir=tmp_path,
+            runtime_mode="in-process",
+            backend="in_memory",
+        )
+    )
 
 
 @pytest.fixture(autouse=True)
-def _default_in_process_cli_host(
+def _default_in_process_cli_runtime(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Keep existing CLI unit tests on the direct host unless they opt into daemon mode."""
+    """Keep CLI unit tests in-process unless they explicitly select daemon mode."""
     monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "in_process")
     monkeypatch.setenv("POTPIE_RUNTIME_MODE", "in-process")
     monkeypatch.setenv("POTPIE_GRAPH_BACKEND", "in_memory")
@@ -91,15 +94,10 @@ def _reset_cli_state():
     try:
         from potpie.cli.commands import _common
 
-        _common._state["store"] = None
-        _common._state["host"] = None
-        _common._state["runtime"] = None
-        _common._state["engine_view"] = None
-        _common._state["json"] = False
-        _common._state["verbose"] = False
-        from potpie.runtime import reset_runtime
-
-        reset_runtime()
+        _common.set_store(None)
+        _common.reset_cli_runtime()
+        _common.set_json(False)
+        _common.set_verbose(False)
     except Exception:
         logging.getLogger(__name__).debug(
             "failed to reset CLI test state", exc_info=True

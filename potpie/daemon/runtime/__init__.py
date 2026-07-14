@@ -1,8 +1,5 @@
-"""``potpie.daemon.runtime`` - the in-daemon-process runtime.
+"""Legacy service-management primitives retained for transport-level tests.
 
-When the host runs detached (``host_mode = "daemon"``), this is what the background
-process executes: the async ``DaemonRuntime`` that binds transports, starts managed
-services, and serves the registered components' operations. Distinct from
-``root PotpieRuntime`` (the in-process service facade) - the runtime *hosts* a
-PotpieRuntime and exposes its surfaces over a transport.
+This package is not an executable daemon. The sole product daemon entrypoint is
+``potpie.daemon.main``.
 """

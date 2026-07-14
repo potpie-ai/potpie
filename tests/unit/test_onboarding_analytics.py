@@ -92,12 +92,16 @@ def test_setup_events_share_one_setup_run_id(fake_sink: _FakeSink) -> None:
     assert "repo" not in fake_sink.events[0].properties
 
 
-def test_setup_observer_emits_step_timing(fake_sink: _FakeSink, root_test_host) -> None:
-    host = root_test_host
-    host.setup.set_observer(CliSetupAnalyticsObserver())
+def test_setup_observer_emits_step_timing(
+    fake_sink: _FakeSink, root_test_runtime
+) -> None:
+    runtime = root_test_runtime
+    runtime.setup.set_observer(CliSetupAnalyticsObserver())
     begin_setup_run()
 
-    report = host.setup.run(SetupPlan(repo=".", agent="claude", defer_default_pot=True))
+    report = runtime.setup.run(
+        SetupPlan(repo=".", agent="claude", defer_default_pot=True)
+    )
 
     assert report.ok is True
     names = [event.name for event in fake_sink.events]

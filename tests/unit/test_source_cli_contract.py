@@ -13,6 +13,7 @@ from potpie_context_engine.domain.ports.services.pot_management import (
     PotInfo,
     SourceInfo,
 )
+from tests.runtime_fakes import runtime_from_services
 
 pytestmark = pytest.mark.unit
 
@@ -21,7 +22,7 @@ pytestmark = pytest.mark.unit
 def _reset_cli_state():
     yield
     _common.set_json(False)
-    _common.set_host(None)
+    _common.set_cli_runtime(None)
 
 
 @dataclass
@@ -47,14 +48,9 @@ class _Pots:
         self.repo_defaults[repo] = pot_id
 
 
-@dataclass
-class _Host:
-    pots: _Pots
-
-
 def test_source_add_plain_output_is_registration_only() -> None:
     fake_pots = _Pots()
-    _common.set_host(_Host(pots=fake_pots))
+    _common.set_cli_runtime(runtime_from_services(pots=fake_pots))
 
     result = CliRunner().invoke(
         pots.source_app, ["add", "repo", "owner/repo", "--pot", "pot-1"]
@@ -76,7 +72,7 @@ def test_source_add_plain_output_is_registration_only() -> None:
 
 def test_source_add_json_marks_registration_only() -> None:
     fake_pots = _Pots()
-    _common.set_host(_Host(pots=fake_pots))
+    _common.set_cli_runtime(runtime_from_services(pots=fake_pots))
     _common.set_json(True)
 
     result = CliRunner().invoke(
@@ -108,10 +104,10 @@ def test_source_add_json_marks_registration_only() -> None:
     assert fake_pots.repo_defaults == {}
 
 
-def test_source_add_repo_default_reports_unavailable_host() -> None:
+def test_source_add_repo_default_reports_unavailable_runtime() -> None:
     fake_pots = _Pots()
     fake_pots.set_repo_default = None  # type: ignore[method-assign]
-    _common.set_host(_Host(pots=fake_pots))
+    _common.set_cli_runtime(runtime_from_services(pots=fake_pots))
     _common.set_json(True)
 
     result = CliRunner().invoke(
@@ -122,7 +118,14 @@ def test_source_add_repo_default_reports_unavailable_host() -> None:
     assert result.exit_code != 0
     emitted = json.loads(result.output)["error"]
     assert emitted["code"] == "repo_default_unavailable"
-    assert fake_pots.calls == []
+    assert fake_pots.calls == [
+        {
+            "pot_id": "pot-1",
+            "kind": "repo",
+            "location": "owner/repo",
+            "name": None,
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -171,12 +174,6 @@ class _StatusPots:
         self.repo_defaults[repo] = pot_id
 
 
-@dataclass
-class _StatusHost:
-    pots: _StatusPots
-    graph: object = None
-
-
 def test_source_status_no_id_returns_pot_summary() -> None:
     """No-ID invocation returns per-pot summary with all sources and pot info."""
     src = SourceInfo(
@@ -187,7 +184,7 @@ def test_source_status_no_id_returns_pot_summary() -> None:
         status="ok",
     )
     fake_pots = _StatusPots(_sources=[src])
-    _common.set_host(_StatusHost(pots=fake_pots))
+    _common.set_cli_runtime(runtime_from_services(pots=fake_pots))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.source_app, ["status", "--pot", "pot-1"])
@@ -217,7 +214,7 @@ def test_source_status_no_id_marks_repo_default() -> None:
     )
     fake_pots = _StatusPots(_sources=[src])
     fake_pots.repo_defaults["github.com/acme/shop"] = "pot-1"
-    _common.set_host(_StatusHost(pots=fake_pots))
+    _common.set_cli_runtime(runtime_from_services(pots=fake_pots))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.source_app, ["status", "--pot", "pot-1"])
@@ -230,7 +227,7 @@ def test_source_status_no_id_marks_repo_default() -> None:
 def test_source_status_no_id_no_sources_recommends_add() -> None:
     """Per-pot summary with no sources includes a recommended_next_action hint."""
     fake_pots = _StatusPots(_sources=[])
-    _common.set_host(_StatusHost(pots=fake_pots))
+    _common.set_cli_runtime(runtime_from_services(pots=fake_pots))
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.source_app, ["status", "--pot", "pot-1"])
@@ -252,7 +249,7 @@ def test_source_status_with_id_returns_enriched_row() -> None:
         status="ok",
     )
     fake_pots = _StatusPots(_sources=[src])
-    _common.set_host(_StatusHost(pots=fake_pots))
+    _common.set_cli_runtime(runtime_from_services(pots=fake_pots))
     _common.set_json(True)
 
     result = CliRunner().invoke(
@@ -279,7 +276,7 @@ def test_source_status_no_id_human_output_contains_kind_and_location() -> None:
         status="ok",
     )
     fake_pots = _StatusPots(_sources=[src])
-    _common.set_host(_StatusHost(pots=fake_pots))
+    _common.set_cli_runtime(runtime_from_services(pots=fake_pots))
 
     result = CliRunner().invoke(pots.source_app, ["status", "--pot", "pot-1"])
 

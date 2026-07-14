@@ -8,16 +8,12 @@ from typer.testing import CliRunner
 from potpie.cli import host_cli
 from potpie.cli.commands import _common
 from potpie.daemon.lifecycle import Daemon
-from potpie.runtime import reset_runtime
 from potpie.setup import SetupPlan
 from tests.boundary.normalization import normalize_engine_result
 
 
 def _reset_cli_runtime() -> None:
-    _common._state["host"] = None
-    _common._state["runtime"] = None
-    _common._state["engine_view"] = None
-    reset_runtime()
+    _common.reset_cli_runtime()
 
 
 def _invoke_json(runner: CliRunner, args: list[str]) -> dict:
@@ -36,12 +32,20 @@ def test_engine_workflow_cli_has_local_daemon_parity(
     runner = CliRunner()
 
     _invoke_json(runner, ["pot", "create", "parity", "--use"])
+    _invoke_json(
+        runner,
+        ["source", "add", "repo", "owner/parity", "--pot", "parity", "--no-default"],
+    )
     commands = (
         ["pot", "list"],
+        ["pot", "info"],
+        ["source", "list", "--pot", "parity"],
         ["resolve", "parity", "--pot", "parity"],
         ["graph", "catalog", "--pot", "parity"],
+        ["graph", "status", "--pot", "parity"],
         ["timeline", "recent", "--pot", "parity"],
         ["ledger", "status"],
+        ["ledger", "sources", "--pot", "parity"],
     )
     local = [_invoke_json(runner, command) for command in commands]
 

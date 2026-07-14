@@ -13,20 +13,27 @@ from potpie.runtime.graph_compat import (
     CapabilityNotImplemented,
     GraphWorkbenchStatus,
 )
+from potpie.runtime.async_bridge import run_sync
+from potpie.runtime.contracts import GraphBackendInfoRequest, GraphQualityRequest
 
 from potpie.cli.commands._common import pot_scope_info
 from potpie.cli.commands.graph_common import _safe, _str, _string_list
 
 
-def _graph_status_payload(host: Any, pot_id: str, dp: Any) -> dict[str, Any]:
-    caps = _safe(lambda: host.backend.capabilities(), None)
-    implemented = list(caps.implemented()) if caps is not None else []
-    pot_info = pot_scope_info(host, pot_id)
-    quality_summary = _graph_status_quality_summary(host, pot_id, dp)
+def _graph_status_payload(runtime: Any, pot_id: str, dp: Any) -> dict[str, Any]:
+    backend_info = _safe(
+        lambda: run_sync(
+            lambda: runtime.engine.graph.backend_info(GraphBackendInfoRequest())
+        ),
+        None,
+    )
+    implemented = list(backend_info.capabilities) if backend_info is not None else []
+    pot_info = pot_scope_info(runtime, pot_id)
+    quality_summary = _graph_status_quality_summary(runtime, pot_id, dp)
     health_status = str(quality_summary.get("health_status") or "unknown")
     status = GraphWorkbenchStatus(
         host={
-            "kind": getattr(host, "profile", "local"),
+            "kind": "local",
             "liveness": "ok",
         },
         pot={
@@ -78,18 +85,21 @@ def _backed_view_names(reader_backed_includes: Any) -> list[str]:
     return names
 
 
-def _graph_status_quality_summary(host: Any, pot_id: str, dp: Any) -> dict[str, Any]:
+def _graph_status_quality_summary(runtime: Any, pot_id: str, dp: Any) -> dict[str, Any]:
     fallback = _data_plane_quality_summary(dp)
-    workbench = getattr(host, "graph_workbench", None)
-    if workbench is None or not getattr(workbench, "quality", None):
-        return fallback
     try:
-        result = workbench.quality(
-            pot_id=pot_id,
-            report="summary",
-            subgraph=None,
-            limit=20,
-            confidence_threshold=0.5,
+        result = run_sync(
+            lambda: runtime.engine.graph.quality(
+                GraphQualityRequest(
+                    pot_id=pot_id,
+                    report="summary",
+                    filters={
+                        "subgraph": None,
+                        "limit": 20,
+                        "confidence_threshold": 0.5,
+                    },
+                )
+            )
         )
     except CapabilityNotImplemented as exc:
         fallback["health_status"] = "unavailable"

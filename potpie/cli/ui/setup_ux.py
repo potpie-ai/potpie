@@ -768,8 +768,10 @@ def maybe_prompt_github_login(
 
 
 def _register_repo_source(*, repo: str) -> str:
-    from potpie.cli.commands._common import get_host
+    from potpie.cli.commands._common import get_cli_runtime
     from potpie.cli.commands.pots import register_repo_source
+    from potpie.runtime.async_bridge import run_sync
+    from potpie.runtime.contracts import PotInfoRequest, SourceListRequest
 
     started_ms = now_ms()
     capture_project_binding_event(
@@ -777,8 +779,8 @@ def _register_repo_source(*, repo: str) -> str:
         entrypoint="post_setup_first_pot",
         properties={"source_kind": "repo"},
     )
-    host = get_host()
-    active = host.pots.active_pot()
+    runtime = get_cli_runtime()
+    active = run_sync(lambda: runtime.engine.pots.info(PotInfoRequest()))
     if active is None:
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_completed",
@@ -786,7 +788,9 @@ def _register_repo_source(*, repo: str) -> str:
             properties={"step_state": "skipped", "duration_ms": elapsed_ms(started_ms)},
         )
         return "skipped"
-    existing = host.pots.list_sources(pot_id=active.pot_id)
+    existing = run_sync(
+        lambda: runtime.engine.sources.list(SourceListRequest(pot_id=active.pot_id))
+    ).items
     resolved = resolve_repo_location(repo)
     if any(
         s.kind == "repo"
@@ -803,7 +807,7 @@ def _register_repo_source(*, repo: str) -> str:
         )
         return "skipped"
     try:
-        register_repo_source(host, pot_id=active.pot_id, location=repo)
+        register_repo_source(runtime, pot_id=active.pot_id, location=repo)
     except Exception as exc:  # noqa: BLE001
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_failed",
@@ -827,10 +831,12 @@ def _maybe_prompt_first_pot(
     repo: Path | None,
     default_pot_name: str,
 ) -> None:
-    from potpie.cli.commands._common import get_host
+    from potpie.cli.commands._common import get_cli_runtime
     from potpie.cli.ui.interactive_prompts import prompt_first_pot_name
     from potpie.cli.ui.potpie_logo_anim import play_setup_finish
     from potpie.cli.ui.setup_wizard_ui import stderr_console
+    from potpie.runtime.async_bridge import run_sync
+    from potpie.runtime.contracts import PotCreateRequest
 
     capture_project_binding_event(
         "cli_onboarding_first_pot_prompt_shown",
@@ -851,7 +857,10 @@ def _maybe_prompt_first_pot(
 
     repo_str = str(repo.resolve()) if repo is not None else None
     name_source = "default" if name == default_pot_name else "custom"
-    pot = get_host().pots.create_pot(name=name, use=True)
+    runtime = get_cli_runtime()
+    pot = run_sync(
+        lambda: runtime.engine.pots.create(PotCreateRequest(name=name, use=True))
+    )
     capture_project_binding_event(
         "cli_onboarding_first_pot_created",
         entrypoint="post_setup_first_pot",

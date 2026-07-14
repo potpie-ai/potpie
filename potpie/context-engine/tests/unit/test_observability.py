@@ -111,7 +111,7 @@ def test_logging_setup_injects_correlation(caplog: pytest.LogCaptureFixture) -> 
 
 
 @pytest.mark.unit
-def test_host_shell_wires_process_observability() -> None:
+def test_engine_components_wire_process_observability() -> None:
     obs = NoOpObservability()
     original = get_observability()
 
