@@ -73,6 +73,8 @@ from potpie_context_engine.contracts import (
     ProvisionReport,
     RecordReceipt,
     RecordRequest,
+    RegisterRepoSourceRequest,
+    RegisterRepoSourceResult,
     RepairReport,
     ResolveRequest,
     SearchRequest,
@@ -85,7 +87,7 @@ from potpie_context_engine.contracts import (
     SnapshotManifest,
     TimelineRecentRequest,
 )
-from potpie_context_engine.contracts import CapabilityNotImplemented, PotNotFound
+from potpie.daemon.rpc_errors import encode_domain_error
 
 RPC_PROTOCOL_VERSION = "1"
 
@@ -166,6 +168,11 @@ ENGINE_RPC_REGISTRY = EngineRpcRegistry(
             "engine.pots.list_repo_defaults", EmptyRequest, RepoDefaultListResult
         ),
         RpcMethodSpec("engine.sources.add", SourceAddRequest, SourceInfo),
+        RpcMethodSpec(
+            "engine.sources.register_repo",
+            RegisterRepoSourceRequest,
+            RegisterRepoSourceResult,
+        ),
         RpcMethodSpec("engine.sources.list", SourceListRequest, SourceListResult),
         RpcMethodSpec("engine.sources.status", SourceStatusRequest, SourceInfo),
         RpcMethodSpec("engine.sources.remove", SourceRemoveRequest, OperationResult),
@@ -273,32 +280,21 @@ async def dispatch_rpc(engine: EngineClient, payload: Any) -> dict[str, Any]:
             message="RPC parameters failed schema validation.",
             details={"errors": exc.errors(include_url=False)},
         )
-    except CapabilityNotImplemented as exc:
-        return rpc_failure(
-            request_id,
-            code="ENGINE_CAPABILITY_NOT_IMPLEMENTED",
-            message=str(exc),
-            details={"capability": exc.capability, "detail": exc.detail},
-        )
-    except PotNotFound as exc:
-        return rpc_failure(
-            request_id,
-            code="ENGINE_POT_NOT_FOUND",
-            message=str(exc),
-        )
-    except ValueError as exc:
-        return rpc_failure(
-            request_id,
-            code="ENGINE_VALIDATION_ERROR",
-            message=str(exc),
-            details={"detail": getattr(exc, "detail", None)},
-        )
     except Exception as exc:
-        _capture_unexpected_daemon_error(exc)
+        encoded = encode_domain_error(exc)
+        if encoded is None:
+            _capture_unexpected_daemon_error(exc)
+            return rpc_failure(
+                request_id,
+                code="ENGINE_INTERNAL_ERROR",
+                message="An internal engine error occurred.",
+            )
         return rpc_failure(
             request_id,
-            code="ENGINE_INTERNAL_ERROR",
-            message="An internal engine error occurred.",
+            code=encoded.code,
+            message=encoded.message,
+            details=encoded.details,
+            retryable=encoded.retryable,
         )
     return {
         "protocol_version": RPC_PROTOCOL_VERSION,

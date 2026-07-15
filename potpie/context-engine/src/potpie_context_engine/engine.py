@@ -83,6 +83,8 @@ from potpie_context_engine.contracts import (
     RecordReceipt,
     RepairReport,
     RecordRequest,
+    RegisterRepoSourceRequest,
+    RegisterRepoSourceResult,
     ResolveRequest,
     SearchRequest,
     SourceAddRequest,
@@ -188,6 +190,24 @@ class _SourceOperations:
             kind=request.kind,
             location=request.location,
             name=request.name,
+        )
+
+    async def register_repo(
+        self, request: RegisterRepoSourceRequest
+    ) -> RegisterRepoSourceResult:
+        source, repo_identity, created, default_bound = (
+            self.engine._components.pots.register_repo_source(
+                pot_id=request.pot_id,
+                location=request.location,
+                name=request.name,
+                make_default=request.make_default,
+            )
+        )
+        return RegisterRepoSourceResult(
+            source=source,
+            repo_identity=repo_identity,
+            created=created,
+            default_bound=default_bound,
         )
 
     async def list(self, request: SourceListRequest) -> SourceListResult:

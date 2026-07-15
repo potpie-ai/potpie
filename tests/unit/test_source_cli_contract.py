@@ -118,14 +118,7 @@ def test_source_add_repo_default_reports_unavailable_runtime() -> None:
     assert result.exit_code != 0
     emitted = json.loads(result.output)["error"]
     assert emitted["code"] == "repo_default_unavailable"
-    assert fake_pots.calls == [
-        {
-            "pot_id": "pot-1",
-            "kind": "repo",
-            "location": "owner/repo",
-            "name": None,
-        }
-    ]
+    assert fake_pots.calls == []
 
 
 # ---------------------------------------------------------------------------

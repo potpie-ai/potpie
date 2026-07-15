@@ -92,6 +92,15 @@ class PotManagementService(Protocol):
         self, *, pot_id: str, kind: str, location: str, name: str | None = None
     ) -> SourceInfo: ...
 
+    def register_repo_source(
+        self,
+        *,
+        pot_id: str,
+        location: str,
+        name: str | None = None,
+        make_default: bool = True,
+    ) -> tuple[SourceInfo, str, bool, bool]: ...
+
     def list_sources(self, *, pot_id: str) -> list[SourceInfo]: ...
 
     def source_status(self, *, pot_id: str, source_id: str) -> SourceInfo: ...

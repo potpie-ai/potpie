@@ -15,10 +15,16 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
+
+from filelock import FileLock
+from potpie_context_engine.domain.errors import PotNotFound
+
+T = TypeVar("T")
 
 
 def default_home() -> Path:
@@ -36,6 +42,10 @@ class LocalPotStore:
     def _path(self) -> Path:
         return self.home / "pots.json"
 
+    @property
+    def _lock_path(self) -> Path:
+        return self.home / "pots.json.lock"
+
     # --- raw state ----------------------------------------------------------
     def _load(self) -> dict[str, Any]:
         try:
@@ -46,10 +56,35 @@ class LocalPotStore:
 
     def _save(self, state: dict[str, Any]) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(state, fh, indent=2)
-        tmp.replace(self._path)
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.home,
+                prefix="pots.",
+                suffix=".tmp",
+                delete=False,
+            ) as fh:
+                temp_path = Path(fh.name)
+                json.dump(state, fh, indent=2)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(temp_path, self._path)
+            temp_path = None
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+
+    def _update(self, operation: Callable[[dict[str, Any]], T]) -> T:
+        """Apply one interprocess-safe read-modify-write transaction."""
+
+        self.home.mkdir(parents=True, exist_ok=True)
+        with FileLock(self._lock_path):
+            state = self._load()
+            result = operation(state)
+            self._save(state)
+            return result
 
     # --- pots ---------------------------------------------------------------
     def list_pots(self) -> list[dict[str, Any]]:
@@ -73,21 +108,22 @@ class LocalPotStore:
     ) -> dict[str, Any]:
         """Create a pot. Repo registration belongs on ``add_source`` via the CLI."""
         _ = repo
-        state = self._load()
-        # Reuse an existing pot by name (idempotent setup).
-        for pid, row in state.get("pots", {}).items():
-            if row.get("name") == name:
-                if use:
-                    state["active"] = pid
-                    self._save(state)
-                return {**row, "active": state.get("active") == pid}
-        pot_id = f"pot_{uuid.uuid4().hex[:12]}"
-        row = {"pot_id": pot_id, "name": name, "archived": False}
-        state.setdefault("pots", {})[pot_id] = row
-        if use or state.get("active") is None:
-            state["active"] = pot_id
-        self._save(state)
-        return {**row, "active": state.get("active") == pot_id}
+
+        def mutate(state: dict[str, Any]) -> dict[str, Any]:
+            # Reuse an existing pot by name (idempotent setup).
+            for pid, row in state.get("pots", {}).items():
+                if row.get("name") == name:
+                    if use:
+                        state["active"] = pid
+                    return {**row, "active": state.get("active") == pid}
+            pot_id = f"pot_{uuid.uuid4().hex[:12]}"
+            row = {"pot_id": pot_id, "name": name, "archived": False}
+            state.setdefault("pots", {})[pot_id] = row
+            if use or state.get("active") is None:
+                state["active"] = pot_id
+            return {**row, "active": state.get("active") == pot_id}
+
+        return self._update(mutate)
 
     def _resolve_ref(self, state: dict[str, Any], ref: str) -> str | None:
         if ref in state.get("pots", {}):
@@ -98,59 +134,107 @@ class LocalPotStore:
         return None
 
     def use(self, *, ref: str) -> dict[str, Any] | None:
-        state = self._load()
-        pid = self._resolve_ref(state, ref)
-        if pid is None:
-            return None
-        state["active"] = pid
-        self._save(state)
-        return {**state["pots"][pid], "active": True}
+        def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
+            pid = self._resolve_ref(state, ref)
+            if pid is None:
+                return None
+            state["active"] = pid
+            return {**state["pots"][pid], "active": True}
+
+        return self._update(mutate)
 
     def rename(self, *, ref: str, new_name: str) -> dict[str, Any] | None:
-        state = self._load()
-        pid = self._resolve_ref(state, ref)
-        if pid is None:
-            return None
-        state["pots"][pid]["name"] = new_name
-        self._save(state)
-        return {**state["pots"][pid], "active": state.get("active") == pid}
+        def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
+            pid = self._resolve_ref(state, ref)
+            if pid is None:
+                return None
+            state["pots"][pid]["name"] = new_name
+            return {**state["pots"][pid], "active": state.get("active") == pid}
+
+        return self._update(mutate)
 
     def archive(self, *, ref: str) -> dict[str, Any] | None:
-        state = self._load()
-        pid = self._resolve_ref(state, ref)
-        if pid is None:
-            return None
-        state["pots"][pid]["archived"] = True
-        if state.get("active") == pid:
-            state["active"] = None
-        self._save(state)
-        return {**state["pots"][pid], "active": False}
+        def mutate(state: dict[str, Any]) -> dict[str, Any] | None:
+            pid = self._resolve_ref(state, ref)
+            if pid is None:
+                return None
+            state["pots"][pid]["archived"] = True
+            if state.get("active") == pid:
+                state["active"] = None
+            return {**state["pots"][pid], "active": False}
+
+        return self._update(mutate)
 
     # --- sources ------------------------------------------------------------
     def add_source(
         self, *, pot_id: str, kind: str, location: str, name: str | None = None
     ) -> dict[str, Any]:
-        state = self._load()
-        row = {
-            "source_id": f"src_{uuid.uuid4().hex[:8]}",
-            "kind": kind,
-            "name": name or location,
-            "location": location,
-        }
-        state.setdefault("sources", {}).setdefault(pot_id, []).append(row)
-        self._save(state)
-        return row
+        def mutate(state: dict[str, Any]) -> dict[str, Any]:
+            row = {
+                "source_id": f"src_{uuid.uuid4().hex[:8]}",
+                "kind": kind,
+                "name": name or location,
+                "location": location,
+            }
+            state.setdefault("sources", {}).setdefault(pot_id, []).append(row)
+            return row
+
+        return self._update(mutate)
+
+    def register_repo_source(
+        self,
+        *,
+        pot_id: str,
+        location: str,
+        name: str | None = None,
+        make_default: bool = True,
+    ) -> tuple[dict[str, Any], str, bool, bool]:
+        repo_identity = _repo_identity_key(location)
+        if not repo_identity:
+            raise ValueError("Could not resolve the repository identity.")
+
+        def mutate(
+            state: dict[str, Any],
+        ) -> tuple[dict[str, Any], str, bool, bool]:
+            if pot_id not in state.get("pots", {}):
+                raise PotNotFound(f"No pot matching '{pot_id}'.")
+            rows = state.setdefault("sources", {}).setdefault(pot_id, [])
+            existing = next(
+                (
+                    row
+                    for row in rows
+                    if row.get("kind") == "repo"
+                    and _repo_identity_key(str(row.get("location") or ""))
+                    == repo_identity
+                ),
+                None,
+            )
+            created = existing is None
+            if existing is None:
+                existing = {
+                    "source_id": f"src_{uuid.uuid4().hex[:8]}",
+                    "kind": "repo",
+                    "name": name or location,
+                    "location": location,
+                }
+                rows.append(existing)
+            if make_default:
+                state.setdefault("repo_defaults", {})[repo_identity] = pot_id
+            return existing, repo_identity, created, make_default
+
+        return self._update(mutate)
 
     def list_sources(self, *, pot_id: str) -> list[dict[str, Any]]:
         return self._load().get("sources", {}).get(pot_id, [])
 
     def remove_source(self, *, pot_id: str, source_id: str) -> None:
-        state = self._load()
-        rows = state.get("sources", {}).get(pot_id, [])
-        state.setdefault("sources", {})[pot_id] = [
-            r for r in rows if r.get("source_id") != source_id
-        ]
-        self._save(state)
+        def mutate(state: dict[str, Any]) -> None:
+            rows = state.get("sources", {}).get(pot_id, [])
+            state.setdefault("sources", {})[pot_id] = [
+                row for row in rows if row.get("source_id") != source_id
+            ]
+
+        self._update(mutate)
 
     # --- repo defaults ------------------------------------------------------
     def repo_default(self, *, repo: str) -> str | None:
@@ -164,21 +248,24 @@ class LocalPotStore:
         key = _repo_identity_key(repo)
         if not key:
             return
-        state = self._load()
-        state.setdefault("repo_defaults", {})[key] = pot_id
-        self._save(state)
+
+        def mutate(state: dict[str, Any]) -> None:
+            state.setdefault("repo_defaults", {})[key] = pot_id
+
+        self._update(mutate)
 
     def clear_repo_default(self, *, repo: str) -> bool:
         key = _repo_identity_key(repo)
         if not key:
             return False
-        state = self._load()
-        defaults = state.setdefault("repo_defaults", {})
-        existed = key in defaults
-        defaults.pop(key, None)
-        if existed:
-            self._save(state)
-        return existed
+
+        def mutate(state: dict[str, Any]) -> bool:
+            defaults = state.setdefault("repo_defaults", {})
+            existed = key in defaults
+            defaults.pop(key, None)
+            return existed
+
+        return self._update(mutate)
 
     def list_repo_defaults(self) -> dict[str, str]:
         return {

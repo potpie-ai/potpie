@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import typer
 
 from potpie.cli.commands._common import (
@@ -33,6 +31,7 @@ from potpie.cli.telemetry.onboarding_events import (
 )
 from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
 from potpie.runtime.async_bridge import run_sync
+from potpie.runtime.composition import PotpieRuntime
 from potpie.runtime.contracts import (
     CapabilityNotImplemented,
     EmptyRequest,
@@ -41,9 +40,11 @@ from potpie.runtime.contracts import (
     PotInfoRequest,
     PotRenameRequest,
     PotResetRequest,
+    RegisterRepoSourceRequest,
     RepoDefaultClearRequest,
     RepoDefaultSetRequest,
     SourceAddRequest,
+    SourceInfo,
     SourceListRequest,
     SourceRemoveRequest,
     SourceStatusRequest,
@@ -123,37 +124,8 @@ def _repo_key_from_option(repo: str) -> str:
     return repo_key
 
 
-def _matching_repo_source(
-    runtime: Any,
-    *,
-    pot_id: str,
-    resolved_location: str,
-    repo_key: str | None,
-) -> Any | None:
-    try:
-        sources = run_sync(
-            lambda: runtime.engine.sources.list(SourceListRequest(pot_id=pot_id))
-        ).items
-    except Exception:  # noqa: BLE001 - duplicate detection must not block registration
-        return None
-    for source in sources or []:
-        if getattr(source, "kind", None) != "repo":
-            continue
-        refs = (
-            str(getattr(source, "location", "") or "").strip(),
-            str(getattr(source, "name", "") or "").strip(),
-        )
-        if repo_key:
-            if any(repo_identity_key(ref) == repo_key for ref in refs if ref):
-                return source
-            continue
-        if resolved_location in refs:
-            return source
-    return None
-
-
 def register_repo_source(
-    runtime: Any,
+    runtime: PotpieRuntime,
     *,
     pot_id: str,
     location: str,
@@ -168,54 +140,38 @@ def register_repo_source(
     """
     resolved_location = resolve_repo_location(location)
     repo_key = repo_identity_key(resolved_location)
-    repo_default_set = False
-    existing = _matching_repo_source(
-        runtime,
-        pot_id=pot_id,
-        resolved_location=resolved_location,
-        repo_key=repo_key,
-    )
-    if existing is not None:
-        src = existing
-    else:
-        src = run_sync(
-            lambda: runtime.engine.sources.add(
-                SourceAddRequest(
+    if not repo_key:
+        fail(
+            code="repo_unresolved",
+            message="Could not resolve the repository identity.",
+            next_action="pass a repo location such as '<owner>/<repo>'",
+        )
+    try:
+        result = run_sync(
+            lambda: runtime.engine.sources.register_repo(
+                RegisterRepoSourceRequest(
                     pot_id=pot_id,
-                    kind="repo",
                     location=resolved_location,
                     name=name,
+                    make_default=make_default,
                 )
             )
         )
-    if make_default:
-        if not repo_key:
-            fail(
-                code="repo_unresolved",
-                message="Could not resolve the repository identity.",
-                next_action="pass a repo location such as '<owner>/<repo>'",
-            )
-        try:
-            run_sync(
-                lambda: runtime.engine.pots.set_repo_default(
-                    RepoDefaultSetRequest(repo=repo_key, pot_id=pot_id)
-                )
-            )
-        except CapabilityNotImplemented:
-            fail(
-                code="repo_default_unavailable",
-                message="This runtime does not support repo default bindings.",
-                next_action="upgrade the local context-engine runtime",
-            )
-        repo_default_set = True
+    except CapabilityNotImplemented:
+        fail(
+            code="repo_default_unavailable",
+            message="This runtime does not support repo default bindings.",
+            next_action="upgrade the local context-engine runtime",
+        )
+    src = result.source
     return {
         "source_id": src.source_id,
         "kind": src.kind,
         "name": src.name,
         "location": resolved_location,
         "pot_id": pot_id,
-        "repo_default_set": repo_default_set,
-        "repo_key": repo_key,
+        "repo_default_set": result.default_bound,
+        "repo_key": result.repo_identity,
         "registration_only": True,
     }
 
@@ -547,7 +503,7 @@ def source_add(
             "cli_onboarding_repo_source_add_completed",
             entrypoint="direct_command",
             properties={
-                "source_kind": payload.get("kind", source_kind),
+                "source_kind": str(payload.get("kind") or source_kind),
                 "step_state": "done",
                 "duration_ms": elapsed_ms(started_ms),
             },
@@ -636,7 +592,9 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
         emit(payload, human=human)
 
 
-def _enrich_source(runtime, src, pot_id: str) -> dict:
+def _enrich_source(
+    runtime: PotpieRuntime, src: SourceInfo, pot_id: str
+) -> dict[str, object]:
     """Build the rich source row used by both per-pot summary and single-source status."""
     location = getattr(src, "location", None)
     kind = getattr(src, "kind", "unknown")

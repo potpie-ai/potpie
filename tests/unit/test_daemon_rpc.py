@@ -14,6 +14,7 @@ from potpie_context_engine.contracts import (
     LedgerStatusRequest,
     PotCreateRequest,
     ProvisionInspectRequest,
+    RegisterRepoSourceRequest,
     ResolveRequest,
     SourceAddRequest,
     SourceListRequest,
@@ -40,7 +41,7 @@ def _payload(method: str, params: dict, request_id: str = "request-1") -> dict:
 def test_registry_is_explicit_engine_only_and_fully_typed() -> None:
     methods = ENGINE_RPC_REGISTRY.methods()
 
-    assert len(methods) == 46
+    assert len(methods) == 47
     assert all(method.startswith("engine.") for method in methods)
     assert "engine.context.resolve" in methods
     assert "engine.provision.apply" in methods
@@ -97,6 +98,22 @@ async def test_local_and_registry_dispatch_have_capability_parity() -> None:
         ),
     )
     assert source_response["ok"] is True
+    register_request = RegisterRepoSourceRequest(
+        pot_id=local_pot.pot_id,
+        location="github.com/acme/widgets",
+        make_default=True,
+    )
+    register_response = await dispatch_rpc(
+        engine,
+        _payload(
+            "engine.sources.register_repo",
+            ENGINE_RPC_REGISTRY.encode_request(
+                "engine.sources.register_repo", register_request
+            ),
+            "source-register",
+        ),
+    )
+    assert register_response["ok"] is True
 
     cases = (
         ("engine.pots.list", EmptyRequest(), await engine.pots.list(EmptyRequest())),

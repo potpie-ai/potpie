@@ -53,6 +53,7 @@ from potpie_context_engine.contracts import (
     ProvisionApplyRequest,
     ProvisionInspectRequest,
     RecordRequest,
+    RegisterRepoSourceRequest,
     ResolveRequest,
     SearchRequest,
     SourceAddRequest,
@@ -80,6 +81,7 @@ from potpie_context_engine.contracts import (
     ProvisionPlan,
     ProvisionReport,
     RecordReceipt,
+    RegisterRepoSourceResult,
     RepairReport,
     SnapshotManifest,
     SourceInfo,
@@ -91,6 +93,7 @@ from potpie_context_engine.contracts import (
 
 from potpie.daemon.lifecycle import Daemon
 from potpie.daemon.rpc import ENGINE_RPC_REGISTRY, RPC_PROTOCOL_VERSION
+from potpie.daemon.rpc_errors import decode_domain_error
 from potpie.runtime.errors import (
     DaemonRpcFailure,
     RpcProtocolMismatch,
@@ -143,11 +146,24 @@ class DaemonRpcTransport:
                 message="The daemon returned a response for another request.",
             )
         if response.status_code >= 400 or data.get("ok") is not True:
+            code = str(error.get("code") or "DAEMON_RPC_ERROR")
+            message = str(error.get("message") or "The daemon request failed.")
+            details = error.get("details") or {}
+            if not isinstance(details, dict):
+                details = {}
+            domain_error = decode_domain_error(
+                code=code, message=message, details=details
+            )
+            if domain_error is not None:
+                raise domain_error
             raise DaemonRpcFailure(
-                code=str(error.get("code") or "DAEMON_RPC_ERROR"),
-                message=str(error.get("message") or "The daemon request failed."),
-                details=error.get("details") or {},
+                code=code,
+                message=message,
+                details=details,
                 retryable=bool(error.get("retryable")),
+                recommended_command=(
+                    "potpie daemon restart" if code == "RPC_METHOD_NOT_FOUND" else None
+                ),
             )
         return ENGINE_RPC_REGISTRY.decode_result(method, data.get("result"))
 
@@ -235,6 +251,11 @@ class _SourcesClient:
 
     async def add(self, request: SourceAddRequest) -> SourceInfo:
         return await self.rpc.call("engine.sources.add", request)
+
+    async def register_repo(
+        self, request: RegisterRepoSourceRequest
+    ) -> RegisterRepoSourceResult:
+        return await self.rpc.call("engine.sources.register_repo", request)
 
     async def list(self, request: SourceListRequest) -> SourceListResult:
         return await self.rpc.call("engine.sources.list", request)

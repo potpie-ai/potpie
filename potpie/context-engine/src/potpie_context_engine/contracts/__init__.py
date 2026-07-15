@@ -166,6 +166,22 @@ class SourceAddRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class RegisterRepoSourceRequest:
+    pot_id: str
+    location: str
+    name: str | None = None
+    make_default: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class RegisterRepoSourceResult:
+    source: SourceInfo
+    repo_identity: str
+    created: bool
+    default_bound: bool
+
+
+@dataclass(frozen=True, slots=True)
 class SourceListRequest:
     pot_id: str
 
@@ -445,6 +461,8 @@ __all__ = [
     "ProvisionStep",
     "RecordReceipt",
     "RecordRequest",
+    "RegisterRepoSourceRequest",
+    "RegisterRepoSourceResult",
     "RepairReport",
     "ResolveRequest",
     "RepoDefaultClearRequest",

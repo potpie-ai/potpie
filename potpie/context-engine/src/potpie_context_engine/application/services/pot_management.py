@@ -90,6 +90,22 @@ class LocalPotManagementService:
             )
         )
 
+    def register_repo_source(
+        self,
+        *,
+        pot_id: str,
+        location: str,
+        name: str | None = None,
+        make_default: bool = True,
+    ) -> tuple[SourceInfo, str, bool, bool]:
+        row, repo_identity, created, default_bound = self.store.register_repo_source(
+            pot_id=pot_id,
+            location=location,
+            name=name,
+            make_default=make_default,
+        )
+        return _source(row), repo_identity, created, default_bound
+
     def list_sources(self, *, pot_id: str) -> list[SourceInfo]:
         return [_source(r) for r in self.store.list_sources(pot_id=pot_id)]
 
@@ -122,7 +138,11 @@ class LocalPotManagementService:
         active = self.active_pot()
         target_id = pot_id or (active.pot_id if active else None)
         sources = tuple(self.list_sources(pot_id=target_id)) if target_id else ()
-        ready = bool(target_id) and self.backend.mutation.readiness(target_id).ready
+        ready = (
+            self.backend.mutation.readiness(target_id).ready
+            if target_id is not None
+            else False
+        )
         return PotAggregateStatus(
             active_pot=active,
             pot_count=len(self.store.list_pots()),

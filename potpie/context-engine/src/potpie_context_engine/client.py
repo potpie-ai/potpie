@@ -70,6 +70,8 @@ from potpie_context_engine.contracts import (
     RecordReceipt,
     RepairReport,
     RecordRequest,
+    RegisterRepoSourceRequest,
+    RegisterRepoSourceResult,
     ResolveRequest,
     SearchRequest,
     SourceAddRequest,
@@ -127,6 +129,10 @@ class PotsClient(Protocol):
 
 class SourcesClient(Protocol):
     async def add(self, request: SourceAddRequest) -> SourceInfo: ...
+
+    async def register_repo(
+        self, request: RegisterRepoSourceRequest
+    ) -> RegisterRepoSourceResult: ...
 
     async def list(self, request: SourceListRequest) -> SourceListResult: ...
 

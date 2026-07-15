@@ -2611,6 +2611,7 @@ name = "potpie-context-engine"
 version = "0.2.0"
 source = { editable = "potpie/context-engine" }
 dependencies = [
+    { name = "filelock" },
     { name = "pydantic" },
 ]
 
@@ -2667,6 +2668,7 @@ requires-dist = [
     { name = "falkordb", marker = "extra == 'embedded'", specifier = ">=1.6.1" },
     { name = "falkordblite", marker = "python_full_version >= '3.12' and extra == 'embedded'", specifier = ">=0.10.0" },
     { name = "fastapi", marker = "extra == 'http'", specifier = ">=0.115.0" },
+    { name = "filelock", specifier = ">=3.18,<4" },
     { name = "hatchet-sdk", marker = "extra == 'hatchet'", specifier = ">=1.29.0" },
     { name = "httpx", marker = "extra == 'http'", specifier = ">=0.28.0" },
     { name = "neo4j", marker = "extra == 'neo4j'", specifier = ">=5.28.0" },

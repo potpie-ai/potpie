@@ -8,6 +8,7 @@ version = "0.2.0"
 description = "Reusable context graph engine library and optional HTTP adapters."
 requires-python = ">=3.12,<3.15"
 dependencies = [
+    "filelock>=3.18,<4",
     "pydantic>=2.0",
 ]
 
