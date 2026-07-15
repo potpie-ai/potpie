@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from potpie_context_engine import (
     ContextEngine,
@@ -12,17 +13,25 @@ from potpie_context_engine import (
     EngineDependencies,
     create_engine,
 )
+from potpie_context_engine.client import (
+    ContextClient,
+    GraphClient,
+    LedgerClient,
+    PotsClient,
+    ProvisionClient,
+    SourcesClient,
+    TimelineClient,
+)
 from potpie_context_engine.contracts import EngineActor
 
+from potpie.auth.services import AccountAuthService, IntegrationAuthService
+from potpie.config import ProductConfigService
+from potpie.daemon.lifecycle import Daemon
+from potpie.install import LocalInstaller
+from potpie.runtime.async_bridge import run_sync, shutdown_async_bridge
 from potpie.runtime.settings import ProductSettings
-
-if TYPE_CHECKING:
-    from potpie.auth.services import AccountAuthService, IntegrationAuthService
-    from potpie.config import ProductConfigService
-    from potpie.daemon.lifecycle import Daemon
-    from potpie.install import LocalInstaller
-    from potpie.setup import ProductSetupService, ProductStatusService
-    from potpie.skills import DefaultSkillManager
+from potpie.setup import ProductSetupService, ProductStatusService
+from potpie.skills import DefaultSkillManager
 
 
 @dataclass(slots=True)
@@ -30,13 +39,13 @@ class LocalEngineClient:
     """Named local transport adapter around an in-process ``ContextEngine``."""
 
     engine: ContextEngine
-    context: Any = field(init=False)
-    pots: Any = field(init=False)
-    sources: Any = field(init=False)
-    graph: Any = field(init=False)
-    ledger: Any = field(init=False)
-    timeline: Any = field(init=False)
-    provision: Any = field(init=False)
+    context: ContextClient = field(init=False)
+    pots: PotsClient = field(init=False)
+    sources: SourcesClient = field(init=False)
+    graph: GraphClient = field(init=False)
+    ledger: LedgerClient = field(init=False)
+    timeline: TimelineClient = field(init=False)
+    provision: ProvisionClient = field(init=False)
 
     def __post_init__(self) -> None:
         self.context = self.engine.context
@@ -65,8 +74,6 @@ class PotpieRuntime:
     status: ProductStatusService = field(init=False)
 
     def __post_init__(self) -> None:
-        from potpie.setup import ProductSetupService, ProductStatusService
-
         self.setup = ProductSetupService(self)
         self.status = ProductStatusService(self)
 
@@ -75,6 +82,7 @@ class PotpieRuntime:
 
 
 _runtime: PotpieRuntime | None = None
+_runtime_lock = threading.Lock()
 
 
 def create_runtime(
@@ -134,16 +142,28 @@ def engine_actor_for_identity(identity: Any) -> EngineActor:
 
 def get_runtime(*, runtime_override: str | None = None) -> PotpieRuntime:
     global _runtime
-    if _runtime is None:
-        _runtime = create_runtime(runtime_override=runtime_override)
-    return _runtime
+    with _runtime_lock:
+        if _runtime is None:
+
+            async def build() -> PotpieRuntime:
+                return create_runtime(runtime_override=runtime_override)
+
+            _runtime = run_sync(build)
+        return _runtime
 
 
 def reset_runtime() -> None:
-    """Forget the process cache; tests close an existing runtime explicitly."""
+    """Close and forget the owned runtime, then stop its event loop."""
 
     global _runtime
-    _runtime = None
+    with _runtime_lock:
+        runtime = _runtime
+        _runtime = None
+    try:
+        if runtime is not None:
+            run_sync(runtime.aclose)
+    finally:
+        shutdown_async_bridge()
 
 
 __all__ = [

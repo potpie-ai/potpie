@@ -81,8 +81,9 @@ def context_resolve(
     """Resolve a bounded task context wrap with evidence and coverage."""
     try:
         assert_mcp_pot_allowed(pot_id)
+        runtime = get_runtime()
         envelope = run_sync(
-            lambda: get_runtime().engine.context.resolve(
+            lambda: runtime.engine.context.resolve(
                 ResolveRequest(
                     pot_id=pot_id,
                     task=query,
@@ -126,8 +127,9 @@ def context_search(
     """Search narrowly for a known phrase or entity."""
     try:
         assert_mcp_pot_allowed(pot_id)
+        runtime = get_runtime()
         envelope = run_sync(
-            lambda: get_runtime().engine.context.search(
+            lambda: runtime.engine.context.search(
                 SearchRequest(
                     pot_id=pot_id,
                     query=query,
@@ -157,6 +159,7 @@ def context_record(
     """Record durable project memory."""
     try:
         assert_mcp_pot_allowed(pot_id)
+        runtime = get_runtime()
         detail_payload: dict[str, Any] = {
             "confidence": confidence,
             "visibility": visibility,
@@ -164,7 +167,7 @@ def context_record(
         if details:
             detail_payload["text"] = details
         receipt = run_sync(
-            lambda: get_runtime().engine.context.record(
+            lambda: runtime.engine.context.record(
                 RecordRequest(
                     pot_id=pot_id,
                     record_type=record_type,

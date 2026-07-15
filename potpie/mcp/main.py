@@ -6,7 +6,12 @@ from potpie.runtime.logging import configure_logging
 
 def main() -> None:
     configure_logging()
-    mcp.run()
+    try:
+        mcp.run()
+    finally:
+        from potpie.runtime import reset_runtime
+
+        reset_runtime()
 
 
 if __name__ == "__main__":

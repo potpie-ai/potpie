@@ -735,11 +735,12 @@ def graph_bulk_apply(
             entry = _bulk_chunk_entry(chunk)
             run["chunks_attempted"] += 1
             run["operations_attempted"] += entry["operation_count"]
+            chunk_payload = chunk["payload"]
             proposal = run_sync(
-                lambda chunk=chunk: runtime.engine.graph.propose(
+                lambda: runtime.engine.graph.propose(
                     GraphProposeRequest(
                         pot_id=pot_id,
-                        payload=chunk["payload"],
+                        payload=chunk_payload,
                         ttl_seconds=ttl_seconds,
                     )
                 )

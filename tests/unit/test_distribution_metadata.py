@@ -35,7 +35,10 @@ def test_source_metadata_declares_final_distribution_boundary() -> None:
     assert set(root["project"]["optional-dependencies"]) == ENGINE_EXTRAS
 
     assert engine["project"]["version"] == "0.2.0"
-    assert engine["project"]["dependencies"] == ["pydantic>=2.0"]
+    assert engine["project"]["dependencies"] == [
+        "filelock>=3.18,<4",
+        "pydantic>=2.0",
+    ]
     assert set(engine["project"]["optional-dependencies"]) == ENGINE_EXTRAS
     assert "scripts" not in engine["project"]
     assert "hooks" not in engine.get("tool", {}).get("hatch", {}).get("build", {})

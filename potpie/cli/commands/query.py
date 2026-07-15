@@ -22,6 +22,7 @@ from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
 from potpie.runtime.contracts import (
+    AgentEnvelope,
     RecordRequest,
     ResolveRequest,
     SearchRequest,
@@ -135,7 +136,7 @@ def _parse_scope(scope: str | None) -> dict[str, str]:
     return out
 
 
-def _envelope_payload(env) -> dict[str, object]:
+def _envelope_payload(env: AgentEnvelope) -> dict[str, object]:
     return {
         "pot_id": env.pot_id,
         "intent": env.intent,
@@ -156,7 +157,7 @@ def _envelope_payload(env) -> dict[str, object]:
     }
 
 
-def _envelope_human(env) -> str:
+def _envelope_human(env: AgentEnvelope) -> str:
     lines = [
         f"pot={env.pot_id} intent={env.intent} confidence={env.overall_confidence} items={len(env.items)}"
     ]

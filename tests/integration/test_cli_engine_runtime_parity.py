@@ -22,6 +22,12 @@ def _invoke_json(runner: CliRunner, args: list[str]) -> dict:
     return json.loads(result.stdout)
 
 
+def _invoke_json_failure(runner: CliRunner, args: list[str]) -> tuple[dict, int]:
+    result = runner.invoke(host_cli.app, ["--json", *args])
+    assert result.exit_code != 0, result.output
+    return json.loads(result.stdout), result.exit_code
+
+
 def test_engine_workflow_cli_has_local_daemon_parity(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -48,6 +54,9 @@ def test_engine_workflow_cli_has_local_daemon_parity(
         ["ledger", "sources", "--pot", "parity"],
     )
     local = [_invoke_json(runner, command) for command in commands]
+    local_error, local_exit = _invoke_json_failure(
+        runner, ["ledger", "query", "--pot", "parity"]
+    )
 
     _reset_cli_runtime()
     monkeypatch.setenv("POTPIE_RUNTIME_MODE", "daemon")
@@ -55,8 +64,13 @@ def test_engine_workflow_cli_has_local_daemon_parity(
     try:
         daemon.ensure(SetupPlan(backend="embedded"))
         remote = [_invoke_json(runner, command) for command in commands]
+        remote_error, remote_exit = _invoke_json_failure(
+            runner, ["ledger", "query", "--pot", "parity"]
+        )
     finally:
         daemon.stop()
         _reset_cli_runtime()
 
     assert normalize_engine_result(remote) == normalize_engine_result(local)
+    assert remote_exit == local_exit
+    assert remote_error["error"] == local_error["error"]

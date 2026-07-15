@@ -26,14 +26,17 @@ from potpie.runtime.contracts import (
     ContextEngineDisabled,
     EmptyRequest,
     GraphStatusRequest,
+    PotInfo,
     PotInfoRequest,
     PotUseRequest,
     PotNotFound,
     RepoDefaultGetRequest,
     RepoDefaultSetRequest,
     SourceListRequest,
+    SourceInfo,
 )
 from potpie.runtime.async_bridge import run_sync
+from potpie.runtime.composition import PotpieRuntime
 from potpie.auth.credentials import CredentialStore
 from potpie.runtime.errors import RuntimeBoundaryError
 
@@ -108,7 +111,7 @@ def is_verbose() -> bool:
     return bool(_state["verbose"])
 
 
-def get_cli_runtime():
+def get_cli_runtime() -> PotpieRuntime:
     """Return the root runtime or an explicitly injected test runtime."""
 
     override = _state["runtime_override"]
@@ -119,7 +122,7 @@ def get_cli_runtime():
     return get_runtime()
 
 
-def set_cli_runtime(runtime: Any | None) -> None:
+def set_cli_runtime(runtime: PotpieRuntime | None) -> None:
     """Inject a runtime for a test or clear the test override with ``None``."""
 
     _state["runtime_override"] = runtime
@@ -552,6 +555,8 @@ def repo_default_mismatch_warning(
     if not default_id or default_id == selected_pot_id or not repo:
         return None
     default = _pot_summary(runtime, str(default_id))
+    if default is None:
+        return None
     return (
         f"repo {repo} default remains {default.get('name')} ({default_id}); "
         "repo-scoped commands here use that pot. Run "
@@ -900,22 +905,22 @@ def _repo_default_pot_id(runtime: Any, repo_identity: str | None) -> str | None:
     return repo_default_pot_id(runtime, repo_identity)
 
 
-def _pot_for_id(runtime: Any, pot_id: str):
+def _pot_for_id(runtime: PotpieRuntime, pot_id: str) -> PotInfo | None:
     for pot in _safe_call(lambda: _list_pots(runtime), []) or []:
         if getattr(pot, "pot_id", None) == pot_id:
             return pot
     return None
 
 
-def _list_pots(runtime: Any) -> list[Any]:
+def _list_pots(runtime: PotpieRuntime) -> list[PotInfo]:
     return list(run_sync(lambda: runtime.engine.pots.list(EmptyRequest())).items)
 
 
-def _active_pot(runtime: Any) -> Any | None:
+def _active_pot(runtime: PotpieRuntime) -> PotInfo | None:
     return run_sync(lambda: runtime.engine.pots.info(PotInfoRequest()))
 
 
-def _list_sources(runtime: Any, pot_id: str) -> list[Any]:
+def _list_sources(runtime: PotpieRuntime, pot_id: str) -> list[SourceInfo]:
     return list(
         run_sync(
             lambda: runtime.engine.sources.list(SourceListRequest(pot_id=pot_id))

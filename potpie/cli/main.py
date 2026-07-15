@@ -168,11 +168,16 @@ def run_cli(argv: list[str] | None = None) -> None:
 
 def main() -> None:
     try:
-        run_cli()
-    except typer.Exit as exc:
-        # Typer's Exit is not a SystemExit; convert so console-script wrappers
-        # exit cleanly without printing exception chains/tracebacks.
-        raise SystemExit(exc.exit_code or 0) from None
+        try:
+            run_cli()
+        except typer.Exit as exc:
+            # Typer's Exit is not a SystemExit; convert so console-script wrappers
+            # exit cleanly without printing exception chains/tracebacks.
+            raise SystemExit(exc.exit_code or 0) from None
+    finally:
+        from potpie.runtime import reset_runtime
+
+        reset_runtime()
 
 
 if __name__ == "__main__":
