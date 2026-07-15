@@ -596,3 +596,17 @@ The former top-level `potpie service` command is removed without replacement.
 No alias, placeholder, service-admin route, operation registry, or compatibility
 transport remains. Removed paths fail through the standard unknown-command
 usage contract.
+
+## Post-migration runtime hardening — 2026-07-14
+
+The HostShell cutover follow-ups are complete in the worktree: repo-source
+registration is one locked, idempotent engine transaction; daemon RPC rebuilds
+recognized domain errors before product error handling; synchronous CLI, setup,
+status, UI, and MCP callbacks share one owned async loop; and local, daemon, and
+test engine clients are checked against the public capability protocols.
+
+Worktree verification passed with 1,075 root tests and 1,056 engine tests, plus
+local/daemon success and failure parity, mypy over the expanded boundary, Ruff,
+wheel builds and isolated imports, `git diff --check`, and the HostShell/view
+residue scan. The 2.0.0 verification record remains pending until these changes
+have a stable commit SHA.
