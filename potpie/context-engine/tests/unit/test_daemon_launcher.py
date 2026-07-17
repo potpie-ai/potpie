@@ -5,7 +5,7 @@ import pathlib
 
 import pytest
 
-from potpie_context_engine.adapters.inbound.cli.telemetry.preferences import (
+from potpie.cli.telemetry.preferences import (
     TelemetryPreferences,
     save_preferences,
 )

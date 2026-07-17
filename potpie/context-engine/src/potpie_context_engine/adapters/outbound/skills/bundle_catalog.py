@@ -79,7 +79,7 @@ def _is_recommended(meta: dict[str, str]) -> bool:
 @lru_cache(maxsize=1)
 def load_bundle_skills() -> tuple[SkillInfo, ...]:
     """All skills shipped under ``agent_bundle/.agents/skills/``, sorted by id."""
-    root = resources.files("potpie_context_engine.adapters.inbound.cli").joinpath(
+    root = resources.files("potpie.cli").joinpath(
         "templates", AGENT_BUNDLE_NAME, SKILLS_PREFIX.rstrip("/")
     )
     skills: list[SkillInfo] = []

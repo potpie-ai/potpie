@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from potpie_context_engine.adapters.inbound.cli import host_cli as cli_main
+from potpie.cli import main as cli_main
 from potpie_context_engine.domain.lifecycle import DONE, SKIPPED, SetupPlan
 from potpie_context_engine.host.daemon import Daemon
 from potpie_context_engine.host.daemon_client import DaemonRpcClient, RemoteHostShell

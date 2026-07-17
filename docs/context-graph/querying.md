@@ -23,7 +23,7 @@ plane is `GRAPH_CONTRACT_VERSION="v1.5"`, `ONTOLOGY_VERSION="2026-06-graph"`).
 | Altitude | Surface | Who | Commands |
 |---|---|---|---|
 | **4-tool agent contract** | MCP `context_*` tools (`adapters/inbound/mcp/server.py`) bound by `AgentContextService` (`application/services/agent_context.py`) | harnesses over MCP | `context_resolve`, `context_search`, `context_record`, `context_status` |
-| **Graph Surface Lite** | the `potpie graph …` workbench (`adapters/inbound/cli/commands/graph.py`) over `DefaultGraphService` | humans + harnesses over the CLI | `graph catalog/read/search-entities/neighborhood/describe/status/history` (+ the write/inbox/quality commands in [`writing.md`](./writing.md)) |
+| **Graph Surface Lite** | the `potpie graph …` workbench (`potpie/cli/commands/graph.py`) over `DefaultGraphService` | humans + harnesses over the CLI | `graph catalog/read/search-entities/neighborhood/describe/status/history` (+ the write/inbox/quality commands in [`writing.md`](./writing.md)) |
 
 The MCP surface is **exactly four tools** — `context_record` is its only write. The
 richer workbench is **CLI-only**; it is not mirrored onto MCP. `resolve`/`search`/

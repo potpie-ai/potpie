@@ -154,7 +154,7 @@ Default tests use fake or in-memory Sentry surfaces and do not call the network.
 ```bash
 UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine pytest potpie/context-engine/tests/unit/test_sentry_*.py -q
 UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine pytest potpie/context-engine/tests/unit/test_telemetry_*.py -q
-UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine ruff check adapters/inbound/cli tests/unit/test_sentry_*.py tests/unit/test_telemetry_*.py
+UV_CACHE_DIR=/private/tmp/uv-cache uv run ruff check potpie/cli tests/unit/test_sentry_*.py tests/unit/test_telemetry_*.py
 ```
 
 Manual CLI smoke:

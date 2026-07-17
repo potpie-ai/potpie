@@ -19,7 +19,11 @@ import importlib.util
 import pytest
 
 _EXTRA_SMOKES = (
-    ("cli", "typer", "potpie_context_engine.adapters.inbound.cli.host_cli"),
+    (
+        "cli-auth",
+        "keyring",
+        "potpie_context_engine.adapters.outbound.cli_auth.e2e_keyring",
+    ),
     ("http", "fastapi", "potpie_context_engine.adapters.inbound.http.app"),
     ("mcp", "mcp", "potpie_context_engine.adapters.inbound.mcp.server"),
     # The falkordblite distribution installs the ``redislite`` module; gate on

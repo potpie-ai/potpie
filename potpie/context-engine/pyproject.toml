@@ -8,7 +8,7 @@ path = "distribution_defaults_hook.py"
 [project]
 name = "potpie-context-engine"
 version = "0.1.0"
-description = "Context graph API, webhooks, CLI, and MCP."
+description = "Context graph API, webhooks, daemon, and MCP."
 requires-python = ">=3.12,<3.15"
 # Base = dependencies imported by the public graph API surface
 # (potpie_context_engine + potpie_context_engine.api). Delivery surfaces and
@@ -19,12 +19,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-cli = [
+# Outbound credential-store + provider auth clients (adapters/outbound/cli_auth).
+# The inbound CLI itself lives in the root `potpie` distribution.
+cli-auth = [
     "httpx>=0.28.0",
     "keyring>=25.0.0",
-    "pillow>=10.0.0",
-    "rich>=13.0",
-    "typer>=0.15.0",
 ]
 http = [
     "fastapi>=0.115.0",
@@ -84,7 +83,7 @@ observability = [
 # OSS distribution convenience set: everything the local potpie experience
 # uses. Excludes benchmarks (development harness) and dev tooling.
 all = [
-    "potpie-context-engine[cli,http,mcp,local,neo4j,postgres,hatchet,observability,embeddings,github,reconciliation-agent]",
+    "potpie-context-engine[cli-auth,http,mcp,local,neo4j,postgres,hatchet,observability,embeddings,github,reconciliation-agent]",
 ]
 dev = [
     "pytest>=9.0.3",
@@ -96,22 +95,10 @@ dev = [
 packages = ["src/potpie_context_engine"]
 include = [
     "src/potpie_context_engine/domain/playbooks/**/*.md",
-    "src/potpie_context_engine/adapters/inbound/cli/templates/**/*.md",
-    "src/potpie_context_engine/adapters/inbound/cli/templates/**/*.yaml",
-    "src/potpie_context_engine/adapters/inbound/cli/ui/assets/**/*.json",
-    "src/potpie_context_engine/adapters/inbound/cli/ui/assets/**/*.png",
-    "src/potpie_context_engine/adapters/inbound/cli/ui/assets/**/*.svg",
     "src/potpie_context_engine/benchmarks/use_cases/**/*.yaml",
     "src/potpie_context_engine/benchmarks/fixtures/raw_events/**/*.json",
     "src/potpie_context_engine/benchmarks/_legacy/data/**/*.json",
 ]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/potpie_context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "potpie_context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json"
-"src/potpie_context_engine/adapters/inbound/cli/ui/assets/potpie.png" = "potpie_context_engine/adapters/inbound/cli/ui/assets/potpie.png"
-"src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
-"src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json"
-"src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json" = "potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -119,20 +106,10 @@ include = [
     "distribution_defaults_hook.py",
     "src/potpie_context_engine",
     "src/potpie_context_engine/domain/playbooks/**/*.md",
-    "src/potpie_context_engine/adapters/inbound/cli/templates/**/*.md",
-    "src/potpie_context_engine/adapters/inbound/cli/templates/**/*.yaml",
-    "src/potpie_context_engine/adapters/inbound/cli/ui/assets/**/*.json",
-    "src/potpie_context_engine/adapters/inbound/cli/ui/assets/**/*.png",
-    "src/potpie_context_engine/adapters/inbound/cli/ui/assets/**/*.svg",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
 ]
-
-[tool.hatch.build.targets.sdist.force-include]
-"src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
-"src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json"
-"src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json" = "src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json"
 
 [tool.ruff]
 target-version = "py310"
