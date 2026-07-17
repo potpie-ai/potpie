@@ -3840,15 +3840,19 @@ dependencies = [
     { name = "mcp" },
     { name = "pillow" },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyjwt" },
     { name = "redis" },
     { name = "rich" },
     { name = "sentry-sdk" },
+    { name = "starlette" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.optional-dependencies]
 all = [
+    { name = "aiohttp" },
     { name = "falkordb" },
     { name = "falkordblite" },
     { name = "hatchet-sdk" },
@@ -3857,6 +3861,7 @@ all = [
     { name = "opentelemetry-instrumentation-openai" },
     { name = "opentelemetry-sdk" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic-ai-slim" },
     { name = "pydantic-deep" },
     { name = "pygithub" },
     { name = "redis" },
@@ -3866,6 +3871,8 @@ all = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", marker = "extra == 'all'", specifier = ">=3.14.1" },
+    { name = "aiohttp", marker = "extra == 'hatchet'", specifier = ">=3.14.1" },
     { name = "falkordb", marker = "extra == 'all'", specifier = ">=1.6.1" },
     { name = "falkordb", marker = "extra == 'falkordb'", specifier = ">=1.6.1" },
     { name = "falkordblite", marker = "python_full_version >= '3.12'", specifier = ">=0.10.0" },
@@ -3890,10 +3897,14 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], marker = "extra == 'all'", specifier = ">=3.2" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic-ai-slim", marker = "extra == 'all'", specifier = ">=1.102.0" },
+    { name = "pydantic-ai-slim", marker = "extra == 'reconciliation-agent'", specifier = ">=1.102.0" },
     { name = "pydantic-deep", marker = "extra == 'all'", specifier = ">=0.3.0" },
     { name = "pydantic-deep", marker = "extra == 'reconciliation-agent'", specifier = ">=0.3.0" },
+    { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pygithub", marker = "extra == 'all'", specifier = ">=2.8.0" },
     { name = "pygithub", marker = "extra == 'github'", specifier = ">=2.8.0" },
+    { name = "pyjwt", specifier = ">=2.13.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "pyyaml", marker = "extra == 'benchmarks'", specifier = ">=6.0" },
@@ -3907,6 +3918,7 @@ requires-dist = [
     { name = "sentry-sdk", specifier = ">=2.61.1,<3.0.0" },
     { name = "sqlalchemy", marker = "extra == 'all'", specifier = ">=2.0" },
     { name = "sqlalchemy", marker = "extra == 'postgres'", specifier = ">=2.0" },
+    { name = "starlette", specifier = ">=1.3.1" },
     { name = "typer", specifier = ">=0.15.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
 ]
@@ -3980,6 +3992,7 @@ dependencies = [
     { name = "pydantic", extra = ["email"] },
     { name = "pydantic-ai-slim" },
     { name = "pydantic-ai-todo" },
+    { name = "pydantic-settings" },
     { name = "pygithub" },
     { name = "pygments" },
     { name = "pyjwt" },
@@ -3995,6 +4008,7 @@ dependencies = [
     { name = "sentence-transformers" },
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "sqlalchemy" },
+    { name = "starlette" },
     { name = "tiktoken" },
     { name = "tldextract" },
     { name = "tornado" },
@@ -4080,6 +4094,7 @@ requires-dist = [
     { name = "pydantic", extras = ["email"], specifier = ">=2.12.4" },
     { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "openai", "retries", "spec", "temporal", "ui", "vertexai", "xai"], specifier = ">=1.102.0" },
     { name = "pydantic-ai-todo", specifier = ">=0.1.6" },
+    { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pygithub", specifier = ">=2.8.1" },
     { name = "pygments", specifier = ">=2.20.0" },
     { name = "pyjwt", specifier = ">=2.13.0" },
@@ -4095,6 +4110,7 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=5.1.2" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.43.0" },
     { name = "sqlalchemy", specifier = ">=2.0.44" },
+    { name = "starlette", specifier = ">=1.3.1" },
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "tldextract", specifier = ">=5.3.1" },
     { name = "tornado", specifier = ">=6.5.7" },
@@ -4158,6 +4174,7 @@ source = { editable = "../potpie/sandbox" }
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", marker = "extra == 'daytona'", specifier = ">=3.14.1" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.134.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },

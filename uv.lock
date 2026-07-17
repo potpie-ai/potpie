@@ -2439,7 +2439,12 @@ name = "potpie"
 version = "2.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "potpie-context-engine", extra = ["all"] },
+    { name = "pydantic-ai-slim" },
+    { name = "pydantic-settings" },
+    { name = "pyjwt" },
+    { name = "starlette" },
 ]
 
 [package.dev-dependencies]
@@ -2455,7 +2460,14 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "potpie-context-engine", extras = ["all"], editable = "potpie/context-engine" }]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.14.1" },
+    { name = "potpie-context-engine", extras = ["all"], editable = "potpie/context-engine" },
+    { name = "pydantic-ai-slim", specifier = ">=1.102.0" },
+    { name = "pydantic-settings", specifier = ">=2.14.2" },
+    { name = "pyjwt", specifier = ">=2.13.0" },
+    { name = "starlette", specifier = ">=1.3.1" },
+]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2481,15 +2493,19 @@ dependencies = [
     { name = "mcp" },
     { name = "pillow" },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyjwt" },
     { name = "redis" },
     { name = "rich" },
     { name = "sentry-sdk" },
+    { name = "starlette" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.optional-dependencies]
 all = [
+    { name = "aiohttp" },
     { name = "falkordb" },
     { name = "falkordblite" },
     { name = "hatchet-sdk" },
@@ -2498,6 +2514,7 @@ all = [
     { name = "opentelemetry-instrumentation-openai" },
     { name = "opentelemetry-sdk" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic-ai-slim" },
     { name = "pydantic-deep" },
     { name = "pygithub" },
     { name = "redis" },
@@ -2528,6 +2545,7 @@ graph = [
     { name = "neo4j" },
 ]
 hatchet = [
+    { name = "aiohttp" },
     { name = "hatchet-sdk" },
 ]
 observability = [
@@ -2540,6 +2558,7 @@ postgres = [
     { name = "sqlalchemy" },
 ]
 reconciliation-agent = [
+    { name = "pydantic-ai-slim" },
     { name = "pydantic-deep" },
 ]
 
@@ -2550,6 +2569,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", marker = "extra == 'all'", specifier = ">=3.14.1" },
+    { name = "aiohttp", marker = "extra == 'hatchet'", specifier = ">=3.14.1" },
     { name = "falkordb", marker = "extra == 'all'", specifier = ">=1.6.1" },
     { name = "falkordb", marker = "extra == 'falkordb'", specifier = ">=1.6.1" },
     { name = "falkordblite", marker = "python_full_version >= '3.12'", specifier = ">=0.10.0" },
@@ -2574,10 +2595,14 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], marker = "extra == 'all'", specifier = ">=3.2" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic-ai-slim", marker = "extra == 'all'", specifier = ">=1.102.0" },
+    { name = "pydantic-ai-slim", marker = "extra == 'reconciliation-agent'", specifier = ">=1.102.0" },
     { name = "pydantic-deep", marker = "extra == 'all'", specifier = ">=0.3.0" },
     { name = "pydantic-deep", marker = "extra == 'reconciliation-agent'", specifier = ">=0.3.0" },
+    { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pygithub", marker = "extra == 'all'", specifier = ">=2.8.0" },
     { name = "pygithub", marker = "extra == 'github'", specifier = ">=2.8.0" },
+    { name = "pyjwt", specifier = ">=2.13.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "pyyaml", marker = "extra == 'benchmarks'", specifier = ">=6.0" },
@@ -2591,6 +2616,7 @@ requires-dist = [
     { name = "sentry-sdk", specifier = ">=2.61.1,<3.0.0" },
     { name = "sqlalchemy", marker = "extra == 'all'", specifier = ">=2.0" },
     { name = "sqlalchemy", marker = "extra == 'postgres'", specifier = ">=2.0" },
+    { name = "starlette", specifier = ">=1.3.1" },
     { name = "typer", specifier = ">=0.15.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
 ]
@@ -2645,6 +2671,7 @@ source = { editable = "potpie/sandbox" }
 
 [package.optional-dependencies]
 daytona = [
+    { name = "aiohttp" },
     { name = "daytona" },
 ]
 dev = [
@@ -2655,6 +2682,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", marker = "extra == 'daytona'", specifier = ">=3.14.1" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.134.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
