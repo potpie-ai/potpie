@@ -217,8 +217,111 @@ def stamp_scored_rows(scored: Iterable[tuple[float, ClaimRow]]) -> list[ClaimRow
     return out
 
 
+def claim_identity(row: ClaimRow) -> tuple:
+    """Stable identity for merging the same claim seen via different paths."""
+    if row.claim_key:
+        return ("claim_key", row.claim_key)
+    return ("tuple", row.predicate, row.subject_key, row.object_key, row.source_ref)
+
+
+def merge_vector_scored_rows(
+    lexical_rows: Iterable[ClaimRow],
+    vector_scored: Iterable[tuple[float, ClaimRow]],
+    query: str,
+    *,
+    admit_extra: Any = None,
+) -> list[ClaimRow]:
+    """Overlay native vector scores onto the lexical result superset.
+
+    The lexical rows define membership: a claim must never become invisible
+    because its embedding is missing, stale, or the vector index is unusable —
+    those rows simply fall back to the lexical score. Rows the vector index
+    returned but the lexical query missed are appended as defense in depth
+    (``admit_extra`` lets the caller re-apply filters the vector path cannot
+    express, e.g. entity-label constraints).
+    """
+    vector_scored = list(vector_scored)  # iterated twice; accept generators
+    scores = {claim_identity(row): score for score, row in vector_scored}
+    seen: set[tuple] = set()
+    out_scored: list[tuple[float, ClaimRow]] = []
+    for row in lexical_rows:
+        ident = claim_identity(row)
+        seen.add(ident)
+        out_scored.append((scores.get(ident, embedding_score(row.fact, query)), row))
+    for score, row in vector_scored:
+        ident = claim_identity(row)
+        if ident in seen:
+            continue
+        if admit_extra is not None and not admit_extra(row):
+            continue
+        seen.add(ident)
+        out_scored.append((score, row))
+    out_scored.sort(key=lambda pair: pair[0], reverse=True)
+    return stamp_scored_rows(out_scored)
+
+
+def filter_rows_by_labels(
+    rows: Iterable[ClaimRow],
+    filter_: Any,
+    entity_labels: Any,
+) -> list[ClaimRow]:
+    """Apply ``subject_label`` / ``object_label`` filters in Python.
+
+    ``FIND_CLAIMS_CYPHER`` cannot reference the edge endpoints (see the comment
+    on the constant), so label constraints are enforced here via the store's
+    node-only ``entity_labels`` lookup. No-op when neither filter is set — the
+    hot read paths never pay the extra query.
+    """
+    rows = list(rows)
+    if not (filter_.subject_label or filter_.object_label):
+        return rows
+    keys = {key for row in rows for key in (row.subject_key, row.object_key)}
+    labels = (
+        entity_labels(pot_id=filter_.pot_id, entity_keys=sorted(keys)) if keys else {}
+    )
+    out: list[ClaimRow] = []
+    for row in rows:
+        if filter_.subject_label and filter_.subject_label not in labels.get(
+            row.subject_key, ()
+        ):
+            continue
+        if filter_.object_label and filter_.object_label not in labels.get(
+            row.object_key, ()
+        ):
+            continue
+        out.append(row)
+    return out
+
+
+def card_for_row(row: ClaimRow) -> str:
+    """Build the retrieval card for a stored claim row (read-side / re-embed)."""
+    from domain.retrieval_card import build_retrieval_card
+
+    props = row.properties or {}
+    return build_retrieval_card(
+        description=row.description or props.get("description"),
+        fact=row.fact,
+        subject_key=row.subject_key,
+        predicate=row.predicate,
+        object_key=row.object_key,
+        scope=props.get("code_scope")
+        if isinstance(props.get("code_scope"), Mapping)
+        else None,
+    )
+
+
+# The endpoints must not be REFERENCED at all — not bound (``(a:Entity
+# {group_id: $gid})``) and not even read (``labels(a)`` in WHERE). Any endpoint
+# reference makes the planner resolve the nodes under the edge scan, and on
+# embedded FalkorDB that nested node stage silently returns zero rows after the
+# store is persisted and reloaded (every ``potpie`` CLI call is a new process)
+# when internal node id 0 — always the first entity created — is an endpoint.
+# A pure edge scan is immune. The edge's ``group_id`` scopes the pot; endpoints
+# can only be same-pot entities by construction of the writer's MERGE.
+# ``subject_label`` / ``object_label`` filters are applied by the callers in
+# Python via :func:`filter_rows_by_labels` (node-only lookups are safe).
 FIND_CLAIMS_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
+MATCH ()-[r:RELATES_TO {group_id: $gid}]->()
 WHERE ($preds IS NULL OR r.name IN $preds)
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
   AND ($objects IS NULL OR r.object_key IN $objects)
@@ -231,8 +334,6 @@ WHERE ($preds IS NULL OR r.name IN $preds)
   AND ($as_of IS NULL OR r.valid_at IS NULL OR r.valid_at <= $as_of)
   AND ($va_after IS NULL OR (r.valid_at IS NOT NULL AND r.valid_at >= $va_after))
   AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
-  AND ($subject_label IS NULL OR $subject_label IN labels(a))
-  AND ($object_label IS NULL OR $object_label IN labels(b))
 RETURN r{.*} AS props
 """
 
@@ -249,8 +350,12 @@ __all__ = [
     "FIND_CLAIMS_CYPHER",
     "CONTRACT_EDGE_KEYS",
     "RESERVED_EDGE_KEYS",
+    "card_for_row",
+    "claim_identity",
     "embedding_score",
+    "filter_rows_by_labels",
     "iso",
+    "merge_vector_scored_rows",
     "parse_dt",
     "row_from_record",
     "stamp_similarity",

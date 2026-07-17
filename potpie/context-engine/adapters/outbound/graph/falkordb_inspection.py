@@ -37,20 +37,24 @@ RETURN e.entity_key AS key, labels(e) AS labels, properties(e) AS props
 LIMIT $limit
 """
 
+# Edge queries never reference the endpoints: the edge carries
+# ``subject_key``/``object_key``, and endpoint-resolving plans silently return
+# zero rows on embedded FalkorDB after a persistence reload when node id 0 is
+# an endpoint (see FIND_CLAIMS_CYPHER in canonical_claim_query).
 _EDGES_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
+MATCH ()-[r:RELATES_TO {group_id: $gid}]->()
 WHERE ($include_invalid OR r.invalid_at IS NULL)
   AND ($preds IS NULL OR r.name IN $preds)
-RETURN a.entity_key AS source, b.entity_key AS target, r.name AS predicate, properties(r) AS props
+RETURN r.subject_key AS source, r.object_key AS target, r.name AS predicate, properties(r) AS props
 LIMIT $limit
 """
 
 # Edges incident (either direction) to the current BFS frontier.
 _INCIDENT_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
-WHERE (a.entity_key IN $frontier OR b.entity_key IN $frontier)
+MATCH ()-[r:RELATES_TO {group_id: $gid}]->()
+WHERE (r.subject_key IN $frontier OR r.object_key IN $frontier)
   AND ($include_invalid OR r.invalid_at IS NULL)
-RETURN a.entity_key AS source, b.entity_key AS target, r.name AS predicate, properties(r) AS props
+RETURN r.subject_key AS source, r.object_key AS target, r.name AS predicate, properties(r) AS props
 """
 
 _HYDRATE_CYPHER = """

@@ -20,6 +20,10 @@ from adapters.outbound.graph.entity_summary_repair import (
     ENTITY_SUMMARY_TARGET,
     wants_entity_summary_repair,
 )
+from adapters.outbound.graph.semantic_index_repair import (
+    SEMANTIC_INDEX_TARGET,
+    wants_semantic_index_repair,
+)
 from domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 from domain.ports.graph.analytics import RepairReport
 
@@ -34,6 +38,7 @@ class ClaimQueryAnalytics:
 
     claim_query: ClaimQueryPort
     entity_summary_repair: Callable[[str], int] | None = None
+    semantic_index_repair: Callable[[str], Mapping[str, Any]] | None = None
 
     def _rows(self, pot_id: str) -> list[ClaimRow]:
         return list(
@@ -72,15 +77,31 @@ class ClaimQueryAnalytics:
         }
 
     def repair(self, pot_id: str, *, targets: Sequence[str] = ()) -> RepairReport:
+        repaired: dict[str, int] = {}
+        details: list[str] = []
+        if self.semantic_index_repair is not None and wants_semantic_index_repair(
+            targets
+        ):
+            report = self.semantic_index_repair(pot_id)
+            repaired[SEMANTIC_INDEX_TARGET] = int(report.get("repaired") or 0)
+            failed = int(report.get("failed") or 0)
+            if failed:
+                repaired[f"{SEMANTIC_INDEX_TARGET}_failed"] = failed
+            detail = report.get("detail")
+            if isinstance(detail, str) and detail:
+                details.append(detail)
         if self.entity_summary_repair is not None and wants_entity_summary_repair(
             targets
         ):
-            repaired = self.entity_summary_repair(pot_id)
+            count = self.entity_summary_repair(pot_id)
+            repaired[ENTITY_SUMMARY_TARGET] = count
+            details.append(f"repaired {count} entity summaries")
+        if repaired or details:
             return RepairReport(
                 pot_id=pot_id,
                 targets=tuple(targets),
-                repaired={ENTITY_SUMMARY_TARGET: repaired},
-                detail=f"repaired {repaired} entity summaries",
+                repaired=repaired,
+                detail="; ".join(details) or None,
             )
         return RepairReport(
             pot_id=pot_id,

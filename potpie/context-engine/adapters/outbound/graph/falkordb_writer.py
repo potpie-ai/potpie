@@ -65,11 +65,17 @@ _INDEX_STATEMENTS = (
 _RESET_BATCH = 500
 
 
+def _vector_index_statement(embedding_dim: int) -> str:
+    return (
+        "CREATE VECTOR INDEX FOR ()-[r:RELATES_TO]->() ON (r.fact_embedding) "
+        f"OPTIONS {{dimension:{int(embedding_dim)}, similarityFunction:'cosine'}}"
+    )
+
+
 def _index_statements(embedding_dim: int) -> tuple[str, ...]:
     return (
         *_INDEX_STATEMENTS,
-        "CREATE VECTOR INDEX FOR ()-[r:RELATES_TO]->() ON (r.fact_embedding) "
-        f"OPTIONS {{dimension:{int(embedding_dim)}, similarityFunction:'cosine'}}",
+        _vector_index_statement(embedding_dim),
     )
 
 
@@ -198,6 +204,7 @@ class FalkorDBGraphWriter(GraphWriterPort):
         self._graph = graph  # injectable for unit tests
         self._graph_provider = graph_provider  # shared handle from the container
         self._embedder = embedder
+        self._indexes_ensured = False
 
     @property
     def enabled(self) -> bool:
@@ -242,6 +249,26 @@ class FalkorDBGraphWriter(GraphWriterPort):
             except Exception as exc:  # noqa: BLE001
                 # Re-running creates an "already indexed" error; best-effort.
                 logger.debug("falkordb index skipped (%s): %s", stmt, exc)
+
+    @staticmethod
+    def _ensure_vector_index_sync(graph: Any, embedding_dim: int) -> bool:
+        """Create just the vector index; report whether it is usable.
+
+        The lazy write-path call must NOT create the range indexes: those
+        change global planner behaviour mid-flight for a store that was never
+        provisioned (embedded FalkorDB plans differently once node indexes
+        exist), and the vector write only needs the vector index. Returns
+        ``False`` on a real failure so the caller retries on the next batch
+        instead of caching a broken state.
+        """
+        try:
+            graph.query(_vector_index_statement(embedding_dim))
+        except Exception as exc:  # noqa: BLE001
+            if "already indexed" in str(exc).lower():
+                return True
+            logger.warning("falkordb vector index creation failed: %s", exc)
+            return False
+        return True
 
     async def upsert_entities(
         self, pot_id: str, items: list[EntityUpsert], provenance: ProvenanceRef
@@ -344,9 +371,26 @@ class FalkorDBGraphWriter(GraphWriterPort):
         pot_id: str,
         items: list[EdgeUpsert],
         provenance: ProvenanceRef,
-    ) -> None:
+    ) -> list[dict[str, str]]:
+        """Attach fact embeddings to just-upserted edges.
+
+        Returns one failure record per edge whose embedding could not be
+        attached — a zero-row MATCH counts as a failure, not a no-op: the edge
+        exists (the upsert wrote it), so silence here is how claims used to
+        vanish from vector-only reads.
+        """
         if self._embedder is None:
-            return
+            return []
+        # Setup's provision step normally creates the vector index, but a
+        # write must not depend on setup having run (fresh homes, tests,
+        # library embedding): ensure the vector index once per writer so the
+        # vectors written below are actually queryable. Only the vector index
+        # — creating the range indexes here would flip planner behaviour for
+        # every other query on a store that was never provisioned.
+        if not self._indexes_ensured:
+            embedding_dim = int(getattr(self._embedder, "dimensions", 1536))
+            self._indexes_ensured = self._ensure_vector_index_sync(graph, embedding_dim)
+        failures: list[dict[str, str]] = []
         for item in items:
             raw_props = dict(item.properties)
             source_ref = _stable_source_ref(
@@ -381,20 +425,24 @@ class FalkorDBGraphWriter(GraphWriterPort):
                 # Keep embedding inside the try: a model error must degrade to
                 # "no vector enrichment", not abort the already-written edge.
                 embedding = [float(x) for x in self._embedder.embed(card)]
-                graph.query(
+                # The edge is matched with UNBOUND endpoints: anchoring the
+                # source node (`(:Entity {entity_key: $from_key})-[r]->`) is
+                # the embedded-FalkorDB plan shape that silently matches zero
+                # rows when the source is internal node id 0 — always the
+                # Repository on a fresh pot. See FIND_CLAIMS_CYPHER.
+                result = graph.query(
                     """
-                    MATCH (:Entity {group_id: $gid, entity_key: $from_key})
-                          -[r:RELATES_TO {
+                    MATCH ()-[r:RELATES_TO {
                               group_id: $gid,
                               name: $predicate,
                               subject_key: $from_key,
                               object_key: $to_key,
                               source_ref: $source_ref
-                          }]->
-                          (:Entity {group_id: $gid, entity_key: $to_key})
+                          }]->()
                     SET r.fact_embedding = vecf32($embedding),
                         r.embedding_model = $embedding_model,
                         r.embedding_dim = $embedding_dim
+                    RETURN count(r) AS updated
                     """,
                     params={
                         "gid": pot_id,
@@ -409,14 +457,38 @@ class FalkorDBGraphWriter(GraphWriterPort):
                         ),
                     },
                 )
+                records = _records_from_result(result)
+                updated = int(records[0]["updated"]) if records else 0
+                if updated < 1:
+                    raise RuntimeError(
+                        "embedding attach matched no edge (upsert wrote it, "
+                        "the attach MATCH could not find it)"
+                    )
             except Exception as exc:  # noqa: BLE001
+                failures.append(
+                    {
+                        "predicate": item.edge_type,
+                        "subject_key": item.from_entity_key,
+                        "object_key": item.to_entity_key,
+                        "error": str(exc),
+                    }
+                )
                 logger.warning(
-                    "falkordb vector write skipped for %s:%s->%s: %s",
+                    "falkordb embedding attach FAILED for %s:%s->%s "
+                    "(claim stays readable, semantic ranking degraded): %s",
                     item.edge_type,
                     item.from_entity_key,
                     item.to_entity_key,
                     exc,
                 )
+        if failures:
+            logger.warning(
+                "falkordb embedding attach failed for %d of %d edge(s) in this "
+                "batch — run 'potpie graph repair semantic_index' to re-embed",
+                len(failures),
+                len(items),
+            )
+        return failures
 
 
 __all__ = ["FalkorDBGraphProvider", "FalkorDBGraphWriter", "build_falkordb_graph"]

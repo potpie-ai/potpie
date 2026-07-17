@@ -222,6 +222,56 @@ def test_commit_verify_reads_back_claim_and_quality_summary() -> None:
     assert result.to_dict()["verification"]["readback_count"] == 1
 
 
+def test_commit_verify_flags_unembedded_claims() -> None:
+    """A committed claim without a fact embedding must surface in verification."""
+    import dataclasses
+
+    from application.services.graph_workbench import (
+        _verification_quality_snapshot,
+        _verify_ingestion_commit,
+    )
+
+    class _StubEmbedder:
+        name = "stub-embedder"
+        dimensions = 3
+
+        def embed(self, text: str) -> tuple[float, ...]:
+            return (0.1, 0.2, 0.3)
+
+        def embed_many(self, texts):
+            return [self.embed(t) for t in texts]
+
+    backend = InMemoryGraphBackend(embedder=_StubEmbedder())
+    store = _MemoryPlanStore()
+    workbench = GraphWorkbenchService(backend=backend, plan_store=store)
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+    result = workbench.commit(proposal.plan_id, pot_id=POT, verify=True)
+
+    # Healthy path: the embedder attached a vector at write time.
+    assert result.verification is not None
+    assert result.verification.unembedded_claim_keys == ()
+
+    # Simulate a failed embedding attach, then re-run verification.
+    claim_store = backend.claim_query
+    claim_store.rows[:] = [
+        dataclasses.replace(row, fact_embedding=None) for row in claim_store.rows
+    ]
+    record = store.get(pot_id=POT, plan_id=proposal.plan_id)
+    assert record is not None
+    verification = _verify_ingestion_commit(
+        backend,
+        pot_id=POT,
+        record=record,
+        before_quality=_verification_quality_snapshot(backend, pot_id=POT),
+    )
+
+    assert verification.unembedded_claim_keys == proposal.claim_keys
+    assert verification.status == "watch"
+    assert any("without a fact embedding" in w for w in verification.warnings)
+    assert "repair semantic_index" in (verification.recommended_next_action or "")
+    assert verification.to_dict()["unembedded_claim_keys"] == list(proposal.claim_keys)
+
+
 def test_commit_verify_flags_quality_regression() -> None:
     workbench, _backend, _store = _service()
     first = workbench.propose(_owner_payload("team:platform"), pot_id=POT)

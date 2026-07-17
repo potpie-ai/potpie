@@ -35,6 +35,21 @@ class _FakeGraph:
         return _FakeResult(self._header, self._result_set)
 
 
+class _SequencedGraph:
+    """Fake graph returning a different canned result per query, in order."""
+
+    def __init__(self, results: list[tuple[list, list]]):
+        self._results = list(results)
+        self.captured: list[tuple[str, dict]] = []
+
+    def query(self, cypher, params=None):
+        self.captured.append((cypher, params or {}))
+        header, result_set = self._results[
+            min(len(self.captured) - 1, len(self._results) - 1)
+        ]
+        return _FakeResult(header, result_set)
+
+
 def _props_graph(*prop_dicts):
     return _FakeGraph(header=[[1, "props"]], result_set=[[p] for p in prop_dicts])
 
@@ -171,9 +186,7 @@ def test_fact_query_stamps_similarity_and_orders() -> None:
     )
 
 
-def test_fact_query_uses_native_relationship_vector_index_when_embedder_present() -> (
-    None
-):
+def test_fact_query_overlays_native_vector_scores_when_embedder_present() -> None:
     graph = _FakeGraph(
         header=[[1, "props"], [1, "score"]],
         result_set=[
@@ -197,15 +210,158 @@ def test_fact_query_uses_native_relationship_vector_index_when_embedder_present(
         ClaimQueryFilter(pot_id="p1", fact_query="connection pool exhausted", limit=3)
     )
 
-    cypher, params = graph.captured[0]
-    assert "db.idx.vector.queryRelationships" in cypher
-    assert "vecf32($embedding)" in cypher
-    assert "id(rel) = id(r)" in cypher
-    assert "ORDER BY score ASC" in cypher
+    # Lexical membership pass first, vector score overlay second.
+    lexical_cypher, _ = graph.captured[0]
+    assert "db.idx.vector" not in lexical_cypher
+    vector_cypher, params = graph.captured[1]
+    assert "db.idx.vector.queryRelationships" in vector_cypher
+    assert "vecf32($embedding)" in vector_cypher
+    # No endpoint binding after the procedure: a bound node scan under the
+    # edge scan is the embedded-FalkorDB id-0 zero-rows plan shape.
+    assert "MATCH" not in vector_cypher
+    assert "ORDER BY score ASC" in vector_cypher
     assert params["embedding"] == [0.1, 0.2, 0.3]
     assert params["k"] == 50
     assert rows[0].subject_key == "a"
     assert rows[0].properties["semantic_similarity"] == pytest.approx(0.88)
+
+
+def test_lexical_find_claims_never_references_endpoints() -> None:
+    """Regression pin for the embedded-FalkorDB endpoint-resolution defect.
+
+    Any endpoint reference — a binding like ``(a:Entity {group_id: $gid})``
+    or even ``labels(a)`` in WHERE with a null parameter — makes the planner
+    resolve the endpoint nodes under the edge scan, and that plan silently
+    returns zero rows after the store is persisted and reloaded when internal
+    node id 0 (always the first entity created) is an endpoint. The claim
+    query must stay a pure edge scan; label filters are applied in Python.
+    """
+    from adapters.outbound.graph.canonical_claim_query import FIND_CLAIMS_CYPHER
+
+    assert "MATCH ()-[r:RELATES_TO {group_id: $gid}]->()" in FIND_CLAIMS_CYPHER
+    assert "labels(" not in FIND_CLAIMS_CYPHER
+    assert "$subject_label" not in FIND_CLAIMS_CYPHER
+    assert "$object_label" not in FIND_CLAIMS_CYPHER
+
+
+def test_label_filters_are_applied_in_python() -> None:
+    """subject_label/object_label constrain results via entity_labels lookups."""
+    claim_row = {
+        "group_id": "p1",
+        "name": "DEPENDS_ON",
+        "subject_key": "service:web",
+        "object_key": "team:platform",
+        "fact": "web is owned by platform",
+    }
+
+    class _LabelsGraph(_FakeGraph):
+        def query(self, cypher, params=None):
+            self.captured.append((cypher, params or {}))
+            if "labels(e)" in cypher:
+                return _FakeResult(
+                    [[1, "key"], [1, "labels"]],
+                    [
+                        ["service:web", ["Entity", "Service"]],
+                        ["team:platform", ["Entity", "Team"]],
+                    ],
+                )
+            return _FakeResult([[1, "props"]], [[claim_row]])
+
+    store = FalkorDBClaimQueryStore(
+        settings=object(),
+        graph=_LabelsGraph(header=[], result_set=[]),
+    )  # type: ignore[arg-type]
+
+    kept = store.find_claims(
+        ClaimQueryFilter(pot_id="p1", subject_label="Service", limit=10)
+    )
+    assert len(kept) == 1
+
+    dropped = store.find_claims(
+        ClaimQueryFilter(pot_id="p1", subject_label="Team", limit=10)
+    )
+    assert dropped == []
+
+
+def test_limit_zero_short_circuits_before_any_query() -> None:
+    graph = _FakeGraph(header=[], result_set=[])
+    store = FalkorDBClaimQueryStore(
+        settings=object(), graph=graph, embedder=_FakeEmbedder()
+    )  # type: ignore[arg-type]
+    assert (
+        store.find_claims(ClaimQueryFilter(pot_id="p1", fact_query="x", limit=0)) == []
+    )
+    assert graph.captured == []
+
+
+def test_unembedded_claims_stay_visible_in_fact_query_results() -> None:
+    """A claim the vector index cannot see must still appear in search results."""
+    embedded_row = {
+        "group_id": "p1",
+        "name": "X",
+        "subject_key": "a",
+        "object_key": "b",
+        "claim_key": "claim:a",
+        "fact": "connection pool exhausted in checkout",
+    }
+    unembedded_row = {
+        "group_id": "p1",
+        "name": "X",
+        "subject_key": "c",
+        "object_key": "d",
+        "claim_key": "claim:c",
+        "fact": "connection pool tuning notes",
+    }
+    graph = _SequencedGraph(
+        [
+            # Lexical pass sees both claims…
+            ([[1, "props"]], [[embedded_row], [unembedded_row]]),
+            # …the vector index only returns the embedded one.
+            ([[1, "props"], [1, "score"]], [[embedded_row, 0.1]]),
+        ]
+    )
+    store = FalkorDBClaimQueryStore(
+        settings=object(), graph=graph, embedder=_FakeEmbedder()
+    )  # type: ignore[arg-type]
+
+    rows = store.find_claims(
+        ClaimQueryFilter(pot_id="p1", fact_query="connection pool", limit=10)
+    )
+
+    assert {r.claim_key for r in rows} == {"claim:a", "claim:c"}
+    # The embedded claim carries the native vector similarity; the unembedded
+    # one falls back to a lexical score instead of disappearing.
+    by_key = {r.claim_key: r.properties["semantic_similarity"] for r in rows}
+    assert by_key["claim:a"] == pytest.approx(0.9)
+    assert by_key["claim:c"] > 0.0
+
+
+def test_vector_query_failure_degrades_to_lexical_scores() -> None:
+    class _ExplodingOnVectorGraph(_SequencedGraph):
+        def query(self, cypher, params=None):
+            if "db.idx.vector" in cypher:
+                self.captured.append((cypher, params or {}))
+                raise RuntimeError("vector index dimension mismatch")
+            return super().query(cypher, params)
+
+    row = {
+        "group_id": "p1",
+        "name": "X",
+        "subject_key": "a",
+        "object_key": "b",
+        "fact": "connection pool exhausted in checkout",
+    }
+    graph = _ExplodingOnVectorGraph([([[1, "props"]], [[row]])])
+    store = FalkorDBClaimQueryStore(
+        settings=object(), graph=graph, embedder=_FakeEmbedder()
+    )  # type: ignore[arg-type]
+
+    rows = store.find_claims(
+        ClaimQueryFilter(pot_id="p1", fact_query="connection pool exhausted")
+    )
+
+    assert len(rows) == 1
+    assert rows[0].properties["semantic_similarity"] > 0.0
 
 
 def test_fact_query_falls_back_to_lexical_when_embedder_fails() -> None:

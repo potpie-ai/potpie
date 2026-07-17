@@ -8,6 +8,7 @@ shim details stay in outbound adapters.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -26,11 +27,20 @@ from adapters.outbound.graph.falkordb_writer import (
     FalkorDBGraphWriter,
     _records_from_result,
 )
+from adapters.outbound.graph.canonical_claim_query import (
+    card_for_row,
+    row_from_record,
+)
 from adapters.outbound.graph.entity_summary_repair import (
     ENTITY_SUMMARY_REPAIR_LIMIT,
     ENTITY_SUMMARY_SCAN_CYPHER,
     ENTITY_SUMMARY_UPDATE_CYPHER,
     repaired_entity_properties,
+)
+from adapters.outbound.graph.semantic_index_repair import (
+    SEMANTIC_INDEX_REPAIR_LIMIT,
+    claim_needs_reembed,
+    stored_dim_mismatch,
 )
 from adapters.outbound.graph.writer_port import GraphWriterPort
 from domain.errors import CapabilityNotImplemented
@@ -41,8 +51,44 @@ from domain.ports.graph.backend import BackendCapabilities
 from domain.ports.graph.mutation import BackendReadiness
 from domain.reconciliation import MutationBatch, MutationResult
 
+logger = logging.getLogger(__name__)
+
 _PROFILE = "falkordb"
 _LITE_PROFILE = "falkordb_lite"
+
+# All repair Cypher is edge-first with UNBOUND endpoints — anchoring a node
+# is the embedded-FalkorDB plan shape that returns zero rows when the bound
+# node is internal id 0 (see FIND_CLAIMS_CYPHER).
+_SEMANTIC_SCAN_CYPHER = """
+MATCH ()-[r:RELATES_TO {group_id: $gid}]->()
+RETURN r{.*} AS props
+LIMIT $limit
+"""
+
+_REEMBED_BY_CLAIM_KEY_CYPHER = """
+MATCH ()-[r:RELATES_TO {group_id: $gid, claim_key: $claim_key}]->()
+SET r.fact_embedding = vecf32($embedding),
+    r.embedding_model = $embedding_model,
+    r.embedding_dim = $embedding_dim
+RETURN count(r) AS updated
+"""
+
+# ``source_ref`` is part of the edge identity for FalkorDB writes: a null
+# param must match only edges that themselves have no source_ref, never act
+# as a wildcard across every edge sharing the (predicate, subject, object)
+# tuple.
+_REEMBED_BY_TUPLE_CYPHER = """
+MATCH ()-[r:RELATES_TO {group_id: $gid, name: $predicate, subject_key: $subject_key, object_key: $object_key}]->()
+WHERE (($source_ref IS NULL AND r.source_ref IS NULL) OR r.source_ref = $source_ref)
+SET r.fact_embedding = vecf32($embedding),
+    r.embedding_model = $embedding_model,
+    r.embedding_dim = $embedding_dim
+RETURN count(r) AS updated
+"""
+
+_DROP_VECTOR_INDEX_CYPHER = (
+    "DROP VECTOR INDEX FOR ()-[r:RELATES_TO]-() ON (r.fact_embedding)"
+)
 
 
 class _FalkorDBModeSettings:
@@ -213,6 +259,7 @@ class FalkorDBGraphBackend:
         return ClaimQueryAnalytics(
             self._claim_query,
             entity_summary_repair=self._repair_entity_summaries,
+            semantic_index_repair=self._repair_semantic_index,
         )
 
     @property
@@ -257,6 +304,144 @@ class FalkorDBGraphBackend:
             ),
             metadata={"profile": self.profile_name},
         )
+
+    def _repair_semantic_index(self, pot_id: str) -> dict[str, Any]:
+        """Re-embed claims whose embeddings are missing, stale, or mis-sized.
+
+        This is both the recovery pass for failed embedding attaches and the
+        migration pass for embedder changes (model or dimensions). On a
+        dimension change the vector index is dropped first — re-embedded
+        values at the new size must not stream into an index built for the
+        old one — and recreated after the claims are rewritten.
+        """
+        if self.embedder is None:
+            return {
+                "scanned": 0,
+                "repaired": 0,
+                "failed": 0,
+                "detail": "no embedder configured; nothing to re-embed",
+            }
+        embedder_name = str(getattr(self.embedder, "name", "unknown"))
+        embedder_dim = int(getattr(self.embedder, "dimensions", 0))
+        graph = self.graph_provider()
+        rows = _records_from_result(
+            graph.query(
+                _SEMANTIC_SCAN_CYPHER,
+                params={"gid": pot_id, "limit": SEMANTIC_INDEX_REPAIR_LIMIT},
+            )
+        )
+        props_list = [
+            props for rec in rows if isinstance(props := rec.get("props"), Mapping)
+        ]
+        needs = [
+            props
+            for props in props_list
+            if claim_needs_reembed(
+                props, embedder_name=embedder_name, embedder_dim=embedder_dim
+            )
+        ]
+        index_recreated = False
+        index_errors: list[str] = []
+        if any(
+            stored_dim_mismatch(props, embedder_dim=embedder_dim) for props in needs
+        ):
+            try:
+                graph.query(_DROP_VECTOR_INDEX_CYPHER)
+                index_recreated = True
+            except Exception as exc:  # noqa: BLE001
+                index_errors.append(f"index drop failed: {exc}")
+                logger.warning("vector index drop failed (continuing): %s", exc)
+        repaired = 0
+        failed = 0
+        for props in needs:
+            try:
+                row = row_from_record({"props": dict(props)})
+                card = card_for_row(row)
+                if not card:
+                    failed += 1
+                    continue
+                embedding = [float(x) for x in self.embedder.embed(card)]
+                updated = self._set_claim_embedding(
+                    graph,
+                    pot_id=pot_id,
+                    props=props,
+                    embedding=embedding,
+                    embedder_name=embedder_name,
+                    embedder_dim=embedder_dim,
+                )
+                if updated < 1:
+                    raise RuntimeError("re-embed matched no edge")
+                repaired += 1
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                logger.warning(
+                    "semantic re-embed failed for %s:%s->%s: %s",
+                    props.get("name"),
+                    props.get("subject_key"),
+                    props.get("object_key"),
+                    exc,
+                )
+        # Recreate (or ensure) the vector index after values are rewritten.
+        # The index covers every :RELATES_TO edge in the (shared) graph, so a
+        # dimension migration re-shapes it for all pots in this store.
+        assert self.writer is not None
+        embedding_dim = int(getattr(self.embedder, "dimensions", 1536))
+        if not FalkorDBGraphWriter._ensure_vector_index_sync(graph, embedding_dim):
+            index_errors.append("index recreate failed — see the daemon/CLI log")
+        index_recreated = index_recreated and not index_errors
+        detail = (
+            f"re-embedded {repaired} of {len(needs)} stale claim(s) "
+            f"(scanned {len(props_list)})"
+        )
+        if failed:
+            detail += f"; {failed} FAILED — see warnings in the daemon/CLI log"
+        if index_recreated:
+            detail += "; vector index rebuilt for new embedding dimensions"
+        if index_errors:
+            detail += "; " + "; ".join(index_errors)
+        return {
+            "scanned": len(props_list),
+            "repaired": repaired,
+            "failed": failed + (1 if index_errors else 0),
+            "index_recreated": index_recreated,
+            "detail": detail,
+        }
+
+    @staticmethod
+    def _set_claim_embedding(
+        graph: Any,
+        *,
+        pot_id: str,
+        props: Mapping[str, Any],
+        embedding: list[float],
+        embedder_name: str,
+        embedder_dim: int,
+    ) -> int:
+        claim_key = props.get("claim_key")
+        base_params = {
+            "gid": pot_id,
+            "embedding": embedding,
+            "embedding_model": embedder_name,
+            "embedding_dim": embedder_dim,
+        }
+        if isinstance(claim_key, str) and claim_key:
+            result = graph.query(
+                _REEMBED_BY_CLAIM_KEY_CYPHER,
+                params={**base_params, "claim_key": claim_key},
+            )
+        else:
+            result = graph.query(
+                _REEMBED_BY_TUPLE_CYPHER,
+                params={
+                    **base_params,
+                    "predicate": props.get("name"),
+                    "subject_key": props.get("subject_key"),
+                    "object_key": props.get("object_key"),
+                    "source_ref": props.get("source_ref"),
+                },
+            )
+        records = _records_from_result(result)
+        return int(records[0].get("updated") or 0) if records else 0
 
     def _repair_entity_summaries(self, pot_id: str) -> int:
         graph = self.graph_provider()

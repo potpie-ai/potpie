@@ -82,12 +82,19 @@ _SEAM_PLAN: tuple[tuple[str, str, str], ...] = (
     ("daemon", "daemon / host", "ensure host running"),
     ("auth", "auth", "init local auth"),
     ("source", "pot management", "register repo '{repo}'"),
+    (
+        "embeddings.reindex",
+        "intelligence / embeddings",
+        "re-embed claims stale for the active embedder",
+    ),
     ("skills", "skill manager", "install skills for '{agent}'"),
 )
 
 # Soft steps never gate the run. Host-gated steps are hard only for a detached
 # daemon host; an in-process host skips them.
-_SOFT_STEPS = frozenset({"auth", "source", "skills", "embeddings.model"})
+_SOFT_STEPS = frozenset(
+    {"auth", "source", "skills", "embeddings.model", "embeddings.reindex"}
+)
 _HOST_GATED = frozenset({"installer", "daemon"})
 
 
@@ -224,6 +231,11 @@ class DefaultSetupOrchestrator:
             self._step("daemon", hard("daemon"), lambda: self.daemon.ensure(plan)),
             self._step("auth", hard("auth"), self.auth.init_local),
             self._step("source", hard("source"), lambda: self._source(plan)),
+            self._step(
+                "embeddings.reindex",
+                hard("embeddings.reindex"),
+                lambda: self._semantic_reindex(plan),
+            ),
             *(
                 [self._step("skills", hard("skills"), lambda: self._skills(plan))]
                 if not plan.defer_skills
@@ -341,6 +353,46 @@ class DefaultSetupOrchestrator:
             detail,
             metadata={**metadata, "mode": plan.embeddings, "model": model},
         )
+
+    def _semantic_reindex(self, plan: SetupPlan) -> StepResult:
+        """Migrate existing claims to the active embedder (idempotent).
+
+        On an upgraded install the pot may hold embeddings written by a
+        different model or dimension count (e.g. hashing-256 before the
+        sentence-transformers default); those claims silently drop out of
+        semantic ranking until re-embedded. A clean pot makes this a fast
+        no-op scan.
+        """
+        step = "embeddings.reindex"
+        embedder = getattr(self.backend, "embedder", None)
+        if embedder is None:
+            return StepResult(
+                step, SKIPPED, f"embedding mode is {plan.embeddings}; lexical only"
+            )
+        active = self.pots.active_pot()
+        if active is None:
+            return StepResult(step, SKIPPED, "no active pot")
+        analytics = getattr(self.backend, "analytics", None)
+        repair = getattr(analytics, "repair", None)
+        if not callable(repair):
+            return StepResult(step, SKIPPED, "backend has no repair surface")
+        report = repair(active.pot_id, targets=("semantic_index",))
+        repaired = dict(report.repaired)
+        reembedded = int(repaired.get("semantic_index") or 0)
+        failed = int(repaired.get("semantic_index_failed") or 0)
+        if failed:
+            return StepResult(
+                step,
+                FAILED,
+                report.detail or f"{failed} claim(s) failed to re-embed",
+                metadata=repaired,
+            )
+        detail = report.detail or (
+            f"re-embedded {reembedded} claim(s)"
+            if reembedded
+            else "claim embeddings match the active embedder"
+        )
+        return StepResult(step, DONE, detail, metadata=repaired)
 
     def _source(self, plan: SetupPlan) -> StepResult:
         if not plan.repo:

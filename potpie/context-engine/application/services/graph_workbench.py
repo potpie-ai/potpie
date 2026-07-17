@@ -1203,6 +1203,22 @@ def _verify_ingestion_commit(
             "Review graph quality summary before relying on newly committed memory."
         )
 
+    unembedded_claim_keys = tuple(readback.get("unembedded_claim_keys", ()))
+    if unembedded_claim_keys:
+        # The claims read back (Part of the write landed) but carry no fact
+        # embedding, so they fall out of semantic ranking. Not a data-loss
+        # failure — but it must never be a silent one.
+        warnings.append(
+            f"{len(unembedded_claim_keys)} committed claim(s) read back without "
+            "a fact embedding; semantic ranking is degraded for them"
+        )
+        if status == "ok":
+            status = "watch"
+            recommended = (
+                "Run 'potpie graph repair semantic_index' to re-embed claims "
+                "missing vectors."
+            )
+
     return GraphIngestionVerificationResult(
         ok=ok,
         status=status,
@@ -1211,6 +1227,7 @@ def _verify_ingestion_commit(
         claim_keys=claim_keys,
         readback_claim_keys=tuple(readback["readback_claim_keys"]),
         missing_claim_keys=tuple(readback["missing_claim_keys"]),
+        unembedded_claim_keys=unembedded_claim_keys,
         readback_count=int(readback["readback_count"]),
         quality_status=str(after_quality["status"]),
         quality_counts=after_counts,
@@ -1235,6 +1252,7 @@ def _verification_readback(
         return {
             "readback_claim_keys": (),
             "missing_claim_keys": (),
+            "unembedded_claim_keys": (),
             "readback_count": 0,
             "unsupported": (),
         }
@@ -1251,20 +1269,34 @@ def _verification_readback(
         return {
             "readback_claim_keys": (),
             "missing_claim_keys": (),
+            "unembedded_claim_keys": (),
             "readback_count": 0,
             "unsupported": (
                 _unsupported_from_exception(exc, fallback="claim_query.find_claims"),
             ),
         }
-    readback_keys = tuple(
-        dict.fromkeys(_row_claim_key(row) for row in _dedupe_claim_rows(list(rows)))
-    )
+    deduped_rows = _dedupe_claim_rows(list(rows))
+    readback_keys = tuple(dict.fromkeys(_row_claim_key(row) for row in deduped_rows))
     readback_set = set(readback_keys)
+    # When the backend runs in vector mode, every committed claim should carry
+    # a fact embedding; a claim without one silently drops out of semantic
+    # ranking, so the gap must surface here rather than in nobody's logs.
+    vector_mode = getattr(backend.claim_query, "match_mode", "lexical") == "vector"
+    unembedded = (
+        tuple(
+            key
+            for row in deduped_rows
+            if (key := _row_claim_key(row)) and row.fact_embedding is None
+        )
+        if vector_mode
+        else ()
+    )
     return {
         "readback_claim_keys": readback_keys,
         "missing_claim_keys": tuple(
             key for key in claim_keys if key not in readback_set
         ),
+        "unembedded_claim_keys": unembedded,
         "readback_count": len(readback_keys),
         "unsupported": (),
     }

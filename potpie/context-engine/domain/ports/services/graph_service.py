@@ -49,6 +49,10 @@ class DataPlaneStatus:
     match_mode: str = "lexical"
     """Active semantic-match mode (``vector`` | ``lexical``) so empty results
     are debuggable, not mysterious (Retrieval Hardening / R1)."""
+    embedder: Mapping[str, Any] = field(default_factory=dict)
+    """Active embedder identity (``name`` + ``dimensions``): "vector" from the
+    hashing fallback and from a semantic model are different quality tiers,
+    and surfaces must not let them look the same."""
     detail: str | None = None
 
 

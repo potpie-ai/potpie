@@ -30,11 +30,18 @@ class _FakeResult:
 class _FakeGraph:
     """Captures queries; answers count() and absorbs DETACH DELETE."""
 
-    def __init__(self, count: int = 0, *, raise_on_index: bool = False):
+    def __init__(
+        self,
+        count: int = 0,
+        *,
+        raise_on_index: bool = False,
+        attach_updated: int = 1,
+    ):
         self.queries: list[tuple[str, dict]] = []
         self._count = count
         self._deleted = False
         self._raise_on_index = raise_on_index
+        self._attach_updated = attach_updated
 
     def query(self, cypher: str, params=None):
         self.queries.append((cypher, params or {}))
@@ -46,6 +53,10 @@ class _FakeGraph:
         if "count(n) AS cnt" in cypher:
             val = 0 if self._deleted else self._count
             return _FakeResult(header=[[1, "cnt"]], result_set=[[val]])
+        if "count(r) AS updated" in cypher:
+            return _FakeResult(
+                header=[[1, "updated"]], result_set=[[self._attach_updated]]
+            )
         return _FakeResult()
 
 
@@ -227,6 +238,127 @@ async def test_upsert_edges_writes_falkordb_vecf32_embedding() -> None:
     assert params["embedding"] == [0.1, 0.2, 0.3]
     assert params["embedding_model"] == "fake-embedder"
     assert params["embedding_dim"] == 3
+
+
+async def test_embedding_attach_uses_unbound_endpoints_and_verifies_count() -> None:
+    """Regression pin for the embedded-FalkorDB id-0 planner defect.
+
+    Anchoring the source node in the attach MATCH silently matched zero rows
+    when the source was internal node id 0 (always the Repository). The edge
+    must be matched by its own properties, and the SET must prove it landed.
+    """
+    graph = _FakeGraph()
+    w = FalkorDBGraphWriter(_FakeSettings(), graph=graph, embedder=_FakeEmbedder())
+    prov = ProvenanceRef(pot_id="p1", source_event_id="e1")
+    await w.upsert_edges(
+        "p1",
+        [EdgeUpsert("DEPENDS_ON", "service:web", "service:auth", {"fact": "x"})],
+        prov,
+    )
+
+    attach_cypher = next(q for q, _ in graph.queries if "vecf32($embedding)" in q)
+    assert "MATCH ()-[r:RELATES_TO" in attach_cypher
+    assert "(:Entity" not in attach_cypher
+    assert "RETURN count(r) AS updated" in attach_cypher
+
+
+async def test_embedding_attach_zero_match_is_loud_failure(caplog) -> None:
+    graph = _FakeGraph(attach_updated=0)
+    w = FalkorDBGraphWriter(_FakeSettings(), graph=graph, embedder=_FakeEmbedder())
+    prov = ProvenanceRef(pot_id="p1", source_event_id="e1")
+
+    failures = w._write_edge_vectors_sync(
+        graph,
+        "p1",
+        [EdgeUpsert("DEPENDS_ON", "service:web", "service:auth", {"fact": "x"})],
+        prov,
+    )
+
+    assert len(failures) == 1
+    assert failures[0]["predicate"] == "DEPENDS_ON"
+    assert failures[0]["subject_key"] == "service:web"
+    assert "matched no edge" in failures[0]["error"]
+    warning_text = " ".join(
+        rec.getMessage() for rec in caplog.records if rec.levelname == "WARNING"
+    )
+    assert "embedding attach FAILED" in warning_text
+    assert "repair semantic_index" in warning_text
+
+
+async def test_lazy_index_ensure_creates_only_the_vector_index() -> None:
+    """The write-path ensure must not create range indexes.
+
+    Creating node/edge range indexes lazily flips global planner behaviour on
+    a store that was never provisioned — embedded FalkorDB then routes other
+    queries through index-scan plans that silently drop rows after a
+    persistence reload. The vector write only needs the vector index.
+    """
+    graph = _FakeGraph()
+    w = FalkorDBGraphWriter(_FakeSettings(), graph=graph, embedder=_FakeEmbedder())
+    prov = ProvenanceRef(pot_id="p1", source_event_id="e1")
+    await w.upsert_edges(
+        "p1",
+        [EdgeUpsert("DEPENDS_ON", "service:web", "service:auth", {"fact": "x"})],
+        prov,
+    )
+
+    index_qs = [q for q, _ in graph.queries if q.startswith("CREATE")]
+    assert len(index_qs) == 1
+    assert index_qs[0].startswith("CREATE VECTOR INDEX")
+
+
+def test_lazy_vector_index_failure_is_retried_next_batch() -> None:
+    """A failed index creation must not be cached as ensured."""
+
+    class _FlakyIndexGraph(_FakeGraph):
+        def __init__(self):
+            super().__init__()
+            self.vector_index_attempts = 0
+
+        def query(self, cypher: str, params=None):
+            if "CREATE VECTOR INDEX" in cypher:
+                self.queries.append((cypher, params or {}))
+                self.vector_index_attempts += 1
+                if self.vector_index_attempts == 1:
+                    raise RuntimeError("connection reset")
+                return _FakeResult()
+            return super().query(cypher, params)
+
+    graph = _FlakyIndexGraph()
+    w = FalkorDBGraphWriter(_FakeSettings(), graph=graph, embedder=_FakeEmbedder())
+    prov = ProvenanceRef(pot_id="p1", source_event_id="e1")
+    edge = [EdgeUpsert("DEPENDS_ON", "service:web", "service:auth", {"fact": "x"})]
+
+    w._write_edge_vectors_sync(graph, "p1", edge, prov)
+    w._write_edge_vectors_sync(graph, "p1", edge, prov)
+    w._write_edge_vectors_sync(graph, "p1", edge, prov)
+
+    # Attempted again after the failure, then cached once it succeeded.
+    assert graph.vector_index_attempts == 2
+
+
+def test_lazy_vector_index_already_indexed_counts_as_success() -> None:
+    class _AlreadyIndexedGraph(_FakeGraph):
+        def __init__(self):
+            super().__init__()
+            self.vector_index_attempts = 0
+
+        def query(self, cypher: str, params=None):
+            if "CREATE VECTOR INDEX" in cypher:
+                self.queries.append((cypher, params or {}))
+                self.vector_index_attempts += 1
+                raise RuntimeError("Attribute 'fact_embedding' is already indexed")
+            return super().query(cypher, params)
+
+    graph = _AlreadyIndexedGraph()
+    w = FalkorDBGraphWriter(_FakeSettings(), graph=graph, embedder=_FakeEmbedder())
+    prov = ProvenanceRef(pot_id="p1", source_event_id="e1")
+    edge = [EdgeUpsert("DEPENDS_ON", "service:web", "service:auth", {"fact": "x"})]
+
+    w._write_edge_vectors_sync(graph, "p1", edge, prov)
+    w._write_edge_vectors_sync(graph, "p1", edge, prov)
+
+    assert graph.vector_index_attempts == 1
 
 
 def test_build_falkordb_graph_server_mode_requires_url() -> None:
