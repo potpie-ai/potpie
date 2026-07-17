@@ -49,7 +49,7 @@ from domain.ports.services.pot_management import PotManagementService
 from domain.ports.services.skill_manager import SkillManager
 from domain.ports.services.state_store import MigrationPort, StateStorePort
 from domain.ports.services.setup import NoOpSetupObserver, SetupObserver
-from host.daemon import Daemon
+from potpie.daemon.lifecycle import Daemon
 
 # Dependency-ordered seam plan: (step, owner, action template). Mirrors the
 # architecture.md "Seam → owner map"; the orchestrator depends only on each

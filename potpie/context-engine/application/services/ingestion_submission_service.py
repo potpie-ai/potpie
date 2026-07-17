@@ -3,7 +3,7 @@
 Most events flow through the debounced batch queue and reconciliation agent.
 Durable ``context_record`` submissions are the deliberate exception: they route
 directly through ``GraphService.record`` so structured agent memories use the
-same deterministic semantic-mutation path as local CLI/MCP writes and do not
+same deterministic semantic-mutation path as local CLI writes and do not
 require a reconciliation agent. The legacy ``connector_sync`` shortcut and its
 source-specific dispatch are gone.
 """

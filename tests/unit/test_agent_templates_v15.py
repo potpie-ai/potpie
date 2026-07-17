@@ -9,14 +9,13 @@ instructions that humans and agents actually read.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
 import pytest
 
 import potpie.cli as _clipkg
-from domain.agent_context_port import CONTEXT_INCLUDE_VALUES, CONTEXT_RECORD_TYPES
+from domain.agent_context_port import CONTEXT_RECORD_TYPES
 
 pytestmark = pytest.mark.unit
 
@@ -47,17 +46,8 @@ STALE_PUBLIC_VIEW_TOKENS = (
 # view name ``recent_changes.timeline``. The JSON-include allowlist check below
 # still rejects ``recent_changes`` if it ever reappears as an include value.
 
-_JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
 _BASH_BLOCK_RE = re.compile(r"```bash\s*\n(.*?)\n```", re.DOTALL)
 _RECORD_ENUM_RE = re.compile(r"^[a-z_]+(?:\|[a-z_]+){3,}$", re.MULTILINE)
-
-
-def _iter_json_blocks(text: str):
-    for raw in _JSON_BLOCK_RE.findall(text):
-        try:
-            yield json.loads(raw)
-        except (ValueError, TypeError):
-            continue  # illustrative non-JSON fence; not a recipe
 
 
 def test_templates_exist() -> None:
@@ -86,20 +76,6 @@ def test_no_stale_include_names_anywhere() -> None:
         assert not hits, (
             f"{path.relative_to(TEMPLATES)} still advertises stale includes: {hits}"
         )
-
-
-def test_every_json_recipe_include_is_supported() -> None:
-    checked = 0
-    for path in MD_FILES:
-        for block in _iter_json_blocks(path.read_text(encoding="utf-8")):
-            if not isinstance(block, dict) or "include" not in block:
-                continue
-            include = block["include"]
-            assert isinstance(include, list) and include, f"{path.name}: empty include"
-            unknown = set(include) - CONTEXT_INCLUDE_VALUES
-            assert not unknown, f"{path.name} recipe has unknown includes: {unknown}"
-            checked += 1
-    assert checked >= 3, "expected several JSON recipe blocks across templates"
 
 
 def test_record_type_enums_are_supported() -> None:
@@ -207,20 +183,24 @@ def test_templates_use_canonical_v2_view_syntax() -> None:
         assert not bad_args, f"{rel} uses fully-qualified --view args: {bad_args}"
 
 
-def test_context_record_is_labeled_mcp_compatibility() -> None:
+def test_templates_do_not_recommend_removed_potpie_mcp_tools() -> None:
     for path in MD_FILES:
         rel = path.relative_to(TEMPLATES).as_posix()
         text = path.read_text(encoding="utf-8")
-        if "context_record" not in text:
-            continue
-        lowered_lines = text.lower().splitlines()
-        for idx, line in enumerate(lowered_lines):
-            if "context_record" not in line:
-                continue
-            window = " ".join(lowered_lines[max(0, idx - 5) : idx + 2])
-            assert "mcp" in window or "compatib" in window, (
-                f"{rel} mentions context_record without MCP compatibility framing"
+        removed_tools = {
+            tool
+            for tool in (
+                "context_resolve",
+                "context_search",
+                "context_record",
+                "context_status",
+                "potpie-mcp",
             )
+            if tool in text
+        }
+        assert removed_tools == set(), (
+            f"{rel} recommends removed Potpie MCP tools: {sorted(removed_tools)}"
+        )
 
 
 def test_recommended_skills_teach_v2_workflow() -> None:
@@ -265,9 +245,9 @@ def test_templates_document_nudge_handling() -> None:
     assert "auto-write" in text.lower() or "prompt to decide" in text.lower()
 
 
-def test_context_tools_kept_as_compatibility_wrappers() -> None:
-    assert "context_resolve" in _read("agent_bundle/AGENTS.md")
-    assert "context_resolve" in _read("claude_bundle/CLAUDE.md")
+def test_agent_instructions_use_the_cli_graph_surface() -> None:
+    assert "potpie graph read" in _read("agent_bundle/AGENTS.md")
+    assert "potpie graph read" in _read("claude_bundle/CLAUDE.md")
 
 
 # The Stage 6 core skills: every one must carry the harness-led boundary in

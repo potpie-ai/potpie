@@ -1,7 +1,7 @@
 """``build_host_shell`` — the skeleton composition root.
 
 Wires the services + adapters behind every seam into one ``HostShell``. This is
-the single composition root for the agent surface (CLI + MCP). The HTTP
+the single composition root for the agent surface (CLI). The HTTP
 ingestion subsystem has its own root, ``bootstrap/ingestion_server.py`` (Neo4j +
 Postgres pipeline + connectors + reconciliation agent), which is being migrated
 onto ``HostShell`` and is not imported on the CLI path.
@@ -53,7 +53,7 @@ from domain.coherence import assert_runtime_coherence
 from domain.ports.graph.backend import GraphBackend
 from domain.ports.ledger.client import EventLedgerClientPort
 from domain.ports.observability import ObservabilityPort
-from host.daemon import Daemon
+from potpie.daemon.lifecycle import Daemon
 from host.shell import HostShell, LedgerFacade
 
 

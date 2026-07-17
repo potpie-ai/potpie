@@ -13,7 +13,7 @@ the read work; ``AgentContextPort.resolve`` is the public binding to it.
 
 Graph Surface Lite (V1.5) adds four V2-shaped methods — ``catalog`` / ``read`` /
 ``search_entities`` / ``mutate`` — that discover, query, and directly mutate the
-graph. They are CLI-only in V1.5 (the MCP surface stays at exactly four tools).
+graph. They are exposed through the CLI in V1.5.
 """
 
 from __future__ import annotations

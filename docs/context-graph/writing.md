@@ -302,7 +302,7 @@ persistence, no TTL, no version-conflict guard. Returns a `SemanticMutationResul
 
 **What reaches Spine B today:**
 
-- the **`record` / `context_record`** bridge (`application/services/record_to_semantic.py`), and
+- the **`record`** bridge (`application/services/record_to_semantic.py`), and
 - `ingestion_submission_service` (the `context_record` deterministic path).
 
 `record_to_semantic` maps each `record_type` to fixed semantic op(s): preference/policy →
@@ -311,8 +311,7 @@ REPRODUCES + RESOLVED/ATTEMPTED_FIX_FAILED (`debugging`); verification → VERIF
 decision → DECIDED (+AFFECTS, truth=user_decision); unknown types → free-form `RELATED_TO`. It
 sets `allow_review_required=True, approved_by="context_record"` so a deliberate record write
 (including medium-risk decisions) auto-applies; it never generates supersede/merge.
-`context_record` is the **only MCP write tool** (`adapters/inbound/mcp/server.py`); the MCP surface
-stays at exactly four tools (see [querying.md](./querying.md)).
+The bridge is exposed by the `potpie record` compatibility command.
 
 > **`graph mutate` is a legacy wrapper, not Spine B.** The CLI `graph mutate`
 > (`commands/graph.py`) internally calls workbench **propose → commit** and emits a legacy
@@ -435,7 +434,7 @@ Full flags live in [cli-flow.md](./cli-flow.md); the write loop discipline is ta
 | `graph bulk apply --file <ndjson> [--chunk-size] [--verify]` | Spine A — chunked multi-plan apply |
 | `graph mutate --file … [--dry-run] [--allow-review-required] [--approved-by]` | **legacy wrapper** over propose+commit |
 | `graph mutation-template --kind <…>` | static schema-only skeleton (no host call) |
-| `record --type … --summary …` / MCP `context_record` | Spine B — record→semantic bridge (only MCP write) |
+| `record --type … --summary …` | Spine B — record→semantic bridge |
 | `graph history [--entity\|--claim\|--plan\|--mutation\|--subgraph]` | committed-write audit trail |
 | `graph inbox …` / `graph quality …` | pending work / diagnostics (§10–11) |
 
@@ -448,7 +447,7 @@ Canonical loop: discover the contract (`graph catalog`) → read (`graph read`) 
 ## See also
 
 - [ontology.md](./ontology.md) — entities, predicates, truth classes, the 10 ops, identity keys.
-- [querying.md](./querying.md) — the read trunk, the 4-tool MCP contract, the AgentEnvelope.
+- [querying.md](./querying.md) — the read trunk and the AgentEnvelope.
 - [cli-flow.md](./cli-flow.md) — the full command/flag surface.
 - [ingestion-nudge.md](./ingestion-nudge.md) — how raw episodes/events enter; the nudge model.
 - [architecture.md](./architecture.md) — backends, the GraphWriterPort, the shared engine room.

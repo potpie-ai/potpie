@@ -2,7 +2,7 @@
 
 The host-routed command-line entrypoint for the context graph. Every command
 routes `CLI → HostShell → service(s) → ports`; the in-process `HostShell` is the
-single composition root for the agent surface (shared with the MCP server).
+single composition root for the product command surface.
 
 - **Entrypoint:** `potpie/cli/main.py` (registered as the `potpie`
   console script in `pyproject.toml` → `[project.scripts]`).
@@ -15,17 +15,17 @@ single composition root for the agent surface (shared with the MCP server).
   and active-pot resolution. An unbuilt capability surfaces as the structured
   not-implemented contract (`CapabilityNotImplemented`), never a traceback.
 
-## The four-tool agent surface
+## Agent compatibility commands
 
-The public agent contract is exactly four tools, each returning an
+The CLI exposes four compatibility commands, each returning an
 `AgentEnvelope` (no server-side synthesis):
 
-| Tool / CLI | Use |
+| Command | Use |
 |------------|-----|
-| `context_resolve` / `potpie resolve` | Primary bounded-context wrap for a task. |
-| `context_search` / `potpie search` | Narrow follow-up lookup. |
-| `context_record` / `potpie record` | Record a durable learning (decision, fix, preference, …). |
-| `context_status` / `potpie status` | Cheap pot/scope readiness + recommended recipe. |
+| `potpie resolve` | Primary bounded-context wrap for a task. |
+| `potpie search` | Narrow follow-up lookup. |
+| `potpie record` | Record a durable learning (decision, fix, preference, …). |
+| `potpie status` | Cheap pot/scope readiness + recommended recipe. |
 
 Integration credential status is intentionally outside this four-tool surface:
 use `potpie auth status [--verify]` for local provider auth state.
@@ -72,15 +72,9 @@ delete every globally installed Potpie skill for a harness with
 `potpie skills remove --all --agent claude`. Use `--scope project --path .` for
 repo-local cleanup.
 
-Use `--scope project --path .` for repo-local installs. The bundle keeps the
-agent surface to the four tools above and encodes feature / debugging / review /
-operations / docs / onboarding workflows as `context_resolve` recipes. Agents
-see only an advisory `skills` block in `context_status` with missing/outdated
+Use `--scope project --path .` for repo-local installs. The bundle teaches
+feature / debugging / review / operations / docs / onboarding workflows over
+the CLI graph surface. Agents see an advisory `skills` block in `potpie status` with missing/outdated
 skills and the exact install command. Repo-local `AGENTS.md` and `CLAUDE.md`
 files are merged the same way as global instruction files, so setup does not
 replace existing agent instructions.
-
-## MCP
-
-The MCP server (`potpie-mcp`, stdio) binds to the same in-process `HostShell`
-and exposes exactly the four tools above (`adapters/inbound/mcp/server.py`).

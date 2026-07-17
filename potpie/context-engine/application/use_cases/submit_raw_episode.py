@@ -23,7 +23,7 @@ from domain.reconciliation import ReconciliationResult
 
 @dataclass(slots=True)
 class RawEpisodeSubmissionResult:
-    """Outcome for CLI, HTTP, and MCP raw ingest."""
+    """Outcome for CLI and HTTP raw ingest."""
 
     ok: bool
     status: Literal[

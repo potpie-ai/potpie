@@ -9,7 +9,6 @@ pure relocation can change ownership without changing the public surfaces.
 
 from __future__ import annotations
 
-import asyncio
 from importlib import import_module
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -22,7 +21,7 @@ from typer.main import get_command
 
 ROOT = Path(__file__).resolve().parents[2]
 
-EXPECTED_SCRIPTS = {"potpie", "potpie-daemon", "potpie-mcp"}
+EXPECTED_SCRIPTS = {"potpie", "potpie-daemon"}
 EXPECTED_CLI_COMMANDS = {
     "auth",
     "backend",
@@ -54,12 +53,6 @@ EXPECTED_CLI_COMMANDS = {
     "use",
     "whoami",
 }
-EXPECTED_MCP_TOOLS = {
-    "context_record",
-    "context_resolve",
-    "context_search",
-    "context_status",
-}
 EXPECTED_DAEMON_ROUTES = {
     ("/attr", frozenset({"POST"})),
     ("/health", frozenset({"GET"})),
@@ -81,7 +74,7 @@ def _load_script(name: str) -> tuple[ModuleType, Any]:
     return module, target
 
 
-def test_root_distribution_exposes_exactly_three_product_processes() -> None:
+def test_root_distribution_exposes_cli_and_daemon_processes() -> None:
     scripts = _scripts()
     assert set(scripts) == EXPECTED_SCRIPTS
     for name in sorted(EXPECTED_SCRIPTS):
@@ -113,9 +106,3 @@ def test_daemon_process_routes_are_unchanged(monkeypatch: Any) -> None:
         if route.path in {"/health", "/rpc", "/attr"}
     }
     assert routes == EXPECTED_DAEMON_ROUTES
-
-
-def test_mcp_tool_surface_is_unchanged() -> None:
-    module, _main = _load_script("potpie-mcp")
-    tools = asyncio.run(module.mcp.list_tools())
-    assert {tool.name for tool in tools} == EXPECTED_MCP_TOOLS

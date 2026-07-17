@@ -123,9 +123,7 @@ run. **There is no top-level `potpie install`** — skills install only via
 | `potpie-debug-memory` | — | Use-case read+record skill (prior bugs/fixes). |
 
 The four use-case skills share one shape: a **Fast Path** read, an **Apply
-Results** step, a **Record** flow, and an MCP fallback recipe
-(`context_resolve` / `context_record` JSON) for harnesses that only have the
-4-tool MCP surface rather than the CLI.
+Results** step, and a **Record** flow over the CLI.
 
 ---
 
@@ -217,8 +215,8 @@ result:
 
 | Command | Purpose |
 |---|---|
-| `/potpie-feature` | Load Potpie context **before** feature work (reads preferences, decisions, infra neighborhood; MCP `context_resolve` fallback). |
-| `/potpie-record` | Record durable learnings **after** useful work (resolve identity → propose/commit `--verify`; `context_record` fallback). |
+| `/potpie-feature` | Load Potpie context **before** feature work (reads preferences, decisions, and the infra neighborhood). |
+| `/potpie-record` | Record durable learnings **after** useful work (resolve identity → propose/commit `--verify`). |
 
 > **Roadmap (not yet wired):** the Claude Code plugin has no first-class CLI
 > install path. The bundle `claude-plugin` agent type exists
@@ -250,7 +248,7 @@ install path.
 > separate HTTP ingestion-server composition root and is **off by default**
 > (`domain/reconciliation_flags.py agent_planner_enabled()` returns False; opt-in
 > `CONTEXT_ENGINE_AGENT_PLANNER_ENABLED=1`). The canonical write path remains
-> harness-authored semantic mutations + the deterministic `context_record`. See
+> harness-authored semantic mutations + the deterministic record bridge. See
 > [ingestion-nudge.md](./ingestion-nudge.md).
 
 ---
@@ -258,6 +256,6 @@ install path.
 ## See also
 
 - [ingestion-nudge.md](./ingestion-nudge.md) — the zero-token nudge trigger model the plugin hook fires, and the server-side reconciliation pipeline.
-- [querying.md](./querying.md) — the read mechanics (catalog/read/search-entities, the AgentEnvelope, the 4-tool MCP fallback) the skills drive.
+- [querying.md](./querying.md) — the read mechanics (catalog/read/search-entities and the AgentEnvelope) the skills drive.
 - [writing.md](./writing.md) — the propose → commit `--verify` write door, the semantic DSL, inbox, and quality scoring.
 - [cli-flow.md](./cli-flow.md) — the full `potpie skills` and `potpie graph …` command/flag reference.
