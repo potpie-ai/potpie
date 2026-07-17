@@ -1115,7 +1115,7 @@ def test_mcp_exposes_exactly_four_context_tools() -> None:
     """The Graph Surface Lite surface is CLI-only in V1.5; MCP stays at four."""
     import asyncio
 
-    from potpie_context_engine.adapters.inbound.mcp import server
+    from potpie.mcp import server
 
     tools = asyncio.run(server.mcp.list_tools())
     names = {t.name for t in tools}

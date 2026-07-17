@@ -53,7 +53,7 @@ The architecture's single spine is `CLI → HostShell → service(s) → ports`
 (`potpie/cli/main.py` docstring). Agents reach the same system
 either through the CLI directly or through the in-process MCP `context_*` tools,
 which are compatibility adapters over the same graph internals
-(`adapters/inbound/mcp/server.py`).
+(`potpie/mcp/server.py`).
 
 ## Two composition roots / two HTTP roots
 
@@ -62,10 +62,10 @@ common architecture error.
 
 ```mermaid
 flowchart TB
-  subgraph cg_spine["Local agent spine — bootstrap/host_wiring.py build_host_shell()"]
+  subgraph cg_spine["Local agent spine — potpie/services/host_wiring.py build_host_shell()"]
     direction TB
     cg_cli["potpie CLI · MCP · daemon HTTP"]
-    cg_shell["HostShell facade (host/shell.py)"]
+    cg_shell["HostShell facade (potpie/daemon/shell.py)"]
     cg_services["services: graph · graph_workbench · agent_context · pots · skills · nudge · ledger"]
     cg_lite[("default backend: falkordb_lite<br/>default host mode: daemon")]
     cg_cli --> cg_shell --> cg_services --> cg_lite
@@ -80,7 +80,7 @@ flowchart TB
   end
 ```
 
-1. **The local agent spine** — `bootstrap/host_wiring.py build_host_shell()`
+1. **The local agent spine** — `potpie/services/host_wiring.py build_host_shell()`
    builds `HostShell`, which the inbound adapters (CLI, MCP, daemon HTTP) bind
    to. The detached daemon serves an `OperationRegistry` over loopback UDS/TCP
    (`adapters/inbound/daemon_http/transport.py`) — that is the **first HTTP
@@ -106,12 +106,12 @@ they differ only in wiring and default storage.
 
 ## The daemon model
 
-`host/daemon.py Daemon` is the local background process for lifecycle, IPC,
+`potpie/daemon/daemon.py Daemon` is the local background process for lifecycle, IPC,
 health, and logs — explicitly **not** the business layer. Two modes:
 
 - **in_process** — the host runs inside the CLI process and reports synthetic
   liveness. Built directly via `build_host_shell()`.
-- **detached** — a separate process runs `host.daemon_main` and serves the
+- **detached** — a separate process runs `potpie.daemon.main` and serves the
   `HostShell` RPC over loopback (UDS / TCP, with `base_url` discovery). The CLI
   talks to it through a daemon-backed `RemoteHostShell`.
 
@@ -405,7 +405,7 @@ removed — those are **methods on `DefaultGraphService`** plus the declarative
 
 | Area | Path |
 |---|---|
-| Composition roots | `bootstrap/host_wiring.py` (`build_host_shell`); `bootstrap/ingestion_server.py` + `standalone_container.py` (ingestion HTTP root) |
+| Composition roots | `potpie/services/host_wiring.py` (`build_host_shell`); `bootstrap/ingestion_server.py` + `standalone_container.py` (ingestion HTTP root) |
 | Host shell + daemon | `host/{shell,daemon}.py`; daemon IPC transport `adapters/inbound/daemon_http/transport.py` |
 | Service interfaces (ports) | `domain/ports/services/{graph_service,pot_management,skill_manager}.py` |
 | Graph capability ports | `domain/ports/graph/{backend,mutation,semantic,inspection,analytics,snapshot}.py` + `domain/ports/claim_query.py` |
@@ -418,9 +418,9 @@ removed — those are **methods on `DefaultGraphService`** plus the declarative
 | Internal event store | `adapters/outbound/postgres/{reconciliation_ledger,ingestion_event_store,batch_repository,ledger}.py` |
 | External Event Ledger seam (stubs) | `domain/ports/ledger/{client,cursor}.py`; `adapters/outbound/ledger/{managed_client,self_hosted_client,cursor_store}.py` |
 | CLI (host-routed) | `potpie/cli/main.py` + `potpie/cli/commands/` |
-| MCP (4 tools) | `adapters/inbound/mcp/server.py` |
+| MCP (4 tools) | `potpie/mcp/server.py` |
 | Ingestion HTTP server | `adapters/inbound/http/` |
-| Skills | `application/services/skill_manager.py` + `adapters/outbound/skills/{bundle_catalog,agent_installer,claude_target}.py` |
+| Skills | `potpie/services/skill_manager.py` + `potpie/services/skills/{bundle_catalog,agent_installer,claude_target}.py` |
 
 ### Stable interfaces
 

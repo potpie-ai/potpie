@@ -49,7 +49,7 @@ uniformly across the surface.
 - **`get_host()`** — returns a daemon-backed `RemoteHostShell` by **default**
   (the shipped CLI default host mode is a detached `daemon`). Only
   `CONTEXT_ENGINE_HOST_MODE=in_process` builds an in-process shell via
-  `bootstrap/host_wiring.py build_host_shell()`. A handful of commands bypass the
+  `potpie/services/host_wiring.py build_host_shell()`. A handful of commands bypass the
   HostShell entirely (see notes on `login` and `cloud`).
 - **`contract()`** — the error boundary that maps outcomes to exit codes and emits
   structured JSON errors (`code`, `message`, `detail`, `recommended_next_action`):
@@ -93,7 +93,7 @@ and `add_typer` sub-apps. Note the corrections vs older docs: there is **no
 | `skills` | `commands/skills.py` | `HostShell.skills` (`SkillManager`) |
 | `cloud` | `commands/cloud.py` | managed sync — **all raise `CapabilityNotImplemented`** (roadmap) |
 
-The MCP server (`adapters/inbound/mcp/server.py`) binds to the same in-process
+The MCP server (`potpie/mcp/server.py`) binds to the same in-process
 `HostShell`. The async ingestion pipeline behind the HTTP API keeps a **separate**
 composition root (`bootstrap/ingestion_server.py`, default backend `neo4j`) — see
 [architecture.md](./architecture.md) and [ingestion-nudge.md](./ingestion-nudge.md).

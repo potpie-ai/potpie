@@ -25,7 +25,6 @@ _EXTRA_SMOKES = (
         "potpie_context_engine.adapters.outbound.cli_auth.e2e_keyring",
     ),
     ("http", "fastapi", "potpie_context_engine.adapters.inbound.http.app"),
-    ("mcp", "mcp", "potpie_context_engine.adapters.inbound.mcp.server"),
     # The falkordblite distribution installs the ``redislite`` module; gate on
     # the falkordb client, which the [local] extra also carries.
     (

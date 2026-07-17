@@ -129,7 +129,7 @@ def test_pots_api_includes_counts_for_selector() -> None:
 
 
 def test_daemon_app_mounts_ui_api_and_static(monkeypatch) -> None:
-    from potpie_context_engine.host import daemon_main
+    from potpie.daemon import main as daemon_main
 
     class Pot:
         pot_id = "p1"

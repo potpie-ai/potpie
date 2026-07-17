@@ -8,7 +8,7 @@ import pytest
 
 from potpie_context_engine.adapters.outbound.graph.backends import KNOWN_PROFILES, build_backend
 from potpie_context_engine.adapters.outbound.graph.backends.falkordb_backend import FalkorDBGraphBackend
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell, default_backend_profile
+from potpie.services.host_wiring import build_host_shell, default_backend_profile
 from potpie_context_engine.bootstrap.ingestion_server import build_ingestion_server
 from potpie_context_engine.domain.context_events import EventRef
 from potpie_context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef

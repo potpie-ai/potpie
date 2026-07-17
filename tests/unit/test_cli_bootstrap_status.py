@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 from potpie.cli import main as cli_main
 from potpie.cli.commands import _common, bootstrap
 from potpie.cli.commands._common import EXIT_DEGRADED
-from potpie_context_engine.bootstrap.host_wiring import default_host_mode
+from potpie.services.host_wiring import default_host_mode
 from potpie_context_engine.domain.lifecycle import (
     DONE,
     FAILED,

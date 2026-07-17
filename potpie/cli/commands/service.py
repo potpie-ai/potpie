@@ -18,7 +18,7 @@ from potpie.cli.commands._common import (
     fail,
     get_host,
 )
-from potpie_context_engine.adapters.outbound.daemon_process.ipc_client import client_for
+from potpie.daemon.process.ipc_client import client_for
 from potpie_context_engine.adapters.outbound.settings_env import context_engine_falkordb_lite_path
 
 service_app = typer.Typer(help="Manage the daemon's supporting services.")

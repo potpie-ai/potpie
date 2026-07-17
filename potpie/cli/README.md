@@ -83,4 +83,4 @@ replace existing agent instructions.
 ## MCP
 
 The MCP server (`potpie-mcp`, stdio) binds to the same in-process `HostShell`
-and exposes exactly the four tools above (`adapters/inbound/mcp/server.py`).
+and exposes exactly the four tools above (`potpie/mcp/server.py`).

@@ -47,7 +47,7 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
     configured_embedder_choice,
     configured_embedding_model,
 )
-from potpie_context_engine.application.services.config_service import KNOWN_CONFIG_KEYS, public_config_value
+from potpie.services.config_service import KNOWN_CONFIG_KEYS, public_config_value
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
 from potpie_context_engine.domain.embedding_modes import normalize_embedding_mode
 from potpie_context_engine.domain.errors import CapabilityNotImplemented
@@ -134,7 +134,7 @@ def register(root: typer.Typer) -> None:
                 explicit_embeddings=embeddings is not None,
                 explicit_model=embedding_model is not None,
             )
-            from potpie_context_engine.bootstrap.host_wiring import default_backend_profile
+            from potpie.services.host_wiring import default_backend_profile
 
             if human_output:
                 host, selected_backend, in_process = _build_local_setup_host(
@@ -161,7 +161,7 @@ def register(root: typer.Typer) -> None:
             ):
                 from potpie.cli.commands._common import set_host
                 from potpie_context_engine.adapters.outbound.graph.backends import build_backend
-                from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+                from potpie.services.host_wiring import build_host_shell
 
                 host = build_host_shell(
                     backend=build_backend(backend), profile=host.profile
@@ -178,7 +178,7 @@ def register(root: typer.Typer) -> None:
 
                 from potpie.cli.commands._common import set_host
                 from potpie_context_engine.adapters.outbound.graph.backends import build_backend
-                from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+                from potpie.services.host_wiring import build_host_shell
 
                 os.environ["CONTEXT_ENGINE_HOST_MODE"] = (
                     "daemon" if daemon else "in_process"
@@ -217,7 +217,7 @@ def register(root: typer.Typer) -> None:
                 if in_process or host.daemon.status().get("up"):
                     preview = host.setup.preview(plan)
                 else:
-                    from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+                    from potpie.services.host_wiring import build_host_shell
 
                     preview_host = build_host_shell()
                     preview = preview_host.setup.preview(plan)
@@ -662,7 +662,7 @@ def _build_local_setup_host(
 
     from potpie.cli.commands._common import set_host
     from potpie_context_engine.adapters.outbound.graph.backends import build_backend
-    from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+    from potpie.services.host_wiring import build_host_shell
 
     selected_backend = backend or default_backend
     if daemon is not None:

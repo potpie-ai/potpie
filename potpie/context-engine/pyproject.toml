@@ -32,13 +32,6 @@ http = [
     "starlette>=1.3.1",
     "uvicorn[standard]>=0.32.0",
 ]
-mcp = [
-    "mcp>=1.28.1",
-    # CVE floors for the MCP SDK's transitive dependencies (see #1015).
-    "pydantic-settings>=2.14.2",
-    "pyjwt>=2.13.0",
-    "starlette>=1.3.1",
-]
 local = [
     "falkordb>=1.6.1",
     # Default CLI backend is FalkorDBLite on Python 3.12+.
@@ -83,7 +76,7 @@ observability = [
 # OSS distribution convenience set: everything the local potpie experience
 # uses. Excludes benchmarks (development harness) and dev tooling.
 all = [
-    "potpie-context-engine[cli-auth,http,mcp,local,neo4j,postgres,hatchet,observability,embeddings,github,reconciliation-agent]",
+    "potpie-context-engine[cli-auth,http,local,neo4j,postgres,hatchet,observability,embeddings,github,reconciliation-agent]",
 ]
 dev = [
     "pytest>=9.0.3",

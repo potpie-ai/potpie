@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping, Sequence
 from types import ModuleType
 from typing import Final, Optional, Union
 
-from potpie.cli.telemetry.sentry_privacy import (
+from potpie_context_engine.bootstrap.sentry_privacy import (
     scrub_sentry_breadcrumb,
     scrub_sentry_event,
 )

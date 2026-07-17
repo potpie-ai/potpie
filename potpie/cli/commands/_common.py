@@ -100,15 +100,15 @@ def get_host():
         mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "").strip().lower()
         if mode != "in_process":
             try:
-                from potpie_context_engine.host.daemon_client import RemoteHostShell
+                from potpie.daemon.daemon_client import RemoteHostShell
             except ModuleNotFoundError as exc:
-                if exc.name != "potpie_context_engine.host.daemon_client":
+                if exc.name != "potpie.daemon.daemon_client":
                     raise
             else:
                 _state["host"] = RemoteHostShell()
                 return _state["host"]
 
-        from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+        from potpie.services.host_wiring import build_host_shell
 
         _state["host"] = build_host_shell()
     return _state["host"]

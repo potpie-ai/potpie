@@ -311,7 +311,7 @@ REPRODUCES + RESOLVED/ATTEMPTED_FIX_FAILED (`debugging`); verification → VERIF
 decision → DECIDED (+AFFECTS, truth=user_decision); unknown types → free-form `RELATED_TO`. It
 sets `allow_review_required=True, approved_by="context_record"` so a deliberate record write
 (including medium-risk decisions) auto-applies; it never generates supersede/merge.
-`context_record` is the **only MCP write tool** (`adapters/inbound/mcp/server.py`); the MCP surface
+`context_record` is the **only MCP write tool** (`potpie/mcp/server.py`); the MCP surface
 stays at exactly four tools (see [querying.md](./querying.md)).
 
 > **`graph mutate` is a legacy wrapper, not Spine B.** The CLI `graph mutate`
