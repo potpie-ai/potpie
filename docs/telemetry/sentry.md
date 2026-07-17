@@ -1,8 +1,8 @@
-# Context-Engine CLI Sentry Telemetry
+# Potpie CLI Sentry Telemetry
 
-Sentry is used only for unexpected Potpie context-engine CLI failures. It is a
-small CLI-owned integration under `potpie/context-engine`, independent of
-the context-engine telemetry path and `legacy/deploy/observability`.
+Sentry is used only for unexpected Potpie CLI failures. The CLI-owned
+integration lives under `potpie/cli`; engine-side metrics wiring remains under
+`potpie/context-engine`, separate from `legacy/deploy/observability`.
 
 ## Configuration
 
@@ -152,9 +152,9 @@ Sentry events must not contain:
 Default tests use fake or in-memory Sentry surfaces and do not call the network.
 
 ```bash
-UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine pytest potpie/context-engine/tests/unit/test_sentry_*.py -q
-UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine pytest potpie/context-engine/tests/unit/test_telemetry_*.py -q
-UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine ruff check adapters/inbound/cli tests/unit/test_sentry_*.py tests/unit/test_telemetry_*.py
+UV_CACHE_DIR=/private/tmp/uv-cache uv run pytest tests/unit/test_sentry_*.py tests/unit/test_telemetry_*.py -q
+UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine pytest potpie/context-engine/tests/unit/test_sentry_daemon.py potpie/context-engine/tests/unit/test_sentry_metrics_*.py potpie/context-engine/tests/unit/test_telemetry_port.py -q
+UV_CACHE_DIR=/private/tmp/uv-cache uv run ruff check potpie/cli tests/unit/test_sentry_*.py tests/unit/test_telemetry_*.py
 ```
 
 Manual CLI smoke:
@@ -162,7 +162,7 @@ Manual CLI smoke:
 ```bash
 XDG_CONFIG_HOME=/tmp/potpie-xdg \
 UV_CACHE_DIR=/private/tmp/uv-cache \
-uv run --package potpie-context-engine potpie --json daemon status
+uv run potpie --json daemon status
 ```
 
 Expected result: command exits `0`, prints daemon status JSON, and creates

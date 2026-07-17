@@ -140,6 +140,6 @@ def _unlink(path: pathlib.Path) -> None:
 
 
 def _load_daemon_child_runtime_settings() -> RuntimeSettings:
-    from adapters.inbound.cli.telemetry.settings import load_cli_runtime_settings
+    from potpie.cli.telemetry.settings import load_cli_runtime_settings
 
     return load_cli_runtime_settings()

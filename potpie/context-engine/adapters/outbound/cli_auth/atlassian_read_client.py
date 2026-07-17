@@ -3,7 +3,7 @@
 Pure transport + parsing for Jira & Confluence reads (fetch projects/issues/
 spaces/pages, credential loading, response parsing) — no CLI/presentation. The
 interactive workspace-selection flow lives in
-``adapters.inbound.cli.auth.atlassian_read``.
+``potpie.cli.auth.atlassian_read``.
 """
 
 from __future__ import annotations
