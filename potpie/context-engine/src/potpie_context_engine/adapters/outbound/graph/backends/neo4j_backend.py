@@ -38,12 +38,12 @@ from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import 
     ENTITY_SUMMARY_UPDATE_CYPHER,
     repaired_entity_properties,
 )
-from potpie_context_engine.domain.graph_mutations import ProvenanceContext
-from potpie_context_engine.domain.lifecycle import SetupPlan, StepResult
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryPort
-from potpie_context_engine.domain.ports.graph.backend import BackendCapabilities
-from potpie_context_engine.domain.ports.graph.mutation import BackendReadiness
-from potpie_context_engine.domain.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.lifecycle import SetupPlan, StepResult
+from potpie_context_core.ports.claim_query import ClaimQueryPort
+from potpie_context_core.ports.graph.backend import BackendCapabilities
+from potpie_context_core.ports.graph.mutation import BackendReadiness
+from potpie_context_core.reconciliation import MutationBatch, MutationResult
 
 _PROFILE = "neo4j"
 
@@ -126,7 +126,7 @@ class _Neo4jMutation:
         self, *, pot_id: str, claim_keys: Any, reason: str | None = None
     ) -> int:
         # TODO(stage-N): cypher invalidation by claim key.
-        from potpie_context_engine.domain.errors import CapabilityNotImplemented
+        from potpie_context_core.errors import CapabilityNotImplemented
 
         raise CapabilityNotImplemented(
             "graph.neo4j.mutation.invalidate",
@@ -231,7 +231,7 @@ class Neo4jGraphBackend:
         )
 
     def provision(self, plan: SetupPlan) -> StepResult:
-        from potpie_context_engine.domain.lifecycle import DONE, FAILED
+        from potpie_context_core.lifecycle import DONE, FAILED
 
         if not self.enabled:
             return StepResult(

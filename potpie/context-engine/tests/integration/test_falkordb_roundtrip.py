@@ -25,13 +25,13 @@ falkordb_client = pytest.importorskip("redislite.falkordb_client")
 
 from potpie_context_engine.adapters.outbound.graph.falkordb_reader import FalkorDBClaimQueryStore  # noqa: E402
 from potpie_context_engine.adapters.outbound.graph.falkordb_writer import FalkorDBGraphWriter  # noqa: E402
-from potpie_context_engine.domain.graph_mutations import (  # noqa: E402
+from potpie_context_core.graph_mutations import (  # noqa: E402
     EdgeUpsert,
     EntityUpsert,
     InvalidationOp,
     ProvenanceRef,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter  # noqa: E402
+from potpie_context_core.ports.claim_query import ClaimQueryFilter  # noqa: E402
 
 
 class _Settings:

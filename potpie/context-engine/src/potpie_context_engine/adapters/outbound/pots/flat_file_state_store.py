@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from potpie_context_engine.domain.lifecycle import SKIPPED, StepResult
+from potpie_context_core.lifecycle import SKIPPED, StepResult
 
 
 @dataclass(slots=True)

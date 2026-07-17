@@ -10,6 +10,7 @@ resolution-markers = [
 [manifest]
 members = [
     "potpie",
+    "potpie-context-core",
     "potpie-context-engine",
     "potpie-integrations",
     "potpie-parsing",
@@ -2440,11 +2441,21 @@ version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
+    { name = "click" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "mcp" },
+    { name = "pillow" },
+    { name = "potpie-context-core" },
     { name = "potpie-context-engine", extra = ["all"] },
     { name = "pydantic-ai-slim" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
+    { name = "rich" },
+    { name = "sentry-sdk" },
     { name = "starlette" },
+    { name = "typer" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.dev-dependencies]
@@ -2462,11 +2473,21 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.1" },
+    { name = "click", specifier = ">=8.1.8" },
+    { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "httpx", specifier = ">=0.28.0" },
+    { name = "mcp", specifier = ">=1.28.1" },
+    { name = "pillow", specifier = ">=10.0.0" },
+    { name = "potpie-context-core", editable = "potpie/context-core" },
     { name = "potpie-context-engine", extras = ["all"], editable = "potpie/context-engine" },
     { name = "pydantic-ai-slim", specifier = ">=1.102.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pyjwt", specifier = ">=2.13.0" },
+    { name = "rich", specifier = ">=13.0" },
+    { name = "sentry-sdk", specifier = ">=2.61.1,<3.0.0" },
     { name = "starlette", specifier = ">=1.3.1" },
+    { name = "typer", specifier = ">=0.15.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -2482,10 +2503,35 @@ dev = [
 ]
 
 [[package]]
+name = "potpie-context-core"
+version = "0.1.0"
+source = { editable = "potpie/context-core" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "potpie-context-engine"
 version = "0.1.0"
 source = { editable = "potpie/context-engine" }
 dependencies = [
+    { name = "potpie-context-core" },
     { name = "pydantic" },
 ]
 
@@ -2498,37 +2544,28 @@ all = [
     { name = "hatchet-sdk" },
     { name = "httpx" },
     { name = "keyring" },
-    { name = "mcp" },
     { name = "neo4j" },
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-instrumentation-openai" },
     { name = "opentelemetry-sdk" },
-    { name = "pillow" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-ai-slim" },
     { name = "pydantic-deep" },
-    { name = "pydantic-settings" },
     { name = "pygithub" },
-    { name = "pyjwt" },
     { name = "redis" },
-    { name = "rich" },
     { name = "sentence-transformers" },
     { name = "sentry-sdk" },
     { name = "sqlalchemy" },
     { name = "starlette" },
-    { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 benchmarks = [
     { name = "openai" },
     { name = "pyyaml" },
 ]
-cli = [
+cli-auth = [
     { name = "httpx" },
     { name = "keyring" },
-    { name = "pillow" },
-    { name = "rich" },
-    { name = "typer" },
 ]
 dev = [
     { name = "pytest" },
@@ -2555,12 +2592,6 @@ local = [
     { name = "falkordb" },
     { name = "falkordblite" },
     { name = "redis" },
-]
-mcp = [
-    { name = "mcp" },
-    { name = "pydantic-settings" },
-    { name = "pyjwt" },
-    { name = "starlette" },
 ]
 neo4j = [
     { name = "neo4j" },
@@ -2592,39 +2623,33 @@ requires-dist = [
     { name = "falkordblite", marker = "python_full_version >= '3.12' and extra == 'local'", specifier = ">=0.10.0" },
     { name = "fastapi", marker = "extra == 'http'", specifier = ">=0.115.0" },
     { name = "hatchet-sdk", marker = "extra == 'hatchet'", specifier = ">=1.29.0" },
-    { name = "httpx", marker = "extra == 'cli'", specifier = ">=0.28.0" },
+    { name = "httpx", marker = "extra == 'cli-auth'", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'http'", specifier = ">=0.28.0" },
-    { name = "keyring", marker = "extra == 'cli'", specifier = ">=25.0.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.28.1" },
+    { name = "keyring", marker = "extra == 'cli-auth'", specifier = ">=25.0.0" },
     { name = "neo4j", marker = "extra == 'neo4j'", specifier = ">=5.28.0" },
     { name = "openai", marker = "extra == 'benchmarks'", specifier = ">=1.50.0" },
     { name = "opentelemetry-exporter-otlp", marker = "extra == 'observability'", specifier = ">=1.27.0" },
     { name = "opentelemetry-instrumentation-openai", marker = "extra == 'observability'", specifier = ">=0.40b0" },
     { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.27.0" },
-    { name = "pillow", marker = "extra == 'cli'", specifier = ">=10.0.0" },
-    { name = "potpie-context-engine", extras = ["cli", "http", "mcp", "local", "neo4j", "postgres", "hatchet", "observability", "embeddings", "github", "reconciliation-agent"], marker = "extra == 'all'", editable = "potpie/context-engine" },
+    { name = "potpie-context-core", editable = "potpie/context-core" },
+    { name = "potpie-context-engine", extras = ["cli-auth", "http", "local", "neo4j", "postgres", "hatchet", "observability", "embeddings", "github", "reconciliation-agent"], marker = "extra == 'all'", editable = "potpie/context-engine" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-ai-slim", marker = "extra == 'reconciliation-agent'", specifier = ">=1.102.0" },
     { name = "pydantic-deep", marker = "extra == 'reconciliation-agent'", specifier = ">=0.3.0" },
-    { name = "pydantic-settings", marker = "extra == 'mcp'", specifier = ">=2.14.2" },
     { name = "pygithub", marker = "extra == 'github'", specifier = ">=2.8.0" },
-    { name = "pyjwt", marker = "extra == 'mcp'", specifier = ">=2.13.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "pyyaml", marker = "extra == 'benchmarks'", specifier = ">=6.0" },
     { name = "redis", marker = "python_full_version >= '3.12' and extra == 'local'", specifier = ">=7.1,<8" },
-    { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=5.1.2" },
     { name = "sentry-sdk", marker = "extra == 'observability'", specifier = ">=2.61.1,<3.0.0" },
     { name = "sqlalchemy", marker = "extra == 'postgres'", specifier = ">=2.0" },
     { name = "starlette", marker = "extra == 'http'", specifier = ">=1.3.1" },
-    { name = "starlette", marker = "extra == 'mcp'", specifier = ">=1.3.1" },
-    { name = "typer", marker = "extra == 'cli'", specifier = ">=0.15.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'http'", specifier = ">=0.32.0" },
 ]
-provides-extras = ["cli", "http", "mcp", "local", "neo4j", "postgres", "benchmarks", "embeddings", "github", "reconciliation-agent", "hatchet", "observability", "all", "dev"]
+provides-extras = ["cli-auth", "http", "local", "neo4j", "postgres", "benchmarks", "embeddings", "github", "reconciliation-agent", "hatchet", "observability", "all", "dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest-cov", specifier = ">=7.1.0" }]

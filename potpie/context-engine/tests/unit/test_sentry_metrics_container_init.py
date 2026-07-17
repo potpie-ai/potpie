@@ -6,7 +6,7 @@ from types import ModuleType
 
 import pytest
 
-from potpie_context_engine.adapters.inbound.cli.telemetry.settings import SentrySettings
+from potpie.cli.telemetry.settings import SentrySettings
 from potpie_context_engine.adapters.outbound.graph import Neo4jGraphWriter
 from potpie_context_engine.application.services.source_connector_registry import SourceConnectorRegistry
 from potpie_context_engine.bootstrap import ingestion_server, sentry_metrics_runtime, standalone_container
@@ -143,7 +143,7 @@ def test_standalone_container_delegates_to_ingestion_server_build(
 
 
 def _patch_container_graph(monkeypatch: pytest.MonkeyPatch) -> None:
-    import potpie_context_engine.domain.coherence as coherence
+    import potpie_context_core.coherence as coherence
 
     monkeypatch.setattr(
         ingestion_server,

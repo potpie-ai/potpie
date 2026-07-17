@@ -26,7 +26,7 @@ from potpie_context_engine.application.readers._common import (
     dedupe_claim_rows,
     rank_candidates,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 from potpie_context_engine.domain.ranking import Candidate, RankingService
 
 

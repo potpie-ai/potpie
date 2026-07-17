@@ -16,7 +16,7 @@ from potpie_context_engine.adapters.outbound.postgres.models import (
     ContextReconciliationRun,
     ContextReconciliationWorkEvent,
 )
-from potpie_context_engine.domain.context_events import ContextEvent, EventScope
+from potpie_context_core.context_events import ContextEvent, EventScope
 from potpie_context_engine.domain.context_status import ReconciliationLedgerHealth
 from potpie_context_engine.domain.ingestion_kinds import INGESTION_KIND_RAW_EPISODE
 from potpie_context_engine.domain.ports.reconciliation_ledger import (

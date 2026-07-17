@@ -321,7 +321,7 @@ class InProcessEngineClient:
     # Reads (snapshot + resolve)
     # ------------------------------------------------------------------
     def context_graph_query(self, body: dict[str, Any]) -> dict[str, Any]:
-        from potpie_context_engine.domain.graph_query import ContextGraphQuery
+        from potpie_context_core.graph_query import ContextGraphQuery
 
         query = ContextGraphQuery(**body)
         db = self._session()

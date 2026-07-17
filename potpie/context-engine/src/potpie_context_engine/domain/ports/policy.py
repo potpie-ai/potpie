@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
-from potpie_context_engine.domain.actor import Actor
+from potpie_context_core.actor import Actor
 
 
 # Resource taxonomy. Single source of truth — adapters only branch on these.

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from potpie_context_engine.domain.lifecycle import StepResult
+from potpie_context_core.lifecycle import StepResult
 
 
 class Installer(Protocol):

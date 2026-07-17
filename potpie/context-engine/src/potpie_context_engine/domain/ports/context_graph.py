@@ -1,7 +1,7 @@
 """Legacy managed context graph compatibility port.
 
-New application code should depend on ``potpie_context_engine.domain.ports.services.graph_service``
-or ``potpie_context_engine.domain.ports.agent_context``. This port remains only for managed callers
+New application code should depend on ``potpie_context_core.ports.graph_service``
+or ``potpie_context_core.ports.agent_context``. This port remains only for managed callers
 that still speak ``ContextGraphQuery`` while they migrate to the canonical DTOs.
 Legacy ``MutationBatch`` apply is intentionally allowed to be not implemented.
 """
@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from potpie_context_engine.domain.graph_mutations import ProvenanceContext
-from potpie_context_engine.domain.graph_query import (
+from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.graph_query import (
     ContextGraphQuery,
     ContextGraphResult,
 )
-from potpie_context_engine.domain.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation import MutationBatch, MutationResult
 
 
 class ContextGraphPort(Protocol):

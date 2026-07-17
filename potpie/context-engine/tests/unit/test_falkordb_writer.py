@@ -16,7 +16,7 @@ from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     _records_from_result,
     build_falkordb_graph,
 )
-from potpie_context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
+from potpie_context_core.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
 
 pytestmark = pytest.mark.unit
 

@@ -33,13 +33,13 @@ from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import 
     repaired_entity_properties,
 )
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
-from potpie_context_engine.domain.graph_mutations import ProvenanceContext
-from potpie_context_engine.domain.lifecycle import DONE, FAILED, SetupPlan, StepResult
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryPort
-from potpie_context_engine.domain.ports.graph.backend import BackendCapabilities
-from potpie_context_engine.domain.ports.graph.mutation import BackendReadiness
-from potpie_context_engine.domain.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.lifecycle import DONE, FAILED, SetupPlan, StepResult
+from potpie_context_core.ports.claim_query import ClaimQueryPort
+from potpie_context_core.ports.graph.backend import BackendCapabilities
+from potpie_context_core.ports.graph.mutation import BackendReadiness
+from potpie_context_core.reconciliation import MutationBatch, MutationResult
 
 _PROFILE = "falkordb"
 _LITE_PROFILE = "falkordb_lite"

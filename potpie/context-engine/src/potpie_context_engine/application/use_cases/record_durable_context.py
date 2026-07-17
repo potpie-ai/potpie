@@ -13,12 +13,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping
 
-from potpie_context_engine.domain.actor import Actor
-from potpie_context_engine.domain.agent_context_port import (
+from potpie_context_core.actor import Actor
+from potpie_context_core.agent_context_port import (
     build_context_record_source_id,
     normalize_record_type,
 )
-from potpie_context_engine.domain.context_records import (
+from potpie_context_core.context_records import (
     has_structured_schema,
     record_to_dict,
     validate_record_payload,

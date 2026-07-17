@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "potpie"
 version = "2.0.0"
-description = "Potpie context engine"
+description = "Potpie product distribution"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 license = "Apache-2.0"
@@ -26,18 +26,28 @@ classifiers = [
     "Topic :: Software Development",
 ]
 dependencies = [
-    "potpie-context-engine[all]==0.1.0",
     "aiohttp>=3.14.1",
+    "click>=8.1.8",
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    "mcp>=1.28.1",
+    "pillow>=10.0.0",
+    "potpie-context-core==0.1.0",
+    "potpie-context-engine[all]==0.1.0",
     "pydantic-ai-slim>=1.102.0",
     "pydantic-settings>=2.14.2",
     "pyjwt>=2.13.0",
+    "rich>=13.0",
+    "sentry-sdk>=2.61.1,<3.0.0",
     "starlette>=1.3.1",
+    "typer>=0.15.0",
+    "uvicorn[standard]>=0.32.0",
 ]
 
 [project.scripts]
-potpie = "potpie_context_engine.adapters.inbound.cli.host_cli:main"
-potpie-mcp = "potpie_context_engine.adapters.inbound.mcp.server:main"
-potpie-daemon = "potpie_context_engine.host.daemon_main:main"
+potpie = "potpie.cli.main:main"
+potpie-mcp = "potpie.mcp.server:main"
+potpie-daemon = "potpie.daemon.main:main"
 
 [project.urls]
 Homepage = "https://potpie.ai"
@@ -46,16 +56,44 @@ Source = "https://github.com/potpie-ai/potpie"
 Issues = "https://github.com/potpie-ai/potpie/issues"
 
 [tool.hatch.build.targets.wheel]
-bypass-selection = true
+packages = ["potpie"]
+include = [
+    "potpie/cli/templates/**/*",
+    "potpie/cli/ui/assets/**/*",
+]
+exclude = [
+    # Recursive globs, not bare directory names: the repo .gitignore (which
+    # hatchling merges into this spec) re-includes some nested files via `!`
+    # negations, and only a later file-level match wins those back.
+    "/potpie/context-engine/**",
+    "/potpie/integrations/**",
+    "/potpie/parsing/**",
+    "/potpie/sandbox/**",
+]
+
+[tool.hatch.build.force-include]
+"potpie/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "potpie/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
+"potpie/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "potpie/cli/templates/claude_plugin/.claude-plugin/plugin.json"
+"potpie/cli/templates/claude_plugin/hooks/hooks.json" = "potpie/cli/templates/claude_plugin/hooks/hooks.json"
 
 [tool.hatch.build.targets.sdist]
 include = [
     "/LICENSE",
     "/README.md",
     "/pyproject.toml",
+    "/scripts/generate-potpie-ascii.mjs",
+    "/potpie/__init__.py",
+    "/potpie/cli",
+    "/potpie/daemon",
+    "/potpie/mcp",
+    "/potpie/services",
 ]
 exclude = [
     "/.gitignore",
+    "/potpie/context-engine/**",
+    "/potpie/integrations/**",
+    "/potpie/parsing/**",
+    "/potpie/sandbox/**",
 ]
 
 [tool.uv]
@@ -76,9 +114,16 @@ override-dependencies = [
 ]
 
 [tool.uv.workspace]
-members = ["potpie/*"]
+members = [
+    "potpie/context-core",
+    "potpie/context-engine",
+    "potpie/integrations",
+    "potpie/parsing",
+    "potpie/sandbox",
+]
 
 [tool.uv.sources]
+potpie-context-core = { workspace = true, editable = true }
 potpie-context-engine = { workspace = true, editable = true }
 
 [dependency-groups]
@@ -93,5 +138,30 @@ dev = [
     "ruff>=0.14.3",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+markers = [
+    "unit: unit tests",
+    "integration: integration tests (no external services required, but exercise real third-party libs)",
+    "cli_auth_e2e: opt-in live CLI auth tests (Linear/Jira/Confluence); requires RUN_CLI_AUTH_E2E=1",
+    "premerge_journey: dedicated pre-merge CLI journey test (Rust required; run in premerge-cli-journey job only)",
+]
+
 [tool.ruff.lint]
 extend-select = ["S"]
+
+[tool.ruff.lint.per-file-ignores]
+# Product-code patterns that predate the move into the root distribution's
+# security-lint scope (asserts on internal invariants, best-effort cleanup
+# handlers, spawning our own executables).
+"potpie/cli/**" = ["S101", "S110", "S603", "S607"]
+"potpie/cli/commands/_common.py" = ["S112"]
+"potpie/cli/ui/setup_ux.py" = ["S112"]
+"potpie/daemon/http/transport.py" = ["S101"]
+"potpie/services/setup_orchestrator.py" = ["S603", "S607"]
+"potpie/services/skills/agent_installer.py" = ["S105"]
+# Test idioms: pytest asserts, fixture credentials, subprocess journeys.
+"tests/**" = ["S101", "S102", "S105", "S106", "S108", "S110", "S310", "S603", "S607"]

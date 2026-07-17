@@ -6,9 +6,9 @@ import pytest
 
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from potpie_context_engine.adapters.outbound.graph.inbox_stores.local_json import LocalJsonGraphInboxStore
-from potpie_context_engine.application.services.graph_workbench import GraphWorkbenchService
-from potpie_context_engine.domain.graph_inbox import GraphInboxItem
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter
+from potpie_context_core.workbench_service import GraphWorkbenchService
+from potpie_context_core.graph_inbox import GraphInboxItem
+from potpie_context_core.ports.claim_query import ClaimQueryFilter
 
 pytestmark = pytest.mark.unit
 

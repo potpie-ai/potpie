@@ -26,10 +26,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
-from potpie_context_engine.domain.context_events import ContextEvent
+from potpie_context_core.context_events import ContextEvent
 from potpie_context_engine.domain.ports.source_connector import SourceConnectorPort
 from potpie_context_engine.domain.source_connector import ConnectorScope, SourceCapability
-from potpie_context_engine.domain.source_references import SourceReferenceRecord
+from potpie_context_core.source_references import SourceReferenceRecord
 from potpie_context_engine.domain.source_resolution import (
     PERMISSION_DENIED,
     SOURCE_UNREACHABLE,

@@ -9,7 +9,7 @@ import pytest
 from potpie_context_engine.adapters.outbound.observability.console import ConsoleObservability
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from potpie_context_engine.bootstrap.ingestion_server import _default_observability
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie.services.host_wiring import build_host_shell
 from potpie_context_engine.bootstrap.observability_context import (
     bind_correlation,
     correlation_scope,

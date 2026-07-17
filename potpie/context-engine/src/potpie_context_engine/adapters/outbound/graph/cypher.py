@@ -26,23 +26,23 @@ import re
 from datetime import date, datetime, time, timezone
 from typing import Any
 
-from potpie_context_engine.domain.graph_mutations import (
+from potpie_context_core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
     EntityUpsert,
     InvalidationOp,
     ProvenanceRef,
 )
-from potpie_context_engine.domain.graph_entity_summary import compact_entity_summary
-from potpie_context_engine.domain.graph_contract import evidence_strength_for_truth
-from potpie_context_engine.domain.ontology import (
+from potpie_context_core.graph_entity_summary import compact_entity_summary
+from potpie_context_core.graph_contract import evidence_strength_for_truth
+from potpie_context_core.ontology import (
     CANONICAL_EDGE_TYPES,
     ENTITY_TYPES,
     canonical_entity_labels,
     is_canonical_entity_label,
 )
 from potpie_context_engine.domain.retrieval_card import build_retrieval_card
-from potpie_context_engine.domain.singleton_predicates import is_singleton_predicate
+from potpie_context_core.singleton_predicates import is_singleton_predicate
 
 logger = logging.getLogger(__name__)
 

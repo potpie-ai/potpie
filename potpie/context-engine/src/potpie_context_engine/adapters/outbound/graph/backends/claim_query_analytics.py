@@ -20,8 +20,8 @@ from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import 
     ENTITY_SUMMARY_TARGET,
     wants_entity_summary_repair,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
-from potpie_context_engine.domain.ports.graph.analytics import RepairReport
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
+from potpie_context_core.ports.graph.analytics import RepairReport
 
 # Pull a generous page; analytics over a single pot's claim set. Backends that
 # need true streaming aggregation can override this adapter.

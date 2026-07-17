@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
-from potpie_context_engine.domain.graph_plans import GraphMutationPlanRecord
+from potpie_context_core.graph_plans import GraphMutationPlanRecord
 
 logger = logging.getLogger(__name__)
 

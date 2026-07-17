@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional, Protocol
 
-from potpie_context_engine.domain.actor import Actor
-from potpie_context_engine.domain.context_events import ContextEvent, EventScope
+from potpie_context_core.actor import Actor
+from potpie_context_core.context_events import ContextEvent, EventScope
 from potpie_context_engine.domain.context_status import ReconciliationLedgerHealth
 
 

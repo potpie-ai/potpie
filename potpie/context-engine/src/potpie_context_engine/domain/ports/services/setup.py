@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from potpie_context_engine.domain.lifecycle import SetupPlan, SetupPreview, SetupReport, StepResult
+from potpie_context_core.lifecycle import SetupPlan, SetupPreview, SetupReport, StepResult
 
 
 class SetupObserver(Protocol):

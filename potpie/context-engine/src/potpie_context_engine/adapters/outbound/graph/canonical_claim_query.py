@@ -8,8 +8,8 @@ import math
 from datetime import datetime
 from typing import Any, Iterable, Mapping
 
-from potpie_context_engine.domain.graph_contract import evidence_strength_for_truth
-from potpie_context_engine.domain.ports.claim_query import ClaimRow
+from potpie_context_core.graph_contract import evidence_strength_for_truth
+from potpie_context_core.ports.claim_query import ClaimRow
 
 # Edge properties that are part of the canonical V1.5 contract or backend system
 # frame. These are hydrated into first-class ``ClaimRow`` fields or intentionally

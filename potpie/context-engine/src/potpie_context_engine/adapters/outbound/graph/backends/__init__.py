@@ -27,7 +27,7 @@ from typing import Any
 from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import EmbeddedGraphBackend
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from potpie_context_engine.adapters.outbound.graph.backends.stub_backend import StubGraphBackend
-from potpie_context_engine.domain.ports.graph.backend import GraphBackend
+from potpie_context_core.ports.graph.backend import GraphBackend
 
 KNOWN_PROFILES: tuple[str, ...] = (
     "in_memory",

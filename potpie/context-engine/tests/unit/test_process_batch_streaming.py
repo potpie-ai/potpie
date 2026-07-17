@@ -18,7 +18,7 @@ from potpie_context_engine.adapters.outbound.event_stream.inmemory_publisher imp
 from potpie_context_engine.adapters.outbound.reconciliation.noop_agent import NoOpReconciliationAgent
 from potpie_context_engine.application.use_cases.process_batch import process_batch
 from potpie_context_engine.domain.ports.reconciliation_ledger import ContextEventRow
-from potpie_context_engine.domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
+from potpie_context_core.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
 from potpie_context_engine.domain.reconciliation_batch import (
     BATCH_STATUS_PENDING,
     BatchEventRef,

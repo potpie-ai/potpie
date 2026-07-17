@@ -33,9 +33,9 @@ repository or infer rich facts from prose for you."
 
 The single source of truth for skill content **and** metadata is the bundled set
 of `SKILL.md` files under
-`adapters/inbound/cli/templates/agent_bundle/.agents/skills/*/SKILL.md`.
+`potpie/cli/templates/agent_bundle/.agents/skills/*/SKILL.md`.
 
-`adapters/outbound/skills/bundle_catalog.py` scans those templates at runtime
+`potpie/services/skills/bundle_catalog.py` scans those templates at runtime
 (`lru_cache`d), parses each file's YAML front-matter (`name` / `version` /
 `description`, optional `recommended: false`) into a `SkillInfo`, and exposes
 `catalog_by_id()` and `RECOMMENDED_SKILL_IDS` (every recommended bundled skill).
@@ -46,12 +46,12 @@ them (everything except `potpie-cli`).
 
 ## 2. Installation, targets & drift (`DefaultSkillManager`)
 
-`application/services/skill_manager.py DefaultSkillManager` owns the catalog +
+`potpie/services/skill_manager.py DefaultSkillManager` owns the catalog +
 per-harness install/drift logic and delegates *where/how* to a registered
 `AgentTargetPort` per harness. Operations: `list / install / update / remove /
 status / nudge / add` (`add` is a TODO stub).
 
-Targets are wired in `bootstrap/host_wiring.py`; each `FileBackedAgentTarget`
+Targets are wired in `potpie/services/host_wiring.py`; each `FileBackedAgentTarget`
 installs into a harness-specific **global** skills root, and a `--scope project`
 install routes through `ProjectAgentTarget` instead:
 
@@ -62,7 +62,7 @@ install routes through `ProjectAgentTarget` instead:
 | `cursor` | `CursorAgentTarget` | `~/.cursor/skills` |
 | `opencode` | `OpenCodeAgentTarget` | `~/.config/opencode/skills` |
 
-Install mechanics (`adapters/outbound/skills/agent_installer.py`):
+Install mechanics (`potpie/services/skills/agent_installer.py`):
 
 - Templates are copied/remapped per harness layout: `claude → .claude/skills`,
   `cursor → .cursor/skills`, `opencode → .opencode/skills`, and the Claude Code
@@ -86,7 +86,7 @@ Install mechanics (`adapters/outbound/skills/agent_installer.py`):
 Before **every** install/update, `validate_packaged_skill_command_snippets`
 extracts every `potpie …` line from the skill's ```` ```bash ```` fences and
 validates each command + option against the **live Typer specs introspected from
-`adapters.inbound.cli.host_cli.app`**. A skill physically cannot ship a `potpie`
+`potpie.cli.main.app`**. A skill physically cannot ship a `potpie`
 command or flag that does not exist — the install raises `ValueError` first.
 (Only `potpie` lines are checked; other shell commands depend on the user's repo.)
 
@@ -176,7 +176,7 @@ baking the ontology into prose. The discipline it teaches (full read mechanics i
 
 ## 5. The Claude Code plugin (hooks + slash commands)
 
-`adapters/inbound/cli/templates/claude_plugin/` is a self-contained Claude Code
+`potpie/cli/templates/claude_plugin/` is a self-contained Claude Code
 plugin: `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` declare
 it, and it carries its own copy of the 7 plugin skills under `skills/`.
 

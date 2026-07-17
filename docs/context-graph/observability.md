@@ -12,7 +12,7 @@ unless an operator opts in. Observability never raises into a caller — it can 
 fail a request.
 
 Both composition roots wire the same port: the local agent spine
-(`bootstrap/host_wiring.py`) and the ingestion HTTP server
+(`potpie/services/host_wiring.py`) and the ingestion HTTP server
 (`bootstrap/ingestion_server.py`) — see [architecture.md](./architecture.md).
 
 ## Shape
@@ -96,8 +96,8 @@ the spans actually emitted today.
 
 | Span | Kind | Meaning | Code boundary |
 |---|---|---|---|
-| `daemon.health`, `daemon.rpc`, `daemon.attr` | server | Local daemon health probe + RPC dispatch. | `host/daemon_main.py` |
-| `graph.<command>` | internal | One workbench command: `graph.status`, `graph.catalog`, `graph.describe`, `graph.search_entities`, `graph.read`, `graph.neighborhood`, **`graph.propose`**, **`graph.commit`**, `graph.bulk`, `graph.history`, `graph.inbox` (carries `operation`), `graph.quality` (carries `report`), plus the legacy `graph.mutate` / `graph.mutation_template` / `graph.nudge`. | `adapters/inbound/cli/commands/graph.py` (`_graph_command`) |
+| `daemon.health`, `daemon.rpc`, `daemon.attr` | server | Local daemon health probe + RPC dispatch. | `potpie/daemon/main.py` |
+| `graph.<command>` | internal | One workbench command: `graph.status`, `graph.catalog`, `graph.describe`, `graph.search_entities`, `graph.read`, `graph.neighborhood`, **`graph.propose`**, **`graph.commit`**, `graph.bulk`, `graph.history`, `graph.inbox` (carries `operation`), `graph.quality` (carries `report`), plus the legacy `graph.mutate` / `graph.mutation_template` / `graph.nudge`. | `potpie/cli/commands/graph.py` (`_graph_command`) |
 | `ingest.submit` | server | Inbound episode/event/record normalized and submitted. | `application/services/ingestion_submission_service.py` |
 | `HTTP <method> <route>`, `http.ready` | server | Ingestion HTTP server request + readiness. | `adapters/inbound/http/_hardening.py`, `adapters/inbound/http/api/router.py` |
 | `batch.process` | consumer | Windowed batch fan-in (N events → 1 run → M mutations); **links back** to each event's ingress traceparent. | `application/use_cases/context_graph_jobs.py` |
@@ -131,7 +131,7 @@ Notes:
 All metric names are `ce.*`. Graph-workbench and batch metrics are mirrored to both the
 `ObservabilityPort` and a Sentry metrics runtime.
 
-Workbench commands (`adapters/inbound/cli/commands/graph.py`) — one counter +
+Workbench commands (`potpie/cli/commands/graph.py`) — one counter +
 histogram per command root:
 
 - `ce.graph.<root>_total` and `ce.graph.<root>_ms` for each root (`read`, `propose`,

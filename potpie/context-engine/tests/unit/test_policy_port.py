@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from potpie_context_engine.adapters.outbound.policy import DefaultPolicyAdapter
-from potpie_context_engine.domain.actor import Actor
+from potpie_context_core.actor import Actor
 from potpie_context_engine.domain.ports.policy import (
     ACTION_APPLY_WRITE,
     ACTION_POT_INGEST_EPISODE,

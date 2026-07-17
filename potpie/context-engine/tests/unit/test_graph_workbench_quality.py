@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 import pytest
 
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from potpie_context_engine.application.services.graph_workbench import GraphWorkbenchService
-from potpie_context_engine.domain.ports.claim_query import ClaimRow
+from potpie_context_core.workbench_service import GraphWorkbenchService
+from potpie_context_core.ports.claim_query import ClaimRow
 
 pytestmark = pytest.mark.unit
 

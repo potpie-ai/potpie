@@ -278,7 +278,7 @@ routes to `host.nudge.nudge(GraphNudgeRequest)`. Full flags are in
 
 ### 7.5 The fail-safe Claude Code hook
 
-`adapters/inbound/cli/templates/claude_plugin/hooks/potpie_nudge.py` is the thin
+`potpie/cli/templates/claude_plugin/hooks/potpie_nudge.py` is the thin
 adapter that turns harness lifecycle events into nudge events and shells
 `potpie --json graph nudge`. Event mapping:
 

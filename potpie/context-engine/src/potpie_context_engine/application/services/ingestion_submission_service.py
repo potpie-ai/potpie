@@ -19,23 +19,23 @@ from potpie_context_engine.bootstrap import sentry_metrics_runtime
 from potpie_context_engine.bootstrap.observability_context import bind_correlation, correlation_scope
 from potpie_context_engine.bootstrap.observability_runtime import get_observability
 from potpie_context_engine.domain.ports.observability import SPAN_KIND_SERVER
-from potpie_context_engine.domain.context_events import (
+from potpie_context_core.context_events import (
     ContextEvent,
     EventScope,
     event_scope_from_resolved_pot,
 )
 from potpie_context_engine.domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
 from potpie_context_engine.domain.ingestion_event_models import EventReceipt, IngestionSubmissionRequest
-from potpie_context_engine.domain.ports.agent_context import RecordRequest
+from potpie_context_core.ports.agent_context import RecordRequest
 from potpie_context_engine.domain.ports.batch_repository import BatchRepositoryPort
 from potpie_context_engine.domain.ports.context_graph_job_queue import ContextGraphJobQueuePort
 from potpie_context_engine.domain.ports.ingestion_config import IngestionConfigPort
 from potpie_context_engine.domain.ports.ingestion_event_store import IngestionEventStore
 from potpie_context_engine.domain.ports.ingestion_submission import IngestionSubmissionService
-from potpie_context_engine.domain.ports.pot_resolution import PotResolutionPort, resolve_write_repo
+from potpie_context_core.ports.pot_resolution import PotResolutionPort, resolve_write_repo
 from potpie_context_engine.domain.ports.reconciliation_agent import ReconciliationAgentPort
 from potpie_context_engine.domain.ports.reconciliation_ledger import ReconciliationLedgerPort
-from potpie_context_engine.domain.ports.services.graph_service import GraphService
+from potpie_context_core.ports.graph_service import GraphService
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 
 logger = logging.getLogger(__name__)

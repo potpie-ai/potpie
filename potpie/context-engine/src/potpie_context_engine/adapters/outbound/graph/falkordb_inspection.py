@@ -21,8 +21,8 @@ from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     _records_from_result,
     build_falkordb_graph,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter
-from potpie_context_engine.domain.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
+from potpie_context_core.ports.claim_query import ClaimQueryFilter
+from potpie_context_core.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 

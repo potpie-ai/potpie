@@ -29,7 +29,7 @@ from potpie_context_engine.application.readers._common import (
     dedupe_claim_rows,
     row_matches_query,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimRow
+from potpie_context_core.ports.claim_query import ClaimRow
 from potpie_context_engine.domain.ranking import RankingService
 
 

@@ -15,7 +15,7 @@ from typing import Any, Mapping, Protocol
 # SkillNudge is the advisory block embedded in context_status; it is defined
 # in the agent contract module to keep the ports layer acyclic and re-exported
 # here so skill code can import it from its own service module.
-from potpie_context_engine.domain.ports.agent_context import SkillNudge
+from potpie_context_core.ports.agent_context import SkillNudge
 
 
 @dataclass(frozen=True, slots=True)

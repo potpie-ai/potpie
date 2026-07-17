@@ -22,7 +22,7 @@ from potpie_context_engine.application.use_cases.flush_windowed_batches import (
     flush_ready_windowed_pots,
     force_flush_pot,
 )
-from potpie_context_engine.domain.context_events import ContextEvent, EventScope
+from potpie_context_core.context_events import ContextEvent, EventScope
 from potpie_context_engine.domain.ports.ingestion_config import (
     IngestionConfig,
     InMemoryIngestionConfig,

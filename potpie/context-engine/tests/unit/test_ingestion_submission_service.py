@@ -11,8 +11,8 @@ from potpie_context_engine.application.services.ingestion_submission_service imp
 )
 from potpie_context_engine.domain.ingestion_event_models import IngestionSubmissionRequest
 from potpie_context_engine.domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter
-from potpie_context_engine.domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
+from potpie_context_core.ports.claim_query import ClaimQueryFilter
+from potpie_context_core.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
 
 
 def _service(*, reconciliation_agent=None):

@@ -31,7 +31,7 @@ from potpie_context_engine.application.readers._common import (
     rank_candidates,
     row_matches_query,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 from potpie_context_engine.domain.ranking import Candidate, RankingService
 from potpie_context_engine.domain.scope_match import hierarchical_scope_overlap
 

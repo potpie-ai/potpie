@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from potpie_context_engine.domain.context_events import EventRef
-from potpie_context_engine.domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp
-from potpie_context_engine.domain.llm_reconciliation import EvidenceRef
-from potpie_context_engine.domain.reconciliation import ReconciliationPlan
+from potpie_context_core.context_events import EventRef
+from potpie_context_core.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp
+from potpie_context_core.llm_reconciliation import EvidenceRef
+from potpie_context_core.reconciliation import ReconciliationPlan
 
 from potpie_context_engine.adapters.outbound.reconciliation.llm_plan_schema import (
     LlmInvalidationOp,
