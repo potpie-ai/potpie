@@ -154,8 +154,14 @@ markers = [
 extend-select = ["S"]
 
 [tool.ruff.lint.per-file-ignores]
+# Product-code patterns that predate the move into the root distribution's
+# security-lint scope (asserts on internal invariants, best-effort cleanup
+# handlers, spawning our own executables).
+"potpie/cli/**" = ["S101", "S110", "S603", "S607"]
 "potpie/cli/commands/_common.py" = ["S112"]
 "potpie/cli/ui/setup_ux.py" = ["S112"]
-"tests/_auth_fakes.py" = ["S108"]
-"tests/unit/test_cli_linear.py" = ["S310"]
-"tests/unit/test_nudge_adapter.py" = ["S102"]
+"potpie/daemon/http/transport.py" = ["S101"]
+"potpie/services/setup_orchestrator.py" = ["S603", "S607"]
+"potpie/services/skills/agent_installer.py" = ["S105"]
+# Test idioms: pytest asserts, fixture credentials, subprocess journeys.
+"tests/**" = ["S101", "S102", "S105", "S106", "S108", "S110", "S310", "S603", "S607"]
