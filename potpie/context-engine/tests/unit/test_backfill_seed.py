@@ -15,12 +15,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from domain.backfill_window import (
+from potpie_context_engine.domain.backfill_window import (
     backfill_max_items,
     backfill_window_since,
     clamp_backfill_limit,
 )
-from domain.event_playbooks import find_playbook, playbooks_enable_planner
+from potpie_context_engine.domain.event_playbooks import find_playbook, playbooks_enable_planner
 
 
 # --- planner signal --------------------------------------------------------
@@ -161,7 +161,7 @@ class _FakeGithub:
 
 
 def _client(pulls=None, issues=None):
-    from adapters.outbound.connectors.github.api_client import PyGithubSourceControl
+    from potpie_context_engine.adapters.outbound.connectors.github.api_client import PyGithubSourceControl
 
     return PyGithubSourceControl(_FakeGithub(_FakeRepo(pulls or [], issues or [])))
 

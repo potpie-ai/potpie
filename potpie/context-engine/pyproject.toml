@@ -92,58 +92,57 @@ dev = [
     "ruff>=0.8.0",
 ]
 
-[tool.hatch.build.force-include]
-"adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "adapters/inbound/cli/ui/assets/potpie-logo-static.json"
-"adapters/inbound/cli/ui/assets/potpie.png" = "adapters/inbound/cli/ui/assets/potpie.png"
-"adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
-"adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json"
-"adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json" = "adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json"
-
 [tool.hatch.build.targets.wheel]
-packages = ["domain", "application", "adapters", "bootstrap", "benchmarks", "host"]
+packages = ["src/potpie_context_engine"]
 include = [
-    "domain/playbooks/**/*.md",
-    "adapters/inbound/cli/templates/**/*.md",
-    "adapters/inbound/cli/templates/**/*.yaml",
-    "adapters/inbound/cli/ui/assets/**/*.json",
-    "adapters/inbound/cli/ui/assets/**/*.png",
-    "adapters/inbound/cli/ui/assets/**/*.svg",
-    "scripts/**/*.py",
-    "scripts/**/*.json",
-    "scripts/**/*.mjs",
-    "benchmarks/use_cases/**/*.yaml",
-    "benchmarks/fixtures/raw_events/**/*.json",
-    "benchmarks/_legacy/data/**/*.json",
+    "src/potpie_context_engine/domain/playbooks/**/*.md",
+    "src/potpie_context_engine/adapters/inbound/cli/templates/**/*.md",
+    "src/potpie_context_engine/adapters/inbound/cli/templates/**/*.yaml",
+    "src/potpie_context_engine/adapters/inbound/cli/ui/assets/**/*.json",
+    "src/potpie_context_engine/adapters/inbound/cli/ui/assets/**/*.png",
+    "src/potpie_context_engine/adapters/inbound/cli/ui/assets/**/*.svg",
+    "src/potpie_context_engine/benchmarks/use_cases/**/*.yaml",
+    "src/potpie_context_engine/benchmarks/fixtures/raw_events/**/*.json",
+    "src/potpie_context_engine/benchmarks/_legacy/data/**/*.json",
 ]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/potpie_context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "potpie_context_engine/adapters/inbound/cli/ui/assets/potpie-logo-static.json"
+"src/potpie_context_engine/adapters/inbound/cli/ui/assets/potpie.png" = "potpie_context_engine/adapters/inbound/cli/ui/assets/potpie.png"
+"src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
+"src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json"
+"src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json" = "potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json"
 
 [tool.hatch.build.targets.sdist]
 include = [
     "build_config_values.py",
     "distribution_defaults_hook.py",
-    "domain",
-    "domain/playbooks/**/*.md",
-    "application",
-    "adapters",
-    "bootstrap",
-    "benchmarks",
-    "host",
-    "domain/playbooks/**/*.md",
-    "adapters/inbound/cli/templates/**/*.md",
-    "adapters/inbound/cli/templates/**/*.yaml",
-    "adapters/inbound/cli/ui/assets/**/*.json",
-    "adapters/inbound/cli/ui/assets/**/*.png",
-    "adapters/inbound/cli/ui/assets/**/*.svg",
+    "src/potpie_context_engine",
+    "src/potpie_context_engine/domain/playbooks/**/*.md",
+    "src/potpie_context_engine/adapters/inbound/cli/templates/**/*.md",
+    "src/potpie_context_engine/adapters/inbound/cli/templates/**/*.yaml",
+    "src/potpie_context_engine/adapters/inbound/cli/ui/assets/**/*.json",
+    "src/potpie_context_engine/adapters/inbound/cli/ui/assets/**/*.png",
+    "src/potpie_context_engine/adapters/inbound/cli/ui/assets/**/*.svg",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
 ]
 
+[tool.hatch.build.targets.sdist.force-include]
+"src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
+"src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json"
+"src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json" = "src/potpie_context_engine/adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json"
+
 [tool.ruff]
 target-version = "py310"
-src = [".", "tests"]
+src = ["src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Root-level build helpers (build_config_values.py) are imported by tests but
+# are not part of the src/ package.
+pythonpath = ["."]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"

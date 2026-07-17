@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from benchmarks.core.reporting import (
+from potpie_context_engine.benchmarks.core.reporting import (
     aggregate_report,
     diff_reports,
     render_diff_markdown,
 )
-from benchmarks.core.result import AxisScore, ScenarioResult
+from potpie_context_engine.benchmarks.core.result import AxisScore, ScenarioResult
 
 
 def _scenario(id: str, agg: float, use_case: str = "PREF") -> ScenarioResult:

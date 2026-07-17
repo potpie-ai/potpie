@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
-from domain.ports.daemon.shell import HealthStatus, ReadyProbe, ServiceSpec
-from host.daemon_runtime.context import ShellContext
+from potpie_context_engine.adapters.outbound.managed_services.subprocess_backend import SubprocessBackend
+from potpie_context_engine.domain.ports.daemon.shell import HealthStatus, ReadyProbe, ServiceSpec
+from potpie_context_engine.host.daemon_runtime.context import ShellContext
 
 
 @pytest.mark.anyio
@@ -200,7 +200,7 @@ async def test_start_closes_parent_log_file_after_spawn(
         return fake_proc
 
     monkeypatch.setattr(
-        "adapters.outbound.managed_services.subprocess_backend.asyncio.create_subprocess_exec",
+        "potpie_context_engine.adapters.outbound.managed_services.subprocess_backend.asyncio.create_subprocess_exec",
         AsyncMock(side_effect=fake_create_subprocess_exec),
     )
 

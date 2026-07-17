@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from adapters.inbound.cli.read_presenter import (
+from potpie_context_engine.adapters.inbound.cli.read_presenter import (
     ReadPresentationContext,
     _escape_table_cell,
     _format_relations_summary,
@@ -14,7 +14,7 @@ from adapters.inbound.cli.read_presenter import (
     render_items_table,
     render_timeline_table,
 )
-from domain.ports.services.graph_service import GraphReadResult
+from potpie_context_engine.domain.ports.services.graph_service import GraphReadResult
 
 pytestmark = pytest.mark.unit
 

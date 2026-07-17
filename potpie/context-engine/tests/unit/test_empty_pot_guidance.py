@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from adapters.inbound.cli.commands import _common, pots
+from potpie_context_engine.adapters.inbound.cli.commands import _common, pots
 
 pytestmark = pytest.mark.unit
 

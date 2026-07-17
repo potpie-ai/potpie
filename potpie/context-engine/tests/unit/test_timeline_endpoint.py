@@ -15,14 +15,14 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from adapters.inbound.http.api.v1.context.router import (
+from potpie_context_engine.adapters.inbound.http.api.v1.context.router import (
     _parse_window,
     create_context_router,
 )
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
-from application.services.graph_service import DefaultGraphService
-from domain.ports.claim_query import ClaimRow
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from potpie_context_engine.adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
+from potpie_context_engine.application.services.graph_service import DefaultGraphService
+from potpie_context_engine.domain.ports.claim_query import ClaimRow
 
 API = "/api/v1/context"
 

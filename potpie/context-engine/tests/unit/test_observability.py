@@ -6,18 +6,18 @@ import logging
 
 import pytest
 
-from adapters.outbound.observability.console import ConsoleObservability
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from bootstrap.ingestion_server import _default_observability
-from bootstrap.host_wiring import build_host_shell
-from bootstrap.observability_context import (
+from potpie_context_engine.adapters.outbound.observability.console import ConsoleObservability
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from potpie_context_engine.bootstrap.ingestion_server import _default_observability
+from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie_context_engine.bootstrap.observability_context import (
     bind_correlation,
     correlation_scope,
     get_correlation,
     reset_correlation,
 )
-from bootstrap.observability_runtime import get_observability, set_observability
-from domain.ports.observability import NoOpObservability, ObservabilityPort
+from potpie_context_engine.bootstrap.observability_runtime import get_observability, set_observability
+from potpie_context_engine.domain.ports.observability import NoOpObservability, ObservabilityPort
 
 
 @pytest.mark.unit
@@ -91,7 +91,7 @@ def test_default_observability_otel_requires_endpoint(
 
 @pytest.mark.unit
 def test_logging_setup_injects_correlation(caplog: pytest.LogCaptureFixture) -> None:
-    from bootstrap.logging_setup import CorrelationFilter
+    from potpie_context_engine.bootstrap.logging_setup import CorrelationFilter
 
     rec = logging.LogRecord("x", logging.INFO, __file__, 1, "hi", None, None)
     with correlation_scope(pot_id="pZ", event_id="eZ"):

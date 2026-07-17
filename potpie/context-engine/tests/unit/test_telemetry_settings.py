@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.inbound.cli.telemetry.preferences import (
+from potpie_context_engine.adapters.inbound.cli.telemetry.preferences import (
     TelemetryPreferences,
     save_preferences,
 )
-from adapters.inbound.cli.telemetry.settings import (
+from potpie_context_engine.adapters.inbound.cli.telemetry.settings import (
     load_telemetry_resolution,
     load_sentry_settings as load_cli_sentry_settings,
     telemetry_environment as cli_telemetry_environment,
 )
-from bootstrap import runtime_settings
-from bootstrap import sentry_settings as shared_sentry_settings
+from potpie_context_engine.bootstrap import runtime_settings
+from potpie_context_engine.bootstrap import sentry_settings as shared_sentry_settings
 
 _SENTRY_ENV_NAMES = (
     "POTPIE_ENVIRONMENT",

@@ -8,9 +8,9 @@ from dataclasses import dataclass, field
 import pytest
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import repo_location
-from adapters.inbound.cli.commands import _common, pots
-from domain.ports.services.pot_management import PotInfo, SourceInfo
+from potpie_context_engine.adapters.inbound.cli import repo_location
+from potpie_context_engine.adapters.inbound.cli.commands import _common, pots
+from potpie_context_engine.domain.ports.services.pot_management import PotInfo, SourceInfo
 
 pytestmark = pytest.mark.unit
 

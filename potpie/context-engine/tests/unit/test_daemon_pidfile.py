@@ -3,7 +3,7 @@ import pathlib
 import stat
 
 import pytest
-from adapters.outbound.daemon_process.pidfile import (
+from potpie_context_engine.adapters.outbound.daemon_process.pidfile import (
     AlreadyRunning,
     read_discovery,
     read_pid_file,

@@ -2,7 +2,7 @@
 
 import os
 
-from adapters.outbound.hatchet.env_bootstrap import prepare_hatchet_client_env
+from potpie_context_engine.adapters.outbound.hatchet.env_bootstrap import prepare_hatchet_client_env
 
 
 def test_prepare_sets_tls_none_for_http_server_url(monkeypatch) -> None:

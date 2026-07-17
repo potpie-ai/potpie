@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from domain.scope_match import hierarchical_scope_overlap, path_contains
+from potpie_context_engine.domain.scope_match import hierarchical_scope_overlap, path_contains
 
 pytestmark = pytest.mark.unit
 

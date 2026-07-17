@@ -17,10 +17,10 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from benchmarks.core.scenario import discover_scenarios, load_scenario
+from potpie_context_engine.benchmarks.core.scenario import discover_scenarios, load_scenario
 
 # tests/unit/benchmarks/test_light_subset.py → ../../../ = context-engine/
-BENCHMARKS_ROOT = Path(__file__).resolve().parents[3] / "benchmarks"
+BENCHMARKS_ROOT = Path(__file__).resolve().parents[3] / "src" / "potpie_context_engine" / "benchmarks"
 
 
 def _write(tmp_path: Path, body: str, name: str = "s.yaml") -> Path:

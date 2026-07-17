@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from adapters.inbound.cli.ui import setup_ux
-from adapters.inbound.cli.ui import setup_wizard_ui
-from adapters.inbound.cli.ui.setup_wizard_ui import SetupWizardUI
-from domain.lifecycle import (
+from potpie_context_engine.adapters.inbound.cli.ui import setup_ux
+from potpie_context_engine.adapters.inbound.cli.ui import setup_wizard_ui
+from potpie_context_engine.adapters.inbound.cli.ui.setup_wizard_ui import SetupWizardUI
+from potpie_context_engine.domain.lifecycle import (
     DONE,
     NOT_IMPLEMENTED,
     PlannedSetupStep,

@@ -7,12 +7,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from adapters.outbound.reconciliation.noop_agent import NoOpReconciliationAgent
-from bootstrap import sentry_metrics_runtime
-from application.use_cases.process_batch import process_batch
-from domain.ports.reconciliation_ledger import ContextEventRow
-from domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
-from domain.reconciliation_batch import (
+from potpie_context_engine.adapters.outbound.reconciliation.noop_agent import NoOpReconciliationAgent
+from potpie_context_engine.bootstrap import sentry_metrics_runtime
+from potpie_context_engine.application.use_cases.process_batch import process_batch
+from potpie_context_engine.domain.ports.reconciliation_ledger import ContextEventRow
+from potpie_context_engine.domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
+from potpie_context_engine.domain.reconciliation_batch import (
     BATCH_STATUS_DONE,
     BATCH_STATUS_PENDING,
     BatchEventRef,
@@ -333,7 +333,7 @@ def test_opens_runs_and_fans_work_events_across_events() -> None:
     class _Stub:
         def run_batch(self, ctx, *, checkpoints=None, execution_log=None):
             del checkpoints, execution_log
-            from domain.reconciliation_batch import BatchAgentOutcome
+            from potpie_context_engine.domain.reconciliation_batch import BatchAgentOutcome
 
             return BatchAgentOutcome(
                 ok=True,
@@ -421,7 +421,7 @@ def test_resumes_with_prior_messages_when_execution_log_has_resume_state() -> No
     """A durable resume state repopulates ``prior_messages_json`` on the
     first chunk (the execution log subsumes the old checkpoint store)."""
 
-    from domain.ports.agent_execution_log import ResumeState
+    from potpie_context_engine.domain.ports.agent_execution_log import ResumeState
 
     batches = MagicMock()
     batches.list_events_for_batch.return_value = [
@@ -455,7 +455,7 @@ def test_resumes_with_prior_messages_when_execution_log_has_resume_state() -> No
             captured["prior"] = ctx.prior_messages_json
             captured["attempt"] = ctx.attempt_number
             captured["start_seq"] = ctx.start_seq
-            from domain.reconciliation_batch import BatchAgentOutcome
+            from potpie_context_engine.domain.reconciliation_batch import BatchAgentOutcome
 
             return BatchAgentOutcome(ok=True, completed_event_ids=["e1"], last_seq=5)
 

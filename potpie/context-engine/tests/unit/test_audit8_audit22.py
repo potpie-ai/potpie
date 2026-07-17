@@ -8,7 +8,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from adapters.inbound.cli.commands import _common, cloud, pots
+from potpie_context_engine.adapters.inbound.cli.commands import _common, cloud, pots
 
 pytestmark = pytest.mark.unit
 

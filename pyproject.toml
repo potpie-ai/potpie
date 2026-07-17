@@ -35,9 +35,9 @@ dependencies = [
 ]
 
 [project.scripts]
-potpie = "adapters.inbound.cli.host_cli:main"
-potpie-mcp = "adapters.inbound.mcp.server:main"
-potpie-daemon = "host.daemon_main:main"
+potpie = "potpie_context_engine.adapters.inbound.cli.host_cli:main"
+potpie-mcp = "potpie_context_engine.adapters.inbound.mcp.server:main"
+potpie-daemon = "potpie_context_engine.host.daemon_main:main"
 
 [project.urls]
 Homepage = "https://potpie.ai"

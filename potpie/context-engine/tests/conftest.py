@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from host.daemon_runtime.context import ServiceEndpoints, ShellContext
+from potpie_context_engine.host.daemon_runtime.context import ServiceEndpoints, ShellContext
 
 
 @pytest.fixture()
@@ -76,7 +76,7 @@ def _reset_cli_state():
     """
     yield
     try:
-        from adapters.inbound.cli.commands import _common
+        from potpie_context_engine.adapters.inbound.cli.commands import _common
 
         _common._state["store"] = None
         _common._state["host"] = None
@@ -104,7 +104,7 @@ def _reset_product_analytics_state():
 
 
 def _reset_product_analytics_globals() -> None:
-    from adapters.inbound.cli.telemetry import product_analytics
+    from potpie_context_engine.adapters.inbound.cli.telemetry import product_analytics
 
     product_analytics._flush_product_analytics_dispatcher()
     product_analytics._dispatcher = product_analytics._ProductAnalyticsDispatcher()

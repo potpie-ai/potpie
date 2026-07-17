@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.skills.bundle_catalog import RECOMMENDED_SKILL_IDS
-from bootstrap.host_wiring import build_host_shell
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from potpie_context_engine.adapters.outbound.skills.bundle_catalog import RECOMMENDED_SKILL_IDS
+from potpie_context_engine.bootstrap.host_wiring import build_host_shell
 
 
 def test_skill_manager_installs_global_harness_targets(

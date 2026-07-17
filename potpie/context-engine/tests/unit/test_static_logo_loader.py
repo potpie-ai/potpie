@@ -1,6 +1,6 @@
 """Static logo ASCII asset."""
 
-from adapters.inbound.cli.ui.static_logo_loader import (
+from potpie_context_engine.adapters.inbound.cli.ui.static_logo_loader import (
     load_static_logo,
     resolve_static_logo_path,
 )

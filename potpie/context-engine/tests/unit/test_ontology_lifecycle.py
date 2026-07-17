@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from domain.ontology import EDGE_TYPES, LifecycleStatus
+from potpie_context_engine.domain.ontology import EDGE_TYPES, LifecycleStatus
 
 
 def test_lifecycle_status_enum_values() -> None:

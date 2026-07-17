@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from adapters.outbound.settings_env import EnvContextEngineSettings
+from potpie_context_engine.adapters.outbound.settings_env import EnvContextEngineSettings
 
 pytestmark = pytest.mark.unit
 

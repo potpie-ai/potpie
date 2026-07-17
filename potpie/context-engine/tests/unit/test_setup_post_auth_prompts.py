@@ -6,8 +6,8 @@ import click
 import pytest
 import typer
 
-from adapters.inbound.cli.commands import _common
-from adapters.inbound.cli.ui import interactive_prompts, setup_ux
+from potpie_context_engine.adapters.inbound.cli.commands import _common
+from potpie_context_engine.adapters.inbound.cli.ui import interactive_prompts, setup_ux
 from tests._auth_fakes import InMemoryCredentialStore
 
 
@@ -33,11 +33,11 @@ def test_maybe_prompt_github_login_runs_selected_integrations(
         lambda *_a, **_k: ["linear", "atlassian"],
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.github_commands.github_login_impl",
+        "potpie_context_engine.adapters.inbound.cli.auth.github_commands.github_login_impl",
         lambda: calls.append("github"),
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.auth_commands.run_integration_login",
+        "potpie_context_engine.adapters.inbound.cli.auth.auth_commands.run_integration_login",
         lambda provider, *, force=False: calls.append(provider),
     )
 
@@ -71,7 +71,7 @@ def test_maybe_prompt_github_login_runs_github_when_confirmed(
         lambda *_a, **_k: [],
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.github_commands.github_login_impl",
+        "potpie_context_engine.adapters.inbound.cli.auth.github_commands.github_login_impl",
         lambda: calls.append("github"),
     )
 
@@ -104,7 +104,7 @@ def test_maybe_prompt_github_login_skips_integration_on_ctrl_c_and_continues(
         calls.append(provider)
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.auth_commands.run_integration_login",
+        "potpie_context_engine.adapters.inbound.cli.auth.auth_commands.run_integration_login",
         _login,
     )
     monkeypatch.setattr(setup_ux, "_maybe_prompt_first_pot", lambda **_k: None)
@@ -127,7 +127,7 @@ def test_maybe_prompt_github_login_cancel_exits_setup_flow(
         lambda *_a, **_k: pytest.fail("setup should exit before integration picker"),
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.github_commands.github_login_impl",
+        "potpie_context_engine.adapters.inbound.cli.auth.github_commands.github_login_impl",
         lambda: (_ for _ in ()).throw(typer.Exit(code=130)),
     )
     monkeypatch.setattr(
@@ -158,7 +158,7 @@ def test_maybe_prompt_github_login_skips_when_already_authenticated(
     messages: list[str] = []
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.ui.output.print_plain_line",
+        "potpie_context_engine.adapters.inbound.cli.ui.output.print_plain_line",
         lambda message, **_kwargs: messages.append(message),
     )
     monkeypatch.setattr(
@@ -171,7 +171,7 @@ def test_maybe_prompt_github_login_skips_when_already_authenticated(
         lambda *_a, **_k: [],
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.github_commands.github_login_impl",
+        "potpie_context_engine.adapters.inbound.cli.auth.github_commands.github_login_impl",
         lambda: pytest.fail("GitHub login should be skipped"),
     )
 
@@ -201,7 +201,7 @@ def test_maybe_prompt_github_login_prompts_when_status_check_fails(
         lambda *_a, **_k: [],
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.github_commands.github_login_impl",
+        "potpie_context_engine.adapters.inbound.cli.auth.github_commands.github_login_impl",
         lambda: calls.append("github"),
     )
 
@@ -234,7 +234,7 @@ def test_maybe_prompt_github_login_skips_integration_on_click_abort(
         calls.append(provider)
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.auth_commands.run_integration_login",
+        "potpie_context_engine.adapters.inbound.cli.auth.auth_commands.run_integration_login",
         _login,
     )
     monkeypatch.setattr(setup_ux, "_maybe_prompt_first_pot", lambda **_k: None)
@@ -248,18 +248,18 @@ def test_try_integration_login_skips_when_atlassian_confirm_aborts(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from adapters.inbound.cli.commands._common import contract
+    from potpie_context_engine.adapters.inbound.cli.commands._common import contract
 
     def _confirm_abort(*_args: object, **_kwargs: object) -> bool:
         raise click.Abort()
 
     monkeypatch.setattr("typer.confirm", _confirm_abort)
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.atlassian_auth._get_product_credentials",
+        "potpie_context_engine.adapters.inbound.cli.auth.atlassian_auth._get_product_credentials",
         lambda _product: {},
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.atlassian_auth.sys.stdin.isatty",
+        "potpie_context_engine.adapters.inbound.cli.auth.atlassian_auth.sys.stdin.isatty",
         lambda: True,
     )
 
@@ -283,7 +283,7 @@ def test_maybe_prompt_github_login_skips_when_not_tty(
         called = True
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth.github_commands.github_login_impl",
+        "potpie_context_engine.adapters.inbound.cli.auth.github_commands.github_login_impl",
         _boom,
     )
     setup_ux.maybe_prompt_github_login()

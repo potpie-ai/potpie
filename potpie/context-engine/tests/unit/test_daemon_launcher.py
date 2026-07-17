@@ -5,12 +5,12 @@ import pathlib
 
 import pytest
 
-from adapters.inbound.cli.telemetry.preferences import (
+from potpie_context_engine.adapters.inbound.cli.telemetry.preferences import (
     TelemetryPreferences,
     save_preferences,
 )
-from adapters.outbound.daemon_process import launcher
-from bootstrap import runtime_settings
+from potpie_context_engine.adapters.outbound.daemon_process import launcher
+from potpie_context_engine.bootstrap import runtime_settings
 
 
 @pytest.fixture(autouse=True)
