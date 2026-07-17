@@ -1,4 +1,4 @@
-"""Contract tests for ``domain.graph_contract`` (Graph V1.5 Step 1).
+"""Contract tests for ``potpie_context_engine.domain.graph_contract`` (Graph V1.5 Step 1).
 
 Locks the versioned contract constants, the truth/op/risk vocabularies, the
 key-prefix standardization decision, and the env-qualified edge identity key.
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from domain.graph_contract import (
+from potpie_context_engine.domain.graph_contract import (
     APPLICABLE_MUTATION_OPS,
     DEFERRED_OPS,
     GRAPH_CONTRACT_VERSION,
@@ -38,7 +38,7 @@ def test_versions() -> None:
 
 
 def test_ontology_version_mirrors_contract() -> None:
-    from domain.ontology import ONTOLOGY_VERSION as ont_version
+    from potpie_context_engine.domain.ontology import ONTOLOGY_VERSION as ont_version
 
     assert ont_version == ONTOLOGY_VERSION
 
@@ -64,7 +64,7 @@ def test_truth_classes_match_plan() -> None:
 
 def test_truth_maps_to_ranker_evidence_strength() -> None:
     # Every truth class lands on a strength the ranker actually scores.
-    from domain.ranking import _STRENGTH_TO_SCORE
+    from potpie_context_engine.domain.ranking import _STRENGTH_TO_SCORE
 
     for truth in TRUTH_CLASSES:
         assert evidence_strength_for_truth(truth) in _STRENGTH_TO_SCORE
@@ -143,7 +143,7 @@ def test_entity_key_matches_type_requires_canonical_prefix() -> None:
 
 def test_public_entity_key_prefixes_are_consistent_with_ontology() -> None:
     """Every public entity type's key prefix round-trips through the helpers."""
-    from domain.ontology import ENTITY_TYPES
+    from potpie_context_engine.domain.ontology import ENTITY_TYPES
 
     for label, spec in ENTITY_TYPES.items():
         if not spec.public:

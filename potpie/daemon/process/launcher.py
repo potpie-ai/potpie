@@ -17,7 +17,10 @@ import sys
 import time
 
 from potpie.daemon.process.pidfile import read_pid_file
-from bootstrap.runtime_settings import RuntimeSettings, project_child_environment
+from potpie_context_engine.bootstrap.runtime_settings import (
+    RuntimeSettings,
+    project_child_environment,
+)
 
 
 class DaemonStartError(Exception):

@@ -42,17 +42,20 @@ from potpie.cli.telemetry.onboarding_events import (
     now_ms,
 )
 from potpie.cli.ui import setup_ux
-from adapters.outbound.intelligence.local_embedder import (
+from potpie_context_engine.adapters.outbound.intelligence.local_embedder import (
     DEFAULT_SENTENCE_TRANSFORMER_MODEL,
     configured_embedder_choice,
     configured_embedding_model,
 )
-from application.services.config_service import KNOWN_CONFIG_KEYS, public_config_value
-from bootstrap import sentry_metrics_runtime
-from domain.embedding_modes import normalize_embedding_mode
-from domain.errors import CapabilityNotImplemented
-from domain.lifecycle import SetupPlan, SetupReport
-from domain.ports.agent_context import StatusRequest
+from potpie_context_engine.application.services.config_service import (
+    KNOWN_CONFIG_KEYS,
+    public_config_value,
+)
+from potpie_context_engine.bootstrap import sentry_metrics_runtime
+from potpie_context_engine.domain.embedding_modes import normalize_embedding_mode
+from potpie_context_engine.domain.errors import CapabilityNotImplemented
+from potpie_context_engine.domain.lifecycle import SetupPlan, SetupReport
+from potpie_context_engine.domain.ports.agent_context import StatusRequest
 
 
 def _effective_current_repo_pot_id(
@@ -134,7 +137,9 @@ def register(root: typer.Typer) -> None:
                 explicit_embeddings=embeddings is not None,
                 explicit_model=embedding_model is not None,
             )
-            from bootstrap.host_wiring import default_backend_profile
+            from potpie_context_engine.bootstrap.host_wiring import (
+                default_backend_profile,
+            )
 
             if human_output:
                 host, selected_backend, in_process = _build_local_setup_host(
@@ -160,8 +165,10 @@ def register(root: typer.Typer) -> None:
                 and backend != host.backend.profile
             ):
                 from potpie.cli.commands._common import set_host
-                from adapters.outbound.graph.backends import build_backend
-                from bootstrap.host_wiring import build_host_shell
+                from potpie_context_engine.adapters.outbound.graph.backends import (
+                    build_backend,
+                )
+                from potpie_context_engine.bootstrap.host_wiring import build_host_shell
 
                 host = build_host_shell(
                     backend=build_backend(backend), profile=host.profile
@@ -177,8 +184,10 @@ def register(root: typer.Typer) -> None:
                 import os
 
                 from potpie.cli.commands._common import set_host
-                from adapters.outbound.graph.backends import build_backend
-                from bootstrap.host_wiring import build_host_shell
+                from potpie_context_engine.adapters.outbound.graph.backends import (
+                    build_backend,
+                )
+                from potpie_context_engine.bootstrap.host_wiring import build_host_shell
 
                 os.environ["CONTEXT_ENGINE_HOST_MODE"] = (
                     "daemon" if daemon else "in_process"
@@ -217,7 +226,9 @@ def register(root: typer.Typer) -> None:
                 if in_process or host.daemon.status().get("up"):
                     preview = host.setup.preview(plan)
                 else:
-                    from bootstrap.host_wiring import build_host_shell
+                    from potpie_context_engine.bootstrap.host_wiring import (
+                        build_host_shell,
+                    )
 
                     preview_host = build_host_shell()
                     preview = preview_host.setup.preview(plan)
@@ -661,8 +672,8 @@ def _build_local_setup_host(
     import os
 
     from potpie.cli.commands._common import set_host
-    from adapters.outbound.graph.backends import build_backend
-    from bootstrap.host_wiring import build_host_shell
+    from potpie_context_engine.adapters.outbound.graph.backends import build_backend
+    from potpie_context_engine.bootstrap.host_wiring import build_host_shell
 
     selected_backend = backend or default_backend
     if daemon is not None:

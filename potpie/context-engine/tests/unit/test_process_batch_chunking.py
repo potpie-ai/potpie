@@ -17,15 +17,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from application.use_cases.process_batch import (
+from potpie_context_engine.application.use_cases.process_batch import (
     _chunk_events,
     _chunk_size_default,
     process_batch,
 )
-from domain.context_events import ContextEvent
-from domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
-from domain.ports.reconciliation_ledger import ContextEventRow
-from domain.reconciliation_batch import (
+from potpie_context_engine.domain.context_events import ContextEvent
+from potpie_context_engine.domain.ports.pot_resolution import (
+    ResolvedPot,
+    ResolvedPotRepo,
+)
+from potpie_context_engine.domain.ports.reconciliation_ledger import ContextEventRow
+from potpie_context_engine.domain.reconciliation_batch import (
     BATCH_STATUS_PENDING,
     BatchAgentOutcome,
     BatchEventRef,

@@ -10,7 +10,10 @@ from typer.testing import CliRunner
 
 from potpie.cli import repo_location
 from potpie.cli.commands import _common, pots
-from domain.ports.services.pot_management import PotInfo, SourceInfo
+from potpie_context_engine.domain.ports.services.pot_management import (
+    PotInfo,
+    SourceInfo,
+)
 
 pytestmark = pytest.mark.unit
 

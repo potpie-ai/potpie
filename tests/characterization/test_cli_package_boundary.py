@@ -14,9 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 ENGINE_ROOT = ROOT / "potpie" / "context-engine"
 
 EXPECTED_ENGINE_CLI_IMPORTERS = {
-    "adapters/outbound/skills/agent_installer.py",
-    "adapters/outbound/skills/bundle_catalog.py",
-    "bootstrap/sentry_metrics_runtime.py",
+    "src/potpie_context_engine/adapters/outbound/skills/agent_installer.py",
+    "src/potpie_context_engine/adapters/outbound/skills/bundle_catalog.py",
+    "src/potpie_context_engine/bootstrap/sentry_metrics_runtime.py",
 }
 
 
@@ -46,7 +46,9 @@ def _references_namespace(path: Path, namespace: str) -> bool:
 
 
 def test_legacy_cli_namespace_is_not_imported() -> None:
-    legacy_namespace = ".".join(("adapters", "inbound", "cli"))
+    legacy_namespace = "potpie_context_engine." + ".".join(
+        ("adapters", "inbound", "cli")
+    )
     offenders = {
         path.relative_to(ROOT).as_posix()
         for search_root in (ROOT / "potpie", ROOT / "tests")

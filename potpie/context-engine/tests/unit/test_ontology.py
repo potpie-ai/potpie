@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from domain.graph_mutations import EdgeUpsert, EntityUpsert
-from domain.ontology import (
+from potpie_context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert
+from potpie_context_engine.domain.ontology import (
     ALLOWED_LIFECYCLE_STATUSES,
     CANONICAL_EDGE_TYPES,
     CANONICAL_LABELS,
@@ -29,7 +29,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_version_is_the_unified_version() -> None:
-    # Owned by domain.graph_contract (the V1.5 contract home) and mirrored on
+    # Owned by potpie_context_engine.domain.graph_contract (the V1.5 contract home) and mirrored on
     # the ontology module; the graph catalog reports the same string.
     assert ONTOLOGY_VERSION == "2026-06-graph"
 
@@ -97,7 +97,7 @@ def test_catalog_contains_code_asset_entity() -> None:
 
 
 def test_feature_key_prefix_convention() -> None:
-    from domain.ontology import entity_spec
+    from potpie_context_engine.domain.ontology import entity_spec
 
     spec = entity_spec("Feature")
     assert spec is not None

@@ -10,7 +10,7 @@ from potpie.cli.telemetry.preferences import (
     save_preferences,
 )
 from potpie.daemon.process import launcher
-from bootstrap import runtime_settings
+from potpie_context_engine.bootstrap import runtime_settings
 
 
 @pytest.fixture(autouse=True)

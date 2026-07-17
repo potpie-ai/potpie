@@ -18,7 +18,7 @@ import typer
 import click
 from click.exceptions import Abort
 
-from adapters.outbound.cli_auth.gitlab_client import (
+from potpie_context_engine.adapters.outbound.cli_auth.gitlab_client import (
     GitLabAuthErrorKind,
     instance_host,
     normalize_instance_url,
@@ -26,7 +26,7 @@ from adapters.outbound.cli_auth.gitlab_client import (
     verify_instance_access,
     verify_read_api_scope,
 )
-from adapters.outbound.cli_auth.credentials_store import (
+from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
     ProviderCredentialError,
     credentials_path,
     get_gitlab_credentials,
@@ -34,7 +34,7 @@ from adapters.outbound.cli_auth.credentials_store import (
 )
 from potpie.cli.commands._common import EXIT_AUTH
 from potpie.cli.ui.output import emit_error, print_plain_line
-from adapters.outbound.cli_auth.provider_config import (
+from potpie_context_engine.adapters.outbound.cli_auth.provider_config import (
     GITLAB_DEFAULT_INSTANCE,
     GITLAB_RECOMMENDED_SCOPES,
     gitlab_pat_page_url,

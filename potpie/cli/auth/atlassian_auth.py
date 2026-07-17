@@ -1,7 +1,7 @@
 """Interactive Atlassian (Jira/Confluence) API-token login command.
 
 The HTTP client (verification + site discovery) lives in
-``adapters.outbound.cli_auth.atlassian_client``; this inbound module owns the
+``potpie_context_engine.adapters.outbound.cli_auth.atlassian_client``; this inbound module owns the
 interactive flow (prompts, output, exit codes) and re-exports the client symbols
 for callers that historically imported them from here.
 """
@@ -18,7 +18,7 @@ import typer
 
 import click
 
-from adapters.outbound.cli_auth.atlassian_client import (  # noqa: F401  (re-export)
+from potpie_context_engine.adapters.outbound.cli_auth.atlassian_client import (  # noqa: F401  (re-export)
     AtlassianAuthErrorKind,
     AtlassianAuthScheme,
     AtlassianVerifyResult,
@@ -49,7 +49,7 @@ from adapters.outbound.cli_auth.atlassian_client import (  # noqa: F401  (re-exp
     verify_gateway_product,
     verify_site_with_api_token,
 )
-from adapters.outbound.cli_auth.credentials_store import (
+from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
     ProviderCredentialError,
     credentials_path,
     get_integration_status,
@@ -57,7 +57,7 @@ from adapters.outbound.cli_auth.credentials_store import (
 )
 from potpie.cli.commands._common import EXIT_AUTH, get_store
 from potpie.cli.ui.output import emit_error, print_plain_line
-from adapters.outbound.cli_auth.provider_config import (
+from potpie_context_engine.adapters.outbound.cli_auth.provider_config import (
     ATLASSIAN_API_TOKEN_PAGE,
     AtlassianProduct,
 )

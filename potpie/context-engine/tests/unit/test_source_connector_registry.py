@@ -5,11 +5,16 @@ from __future__ import annotations
 import asyncio
 from typing import Iterable, Mapping, Sequence
 
-from application.services.source_connector_registry import SourceConnectorRegistry
-from domain.context_events import ContextEvent
-from domain.source_connector import ConnectorScope, SourceCapability
-from domain.source_references import SourceReferenceRecord
-from domain.source_resolution import (
+from potpie_context_engine.application.services.source_connector_registry import (
+    SourceConnectorRegistry,
+)
+from potpie_context_engine.domain.context_events import ContextEvent
+from potpie_context_engine.domain.source_connector import (
+    ConnectorScope,
+    SourceCapability,
+)
+from potpie_context_engine.domain.source_references import SourceReferenceRecord
+from potpie_context_engine.domain.source_resolution import (
     ResolvedSummary,
     ResolverAuthContext,
     ResolverBudget,
@@ -202,7 +207,9 @@ def test_third_source_smoke_test_notion_connector_loads() -> None:
     connector module to add a new source — this test fails the moment
     that becomes true.
     """
-    from adapters.outbound.connectors.notion import NotionConnector
+    from potpie_context_engine.adapters.outbound.connectors.notion import (
+        NotionConnector,
+    )
 
     reg = SourceConnectorRegistry()
     reg.register(

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from application.services.ingestion_wait import wait_for_terminal_ingestion_event
+from potpie_context_engine.application.services.ingestion_wait import (
+    wait_for_terminal_ingestion_event,
+)
 
 
 def test_wait_returns_immediately_on_terminal() -> None:

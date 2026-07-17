@@ -5,7 +5,9 @@ import typer
 
 from potpie.cli.auth import _login_impl, github_commands
 from potpie.cli.commands import _common
-from adapters.outbound.cli_auth.github import GitHubDeviceFlowError
+from potpie_context_engine.adapters.outbound.cli_auth.github import (
+    GitHubDeviceFlowError,
+)
 from tests._auth_fakes import InMemoryCredentialStore
 
 

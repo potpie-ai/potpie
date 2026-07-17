@@ -11,7 +11,7 @@ from integrations.application.project_sources_service import (
     list_github_repository_sources,
 )
 from app.modules.projects.projects_model import Project
-from domain.ports.pot_resolution import (
+from potpie_context_engine.domain.ports.pot_resolution import (
     ResolvedPot,
     ResolvedPotRepo,
     single_github_repo_pot,

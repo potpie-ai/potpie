@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from domain.agent_context_port import READER_BACKED_INCLUDES
-from domain.graph_views import (
+from potpie_context_engine.domain.agent_context_port import READER_BACKED_INCLUDES
+from potpie_context_engine.domain.graph_views import (
     GRAPH_VIEWS,
     INCLUDE_TO_VIEW,
     UnknownGraphViewError,

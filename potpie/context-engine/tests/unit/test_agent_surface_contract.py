@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from domain.agent_context_port import (
+from potpie_context_engine.domain.agent_context_port import (
     CONTEXT_INCLUDE_VALUES,
     CONTEXT_RESOLVE_RECIPES,
     context_port_manifest,
