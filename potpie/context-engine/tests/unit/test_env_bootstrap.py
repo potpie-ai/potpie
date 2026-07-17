@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from bootstrap import env_bootstrap as eb
+from potpie_context_engine.bootstrap import env_bootstrap as eb
 
 
 def test_parse_env_line() -> None:

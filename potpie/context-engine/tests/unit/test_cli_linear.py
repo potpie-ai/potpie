@@ -8,9 +8,9 @@ import time
 import urllib.error
 import urllib.request
 import pytest
-from adapters.inbound.cli.commands._common import set_store
+from potpie_context_engine.adapters.inbound.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
-from adapters.outbound.cli_auth.callback_server import (
+from potpie_context_engine.adapters.outbound.cli_auth.callback_server import (
     OAuthCallbackResult,
     _first,
     _oauth_callback_failure_html,
@@ -19,13 +19,13 @@ from adapters.outbound.cli_auth.callback_server import (
 )
 import base64
 import hashlib
-from adapters.outbound.cli_auth.pkce import generate_pkce_pair
+from potpie_context_engine.adapters.outbound.cli_auth.pkce import generate_pkce_pair
 from unittest.mock import MagicMock, patch
-from adapters.outbound.cli_auth import token_exchange as tx
-from adapters.outbound.cli_auth import integration_session as session
+from potpie_context_engine.adapters.outbound.cli_auth import token_exchange as tx
+from potpie_context_engine.adapters.outbound.cli_auth import integration_session as session
 import typer
-from adapters.inbound.cli.auth import auth_commands
-from adapters.outbound.cli_auth.provider_config import (
+from potpie_context_engine.adapters.inbound.cli.auth import auth_commands
+from potpie_context_engine.adapters.outbound.cli_auth.provider_config import (
     DEFAULT_CALLBACK_PORT,
     DEFAULT_FALLBACK_CALLBACK_PORTS,
 )
@@ -559,7 +559,7 @@ def test_run_linear_oauth_flow_already_connected(
     )
     monkeypatch.setattr(auth_commands, "token_needs_refresh", lambda _x: False)
     monkeypatch.setattr(
-        "adapters.outbound.cli_auth.credentials_store.list_linear_organizations",
+        "potpie_context_engine.adapters.outbound.cli_auth.credentials_store.list_linear_organizations",
         lambda: [{"id": "org-1", "name": "Potpie AI CLI", "key": "potpie-ai-cli"}],
     )
 

@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 import pytest
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import cli_install_status as cis
-from adapters.inbound.cli.commands import bootstrap
-from adapters.inbound.cli import host_cli as cli_main
+from potpie_context_engine.adapters.inbound.cli import cli_install_status as cis
+from potpie_context_engine.adapters.inbound.cli.commands import bootstrap
+from potpie_context_engine.adapters.inbound.cli import host_cli as cli_main
 
 pytestmark = pytest.mark.unit
 

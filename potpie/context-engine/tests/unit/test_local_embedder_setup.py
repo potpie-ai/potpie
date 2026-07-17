@@ -12,14 +12,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from adapters.outbound.intelligence import local_embedder
-from adapters.outbound.intelligence.local_embedder import (
+from potpie_context_engine.adapters.outbound.intelligence import local_embedder
+from potpie_context_engine.adapters.outbound.intelligence.local_embedder import (
     HashingEmbedder,
     SentenceTransformerEmbedder,
 )
-from application.services.config_service import LocalConfigService
-from application.services.setup_orchestrator import DefaultSetupOrchestrator
-from domain.lifecycle import DONE, FAILED, SetupPlan
+from potpie_context_engine.application.services.config_service import LocalConfigService
+from potpie_context_engine.application.services.setup_orchestrator import DefaultSetupOrchestrator
+from potpie_context_engine.domain.lifecycle import DONE, FAILED, SetupPlan
 
 pytestmark = pytest.mark.unit
 

@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-import adapters.inbound.cli as _clipkg
-from domain.agent_context_port import CONTEXT_INCLUDE_VALUES, CONTEXT_RECORD_TYPES
+import potpie_context_engine.adapters.inbound.cli as _clipkg
+from potpie_context_engine.domain.agent_context_port import CONTEXT_INCLUDE_VALUES, CONTEXT_RECORD_TYPES
 
 pytestmark = pytest.mark.unit
 

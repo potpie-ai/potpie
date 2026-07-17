@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from adapters.outbound.managed_services.external_backend import ExternalBackend
-from domain.ports.daemon.shell import HealthStatus, ReadyProbe, ServiceSpec
-from host.daemon_runtime.context import ServiceEndpoints, ShellContext
+from potpie_context_engine.adapters.outbound.managed_services.external_backend import ExternalBackend
+from potpie_context_engine.domain.ports.daemon.shell import HealthStatus, ReadyProbe, ServiceSpec
+from potpie_context_engine.host.daemon_runtime.context import ServiceEndpoints, ShellContext
 
 
 def _free_port_and_listener() -> tuple[int, socket.socket]:
@@ -85,7 +85,7 @@ async def test_external_probe_http_ready_when_endpoint_healthy(ctx):
     )
 
     with patch(
-        "adapters.outbound.managed_services.external_backend._http_probe",
+        "potpie_context_engine.adapters.outbound.managed_services.external_backend._http_probe",
         new=AsyncMock(return_value=True),
     ):
         assert await be.probe(spec) is HealthStatus.READY

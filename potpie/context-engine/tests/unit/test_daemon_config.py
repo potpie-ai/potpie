@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pathlib
 
-from host.daemon_runtime.config import (
+from potpie_context_engine.host.daemon_runtime.config import (
     ComponentEntry,
     DaemonConfig,
     ReadyProbeEntry,

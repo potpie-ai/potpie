@@ -8,10 +8,10 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import host_cli as cli_main
-from adapters.outbound.cli_auth import github as gh_auth
-from adapters.inbound.cli.auth import github_commands as gh_cmds
-from adapters.outbound.cli_auth import credentials_store as cs
+from potpie_context_engine.adapters.inbound.cli import host_cli as cli_main
+from potpie_context_engine.adapters.outbound.cli_auth import github as gh_auth
+from potpie_context_engine.adapters.inbound.cli.auth import github_commands as gh_cmds
+from potpie_context_engine.adapters.outbound.cli_auth import credentials_store as cs
 
 pytestmark = pytest.mark.unit
 
@@ -770,7 +770,7 @@ def test_potpie_login_delegates_to_impl(monkeypatch: pytest.MonkeyPatch) -> None
     called: list[bool] = []
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.auth._login_impl.potpie_login_impl",
+        "potpie_context_engine.adapters.inbound.cli.auth._login_impl.potpie_login_impl",
         lambda: called.append(True),
     )
 
@@ -783,14 +783,14 @@ def test_potpie_login_delegates_to_impl(monkeypatch: pytest.MonkeyPatch) -> None
 def test_verify_integration_access_github_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from adapters.outbound.cli_auth.integration_verify import verify_integration_access
+    from potpie_context_engine.adapters.outbound.cli_auth.integration_verify import verify_integration_access
 
     class _Account:
         login = "octocat"
         email = "octo@example.com"
 
     monkeypatch.setattr(
-        "adapters.outbound.cli_auth.github.verify_account",
+        "potpie_context_engine.adapters.outbound.cli_auth.github.verify_account",
         lambda _token, **_: _Account(),
     )
 
@@ -803,7 +803,7 @@ def test_verify_integration_access_github_success(
 
 
 def test_verify_integration_access_github_no_token() -> None:
-    from adapters.outbound.cli_auth.integration_verify import verify_integration_access
+    from potpie_context_engine.adapters.outbound.cli_auth.integration_verify import verify_integration_access
 
     ok, message = verify_integration_access("github", {})
     assert ok is False

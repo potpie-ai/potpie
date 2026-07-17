@@ -7,15 +7,15 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import host_cli
-from adapters.inbound.cli.commands import _common
-from adapters.inbound.cli.telemetry.settings import SentrySettings
-from adapters.inbound.cli.telemetry_context import (
+from potpie_context_engine.adapters.inbound.cli import host_cli
+from potpie_context_engine.adapters.inbound.cli.commands import _common
+from potpie_context_engine.adapters.inbound.cli.telemetry.settings import SentrySettings
+from potpie_context_engine.adapters.inbound.cli.telemetry_context import (
     current_telemetry_context,
     load_anonymous_install_id,
 )
-from adapters.inbound.cli.telemetry.identity_store import identity_path
-from domain.errors import CapabilityNotImplemented, ContextEngineDisabled, PotNotFound
+from potpie_context_engine.adapters.inbound.cli.telemetry.identity_store import identity_path
+from potpie_context_engine.domain.errors import CapabilityNotImplemented, ContextEngineDisabled, PotNotFound
 
 _SAFE_CLI_ATTRS: Final[frozenset[str]] = frozenset(
     {
@@ -73,11 +73,11 @@ class _FakeMetricsRuntime:
 @pytest.fixture
 def fake_metrics(monkeypatch: pytest.MonkeyPatch) -> _FakeMetricsRuntime:
     fake = _FakeMetricsRuntime()
-    monkeypatch.setattr("bootstrap.sentry_metrics_runtime.count", fake.count)
+    monkeypatch.setattr("potpie_context_engine.bootstrap.sentry_metrics_runtime.count", fake.count)
     monkeypatch.setattr(
-        "bootstrap.sentry_metrics_runtime.distribution", fake.distribution
+        "potpie_context_engine.bootstrap.sentry_metrics_runtime.distribution", fake.distribution
     )
-    monkeypatch.setattr("bootstrap.sentry_metrics_runtime.flush", fake.flush)
+    monkeypatch.setattr("potpie_context_engine.bootstrap.sentry_metrics_runtime.flush", fake.flush)
     return fake
 
 
@@ -130,15 +130,15 @@ def test_cli_root_configures_sentry_errors_and_metrics_with_one_settings_load(
     error_settings: list[SentrySettings] = []
     metric_settings: list[SentrySettings] = []
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.settings.load_sentry_settings",
+        "potpie_context_engine.adapters.inbound.cli.telemetry.settings.load_sentry_settings",
         lambda: loaded.append(None) or settings,
     )
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.sentry_runtime.configure_cli_sentry",
+        "potpie_context_engine.adapters.inbound.cli.telemetry.sentry_runtime.configure_cli_sentry",
         error_settings.append,
     )
     monkeypatch.setattr(
-        "bootstrap.sentry_metrics_runtime.configure_metrics", metric_settings.append
+        "potpie_context_engine.bootstrap.sentry_metrics_runtime.configure_metrics", metric_settings.append
     )
     runner = CliRunner()
 
@@ -155,7 +155,7 @@ def test_expected_contract_error_does_not_capture_sentry(
 ) -> None:
     captured: list[BaseException] = []
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
+        "potpie_context_engine.adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
         lambda exc, *, error_code, error_kind: captured.append(exc),
     )
 
@@ -172,7 +172,7 @@ def test_contract_records_success_metrics_without_command_metadata(
     fake_metrics: _FakeMetricsRuntime,
 ) -> None:
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.context.current_telemetry_context", lambda: None
+        "potpie_context_engine.adapters.inbound.cli.telemetry.context.current_telemetry_context", lambda: None
     )
 
     with _common.contract():
@@ -222,7 +222,7 @@ def test_contract_preserves_expected_typer_exit_from_fail(
 ) -> None:
     captured: list[BaseException] = []
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
+        "potpie_context_engine.adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
         lambda exc, *, error_code, error_kind: captured.append(exc),
     )
     _common.set_json(True)
@@ -249,7 +249,7 @@ def test_unexpected_contract_error_is_captured_and_rendered_json(
 ) -> None:
     captured: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
+        "potpie_context_engine.adapters.inbound.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
         lambda exc, *, error_code, error_kind: captured.append(
             (type(exc).__name__, error_code, error_kind)
         ),

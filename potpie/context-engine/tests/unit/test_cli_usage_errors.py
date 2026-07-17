@@ -11,8 +11,8 @@ import typer
 from typer._click.exceptions import Abort as TyperAbort
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import host_cli
-from adapters.inbound.cli.commands import _common
+from potpie_context_engine.adapters.inbound.cli import host_cli
+from potpie_context_engine.adapters.inbound.cli.commands import _common
 
 
 @pytest.fixture(autouse=True)

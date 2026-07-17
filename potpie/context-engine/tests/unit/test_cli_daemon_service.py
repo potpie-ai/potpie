@@ -8,10 +8,10 @@ from pathlib import Path
 import httpx
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import host_cli
-from adapters.inbound.cli.commands import _common, bootstrap
-from adapters.inbound.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
-from domain.lifecycle import (
+from potpie_context_engine.adapters.inbound.cli import host_cli
+from potpie_context_engine.adapters.inbound.cli.commands import _common, bootstrap
+from potpie_context_engine.adapters.inbound.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
+from potpie_context_engine.domain.lifecycle import (
     SKIPPED,
     PlannedSetupStep,
     SetupPlan,
@@ -135,7 +135,7 @@ def test_service_logs_returns_helpful_message_when_daemon_ipc_fails(
         yield _Client()
 
     monkeypatch.setattr(
-        "adapters.inbound.cli.commands.service.client_for",
+        "potpie_context_engine.adapters.inbound.cli.commands.service.client_for",
         _failing_client,
     )
     _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
@@ -173,7 +173,7 @@ def test_setup_daemon_dry_run_marks_daemon_host_mode(
     host = _SetupHost(home=tmp_path)
     monkeypatch.setattr(bootstrap, "get_host", lambda: host)
     monkeypatch.setattr(
-        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        "potpie_context_engine.adapters.inbound.cli.ui.setup_ux.rich_enabled",
         lambda **_kwargs: False,
     )
 
@@ -193,7 +193,7 @@ def test_setup_daemon_uses_daemon_status_for_backend_validation(
     host.daemon.backend = "embedded"
     monkeypatch.setattr(bootstrap, "get_host", lambda: host)
     monkeypatch.setattr(
-        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        "potpie_context_engine.adapters.inbound.cli.ui.setup_ux.rich_enabled",
         lambda **_kwargs: False,
     )
 
@@ -214,7 +214,7 @@ def test_setup_daemon_fails_when_requested_backend_cannot_be_verified(
     host = _SetupHost(home=tmp_path)
     monkeypatch.setattr(bootstrap, "get_host", lambda: host)
     monkeypatch.setattr(
-        "adapters.inbound.cli.ui.setup_ux.rich_enabled",
+        "potpie_context_engine.adapters.inbound.cli.ui.setup_ux.rich_enabled",
         lambda **_kwargs: False,
     )
 

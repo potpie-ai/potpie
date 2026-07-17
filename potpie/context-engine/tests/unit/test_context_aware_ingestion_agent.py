@@ -6,19 +6,19 @@ from datetime import datetime, timezone
 from typing import Any
 import pytest
 
-from adapters.outbound.reconciliation.context_graph_tools import (
+from potpie_context_engine.adapters.outbound.reconciliation.context_graph_tools import (
     ContextGraphReconciliationTools,
     build_initial_context_snapshot,
 )
-from application.services.reconciliation_validation import (
+from potpie_context_engine.application.services.reconciliation_validation import (
     validate_reconciliation_plan,
 )
-from domain.agent_envelope import AgentEnvelope
-from domain.context_events import ContextEvent, EventRef
-from domain.graph_mutations import EntityUpsert
-from domain.llm_reconciliation import ReconciliationRequest
-from domain.ports.agent_context import ResolveRequest
-from domain.reconciliation import ReconciliationPlan
+from potpie_context_engine.domain.agent_envelope import AgentEnvelope
+from potpie_context_engine.domain.context_events import ContextEvent, EventRef
+from potpie_context_engine.domain.graph_mutations import EntityUpsert
+from potpie_context_engine.domain.llm_reconciliation import ReconciliationRequest
+from potpie_context_engine.domain.ports.agent_context import ResolveRequest
+from potpie_context_engine.domain.reconciliation import ReconciliationPlan
 
 
 def _make_request(
@@ -105,9 +105,9 @@ def test_tools_adapter_lists_expected_tool_catalog() -> None:
 def test_read_tool_includes_are_orchestrator_backed() -> None:
     """Every targeted read tool must name an include the orchestrator backs;
     this guard stops the tool surface from drifting from the readers again."""
-    from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
-    from adapters.outbound.reconciliation.context_graph_tools import READ_TOOL_INCLUDE
-    from application.services.read_orchestrator import ReadOrchestrator
+    from potpie_context_engine.adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
+    from potpie_context_engine.adapters.outbound.reconciliation.context_graph_tools import READ_TOOL_INCLUDE
+    from potpie_context_engine.application.services.read_orchestrator import ReadOrchestrator
 
     backed = ReadOrchestrator(claim_query=InMemoryClaimQueryStore()).backed_includes
     targeted = {inc for inc in READ_TOOL_INCLUDE.values() if inc is not None}
@@ -201,7 +201,7 @@ def test_validation_no_warning_when_confidence_set() -> None:
 
 def test_pydantic_deep_agent_exposes_tools_setter() -> None:
     pytest.importorskip("pydantic_deep")
-    from adapters.outbound.reconciliation.pydantic_deep_agent import (
+    from potpie_context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
         PydanticDeepReconciliationAgent,
     )
 

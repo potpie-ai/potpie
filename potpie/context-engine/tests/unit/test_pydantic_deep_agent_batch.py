@@ -9,12 +9,12 @@ from types import ModuleType
 import anyio
 import pytest
 
-from adapters.outbound.reconciliation.pydantic_deep_agent import (
+from potpie_context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
     PydanticDeepReconciliationAgent,
 )
-from bootstrap import sentry_metrics_runtime
-from domain.context_events import ContextEvent
-from domain.reconciliation_batch import BatchAgentContext
+from potpie_context_engine.bootstrap import sentry_metrics_runtime
+from potpie_context_engine.domain.context_events import ContextEvent
+from potpie_context_engine.domain.reconciliation_batch import BatchAgentContext
 
 pytestmark = pytest.mark.unit
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import stat
 
-from adapters.inbound.cli.telemetry.identity_store import (
+from potpie_context_engine.adapters.inbound.cli.telemetry.identity_store import (
     identity_path,
     load_or_create_identity,
 )

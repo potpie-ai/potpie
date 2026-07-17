@@ -4,9 +4,9 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from adapters.inbound.cli.telemetry import product_analytics
-from adapters.inbound.cli.telemetry.context import TelemetryContext
-from adapters.inbound.cli.telemetry.product_analytics import (
+from potpie_context_engine.adapters.inbound.cli.telemetry import product_analytics
+from potpie_context_engine.adapters.inbound.cli.telemetry.context import TelemetryContext
+from potpie_context_engine.adapters.inbound.cli.telemetry.product_analytics import (
     ProductAnalyticsEvent,
     ProductAnalyticsSettings,
     PostHogSink,
@@ -14,8 +14,8 @@ from adapters.inbound.cli.telemetry.product_analytics import (
     configure_product_analytics,
     set_product_analytics_sink,
 )
-from adapters.inbound.cli.telemetry.settings import load_product_analytics_settings
-from bootstrap import runtime_settings
+from potpie_context_engine.adapters.inbound.cli.telemetry.settings import load_product_analytics_settings
+from potpie_context_engine.bootstrap import runtime_settings
 
 _PRODUCT_ANALYTICS_ENV_NAMES = (
     "POTPIE_ENVIRONMENT",
@@ -82,7 +82,7 @@ def test_product_analytics_settings_respect_kill_switch(monkeypatch) -> None:
 def test_product_analytics_settings_respect_persisted_telemetry_disable(
     monkeypatch,
 ) -> None:
-    from adapters.inbound.cli.telemetry.preferences import (
+    from potpie_context_engine.adapters.inbound.cli.telemetry.preferences import (
         TelemetryPreferences,
         save_preferences,
     )
@@ -99,7 +99,7 @@ def test_product_analytics_settings_respect_persisted_telemetry_disable(
 def test_product_analytics_settings_persisted_enable_preserves_existing_gates(
     monkeypatch,
 ) -> None:
-    from adapters.inbound.cli.telemetry.preferences import (
+    from potpie_context_engine.adapters.inbound.cli.telemetry.preferences import (
         TelemetryPreferences,
         save_preferences,
     )
@@ -178,7 +178,7 @@ def test_capture_event_uses_existing_telemetry_identity(monkeypatch) -> None:
     sink = _FakeSink()
     set_product_analytics_sink(sink)
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        "potpie_context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
         _telemetry_context,
     )
 
@@ -207,7 +207,7 @@ def test_capture_event_is_noop_without_telemetry_context(monkeypatch) -> None:
     sink = _FakeSink()
     set_product_analytics_sink(sink)
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        "potpie_context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
         lambda: None,
     )
 
@@ -220,7 +220,7 @@ def test_configure_product_analytics_uses_noop_when_disabled(monkeypatch) -> Non
     sink = _FakeSink()
     set_product_analytics_sink(sink)
     monkeypatch.setattr(
-        "adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
+        "potpie_context_engine.adapters.inbound.cli.telemetry.product_analytics.current_telemetry_context",
         _telemetry_context,
     )
 

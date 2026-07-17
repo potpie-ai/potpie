@@ -2,7 +2,7 @@
 
 import logging
 
-from adapters.inbound.cli.ui.output import (
+from potpie_context_engine.adapters.inbound.cli.ui.output import (
     DoctorSnapshot,
     configure_error_output,
     configure_cli_logging,

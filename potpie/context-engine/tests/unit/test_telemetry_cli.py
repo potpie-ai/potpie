@@ -5,16 +5,16 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import host_cli
-from adapters.inbound.cli.commands import telemetry as telemetry_cmd
-from adapters.inbound.cli.telemetry import sentry_runtime
-from adapters.inbound.cli.telemetry.preferences import (
+from potpie_context_engine.adapters.inbound.cli import host_cli
+from potpie_context_engine.adapters.inbound.cli.commands import telemetry as telemetry_cmd
+from potpie_context_engine.adapters.inbound.cli.telemetry import sentry_runtime
+from potpie_context_engine.adapters.inbound.cli.telemetry.preferences import (
     load_preferences,
     preferences_path,
 )
-from adapters.inbound.cli.telemetry.product_analytics import ProductAnalyticsSettings
-from adapters.inbound.cli.telemetry.settings import SentrySettings
-from bootstrap import runtime_settings
+from potpie_context_engine.adapters.inbound.cli.telemetry.product_analytics import ProductAnalyticsSettings
+from potpie_context_engine.adapters.inbound.cli.telemetry.settings import SentrySettings
+from potpie_context_engine.bootstrap import runtime_settings
 
 _TELEMETRY_ENV_NAMES = (
     "POTPIE_ENVIRONMENT",
