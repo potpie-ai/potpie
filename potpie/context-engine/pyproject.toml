@@ -10,28 +10,47 @@ name = "potpie-context-engine"
 version = "0.1.0"
 description = "Context graph API, webhooks, CLI, and MCP."
 requires-python = ">=3.12,<3.15"
+# Base = dependencies imported by the public graph API surface
+# (potpie_context_engine + potpie_context_engine.api). Delivery surfaces and
+# storage backends live behind extras; importing the base package must not
+# require any of them.
 dependencies = [
-    "fastapi>=0.115.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+cli = [
     "httpx>=0.28.0",
     "keyring>=25.0.0",
-    "mcp>=1.28.1",
     "pillow>=10.0.0",
+    "rich>=13.0",
+    "typer>=0.15.0",
+]
+http = [
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    # CVE floor for FastAPI's transitive core (see #1015).
+    "starlette>=1.3.1",
+    "uvicorn[standard]>=0.32.0",
+]
+mcp = [
+    "mcp>=1.28.1",
+    # CVE floors for the MCP SDK's transitive dependencies (see #1015).
     "pydantic-settings>=2.14.2",
     "pyjwt>=2.13.0",
-    "rich>=13.0",
     "starlette>=1.3.1",
-    "typer>=0.15.0",
-    "uvicorn[standard]>=0.32.0",
-    "pydantic>=2.0",
-    "sentry-sdk>=2.61.1,<3.0.0",
+]
+local = [
+    "falkordb>=1.6.1",
     # Default CLI backend is FalkorDBLite on Python 3.12+.
     "falkordblite>=0.10.0; python_version >= '3.12'",
     # redis 8 enables maintenance notifications that break FalkorDBLite's
     # hostless embedded connection; keep the bound wherever falkordblite ships.
     "redis>=7.1,<8; python_version >= '3.12'",
 ]
-
-[project.optional-dependencies]
+neo4j = [
+    "neo4j>=5.28.0",
+]
 postgres = [
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
@@ -39,16 +58,6 @@ postgres = [
 benchmarks = [
     "pyyaml>=6.0",
     "openai>=1.50.0",
-]
-graph = [
-    "neo4j>=5.28.0",
-]
-falkordb = [
-    "falkordb>=1.6.1",
-    # Keep this marker for dependency metadata consumers even though Potpie
-    # itself supports Python 3.12+.
-    "falkordblite>=0.10.0; python_version >= '3.12'",
-    "redis>=7.1,<8",
 ]
 embeddings = [
     "sentence-transformers>=5.1.2",
@@ -58,33 +67,24 @@ github = [
 ]
 reconciliation-agent = [
     "pydantic-deep>=0.3.0",
+    # CVE floor for pydantic-deep's transitive dependency (see #1015).
     "pydantic-ai-slim>=1.102.0",
 ]
 hatchet = [
     "hatchet-sdk>=1.29.0",
+    # CVE floor for the Hatchet SDK's transitive dependency (see #1015).
     "aiohttp>=3.14.1",
 ]
 observability = [
     "opentelemetry-sdk>=1.27.0",
     "opentelemetry-exporter-otlp>=1.27.0",
     "opentelemetry-instrumentation-openai>=0.40b0",
+    "sentry-sdk>=2.61.1,<3.0.0",
 ]
+# OSS distribution convenience set: everything the local potpie experience
+# uses. Excludes benchmarks (development harness) and dev tooling.
 all = [
-    "aiohttp>=3.14.1",
-    "sqlalchemy>=2.0",
-    "psycopg[binary]>=3.2",
-    "neo4j>=5.28.0",
-    "falkordb>=1.6.1",
-    "falkordblite>=0.10.0; python_version >= '3.12'",
-    "redis>=7.1,<8",
-    "sentence-transformers>=5.1.2",
-    "pygithub>=2.8.0",
-    "pydantic-deep>=0.3.0",
-    "pydantic-ai-slim>=1.102.0",
-    "hatchet-sdk>=1.29.0",
-    "opentelemetry-sdk>=1.27.0",
-    "opentelemetry-exporter-otlp>=1.27.0",
-    "opentelemetry-instrumentation-openai>=0.40b0",
+    "potpie-context-engine[cli,http,mcp,local,neo4j,postgres,hatchet,observability,embeddings,github,reconciliation-agent]",
 ]
 dev = [
     "pytest>=9.0.3",
