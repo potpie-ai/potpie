@@ -81,7 +81,5 @@ def test_engine_metadata_does_not_depend_on_root_potpie() -> None:
 
 
 def test_root_console_script_targets_relocated_cli() -> None:
-    root_metadata = tomllib.loads(
-        (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )
+    root_metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert root_metadata["project"]["scripts"]["potpie"] == "potpie.cli.main:main"

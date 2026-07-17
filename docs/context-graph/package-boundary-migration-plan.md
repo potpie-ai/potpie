@@ -181,4 +181,3 @@ wheel installs and operates without root Potpie.
 
 Daemon protocol changes, CLI runtime cutover, `HostShell` removal, atomic source
 registration, async-loop ownership, and CLI naming changes remain later work.
-

@@ -21,8 +21,7 @@ import pytest
 
 pytestmark = [pytest.mark.integration, pytest.mark.premerge_journey]
 
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_CONTEXT_ENGINE_PROJECT = "potpie/context-engine"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _run(
@@ -59,7 +58,7 @@ def _run_json_cli(
     timeout: int = 300,
 ) -> dict[str, Any]:
     proc = _run(
-        ["uv", "run", "--project", _CONTEXT_ENGINE_PROJECT, "potpie", "--json", *args],
+        ["uv", "run", "potpie", "--json", *args],
         cwd=clone_root,
         env=env,
         timeout=timeout,
