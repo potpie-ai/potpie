@@ -13,8 +13,8 @@ import pytest
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from potpie_context_engine.adapters.outbound.ledger.self_hosted_client import FixtureEventLedgerClient
 from potpie.services.host_wiring import build_host_shell
-from potpie_context_core.domain.context_records import ContextRecordValidationError
-from potpie_context_core.domain.lifecycle import (
+from potpie_context_core.context_records import ContextRecordValidationError
+from potpie_context_core.lifecycle import (
     DONE,
     NOT_IMPLEMENTED,
     PLANNED,
@@ -22,7 +22,7 @@ from potpie_context_core.domain.lifecycle import (
     SetupPlan,
     SetupPreview,
 )
-from potpie_context_core.domain.ports.agent_context import (
+from potpie_context_core.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
     SearchRequest,
@@ -210,7 +210,7 @@ def test_setup_run_state_store_and_migrator_skip_cleanly(host):
 
 def test_stub_backend_profiles_registered_and_fail_closed():
     from potpie_context_engine.adapters.outbound.graph.backends import KNOWN_PROFILES, build_backend
-    from potpie_context_core.domain.errors import CapabilityNotImplemented
+    from potpie_context_core.errors import CapabilityNotImplemented
 
     assert "falkordb" in KNOWN_PROFILES
     assert "falkordb_lite" in KNOWN_PROFILES

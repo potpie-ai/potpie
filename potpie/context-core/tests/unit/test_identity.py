@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from potpie_context_core.domain.identity import (
+from potpie_context_core.identity import (
     IdentityClass,
     IdentityError,
     IdentitySpec,

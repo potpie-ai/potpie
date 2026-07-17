@@ -13,7 +13,7 @@ from potpie_context_engine.adapters.outbound.reconciliation.pydantic_deep_agent 
     PydanticDeepReconciliationAgent,
 )
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
-from potpie_context_core.domain.context_events import ContextEvent
+from potpie_context_core.context_events import ContextEvent
 from potpie_context_engine.domain.reconciliation_batch import BatchAgentContext
 
 pytestmark = pytest.mark.unit

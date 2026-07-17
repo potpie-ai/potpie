@@ -26,7 +26,7 @@ from potpie_context_engine.domain.nudge import (
     canonical_nudge_event,
 )
 from potpie_context_engine.domain.ports.injection_ledger import InjectionLedgerPort
-from potpie_context_core.domain.ports.services.graph_service import GraphReadRequest, GraphReadResult
+from potpie_context_core.ports.graph_service import GraphReadRequest, GraphReadResult
 
 
 class GraphReadPort(Protocol):

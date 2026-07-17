@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pathlib
 
-from potpie_context_core.domain.lifecycle import DONE, SKIPPED
+from potpie_context_core.lifecycle import DONE, SKIPPED
 from potpie.daemon.daemon import Daemon
 
 

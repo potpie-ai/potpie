@@ -63,14 +63,14 @@ from potpie_context_engine.domain.ports.event_stream import (
 )
 from potpie_context_engine.domain.ports.ingestion_config import IngestionConfigPort
 from potpie_context_engine.domain.ports.context_graph import ContextGraphPort
-from potpie_context_core.domain.ports.graph.backend import GraphBackend
+from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_engine.domain.ports.ingestion_submission import IngestionSubmissionService
 from potpie_context_engine.domain.ports.context_graph_job_queue import (
     ContextGraphJobQueuePort,
     NoOpContextGraphJobQueue,
 )
 from potpie_context_engine.domain.ports.policy import PolicyPort
-from potpie_context_core.domain.ports.pot_resolution import PotResolutionPort
+from potpie_context_core.ports.pot_resolution import PotResolutionPort
 from potpie_context_engine.domain.ports.pot_source_listing import PotSourceListingPort
 from potpie_context_engine.domain.ports.observability import NoOpObservability, ObservabilityPort
 from potpie_context_engine.bootstrap.observability_wiring import (
@@ -79,9 +79,9 @@ from potpie_context_engine.bootstrap.observability_wiring import (
 )
 from potpie_context_engine.domain.ports.reconciliation_agent import ReconciliationAgentPort
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
-from potpie_context_core.domain.ports.services.graph_service import GraphService
+from potpie_context_core.ports.graph_service import GraphService
 from potpie_context_engine.domain.ports.telemetry import TelemetryPort
-from potpie_context_core.domain.source_references import SourceReferenceRecord
+from potpie_context_core.source_references import SourceReferenceRecord
 
 Neo4jGraphWriter = _Neo4jGraphWriter
 Neo4jGraphBackend = _Neo4jGraphBackend
@@ -253,8 +253,8 @@ def build_ingestion_server(
     graph = DefaultGraphService(backend=backend)
     context_graph = _build_context_graph_service(graph=graph, backend=backend)
     # Fail fast if the read trunk's reader set has drifted from the advertised
-    # ``READER_BACKED_INCLUDES`` (see potpie_context_core.domain.coherence).
-    from potpie_context_core.domain.coherence import assert_runtime_coherence
+    # ``READER_BACKED_INCLUDES`` (see potpie_context_core.coherence).
+    from potpie_context_core.coherence import assert_runtime_coherence
 
     assert_runtime_coherence(reader_backed_includes=context_graph.backed_includes)
     _attach_reconciliation_context(reconciliation_agent, graph, context_graph)

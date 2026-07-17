@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from potpie_context_core.domain.singleton_predicates import (
+from potpie_context_core.singleton_predicates import (
     all_singletons,
     is_singleton_predicate,
     register_singleton,

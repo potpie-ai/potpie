@@ -6,15 +6,15 @@ from datetime import datetime, timezone
 
 import pytest
 
-from potpie_context_core.domain.graph_quality import (
+from potpie_context_core.graph_quality import (
     EpisodicEdgeConflictInput,
     assess_graph_quality,
     detect_family_conflicts,
     freshness_ttl_hours_for_source_type,
     source_of_truth_for_source_type,
 )
-from potpie_context_core.domain.graph_quality import CoverageReport
-from potpie_context_core.domain.source_references import SourceReferenceRecord
+from potpie_context_core.graph_quality import CoverageReport
+from potpie_context_core.source_references import SourceReferenceRecord
 
 pytestmark = pytest.mark.unit
 

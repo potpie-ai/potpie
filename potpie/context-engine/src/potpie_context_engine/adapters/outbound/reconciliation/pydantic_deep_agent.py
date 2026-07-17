@@ -28,15 +28,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
-from potpie_context_core.domain.context_events import ContextEvent, EventRef
-from potpie_context_core.domain.event_playbooks import (
+from potpie_context_core.context_events import ContextEvent, EventRef
+from potpie_context_core.event_playbooks import (
     EventPlaybook,
     find_playbook,
     is_default_playbook,
     playbooks_enable_planner,
     render_playbooks_section,
 )
-from potpie_context_core.domain.graph_mutations import ProvenanceContext
+from potpie_context_core.graph_mutations import ProvenanceContext
 from potpie_context_engine.domain.ports.agent_checkpoint_store import AgentCheckpointStorePort
 from potpie_context_engine.domain.ports.agent_execution_log import (
     AgentExecutionLogPort,
@@ -47,7 +47,7 @@ from potpie_context_engine.domain.ports.event_stream import (
     EventStreamPublisherPort,
     NoOpEventStreamPublisher,
 )
-from potpie_context_core.domain.llm_reconciliation import ReconciliationRequest
+from potpie_context_core.llm_reconciliation import ReconciliationRequest
 from potpie_context_engine.domain.ports.reconciliation_tools import ReconciliationToolsPort
 from potpie_context_engine.domain.ports.telemetry import CostEvent, NoOpTelemetry, TelemetryPort
 from potpie_context_engine.domain.reconciliation_batch import BatchAgentContext, BatchAgentOutcome

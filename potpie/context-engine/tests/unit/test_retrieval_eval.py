@@ -55,8 +55,8 @@ def test_vector_recovers_morphological_variants_lexical_misses() -> None:
     scores both claims ~0 (a tie), so it cannot rank the right one first; the
     embedder ranks it first via shared subwords.
     """
-    from potpie_context_core.domain.ports.claim_query import ClaimQueryFilter
-    from potpie_context_core.domain.semantic_mutations import SemanticMutationRequest
+    from potpie_context_core.ports.claim_query import ClaimQueryFilter
+    from potpie_context_core.semantic_mutations import SemanticMutationRequest
 
     def rank_first_key(embedder) -> str | None:
         svc = DefaultGraphService(backend=InMemoryGraphBackend(embedder=embedder))

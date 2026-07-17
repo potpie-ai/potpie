@@ -6,12 +6,12 @@ from dataclasses import replace
 
 import pytest
 
-from potpie_context_core.domain.graph_contract import (
+from potpie_context_core.graph_contract import (
     APPLICABLE_MUTATION_OPS,
     DEFERRED_OPS,
     REVIEW_REQUIRED_OPS,
 )
-from potpie_context_core.domain.graph_workbench_ontology import (
+from potpie_context_core.graph_workbench_ontology import (
     assert_ontology_contract_coherent,
     describe_contract,
     ontology_contract,

@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from potpie_context_core.domain.errors import CapabilityNotImplemented
+from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_engine.domain.ports.ledger.client import (
     LedgerCursor,
     LedgerEvent,

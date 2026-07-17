@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Sequence
 
 from potpie_context_engine.adapters.outbound.connectors.github.api_client import GitHubReadPort
-from potpie_context_core.domain.source_references import SourceReferenceRecord, normalize_source_policy
+from potpie_context_core.source_references import SourceReferenceRecord, normalize_source_policy
 from potpie_context_engine.domain.source_resolution import (
     PERMISSION_DENIED,
     RESOLVER_ERROR,

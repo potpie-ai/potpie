@@ -29,7 +29,7 @@ from potpie.cli.repo_location import (
     normalize_repo_ref as shared_normalize_repo_ref,
     repo_identity_key,
 )
-from potpie_context_core.domain.errors import (
+from potpie_context_core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
     PotNotFound,

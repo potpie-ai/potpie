@@ -23,13 +23,13 @@ import subprocess
 from typing import Callable
 from urllib.parse import urlparse
 
-from potpie_context_core.domain.errors import CapabilityNotImplemented
+from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_engine.domain.embedding_modes import (
     EMBEDDING_MODEL_PREP_SKIPPED_ALIASES,
     SEMANTIC_EMBEDDER_ALIASES,
     normalize_embedding_mode,
 )
-from potpie_context_core.domain.lifecycle import (
+from potpie_context_core.lifecycle import (
     DONE,
     FAILED,
     NOT_IMPLEMENTED,
@@ -41,7 +41,7 @@ from potpie_context_core.domain.lifecycle import (
     SetupReport,
     StepResult,
 )
-from potpie_context_core.domain.ports.graph.backend import GraphBackend
+from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_engine.domain.ports.install import Installer
 from potpie_context_engine.domain.ports.services.auth import AuthService
 from potpie_context_engine.domain.ports.services.config import ConfigService

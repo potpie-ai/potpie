@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from potpie_context_core.domain.source_references import (
+from potpie_context_core.source_references import (
     SourceReferenceRecord,
     assess_freshness,
     dedupe_source_references,

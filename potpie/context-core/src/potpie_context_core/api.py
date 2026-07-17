@@ -14,7 +14,7 @@ runtime implements.
 from __future__ import annotations
 
 # --- Ontology: the single catalog of labels, predicates, and record types.
-from potpie_context_core.domain.ontology import (
+from potpie_context_core.ontology import (
     EDGE_TYPES,
     ENTITY_TYPES,
     PUBLIC_RECORD_TYPES,
@@ -22,7 +22,7 @@ from potpie_context_core.domain.ontology import (
 )
 
 # --- Context records: the typed durable-memory vocabulary.
-from potpie_context_core.domain.context_records import (
+from potpie_context_core.context_records import (
     BugPatternRecord,
     ContextRecordValidationError,
     DecisionRecord,
@@ -32,37 +32,37 @@ from potpie_context_core.domain.context_records import (
 )
 
 # --- Semantic mutations: how records become graph writes.
-from potpie_context_core.domain.semantic_mutations import (
+from potpie_context_core.semantic_mutations import (
     SemanticMutation,
     SemanticMutationParseError,
     SemanticMutationPlan,
     SemanticMutationRequest,
     SemanticMutationResult,
 )
-from potpie_context_core.application.services.record_to_semantic import (
+from potpie_context_core.record_to_semantic import (
     record_to_semantic_request,
 )
-from potpie_context_core.application.services.semantic_mutation_lowering import (
+from potpie_context_core.semantic_mutation_lowering import (
     lower_semantic_request,
 )
-from potpie_context_core.application.services.semantic_mutation_validator import (
+from potpie_context_core.semantic_mutation_validator import (
     validate_semantic_request,
 )
 
 # --- Workbench: the catalog/read/search/mutate command surface.
-from potpie_context_core.application.services.graph_workbench import (
+from potpie_context_core.workbench_service import (
     GraphWorkbenchService,
 )
-from potpie_context_core.domain.graph_workbench import GraphCommandEnvelope
+from potpie_context_core.graph_workbench import GraphCommandEnvelope
 
 # --- Ports: the contracts a graph runtime implements.
-from potpie_context_core.domain.agent_envelope import AgentEnvelope
-from potpie_context_core.domain.ports.claim_query import ClaimQueryPort
-from potpie_context_core.domain.ports.graph.backend import GraphBackend
-from potpie_context_core.domain.ports.graph.inbox_store import GraphInboxStorePort
-from potpie_context_core.domain.ports.graph.mutation import GraphMutationPort
-from potpie_context_core.domain.ports.graph.plan_store import GraphPlanStorePort
-from potpie_context_core.domain.ports.services.graph_service import GraphService
+from potpie_context_core.agent_envelope import AgentEnvelope
+from potpie_context_core.ports.claim_query import ClaimQueryPort
+from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_core.ports.graph.inbox_store import GraphInboxStorePort
+from potpie_context_core.ports.graph.mutation import GraphMutationPort
+from potpie_context_core.ports.graph.plan_store import GraphPlanStorePort
+from potpie_context_core.ports.graph_service import GraphService
 
 __all__ = [
     # ontology

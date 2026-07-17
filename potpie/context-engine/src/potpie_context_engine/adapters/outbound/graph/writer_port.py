@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from potpie_context_core.domain.graph_mutations import (
+from potpie_context_core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
     EntityUpsert,

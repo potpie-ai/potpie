@@ -14,7 +14,7 @@ from potpie.cli.read_presenter import (
     render_items_table,
     render_timeline_table,
 )
-from potpie_context_core.domain.ports.services.graph_service import GraphReadResult
+from potpie_context_core.ports.graph_service import GraphReadResult
 
 pytestmark = pytest.mark.unit
 

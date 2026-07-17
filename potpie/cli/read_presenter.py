@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from potpie_context_core.domain.ports.services.graph_service import (
+from potpie_context_core.ports.graph_service import (
     normalize_read_detail,
     normalize_read_relations,
     read_item_for_detail,

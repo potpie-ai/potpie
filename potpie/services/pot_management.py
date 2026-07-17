@@ -10,9 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import LocalPotStore
-from potpie_context_core.domain.errors import PotNotFound
-from potpie_context_core.domain.lifecycle import DONE, StepResult
-from potpie_context_core.domain.ports.graph.backend import GraphBackend
+from potpie_context_core.errors import PotNotFound
+from potpie_context_core.lifecycle import DONE, StepResult
+from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_engine.domain.ports.services.pot_management import (
     PotAggregateStatus,
     PotInfo,

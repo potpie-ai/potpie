@@ -14,19 +14,19 @@ from datetime import datetime
 from typing import Iterable, Mapping, Sequence
 
 from potpie_context_engine.application.readers._common import ReadResponse
-from potpie_context_core.domain.agent_context_port import (
+from potpie_context_core.agent_context_port import (
     includes_for_request,
     normalize_context_intent,
     unsupported_include_values,
 )
-from potpie_context_core.domain.agent_envelope import (
+from potpie_context_core.agent_envelope import (
     AgentEnvelope,
     CoverageReport,
     EvidenceItem,
     UnsupportedInclude,
     derive_overall_confidence,
 )
-from potpie_context_core.domain.graph_views import INCLUDE_TO_VIEW
+from potpie_context_core.graph_views import INCLUDE_TO_VIEW
 
 
 @dataclass(slots=True)

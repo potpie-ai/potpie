@@ -13,7 +13,7 @@ from __future__ import annotations
 import typer
 
 from potpie.cli.commands._common import contract
-from potpie_context_core.domain.errors import CapabilityNotImplemented
+from potpie_context_core.errors import CapabilityNotImplemented
 
 cloud_app = typer.Typer(
     help="Managed profile + sync (TODO).", invoke_without_command=True

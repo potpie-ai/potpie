@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from potpie_context_core.application.services.reconciliation_validation import validate_reconciliation_plan
-from potpie_context_core.domain.context_events import EventRef
-from potpie_context_core.domain.errors import ReconciliationPlanValidationError
-from potpie_context_core.domain.graph_mutations import EdgeUpsert, EntityUpsert
-from potpie_context_core.domain.ontology import CANONICAL_EDGE_TYPES, CANONICAL_LABELS, EDGE_TYPES
-from potpie_context_core.domain.reconciliation import ReconciliationPlan
+from potpie_context_core.reconciliation_validation import validate_reconciliation_plan
+from potpie_context_core.context_events import EventRef
+from potpie_context_core.errors import ReconciliationPlanValidationError
+from potpie_context_core.graph_mutations import EdgeUpsert, EntityUpsert
+from potpie_context_core.ontology import CANONICAL_EDGE_TYPES, CANONICAL_LABELS, EDGE_TYPES
+from potpie_context_core.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.unit
 

@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import potpie.cli as _clipkg
-from potpie_context_core.domain.ontology import CANONICAL_EDGE_TYPES, CANONICAL_LABELS
+from potpie_context_core.ontology import CANONICAL_EDGE_TYPES, CANONICAL_LABELS
 
 pytestmark = pytest.mark.unit
 

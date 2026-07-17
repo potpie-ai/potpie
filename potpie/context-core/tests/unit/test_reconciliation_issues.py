@@ -1,6 +1,6 @@
 """Split validation lines into {entity, issue} rows."""
 
-from potpie_context_core.domain.reconciliation_issues import (
+from potpie_context_core.reconciliation_issues import (
     validation_line_to_issue,
     validation_lines_to_issues,
 )

@@ -11,7 +11,7 @@ from potpie_context_engine.adapters.outbound.reconciliation.noop_agent import No
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
 from potpie_context_engine.application.use_cases.process_batch import process_batch
 from potpie_context_engine.domain.ports.reconciliation_ledger import ContextEventRow
-from potpie_context_core.domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
+from potpie_context_core.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
 from potpie_context_engine.domain.reconciliation_batch import (
     BATCH_STATUS_DONE,
     BATCH_STATUS_PENDING,

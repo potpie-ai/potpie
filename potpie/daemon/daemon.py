@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
-from potpie_context_core.domain.lifecycle import DONE, SKIPPED, SetupPlan, StepResult
+from potpie_context_core.lifecycle import DONE, SKIPPED, SetupPlan, StepResult
 
 
 def _pid_alive(pid: int) -> bool:

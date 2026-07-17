@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from potpie_context_core.domain.context_events import ContextEvent, EventScope
+from potpie_context_core.context_events import ContextEvent, EventScope
 from potpie_context_engine.domain.ports.batch_repository import BatchRepositoryPort
 from potpie_context_engine.domain.ports.context_graph_job_queue import ContextGraphJobQueuePort
 from potpie_context_engine.domain.ports.ingestion_config import IngestionConfigPort

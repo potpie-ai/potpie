@@ -17,7 +17,7 @@ from potpie_context_engine.domain.nudge import (
     canonical_nudge_event,
     is_nudge_event,
 )
-from potpie_context_core.domain.ports.services.graph_service import GraphReadResult
+from potpie_context_core.ports.graph_service import GraphReadResult
 
 pytestmark = pytest.mark.unit
 

@@ -1,12 +1,12 @@
 """EventScope helpers for standalone pots."""
 
-from potpie_context_core.domain.context_events import (
+from potpie_context_core.context_events import (
     STANDALONE_POT_HOST,
     STANDALONE_POT_PROVIDER,
     STANDALONE_POT_REPO,
     event_scope_from_resolved_pot,
 )
-from potpie_context_core.domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
+from potpie_context_core.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
 
 
 def test_event_scope_from_resolved_pot_with_repo() -> None:

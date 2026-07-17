@@ -50,9 +50,9 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
 from potpie.services.config_service import KNOWN_CONFIG_KEYS, public_config_value
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
 from potpie_context_engine.domain.embedding_modes import normalize_embedding_mode
-from potpie_context_core.domain.errors import CapabilityNotImplemented
-from potpie_context_core.domain.lifecycle import SetupPlan, SetupReport
-from potpie_context_core.domain.ports.agent_context import StatusRequest
+from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.lifecycle import SetupPlan, SetupReport
+from potpie_context_core.ports.agent_context import StatusRequest
 
 
 def _effective_current_repo_pot_id(

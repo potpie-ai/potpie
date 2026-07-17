@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from potpie_context_core.domain.source_references import SourceReferenceRecord, normalize_source_policy
+from potpie_context_core.source_references import SourceReferenceRecord, normalize_source_policy
 from potpie_context_engine.domain.source_resolution import (
     RESOLVER_UNAVAILABLE,
     ResolverAuthContext,

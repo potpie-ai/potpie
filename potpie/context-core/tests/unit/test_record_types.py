@@ -1,7 +1,7 @@
 """Tests for the unified RECORD_TYPES catalog + coherence invariants.
 
 These tests lock in the agent-surface → graph-ontology join. If any
-:data:`potpie_context_core.domain.ontology.RECORD_TYPES` row points at an unknown entity or
+:data:`potpie_context_core.ontology.RECORD_TYPES` row points at an unknown entity or
 predicate, the coherence check should fail at import — these tests assert
 the catalog is complete and the helpers behave as specified.
 """
@@ -10,19 +10,19 @@ from __future__ import annotations
 
 import pytest
 
-from potpie_context_core.domain.agent_context_port import (
+from potpie_context_core.agent_context_port import (
     CONTEXT_INCLUDE_VALUES,
     CONTEXT_RECORD_TYPES,
     PLANNED_INCLUDES,
     READER_BACKED_INCLUDES,
 )
-from potpie_context_core.domain.coherence import (
+from potpie_context_core.coherence import (
     OntologyCoherenceError,
     assert_playbook_vocabulary_coherence,
     assert_runtime_coherence,
 )
-from potpie_context_core.domain.event_playbooks import EventPlaybook
-from potpie_context_core.domain.ontology import (
+from potpie_context_core.event_playbooks import EventPlaybook
+from potpie_context_core.ontology import (
     EDGE_TYPES,
     ENTITY_TYPES,
     PUBLIC_RECORD_TYPES,

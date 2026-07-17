@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from potpie_context_core.application.services.semantic_mutation_lowering import lower_semantic_request
-from potpie_context_core.application.services.semantic_mutation_validator import (
+from potpie_context_core.semantic_mutation_lowering import lower_semantic_request
+from potpie_context_core.semantic_mutation_validator import (
     subgraph_for_predicate,
     validate_semantic_request,
 )
-from potpie_context_core.domain.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
-from potpie_context_core.domain.semantic_mutations import SemanticMutationRequest
+from potpie_context_core.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
+from potpie_context_core.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
 

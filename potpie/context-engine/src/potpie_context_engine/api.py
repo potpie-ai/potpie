@@ -17,10 +17,10 @@ adapters, no backend drivers.
 
 from __future__ import annotations
 
-from potpie_context_core.domain.ports.graph.backend import GraphBackend
-from potpie_context_core.domain.ports.graph.inbox_store import GraphInboxStorePort
-from potpie_context_core.domain.ports.graph.plan_store import GraphPlanStorePort
-from potpie_context_core.domain.ports.services.graph_service import GraphService
+from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_core.ports.graph.inbox_store import GraphInboxStorePort
+from potpie_context_core.ports.graph.plan_store import GraphPlanStorePort
+from potpie_context_core.ports.graph_service import GraphService
 
 __all__ = [
     "GraphBackend",

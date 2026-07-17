@@ -16,11 +16,11 @@ def test_every_declared_export_resolves() -> None:
 
 def test_api_reexports_are_the_internal_contracts() -> None:
     from potpie_context_core import api
-    from potpie_context_core.application.services.graph_workbench import (
+    from potpie_context_core.workbench_service import (
         GraphWorkbenchService,
     )
-    from potpie_context_core.domain.ports.graph.backend import GraphBackend
-    from potpie_context_core.domain.ports.services.graph_service import GraphService
+    from potpie_context_core.ports.graph.backend import GraphBackend
+    from potpie_context_core.ports.graph_service import GraphService
 
     assert api.GraphBackend is GraphBackend
     assert api.GraphService is GraphService

@@ -28,9 +28,9 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 )
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
-from potpie_context_core.domain.lifecycle import DONE, SetupPlan, StepResult
+from potpie_context_core.lifecycle import DONE, SetupPlan, StepResult
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
-from potpie_context_core.domain.ports.graph.backend import BackendCapabilities
+from potpie_context_core.ports.graph.backend import BackendCapabilities
 
 _PROFILE = "embedded"
 

@@ -28,24 +28,24 @@ from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import 
     repaired_entity_properties,
     wants_entity_summary_repair,
 )
-from potpie_context_core.application.services.reconciliation_validation import (
+from potpie_context_core.reconciliation_validation import (
     validate_reconciliation_plan,
 )
-from potpie_context_core.domain.graph_contract import evidence_strength_for_truth
-from potpie_context_core.domain.graph_entity_summary import (
+from potpie_context_core.graph_contract import evidence_strength_for_truth
+from potpie_context_core.graph_entity_summary import (
     merge_entity_display_properties,
     normalize_entity_properties,
 )
-from potpie_context_core.domain.graph_mutations import ProvenanceContext
-from potpie_context_core.domain.lifecycle import DONE, SetupPlan, StepResult
-from potpie_context_core.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.lifecycle import DONE, SetupPlan, StepResult
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
-from potpie_context_core.domain.ports.graph.analytics import RepairReport
-from potpie_context_core.domain.ports.graph.backend import BackendCapabilities
-from potpie_context_core.domain.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
-from potpie_context_core.domain.ports.graph.mutation import BackendReadiness
-from potpie_context_core.domain.ports.graph.snapshot import SnapshotManifest
-from potpie_context_core.domain.reconciliation import (
+from potpie_context_core.ports.graph.analytics import RepairReport
+from potpie_context_core.ports.graph.backend import BackendCapabilities
+from potpie_context_core.ports.graph.inspection import GraphEdge, GraphNode, GraphSlice
+from potpie_context_core.ports.graph.mutation import BackendReadiness
+from potpie_context_core.ports.graph.snapshot import SnapshotManifest
+from potpie_context_core.reconciliation import (
     MutationBatch,
     MutationResult,
     MutationSummary,

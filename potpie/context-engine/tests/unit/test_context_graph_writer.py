@@ -10,15 +10,15 @@ import pytest
 from potpie_context_engine.adapters.outbound.graph.apply_plan import apply_mutation_batch
 from potpie_context_engine.adapters.outbound.graph.context_graph_service import ContextGraphService
 from potpie_context_engine.adapters.outbound.graph.cypher import upsert_entities_async
-from potpie_context_core.domain.context_events import EventRef
-from potpie_context_core.domain.errors import CapabilityNotImplemented
-from potpie_context_core.domain.graph_mutations import (
+from potpie_context_core.context_events import EventRef
+from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.graph_mutations import (
     EdgeUpsert,
     EntityUpsert,
     ProvenanceContext,
     ProvenanceRef,
 )
-from potpie_context_core.domain.reconciliation import (
+from potpie_context_core.reconciliation import (
     MutationBatch,
 )
 

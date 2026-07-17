@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from potpie_context_core.domain.semantic_mutations import (
+from potpie_context_core.semantic_mutations import (
     GraphEntityRef,
     GraphEvidenceRef,
     SemanticMutationParseError,

@@ -13,18 +13,18 @@ import pytest
 
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
-from potpie_context_core.domain.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
-from potpie_context_core.domain.graph_mutations import ProvenanceContext
-from potpie_context_core.domain.ports.agent_context import RecordRequest
-from potpie_context_core.domain.ports.claim_query import ClaimRow
-from potpie_context_core.domain.ports.services.graph_service import (
+from potpie_context_core.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
+from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.ports.agent_context import RecordRequest
+from potpie_context_core.ports.claim_query import ClaimRow
+from potpie_context_core.ports.graph_service import (
     GraphCatalogRequest,
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
-from potpie_context_core.domain.graph_views import UnknownGraphViewError
-from potpie_context_core.domain.reconciliation import MutationBatch, MutationResult, MutationSummary
-from potpie_context_core.domain.semantic_mutations import SemanticMutationRequest
+from potpie_context_core.graph_views import UnknownGraphViewError
+from potpie_context_core.reconciliation import MutationBatch, MutationResult, MutationSummary
+from potpie_context_core.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
 
@@ -701,7 +701,7 @@ def test_read_missing_required_scope_is_validation_failure(service) -> None:
 def test_describe_routes_through_service(service) -> None:
     # `graph describe` must answer from the service (daemon-side ontology),
     # not a CLI-local contract lookup — same routing as every graph command.
-    from potpie_context_core.domain.ports.services.graph_service import GraphDescribeRequest
+    from potpie_context_core.ports.graph_service import GraphDescribeRequest
 
     payload = service.describe(
         GraphDescribeRequest(subgraph="debugging", view="prior_occurrences")

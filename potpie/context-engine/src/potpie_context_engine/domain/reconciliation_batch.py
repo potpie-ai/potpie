@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from potpie_context_core.domain.context_events import ContextEvent
+from potpie_context_core.context_events import ContextEvent
 
 BATCH_STATUS_PENDING = "pending"
 BATCH_STATUS_CLAIMED = "claimed"

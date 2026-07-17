@@ -23,13 +23,13 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/potpie_context_core"]
 include = [
-    "src/potpie_context_core/domain/playbooks/**/*.md",
+    "src/potpie_context_core/playbooks/**/*.md",
 ]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "src/potpie_context_core",
-    "src/potpie_context_core/domain/playbooks/**/*.md",
+    "src/potpie_context_core/playbooks/**/*.md",
 ]
 
 [tool.ruff]

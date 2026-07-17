@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from potpie_context_core.domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 
 
 @dataclass(slots=True)

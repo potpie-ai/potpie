@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Protocol, Sequence
 
-from potpie_context_core.domain.source_references import SourceReferenceRecord
+from potpie_context_core.source_references import SourceReferenceRecord
 from potpie_context_engine.domain.source_resolution import (
     ResolverAuthContext,
     ResolverBudget,
