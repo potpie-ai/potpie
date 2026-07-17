@@ -16,7 +16,7 @@ relative to that root).
 There is no separate human-vs-agent API. Both people and coding harnesses drive
 the same `potpie` CLI; agents may also reach the same internals through the
 in-process MCP `context_*` tools (exactly four — see [querying.md](./querying.md)).
-`adapters/inbound/cli/host_cli.py build_app()` is the single console entrypoint
+`potpie/cli/main.py build_app()` is the single console entrypoint
 (`[project.scripts]`): one Typer root whose `@app.callback` exposes three global
 options, with the rest of the surface assembled from top-level registrars and
 `add_typer` sub-apps. Every command routes `CLI → HostShell → service(s) → ports`.
@@ -24,7 +24,7 @@ options, with the rest of the surface assembled from top-level registrars and
 ```mermaid
 flowchart LR
   cf_user["user / agent"]
-  cf_cli["potpie CLI<br/>host_cli.py build_app()"]
+  cf_cli["potpie CLI<br/>main.py build_app()"]
   cf_common["commands/_common.py<br/>get_host • contract() • resolve_pot_id"]
   cf_shell["HostShell facade<br/>(daemon-backed RemoteHostShell by default)"]
   cf_svc["services: pots • graph • graph_workbench<br/>skills • daemon • ledger • nudge • backend"]
