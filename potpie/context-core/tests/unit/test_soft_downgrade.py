@@ -1,0 +1,160 @@
+"""Ontology soft-fail (CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL) downgrade behavior."""
+
+from __future__ import annotations
+
+import pytest
+
+from potpie_context_core.application.services.reconciliation_validation import validate_reconciliation_plan
+from potpie_context_core.domain.context_events import EventRef
+from potpie_context_core.domain.errors import ReconciliationPlanValidationError
+from potpie_context_core.domain.graph_mutations import EdgeUpsert, EntityUpsert
+from potpie_context_core.domain.ontology import CANONICAL_EDGE_TYPES, CANONICAL_LABELS, EDGE_TYPES
+from potpie_context_core.domain.reconciliation import ReconciliationPlan
+
+pytestmark = pytest.mark.unit
+
+
+def _ref() -> EventRef:
+    return EventRef(event_id="evt-1", source_system="test", pot_id="p1")
+
+
+def test_related_to_is_canonical() -> None:
+    assert "RELATED_TO" in EDGE_TYPES
+    assert "RELATED_TO" in CANONICAL_EDGE_TYPES
+
+
+def test_canonical_labels_export() -> None:
+    assert "Service" in CANONICAL_LABELS
+
+
+def test_soft_fail_coerces_adr_like_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL", "1")
+    monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "0")
+
+    plan = ReconciliationPlan(
+        event_ref=_ref(),
+        summary="adr",
+        entity_upserts=[
+            EntityUpsert(
+                entity_key="person:alice",
+                labels=("Entity", "Person"),
+                properties={"name": "Alice"},
+            ),
+            EntityUpsert(
+                entity_key="adr:0042",
+                labels=("Entity", "ADR", "Database", "Technology"),
+                properties={
+                    "title": "Migrate ledger",
+                    "summary": "Move to new store",
+                    "status": "recorded",
+                },
+            ),
+        ],
+        edge_upserts=[
+            EdgeUpsert(
+                edge_type="DECIDED_BY",
+                from_entity_key="person:alice",
+                to_entity_key="adr:0042",
+                properties={},
+            ),
+        ],
+    )
+    validate_reconciliation_plan(plan, "p1")
+
+    assert plan.ontology_downgrades
+    kinds = {d["kind"] for d in plan.ontology_downgrades}
+    assert "unknown_labels" in kinds
+    assert "edge_type" in kinds
+
+    edge = plan.edge_upserts[0]
+    assert edge.edge_type == "RELATED_TO"
+    assert edge.properties.get("original_edge_type") == "DECIDED_BY"
+    assert edge.properties.get("confidence") == 0.3
+
+    adr = next(e for e in plan.entity_upserts if e.entity_key == "adr:0042")
+    assert "Document" in adr.labels
+    assert adr.properties.get("title") == "Migrate ledger"
+
+
+def test_soft_fail_off_still_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Soft-fail is now ON by default; the legacy reject-on-error behaviour
+    # is only available by explicitly opting in to strict mode.
+    monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL", "0")
+    monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_STRICT", "1")
+    monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "0")
+
+    plan = ReconciliationPlan(
+        event_ref=_ref(),
+        summary="x",
+        entity_upserts=[
+            EntityUpsert(
+                entity_key="e1",
+                labels=("Entity", "ADR"),
+                properties={"title": "t", "summary": "s", "status": "recorded"},
+            ),
+        ],
+        edge_upserts=[],
+    )
+    with pytest.raises(ReconciliationPlanValidationError):
+        validate_reconciliation_plan(plan, "p1")
+
+
+def test_strict_overrides_soft_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL", "1")
+    monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_STRICT", "1")
+    monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "0")
+
+    plan = ReconciliationPlan(
+        event_ref=_ref(),
+        summary="x",
+        entity_upserts=[
+            EntityUpsert(
+                entity_key="e1",
+                labels=("Entity", "ADR"),
+                properties={"title": "t", "summary": "s", "status": "accepted"},
+            ),
+        ],
+        edge_upserts=[],
+    )
+    with pytest.raises(ReconciliationPlanValidationError):
+        validate_reconciliation_plan(plan, "p1")
+
+
+def test_duplicate_entity_keys_are_merged_by_canonicalization() -> None:
+    plan = ReconciliationPlan(
+        event_ref=_ref(),
+        summary="dup",
+        entity_upserts=[
+            EntityUpsert(
+                entity_key="same",
+                labels=("Entity", "Person"),
+                properties={"name": "a"},
+            ),
+            EntityUpsert(
+                entity_key="Same",
+                labels=("Entity", "Person"),
+                properties={"name": "b"},
+            ),
+        ],
+    )
+    validate_reconciliation_plan(plan, "p1")
+    assert len(plan.entity_upserts) == 1
+    assert plan.entity_upserts[0].entity_key == "same"
+    assert plan.entity_upserts[0].properties["name"] == "a"
+    assert any("canonicalized" in w for w in plan.warnings)
+
+
+def test_invalid_iso_temporal_hard_error() -> None:
+    plan = ReconciliationPlan(
+        event_ref=_ref(),
+        summary="t",
+        entity_upserts=[
+            EntityUpsert(
+                entity_key="p:1",
+                labels=("Entity", "Person"),
+                properties={"name": "x", "valid_at": "not-a-date"},
+            ),
+        ],
+    )
+    with pytest.raises(ReconciliationPlanValidationError, match="ISO 8601"):
+        validate_reconciliation_plan(plan, "p1")

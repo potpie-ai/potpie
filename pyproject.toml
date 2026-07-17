@@ -32,6 +32,7 @@ dependencies = [
     "httpx>=0.28.0",
     "mcp>=1.28.1",
     "pillow>=10.0.0",
+    "potpie-context-core==0.1.0",
     "potpie-context-engine[all]==0.1.0",
     "pydantic-ai-slim>=1.102.0",
     "pydantic-settings>=2.14.2",
@@ -114,6 +115,7 @@ override-dependencies = [
 
 [tool.uv.workspace]
 members = [
+    "potpie/context-core",
     "potpie/context-engine",
     "potpie/integrations",
     "potpie/parsing",
@@ -121,6 +123,7 @@ members = [
 ]
 
 [tool.uv.sources]
+potpie-context-core = { workspace = true, editable = true }
 potpie-context-engine = { workspace = true, editable = true }
 
 [dependency-groups]

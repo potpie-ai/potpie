@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
-from potpie_context_engine.domain.lifecycle import StepResult
+from potpie_context_core.domain.errors import CapabilityNotImplemented
+from potpie_context_core.domain.lifecycle import StepResult
 
 
 @dataclass(slots=True)

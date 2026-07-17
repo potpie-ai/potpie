@@ -32,13 +32,13 @@ from potpie_context_engine.application.services.envelope_builder import (
     EnvelopeBuilder,
     IncludeResult,
 )
-from potpie_context_engine.domain.agent_context_port import (
+from potpie_context_core.domain.agent_context_port import (
     CONTEXT_INCLUDE_VALUES,
     includes_for_request,
     normalize_context_intent,
 )
-from potpie_context_engine.domain.agent_envelope import AgentEnvelope, UnsupportedInclude
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryPort
+from potpie_context_core.domain.agent_envelope import AgentEnvelope, UnsupportedInclude
+from potpie_context_core.domain.ports.claim_query import ClaimQueryPort
 from potpie_context_engine.domain.ranking import RankingService
 
 

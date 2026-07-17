@@ -28,7 +28,7 @@ from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import 
     stamp_scored_rows,
     stamp_similarity,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_core.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 

@@ -22,8 +22,8 @@ from mcp.server.fastmcp import FastMCP
 
 from potpie.mcp.project_access import assert_mcp_pot_allowed
 from potpie.services.host_wiring import build_host_shell
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
-from potpie_context_engine.domain.ports.agent_context import (
+from potpie_context_core.domain.errors import CapabilityNotImplemented
+from potpie_context_core.domain.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
     SearchRequest,

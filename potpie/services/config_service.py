@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
-from potpie_context_engine.domain.lifecycle import SetupPlan
+from potpie_context_core.domain.lifecycle import SetupPlan
 
 KNOWN_CONFIG_KEYS: tuple[str, ...] = (
     "profile",

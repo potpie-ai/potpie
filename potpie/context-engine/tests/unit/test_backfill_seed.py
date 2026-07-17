@@ -20,7 +20,7 @@ from potpie_context_engine.domain.backfill_window import (
     backfill_window_since,
     clamp_backfill_limit,
 )
-from potpie_context_engine.domain.event_playbooks import find_playbook, playbooks_enable_planner
+from potpie_context_core.domain.event_playbooks import find_playbook, playbooks_enable_planner
 
 
 # --- planner signal --------------------------------------------------------

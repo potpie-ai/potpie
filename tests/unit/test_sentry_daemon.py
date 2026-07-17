@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from potpie.cli import main as host_cli
 from potpie.cli.commands import _common
 from potpie.cli.telemetry.context import current_telemetry_context
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
+from potpie_context_core.domain.errors import CapabilityNotImplemented
 from potpie.daemon import main as daemon_main
 
 
@@ -116,7 +116,7 @@ def test_daemon_rpc_expected_error_is_not_captured(monkeypatch) -> None:
 def test_daemon_rpc_validation_error_guidance_round_trips() -> None:
     # UnknownGraphViewError's did_you_mean must survive the daemon RPC
     # boundary so remote reads error exactly like in-process ones.
-    from potpie_context_engine.domain.graph_views import UnknownGraphViewError, include_guess_guidance
+    from potpie_context_core.domain.graph_views import UnknownGraphViewError, include_guess_guidance
     from potpie.daemon import daemon_client
 
     guidance = include_guess_guidance("docs", "relevant")

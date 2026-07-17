@@ -11,10 +11,10 @@ import logging
 from typing import Any
 
 from potpie_context_engine.application.services.envelope_builder import envelope_to_dict
-from potpie_context_engine.domain.llm_reconciliation import ReconciliationRequest
-from potpie_context_engine.domain.ports.agent_context import ResolveRequest
+from potpie_context_core.domain.llm_reconciliation import ReconciliationRequest
+from potpie_context_core.domain.ports.agent_context import ResolveRequest
 from potpie_context_engine.domain.ports.reconciliation_tools import ReconciliationToolsPort, ToolDescriptor
-from potpie_context_engine.domain.ports.services.graph_service import GraphService
+from potpie_context_core.domain.ports.services.graph_service import GraphService
 
 logger = logging.getLogger(__name__)
 

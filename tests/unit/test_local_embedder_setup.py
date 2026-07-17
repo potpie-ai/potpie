@@ -19,7 +19,7 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
 )
 from potpie.services.config_service import LocalConfigService
 from potpie.services.setup_orchestrator import DefaultSetupOrchestrator
-from potpie_context_engine.domain.lifecycle import DONE, FAILED, SetupPlan
+from potpie_context_core.domain.lifecycle import DONE, FAILED, SetupPlan
 
 pytestmark = pytest.mark.unit
 

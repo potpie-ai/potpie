@@ -27,8 +27,8 @@ from potpie_context_engine.application.services.agent_work_events import (
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
 from potpie_context_engine.bootstrap.observability_context import correlation_scope
 from potpie_context_engine.bootstrap.observability_runtime import get_observability
-from potpie_context_engine.domain.actor import SYSTEM_ACTOR
-from potpie_context_engine.domain.context_events import ContextEvent
+from potpie_context_core.domain.actor import SYSTEM_ACTOR
+from potpie_context_core.domain.context_events import ContextEvent
 from potpie_context_engine.domain.ports.observability import SPAN_KIND_INTERNAL
 from potpie_context_engine.domain.ports.agent_checkpoint_store import AgentCheckpointStorePort
 from potpie_context_engine.domain.ports.agent_execution_log import (
@@ -45,7 +45,7 @@ from potpie_context_engine.domain.ports.policy import (
     RESOURCE_APPLY,
     PolicyPort,
 )
-from potpie_context_engine.domain.ports.pot_resolution import PotResolutionPort
+from potpie_context_core.domain.ports.pot_resolution import PotResolutionPort
 from potpie_context_engine.domain.ports.reconciliation_agent import ReconciliationAgentPort
 from potpie_context_engine.domain.ports.reconciliation_ledger import (
     ContextEventRow,

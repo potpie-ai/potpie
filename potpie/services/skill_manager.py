@@ -18,7 +18,7 @@ from potpie.services.skills.bundle_catalog import (
     RECOMMENDED_SKILL_IDS,
     catalog_by_id,
 )
-from potpie_context_engine.domain.ports.agent_context import SkillNudge
+from potpie_context_core.domain.ports.agent_context import SkillNudge
 from potpie_context_engine.domain.ports.services.skill_manager import (
     AgentTargetPort,
     SkillInfo,

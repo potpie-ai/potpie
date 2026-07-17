@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from potpie_context_engine.domain.lifecycle import SetupPlan
+from potpie_context_core.domain.lifecycle import SetupPlan
 from potpie.daemon.daemon_rpc import TYPE_KEY, decode, encode
 
 

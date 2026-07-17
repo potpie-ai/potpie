@@ -37,7 +37,7 @@ from potpie_context_engine.application.readers._common import (
     rank_candidates,
     service_anchor_keys,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
+from potpie_context_core.domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 from potpie_context_engine.domain.ranking import Candidate, RankingService
 
 

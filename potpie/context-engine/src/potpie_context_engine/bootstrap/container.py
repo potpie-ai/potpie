@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from potpie_context_engine.domain.ports.pot_resolution import PotResolutionPort
+from potpie_context_core.domain.ports.pot_resolution import PotResolutionPort
 from potpie_context_engine.domain.ports.pot_source_listing import PotSourceListingPort
 from potpie_context_engine.domain.ports.reconciliation_agent import ReconciliationAgentPort
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort

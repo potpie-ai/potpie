@@ -46,7 +46,7 @@ from potpie_context_engine.application.services.envelope_builder import envelope
 from potpie_context_engine.application.services.read_orchestrator import ReadOrchestrator  # noqa: E402
 from potpie_context_engine.bootstrap.ingestion_server import IngestionServerContainer  # noqa: E402
 from potpie_context_engine.bootstrap.http_projects import ExplicitPotResolution  # noqa: E402
-from potpie_context_engine.domain.agent_context_port import (  # noqa: E402
+from potpie_context_core.domain.agent_context_port import (  # noqa: E402
     build_context_record_source_id,
     context_recipe_for_intent,
     normalize_record_type,

@@ -7,7 +7,7 @@ managed API server:
     PotManagementService    control plane — pots, active pot, sources, readiness
     SkillManager            CLI-managed agent skill catalog + nudge
 
-``AgentContextPort`` (``potpie_context_engine.domain.ports.agent_context``) composes them into the
+``AgentContextPort`` (``potpie_context_core.domain.ports.agent_context``) composes them into the
 public four-tool surface.
 """
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from potpie_context_engine.domain.ports.services.auth import AuthIdentity, AuthService
 from potpie_context_engine.domain.ports.services.config import ConfigService
-from potpie_context_engine.domain.ports.services.graph_service import DataPlaneStatus, GraphService
+from potpie_context_core.domain.ports.services.graph_service import DataPlaneStatus, GraphService
 from potpie_context_engine.domain.ports.services.pot_management import (
     PotAggregateStatus,
     PotInfo,

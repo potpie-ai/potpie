@@ -15,6 +15,7 @@ requires-python = ">=3.12,<3.15"
 # storage backends live behind extras; importing the base package must not
 # require any of them.
 dependencies = [
+    "potpie-context-core==0.1.0",
     "pydantic>=2.0",
 ]
 
@@ -87,7 +88,6 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/potpie_context_engine"]
 include = [
-    "src/potpie_context_engine/domain/playbooks/**/*.md",
     "src/potpie_context_engine/benchmarks/use_cases/**/*.yaml",
     "src/potpie_context_engine/benchmarks/fixtures/raw_events/**/*.json",
     "src/potpie_context_engine/benchmarks/_legacy/data/**/*.json",
@@ -98,7 +98,6 @@ include = [
     "build_config_values.py",
     "distribution_defaults_hook.py",
     "src/potpie_context_engine",
-    "src/potpie_context_engine/domain/playbooks/**/*.md",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",

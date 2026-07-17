@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Mapping, Protocol
 
-from potpie_context_engine.domain.lifecycle import StepResult
+from potpie_context_core.domain.lifecycle import StepResult
 
 
 @dataclass(frozen=True, slots=True)

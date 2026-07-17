@@ -15,10 +15,10 @@ from typing import Literal
 from sqlalchemy.orm import Session
 
 from potpie_context_engine.bootstrap.ingestion_server import IngestionServerContainer
-from potpie_context_engine.domain.actor import Actor
+from potpie_context_core.domain.actor import Actor
 from potpie_context_engine.domain.ingestion_event_models import EventReceipt, IngestionSubmissionRequest
 from potpie_context_engine.domain.ingestion_kinds import INGESTION_KIND_RAW_EPISODE
-from potpie_context_engine.domain.reconciliation import ReconciliationResult
+from potpie_context_core.domain.reconciliation import ReconciliationResult
 
 
 @dataclass(slots=True)

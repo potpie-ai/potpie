@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
-from potpie_context_engine.domain.graph_entity_summary import normalize_entity_properties
+from potpie_context_core.domain.graph_entity_summary import normalize_entity_properties
 
 ENTITY_SUMMARY_TARGET = "entity_summaries"
 ENTITY_SUMMARY_TARGETS = frozenset(

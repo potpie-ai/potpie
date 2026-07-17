@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from potpie_context_engine.domain.lifecycle import StepResult
+from potpie_context_core.domain.lifecycle import StepResult
 
 
 @dataclass(frozen=True, slots=True)

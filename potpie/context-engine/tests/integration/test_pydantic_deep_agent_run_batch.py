@@ -25,7 +25,7 @@ import pytest
 from potpie_context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
     PydanticDeepReconciliationAgent,
 )
-from potpie_context_engine.domain.context_events import ContextEvent
+from potpie_context_core.domain.context_events import ContextEvent
 from potpie_context_engine.domain.reconciliation_batch import BatchAgentContext
 
 pytestmark = pytest.mark.integration

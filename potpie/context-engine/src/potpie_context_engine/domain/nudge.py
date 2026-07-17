@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Mapping
 
-from potpie_context_engine.domain.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
+from potpie_context_core.domain.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
 
 
 class NudgeEvent(StrEnum):
@@ -92,7 +92,7 @@ class NudgePolicy:
 
 
 # The event → action map (the plan's "Event → nudge" table). Views reference
-# names in ``potpie_context_engine.domain.graph_views.GRAPH_VIEWS``.
+# names in ``potpie_context_core.domain.graph_views.GRAPH_VIEWS``.
 NUDGE_POLICIES: dict[str, NudgePolicy] = {
     NudgeEvent.session_start.value: NudgePolicy(
         event=NudgeEvent.session_start.value,
@@ -167,7 +167,7 @@ def _check_nudge_policies_coherent() -> None:
     """Import-time guard: the hand-maintained policy table must cover every
     nudge event exactly once, with each key matching its policy's ``event``.
 
-    Mirrors :func:`potpie_context_engine.domain.graph_views._check_views_coherent` — a missing or
+    Mirrors :func:`potpie_context_core.domain.graph_views._check_views_coherent` — a missing or
     mismatched key silently disables the nudge for that event.
     """
     errors: list[str] = []

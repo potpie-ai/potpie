@@ -10,15 +10,15 @@ from potpie_context_engine.adapters.outbound.reconciliation.context_graph_tools 
     ContextGraphReconciliationTools,
     build_initial_context_snapshot,
 )
-from potpie_context_engine.application.services.reconciliation_validation import (
+from potpie_context_core.application.services.reconciliation_validation import (
     validate_reconciliation_plan,
 )
-from potpie_context_engine.domain.agent_envelope import AgentEnvelope
-from potpie_context_engine.domain.context_events import ContextEvent, EventRef
-from potpie_context_engine.domain.graph_mutations import EntityUpsert
-from potpie_context_engine.domain.llm_reconciliation import ReconciliationRequest
-from potpie_context_engine.domain.ports.agent_context import ResolveRequest
-from potpie_context_engine.domain.reconciliation import ReconciliationPlan
+from potpie_context_core.domain.agent_envelope import AgentEnvelope
+from potpie_context_core.domain.context_events import ContextEvent, EventRef
+from potpie_context_core.domain.graph_mutations import EntityUpsert
+from potpie_context_core.domain.llm_reconciliation import ReconciliationRequest
+from potpie_context_core.domain.ports.agent_context import ResolveRequest
+from potpie_context_core.domain.reconciliation import ReconciliationPlan
 
 
 def _make_request(

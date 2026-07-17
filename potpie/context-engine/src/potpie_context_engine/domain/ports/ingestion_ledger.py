@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from potpie_context_engine.domain.ports.pot_resolution import ResolvedPotRepo
+from potpie_context_core.domain.ports.pot_resolution import ResolvedPotRepo
 
 
 @dataclass(frozen=True, slots=True)

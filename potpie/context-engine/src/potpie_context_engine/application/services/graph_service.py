@@ -27,16 +27,16 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from potpie_context_engine.application.services.read_orchestrator import ReadOrchestrator
-from potpie_context_engine.application.services.record_to_semantic import record_to_semantic_request
-from potpie_context_engine.application.services.semantic_mutation_lowering import lower_semantic_request
-from potpie_context_engine.application.services.semantic_mutation_validator import validate_semantic_request
-from potpie_context_engine.domain.agent_context_port import (
+from potpie_context_core.application.services.record_to_semantic import record_to_semantic_request
+from potpie_context_core.application.services.semantic_mutation_lowering import lower_semantic_request
+from potpie_context_core.application.services.semantic_mutation_validator import validate_semantic_request
+from potpie_context_core.domain.agent_context_port import (
     build_context_record_source_id,
     normalize_record_type,
 )
-from potpie_context_engine.domain.agent_envelope import AgentEnvelope, EvidenceItem
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
-from potpie_context_engine.domain.graph_contract import (
+from potpie_context_core.domain.agent_envelope import AgentEnvelope, EvidenceItem
+from potpie_context_core.domain.errors import CapabilityNotImplemented
+from potpie_context_core.domain.graph_contract import (
     APPLICABLE_MUTATION_OPS,
     DEFERRED_OPS,
     GRAPH_CONTRACT_VERSION,
@@ -45,29 +45,29 @@ from potpie_context_engine.domain.graph_contract import (
     SOURCE_AUTHORITIES,
     TRUTH_CLASSES,
 )
-from potpie_context_engine.domain.graph_entity_summary import normalize_entity_properties
-from potpie_context_engine.domain.graph_views import (
+from potpie_context_core.domain.graph_entity_summary import normalize_entity_properties
+from potpie_context_core.domain.graph_views import (
     GRAPH_VIEWS,
     UnknownGraphViewError,
     include_guess_guidance,
     view_spec,
     views_for_catalog,
 )
-from potpie_context_engine.domain.graph_workbench_ontology import (
+from potpie_context_core.domain.graph_workbench_ontology import (
     ViewContract,
     describe_contract,
     ontology_contract,
 )
-from potpie_context_engine.domain.ontology import EDGE_TYPES, ENTITY_TYPES, canonical_entity_labels
-from potpie_context_engine.domain.ports.agent_context import (
+from potpie_context_core.domain.ontology import EDGE_TYPES, ENTITY_TYPES, canonical_entity_labels
+from potpie_context_core.domain.ports.agent_context import (
     RecordReceipt,
     RecordRequest,
     ResolveRequest,
     SearchRequest,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
-from potpie_context_engine.domain.ports.graph.backend import GraphBackend
-from potpie_context_engine.domain.ports.services.graph_service import (
+from potpie_context_core.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_core.domain.ports.graph.backend import GraphBackend
+from potpie_context_core.domain.ports.services.graph_service import (
     DataPlaneStatus,
     GraphCatalogRequest,
     GraphCatalogResult,
@@ -80,7 +80,7 @@ from potpie_context_engine.domain.ports.services.graph_service import (
     normalize_read_detail,
     normalize_read_relations,
 )
-from potpie_context_engine.domain.semantic_mutations import (
+from potpie_context_core.domain.semantic_mutations import (
     SemanticMutationRequest,
     SemanticMutationResult,
 )

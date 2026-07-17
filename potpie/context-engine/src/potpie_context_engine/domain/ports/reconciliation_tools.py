@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from potpie_context_engine.domain.llm_reconciliation import ReconciliationRequest
+from potpie_context_core.domain.llm_reconciliation import ReconciliationRequest
 
 
 class ToolDescriptor:

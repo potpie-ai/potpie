@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 
-from potpie_context_engine.domain.ports.pot_resolution import (
+from potpie_context_core.domain.ports.pot_resolution import (
     PotResolutionPort,
     RepoRef,
     ResolvedPot,

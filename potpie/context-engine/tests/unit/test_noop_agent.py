@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from potpie_context_engine.adapters.outbound.reconciliation.noop_agent import NoOpReconciliationAgent
-from potpie_context_engine.domain.context_events import ContextEvent
+from potpie_context_core.domain.context_events import ContextEvent
 from potpie_context_engine.domain.reconciliation_batch import BatchAgentContext
 
 pytestmark = pytest.mark.unit

@@ -26,7 +26,7 @@ from potpie_context_engine.bootstrap.logging_setup import configure_logging
 from potpie_context_engine.bootstrap.observability_context import correlation_scope
 from potpie_context_engine.bootstrap.observability_runtime import get_observability
 from potpie.services.host_wiring import build_host_shell
-from potpie_context_engine.domain.errors import CapabilityNotImplemented, PotNotFound
+from potpie_context_core.domain.errors import CapabilityNotImplemented, PotNotFound
 from potpie_context_engine.domain.ports.observability import SPAN_KIND_SERVER
 from potpie.daemon.daemon_rpc import decode, encode
 

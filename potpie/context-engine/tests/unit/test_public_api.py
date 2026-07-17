@@ -73,12 +73,12 @@ def test_supported_imports_do_not_load_optional_dependencies() -> None:
 
 def test_api_reexports_are_the_internal_contracts() -> None:
     from potpie_context_engine import api
-    from potpie_context_engine.domain.ports.graph.backend import GraphBackend
-    from potpie_context_engine.domain.ports.graph.inbox_store import (
+    from potpie_context_core.domain.ports.graph.backend import GraphBackend
+    from potpie_context_core.domain.ports.graph.inbox_store import (
         GraphInboxStorePort,
     )
-    from potpie_context_engine.domain.ports.graph.plan_store import GraphPlanStorePort
-    from potpie_context_engine.domain.ports.services.graph_service import GraphService
+    from potpie_context_core.domain.ports.graph.plan_store import GraphPlanStorePort
+    from potpie_context_core.domain.ports.services.graph_service import GraphService
 
     assert api.GraphBackend is GraphBackend
     assert api.GraphInboxStorePort is GraphInboxStorePort

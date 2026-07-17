@@ -22,7 +22,7 @@ from potpie_context_engine.adapters.inbound.http.api.v1.context.router import (
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
-from potpie_context_engine.domain.ports.claim_query import ClaimRow
+from potpie_context_core.domain.ports.claim_query import ClaimRow
 
 API = "/api/v1/context"
 

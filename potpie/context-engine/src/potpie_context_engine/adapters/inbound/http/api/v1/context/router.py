@@ -34,7 +34,7 @@ from potpie_context_engine.application.use_cases.record_durable_context import (
 from potpie_context_engine.application.use_cases.report_status import report_status
 from potpie_context_engine.application.use_cases.submit_raw_episode import submit_raw_episode
 from potpie_context_engine.bootstrap.ingestion_server import IngestionServerContainer
-from potpie_context_engine.domain.actor import Actor, ActorSurface, normalize_surface
+from potpie_context_core.domain.actor import Actor, ActorSurface, normalize_surface
 from potpie_context_engine.domain.ingestion_event_models import (
     EventListFilters,
     IngestionEventStatus,
@@ -51,7 +51,7 @@ from potpie_context_engine.domain.ports.policy import (
     REASON_UNKNOWN_POT,
     PolicyDecision,
 )
-from potpie_context_engine.domain.ports.agent_context import ResolveRequest
+from potpie_context_core.domain.ports.agent_context import ResolveRequest
 
 # Surfaces a client may self-declare via the untrusted ``X-Potpie-Client``
 # header. ``system``/``webhook`` are deliberately excluded — those are

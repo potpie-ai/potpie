@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from potpie_context_engine.domain.agent_context_port import normalize_context_intent
-from potpie_context_engine.domain.agent_envelope import AgentEnvelope
-from potpie_context_engine.domain.ports.agent_context import (
+from potpie_context_core.domain.agent_context_port import normalize_context_intent
+from potpie_context_core.domain.agent_envelope import AgentEnvelope
+from potpie_context_core.domain.ports.agent_context import (
     RecordReceipt,
     RecordRequest,
     ResolveRequest,
@@ -23,7 +23,7 @@ from potpie_context_engine.domain.ports.agent_context import (
     StatusReport,
     StatusRequest,
 )
-from potpie_context_engine.domain.ports.services.graph_service import GraphService
+from potpie_context_core.domain.ports.services.graph_service import GraphService
 from potpie_context_engine.domain.ports.services.pot_management import PotManagementService
 from potpie_context_engine.domain.ports.services.skill_manager import SkillManager
 

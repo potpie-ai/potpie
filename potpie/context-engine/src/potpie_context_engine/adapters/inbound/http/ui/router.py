@@ -11,10 +11,10 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
-from potpie_context_engine.domain.errors import CapabilityNotImplemented, PotNotFound
-from potpie_context_engine.domain.graph_entity_summary import normalize_entity_properties
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter
-from potpie_context_engine.domain.ports.services.graph_service import (
+from potpie_context_core.domain.errors import CapabilityNotImplemented, PotNotFound
+from potpie_context_core.domain.graph_entity_summary import normalize_entity_properties
+from potpie_context_core.domain.ports.claim_query import ClaimQueryFilter
+from potpie_context_core.domain.ports.services.graph_service import (
     GraphCatalogRequest,
     GraphEntitySearchRequest,
     GraphReadRequest,

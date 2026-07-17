@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import embedding_score
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_core.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.retrieval_card import build_retrieval_card, cosine_similarity
 

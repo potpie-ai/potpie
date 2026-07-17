@@ -6,7 +6,7 @@ import logging
 
 from potpie_context_engine.domain.ports.reconciliation_agent import ReconciliationAgentPort
 from potpie_context_engine.domain.ports.reconciliation_tools import ReconciliationToolsPort
-from potpie_context_engine.domain.reconciliation_flags import agent_planner_enabled
+from potpie_context_core.domain.reconciliation_flags import agent_planner_enabled
 
 logger = logging.getLogger(__name__)
 

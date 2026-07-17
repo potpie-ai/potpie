@@ -10,11 +10,11 @@ from potpie_context_engine.adapters.outbound.graph.backends import KNOWN_PROFILE
 from potpie_context_engine.adapters.outbound.graph.backends.falkordb_backend import FalkorDBGraphBackend
 from potpie.services.host_wiring import build_host_shell, default_backend_profile
 from potpie_context_engine.bootstrap.ingestion_server import build_ingestion_server
-from potpie_context_engine.domain.context_events import EventRef
-from potpie_context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
-from potpie_context_engine.domain.lifecycle import SetupPlan
-from potpie_context_engine.domain.ports.graph.backend import GraphBackend
-from potpie_context_engine.domain.reconciliation import ReconciliationPlan
+from potpie_context_core.domain.context_events import EventRef
+from potpie_context_core.domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
+from potpie_context_core.domain.lifecycle import SetupPlan
+from potpie_context_core.domain.ports.graph.backend import GraphBackend
+from potpie_context_core.domain.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.unit
 

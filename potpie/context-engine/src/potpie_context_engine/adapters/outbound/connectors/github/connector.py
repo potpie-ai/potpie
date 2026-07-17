@@ -32,10 +32,10 @@ from potpie_context_engine.adapters.outbound.connectors.github.api_client import
     PyGithubSourceControl,
 )
 from potpie_context_engine.adapters.outbound.connectors.github.resolver import GitHubPullRequestResolver
-from potpie_context_engine.domain.context_events import ContextEvent
+from potpie_context_core.domain.context_events import ContextEvent
 from potpie_context_engine.domain.ports.source_connector import SourceConnectorPort
 from potpie_context_engine.domain.source_connector import ConnectorScope, SourceCapability
-from potpie_context_engine.domain.source_references import SourceReferenceRecord
+from potpie_context_core.domain.source_references import SourceReferenceRecord
 from potpie_context_engine.domain.source_resolution import (
     ResolverAuthContext,
     ResolverBudget,

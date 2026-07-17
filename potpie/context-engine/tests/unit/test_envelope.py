@@ -1,7 +1,7 @@
 """Canonical agent envelope (rebuild plan P8).
 
 Intent/include vocabulary is the single canonical set in
-``potpie_context_engine.domain.agent_context_port``; the envelope carries plain strings.
+``potpie_context_core.domain.agent_context_port``; the envelope carries plain strings.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from potpie_context_engine.application.services.envelope_builder import (
     IncludeResult,
     envelope_to_dict,
 )
-from potpie_context_engine.domain.agent_context_port import CONTEXT_INTENTS, DEFAULT_INTENT_INCLUDES
-from potpie_context_engine.domain.agent_envelope import CoverageReport, derive_overall_confidence
+from potpie_context_core.domain.agent_context_port import CONTEXT_INTENTS, DEFAULT_INTENT_INCLUDES
+from potpie_context_core.domain.agent_envelope import CoverageReport, derive_overall_confidence
 from potpie_context_engine.domain.ranking import Candidate, RankedItem
 
 

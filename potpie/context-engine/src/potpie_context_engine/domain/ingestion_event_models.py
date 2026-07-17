@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-from potpie_context_engine.domain.actor import Actor
+from potpie_context_core.domain.actor import Actor
 
 # --- Public lifecycle (stable API / dashboard) ---
 

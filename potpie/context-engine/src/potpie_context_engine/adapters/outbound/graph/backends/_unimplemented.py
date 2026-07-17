@@ -15,14 +15,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
-from potpie_context_engine.domain.graph_mutations import ProvenanceContext
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
-from potpie_context_engine.domain.ports.graph.analytics import RepairReport
-from potpie_context_engine.domain.ports.graph.inspection import GraphSlice
-from potpie_context_engine.domain.ports.graph.mutation import BackendReadiness
-from potpie_context_engine.domain.ports.graph.snapshot import SnapshotManifest
-from potpie_context_engine.domain.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.domain.errors import CapabilityNotImplemented
+from potpie_context_core.domain.graph_mutations import ProvenanceContext
+from potpie_context_core.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_core.domain.ports.graph.analytics import RepairReport
+from potpie_context_core.domain.ports.graph.inspection import GraphSlice
+from potpie_context_core.domain.ports.graph.mutation import BackendReadiness
+from potpie_context_core.domain.ports.graph.snapshot import SnapshotManifest
+from potpie_context_core.domain.reconciliation import MutationBatch, MutationResult
 
 
 def _raise(profile: str, capability: str, method: str) -> Any:

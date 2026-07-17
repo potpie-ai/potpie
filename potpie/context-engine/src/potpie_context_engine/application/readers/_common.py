@@ -8,7 +8,7 @@ from datetime import datetime
 import re
 from typing import Any
 
-from potpie_context_engine.domain.ports.claim_query import ClaimRow
+from potpie_context_core.domain.ports.claim_query import ClaimRow
 from potpie_context_engine.domain.ranking import Candidate, RankedItem, RankingService, TaskContext
 
 

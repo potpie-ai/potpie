@@ -7,7 +7,7 @@ import pytest
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
 from potpie_context_engine.adapters.outbound.graph.context_graph_service import ContextGraphService
 from potpie_context_engine.bootstrap.ingestion_server import IngestionServerContainer
-from potpie_context_engine.domain.graph_query import (
+from potpie_context_core.domain.graph_query import (
     ContextGraphGoal,
     ContextGraphQuery,
     ContextGraphStrategy,

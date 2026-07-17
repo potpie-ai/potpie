@@ -143,7 +143,7 @@ def test_standalone_container_delegates_to_ingestion_server_build(
 
 
 def _patch_container_graph(monkeypatch: pytest.MonkeyPatch) -> None:
-    import potpie_context_engine.domain.coherence as coherence
+    import potpie_context_core.domain.coherence as coherence
 
     monkeypatch.setattr(
         ingestion_server,

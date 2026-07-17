@@ -33,7 +33,7 @@ from potpie_context_engine.application.readers._common import (
     row_matches_query,
     scope_ref_matches,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
+from potpie_context_core.domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 from potpie_context_engine.domain.ranking import Candidate, RankingService
 
 

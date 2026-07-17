@@ -15,10 +15,10 @@ from fastapi import APIRouter, HTTPException, Request
 
 from potpie_context_engine.adapters.outbound.postgres.session import make_session_factory
 from potpie_context_engine.adapters.inbound.http.deps import get_container_or_503
-from potpie_context_engine.domain.actor import Actor
+from potpie_context_core.domain.actor import Actor
 from potpie_context_engine.domain.ingestion_event_models import IngestionSubmissionRequest
 from potpie_context_engine.domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
-from potpie_context_engine.domain.ports.pot_resolution import RepoRef
+from potpie_context_core.domain.ports.pot_resolution import RepoRef
 
 logger = logging.getLogger(__name__)
 
