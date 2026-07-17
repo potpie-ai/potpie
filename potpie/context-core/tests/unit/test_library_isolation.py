@@ -41,11 +41,9 @@ import json
 import sys
 
 import potpie_context_core
-from potpie_context_core.application.services.graph_workbench import (
-    GraphWorkbenchService,
-)
-from potpie_context_core.domain.ontology import PUBLIC_RECORD_TYPES
-from potpie_context_core.domain.ports.graph.backend import GraphBackend
+from potpie_context_core import api
+
+assert api.__all__
 
 print(json.dumps(sorted({module.split(".")[0] for module in sys.modules})))
 """
