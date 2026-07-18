@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from adapters.inbound.cli.commands.query import (
+from potpie.cli.commands.query import (
     _envelope_human,
     _envelope_payload,
     _select_intent,
