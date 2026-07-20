@@ -1,3 +1,5 @@
+[![Listed on TakoAPI](https://takoapi.com/api/badge/potpie-ai-potpie)](https://takoapi.com/agents/potpie-ai-potpie)
+
 <p align="center">
   <a href="https://potpie.ai?utm_source=github">
     <img src="https://raw.githubusercontent.com/potpie-ai/potpie/main/assets/readme_logo_light.svg" alt="Potpie AI logo" />
