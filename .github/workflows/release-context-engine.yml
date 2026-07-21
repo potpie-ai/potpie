@@ -1,0 +1,262 @@
+name: Release potpie-context-engine
+
+on:
+  workflow_call:
+    inputs:
+      publish_target:
+        description: "Where to publish the verified artifacts."
+        required: true
+        type: string
+      confirm_publish:
+        description: "Required literal value 'publish' when publish_target=pypi."
+        required: false
+        default: ""
+        type: string
+      allow_python_release_tag:
+        description: "Allow the aggregate python-v<potpie-version> tag when called by the orchestrator."
+        required: false
+        default: false
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      publish_target:
+        description: "Where to publish the verified artifacts."
+        required: true
+        default: build-only
+        type: choice
+        options:
+          - build-only
+          - testpypi
+          - pypi
+      confirm_publish:
+        description: "Required literal value 'publish' only when publish_target=pypi."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: context-engine-release-${{ inputs.publish_target }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  preflight:
+    name: Validate context-engine release
+    runs-on: ubuntu-latest
+    outputs:
+      context_engine_version: ${{ steps.validate.outputs.context_engine_version }}
+      channel: ${{ steps.validate.outputs.channel }}
+      metadata_path: ${{ steps.validate.outputs.metadata_path }}
+    steps:
+      # actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      # actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13"
+
+      - name: Install validation dependencies
+        run: python -m pip install --upgrade packaging
+
+      - name: Validate release metadata
+        id: validate
+        run: >-
+          python scripts/validate_python_release.py
+          --package context-engine
+          --publish-target "${{ inputs.publish_target }}"
+          --confirm-publish "${{ inputs.confirm_publish }}"
+          ${{ inputs.allow_python_release_tag && '--allow-python-release-tag' || '' }}
+
+      # actions/upload-artifact@v4
+      - name: Upload release metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-metadata-context-engine
+          path: ${{ steps.validate.outputs.metadata_path }}
+          if-no-files-found: error
+
+  build:
+    name: Build context-engine distributions
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      # actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade build twine
+
+      - name: Validate CLI OAuth build variables
+        if: ${{ inputs.publish_target != 'build-only' }}
+        env:
+          LINEAR_CLIENT_ID: ${{ vars.LINEAR_CLIENT_ID }}
+          POTPIE_GITHUB_CLIENT_ID: ${{ vars.POTPIE_GITHUB_CLIENT_ID }}
+        run: |
+          test -n "$LINEAR_CLIENT_ID" || { echo "LINEAR_CLIENT_ID repository/environment variable is required for publishing"; exit 1; }
+          test -n "$POTPIE_GITHUB_CLIENT_ID" || { echo "POTPIE_GITHUB_CLIENT_ID repository/environment variable is required for publishing"; exit 1; }
+
+      - name: Build potpie-context-engine
+        env:
+          LINEAR_CLIENT_ID: ${{ vars.LINEAR_CLIENT_ID }}
+          POTPIE_GITHUB_CLIENT_ID: ${{ vars.POTPIE_GITHUB_CLIENT_ID }}
+        run: |
+          mkdir -p dist/context-engine
+          python -m build --sdist --wheel --outdir dist/context-engine potpie/context-engine
+          python -m twine check dist/context-engine/*
+
+      # actions/upload-artifact@v4
+      - name: Upload context-engine distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dist-context-engine
+          path: dist/context-engine/*
+          if-no-files-found: error
+
+  smoke-install:
+    name: Smoke install context-engine (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    needs:
+      - preflight
+      - build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12", "3.13"]
+    steps:
+      # actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # actions/download-artifact@v4
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: dist-context-engine
+          path: dist
+
+      - name: Smoke install and run CLI
+        env:
+          CONTEXT_ENGINE_VERSION: ${{ needs.preflight.outputs.context_engine_version }}
+        run: |
+          ls -la dist
+          python -m venv .release-smoke
+          .release-smoke/bin/python -m pip install --upgrade pip
+          .release-smoke/bin/python -m pip install --find-links dist "potpie-context-engine[all]==${CONTEXT_ENGINE_VERSION}"
+          CONTEXT_ENGINE_HOME="$PWD/.context-engine-home" \
+            PATH="$PWD/.release-smoke/bin:$PATH" \
+            potpie status
+
+  assemble-artifacts:
+    name: Assemble context-engine artifacts
+    needs:
+      - preflight
+      - build
+      - smoke-install
+    runs-on: ubuntu-latest
+    steps:
+      # actions/download-artifact@v4
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: dist-context-engine
+          path: dist
+
+      # actions/download-artifact@v4
+      - name: Download release metadata
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-metadata-context-engine
+          path: release-metadata
+
+      - name: Generate checksums
+        run: |
+          find dist -maxdepth 1 -type f -print | sort
+          shasum -a 256 dist/* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # actions/upload-artifact@v4
+      - name: Upload release artifact bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-artifacts-context-engine
+          path: |
+            dist/*
+            release-metadata/release-metadata.json
+            SHA256SUMS.txt
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: Publish context-engine to TestPyPI
+    if: ${{ inputs.publish_target == 'testpypi' }}
+    needs:
+      - preflight
+      - assemble-artifacts
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/potpie-context-engine/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # actions/download-artifact@v4
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: dist-context-engine
+          path: dist
+
+      # pypa/gh-action-pypi-publish@release/v1
+      - name: Publish distributions to TestPyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+        with:
+          packages-dir: dist/
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Publish context-engine to PyPI
+    if: ${{ inputs.publish_target == 'pypi' }}
+    needs:
+      - preflight
+      - assemble-artifacts
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/potpie-context-engine/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # actions/download-artifact@v4
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: dist-context-engine
+          path: dist
+
+      # pypa/gh-action-pypi-publish@release/v1
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+        with:
+          packages-dir: dist/
