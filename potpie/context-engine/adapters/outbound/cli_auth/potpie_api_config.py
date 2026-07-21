@@ -1,4 +1,4 @@
-"""Resolve Potpie API base URL and auth headers for thin CLI / MCP."""
+"""Resolve Potpie API base URL and auth headers for thin CLI."""
 
 from __future__ import annotations
 

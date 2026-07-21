@@ -37,17 +37,7 @@ Use text output for routine orientation and context reads. Add `--json` when a
 workflow needs exact machine parsing, mutation plans, commits, history
 verification, or full evidence/debug payloads.
 
-When only MCP is configured, use the compatibility tools:
-
-- `context_status` - readiness, freshness gaps, and recommended recipe.
-- `context_resolve` - primary task context wrap.
-- `context_search` - narrow follow-up lookup after a resolve.
-- `context_record` - durable preferences, fixes, decisions, workflows, docs, and
-  incident notes.
-
-Do not add one tool per context type. Express reads as
-`graph read --subgraph <subgraph> --view <view>` or as a `context_resolve`
-recipe.
+Express reads through `graph read --subgraph <subgraph> --view <view>`.
 
 ## Views
 
@@ -61,38 +51,6 @@ recipe.
 | `code_topology.ownership_by_path` | owners for a scope |
 | `knowledge.document_context` | docs and runbooks for a scope |
 | `admin.inspection_slice` | raw canonical graph for debugging |
-
-## Recipes
-
-Feature or code work:
-
-```json
-{"intent":"feature","include":["coding_preferences","infra_topology","decisions","owners","docs"],"mode":"fast","source_policy":"references_only"}
-```
-
-Debugging:
-
-```json
-{"intent":"debugging","include":["prior_bugs","infra_topology","timeline"],"mode":"fast","source_policy":"references_only"}
-```
-
-Review:
-
-```json
-{"intent":"review","include":["coding_preferences","decisions","timeline","owners"],"mode":"balanced","source_policy":"summary"}
-```
-
-Operations:
-
-```json
-{"intent":"operations","include":["infra_topology","timeline","owners"],"mode":"balanced","source_policy":"summary"}
-```
-
-Docs/onboarding:
-
-```json
-{"intent":"onboarding","include":["infra_topology","coding_preferences","docs","owners"],"mode":"fast","source_policy":"references_only"}
-```
 
 ## Writing
 
@@ -142,10 +100,6 @@ Example infra write:
 }
 ```
 
-When only MCP is configured, `context_record` is the compatibility write for
-preferences, bug patterns, fixes, verifications, decisions, doc references,
-workflows, runbooks, and incident summaries.
-
 preference|policy|bug_pattern|fix|verification|decision|doc_reference|workflow|runbook_note|incident_summary|investigation|diagnostic_signal|service_note|feature_note|integration_note
 
 ## Ingestion Boundary
@@ -188,8 +142,8 @@ A hook may inject context or instructions from `potpie graph nudge`.
 - `inject_context` - use the injected facts for the current task.
 - `instruction` - a prompt to decide whether something durable was learned. If it
   was, resolve identity, propose a graph plan, commit it with `--verify` when
-  policy allows, then inspect history. If only MCP is configured, use
-  `context_record`. If nothing durable was learned, do nothing.
+  policy allows, then inspect history. If nothing durable was learned, do
+  nothing.
 
 ## Skills
 

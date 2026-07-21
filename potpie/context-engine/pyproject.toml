@@ -8,13 +8,12 @@ path = "distribution_defaults_hook.py"
 [project]
 name = "potpie-context-engine"
 version = "0.1.0"
-description = "Context graph API, webhooks, daemon, and MCP."
+description = "Context graph API and webhooks."
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
     "keyring>=25.0.0",
-    "mcp>=1.28.1",
     "pillow>=10.0.0",
     "pydantic-settings>=2.14.2",
     "pyjwt>=2.13.0",

@@ -14,8 +14,7 @@ relative to that root).
 ## One CLI for humans and agents
 
 There is no separate human-vs-agent API. Both people and coding harnesses drive
-the same `potpie` CLI; agents may also reach the same internals through the
-in-process MCP `context_*` tools (exactly four — see [querying.md](./querying.md)).
+the same `potpie` CLI.
 `potpie/cli/main.py build_app()` is the single console entrypoint
 (`[project.scripts]`): one Typer root whose `@app.callback` exposes three global
 options, with the rest of the surface assembled from top-level registrars and
@@ -93,8 +92,7 @@ and `add_typer` sub-apps. Note the corrections vs older docs: there is **no
 | `skills` | `commands/skills.py` | `HostShell.skills` (`SkillManager`) |
 | `cloud` | `commands/cloud.py` | managed sync — **all raise `CapabilityNotImplemented`** (roadmap) |
 
-The MCP server (`adapters/inbound/mcp/server.py`) binds to the same in-process
-`HostShell`. The async ingestion pipeline behind the HTTP API keeps a **separate**
+The async ingestion pipeline behind the HTTP API keeps a **separate**
 composition root (`bootstrap/ingestion_server.py`, default backend `neo4j`) — see
 [architecture.md](./architecture.md) and [ingestion-nudge.md](./ingestion-nudge.md).
 
@@ -290,8 +288,7 @@ and the (separate) server-side reconciliation skill surface are documented in
 
 ## Graph workbench (`commands/graph.py`) — the core surface
 
-The `potpie graph …` workbench is **shipped today as V1.5** (it is CLI-only; the
-MCP/agent surface stays at exactly four tools). Three Typer apps are defined here and
+The `potpie graph …` workbench is **shipped today as V1.5**. Three Typer apps are defined here and
 mounted at root: `graph` (with nested `inbox`, `quality`, `bulk`), plus top-level
 `timeline` and `backend`. Each graph command runs inside `_graph_command(name)`,
 wrapping `contract()` with the richer **workbench envelope**
@@ -584,7 +581,7 @@ potpie graph commit <plan_id> --verify
 - [vision.md](./vision.md) — what the Context Graph is and the product boundaries.
 - [architecture.md](./architecture.md) — composition roots, daemon model, GraphBackend ports & coverage.
 - [ontology.md](./ontology.md) — the catalogs the `catalog`/`describe` commands return.
-- [querying.md](./querying.md) — the read trunk, views, ranking, and the 4-tool MCP contract.
+- [querying.md](./querying.md) — the read trunk, views, ranking, and compatibility commands.
 - [writing.md](./writing.md) — the semantic DSL, propose→commit, risk/validation, inbox, quality.
 - [ingestion-nudge.md](./ingestion-nudge.md) — event stores, connectors, and the nudge trigger model.
 - [skills.md](./skills.md) — the skill catalog, install/drift, and the harness loop.

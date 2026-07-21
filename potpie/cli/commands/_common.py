@@ -100,9 +100,9 @@ def get_host():
         mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "").strip().lower()
         if mode != "in_process":
             try:
-                from host.daemon_client import RemoteHostShell
+                from potpie.daemon.client import RemoteHostShell
             except ModuleNotFoundError as exc:
-                if exc.name != "host.daemon_client":
+                if exc.name != "potpie.daemon.client":
                     raise
             else:
                 _state["host"] = RemoteHostShell()

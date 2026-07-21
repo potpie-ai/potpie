@@ -5,7 +5,7 @@ sites and *no* configuration: format and level were whatever uvicorn /
 root defaults happened to be, and the one structured ``extra={"audit":...}``
 payload was dropped on the floor (no formatter rendered it).
 
-:func:`configure_logging` is idempotent and shared by the HTTP and MCP
+:func:`configure_logging` is idempotent and shared by the HTTP and daemon
 entrypoints. It is deliberately **stdlib-only** — no structlog hard dependency.
 The ~200 existing ``getLogger`` sites get structured JSON +
 trace correlation for free because the *handler/formatter* is the swappable

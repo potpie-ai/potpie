@@ -7,7 +7,7 @@ log record; Phase B binds them at ingress and re-binds them inside the
 batch worker so a log line / span can always be tied back to an event.
 
 Dependency-free by design (stdlib ``contextvars`` only) — the same
-precedent the MCP auth context uses. Keys are intentionally a fixed,
+precedent external auth contexts use. Keys are intentionally a fixed,
 documented set so log/trace attribute names stay stable across the codebase.
 """
 

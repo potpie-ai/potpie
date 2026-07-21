@@ -26,7 +26,7 @@ composition roots at the top.
 
 ```mermaid
 flowchart TB
-  cg_inbound["inbound adapters<br/>cli · mcp · http ingestion · daemon_http · webhooks"]
+  cg_inbound["inbound adapters<br/>cli · http ingestion · daemon HTTP · webhooks"]
   cg_app["application<br/>services · readers · use_cases"]
   cg_domain["domain<br/>ontology · contract · ports · DTOs · ranking · coherence · identity"]
   cg_outbound["outbound adapters<br/>graph backends + engine room · connectors · ledger clients · postgres event store · skills targets · local embedder"]
@@ -45,15 +45,12 @@ flowchart TB
 |---|---|---|
 | **domain/** | `domain/` | Pure model and contracts: the three ontology catalogs, contract constants, ports (Protocols), DTOs, ranking, coherence invariants, identity. No I/O. Import-time coherence guards fail startup fast if vocabularies drift. |
 | **application/** | `application/` | Services and use cases that orchestrate domain over ports: `services/` (graph_service, graph_workbench, agent_context, read_orchestrator, envelope_builder, nudge_service, skill_manager, semantic_mutation_validator/lowering, reconciliation_validation, ingestion_submission_service), `readers/` (the 9 readers), `use_cases/` (the ingestion pipeline). |
-| **adapters/** | `adapters/inbound`, `adapters/outbound` | Concrete I/O. Inbound: cli, mcp, http ingestion server, daemon_http, webhooks. Outbound: graph backends + the shared engine room, skills targets, connectors, ledger clients, the Postgres event store, `intelligence/local_embedder`, the session injection ledger. |
+| **adapters/** | `adapters/inbound`, `adapters/outbound` | Concrete I/O. Inbound: HTTP ingestion server and webhooks. Outbound: graph backends + the shared engine room, skills targets, connectors, ledger clients, the Postgres event store, `intelligence/local_embedder`, the session injection ledger. Product CLI and daemon adapters live under `potpie/`. |
 | **bootstrap/** | `bootstrap/` | The two composition roots (next section). |
 | **host/** | `host/` | `shell.py` (the `HostShell` facade) and `daemon.py` (lifecycle). |
 
 The architecture's single spine is `CLI → HostShell → service(s) → ports`
-(`potpie/cli/main.py` docstring). Agents reach the same system
-either through the CLI directly or through the in-process MCP `context_*` tools,
-which are compatibility adapters over the same graph internals
-(`adapters/inbound/mcp/server.py`).
+(`potpie/cli/main.py` docstring). Agents reach it through the CLI.
 
 ## Two composition roots / two HTTP roots
 
@@ -64,7 +61,7 @@ common architecture error.
 flowchart TB
   subgraph cg_spine["Local agent spine — bootstrap/host_wiring.py build_host_shell()"]
     direction TB
-    cg_cli["potpie CLI · MCP · daemon HTTP"]
+    cg_cli["potpie CLI · daemon HTTP"]
     cg_shell["HostShell facade (host/shell.py)"]
     cg_services["services: graph · graph_workbench · agent_context · pots · skills · nudge · ledger"]
     cg_lite[("default backend: falkordb_lite<br/>default host mode: daemon")]
@@ -81,9 +78,9 @@ flowchart TB
 ```
 
 1. **The local agent spine** — `bootstrap/host_wiring.py build_host_shell()`
-   builds `HostShell`, which the inbound adapters (CLI, MCP, daemon HTTP) bind
+   builds `HostShell`, which the product adapters (CLI and daemon HTTP) bind
    to. The detached daemon serves an `OperationRegistry` over loopback UDS/TCP
-   (`adapters/inbound/daemon_http/transport.py`) — that is the **first HTTP
+   (`potpie/daemon/http/transport.py`) — that is the **first HTTP
    root**, a private IPC transport. Everything you reach with `potpie graph …`,
    `potpie resolve/search/record`, and `potpie graph nudge` routes through here.
    **Default backend: `falkordb_lite`. Default host mode: `daemon`.**
@@ -106,12 +103,12 @@ they differ only in wiring and default storage.
 
 ## The daemon model
 
-`host/daemon.py Daemon` is the local background process for lifecycle, IPC,
+`potpie/daemon/lifecycle.py Daemon` is the local background process for lifecycle, IPC,
 health, and logs — explicitly **not** the business layer. Two modes:
 
 - **in_process** — the host runs inside the CLI process and reports synthetic
   liveness. Built directly via `build_host_shell()`.
-- **detached** — a separate process runs `host.daemon_main` and serves the
+- **detached** — a separate process runs `potpie.daemon.main` and serves the
   `HostShell` RPC over loopback (UDS / TCP, with `base_url` discovery). The CLI
   talks to it through a daemon-backed `RemoteHostShell`.
 
@@ -128,18 +125,17 @@ composes `backend.capabilities()` + `backend.mutation.readiness()` +
 `potpie ui` (the read-only graph explorer) is served by this daemon — it ensures
 the daemon, discovers `base_url`, and opens `<base>/ui`.
 
-## Two altitudes onto one data plane
+## CLI surfaces onto one data plane
 
 Reads and writes both reach `DefaultGraphService`
-(`application/services/graph_service.py`) over the backend, but agents see two
-altitudes:
+(`application/services/graph_service.py`) over the backend, but the CLI exposes
+two shapes:
 
-- **The 4-tool MCP contract** — `context_resolve` / `context_search` /
-  `context_record` / `context_status`, bound by `AgentContextService`. This is
-  the entire long-term agent surface; `context_record` is the only MCP write.
+- **Compatibility commands** — `potpie resolve` / `search` / `record` /
+  `status`, bound by `AgentContextService`.
 - **Graph Surface Lite (V1.5)** — the richer `potpie graph …` workbench
   (`catalog`/`read`/`search-entities`/`neighborhood`/`propose`/`commit`/`bulk`/
-  `history`/`inbox`/`quality` …). **CLI-only**; it does not add MCP tools.
+  `history`/`inbox`/`quality` …).
 
 Both are shipped. The read shapes and the 9-reader trunk are owned by
 [querying.md](./querying.md); the write stack is owned by
@@ -406,7 +402,7 @@ removed — those are **methods on `DefaultGraphService`** plus the declarative
 | Area | Path |
 |---|---|
 | Composition roots | `bootstrap/host_wiring.py` (`build_host_shell`); `bootstrap/ingestion_server.py` + `standalone_container.py` (ingestion HTTP root) |
-| Host shell + daemon | `host/{shell,daemon}.py`; daemon IPC transport `adapters/inbound/daemon_http/transport.py` |
+| Host shell + daemon | `host/shell.py`; daemon lifecycle and IPC under `potpie/daemon/` |
 | Service interfaces (ports) | `domain/ports/services/{graph_service,pot_management,skill_manager}.py` |
 | Graph capability ports | `domain/ports/graph/{backend,mutation,semantic,inspection,analytics,snapshot}.py` + `domain/ports/claim_query.py` |
 | Read trunk | `application/services/read_orchestrator.py`, `envelope_builder.py`, `application/readers/`, `domain/agent_envelope.py`, `domain/ranking.py`, `domain/agent_context_port.py` |
@@ -418,7 +414,6 @@ removed — those are **methods on `DefaultGraphService`** plus the declarative
 | Internal event store | `adapters/outbound/postgres/{reconciliation_ledger,ingestion_event_store,batch_repository,ledger}.py` |
 | External Event Ledger seam (stubs) | `domain/ports/ledger/{client,cursor}.py`; `adapters/outbound/ledger/{managed_client,self_hosted_client,cursor_store}.py` |
 | CLI (host-routed) | `potpie/cli/main.py` + `potpie/cli/commands/` |
-| MCP (4 tools) | `adapters/inbound/mcp/server.py` |
 | Ingestion HTTP server | `adapters/inbound/http/` |
 | Skills | `application/services/skill_manager.py` + `adapters/outbound/skills/{bundle_catalog,agent_installer,claude_target}.py` |
 
@@ -463,8 +458,7 @@ duplicate ontology enums in docs/CLI.
 
 - OSS graph use works with no cloud auth and no mandatory Docker/Neo4j/Postgres
   (the default `falkordb_lite` is embedded).
-- The CLI is the primary user/agent surface; the MCP surface stays at exactly 4
-  tools.
+- The CLI is the user and agent surface.
 - The canonical claim store is the only source of truth; semantic/inspection/
   analytics/snapshot are rebuildable projections.
 - Every fact is scoped by `pot_id` = `group_id`; no cross-pot federation.
