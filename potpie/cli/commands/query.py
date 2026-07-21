@@ -150,10 +150,9 @@ def _parse_scope(scope: str | None) -> dict[str, str]:
 
 
 def _envelope_payload(env) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "pot_id": env.pot_id,
         "intent": env.intent,
-        "intent_source": dict(env.metadata).get("intent_source", "default"),
         "overall_confidence": env.overall_confidence,
         "items": [
             {"include": i.include, "score": i.score, "payload": dict(i.payload)}
@@ -169,12 +168,19 @@ def _envelope_payload(env) -> dict[str, object]:
             {"name": u.name, "reason": u.reason} for u in env.unsupported_includes
         ],
     }
+    # Only resolve performs intent selection; search envelopes carry no
+    # intent_source, and the field must not appear in their output.
+    intent_source = dict(env.metadata).get("intent_source")
+    if intent_source:
+        payload["intent_source"] = intent_source
+    return payload
 
 
 def _envelope_human(env) -> str:
-    intent_source = dict(env.metadata).get("intent_source", "default")
+    intent_source = dict(env.metadata).get("intent_source")
+    source_note = f" (source={intent_source})" if intent_source else ""
     lines = [
-        f"pot={env.pot_id} intent={env.intent} (source={intent_source}) "
+        f"pot={env.pot_id} intent={env.intent}{source_note} "
         f"confidence={env.overall_confidence} items={len(env.items)}"
     ]
     for item in env.items[:10]:

@@ -56,7 +56,17 @@ def test_envelope_human_header_shows_source() -> None:
     assert "intent=unknown (source=default)" in header
 
 
-def test_envelope_payload_defaults_source_when_metadata_absent() -> None:
-    env = _fake_env(intent="feature", intent_source="detected")
-    env.metadata = {}
-    assert _envelope_payload(env)["intent_source"] == "default"
+def test_envelope_payload_omits_source_when_metadata_absent() -> None:
+    """Search envelopes carry no intent_source; the field must not leak into
+    their output (search performs no intent selection)."""
+    env = _fake_env(intent="unknown", intent_source="detected")
+    env.metadata = {"mode": "fast", "search": True}
+    assert "intent_source" not in _envelope_payload(env)
+
+
+def test_envelope_human_omits_source_when_metadata_absent() -> None:
+    env = _fake_env(intent="unknown", intent_source="detected")
+    env.metadata = {"mode": "fast", "search": True}
+    header = _envelope_human(env)
+    assert "source=" not in header
+    assert "intent=unknown " in header
