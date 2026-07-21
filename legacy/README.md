@@ -88,6 +88,19 @@ Core libraries live at the repo root under `potpie/` (`context-engine`, `parsing
    > **`CHAT_MODEL`** and **`INFERENCE_MODEL`** are used for agent reasoning and knowledge graph generation respectively. Model names follow the `provider/model_name` format as expected by [LiteLLM](https://docs.litellm.ai/docs/providers).
    >
    > **💡 Using Ollama instead?** Set `LLM_PROVIDER=ollama` and use `CHAT_MODEL=ollama_chat/qwen2.5-coder:7b` and `INFERENCE_MODEL=ollama_chat/qwen2.5-coder:7b`.
+   >
+   > **Using an OpenAI-compatible gateway (e.g. [DaoXE](https://daoxe.com))?** DaoXE is a multi-model multi-protocol API gateway (`https://daoxe.com/v1`). Point the OpenAI path at it with your DaoXE key and an account-scoped model ID (from authenticated `GET /v1/models` or your dashboard — not a hardcoded public catalog). DaoXE is not available in mainland China.
+   >
+   > ```bash
+   > LLM_PROVIDER=openai
+   > OPENAI_API_KEY=your-daoxe-api-key
+   > # Account-scoped model IDs, e.g. openai/<id-from-GET-/v1/models>
+   > CHAT_MODEL=openai/your-account-model-id
+   > INFERENCE_MODEL=openai/your-account-model-id
+   > LLM_API_BASE=https://daoxe.com/v1
+   > ```
+   >
+   > DaoXE also exposes other protocol routes (for example Anthropic Messages) for clients that speak those APIs; with Potpie's OpenAI/`LLM_API_BASE` path above you use Chat Completions. Starters: [DaoXE-AI](https://github.com/seven7763/DaoXE-AI) · [Pricing](https://daoxe.com/pricing).
 
    See `.env.template` for the full list of optional configuration (logging, feature flags, object storage, email, analytics, etc.).
 
