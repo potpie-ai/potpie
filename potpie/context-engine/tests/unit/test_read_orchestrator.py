@@ -86,3 +86,65 @@ def test_intent_expands_to_backed_readers() -> None:
     # readers; empty backed readers return no items, not unsupported includes.
     assert "coding_preferences" in {i.include for i in env.items}
     assert env.unsupported_includes == ()
+
+
+def test_feature_intent_routes_feature_claims_to_features_include() -> None:
+    store = InMemoryClaimQueryStore()
+    store.add(
+        ClaimRow(
+            pot_id="p1",
+            predicate="PROVIDES",
+            subject_key="repo:github.com/acme/widgets",
+            object_key="feature:search",
+            evidence_strength="attested",
+            fact="widgets repo provides search",
+            properties={},
+        )
+    )
+    orch = ReadOrchestrator(claim_query=store)
+
+    env = orch.resolve(
+        pot_id="p1",
+        intent="feature",
+        scope={"anchor_entity_key": "repo:github.com/acme/widgets"},
+    )
+
+    includes = [item.include for item in env.items]
+    assert "features" in includes
+    assert "infra_topology" not in includes
+
+
+def test_infra_topology_excludes_feature_predicates() -> None:
+    store = InMemoryClaimQueryStore()
+    store.add(
+        ClaimRow(
+            pot_id="p1",
+            predicate="DEFINED_IN",
+            subject_key="service:search-api",
+            object_key="repo:github.com/acme/widgets",
+            evidence_strength="attested",
+            fact="search api lives in widgets repo",
+            properties={},
+        )
+    )
+    store.add(
+        ClaimRow(
+            pot_id="p1",
+            predicate="PROVIDES",
+            subject_key="repo:github.com/acme/widgets",
+            object_key="feature:search",
+            evidence_strength="attested",
+            fact="widgets repo provides search",
+            properties={},
+        )
+    )
+    orch = ReadOrchestrator(claim_query=store)
+
+    env = orch.resolve(
+        pot_id="p1",
+        include=["infra_topology"],
+        scope={"anchor_entity_key": "repo:github.com/acme/widgets"},
+    )
+
+    assert [item.include for item in env.items] == ["infra_topology"]
+    assert env.items[0].payload["predicate"] == "DEFINED_IN"

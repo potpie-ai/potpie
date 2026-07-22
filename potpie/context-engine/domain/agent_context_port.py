@@ -78,7 +78,14 @@ PLANNED_INCLUDES: frozenset[str] = CONTEXT_INCLUDE_VALUES - READER_BACKED_INCLUD
 FALLBACK_ONLY_INCLUDES: frozenset[str] = PLANNED_INCLUDES
 
 DEFAULT_INTENT_INCLUDES: dict[str, tuple[str, ...]] = {
-    "feature": ("coding_preferences", "infra_topology", "decisions", "owners", "docs"),
+    "feature": (
+        "coding_preferences",
+        "features",
+        "infra_topology",
+        "decisions",
+        "owners",
+        "docs",
+    ),
     "debugging": ("prior_bugs", "infra_topology", "timeline"),
     "review": ("coding_preferences", "decisions", "timeline", "owners"),
     "operations": ("infra_topology", "timeline", "owners"),

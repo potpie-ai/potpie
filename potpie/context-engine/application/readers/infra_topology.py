@@ -3,7 +3,7 @@
 Inputs: scope (service / env / file). Logic: bounded neighbourhood
 traversal over claim edges with topology predicates (``DEFINED_IN``,
 ``DEPLOYED_TO``, ``DEPENDS_ON``, ``USES``, ``HOSTED_ON``, ``OWNED_BY``,
-``PROVIDES``, ``IMPLEMENTED_IN``),
+``USES_ADAPTER``, ``CONFIGURES``, ``DEPLOYED_WITH``),
 environment-filtered via the ``environment`` edge property. Supports
 blast-radius (incoming ``DEPENDS_ON`` traversal with depth). Supports
 ``as_of`` via the bitemporal predicate.
@@ -51,8 +51,6 @@ _INFRA_PREDICATES: tuple[str, ...] = (
     "DEPLOYED_WITH",
     "HOSTED_ON",
     "OWNED_BY",
-    "PROVIDES",
-    "IMPLEMENTED_IN",
 )
 
 
