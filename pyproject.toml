@@ -29,7 +29,7 @@ dependencies = [
     "aiohttp>=3.14.1",
     "click>=8.1.8",
     "httpx>=0.28.0",
-    "pillow>=10.0.0",
+    "pillow>=12.3.0",
     "potpie-context-engine[all]==0.1.0",
     "pydantic-ai-slim>=1.102.0",
     "pydantic-settings>=2.14.2",
