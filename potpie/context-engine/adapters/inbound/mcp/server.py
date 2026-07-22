@@ -14,7 +14,7 @@ straight to the local context graph through the same services the CLI uses.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
 
@@ -54,7 +54,13 @@ def _parse_as_of_iso(value: str | None) -> datetime | None:
     s = value.strip()
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
-    return datetime.fromisoformat(s)
+    parsed = datetime.fromisoformat(s)
+    if parsed.tzinfo is None:
+        # Treat naive timestamps (e.g. "2024-06-01") as UTC. A naive datetime
+        # would otherwise flow into recency scoring as `now` and crash against
+        # tz-normalized claim times (naive minus aware TypeError).
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _scope(**fields: Any) -> dict[str, Any]:
