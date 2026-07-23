@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "potpie"
 version = "2.0.0"
-description = "Potpie context engine"
+description = "Potpie product distribution"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 license = "Apache-2.0"
@@ -26,11 +26,22 @@ classifiers = [
     "Topic :: Software Development",
 ]
 dependencies = [
+    "aiohttp>=3.14.1",
+    "click>=8.1.8",
+    "httpx>=0.28.0",
+    "pillow>=12.3.0",
     "potpie-context-engine[all]==0.1.0",
+    "pydantic-ai-slim>=1.102.0",
+    "pydantic-settings>=2.14.2",
+    "pyjwt>=2.13.0",
+    "rich>=13.0",
+    "sentry-sdk>=2.61.1,<3.0.0",
+    "starlette>=1.3.1",
+    "typer>=0.15.0",
 ]
 
 [project.scripts]
-potpie = "adapters.inbound.cli.host_cli:main"
+potpie = "potpie.cli.main:main"
 potpie-mcp = "adapters.inbound.mcp.server:main"
 potpie-daemon = "host.daemon_main:main"
 
@@ -41,16 +52,38 @@ Source = "https://github.com/potpie-ai/potpie"
 Issues = "https://github.com/potpie-ai/potpie/issues"
 
 [tool.hatch.build.targets.wheel]
-bypass-selection = true
+packages = ["potpie"]
+include = [
+    "potpie/cli/templates/**/*",
+    "potpie/cli/ui/assets/**/*",
+]
+exclude = [
+    "/potpie/context-engine",
+    "/potpie/integrations",
+    "/potpie/parsing",
+    "/potpie/sandbox",
+]
+
+[tool.hatch.build.force-include]
+"potpie/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "potpie/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
+"potpie/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "potpie/cli/templates/claude_plugin/.claude-plugin/plugin.json"
+"potpie/cli/templates/claude_plugin/hooks/hooks.json" = "potpie/cli/templates/claude_plugin/hooks/hooks.json"
 
 [tool.hatch.build.targets.sdist]
 include = [
     "/LICENSE",
     "/README.md",
     "/pyproject.toml",
+    "/scripts/generate-potpie-ascii.mjs",
+    "/potpie/__init__.py",
+    "/potpie/cli",
 ]
 exclude = [
     "/.gitignore",
+    "/potpie/context-engine",
+    "/potpie/integrations",
+    "/potpie/parsing",
+    "/potpie/sandbox",
 ]
 
 [tool.uv]
@@ -65,12 +98,18 @@ override-dependencies = [
     "starlette>=1.3.1",
     "pyjwt>=2.13.0",
     "pydantic-settings>=2.14.2",
-    # torch 2.12.0 is flagged vulnerable; no stable patch yet — cap below 2.12 for releases.
-    "torch>=2.11.0,<2.12.0",
+    "pydantic-ai-slim>=1.102.0",
+    # CVE-2025-3000: torch <= 2.12.1; 2.13.0 is the first patched release on PyPI.
+    "torch>=2.13.0",
 ]
 
 [tool.uv.workspace]
-members = ["potpie/*"]
+members = [
+    "potpie/context-engine",
+    "potpie/integrations",
+    "potpie/parsing",
+    "potpie/sandbox",
+]
 
 [tool.uv.sources]
 potpie-context-engine = { workspace = true, editable = true }
@@ -87,5 +126,24 @@ dev = [
     "ruff>=0.14.3",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+markers = [
+    "unit: unit tests",
+    "integration: integration tests (no external services required, but exercise real third-party libs)",
+    "cli_auth_e2e: opt-in live CLI auth tests (Linear/Jira/Confluence); requires RUN_CLI_AUTH_E2E=1",
+    "premerge_journey: dedicated pre-merge CLI journey test (Rust required; run in premerge-cli-journey job only)",
+]
+
 [tool.ruff.lint]
 extend-select = ["S"]
+
+[tool.ruff.lint.per-file-ignores]
+"potpie/cli/commands/_common.py" = ["S112"]
+"potpie/cli/ui/setup_ux.py" = ["S112"]
+"tests/_auth_fakes.py" = ["S108"]
+"tests/unit/test_cli_linear.py" = ["S310"]
+"tests/unit/test_nudge_adapter.py" = ["S102"]

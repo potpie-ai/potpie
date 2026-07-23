@@ -23,7 +23,12 @@ from application.readers import (
     PriorBugsReader,
     TimelineReader,
 )
-from application.readers._common import ReadRequest, dedupe_claim_rows
+from application.readers._common import (
+    ReadRequest,
+    claim_semantic_similarity,
+    dedupe_claim_rows,
+    row_matches_query,
+)
 from domain.ports.claim_query import ClaimRow
 from domain.ranking import RankingService
 
@@ -95,6 +100,17 @@ def test_dedupe_claim_rows_uses_claim_key_then_triple_and_sources() -> None:
     ]
 
 
+def test_claim_semantic_similarity_ignores_booleans() -> None:
+    row = _row(
+        predicate="DEPENDS_ON",
+        subject_key="service:a",
+        object_key="service:b",
+        properties={"semantic_similarity": True},
+    )
+    assert claim_semantic_similarity(row) is None
+    assert not row_matches_query(row, "unrelated query")
+
+
 # ---------------------------------------------------------------------------
 # CodingPreferencesReader
 # ---------------------------------------------------------------------------
@@ -157,6 +173,46 @@ class TestCodingPreferencesReader:
         assert response.items
         assert "httpx" in (response.items[0].candidate.payload["fact"] or "")
 
+    def test_query_filters_out_non_matching_preferences(self) -> None:
+        store = self._setup_store()
+        reader = CodingPreferencesReader(claim_query=store, ranker=RankingService())
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"language": "python"},
+                query="does-not-exist-12345",
+                max_items=5,
+            )
+        )
+        assert response.items == ()
+        assert response.coverage_status == "empty"
+
+    def test_query_threshold_can_be_relaxed(self) -> None:
+        store = self._setup_store()
+        reader = CodingPreferencesReader(claim_query=store, ranker=RankingService())
+
+        strict = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"language": "python"},
+                query="httpx absent",
+                max_items=5,
+            )
+        )
+        relaxed = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"language": "python"},
+                query="httpx absent",
+                query_threshold=0.30,
+                max_items=5,
+            )
+        )
+
+        assert strict.items == ()
+        assert relaxed.items
+        assert relaxed.items[0].candidate.payload["subject_key"] == "policy:use-httpx"
+
     def test_empty_pool_reports_empty_coverage(self) -> None:
         reader = CodingPreferencesReader(
             claim_query=InMemoryClaimQueryStore(), ranker=RankingService()
@@ -164,6 +220,161 @@ class TestCodingPreferencesReader:
         response = reader.read(ReadRequest(pot_id="pot-1", scope={"language": "rust"}))
         assert response.items == ()
         assert response.coverage_status == "empty"
+
+    def test_repo_path_scope_excludes_conflicting_preferences(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:alpha-pytest",
+                object_key="code:github.com/mock/alpha-checkout:src/checkout",
+                fact="add pytest tests for checkout changes",
+                properties={
+                    "code_scope": {
+                        "repo": "github.com/mock/alpha-checkout",
+                        "service": "checkout-api",
+                        "file_path": "src/checkout",
+                        "language": "python",
+                    }
+                },
+            )
+        )
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:beta-logging",
+                object_key="code:github.com/mock/beta-billing:src/billing",
+                fact="add structured logging for billing changes",
+                properties={
+                    "code_scope": {
+                        "repo": "github.com/mock/beta-billing",
+                        "service": "billing-worker",
+                        "file_path": "src/billing",
+                        "language": "python",
+                    }
+                },
+            )
+        )
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:global-python",
+                object_key="scope:any",
+                fact="prefer small focused python tests",
+            )
+        )
+        reader = CodingPreferencesReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={
+                    "repo": "github.com/mock/alpha-checkout",
+                    "path": "src/checkout/cache.py",
+                    "language": "python",
+                },
+                max_items=10,
+            )
+        )
+
+        keys = {r.candidate.payload["subject_key"] for r in response.items}
+        assert "preference:alpha-pytest" in keys
+        assert "preference:global-python" in keys
+        assert "preference:beta-logging" not in keys
+
+    def test_beta_scope_excludes_alpha_preference(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:alpha-pytest",
+                object_key="code:github.com/mock/alpha-checkout:src/checkout",
+                fact="add pytest tests for checkout changes",
+                properties={
+                    "code_scope": {
+                        "repo": "github.com/mock/alpha-checkout",
+                        "file_path": "src/checkout",
+                    }
+                },
+            )
+        )
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:beta-logging",
+                object_key="code:github.com/mock/beta-billing:src/billing",
+                fact="add structured logging for billing changes",
+                properties={
+                    "code_scope": {
+                        "repo": "github.com/mock/beta-billing",
+                        "file_path": "src/billing",
+                    }
+                },
+            )
+        )
+        reader = CodingPreferencesReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"repo": "github.com/mock/beta-billing", "path": "src/billing"},
+                max_items=10,
+            )
+        )
+
+        keys = {r.candidate.payload["subject_key"] for r in response.items}
+        assert keys == {"preference:beta-logging"}
+
+    def test_conflicting_language_framework_and_service_preferences_are_excluded(
+        self,
+    ) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:python-fastapi",
+                object_key="service:checkout-api",
+                fact="python fastapi checkout preference",
+                properties={
+                    "code_scope": {
+                        "service": "checkout-api",
+                        "language": "python",
+                        "framework": "fastapi",
+                    }
+                },
+            )
+        )
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:go-chi",
+                object_key="service:billing-worker",
+                fact="go chi billing preference",
+                properties={
+                    "code_scope": {
+                        "service": "billing-worker",
+                        "language": "go",
+                        "framework": "chi",
+                    }
+                },
+            )
+        )
+        reader = CodingPreferencesReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={
+                    "service": "checkout-api",
+                    "language": "python",
+                    "framework": "fastapi",
+                },
+                max_items=10,
+            )
+        )
+
+        keys = {r.candidate.payload["subject_key"] for r in response.items}
+        assert keys == {"preference:python-fastapi"}
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +530,88 @@ class TestInfraTopologyReader:
         response = reader.read(ReadRequest(pot_id="pot-1", scope={}))
         # Unscoped: returns all infra predicates, all neutral overlap
         assert len(response.items) >= 2
+
+    def _setup_semantic_store(self) -> InMemoryClaimQueryStore:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="DEPENDS_ON",
+                subject_key="service:auth-svc",
+                object_key="datastore:redis-cache",
+                fact="auth-svc depends on redis cache for session connection pooling",
+                evidence_strength="deterministic",
+            )
+        )
+        store.add(
+            _row(
+                predicate="DEPENDS_ON",
+                subject_key="service:auth-svc",
+                object_key="service:kafka-broker",
+                fact="auth-svc publishes login events to the kafka broker",
+                evidence_strength="deterministic",
+            )
+        )
+        return store
+
+    def test_query_makes_anchored_ranking_semantic(self) -> None:
+        store = self._setup_semantic_store()
+        reader = InfraTopologyReader(claim_query=store, ranker=RankingService())
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"services": ["auth-svc"]},
+                query="redis connection pool for sessions",
+            )
+        )
+        assert len(response.items) == 2
+        top, second = response.items
+        assert top.candidate.payload["object_key"] == "datastore:redis-cache"
+        assert (
+            top.breakdown["semantic_similarity"]
+            > second.breakdown["semantic_similarity"]
+        )
+
+    def test_query_makes_unanchored_ranking_semantic(self) -> None:
+        store = self._setup_semantic_store()
+        reader = InfraTopologyReader(claim_query=store, ranker=RankingService())
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={},
+                query="redis connection pool for sessions",
+            )
+        )
+        assert response.items
+        top = response.items[0]
+        assert top.candidate.payload["object_key"] == "datastore:redis-cache"
+        sims = {r.breakdown["semantic_similarity"] for r in response.items}
+        assert len(sims) > 1  # not flat-scored
+
+    def test_no_query_keeps_neutral_similarity(self) -> None:
+        store = self._setup_semantic_store()
+        reader = InfraTopologyReader(claim_query=store, ranker=RankingService())
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"services": ["auth-svc"]})
+        )
+        assert response.items
+        assert all(r.breakdown["semantic_similarity"] == 0.5 for r in response.items)
+
+    def test_query_does_not_change_traversal_discovery(self) -> None:
+        store = self._setup_semantic_store()
+        reader = InfraTopologyReader(claim_query=store, ranker=RankingService())
+        without_query = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"services": ["auth-svc"]})
+        )
+        with_query = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"services": ["auth-svc"]},
+                query="redis connection pool for sessions",
+            )
+        )
+        assert {r.candidate.candidate_key for r in without_query.items} == {
+            r.candidate.candidate_key for r in with_query.items
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +850,218 @@ class TestTimelineReader:
         payload = response.items[0].candidate.payload
         assert payload["activity_key"] == "activity:github:pr:dupe"
         assert payload["properties"]["activity_edge_count"] == 2
+
+    def test_timeline_scope_filters_by_repo_service_and_path(self) -> None:
+        store = _timeline_scope_store()
+        reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+        unscoped = reader.read(ReadRequest(pot_id="pot-1", max_items=10))
+        assert _timeline_activity_keys(unscoped) == {
+            "activity:github:pr:alpha",
+            "activity:github:pr:beta",
+        }
+
+        by_service = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "checkout-api"}, max_items=10)
+        )
+        assert _timeline_activity_keys(by_service) == {"activity:github:pr:alpha"}
+
+        by_repo = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"repo": "github.com/mock/alpha-checkout"},
+                max_items=10,
+            )
+        )
+        assert _timeline_activity_keys(by_repo) == {"activity:github:pr:alpha"}
+
+        by_path = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"path": "src/checkout"}, max_items=10)
+        )
+        assert _timeline_activity_keys(by_path) == {"activity:github:pr:alpha"}
+
+        by_repo_and_path = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={
+                    "repo": "github.com/mock/alpha-checkout",
+                    "path": "src/checkout",
+                },
+                max_items=10,
+            )
+        )
+        assert _timeline_activity_keys(by_repo_and_path) == {"activity:github:pr:alpha"}
+
+        beta = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"repo": "github.com/mock/beta-billing", "path": "src/billing"},
+                max_items=10,
+            )
+        )
+        assert _timeline_activity_keys(beta) == {"activity:github:pr:beta"}
+
+    def test_timeline_anchor_scope_survives_unrelated_activity_cap(self) -> None:
+        """Scoped repo reads must not drop matches when unrelated rows fill the cap."""
+        store = InMemoryClaimQueryStore()
+        for index in range(250):
+            store.add(
+                _row(
+                    predicate="TOUCHED",
+                    subject_key=f"activity:github:pr:filler-{index}",
+                    object_key="repo:github.com/mock/unrelated-repo",
+                    fact=f"filler activity {index}",
+                    valid_at=_NOW - timedelta(hours=1),
+                    properties={"occurred_at": "2026-07-03T12:00:00+00:00"},
+                )
+            )
+        store.add(
+            _row(
+                predicate="TOUCHED",
+                subject_key="activity:github:pr:alpha",
+                object_key="repo:github.com/mock/alpha-checkout",
+                fact="alpha checkout latency change",
+                valid_at=_NOW - timedelta(hours=3),
+                properties={"occurred_at": "2026-07-01T10:00:00+00:00"},
+            )
+        )
+        reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"repo": "github.com/mock/alpha-checkout"},
+                max_items=10,
+            )
+        )
+
+        assert _timeline_activity_keys(response) == {"activity:github:pr:alpha"}
+
+    def test_timeline_scope_includes_performed_edges(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="PERFORMED",
+                subject_key="repo:github.com/mock/alpha-checkout",
+                object_key="activity:github:pr:alpha",
+                fact="alpha checkout team performed the activity",
+            )
+        )
+        reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"repo": "github.com/mock/alpha-checkout"},
+                max_items=10,
+            )
+        )
+
+        assert _timeline_activity_keys(response) == {"activity:github:pr:alpha"}
+
+    def test_timeline_source_ref_filter_still_narrows_events(self) -> None:
+        store = _timeline_scope_store()
+        reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                source_refs=("mock:github:mock/alpha-checkout#pr/101",),
+                max_items=10,
+            )
+        )
+
+        assert _timeline_activity_keys(response) == {"activity:github:pr:alpha"}
+
+    def test_timeline_query_filters_activity_groups(self) -> None:
+        store = _timeline_scope_store()
+        reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+        alpha = reader.read(
+            ReadRequest(pot_id="pot-1", query="ALPHA_SENTINEL", max_items=10)
+        )
+        assert _timeline_activity_keys(alpha) == {"activity:github:pr:alpha"}
+
+        nonsense = reader.read(
+            ReadRequest(pot_id="pot-1", query="does-not-exist-12345", max_items=10)
+        )
+        assert nonsense.items == ()
+        assert nonsense.coverage_status == "empty"
+
+
+def _timeline_scope_store() -> InMemoryClaimQueryStore:
+    store = InMemoryClaimQueryStore()
+    store.add(
+        _row(
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:alpha",
+            object_key="repo:github.com/mock/alpha-checkout",
+            fact="ALPHA_SENTINEL checkout latency change",
+            valid_at=_NOW - timedelta(hours=3),
+            source_ref="mock:github:mock/alpha-checkout#pr/101",
+            properties={"occurred_at": "2026-07-01T10:00:00+00:00"},
+        )
+    )
+    store.add(
+        _row(
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:alpha",
+            object_key="service:checkout-api",
+            fact="ALPHA_SENTINEL touched checkout service",
+            valid_at=_NOW - timedelta(hours=3),
+            source_ref="mock:github:mock/alpha-checkout#pr/101",
+            properties={"occurred_at": "2026-07-01T10:00:00+00:00"},
+        )
+    )
+    store.add(
+        _row(
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:alpha",
+            object_key="code:github.com/mock/alpha-checkout:src/checkout/cache.py",
+            fact="ALPHA_SENTINEL touched checkout cache",
+            valid_at=_NOW - timedelta(hours=3),
+            source_ref="mock:github:mock/alpha-checkout#pr/101",
+            properties={"occurred_at": "2026-07-01T10:00:00+00:00"},
+        )
+    )
+    store.add(
+        _row(
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:beta",
+            object_key="repo:github.com/mock/beta-billing",
+            fact="BETA_SENTINEL invoice retry change",
+            valid_at=_NOW - timedelta(hours=2),
+            source_ref="mock:github:mock/beta-billing#pr/202",
+            properties={"occurred_at": "2026-07-02T11:00:00+00:00"},
+        )
+    )
+    store.add(
+        _row(
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:beta",
+            object_key="service:billing-worker",
+            fact="BETA_SENTINEL touched billing service",
+            valid_at=_NOW - timedelta(hours=2),
+            source_ref="mock:github:mock/beta-billing#pr/202",
+            properties={"occurred_at": "2026-07-02T11:00:00+00:00"},
+        )
+    )
+    store.add(
+        _row(
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:beta",
+            object_key="code:github.com/mock/beta-billing:src/billing/retry.py",
+            fact="BETA_SENTINEL touched billing retry",
+            valid_at=_NOW - timedelta(hours=2),
+            source_ref="mock:github:mock/beta-billing#pr/202",
+            properties={"occurred_at": "2026-07-02T11:00:00+00:00"},
+        )
+    )
+    return store
+
+
+def _timeline_activity_keys(response) -> set[str]:
+    return {item.candidate.payload["activity_key"] for item in response.items}
 
 
 # ---------------------------------------------------------------------------

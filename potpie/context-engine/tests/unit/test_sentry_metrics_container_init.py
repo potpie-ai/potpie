@@ -6,7 +6,7 @@ from types import ModuleType
 
 import pytest
 
-from adapters.inbound.cli.telemetry.settings import SentrySettings
+from potpie.cli.telemetry.settings import SentrySettings
 from adapters.outbound.graph import Neo4jGraphWriter
 from application.services.source_connector_registry import SourceConnectorRegistry
 from bootstrap import ingestion_server, sentry_metrics_runtime, standalone_container

@@ -23,6 +23,7 @@ from application.readers._common import (
     ReadResponse,
     claim_candidate_key,
     claim_payload,
+    claim_semantic_similarity,
     coverage_status_from_count,
     dedupe_claim_rows,
     rank_candidates,
@@ -88,7 +89,6 @@ class PriorBugsReader:
             )
             if anchor_keys and overlap == 0.0:
                 continue
-            sim = row.properties.get("semantic_similarity")
             fix_key = _fix_key_for_row(row)
             verification_boost = verification_counts.get(fix_key, 0) if fix_key else 0
             candidates.append(
@@ -99,9 +99,7 @@ class PriorBugsReader:
                     valid_at=row.valid_at,
                     corroboration_count=1 + verification_boost,
                     scope_overlap=overlap if anchor_keys else None,
-                    semantic_similarity=float(sim)
-                    if isinstance(sim, (int, float))
-                    else None,
+                    semantic_similarity=claim_semantic_similarity(row),
                 )
             )
 

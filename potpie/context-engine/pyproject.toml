@@ -8,15 +8,18 @@ path = "distribution_defaults_hook.py"
 [project]
 name = "potpie-context-engine"
 version = "0.1.0"
-description = "Context graph API, webhooks, CLI, and MCP."
+description = "Context graph API, webhooks, daemon, and MCP."
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
     "keyring>=25.0.0",
-    "mcp>=1.0.0",
-    "pillow>=10.0.0",
+    "mcp>=1.28.1",
+    "pillow>=12.3.0",
+    "pydantic-settings>=2.14.2",
+    "pyjwt>=2.13.0",
     "rich>=13.0",
+    "starlette>=1.3.1",
     "typer>=0.15.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.0",
@@ -55,9 +58,11 @@ github = [
 ]
 reconciliation-agent = [
     "pydantic-deep>=0.3.0",
+    "pydantic-ai-slim>=1.102.0",
 ]
 hatchet = [
     "hatchet-sdk>=1.29.0",
+    "aiohttp>=3.14.1",
 ]
 observability = [
     "opentelemetry-sdk>=1.27.0",
@@ -65,6 +70,7 @@ observability = [
     "opentelemetry-instrumentation-openai>=0.40b0",
 ]
 all = [
+    "aiohttp>=3.14.1",
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
     "neo4j>=5.28.0",
@@ -74,6 +80,7 @@ all = [
     "sentence-transformers>=5.1.2",
     "pygithub>=2.8.0",
     "pydantic-deep>=0.3.0",
+    "pydantic-ai-slim>=1.102.0",
     "hatchet-sdk>=1.29.0",
     "opentelemetry-sdk>=1.27.0",
     "opentelemetry-exporter-otlp>=1.27.0",
@@ -85,22 +92,10 @@ dev = [
     "ruff>=0.8.0",
 ]
 
-[tool.hatch.build.force-include]
-"adapters/inbound/cli/ui/assets/potpie-logo-static.json" = "adapters/inbound/cli/ui/assets/potpie-logo-static.json"
-"adapters/inbound/cli/ui/assets/potpie.png" = "adapters/inbound/cli/ui/assets/potpie.png"
-"adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "adapters/inbound/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
-"adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "adapters/inbound/cli/templates/claude_plugin/.claude-plugin/plugin.json"
-"adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json" = "adapters/inbound/cli/templates/claude_plugin/hooks/hooks.json"
-
 [tool.hatch.build.targets.wheel]
 packages = ["domain", "application", "adapters", "bootstrap", "benchmarks", "host"]
 include = [
     "domain/playbooks/**/*.md",
-    "adapters/inbound/cli/templates/**/*.md",
-    "adapters/inbound/cli/templates/**/*.yaml",
-    "adapters/inbound/cli/ui/assets/**/*.json",
-    "adapters/inbound/cli/ui/assets/**/*.png",
-    "adapters/inbound/cli/ui/assets/**/*.svg",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
@@ -121,11 +116,6 @@ include = [
     "benchmarks",
     "host",
     "domain/playbooks/**/*.md",
-    "adapters/inbound/cli/templates/**/*.md",
-    "adapters/inbound/cli/templates/**/*.yaml",
-    "adapters/inbound/cli/ui/assets/**/*.json",
-    "adapters/inbound/cli/ui/assets/**/*.png",
-    "adapters/inbound/cli/ui/assets/**/*.svg",
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
@@ -158,8 +148,10 @@ constraint-dependencies = [
     "cryptography>=48.0.1",
     "idna>=3.15",
     "pyjwt>=2.13.0",
+    "pydantic-ai-slim>=1.102.0",
     "pydantic-settings>=2.14.2",
     "python-multipart>=0.0.28",
     "starlette>=1.3.1",
+    "torch>=2.13.0",
     "urllib3>=2.7.0",
 ]

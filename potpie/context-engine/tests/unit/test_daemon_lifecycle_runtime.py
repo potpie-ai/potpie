@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import host_cli as cli_main
+from potpie.cli import main as cli_main
 from domain.lifecycle import DONE, SKIPPED, SetupPlan
 from host.daemon import Daemon
 from host.daemon_client import DaemonRpcClient, RemoteHostShell

@@ -23,9 +23,13 @@ from application.readers._common import (
     claim_candidate_key,
     claim_corroboration,
     claim_payload,
+    claim_semantic_similarity,
+    code_scope_conflicts,
     coverage_status_from_count,
     dedupe_claim_rows,
+    graph_read_scope,
     rank_candidates,
+    row_matches_query,
 )
 from domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 from domain.ranking import Candidate, RankingService
@@ -57,14 +61,18 @@ class CodingPreferencesReader:
         )
 
         scope_keys = _normalise_scope_for_overlap(req.scope)
+        hard_scope = graph_read_scope(req.scope)
         candidates: list[Candidate] = []
         for row in rows:
+            if not row_matches_query(row, req.query, threshold=req.query_threshold):
+                continue
+            if _scope_conflicts(row, hard_scope):
+                continue
             overlap = _scope_overlap(row, scope_keys)
             if overlap == 0.0 and scope_keys:
                 # Hard zero on overlap: skip — readers should not surface
                 # rules that demonstrably don't apply.
                 continue
-            sim = row.properties.get("semantic_similarity")
             candidates.append(
                 Candidate(
                     candidate_key=claim_candidate_key(row),
@@ -73,9 +81,7 @@ class CodingPreferencesReader:
                     valid_at=row.valid_at,
                     corroboration_count=claim_corroboration(row),
                     scope_overlap=overlap if scope_keys else None,
-                    semantic_similarity=float(sim)
-                    if isinstance(sim, (int, float))
-                    else None,
+                    semantic_similarity=claim_semantic_similarity(row),
                 )
             )
 
@@ -134,6 +140,15 @@ def _scope_overlap(row: ClaimRow, task_scope: Mapping[str, str]) -> float:
     if not rule_scope:
         return 0.5
     return hierarchical_scope_overlap(task_scope, rule_scope)
+
+
+def _scope_conflicts(row: ClaimRow, task_scope: Mapping[str, str]) -> bool:
+    if not task_scope:
+        return False
+    rule_scope_raw = row.properties.get("code_scope")
+    if not isinstance(rule_scope_raw, Mapping):
+        return False
+    return code_scope_conflicts(task_scope, rule_scope_raw)
 
 
 def _payload_from_row(row: ClaimRow) -> dict[str, Any]:

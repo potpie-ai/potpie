@@ -159,7 +159,7 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
 
 def main() -> None:
     configure_logging()
-    from adapters.inbound.cli.sentry_runtime import configure_daemon_sentry
+    from potpie.cli.sentry_runtime import configure_daemon_sentry
 
     configure_daemon_sentry()
     home = default_home()
@@ -220,7 +220,7 @@ def _error_payload(exc: Exception) -> dict[str, Any]:
         }
     else:
         logger.exception("daemon RPC failed")
-        from adapters.inbound.cli.sentry_runtime import capture_unexpected_daemon_error
+        from potpie.cli.sentry_runtime import capture_unexpected_daemon_error
 
         capture_unexpected_daemon_error(
             exc,

@@ -53,7 +53,7 @@ def resolve_install_root(path: str | Path) -> Path:
 
 def _iter_bundle_files(bundle_name: str) -> list[tuple[Path, str]]:
     """Return packaged template files from the named bundle as (repo-relative path, UTF-8 text)."""
-    root = resources.files("adapters.inbound.cli").joinpath("templates", bundle_name)
+    root = resources.files("potpie.cli").joinpath("templates", bundle_name)
     out: list[tuple[Path, str]] = []
     stack = [(root, Path("."))]
     while stack:
@@ -258,7 +258,7 @@ def _option_name(token: str) -> str:
 
 @lru_cache(maxsize=1)
 def _potpie_command_option_specs() -> dict[tuple[str, ...], frozenset[str]]:
-    from adapters.inbound.cli.host_cli import app
+    from potpie.cli.main import app
 
     specs: dict[tuple[str, ...], frozenset[str]] = {}
     _collect_typer_command_specs(app, path=(), out=specs)
@@ -267,7 +267,7 @@ def _potpie_command_option_specs() -> dict[tuple[str, ...], frozenset[str]]:
 
 @lru_cache(maxsize=1)
 def _potpie_root_options() -> frozenset[str]:
-    from adapters.inbound.cli.host_cli import app
+    from potpie.cli.main import app
 
     callback = app.registered_callback
     if callback is None or callback.callback is None:
@@ -520,8 +520,9 @@ def install_agent_bundle(
             "agent_bundle",
             result,
             force=force,
-            include=lambda rel: rel.as_posix() == "AGENTS.md"
-            or _include_selected_skills(rel, selected),
+            include=lambda rel: (
+                rel.as_posix() == "AGENTS.md" or _include_selected_skills(rel, selected)
+            ),
             remap=_cursor_bundle_remap,
         )
     elif normalized == "opencode":
@@ -539,8 +540,9 @@ def install_agent_bundle(
             "agent_bundle",
             result,
             force=force,
-            include=lambda rel: rel.as_posix() == "AGENTS.md"
-            or _include_selected_skills(rel, selected),
+            include=lambda rel: (
+                rel.as_posix() == "AGENTS.md" or _include_selected_skills(rel, selected)
+            ),
         )
 
     return result

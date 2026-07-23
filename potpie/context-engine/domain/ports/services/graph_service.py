@@ -137,6 +137,7 @@ class GraphReadRequest:
     source_refs: tuple[str, ...] = ()
     detail: str = "compact"
     relations: str = "summary"
+    query_threshold: float = 0.70
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,8 +173,8 @@ class GraphReadResult:
     relations: str = "summary"
 
     def to_dict(self) -> dict[str, Any]:
-        detail = _normalize_read_detail(self.detail)
-        relations = _normalize_read_relations(self.relations)
+        detail = normalize_read_detail(self.detail)
+        relations = normalize_read_relations(self.relations)
         out = {
             "ok": self.ok,
             "graph_contract_version": self.graph_contract_version,
@@ -188,7 +189,7 @@ class GraphReadResult:
             "detail": detail,
             "relations_detail": relations,
             "items": [
-                _read_item_for_detail(item, detail=detail, relations=relations)
+                read_item_for_detail(item, detail=detail, relations=relations)
                 for item in self.items
             ],
             "coverage": [dict(report) for report in self.coverage],
@@ -316,21 +317,21 @@ class GraphService(Protocol):
         ...
 
 
-def _normalize_read_detail(value: str | None) -> str:
+def normalize_read_detail(value: str | None) -> str:
     detail = (value or "compact").strip().lower()
     if detail not in {"compact", "full"}:
         raise ValueError("detail must be one of: compact, full")
     return detail
 
 
-def _normalize_read_relations(value: str | None) -> str:
+def normalize_read_relations(value: str | None) -> str:
     relations = (value or "summary").strip().lower()
     if relations not in {"summary", "full"}:
         raise ValueError("relations must be one of: summary, full")
     return relations
 
 
-def _read_item_for_detail(
+def read_item_for_detail(
     item: Mapping[str, Any], *, detail: str, relations: str
 ) -> dict[str, Any]:
     payload = dict(item)
@@ -417,4 +418,7 @@ __all__ = [
     "GraphReadRequest",
     "GraphReadResult",
     "GraphService",
+    "normalize_read_detail",
+    "normalize_read_relations",
+    "read_item_for_detail",
 ]
