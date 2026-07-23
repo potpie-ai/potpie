@@ -22,6 +22,11 @@ from adapters.outbound.cli_auth.credentials_store import (
     save_gitlab_workspace_prefs,
 )
 from potpie.cli.ui.output import print_plain_line
+from rich.markup import escape
+
+
+def _esc(value: Any) -> str:
+    return escape(str(value or ""))
 
 
 def _prompt_choice(label: str, *, default: str = "1") -> int:
@@ -40,8 +45,10 @@ def _prompt_project(
         raise GitLabReadError("No GitLab projects found for this account.")
     print_plain_line("Select a project:", as_json=False)
     for index, p in enumerate(projects, start=1):
+        path = _esc(p.get("path_with_namespace"))
+        name = _esc(p.get("name"))
         print_plain_line(
-            f"  {index}. {p.get('path_with_namespace')}\t{p.get('name')}",
+            f"  {index}. {path}\t{name}",
             as_json=False,
         )
     while True:
@@ -67,19 +74,18 @@ def run_gitlab_select_flow(
             "Interactive project selection requires a terminal. "
             "Use: potpie gitlab select --project group/repo"
         )
-    projects = fetch_gitlab_projects(instance_host=instance_host, limit=100)
 
-    if project_path or (default_project and not sys.stdin.isatty()):
-        match = next(
-            (p for p in projects if p.get("path_with_namespace") == default_project),
-            None,
-        )
-        picked = match or {
+    use_direct_project = bool(
+        project_path or (default_project and not sys.stdin.isatty())
+    )
+    if use_direct_project:
+        picked = {
             "path_with_namespace": default_project,
             "name": default_project,
             "id": None,
         }
     else:
+        projects = fetch_gitlab_projects(instance_host=instance_host, limit=100)
         picked = _prompt_project(projects)
 
     path_with_ns = str(picked.get("path_with_namespace") or "").strip()

@@ -383,11 +383,11 @@ def test_run_gitlab_select_flow_with_project_path(
 ) -> None:
     _save_gitlab()
     monkeypatch.setattr(gl_read.sys.stdin, "isatty", lambda: False)
-    monkeypatch.setattr(
-        gl_read,
-        "fetch_gitlab_projects",
-        lambda **_k: [{"id": 7, "path_with_namespace": "acme/api", "name": "API"}],
-    )
+
+    def _fail_list(**_k: Any) -> list[dict[str, Any]]:
+        raise AssertionError("fetch_gitlab_projects should not be called")
+
+    monkeypatch.setattr(gl_read, "fetch_gitlab_projects", _fail_list)
     monkeypatch.setattr(
         gl_read,
         "fetch_gitlab_merge_requests",
@@ -404,17 +404,41 @@ def test_run_gitlab_select_flow_with_project_path(
     assert len(result["issues"]) == 1
 
 
+def test_run_gitlab_select_flow_with_project_path_when_listing_would_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _save_gitlab()
+    monkeypatch.setattr(gl_read.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(
+        gl_read,
+        "fetch_gitlab_projects",
+        lambda **_k: (_ for _ in ()).throw(GitLabReadError("listing failed")),
+    )
+    monkeypatch.setattr(
+        gl_read,
+        "fetch_gitlab_merge_requests",
+        lambda *_a, **_k: [{"iid": 1, "title": "MR"}],
+    )
+    monkeypatch.setattr(
+        gl_read,
+        "fetch_gitlab_issues",
+        lambda *_a, **_k: [],
+    )
+    result = gl_read.run_gitlab_select_flow(project_path="acme/api", limit=5)
+    assert result["workspace_key"] == "acme/api"
+
+
 def test_run_gitlab_select_flow_with_saved_default_project(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _save_gitlab()
     cs.save_gitlab_workspace_prefs(default_project="acme/api")
     monkeypatch.setattr(gl_read.sys.stdin, "isatty", lambda: False)
-    monkeypatch.setattr(
-        gl_read,
-        "fetch_gitlab_projects",
-        lambda **_k: [{"id": 7, "path_with_namespace": "acme/api", "name": "API"}],
-    )
+
+    def _fail_list(**_k: Any) -> list[dict[str, Any]]:
+        raise AssertionError("fetch_gitlab_projects should not be called")
+
+    monkeypatch.setattr(gl_read, "fetch_gitlab_projects", _fail_list)
     monkeypatch.setattr(
         gl_read,
         "fetch_gitlab_merge_requests",
@@ -450,6 +474,24 @@ def test_prompt_project_invalid_then_valid(
     )
     assert picked["path_with_namespace"] == "acme/api"
     assert "Enter a number" in capsys.readouterr().out
+
+
+def test_prompt_project_escapes_rich_markup(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(gl_read.typer, "prompt", lambda *_a, **_k: "1")
+    gl_read._prompt_project(
+        [
+            {
+                "path_with_namespace": "acme/[bold]api",
+                "name": "[red]Danger[/red]",
+            },
+        ],
+    )
+    out = capsys.readouterr().out
+    assert r"acme/\[bold]api" in out
+    assert r"\[red]Danger\[/red]" in out
 
 
 # ─── gitlab_commands via CliRunner ──────────────────────────────────────────

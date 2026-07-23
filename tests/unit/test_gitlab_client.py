@@ -64,6 +64,55 @@ def test_normalize_preserves_port() -> None:
     )
 
 
+def test_normalize_preserves_subpath() -> None:
+    assert (
+        normalize_instance_url("https://company.com/gitlab")
+        == "https://company.com/gitlab"
+    )
+
+
+def test_normalize_preserves_subpath_with_trailing_slash() -> None:
+    assert (
+        normalize_instance_url("https://company.com/gitlab/")
+        == "https://company.com/gitlab"
+    )
+
+
+def test_normalize_preserves_subpath_with_http_allow_http() -> None:
+    assert (
+        normalize_instance_url("http://company.com/gitlab", allow_http=True)
+        == "http://company.com/gitlab"
+    )
+
+
+def test_normalize_strips_gitlab_com_profile_path() -> None:
+    assert (
+        normalize_instance_url("https://gitlab.com/nih1t")
+        == "https://gitlab.com"
+    )
+
+
+def test_normalize_strips_gitlab_com_project_path() -> None:
+    assert (
+        normalize_instance_url("https://gitlab.com/acme/api")
+        == "https://gitlab.com"
+    )
+
+
+def test_normalize_strips_root_host_project_path() -> None:
+    assert (
+        normalize_instance_url("https://git.corp.com/acme/api")
+        == "https://git.corp.com"
+    )
+
+
+def test_normalize_trims_subpath_project_url() -> None:
+    assert (
+        normalize_instance_url("https://company.com/gitlab/acme/api")
+        == "https://company.com/gitlab"
+    )
+
+
 # --- instance_host ---
 
 
@@ -117,6 +166,18 @@ def test_gitlab_api_base_url_custom() -> None:
     )
 
 
+def test_gitlab_api_base_url_subpath() -> None:
+    assert (
+        gitlab_api_base_url("https://company.com/gitlab")
+        == "https://company.com/gitlab/api/v4"
+    )
+
+
+def test_gitlab_pat_page_url_subpath() -> None:
+    url = gitlab_pat_page_url("https://company.com/gitlab")
+    assert url == "https://company.com/gitlab/-/user_settings/personal_access_tokens"
+
+
 # --- parse_user_profile ---
 
 
@@ -161,6 +222,23 @@ def test_verify_instance_access_success() -> None:
     assert ok is True
     assert error_kind is None
     assert data["username"] == "jane"
+
+
+def test_verify_instance_access_uses_subpath_api_base() -> None:
+    fake = FakeAuthHttpClient(
+        [
+            httpx.Response(200, json={"id": 42, "username": "jane"}),
+        ]
+    )
+    ok, error_kind, data = verify_instance_access(
+        "https://company.com/gitlab",
+        "glpat-test",
+        http=fake,
+    )
+    assert ok is True
+    assert error_kind is None
+    assert data["username"] == "jane"
+    assert fake.calls[0][1] == "https://company.com/gitlab/api/v4/user"
 
 
 def test_verify_instance_access_unauthorized() -> None:

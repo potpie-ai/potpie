@@ -20,16 +20,41 @@ from adapters.outbound.cli_auth.provider_config import (
 
 _HTTP_TIMEOUT = 30.0
 
+# GitLab SaaS is always served from the host root (no subpath install).
+_KNOWN_GITLAB_SAAS_HOSTS = frozenset({"gitlab.com", "www.gitlab.com"})
 
-class GitLabAuthErrorKind(enum.StrEnum):
-    INVALID_CREDENTIALS = "invalid_credentials"
-    INSUFFICIENT_SCOPES = "insufficient_scopes"
-    INSTANCE_UNREACHABLE = "instance_unreachable"
-    UNKNOWN = "unknown"
+# Common mount prefixes when GitLab is installed under a URL path.
+_GITLAB_SUBPATH_MOUNTS = frozenset({"gitlab", "git", "gl", "scm"})
+
+
+def _instance_path_prefix(path: str, *, host: str) -> str:
+    """Return a subpath mount prefix, or empty when path is not the instance root."""
+    normalized_path = (path or "").rstrip("/")
+    if not normalized_path:
+        return ""
+
+    hostname = host.lower().split(":")[0]
+    if hostname in _KNOWN_GITLAB_SAAS_HOSTS:
+        return ""
+
+    if normalized_path.startswith(("/-/", "/groups/", "/projects/")):
+        return ""
+
+    segments = [segment for segment in normalized_path.split("/") if segment]
+    if not segments:
+        return ""
+
+    if len(segments) == 1:
+        return f"/{segments[0]}"
+
+    if segments[0].lower() in _GITLAB_SUBPATH_MOUNTS:
+        return f"/{segments[0]}"
+
+    return ""
 
 
 def normalize_instance_url(url: str, *, allow_http: bool | None = None) -> str:
-    """Normalize a GitLab instance URL to ``https://host[:port]``."""
+    """Normalize a GitLab instance URL to ``https://host[:port][/path]``."""
     value = url.strip().rstrip("/")
     if not value:
         return ""
@@ -47,10 +72,21 @@ def normalize_instance_url(url: str, *, allow_http: bool | None = None) -> str:
                 "true",
                 "yes",
             )
-        if not allow_http:
-            return f"https://{parsed.netloc}"
-    scheme = parsed.scheme or "https"
-    return f"{scheme}://{parsed.netloc}"
+        scheme = "http" if allow_http else "https"
+    else:
+        scheme = parsed.scheme or "https"
+    base = f"{scheme}://{parsed.netloc}"
+    path_prefix = _instance_path_prefix(parsed.path or "", host=parsed.netloc)
+    if path_prefix:
+        return f"{base}{path_prefix}"
+    return base
+
+
+class GitLabAuthErrorKind(enum.StrEnum):
+    INVALID_CREDENTIALS = "invalid_credentials"
+    INSUFFICIENT_SCOPES = "insufficient_scopes"
+    INSTANCE_UNREACHABLE = "instance_unreachable"
+    UNKNOWN = "unknown"
 
 
 def instance_host(instance_url: str) -> str:
