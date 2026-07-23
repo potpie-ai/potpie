@@ -42,12 +42,12 @@ def _isolate_creds(tmp_path, monkeypatch):
     )
 
 
-def _save_gitlab(*, host: str = "gitlab.com", token: str = "glpat-test") -> None:
+def _save_gitlab(*, host: str = "gitlab.com", token: str | None = None) -> None:
     cs.save_gitlab_credentials(
         {
             "instance_url": f"https://{host}",
             "instance_host": host,
-            "personal_access_token": token,
+            "personal_access_token": token or "glpat-test",
         },
         account={"username": "jane", "id": "42"},
     )
