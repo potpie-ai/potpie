@@ -77,9 +77,7 @@ def _validate_gitbucket_host_parsed(parsed: Any, *, source: str) -> None:
             "https://git.company.com/gitbucket."
         )
     if parsed.port is not None and not (1 <= parsed.port <= 65535):
-        raise GitBucketClientError(
-            f"Invalid port in GitBucket host URL ({source!r})."
-        )
+        raise GitBucketClientError(f"Invalid port in GitBucket host URL ({source!r}).")
 
 
 def normalize_gitbucket_host_url(host_url: str) -> str:
