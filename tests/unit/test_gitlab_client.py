@@ -86,17 +86,11 @@ def test_normalize_preserves_subpath_with_http_allow_http() -> None:
 
 
 def test_normalize_strips_gitlab_com_profile_path() -> None:
-    assert (
-        normalize_instance_url("https://gitlab.com/nih1t")
-        == "https://gitlab.com"
-    )
+    assert normalize_instance_url("https://gitlab.com/nih1t") == "https://gitlab.com"
 
 
 def test_normalize_strips_gitlab_com_project_path() -> None:
-    assert (
-        normalize_instance_url("https://gitlab.com/acme/api")
-        == "https://gitlab.com"
-    )
+    assert normalize_instance_url("https://gitlab.com/acme/api") == "https://gitlab.com"
 
 
 def test_normalize_strips_root_host_project_path() -> None:
