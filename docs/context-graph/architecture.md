@@ -50,7 +50,7 @@ flowchart TB
 | **host/** | `host/` | `shell.py` (the `HostShell` facade) and `daemon.py` (lifecycle). |
 
 The architecture's single spine is `CLI → HostShell → service(s) → ports`
-(`adapters/inbound/cli/host_cli.py` docstring). Agents reach the same system
+(`potpie/cli/main.py` docstring). Agents reach the same system
 either through the CLI directly or through the in-process MCP `context_*` tools,
 which are compatibility adapters over the same graph internals
 (`adapters/inbound/mcp/server.py`).
@@ -417,7 +417,7 @@ removed — those are **methods on `DefaultGraphService`** plus the declarative
 | Shared engine room | `adapters/outbound/graph/{cypher,canonical_claim_query,claim_query_analytics,claim_query_semantic,apply_plan,writer_port,in_memory_reader,context_graph_service}.py` + `plan_stores/`, `inbox_stores/` |
 | Internal event store | `adapters/outbound/postgres/{reconciliation_ledger,ingestion_event_store,batch_repository,ledger}.py` |
 | External Event Ledger seam (stubs) | `domain/ports/ledger/{client,cursor}.py`; `adapters/outbound/ledger/{managed_client,self_hosted_client,cursor_store}.py` |
-| CLI (host-routed) | `adapters/inbound/cli/host_cli.py` + `adapters/inbound/cli/commands/` |
+| CLI (host-routed) | `potpie/cli/main.py` + `potpie/cli/commands/` |
 | MCP (4 tools) | `adapters/inbound/mcp/server.py` |
 | Ingestion HTTP server | `adapters/inbound/http/` |
 | Skills | `application/services/skill_manager.py` + `adapters/outbound/skills/{bundle_catalog,agent_installer,claude_target}.py` |

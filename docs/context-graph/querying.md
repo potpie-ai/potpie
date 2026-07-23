@@ -23,7 +23,7 @@ plane is `GRAPH_CONTRACT_VERSION="v1.5"`, `ONTOLOGY_VERSION="2026-06-graph"`).
 | Altitude | Surface | Who | Commands |
 |---|---|---|---|
 | **4-tool agent contract** | MCP `context_*` tools (`adapters/inbound/mcp/server.py`) bound by `AgentContextService` (`application/services/agent_context.py`) | harnesses over MCP | `context_resolve`, `context_search`, `context_record`, `context_status` |
-| **Graph Surface Lite** | the `potpie graph …` workbench (`adapters/inbound/cli/commands/graph.py`) over `DefaultGraphService` | humans + harnesses over the CLI | `graph catalog/read/search-entities/neighborhood/describe/status/history` (+ the write/inbox/quality commands in [`writing.md`](./writing.md)) |
+| **Graph Surface Lite** | the `potpie graph …` workbench (`potpie/cli/commands/graph.py`) over `DefaultGraphService` | humans + harnesses over the CLI | `graph catalog/read/search-entities/neighborhood/describe/status/history` (+ the write/inbox/quality commands in [`writing.md`](./writing.md)) |
 
 The MCP surface is **exactly four tools** — `context_record` is its only write. The
 richer workbench is **CLI-only**; it is not mirrored onto MCP. `resolve`/`search`/
@@ -378,7 +378,7 @@ Full flag lists live in [`cli-flow.md`](./cli-flow.md); this is the read-side or
 | `graph status` | data-plane status for the active pot |
 | `graph catalog [--subgraph] [--profile full\|read]` | **contract discovery** — returns `GraphCatalogResult`: versions, commands, truth classes, mutation ops (+ empty review/deferred), source authorities, `match_mode`, views, public entity types & predicates. Derived entirely from the ontology + view map + constants ("no docs needed"). `--task` is **accepted but ignored in V1.5**. |
 | `graph describe [subgraph] [--view] [--examples]` | in-process `describe_contract()` (not a host call); returns a subgraph and optionally one view. |
-| `graph read --subgraph <s> --view <v>` | **Retrieve** axis (§7/§8); `--detail compact\|full`, `--relations summary\|full`, `--query`, `--scope k:v`, `--since/--until`, `--depth/--direction`, `--limit`, `--sort`, `--format`. |
+| `graph read --subgraph <s> --view <v>` | **Retrieve** axis (§7/§8); `--detail compact\|full`, `--relations summary\|full`, `--query`, `--query-threshold` (default `0.70`; lower is looser), `--scope k:v`, `--since/--until`, `--depth/--direction`, `--limit`, `--sort`, `--format`. `--detail` and `--relations` affect **both** `--json` and default human output. `--format table` renders markdown pipe tables in human mode; timeline views default to `--format events` (bullets). |
 | `timeline recent` | sugar for `graph read --subgraph recent_changes --view timeline`. |
 | `graph search-entities` | **Filter** axis (§7); structured typed lookup for identity resolution. |
 | `graph neighborhood --entity <key>` | **Traverse** axis (§7); `graph inspect <key>` is a legacy alias. |

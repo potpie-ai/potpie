@@ -1,6 +1,6 @@
 # Potpie root Makefile
 #
-# Installs the local `potpie` context-engine CLI globally. The day-to-day dev
+# Installs the local `potpie` CLI globally. The day-to-day dev
 # stack (infra, API, worker, migrations, tests) lives in legacy/Makefile — run
 # those with `make -C legacy <target>`.
 #
@@ -23,7 +23,7 @@ help: ## Show this help
 	     /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' \
 	     $(MAKEFILE_LIST)
 
-##@ Context Engine CLI (potpie)
+##@ Potpie CLI
 
 # The `potpie` CLI installs from the root distribution in EDITABLE mode:
 # the global `potpie` / `potpie-mcp` on your PATH run straight from the repo

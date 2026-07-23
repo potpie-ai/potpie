@@ -17,18 +17,21 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from application.readers._common import (
     ReadRequest,
     ReadResponse,
     claim_corroboration,
     claim_payload,
+    claim_semantic_similarity,
     coverage_status_from_count,
     dedupe_claim_rows,
+    graph_read_scope,
     rank_candidates,
     row_in_anchor_set,
-    service_anchor_keys,
+    row_matches_query,
+    scope_ref_matches,
 )
 from domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 from domain.ranking import Candidate, RankingService
@@ -49,12 +52,13 @@ class TimelineReader:
     family: str = "timeline"
 
     def read(self, req: ReadRequest) -> ReadResponse:
-        anchor_keys = service_anchor_keys(req.scope)
+        scope_filters = _timeline_scope_filters(req.scope)
+        anchor_keys = _timeline_anchor_keys(scope_filters)
         window_after, window_before = _resolve_window(req)
 
         rows = self._activities_for_scope(
             req=req,
-            anchor_keys=anchor_keys,
+            scope_filters=scope_filters,
             window_after=window_after,
             window_before=window_before,
         )
@@ -65,9 +69,10 @@ class TimelineReader:
         for row in grouped_rows:
             event_time = _event_datetime(row)
             overlap = (
-                1.0 if (not anchor_keys) or row_in_anchor_set(row, anchor_keys) else 0.4
+                1.0
+                if (not scope_filters) or row_in_anchor_set(row, anchor_keys)
+                else 0.8
             )
-            sim = row.properties.get("semantic_similarity")
             candidates.append(
                 Candidate(
                     candidate_key=_activity_key(row),
@@ -76,9 +81,7 @@ class TimelineReader:
                     valid_at=event_time,
                     scope_overlap=overlap,
                     corroboration_count=claim_corroboration(row),
-                    semantic_similarity=float(sim)
-                    if isinstance(sim, (int, float))
-                    else None,
+                    semantic_similarity=claim_semantic_similarity(row),
                 )
             )
 
@@ -96,6 +99,7 @@ class TimelineReader:
             ),
             meta={
                 "anchor_keys": list(anchor_keys),
+                "scope_filters": dict(scope_filters),
                 "window_after": window_after.isoformat() if window_after else None,
                 "window_before": window_before.isoformat() if window_before else None,
                 "candidate_pool": len(rows),
@@ -107,59 +111,76 @@ class TimelineReader:
         self,
         *,
         req: ReadRequest,
-        anchor_keys: Iterable[str],
+        scope_filters: Mapping[str, str],
         window_after: datetime | None,
         window_before: datetime | None,
     ) -> list[ClaimRow]:
-        anchors = tuple(anchor_keys)
-        base = ClaimQueryFilter(
-            pot_id=req.pot_id,
-            predicate_in=_TIMELINE_PREDICATES,
-            include_invalidated=req.include_invalidated,
-            as_of=req.as_of,
-            source_ref_in=req.source_refs,
-            # Timeline windows are source-event windows. Older rows may have
-            # occurred_at only in properties with valid_at set to ingestion time,
-            # so filter after hydration with _event_datetime().
-            limit=max(req.max_items * 20, 200),
-            fact_query=req.query,
-        )
-        if not anchors:
-            return _filter_window(
-                dedupe_claim_rows(self.claim_query.find_claims(base)),
-                window_after=window_after,
-                window_before=window_before,
+        query_limit = max(req.max_items * 20, 200)
+        anchor_keys = tuple(_timeline_anchor_keys(scope_filters))
+
+        if anchor_keys:
+            # Push repo/service scope into the claim query so scoped reads are
+            # not truncated by unrelated timeline edges in large pots.
+            rows = _fetch_anchor_scoped_rows(
+                self.claim_query,
+                req=req,
+                anchor_keys=anchor_keys,
+                limit=query_limit,
+            )
+            if _scope_needs_full_activity_groups(scope_filters):
+                rows = _expand_activity_group_edges(
+                    self.claim_query,
+                    req=req,
+                    seed_rows=rows,
+                    limit=query_limit,
+                )
+        elif scope_filters:
+            # Path-only scope cannot be indexed as a simple anchor key; fetch
+            # provenance edges and post-filter activity groups by path overlap.
+            rows = dedupe_claim_rows(
+                self.claim_query.find_claims(
+                    ClaimQueryFilter(
+                        pot_id=req.pot_id,
+                        predicate_in=("MENTIONS", "TOUCHED"),
+                        include_invalidated=req.include_invalidated,
+                        as_of=req.as_of,
+                        source_ref_in=req.source_refs,
+                        limit=query_limit,
+                        fact_query=req.query,
+                    )
+                )
+            )
+        else:
+            rows = dedupe_claim_rows(
+                self.claim_query.find_claims(
+                    ClaimQueryFilter(
+                        pot_id=req.pot_id,
+                        predicate_in=_TIMELINE_PREDICATES,
+                        include_invalidated=req.include_invalidated,
+                        as_of=req.as_of,
+                        source_ref_in=req.source_refs,
+                        # Timeline windows are source-event windows. Older rows may
+                        # have occurred_at only in properties with valid_at set to
+                        # ingestion time, so filter after hydration with
+                        # _event_datetime().
+                        limit=query_limit,
+                        fact_query=req.query,
+                    )
+                )
             )
 
-        # Activity → anchor (MENTIONS) plus anchor → activity (PERFORMED etc).
-        mentioning = self.claim_query.find_claims(
-            ClaimQueryFilter(
-                pot_id=base.pot_id,
-                predicate_in=("MENTIONS", "TOUCHED"),
-                object_key_in=anchors,
-                include_invalidated=base.include_invalidated,
-                as_of=base.as_of,
-                source_ref_in=base.source_ref_in,
-                limit=base.limit,
-                fact_query=req.query,
+        rows = _filter_window(
+            rows,
+            window_after=window_after,
+            window_before=window_before,
+        )
+        if req.query:
+            rows = _filter_query_activity_groups(
+                rows, query=req.query, threshold=req.query_threshold
             )
-        )
-        authored = self.claim_query.find_claims(
-            ClaimQueryFilter(
-                pot_id=base.pot_id,
-                predicate_in=("PERFORMED", "AUTHORED"),
-                subject_key_in=anchors,
-                include_invalidated=base.include_invalidated,
-                as_of=base.as_of,
-                source_ref_in=base.source_ref_in,
-                limit=base.limit,
-                fact_query=req.query,
-            )
-        )
-        out = dedupe_claim_rows((*mentioning, *authored))
-        return _filter_window(
-            out, window_after=window_after, window_before=window_before
-        )
+        if scope_filters:
+            rows = _filter_activity_groups(rows, scope_filters=scope_filters)
+        return rows
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +199,165 @@ def _resolve_window(req: ReadRequest) -> tuple[datetime | None, datetime | None]
         # Caller asked only for "before this"; pass through.
         return None, until
     return None, None
+
+
+def _timeline_scope_filters(scope: Mapping[str, Any]) -> dict[str, str]:
+    normalized = graph_read_scope(scope)
+    return {
+        key: value
+        for key, value in normalized.items()
+        if key in {"repo", "service", "path", "file_path"}
+    }
+
+
+def _fetch_anchor_scoped_rows(
+    claim_query: ClaimQueryPort,
+    *,
+    req: ReadRequest,
+    anchor_keys: tuple[str, ...],
+    limit: int,
+) -> list[ClaimRow]:
+    """Fetch timeline edges tied to repo/service anchors via the graph index."""
+    common = {
+        "pot_id": req.pot_id,
+        "include_invalidated": req.include_invalidated,
+        "as_of": req.as_of,
+        "source_ref_in": req.source_refs,
+        "limit": limit,
+        "fact_query": req.query,
+    }
+    mentioning = claim_query.find_claims(
+        ClaimQueryFilter(
+            predicate_in=("MENTIONS", "TOUCHED"),
+            object_key_in=anchor_keys,
+            **common,
+        )
+    )
+    authored = claim_query.find_claims(
+        ClaimQueryFilter(
+            predicate_in=("PERFORMED", "AUTHORED"),
+            subject_key_in=anchor_keys,
+            **common,
+        )
+    )
+    return dedupe_claim_rows((*mentioning, *authored))
+
+
+def _scope_needs_full_activity_groups(scope_filters: Mapping[str, str]) -> bool:
+    return "file_path" in scope_filters or "path" in scope_filters
+
+
+def _expand_activity_group_edges(
+    claim_query: ClaimQueryPort,
+    *,
+    req: ReadRequest,
+    seed_rows: Iterable[ClaimRow],
+    limit: int,
+) -> list[ClaimRow]:
+    """Hydrate all timeline edges for activities matched by anchor-scoped seeds."""
+    activity_keys = tuple({_activity_key(row) for row in seed_rows})
+    if not activity_keys:
+        return []
+    common = {
+        "pot_id": req.pot_id,
+        "include_invalidated": req.include_invalidated,
+        "as_of": req.as_of,
+        "source_ref_in": req.source_refs,
+        "limit": limit,
+        "fact_query": req.query,
+    }
+    as_subject = claim_query.find_claims(
+        ClaimQueryFilter(
+            predicate_in=_TIMELINE_PREDICATES,
+            subject_key_in=activity_keys,
+            **common,
+        )
+    )
+    as_object = claim_query.find_claims(
+        ClaimQueryFilter(
+            predicate_in=("PERFORMED", "AUTHORED"),
+            object_key_in=activity_keys,
+            **common,
+        )
+    )
+    return dedupe_claim_rows((*as_subject, *as_object))
+
+
+def _timeline_anchor_keys(scope: Mapping[str, str]) -> list[str]:
+    keys: list[str] = []
+    repo = scope.get("repo")
+    if repo:
+        keys.append(repo if repo.startswith("repo:") else f"repo:{repo}")
+    service = scope.get("service")
+    if service:
+        keys.append(service if service.startswith("service:") else f"service:{service}")
+    return keys
+
+
+def _filter_activity_groups(
+    rows: Iterable[ClaimRow], *, scope_filters: Mapping[str, str]
+) -> list[ClaimRow]:
+    grouped: dict[str, list[ClaimRow]] = {}
+    order: list[str] = []
+    for row in rows:
+        activity_key = _activity_key(row)
+        if activity_key not in grouped:
+            order.append(activity_key)
+        grouped.setdefault(activity_key, []).append(row)
+
+    out: list[ClaimRow] = []
+    for activity_key in order:
+        group = grouped[activity_key]
+        if _activity_group_matches_scope(group, scope_filters=scope_filters):
+            out.extend(group)
+    return out
+
+
+def _filter_query_activity_groups(
+    rows: Iterable[ClaimRow], *, query: str, threshold: float
+) -> list[ClaimRow]:
+    grouped, order = _group_activity_rows(rows)
+    out: list[ClaimRow] = []
+    for activity_key in order:
+        group = grouped[activity_key]
+        if any(row_matches_query(row, query, threshold=threshold) for row in group):
+            out.extend(group)
+    return out
+
+
+def _group_activity_rows(
+    rows: Iterable[ClaimRow],
+) -> tuple[dict[str, list[ClaimRow]], list[str]]:
+    grouped: dict[str, list[ClaimRow]] = {}
+    order: list[str] = []
+    for row in rows:
+        activity_key = _activity_key(row)
+        if activity_key not in grouped:
+            order.append(activity_key)
+        grouped.setdefault(activity_key, []).append(row)
+    return grouped, order
+
+
+def _activity_group_matches_scope(
+    rows: Iterable[ClaimRow], *, scope_filters: Mapping[str, str]
+) -> bool:
+    scoped_edges = [
+        row for row in rows if row.predicate.upper() in _TIMELINE_PREDICATES
+    ]
+    for key in _scope_filter_keys(scope_filters):
+        if not any(scope_ref_matches(row, scope_filters, key) for row in scoped_edges):
+            return False
+    return True
+
+
+def _scope_filter_keys(scope_filters: Mapping[str, str]) -> tuple[str, ...]:
+    keys: list[str] = []
+    for key in ("repo", "service"):
+        if key in scope_filters:
+            keys.append(key)
+    if "file_path" in scope_filters or "path" in scope_filters:
+        keys.append("file_path" if "file_path" in scope_filters else "path")
+    return tuple(keys)
 
 
 def _payload_from_row(row: ClaimRow) -> dict[str, Any]:
@@ -210,6 +390,7 @@ def _with_freshness(req: ReadRequest, preference: str) -> ReadRequest:
         freshness_preference=preference,
         include_invalidated=req.include_invalidated,
         source_refs=req.source_refs,
+        query_threshold=req.query_threshold,
     )
 
 
@@ -268,8 +449,7 @@ def _representative_activity_row(
             "PERFORMED": 1,
             "AUTHORED": 1,
         }.get(predicate, 0)
-        sim = row.properties.get("semantic_similarity")
-        similarity = float(sim) if isinstance(sim, (int, float)) else 0.0
+        similarity = claim_semantic_similarity(row) or 0.0
         event_time = _event_datetime(row)
         event_ts = event_time.timestamp() if event_time else 0.0
         return (direct_anchor, predicate_priority, similarity, event_ts)

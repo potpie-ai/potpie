@@ -62,7 +62,7 @@ entity; an entity exists only if an edge needs it as an endpoint.
 ## One CLI surface for humans and agents
 
 There is **no separate human-vs-agent API**. Both users and agents talk to the same
-`potpie` CLI, described in its own spine (`adapters/inbound/cli/host_cli.py`) as
+`potpie` CLI, described in its own spine (`potpie/cli/main.py`) as
 "the architecture's single spine": every command routes `CLI → HostShell →
 service(s) → ports`.
 
@@ -166,7 +166,7 @@ local `default` pot. **Cross-pot federation is an explicit anti-goal.**
 The single biggest historical drift in these docs framed the `potpie graph …`
 workbench as a future "Graph V2." **That is wrong: the workbench is shipped today
 as V1.5.** Both the legacy V1 wrappers (`resolve` / `search` / `record`) *and* the
-full workbench are registered in `host_cli.py` right now.
+full workbench are registered in `main.py` right now.
 
 Concretely, the live contract constants are:
 

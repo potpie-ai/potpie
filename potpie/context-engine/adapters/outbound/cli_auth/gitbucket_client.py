@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
+import httpx
+
 from adapters.outbound.cli_auth.http import AuthHttpClient, AuthHttpError, HttpClient
 from adapters.outbound.cli_auth.provider_config import (
     GITBUCKET_ALLOW_INSECURE_HTTP_ENV_VARS,
@@ -43,18 +45,56 @@ class GitBucketAccount:
     html_url: str = ""
 
 
+def _coerce_gitbucket_host_input(host_url: str) -> str:
+    """Normalize common host URL typos before parsing."""
+    url = (host_url or "").strip().rstrip("/")
+    if not url:
+        return ""
+    lower = url.lower()
+    if lower.startswith("https::"):
+        url = "https://" + url[7:]
+    elif lower.startswith("http::"):
+        url = "http://" + url[6:]
+    elif lower.startswith("https:") and not lower.startswith("https://"):
+        url = "https://" + url[6:].lstrip("/")
+    elif lower.startswith("http:") and not lower.startswith("http://"):
+        url = "http://" + url[5:].lstrip("/")
+    elif not lower.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    return url
+
+
+def _validate_gitbucket_host_parsed(parsed: Any, *, source: str) -> None:
+    if parsed.scheme not in ("http", "https"):
+        raise GitBucketClientError(
+            "Invalid GitBucket host URL. Use http:// or https://, for example "
+            "http://localhost:8081."
+        )
+    if not parsed.hostname:
+        raise GitBucketClientError(
+            "Invalid GitBucket host URL "
+            f"({source!r}). Use a full URL such as http://localhost:8081 or "
+            "https://git.company.com/gitbucket."
+        )
+    if parsed.port is not None and not (1 <= parsed.port <= 65535):
+        raise GitBucketClientError(
+            f"Invalid port in GitBucket host URL ({source!r})."
+        )
+
+
 def normalize_gitbucket_host_url(host_url: str) -> str:
     """Normalize a GitBucket host URL: strip trailing slashes, ensure scheme.
 
     Handles subpath deployments (e.g. ``https://git.company.com/gitbucket``).
-    Bare hostnames are assumed HTTPS.
+    Bare hostnames are assumed HTTPS. Raises :class:`GitBucketClientError` when
+    the URL cannot be parsed into a usable host.
     """
-    url = (host_url or "").strip().rstrip("/")
+    source = (host_url or "").strip()
+    url = _coerce_gitbucket_host_input(source)
     if not url:
         return ""
-    if not url.startswith(("http://", "https://")):
-        url = f"https://{url}"
     parsed = urlparse(url)
+    _validate_gitbucket_host_parsed(parsed, source=source)
     normalized = urlunparse(
         (
             parsed.scheme,
@@ -148,6 +188,11 @@ def verify_gitbucket_token(
     except AuthHttpError as exc:
         raise GitBucketClientError(
             f"Could not reach GitBucket at {normalized}: {exc}"
+        ) from exc
+    except httpx.InvalidURL as exc:
+        raise GitBucketClientError(
+            "Invalid GitBucket host URL. Use a full URL such as "
+            f"http://localhost:8081 (received {host_url!r})."
         ) from exc
     finally:
         if owns:

@@ -11,10 +11,16 @@ blast-radius (incoming ``DEPENDS_ON`` traversal with depth). Supports
 When a harness records ``Service DEPLOYED_TO Environment`` with the
 environment stamped on the edge, the question "what env runs auth-svc?"
 returns a real edge instead of 0% coverage.
+
+When the read carries a free-text ``query``, discovered rows are scored
+against it (``semantic_similarity``) so ranking is query-sensitive; the
+traversal itself stays query-free so the same topology is discovered
+either way.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
@@ -25,6 +31,7 @@ from application.readers._common import (
     claim_corroboration,
     claim_environment,
     claim_payload,
+    claim_semantic_similarity,
     coverage_status_from_count,
     dedupe_claim_rows,
     rank_candidates,
@@ -92,6 +99,7 @@ class InfraTopologyReader:
                     valid_at=row.valid_at,
                     scope_overlap=overlap,
                     corroboration_count=claim_corroboration(row),
+                    semantic_similarity=claim_semantic_similarity(row),
                 )
             )
 
@@ -135,6 +143,7 @@ class InfraTopologyReader:
                     include_invalidated=req.include_invalidated,
                     as_of=req.as_of,
                     source_ref_in=req.source_refs,
+                    fact_query=req.query,
                     limit=max(req.max_items * 4, 16),
                 )
             )
@@ -219,7 +228,55 @@ class InfraTopologyReader:
                     next_frontier.add(row.subject_key)
             frontier = next_frontier - visited_anchors
 
-        return list(seen_rows.values())
+        return self._stamp_query_similarity(req, list(seen_rows.values()))
+
+    def _stamp_query_similarity(
+        self, req: ReadRequest, rows: list[ClaimRow]
+    ) -> list[ClaimRow]:
+        """Stamp ``semantic_similarity`` onto already-traversed rows.
+
+        The traversal itself stays query-free: on vector backends a
+        ``fact_query`` turns ``find_claims`` into a top-k similarity search,
+        which would silently prune frontier edges and change *which* topology
+        is discovered. Scoring the discovered rows afterwards keeps discovery
+        query-insensitive while making ranking query-sensitive.
+        """
+        if not req.query or not rows:
+            return rows
+        claim_keys = tuple(sorted({row.claim_key for row in rows if row.claim_key}))
+        if not claim_keys:
+            return rows
+        scored = self.claim_query.find_claims(
+            ClaimQueryFilter(
+                pot_id=req.pot_id,
+                predicate_in=_INFRA_PREDICATES,
+                claim_key_in=claim_keys,
+                include_invalidated=req.include_invalidated,
+                as_of=req.as_of,
+                source_ref_in=req.source_refs,
+                fact_query=req.query,
+                limit=len(claim_keys),
+            )
+        )
+        similarity_by_key: dict[str, float] = {}
+        for row in scored:
+            sim = claim_semantic_similarity(row)
+            if row.claim_key and sim is not None:
+                similarity_by_key[row.claim_key] = sim
+
+        out: list[ClaimRow] = []
+        for row in rows:
+            sim = similarity_by_key.get(row.claim_key) if row.claim_key else None
+            if sim is None:
+                # No stamp for this row (e.g. missing claim_key or the vector
+                # top-k skipped it): leave it unset so the ranker uses its
+                # neutral default instead of a fabricated score.
+                out.append(row)
+                continue
+            props = dict(row.properties)
+            props["semantic_similarity"] = sim
+            out.append(dataclasses.replace(row, properties=props))
+        return out
 
 
 # ---------------------------------------------------------------------------
