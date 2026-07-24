@@ -45,9 +45,7 @@ def collect_cli_install_status() -> dict[str, Any]:
 
     listed_uv = _uv_tool_list_status()
     active_uv = _active_uv_tool_from_executable(primary_path)
-    via_uv_tool = bool(
-        active_uv and active_uv.get("tool_name") in _UV_TOOL_NAMES
-    )
+    via_uv_tool = bool(active_uv and active_uv.get("tool_name") in _UV_TOOL_NAMES)
     editable = bool(via_uv_tool and _is_editable_uv_tool(active_uv["tool_root"]))
 
     package_version = _package_version_via_interpreter(python_interpreter)
