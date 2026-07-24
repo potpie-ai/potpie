@@ -46,7 +46,10 @@ def collect_cli_install_status() -> dict[str, Any]:
     listed_uv = _uv_tool_list_status()
     active_uv = _active_uv_tool_from_executable(primary_path)
     via_uv_tool = bool(active_uv and active_uv.get("tool_name") in _UV_TOOL_NAMES)
-    editable = bool(via_uv_tool and _is_editable_uv_tool(active_uv["tool_root"]))
+    editable = bool(
+        via_uv_tool
+        and _is_editable_uv_tool(active_uv["tool_root"], str(active_uv["tool_name"]))
+    )
 
     package_version = _package_version_via_interpreter(python_interpreter)
     if package_version is None:
@@ -218,29 +221,124 @@ def _active_uv_tool_from_executable(script_path: str | None) -> dict[str, Any] |
     return None
 
 
-def _is_editable_uv_tool(tool_root: Path) -> bool:
+def _package_names_for_tool(tool_name: str) -> frozenset[str]:
+    """Distribution / requirement names that identify the tool package itself."""
+    return frozenset(
+        {
+            tool_name,
+            tool_name.replace("-", "_"),
+            tool_name.replace("_", "-"),
+        }
+    )
+
+
+def _is_editable_uv_tool(tool_root: Path, tool_name: str) -> bool:
+    """Return True only when *this* tool package is an editable install."""
+    package_names = _package_names_for_tool(tool_name)
     receipt = tool_root / "uv-receipt.toml"
     if receipt.is_file():
         try:
             text = receipt.read_text(encoding="utf-8")
         except OSError:
             text = ""
-        if re.search(r"\beditable\s*=", text):
+        receipt_editable = _receipt_tool_editable(text, package_names)
+        if receipt_editable is not None:
+            return receipt_editable
+
+    return _direct_url_tool_editable(tool_root, package_names)
+
+
+def _receipt_tool_editable(text: str, package_names: frozenset[str]) -> bool | None:
+    """Parse uv-receipt.toml for the matching tool requirement's editable flag.
+
+    Returns True/False when the tool requirement is found, else None.
+    """
+    requirements: list[Any] = []
+    try:
+        import tomllib
+
+        data = tomllib.loads(text)
+        tool = data.get("tool")
+        if isinstance(tool, dict):
+            raw = tool.get("requirements")
+            if isinstance(raw, list):
+                requirements = raw
+        if not requirements:
+            raw = data.get("requirements")
+            if isinstance(raw, list):
+                requirements = raw
+    except Exception:
+        requirements = []
+
+    if requirements:
+        for req in requirements:
+            if not isinstance(req, dict):
+                continue
+            name = str(req.get("name") or "").strip()
+            if name not in package_names:
+                continue
+            return bool(req.get("editable"))
+        return None
+
+    # Fallback: only treat editable as True when it appears on the matching req.
+    for name in package_names:
+        if re.search(
+            rf'\{{\s*name\s*=\s*"{re.escape(name)}"\s*,[^{{}}]*\beditable\s*=',
+            text,
+        ):
             return True
+        if re.search(rf'\{{\s*name\s*=\s*"{re.escape(name)}"', text):
+            return False
+    return None
+
+
+def _direct_url_tool_editable(tool_root: Path, package_names: frozenset[str]) -> bool:
+    """Check direct_url.json only under this tool's own dist-info directories."""
     lib = tool_root / "lib"
     if not lib.is_dir():
         return False
+
     try:
-        candidates = lib.rglob("direct_url.json")
+        site_package_paths = lib.rglob("site-packages")
     except OSError:
         return False
-    for path in candidates:
+
+    site_packages: list[Path] = []
+    try:
+        for path in site_package_paths:
+            try:
+                if path.is_dir():
+                    site_packages.append(path)
+            except OSError:
+                continue
+    except OSError:
+        # OSError can also arise while the rglob generator walks the tree.
+        return False
+
+    for site in site_packages:
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            children = list(site.iterdir())
+        except OSError:
             continue
-        if isinstance(data, dict) and data.get("dir_info", {}).get("editable"):
-            return True
+        for child in children:
+            if not child.name.endswith(".dist-info") or not child.is_dir():
+                continue
+            base = child.name[: -len(".dist-info")]
+            if not any(
+                base.startswith(f"{pkg}-")
+                or base.startswith(f"{pkg.replace('-', '_')}-")
+                for pkg in package_names
+            ):
+                continue
+            direct_url = child / "direct_url.json"
+            try:
+                if not direct_url.is_file():
+                    continue
+                data = json.loads(direct_url.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if isinstance(data, dict) and data.get("dir_info", {}).get("editable"):
+                return True
     return False
 
 

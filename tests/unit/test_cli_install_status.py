@@ -57,6 +57,11 @@ def _fake_uv_tool_env(
             ),
             encoding="utf-8",
         )
+    else:
+        (tool_root / "uv-receipt.toml").write_text(
+            'requirements = [{ name = "potpie" }]\n',
+            encoding="utf-8",
+        )
     return tool_root, script
 
 
@@ -140,6 +145,72 @@ def test_collect_skips_uv_tool_when_path_executable_is_not_uv_backed(
     assert "via=uv_tool" not in human
     assert "local reinstall: make cli-install" not in human
     assert "published: uv tool install potpie" not in human
+
+
+def test_sibling_editable_dependency_does_not_mark_tool_editable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Editable sibling deps must not make the potpie tool look editable."""
+    tool_root, script = _fake_uv_tool_env(tmp_path, editable=False)
+    (tool_root / "uv-receipt.toml").write_text(
+        "\n".join(
+            [
+                "requirements = [",
+                '  { name = "potpie" },',
+                '  { name = "helper-lib", editable = "/repo/helper" },',
+                "]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    site = tool_root / "lib" / "python3.12" / "site-packages"
+    sibling = site / "helper_lib-1.0.0.dist-info"
+    sibling.mkdir(parents=True)
+    (sibling / "direct_url.json").write_text(
+        json.dumps(
+            {
+                "url": "file:///repo/helper",
+                "dir_info": {"editable": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Non-editable potpie dist-info (no editable flag).
+    potpie_dist = site / "potpie-2.0.0.dist-info"
+    potpie_dist.mkdir(parents=True)
+    (potpie_dist / "direct_url.json").write_text(
+        json.dumps({"url": "https://pypi.org/simple/potpie/"}),
+        encoding="utf-8",
+    )
+
+    link = tmp_path / "bin" / "potpie"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(script)
+
+    monkeypatch.setattr(
+        cis.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None
+    )
+    monkeypatch.setattr(cis, "_potpie_paths_on_path", lambda: [str(link)])
+    monkeypatch.setattr(cis, "_python_version", lambda _path: "3.12.12")
+    monkeypatch.setattr(cis, "_package_version_via_interpreter", lambda _path: "2.0.0")
+    monkeypatch.setattr(
+        cis.subprocess,
+        "run",
+        lambda *args, **kwargs: MagicMock(
+            returncode=0,
+            stdout="potpie v2.0.0\n- potpie\n",
+            stderr="",
+        ),
+    )
+
+    status = cis.collect_cli_install_status()
+
+    assert status["install_method"] == "uv_tool"
+    assert status["editable"] is False
+    assert status["hint"] is not None
+    assert "make cli-install" not in status["hint"]
+    assert "uv tool install potpie" in status["hint"]
 
 
 def test_published_uv_tool_hint_omits_make_cli_install(
