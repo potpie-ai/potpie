@@ -33,6 +33,7 @@ EXPECTED_CLI_COMMANDS = {
     "doctor",
     "git",
     "github",
+    "gitbucket",
     "gitlab",
     "graph",
     "jira",

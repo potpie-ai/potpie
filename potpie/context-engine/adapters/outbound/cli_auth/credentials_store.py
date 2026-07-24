@@ -30,6 +30,8 @@ _CONFLUENCE_TOKEN_SECRET = "confluence_api_token"
 _ATLASSIAN_CREDENTIALS_KEY = "atlassian"
 _JIRA_CREDENTIALS_KEY = "jira"
 _CONFLUENCE_CREDENTIALS_KEY = "confluence"
+_GITBUCKET_TOKEN_SECRET = "gitbucket_token"
+_GITBUCKET_CREDENTIALS_KEY = "gitbucket"
 _GITLAB_CREDENTIALS_KEY = "gitlab"
 
 
@@ -1282,6 +1284,49 @@ def save_atlassian_workspace_prefs(
         save_confluence_workspace_prefs(space_key=confluence_space)
 
 
+def save_gitbucket_credentials(credentials: dict[str, Any]) -> None:
+    """Store a GitBucket personal access token and metadata."""
+    from adapters.outbound.cli_auth.integration_profile import (
+        build_gitbucket_integration_record,
+    )
+
+    token = str(credentials.get("token") or "").strip()
+    if not token:
+        raise ProviderCredentialError("GitBucket personal access token is required.")
+
+    prior = _read_metadata_entry(_GITBUCKET_CREDENTIALS_KEY)
+    merged = {**prior, **credentials, "token": token}
+    host_url = str(merged.get("host_url") or "").strip()
+    if not host_url:
+        raise ProviderCredentialError("GitBucket host URL is required.")
+
+    token_storage = _store_file_secret(
+        "GitBucket token",
+        _GITBUCKET_TOKEN_SECRET,
+        token,
+    )
+    record = build_gitbucket_integration_record(merged)
+    record["token_storage"] = token_storage
+    _write_metadata_entry(_GITBUCKET_CREDENTIALS_KEY, record)
+
+
+def get_gitbucket_credentials() -> dict[str, Any]:
+    """Return stored GitBucket metadata merged with the secret token."""
+    metadata = _read_metadata_entry(_GITBUCKET_CREDENTIALS_KEY)
+    if not metadata:
+        return {}
+    token = _load_file_secret("GitBucket token", _GITBUCKET_TOKEN_SECRET)
+    if not token:
+        return {}
+    return {**metadata, "token": token}
+
+
+def clear_gitbucket_credentials() -> None:
+    """Remove all stored GitBucket credentials."""
+    _delete_file_secret("GitBucket token", _GITBUCKET_TOKEN_SECRET)
+    _clear_metadata_entries(_GITBUCKET_CREDENTIALS_KEY)
+
+
 def get_integration_tokens(provider: str) -> dict[str, Any]:
     """Return integration credentials with secrets loaded from the local file store."""
     key = _norm_integration_key(provider)
@@ -1299,6 +1344,9 @@ def get_integration_tokens(provider: str) -> dict[str, Any]:
         else:
             creds = get_confluence_credentials()
         return {"auth_type": "api_token", **creds} if creds else {}
+    if key == _GITBUCKET_CREDENTIALS_KEY:
+        creds = get_gitbucket_credentials()
+        return {"auth_type": "personal_access_token", **creds} if creds else {}
     if key == _GITLAB_CREDENTIALS_KEY:
         creds = get_gitlab_credentials()
         return {"auth_type": "personal_access_token", **creds} if creds else {}
@@ -1335,6 +1383,9 @@ def clear_integration_tokens(provider: str) -> None:
     if key == _ATLASSIAN_CREDENTIALS_KEY:
         clear_atlassian_credentials()
         return
+    if key == _GITBUCKET_CREDENTIALS_KEY:
+        clear_gitbucket_credentials()
+        return
     if key == _GITLAB_CREDENTIALS_KEY:
         clear_gitlab_credentials()
         return
@@ -1349,6 +1400,7 @@ def list_integration_providers() -> list[str]:
         _JIRA_CREDENTIALS_KEY,
         _CONFLUENCE_CREDENTIALS_KEY,
         _ATLASSIAN_CREDENTIALS_KEY,
+        _GITBUCKET_CREDENTIALS_KEY,
         _GITLAB_CREDENTIALS_KEY,
     ):
         if isinstance(integrations.get(key), dict):
@@ -1360,6 +1412,7 @@ def get_integration_status(provider: str) -> dict[str, Any]:
     from adapters.outbound.cli_auth.integration_profile import (
         atlassian_account_from_entry,
         atlassian_site_from_entry,
+        gitbucket_account_from_entry,
         linear_account_from_entry,
     )
 
@@ -1465,6 +1518,27 @@ def get_integration_status(provider: str) -> dict[str, Any]:
             "cloud_id": site.get("cloud_id") or (entry or creds).get("cloud_id"),
             "stored_at": (entry or creds).get("stored_at"),
             "token_storage": (entry or creds).get("token_storage"),
+        }
+
+    if key == _GITBUCKET_CREDENTIALS_KEY:
+        metadata = _read_metadata_entry(_GITBUCKET_CREDENTIALS_KEY)
+        token = _load_file_secret("GitBucket token", _GITBUCKET_TOKEN_SECRET)
+        if not metadata or not token:
+            return {
+                "provider": key,
+                "authenticated": False,
+                "auth_type": "personal_access_token",
+            }
+        account = gitbucket_account_from_entry(metadata)
+        return {
+            "provider": key,
+            "authenticated": True,
+            "auth_type": "personal_access_token",
+            "login": account.get("login"),
+            "email": account.get("email"),
+            "host_url": metadata.get("host_url"),
+            "stored_at": metadata.get("stored_at"),
+            "token_storage": metadata.get("token_storage"),
         }
 
     if key == _GITLAB_CREDENTIALS_KEY:

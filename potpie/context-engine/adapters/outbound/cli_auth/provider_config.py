@@ -9,7 +9,15 @@ import os
 
 from bootstrap.runtime_settings import load_runtime_settings
 
-Provider = Literal["linear", "github", "atlassian", "jira", "confluence", "gitlab"]
+Provider = Literal[
+    "linear",
+    "github",
+    "atlassian",
+    "jira",
+    "confluence",
+    "gitlab",
+    "gitbucket",
+]
 OAuthProvider = Literal["linear"]
 AtlassianProduct = Literal["jira", "confluence"]
 
@@ -29,6 +37,15 @@ ATLASSIAN_API_TOKEN_PAGE = "https://id.atlassian.com/manage-profile/security/api
 ATLASSIAN_API_GATEWAY = "https://api.atlassian.com"
 ATLASSIAN_ACCESSIBLE_RESOURCES_URL = (
     f"{ATLASSIAN_API_GATEWAY}/oauth/token/accessible-resources"
+)
+
+# GitBucket PATs are created at /{username}/_application (Account Settings → Applications).
+GITBUCKET_TOKEN_PAGE_SUFFIX = "_application"
+GITBUCKET_API_VERSION = "v3"
+GITBUCKET_TOKEN_ENV_VARS = ("GITBUCKET_TOKEN", "POTPIE_GITBUCKET_TOKEN")
+GITBUCKET_ALLOW_INSECURE_HTTP_ENV_VARS = (
+    "POTPIE_GITBUCKET_ALLOW_INSECURE_HTTP",
+    "GITBUCKET_ALLOW_INSECURE_HTTP",
 )
 
 

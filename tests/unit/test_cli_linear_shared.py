@@ -1362,6 +1362,7 @@ def test_get_client_id_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_redirect_and_callback_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("POTPIE_CLI_OAUTH_CALLBACK_PORT", raising=False)
     monkeypatch.setenv(
         "POTPIE_CLI_OAUTH_REDIRECT_URI",
         "http://127.0.0.1:9001/custom/callback",
@@ -1418,6 +1419,7 @@ def test_get_scopes_default_and_override(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_invalid_redirect_uri_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("POTPIE_CLI_OAUTH_CALLBACK_PORT", raising=False)
     monkeypatch.setenv("POTPIE_CLI_OAUTH_REDIRECT_URI", "https://example.com/cb")
     with pytest.raises(ValueError, match="localhost"):
         get_callback_port()
