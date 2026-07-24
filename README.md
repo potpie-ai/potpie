@@ -35,6 +35,19 @@ python3 -m pip install --user potpie
 > `uv tool install potpie` is recommended for CLI installs because global
 > mutation of Python packages is generally not recommended.
 
+### Developing from this repository
+
+For a source checkout, use the Makefile path (builds the graph explorer, stops
+any old daemon, then installs the editable CLI):
+
+```bash
+make cli-install
+make cli-status
+```
+
+Do not use a bare `uv tool install --editable ./potpie/context-engine` for
+day-to-day local reinstalls — it skips the UI build and daemon stop.
+
 ### Step 2: Run the Potpie setup wizard
 
 ```bash

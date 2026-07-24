@@ -303,13 +303,15 @@ usage events.
 facts (uv tool env, PATH, python shebang), and recommended follow-up commands.
 Do not use `python -m pip show potpie-context-engine` for local dev installs —
 the package lives in the uv tool environment. Prefer `uv tool list`,
-`which -a potpie`, and `make cli-status`.
+`which -a potpie`, `make cli-status`, and `make cli-install` for repo-local
+reinstalls (UI build + daemon stop + editable install).
 
 ```bash
 uv tool list
 which -a potpie
 head -n 1 "$(command -v potpie)"
 make cli-status
+make cli-install   # repo-local reinstall only
 potpie doctor
 potpie --json doctor
 ```
@@ -548,8 +550,19 @@ flowchart LR
 Local first run (OSS default — `falkordb_lite`, detached daemon, skills installed
 during setup):
 
+**Published package:**
+
 ```bash
-pip install potpie
+uv tool install potpie   # or: pip install potpie
+potpie setup --repo . --agent claude
+potpie status
+```
+
+**This repo (local development):** prefer `make cli-install` so the graph-explorer
+UI is built and any old daemon is stopped before the editable install.
+
+```bash
+make cli-install
 potpie setup --repo . --agent claude
 potpie status
 

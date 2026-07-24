@@ -42,6 +42,19 @@ The in-progress Graph V1.5 handover plan is
 Run `potpie --help` (or `python -m potpie.cli.main --help`) to list
 the live commands.
 
+## Local install (this repo)
+
+Repo-local development installs the CLI with:
+
+```bash
+make cli-install
+make cli-status
+```
+
+That path builds the graph-explorer UI, stops any old daemon, and installs the
+editable package. Published-package users should use `uv tool install potpie` or
+`pip install potpie` instead.
+
 ## Agent harness install
 
 `potpie skills install [<id>] --agent claude` materializes the packaged skill

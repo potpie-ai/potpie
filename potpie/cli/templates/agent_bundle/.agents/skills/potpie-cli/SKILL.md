@@ -11,6 +11,18 @@ ordinary project-memory context, prefer the relevant use-case skill first.
 
 ## Setup And Scope
 
+For **repo-local** CLI install/reinstall from this checkout, use:
+
+```bash
+make cli-install    # UI build + stop old daemon + editable install
+make cli-status
+potpie doctor
+```
+
+Do not use raw `uv tool install --editable …` or `pip install` for day-to-day
+local reinstalls. Reserve `uv tool install potpie` / `pip install potpie` for
+the **published** package.
+
 ```bash
 potpie doctor
 potpie --json doctor
@@ -79,7 +91,8 @@ deterministic local code scans as the agent ingestion path.
 Do not use scanner-driven graph updates.
 
 For CLI failures, stay in this skill: run `potpie doctor`, `make cli-status`, or
-`uv tool list` for install facts. Do not use `python -m pip show
+`uv tool list` for install facts. For repo-local reinstall use `make cli-install`
+(not raw `uv tool install`). Do not use `python -m pip show
 potpie-context-engine` for local uv-tool installs. Inspect JSON output when
 useful, check API URL/key config, confirm pot scope, and verify source
 registration before changing project code.
