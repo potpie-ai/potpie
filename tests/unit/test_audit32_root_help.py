@@ -1,4 +1,4 @@
-"""Tests for CLI audit 32: root help happy path + de-emphasize auth/cloud."""
+"""Tests for root help: first-run guidance + de-emphasize auth/cloud."""
 
 from __future__ import annotations
 
@@ -11,11 +11,24 @@ from potpie.cli import main as host_cli
 
 pytestmark = pytest.mark.unit
 
+# Rich help on CI injects ANSI between glyphs (e.g. "╭─" + codes + " Legacy"),
+# so assertions must run on a stripped view of the text.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
 
 def _root_help() -> str:
-    result = CliRunner().invoke(host_cli.app, ["--help"])
+    result = CliRunner().invoke(
+        host_cli.app,
+        ["--help"],
+        color=False,
+        env={"NO_COLOR": "1", "TERM": "dumb"},
+    )
     assert result.exit_code == 0, result.output
-    return result.stdout
+    return _strip_ansi(result.stdout)
 
 
 def _panel_body(help_text: str, title: str) -> str:
