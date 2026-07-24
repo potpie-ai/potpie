@@ -16,10 +16,12 @@ from potpie.cli.commands._common import contract
 from domain.errors import CapabilityNotImplemented
 
 cloud_app = typer.Typer(
-    help="Managed profile + sync (TODO).", invoke_without_command=True
+    help="Managed Potpie profile and sync (in development).",
+    invoke_without_command=True,
 )
 skills_app = typer.Typer(
-    help="Managed skill catalog sync (TODO).", invoke_without_command=True
+    help="Managed skill catalog sync (in development).",
+    invoke_without_command=True,
 )
 cloud_app.add_typer(skills_app, name="skills")
 
@@ -72,7 +74,7 @@ def cloud_pull(pot: str = typer.Option(None, "--pot")) -> None:
 
 @skills_app.command("sync")
 def cloud_skills_sync(agent: str = typer.Option(None, "--agent")) -> None:
-    """Sync the managed skill catalog into a harness (managed profile; TODO)."""
+    """Sync the managed skill catalog into a harness (in development)."""
     with contract():
         _todo("skills.sync")
 
