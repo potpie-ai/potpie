@@ -32,6 +32,7 @@ _JIRA_CREDENTIALS_KEY = "jira"
 _CONFLUENCE_CREDENTIALS_KEY = "confluence"
 _GITBUCKET_TOKEN_SECRET = "gitbucket_token"
 _GITBUCKET_CREDENTIALS_KEY = "gitbucket"
+_GITLAB_CREDENTIALS_KEY = "gitlab"
 
 
 class CredentialStoreError(CliAuthError):
@@ -1097,6 +1098,181 @@ def save_linear_workspace_prefs(
     )
 
 
+def _gitlab_pat_secret(host: str) -> str:
+    return f"gitlab_pat_{host}"
+
+
+def _norm_gitlab_host(host: str) -> str:
+    key = str(host or "").strip().lower().rstrip("/")
+    if not key:
+        return "gitlab.com"
+    if key.startswith(("http://", "https://")):
+        from urllib.parse import urlparse
+
+        parsed = urlparse(key)
+        return parsed.netloc or "gitlab.com"
+    return key
+
+
+def _read_gitlab_metadata() -> dict[str, Any]:
+    return _read_metadata_entry(_GITLAB_CREDENTIALS_KEY) or {}
+
+
+def _get_active_gitlab_host() -> str | None:
+    meta = _read_gitlab_metadata()
+    active = str(meta.get("active_instance_host") or "").strip()
+    if active:
+        return active
+    instances = meta.get("instances")
+    if isinstance(instances, dict) and len(instances) == 1:
+        return next(iter(instances.keys()))
+    return None
+
+
+def save_gitlab_credentials(
+    credentials: dict[str, Any],
+    *,
+    account: dict[str, Any] | None = None,
+) -> None:
+    """Store GitLab PAT credentials for a single instance."""
+    from adapters.outbound.cli_auth.integration_profile import (
+        build_gitlab_integration_record,
+    )
+
+    inst_host = _norm_gitlab_host(
+        credentials.get("instance_host") or credentials.get("instance_url") or ""
+    )
+    pat = str(credentials.get("personal_access_token") or "").strip()
+    if not pat:
+        raise ProviderCredentialError("GitLab personal access token is required.")
+
+    secret_name = _gitlab_pat_secret(inst_host)
+    token_storage = _store_file_secret("GitLab PAT", secret_name, pat)
+
+    instance_entry = dict(credentials)
+    instance_entry.pop("personal_access_token", None)
+    instance_entry["instance_host"] = inst_host
+    instance_entry["token_storage"] = token_storage
+
+    meta = _read_gitlab_metadata()
+    existing_instances = dict(meta.get("instances") or {})
+    existing_entry = existing_instances.get(inst_host) or {}
+    if "workspaces" not in instance_entry and isinstance(
+        existing_entry.get("workspaces"),
+        dict,
+    ):
+        instance_entry["workspaces"] = existing_entry["workspaces"]
+    if "created_at" not in instance_entry and existing_entry.get("created_at"):
+        instance_entry["created_at"] = existing_entry["created_at"]
+
+    record = build_gitlab_integration_record(
+        instance_entry,
+        account=account,
+    )
+
+    instances = existing_instances
+    instances[inst_host] = record
+    meta["instances"] = instances
+    meta["active_instance_host"] = inst_host
+    _write_metadata_entry(_GITLAB_CREDENTIALS_KEY, meta)
+
+
+def get_gitlab_credentials(
+    instance_host: str | None = None,
+) -> dict[str, Any]:
+    """Return GitLab credentials (metadata + PAT) for an instance."""
+    meta = _read_gitlab_metadata()
+    host = (
+        _norm_gitlab_host(instance_host) if instance_host else _get_active_gitlab_host()
+    )
+    if not host:
+        return {}
+
+    instances = meta.get("instances")
+    if not isinstance(instances, dict):
+        return {}
+    entry = instances.get(host)
+    if not isinstance(entry, dict):
+        return {}
+
+    secret_name = _gitlab_pat_secret(host)
+    pat = _load_file_secret("GitLab PAT", secret_name)
+    if not pat:
+        return {}
+    result = dict(entry)
+    result["personal_access_token"] = pat
+    return result
+
+
+def clear_gitlab_credentials(instance_host: str | None = None) -> None:
+    """Remove stored GitLab credentials for an instance (or all instances)."""
+    meta = _read_gitlab_metadata()
+    instances = dict(meta.get("instances") or {})
+
+    if instance_host:
+        host = _norm_gitlab_host(instance_host)
+        _delete_file_secret("GitLab PAT", _gitlab_pat_secret(host))
+        instances.pop(host, None)
+        if instances:
+            meta["instances"] = instances
+            active = meta.get("active_instance_host")
+            if active == host:
+                meta["active_instance_host"] = next(iter(instances.keys()))
+            _write_metadata_entry(_GITLAB_CREDENTIALS_KEY, meta)
+        else:
+            _clear_metadata_entries(_GITLAB_CREDENTIALS_KEY)
+    else:
+        for host in list(instances.keys()):
+            _delete_file_secret("GitLab PAT", _gitlab_pat_secret(host))
+        _clear_metadata_entries(_GITLAB_CREDENTIALS_KEY)
+
+
+def list_gitlab_instances() -> list[dict[str, Any]]:
+    """Return connected GitLab instances with metadata only."""
+    meta = _read_gitlab_metadata()
+    instances = meta.get("instances")
+    if not isinstance(instances, dict):
+        return []
+    active = str(meta.get("active_instance_host") or "").strip()
+    rows: list[dict[str, Any]] = []
+    for host, entry in instances.items():
+        if not isinstance(entry, dict):
+            continue
+        row = dict(entry)
+        row["instance_host"] = host
+        row["active"] = host == active
+        rows.append(row)
+    return rows
+
+
+def save_gitlab_workspace_prefs(
+    *,
+    instance_host: str | None = None,
+    default_project: str,
+) -> None:
+    """Persist the user's default GitLab project selection."""
+    meta = _read_gitlab_metadata()
+    host = (
+        _norm_gitlab_host(instance_host) if instance_host else _get_active_gitlab_host()
+    )
+    if not host:
+        raise ProviderCredentialError(
+            "GitLab is not connected. Run: potpie gitlab login"
+        )
+    instances = dict(meta.get("instances") or {})
+    if host not in instances:
+        raise ProviderCredentialError(
+            "GitLab is not connected. Run: potpie gitlab login"
+        )
+    entry = dict(instances.get(host) or {})
+    workspaces = dict(entry.get("workspaces") or {})
+    workspaces["default_project"] = default_project.strip()
+    entry["workspaces"] = workspaces
+    instances[host] = entry
+    meta["instances"] = instances
+    _write_metadata_entry(_GITLAB_CREDENTIALS_KEY, meta)
+
+
 def save_atlassian_workspace_prefs(
     *,
     jira_project: str | None = None,
@@ -1171,6 +1347,9 @@ def get_integration_tokens(provider: str) -> dict[str, Any]:
     if key == _GITBUCKET_CREDENTIALS_KEY:
         creds = get_gitbucket_credentials()
         return {"auth_type": "personal_access_token", **creds} if creds else {}
+    if key == _GITLAB_CREDENTIALS_KEY:
+        creds = get_gitlab_credentials()
+        return {"auth_type": "personal_access_token", **creds} if creds else {}
 
     raise ValueError(f"Unknown integration provider {provider!r}.")
 
@@ -1207,6 +1386,9 @@ def clear_integration_tokens(provider: str) -> None:
     if key == _GITBUCKET_CREDENTIALS_KEY:
         clear_gitbucket_credentials()
         return
+    if key == _GITLAB_CREDENTIALS_KEY:
+        clear_gitlab_credentials()
+        return
     raise ValueError(f"Unknown integration provider {provider!r}.")
 
 
@@ -1219,6 +1401,7 @@ def list_integration_providers() -> list[str]:
         _CONFLUENCE_CREDENTIALS_KEY,
         _ATLASSIAN_CREDENTIALS_KEY,
         _GITBUCKET_CREDENTIALS_KEY,
+        _GITLAB_CREDENTIALS_KEY,
     ):
         if isinstance(integrations.get(key), dict):
             found.append(key)
@@ -1356,6 +1539,42 @@ def get_integration_status(provider: str) -> dict[str, Any]:
             "host_url": metadata.get("host_url"),
             "stored_at": metadata.get("stored_at"),
             "token_storage": metadata.get("token_storage"),
+        }
+
+    if key == _GITLAB_CREDENTIALS_KEY:
+        from adapters.outbound.cli_auth.integration_profile import (
+            gitlab_account_from_entry,
+        )
+
+        creds = get_gitlab_credentials()
+        if not creds:
+            return {
+                "provider": key,
+                "authenticated": False,
+                "auth_type": "personal_access_token",
+            }
+        meta = _read_gitlab_metadata()
+        instances = meta.get("instances")
+        active_host = _get_active_gitlab_host()
+        entry = (
+            instances.get(active_host)
+            if isinstance(instances, dict) and active_host
+            else {}
+        ) or {}
+        account = gitlab_account_from_entry(entry)
+        instance_count = len(instances) if isinstance(instances, dict) else 0
+        return {
+            "provider": key,
+            "authenticated": True,
+            "auth_type": "personal_access_token",
+            "login": account.get("username") or account.get("name"),
+            "email": account.get("email"),
+            "instance_url": entry.get("instance_url"),
+            "instance_host": active_host,
+            "stored_at": entry.get("stored_at"),
+            "token_storage": entry.get("token_storage"),
+            "provider_host": active_host,
+            "instance_count": instance_count,
         }
 
     raise ValueError(f"Unknown integration provider {provider!r}.")
