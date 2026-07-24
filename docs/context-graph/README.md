@@ -49,9 +49,23 @@ flowchart TB
 
 ## Target OSS default
 
+**Published package** (PyPI):
+
 ```bash
-pip install potpie
+uv tool install potpie   # recommended
+# or: pip install potpie
 potpie setup        # provisions config, local stores, the default pot, the daemon, and skills
+potpie status
+```
+
+**Repo-local development** (this checkout): use `make cli-install` — it builds the
+graph-explorer UI, stops any old daemon, and installs the editable CLI. Do not use
+raw `uv tool install --editable ./potpie/context-engine` for day-to-day reinstalls.
+
+```bash
+make cli-install
+make cli-status     # confirm PATH / uv-tool install
+potpie setup
 potpie status
 ```
 

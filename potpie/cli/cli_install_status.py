@@ -18,6 +18,7 @@ _DIAGNOSTIC_COMMANDS = (
     "which -a potpie",
     'head -n 1 "$(command -v potpie)"',
     "make cli-status",
+    "make cli-install",
 )
 
 
@@ -29,6 +30,14 @@ def collect_cli_install_status() -> dict[str, Any]:
     python_version = _python_version(python_interpreter)
     uv_tool = _uv_tool_status()
     package_version = _installed_package_version()
+    via_uv_tool = bool(uv_tool.get("installed"))
+    hint = None
+    if via_uv_tool:
+        hint = (
+            "Check with `make cli-status` or `potpie doctor`. "
+            "Repo-local reinstall: `make cli-install` "
+            "(builds UI, stops old daemon) — not raw `uv tool install`."
+        )
 
     return {
         "package_name": CLI_TOOL_NAME,
@@ -43,13 +52,14 @@ def collect_cli_install_status() -> dict[str, Any]:
         "uv_available": shutil.which("uv") is not None,
         "uv_tool_installed": uv_tool.get("installed"),
         "uv_tool_version": uv_tool.get("version"),
-        "install_method": "uv_tool" if uv_tool.get("installed") else None,
+        "install_method": "uv_tool" if via_uv_tool else None,
         "diagnostic_commands": list(_DIAGNOSTIC_COMMANDS),
+        "hint": hint,
         "pip_show_note": (
             "Do not use `python -m pip show potpie-context-engine` for local dev "
             "installs: `python` may be absent from PATH and the package lives in "
             "the uv tool environment. Prefer `uv tool list`, `which -a potpie`, "
-            "and `make cli-status`."
+            "`make cli-status`, and `make cli-install` for repo-local reinstalls."
         ),
     }
 
@@ -67,7 +77,10 @@ def cli_install_human(status: dict[str, Any]) -> str:
         parts.append(f"via={via}")
     if py:
         parts.append(f"python={py}")
-    return " ".join(parts)
+    line = " ".join(parts)
+    if via == "uv_tool":
+        line += " | tip: make cli-status (local reinstall: make cli-install)"
+    return line
 
 
 def _installed_package_version() -> str | None:

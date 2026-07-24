@@ -57,7 +57,11 @@ def test_collect_cli_install_status_from_uv_tool(
     assert status["python_version"] == "3.12.12"
     assert "uv tool list" in status["diagnostic_commands"]
     assert "make cli-status" in status["diagnostic_commands"]
+    assert "make cli-install" in status["diagnostic_commands"]
+    assert status["hint"] is not None
+    assert "make cli-install" in status["hint"]
     assert "pip show" in status["pip_show_note"]
+    assert "make cli-install" in cis.cli_install_human(status)
 
 
 def test_cli_install_human_when_missing_from_path() -> None:
@@ -112,3 +116,35 @@ def test_doctor_includes_cli_install(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0, result.stdout
     assert "cli: potpie-context-engine 0.1.0" in result.stdout
     assert "via=uv_tool" in result.stdout
+    assert "make cli-status" in result.stdout
+    assert "make cli-install" in result.stdout
+
+
+def test_cli_install_human_uv_tool_includes_reinstall_hint() -> None:
+    human = cis.cli_install_human(
+        {
+            "on_path": True,
+            "package_name": "potpie-context-engine",
+            "package_version": "0.1.0",
+            "primary_path": "/Users/me/.local/bin/potpie",
+            "install_method": "uv_tool",
+            "python_version": "3.12.12",
+        }
+    )
+    assert "via=uv_tool" in human
+    assert "make cli-status" in human
+    assert "make cli-install" in human
+
+
+def test_collect_cli_install_status_omits_hint_without_uv_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cis.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(cis, "_potpie_paths_on_path", lambda: [])
+    monkeypatch.setattr(cis, "_installed_package_version", lambda: None)
+
+    status = cis.collect_cli_install_status()
+
+    assert status["uv_tool_installed"] is False
+    assert status["hint"] is None
+    assert "make cli-install" in status["diagnostic_commands"]
