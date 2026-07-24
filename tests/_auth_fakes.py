@@ -14,6 +14,8 @@ from typing import Any, Callable, Optional
 
 import httpx
 
+from adapters.outbound.cli_auth.credentials_store import ProviderCredentialError
+
 
 class FakeAuthHttpClient:
     """Scriptable :class:`~adapters.outbound.cli_auth.http.HttpClient` for tests.
@@ -77,6 +79,7 @@ class InMemoryCredentialStore:
         self.integrations: dict[str, dict[str, Any]] = {}
         self.atlassian: dict[str, dict[str, Any]] = {}
         self.workspace_prefs: dict[str, dict[str, Any]] = {}
+        self._gitlab_pat_secrets: dict[str, str] = {}
 
     # --- paths / Potpie account ------------------------------------------
     def credentials_path(self) -> Path:
@@ -211,6 +214,105 @@ class InMemoryCredentialStore:
 
     def save_confluence_workspace_prefs(self, *, space_key: str) -> None:
         self.workspace_prefs["confluence"] = {"space_key": space_key}
+
+    # --- GitLab credentials + workspace prefs ----------------------------
+    def get_gitlab_credentials(
+        self,
+        instance_host: str | None = None,
+    ) -> dict[str, Any]:
+        gitlab = self.providers.get("gitlab", {})
+        if not gitlab:
+            return {}
+        instances = gitlab.get("instances", {})
+        host = instance_host or gitlab.get("active_instance_host")
+        if host and isinstance(instances, dict):
+            entry = dict(instances.get(host, {}))
+            if not entry:
+                return {}
+            pat = self._gitlab_pat_secrets.get(host, "")
+            if not pat:
+                return {}
+            entry["personal_access_token"] = pat
+            return entry
+        return {}
+
+    def save_gitlab_credentials(
+        self,
+        credentials: dict[str, Any],
+        *,
+        account: dict[str, Any] | None = None,
+    ) -> None:
+        pat = str(credentials.get("personal_access_token") or "").strip()
+        if not pat:
+            raise ProviderCredentialError("GitLab personal access token is required.")
+        gitlab = dict(self.providers.get("gitlab", {}))
+        instances = dict(gitlab.get("instances", {}))
+        host = credentials.get("instance_host") or "gitlab.com"
+        entry = dict(credentials)
+        entry.pop("personal_access_token", None)
+        if account:
+            entry["account"] = account
+        existing = instances.get(host) or {}
+        if "workspaces" not in entry and isinstance(existing.get("workspaces"), dict):
+            entry["workspaces"] = existing["workspaces"]
+        if "created_at" not in entry and existing.get("created_at"):
+            entry["created_at"] = existing["created_at"]
+        instances[host] = entry
+        gitlab["instances"] = instances
+        gitlab["active_instance_host"] = host
+        self.providers["gitlab"] = gitlab
+        self._gitlab_pat_secrets[host] = pat
+
+    def clear_gitlab_credentials(
+        self,
+        instance_host: str | None = None,
+    ) -> None:
+        if instance_host:
+            gitlab = dict(self.providers.get("gitlab", {}))
+            instances = dict(gitlab.get("instances", {}))
+            instances.pop(instance_host, None)
+            self._gitlab_pat_secrets.pop(instance_host, None)
+            if instances:
+                gitlab["instances"] = instances
+                self.providers["gitlab"] = gitlab
+            else:
+                self.providers.pop("gitlab", None)
+        else:
+            self.providers.pop("gitlab", None)
+            self._gitlab_pat_secrets.clear()
+
+    def list_gitlab_instances(self) -> list[dict[str, Any]]:
+        gitlab = self.providers.get("gitlab", {})
+        instances = gitlab.get("instances", {})
+        if not isinstance(instances, dict):
+            return []
+        active = str(gitlab.get("active_instance_host") or "")
+        return [
+            {**entry, "instance_host": host, "active": host == active}
+            for host, entry in instances.items()
+            if isinstance(entry, dict)
+        ]
+
+    def save_gitlab_workspace_prefs(
+        self,
+        *,
+        instance_host: str | None = None,
+        default_project: str,
+    ) -> None:
+        gitlab = dict(self.providers.get("gitlab", {}))
+        instances = dict(gitlab.get("instances", {}))
+        host = instance_host or gitlab.get("active_instance_host")
+        if not host or host not in instances:
+            raise ProviderCredentialError(
+                "GitLab is not connected. Run: potpie gitlab login"
+            )
+        entry = dict(instances.get(host) or {})
+        workspaces = dict(entry.get("workspaces") or {})
+        workspaces["default_project"] = default_project.strip()
+        entry["workspaces"] = workspaces
+        instances[host] = entry
+        gitlab["instances"] = instances
+        self.providers["gitlab"] = gitlab
 
 
 __all__ = ["FakeAuthHttpClient", "InMemoryCredentialStore"]

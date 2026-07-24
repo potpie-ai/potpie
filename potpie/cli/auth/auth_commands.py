@@ -83,7 +83,13 @@ jira_app = typer.Typer(help="Jira integration and read.")
 confluence_app = typer.Typer(help="Confluence integration and read.")
 
 _OAUTH_CALLBACK_TIMEOUT = 300.0
-_ALL_PROVIDERS: tuple[Provider, ...] = ("github", "linear", "jira", "confluence")
+_ALL_PROVIDERS: tuple[Provider, ...] = (
+    "github",
+    "linear",
+    "jira",
+    "confluence",
+    "gitlab",
+)
 IntegrationAuthProvider = Literal["linear", "atlassian", "jira", "confluence"]
 
 
@@ -543,6 +549,8 @@ def integration_status(
             parts.append(f"site={_esc(row['site_name'])}")
         if row.get("site_url"):
             parts.append(f"url={_esc(row['site_url'])}")
+        if row.get("instance_host"):
+            parts.append(f"instance={_esc(row['instance_host'])}")
         if row.get("expires_at") is not None:
             parts.append(f"expires_at={_esc(row['expires_at'])}")
         if row.get("cloud_id"):
@@ -631,6 +639,11 @@ def auth_logout(provider: str) -> None:
         from potpie.cli.auth.github_commands import github_logout_impl
 
         github_logout_impl()
+        return
+    if key == "gitlab":
+        from potpie.cli.auth.gitlab_commands import gitlab_logout_impl
+
+        gitlab_logout_impl()
         return
 
     store = get_store()
@@ -852,9 +865,11 @@ def register_integration_commands(root: typer.Typer) -> None:
         git_app,
         github_app,
     )
+    from potpie.cli.auth.gitlab_commands import gitlab_app
 
     root.add_typer(github_app, name="github")
     root.add_typer(git_app, name="git")
+    root.add_typer(gitlab_app, name="gitlab")
     root.add_typer(linear_app, name="linear")
     root.add_typer(jira_app, name="jira")
     root.add_typer(confluence_app, name="confluence")
