@@ -13,10 +13,11 @@ import sys
 import time
 import webbrowser
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import click
 import typer
+from rich.markup import escape
 
 from adapters.outbound.cli_auth.credentials_store import (
     ProviderCredentialError,
@@ -44,6 +45,10 @@ from bootstrap.runtime_settings import ensure_runtime_environment_loaded
 T = TypeVar("T")
 
 gitbucket_app = typer.Typer(help="GitBucket integration.")
+
+
+def _esc(value: Any) -> str:
+    return escape(str(value or ""))
 
 
 def _flags() -> tuple[bool, bool]:
@@ -94,7 +99,6 @@ def _open_computed_token_page(token_page: str, *, as_json: bool) -> bool:
     if as_json:
         print_json_blob(
             {
-                "ok": True,
                 "provider": "gitbucket",
                 "action": "open_token_page",
                 "token_page_url": token_page,
@@ -430,8 +434,10 @@ def gitbucket_repos(
 
     for repo in repos:
         visibility = "private" if repo.get("private") else "public"
+        full_name = _esc(repo.get("full_name"))
+        branch = _esc(repo.get("default_branch") or "")
         print_plain_line(
-            f"{repo.get('full_name')}\t{visibility}\t{repo.get('default_branch') or ''}",
+            f"{full_name}\t{visibility}\t{branch}",
             as_json=False,
         )
 

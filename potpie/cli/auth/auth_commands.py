@@ -681,7 +681,7 @@ def auth_logout(provider: str) -> None:
 def auth_logout_cmd(
     provider: str = typer.Argument(
         ...,
-        help="Deprecated. Provider to log out: github, linear, jira, or confluence.",
+        help="Deprecated. Provider to log out: github, linear, jira, confluence, gitlab, or gitbucket.",
     ),
 ) -> None:
     """Deprecated: use ``potpie <provider> logout``."""

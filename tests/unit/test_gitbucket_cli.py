@@ -829,6 +829,35 @@ def test_gitbucket_repos_cli(
     assert "main" in result.output
 
 
+def test_gitbucket_repos_escapes_rich_markup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cs.save_gitbucket_credentials(
+        {
+            "host_url": "http://localhost:8080",
+            "login": "alice",
+            "token": "gb-token",
+        }
+    )
+    monkeypatch.setattr(
+        gb_cmds,
+        "list_gitbucket_repos",
+        lambda **_: [
+            {
+                "full_name": "alice/[bold]widgets",
+                "private": False,
+                "default_branch": "[red]main",
+            }
+        ],
+    )
+
+    result = runner.invoke(cli_main.app, ["gitbucket", "repos"])
+
+    assert result.exit_code == 0, result.output
+    assert r"alice/\[bold]widgets" in result.output
+    assert r"\[red]main" in result.output
+
+
 def test_gitbucket_repos_requires_connection() -> None:
     result = runner.invoke(cli_main.app, ["gitbucket", "repos"])
 
@@ -928,6 +957,7 @@ def test_run_gitbucket_auth_json_mode_emits_token_page_when_browser_fails(
     assert '"action": "open_token_page"' in out
     assert '"token_page_url": "http://localhost:8080/alice/_application"' in out
     assert '"browser_opened": false' in out
+    assert out.count('"ok": true') == 1
 
 
 def test_run_gitbucket_auth_interactive_flow(
