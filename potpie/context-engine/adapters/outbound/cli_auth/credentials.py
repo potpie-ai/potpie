@@ -135,5 +135,50 @@ class FileCredentialStore(CredentialStore):
     def save_confluence_workspace_prefs(self, *, space_key: str) -> None:
         _store.save_confluence_workspace_prefs(space_key=space_key)
 
+    # --- GitBucket product credentials -----------------------------------
+    def get_gitbucket_credentials(self) -> dict[str, Any]:
+        return _store.get_gitbucket_credentials()
+
+    def save_gitbucket_credentials(self, credentials: dict[str, Any]) -> None:
+        _store.save_gitbucket_credentials(credentials)
+
+    def clear_gitbucket_credentials(self) -> None:
+        _store.clear_gitbucket_credentials()
+
+    # --- GitLab credentials + workspace prefs ----------------------------
+    def get_gitlab_credentials(
+        self,
+        instance_host: str | None = None,
+    ) -> dict[str, Any]:
+        return _store.get_gitlab_credentials(instance_host=instance_host)
+
+    def save_gitlab_credentials(
+        self,
+        credentials: dict[str, Any],
+        *,
+        account: dict[str, Any] | None = None,
+    ) -> None:
+        _store.save_gitlab_credentials(credentials, account=account)
+
+    def clear_gitlab_credentials(
+        self,
+        instance_host: str | None = None,
+    ) -> None:
+        _store.clear_gitlab_credentials(instance_host=instance_host)
+
+    def list_gitlab_instances(self) -> list[dict[str, Any]]:
+        return _store.list_gitlab_instances()
+
+    def save_gitlab_workspace_prefs(
+        self,
+        *,
+        instance_host: str | None = None,
+        default_project: str,
+    ) -> None:
+        _store.save_gitlab_workspace_prefs(
+            instance_host=instance_host,
+            default_project=default_project,
+        )
+
 
 __all__ = ["CredentialStore", "FileCredentialStore"]

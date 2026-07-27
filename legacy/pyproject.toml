@@ -39,7 +39,7 @@ dependencies = [
     "firebase-admin>=7.1.0",
     "firecrawl-py>=4.6.0",
     "flower>=2.0.1",
-    "gitpython>=3.1.50",
+    "gitpython>=3.1.52",
     "google-cloud-secret-manager>=2.25.0",
     "google-cloud-storage>=3.5.0",
     "grep-ast>=0.6.0",
@@ -59,7 +59,7 @@ dependencies = [
     "newrelic>=11.2.0",
     "openai>=2.7.1",
     "pathspec>=0.12.1",
-    "pillow>=12.2.0",
+    "pillow>=12.3.0",
     "postgres>=4.0",
     "posthog>=6.9.0",
     "protobuf>=6.33.5",
@@ -74,7 +74,7 @@ dependencies = [
     "pyjwt>=2.13.0",
     "pynacl>=1.6.2",
     "python-dotenv>=1.2.2",
-    "pyasn1>=0.6.3",
+    "pyasn1>=0.6.4",
     "python-multipart>=0.0.28",
     "redis>=7.0.1",
     "python-socketio>=5.11.0",
@@ -133,8 +133,8 @@ override-dependencies = [
     "msgpack>1.2.0",
     "tornado>=6.5.7",
     "pydantic-ai-slim>=1.102.0",
-    # CVE-2025-3000: torch <= 2.12.0; 2.12.1 is the first patched release on PyPI.
-    "torch>=2.12.1",
+    # CVE-2025-3000: torch <= 2.12.1; 2.13.0 is the first patched release on PyPI.
+    "torch>=2.13.0",
 ]
 
 [tool.uv.sources]

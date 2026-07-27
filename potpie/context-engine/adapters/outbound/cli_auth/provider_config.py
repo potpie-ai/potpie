@@ -9,7 +9,15 @@ import os
 
 from bootstrap.runtime_settings import load_runtime_settings
 
-Provider = Literal["linear", "github", "atlassian", "jira", "confluence"]
+Provider = Literal[
+    "linear",
+    "github",
+    "atlassian",
+    "jira",
+    "confluence",
+    "gitlab",
+    "gitbucket",
+]
 OAuthProvider = Literal["linear"]
 AtlassianProduct = Literal["jira", "confluence"]
 
@@ -29,6 +37,15 @@ ATLASSIAN_API_TOKEN_PAGE = "https://id.atlassian.com/manage-profile/security/api
 ATLASSIAN_API_GATEWAY = "https://api.atlassian.com"
 ATLASSIAN_ACCESSIBLE_RESOURCES_URL = (
     f"{ATLASSIAN_API_GATEWAY}/oauth/token/accessible-resources"
+)
+
+# GitBucket PATs are created at /{username}/_application (Account Settings → Applications).
+GITBUCKET_TOKEN_PAGE_SUFFIX = "_application"
+GITBUCKET_API_VERSION = "v3"
+GITBUCKET_TOKEN_ENV_VARS = ("GITBUCKET_TOKEN", "POTPIE_GITBUCKET_TOKEN")
+GITBUCKET_ALLOW_INSECURE_HTTP_ENV_VARS = (
+    "POTPIE_GITBUCKET_ALLOW_INSECURE_HTTP",
+    "GITBUCKET_ALLOW_INSECURE_HTTP",
 )
 
 
@@ -119,6 +136,22 @@ def token_url(provider: OAuthProvider) -> str:
     if provider != "linear":
         raise ValueError(f"Unsupported OAuth provider: {provider!r}")
     return LINEAR_TOKEN_URL
+
+
+GITLAB_DEFAULT_INSTANCE = "https://gitlab.com"
+GITLAB_PAT_PAGE_PATH = "/-/user_settings/personal_access_tokens"
+GITLAB_API_VERSION = "v4"
+GITLAB_RECOMMENDED_SCOPES = ("read_api",)
+
+
+def gitlab_pat_page_url(instance_url: str) -> str:
+    base = instance_url.rstrip("/") or GITLAB_DEFAULT_INSTANCE
+    return f"{base}{GITLAB_PAT_PAGE_PATH}"
+
+
+def gitlab_api_base_url(instance_url: str) -> str:
+    base = instance_url.rstrip("/") or GITLAB_DEFAULT_INSTANCE
+    return f"{base}/api/{GITLAB_API_VERSION}"
 
 
 def atlassian_jira_gateway_url(cloud_id: str) -> str:

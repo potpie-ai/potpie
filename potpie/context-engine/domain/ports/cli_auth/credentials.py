@@ -99,5 +99,39 @@ class CredentialStore(Protocol):
 
     def save_confluence_workspace_prefs(self, *, space_key: str) -> None: ...
 
+    # --- GitBucket product credentials ------------------------------------
+    def get_gitbucket_credentials(self) -> dict[str, Any]: ...
+
+    def save_gitbucket_credentials(self, credentials: dict[str, Any]) -> None: ...
+
+    def clear_gitbucket_credentials(self) -> None: ...
+
+    # --- GitLab credentials + workspace prefs ----------------------------
+    def get_gitlab_credentials(
+        self,
+        instance_host: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def save_gitlab_credentials(
+        self,
+        credentials: dict[str, Any],
+        *,
+        account: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def clear_gitlab_credentials(
+        self,
+        instance_host: str | None = None,
+    ) -> None: ...
+
+    def list_gitlab_instances(self) -> list[dict[str, Any]]: ...
+
+    def save_gitlab_workspace_prefs(
+        self,
+        *,
+        instance_host: str | None = None,
+        default_project: str,
+    ) -> None: ...
+
 
 __all__ = ["CredentialStore"]

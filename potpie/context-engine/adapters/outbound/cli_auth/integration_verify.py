@@ -49,6 +49,10 @@ def verify_integration_access(
         return False, f"jira: {jira_message}; confluence: {confluence_message}"
     if provider in ("jira", "confluence"):
         return _verify_atlassian_product(provider, credentials)
+    if provider == "gitbucket":
+        return _verify_gitbucket(credentials, http=http)
+    if provider == "gitlab":
+        return _verify_gitlab(credentials, http=http)
     return False, f"unknown provider {provider!r}"
 
 
@@ -111,6 +115,73 @@ def _verify_github(
     if account.email:
         return True, f"ok ({login} <{account.email}>)"
     return True, f"ok ({login})"
+
+
+def _verify_gitbucket(
+    credentials: dict[str, Any],
+    *,
+    http: HttpClient | None = None,
+) -> tuple[bool, str]:
+    from adapters.outbound.cli_auth.gitbucket_client import (
+        GitBucketClientError,
+        verify_gitbucket_token,
+    )
+
+    host_url = str(credentials.get("host_url") or "").strip()
+    token = str(credentials.get("token") or "").strip()
+    if not host_url or not token:
+        return False, "not authenticated"
+    try:
+        account = verify_gitbucket_token(host_url, token, http=http)
+    except GitBucketClientError as exc:
+        return False, str(exc)
+    login = account.login
+    if account.email:
+        return True, f"ok ({login} <{account.email}> @ {host_url})"
+    return True, f"ok ({login} @ {host_url})"
+
+
+def _verify_gitlab(
+    credentials: dict[str, Any],
+    *,
+    http: HttpClient | None = None,
+) -> tuple[bool, str]:
+    from adapters.outbound.cli_auth.gitlab_client import (
+        GitLabAuthErrorKind,
+        verify_instance_access,
+        verify_read_api_scope,
+        parse_user_profile,
+    )
+
+    pat = str(credentials.get("personal_access_token") or "").strip()
+    if not pat:
+        return False, "not authenticated"
+    instance_url = str(credentials.get("instance_url") or "https://gitlab.com").strip()
+
+    ok, error_kind, user_data = verify_instance_access(
+        instance_url,
+        pat,
+        http=http,
+    )
+    if not ok:
+        if error_kind == GitLabAuthErrorKind.INVALID_CREDENTIALS:
+            return False, "invalid GitLab personal access token"
+        if error_kind == GitLabAuthErrorKind.INSUFFICIENT_SCOPES:
+            return False, "GitLab token missing required scopes (need read_api)"
+        if error_kind == GitLabAuthErrorKind.INSTANCE_UNREACHABLE:
+            return False, f"GitLab instance unreachable: {instance_url}"
+        return False, "GitLab verification failed"
+
+    scope_ok, scope_error = verify_read_api_scope(instance_url, pat, http=http)
+    if not scope_ok:
+        if scope_error == GitLabAuthErrorKind.INSUFFICIENT_SCOPES:
+            return False, "GitLab token missing required scopes (need read_api)"
+        return False, "GitLab verification failed"
+
+    account = parse_user_profile(user_data)
+    username = account.get("username") or account.get("name") or "user"
+    inst_host = credentials.get("instance_host") or instance_url
+    return True, f"ok ({username} @ {inst_host})"
 
 
 def _verify_message_for_kind(
