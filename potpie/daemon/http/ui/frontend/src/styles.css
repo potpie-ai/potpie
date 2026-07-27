@@ -389,7 +389,7 @@ body {
 .props .pv {
   color: var(--text);
   font-size: 14px;
-  word-break: break-word;
+  overflow-wrap: anywhere;
   line-height: 1.45;
   letter-spacing: -0.02em;
 }

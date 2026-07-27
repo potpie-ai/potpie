@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { GraphData, GraphNode } from "./types";
 import { kindColor, typeColor, UI } from "./theme";
 
@@ -12,7 +18,6 @@ const ROW_H = 116; // vertical space per activity
 const DIVIDER_H = 40; // day-change divider band
 const NB_VGAP = 30; // vertical gap between stacked branch neighbors
 const TOP = 24;
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function endId(v: string | GraphNode): string {
   return typeof v === "string" ? v : v.id;
@@ -22,8 +27,11 @@ function dayKey(ms: number): string {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 function dayLabel(ms: number): string {
-  const d = new Date(ms);
-  return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+  return new Date(ms).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }
 function trim(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
@@ -40,6 +48,22 @@ type Act = {
   akind: string;
   neighbors: Neighbor[];
 };
+
+function clickable(onActivate: () => void, label: string) {
+  return {
+    role: "button" as const,
+    tabIndex: 0,
+    "aria-label": label,
+    style: { cursor: "pointer" },
+    onClick: onActivate,
+    onKeyDown: (event: KeyboardEvent<SVGElement>) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onActivate();
+      }
+    },
+  };
+}
 
 export default function Timeline({ data, selectedId, onSelect }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -64,21 +88,22 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
 
   const { rows, height } = useMemo(() => {
     const byId = new Map(data.nodes.map((n) => [n.id, n]));
-    const neighborsOf = (id: string): Neighbor[] => {
-      const out: Neighbor[] = [];
-      for (const e of data.edges) {
-        const s = endId(e.source);
-        const t = endId(e.target);
-        let otherId: string | null = null;
-        if (s === id && t !== id) otherId = t;
-        else if (t === id && s !== id) otherId = s;
-        if (otherId) {
-          const nb = byId.get(otherId);
-          if (nb) out.push({ node: nb, predicate: e.predicate });
-        }
-      }
-      return out;
+    const adjacency = new Map<string, Neighbor[]>();
+    const link = (from: string, to: string, predicate: string) => {
+      const node = byId.get(to);
+      if (!node) return;
+      const neighbors = adjacency.get(from);
+      if (neighbors) neighbors.push({ node, predicate });
+      else adjacency.set(from, [{ node, predicate }]);
     };
+    for (const edge of data.edges) {
+      const source = endId(edge.source);
+      const target = endId(edge.target);
+      if (source === target) continue;
+      link(source, target, edge.predicate);
+      link(target, source, edge.predicate);
+    }
+    const neighborsOf = (id: string): Neighbor[] => adjacency.get(id) || [];
 
     const acts = data.nodes
       .filter((n) => n.type === "Activity" && n.properties?.occurred_at)
@@ -175,8 +200,10 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
                       fill={typeColor(nb.node.type)}
                       stroke={nsel ? UI.ring : "rgba(2,26,24,0.6)"}
                       strokeWidth={nsel ? 2 : 1}
-                      style={{ cursor: "pointer" }}
-                      onClick={() => onSelect(nb.node)}
+                      {...clickable(
+                        () => onSelect(nb.node),
+                        `${nb.node.type}: ${nb.node.caption}`,
+                      )}
                     >
                       <title>{`${nb.node.type}: ${nb.node.caption}`}</title>
                     </circle>
@@ -186,8 +213,10 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
                       fill="#b9ccc0"
                       fontSize={11}
                       textAnchor={a.side > 0 ? "start" : "end"}
-                      style={{ cursor: "pointer" }}
-                      onClick={() => onSelect(nb.node)}
+                      {...clickable(
+                        () => onSelect(nb.node),
+                        `${nb.node.type}: ${nb.node.caption}`,
+                      )}
                     >
                       {trim(nb.node.caption, 22)}
                     </text>
@@ -203,8 +232,10 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
                 fill={kindColor(a.akind)}
                 stroke={sel ? UI.ring : UI.bg}
                 strokeWidth={sel ? 2.5 : 2}
-                style={{ cursor: "pointer" }}
-                onClick={() => onSelect(a.node)}
+                {...clickable(
+                  () => onSelect(a.node),
+                  `${a.node.caption} (${a.akind})`,
+                )}
               >
                 <title>{`${a.node.caption}\n${a.akind}`}</title>
               </circle>
@@ -217,8 +248,10 @@ export default function Timeline({ data, selectedId, onSelect }: Props) {
                 fontSize={12.5}
                 fontWeight={600}
                 textAnchor={a.side > 0 ? "end" : "start"}
-                style={{ cursor: "pointer" }}
-                onClick={() => onSelect(a.node)}
+                {...clickable(
+                  () => onSelect(a.node),
+                  `${a.node.caption} (${a.akind})`,
+                )}
               >
                 {trim(a.node.caption, 34)}
               </text>

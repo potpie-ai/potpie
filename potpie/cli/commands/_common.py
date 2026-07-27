@@ -102,7 +102,7 @@ def get_host():
             try:
                 from potpie.daemon.client import RemoteHostShell
             except ModuleNotFoundError as exc:
-                if exc.name != "potpie.daemon.client":
+                if exc.name not in {"potpie.daemon", "potpie.daemon.client"}:
                     raise
             else:
                 _state["host"] = RemoteHostShell()

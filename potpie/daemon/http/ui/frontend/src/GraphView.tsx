@@ -30,6 +30,7 @@ export default function GraphView({
   const fgRef = useRef<any>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const hoverRef = useRef<GraphNode | null>(null);
+  const nodeRefs = useRef(new Map<string, GraphNode>());
   const [dims, setDims] = useState({ w: 800, h: 600 });
 
   useEffect(() => {
@@ -58,8 +59,22 @@ export default function GraphView({
       degree[s] = (degree[s] || 0) + 1;
       degree[t] = (degree[t] || 0) + 1;
     }
+    const currentIds = new Set(data.nodes.map((node) => node.id));
+    for (const id of nodeRefs.current.keys()) {
+      if (!currentIds.has(id)) nodeRefs.current.delete(id);
+    }
+    const nodes = data.nodes.map((node) => {
+      const existing = nodeRefs.current.get(node.id);
+      if (existing) {
+        Object.assign(existing, node, { degree: degree[node.id] || 0 });
+        return existing;
+      }
+      const created = { ...node, degree: degree[node.id] || 0 };
+      nodeRefs.current.set(node.id, created);
+      return created;
+    });
     return {
-      nodes: data.nodes.map((n) => ({ ...n, degree: degree[n.id] || 0 })),
+      nodes,
       links: data.edges.map((e) => ({ ...e })),
     };
   }, [data]);

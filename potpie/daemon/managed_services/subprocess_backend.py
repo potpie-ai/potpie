@@ -57,13 +57,13 @@ class SubprocessBackend:
         rp = spec.ready
         if rp.kind == "tcp":
             host, port = rp.target.split(":")
-            ok = await _tcp_probe(host, int(port), timeout_s=rp.interval_s)
+            ok = await _tcp_probe(host, int(port), timeout_s=rp.timeout_s)
             return HealthStatus.READY if ok else HealthStatus.STARTING
         if rp.kind == "http":
-            ok = await _http_probe(rp.target, timeout_s=rp.interval_s)
+            ok = await _http_probe(rp.target, timeout_s=rp.timeout_s)
             return HealthStatus.READY if ok else HealthStatus.STARTING
         if rp.kind == "cmd":
-            ok = await _cmd_probe(rp.target, timeout_s=rp.interval_s)
+            ok = await _cmd_probe(rp.target, timeout_s=rp.timeout_s)
             return HealthStatus.READY if ok else HealthStatus.STARTING
         return HealthStatus.DEGRADED
 

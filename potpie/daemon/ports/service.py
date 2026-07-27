@@ -10,7 +10,7 @@ from typing import Any
 @dataclass(frozen=True)
 class ReadyProbe:
     kind: str  # "tcp" | "http" | "cmd"
-    target: str  # "host:port" | url | shell argv (json-encoded)
+    target: str  # "host:port" | URL | shell command string
     interval_s: float = 0.5
     timeout_s: float = 30.0
 

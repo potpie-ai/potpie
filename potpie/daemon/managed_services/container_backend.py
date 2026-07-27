@@ -67,13 +67,13 @@ class ContainerBackend:
             host, port = rp.target.split(":")
             return (
                 HealthStatus.READY
-                if await _tcp_probe(host, int(port), rp.interval_s)
+                if await _tcp_probe(host, int(port), rp.timeout_s)
                 else HealthStatus.STARTING
             )
         if rp.kind == "http":
             return (
                 HealthStatus.READY
-                if await _http_probe(rp.target, rp.interval_s)
+                if await _http_probe(rp.target, rp.timeout_s)
                 else HealthStatus.STARTING
             )
         if rp.kind == "cmd":
@@ -83,7 +83,7 @@ class ContainerBackend:
             argv = [self._docker, "exec", cid, *shlex.split(rp.target)]
             return (
                 HealthStatus.READY
-                if await _argv_probe(argv, rp.interval_s)
+                if await _argv_probe(argv, rp.timeout_s)
                 else HealthStatus.STARTING
             )
         return HealthStatus.STARTING

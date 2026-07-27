@@ -17,8 +17,14 @@ single composition root for the product command surface.
 
 ## Agent compatibility commands
 
-The CLI exposes four compatibility commands, each returning an
-`AgentEnvelope` (no server-side synthesis):
+The CLI exposes four compatibility commands with distinct response contracts:
+
+- `potpie resolve` and `potpie search` return an `AgentEnvelope` with no
+  server-side synthesis.
+- `potpie record` returns a record receipt containing `status`, `record_id`,
+  and `mutations_applied`.
+- `potpie status` returns readiness information for the selected pot and scope,
+  including the recommended recipe.
 
 | Command | Use |
 |------------|-----|

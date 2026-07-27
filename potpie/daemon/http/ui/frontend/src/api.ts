@@ -7,11 +7,23 @@ import type {
 
 const BASE = "/ui/api";
 
+function errorDetail(detail: unknown, fallback: string): string {
+  if (typeof detail === "string" && detail) return detail;
+  if (detail !== undefined && detail !== null) {
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      // Fall through to the request-specific message.
+    }
+  }
+  return fallback;
+}
+
 async function jget<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(body?.detail || `request failed (${res.status})`);
+    throw new Error(errorDetail(body?.detail, `request failed (${res.status})`));
   }
   return body as T;
 }
@@ -31,7 +43,7 @@ export const api = {
     });
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
-      throw new Error(b?.detail || `switch failed (${res.status})`);
+      throw new Error(errorDetail(b?.detail, `switch failed (${res.status})`));
     }
     return res.json();
   },
@@ -55,7 +67,4 @@ export const api = {
         pot ? `&${potParam(pot)}` : ""
       }`,
     ),
-
-  catalog: (pot?: string) =>
-    jget<Record<string, unknown>>(`/catalog${pot ? `?${potParam(pot)}` : ""}`),
 };

@@ -291,6 +291,7 @@ export default function App() {
         <div className="topbar-search">
           <form onSubmit={runSearch}>
             <input
+              aria-label="Search graph"
               placeholder="Search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -355,8 +356,9 @@ export default function App() {
         </div>
 
         <div className="pot-select">
-          <label>Pot</label>
+          <label htmlFor="pot-selector">Pot</label>
           <select
+            id="pot-selector"
             value={activeId || ""}
             onChange={(e) => switchPot(e.target.value)}
             disabled={busy}
@@ -623,6 +625,9 @@ function propRank(k: string): number {
 // Render epoch values on *_at / timestamp keys as a readable local timestamp;
 // everything else (already-formatted strings, ISO dates) passes through.
 function formatValue(key: string, value: unknown): string {
+  if (value !== null && typeof value === "object") {
+    return JSON.stringify(value, null, 2);
+  }
   const s = String(value);
   if (isDateKey(key)) {
     const num = typeof value === "number" ? value : Number(s);

@@ -248,6 +248,18 @@ def test_templates_document_nudge_handling() -> None:
 def test_agent_instructions_use_the_cli_graph_surface() -> None:
     assert "potpie graph read" in _read("agent_bundle/AGENTS.md")
     assert "potpie graph read" in _read("claude_bundle/CLAUDE.md")
+    plugin_instructions = (
+        "claude_plugin/commands/potpie-feature.md",
+        "claude_plugin/skills/potpie-change-timeline/SKILL.md",
+        "claude_plugin/skills/potpie-debug-memory/SKILL.md",
+        "claude_plugin/skills/potpie-graph/SKILL.md",
+        "claude_plugin/skills/potpie-infra-architecture/SKILL.md",
+        "claude_plugin/skills/potpie-project-preferences/SKILL.md",
+        "claude_plugin/skills/potpie-repo-baseline/SKILL.md",
+        "claude_plugin/skills/potpie-source-ingestion/SKILL.md",
+    )
+    for path in plugin_instructions:
+        assert "potpie graph read" in _read(path), path
 
 
 # The Stage 6 core skills: every one must carry the harness-led boundary in

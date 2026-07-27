@@ -322,6 +322,7 @@ def test_install_agent_bundle_claude_creates_claude_files(tmp_path: Path) -> Non
     content = (repo / "CLAUDE.md").read_text(encoding="utf-8")
     assert "<!-- potpie-start -->" in content
     assert "potpie graph read" in content
+    assert "context_resolve" not in content
     assert (repo / ".claude" / "commands" / "potpie-feature.md").exists()
     assert (repo / ".claude" / "commands" / "potpie-record.md").exists()
     assert (repo / ".claude" / "skills" / "potpie-cli" / "SKILL.md").exists()
@@ -345,6 +346,7 @@ def test_install_agent_bundle_claude_merges_into_existing_claude_md(
     assert "Existing content." in content
     assert "<!-- potpie-start -->" in content
     assert "potpie graph read" in content
+    assert "context_resolve" not in content
 
 
 def test_install_agent_bundle_claude_unchanged_on_second_run(tmp_path: Path) -> None:
@@ -373,6 +375,7 @@ def test_install_agent_bundle_claude_updates_section_with_force(tmp_path: Path) 
     content = (repo / "CLAUDE.md").read_text(encoding="utf-8")
     assert "OLD SECTION" not in content
     assert "potpie graph read" in content
+    assert "context_resolve" not in content
     assert "# Project" in content
 
 
@@ -395,6 +398,7 @@ def test_install_agent_bundle_claude_updates_changed_section_without_force(
     assert "Keep me." in content
     assert "CUSTOM" not in content
     assert "potpie graph read" in content
+    assert "context_resolve" not in content
 
 
 def test_install_agent_bundle_claude_plugin_lays_out_plugin_dir(tmp_path: Path) -> None:

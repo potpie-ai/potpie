@@ -31,7 +31,7 @@ flowchart TB
   cg_domain["domain<br/>ontology · contract · ports · DTOs · ranking · coherence · identity"]
   cg_outbound["outbound adapters<br/>graph backends + engine room · connectors · ledger clients · postgres event store · skills targets · local embedder"]
   cg_boot["bootstrap (composition roots)<br/>host_wiring.py · ingestion_server.py"]
-  cg_host["host<br/>shell.py (HostShell) · daemon.py"]
+  cg_host["host + daemon<br/>host/shell.py (HostShell) · potpie/daemon/lifecycle.py"]
 
   cg_boot --> cg_host
   cg_boot --> cg_inbound
@@ -47,7 +47,7 @@ flowchart TB
 | **application/** | `application/` | Services and use cases that orchestrate domain over ports: `services/` (graph_service, graph_workbench, agent_context, read_orchestrator, envelope_builder, nudge_service, skill_manager, semantic_mutation_validator/lowering, reconciliation_validation, ingestion_submission_service), `readers/` (the 9 readers), `use_cases/` (the ingestion pipeline). |
 | **adapters/** | `adapters/inbound`, `adapters/outbound` | Concrete I/O. Inbound: HTTP ingestion server and webhooks. Outbound: graph backends + the shared engine room, skills targets, connectors, ledger clients, the Postgres event store, `intelligence/local_embedder`, the session injection ledger. Product CLI and daemon adapters live under `potpie/`. |
 | **bootstrap/** | `bootstrap/` | The two composition roots (next section). |
-| **host/** | `host/` | `shell.py` (the `HostShell` facade) and `daemon.py` (lifecycle). |
+| **host/** + daemon | `host/shell.py`; `potpie/daemon/lifecycle.py` | The `HostShell` facade and product-owned daemon lifecycle. |
 
 The architecture's single spine is `CLI → HostShell → service(s) → ports`
 (`potpie/cli/main.py` docstring). Agents reach it through the CLI.
@@ -428,7 +428,7 @@ removed — those are **methods on `DefaultGraphService`** plus the declarative
 | `GraphMutationPort` / `ClaimQueryPort` | `domain/ports/graph/mutation.py`, `domain/ports/claim_query.py` | Canonical source of truth (write / read). |
 | `SemanticSearchPort` / `GraphInspectionPort` / `GraphAnalyticsPort` / `GraphSnapshotPort` | `domain/ports/graph/{semantic,inspection,analytics,snapshot}.py` | Rebuildable projections. |
 | `EventLedgerClientPort` / `LedgerCursorStorePort` | `domain/ports/ledger/{client,cursor}.py` | External Event Ledger pull + per-(pot,source) cursor (clients are stubs today). |
-| `HostShell` / `Daemon` | `host/{shell,daemon}.py` | In-process facade over the services + local lifecycle. |
+| `HostShell` / `Daemon` | `host/shell.py`; `potpie/daemon/lifecycle.py` | In-process facade over the services + product-owned local lifecycle. |
 
 An unbuilt capability raises `domain.errors.CapabilityNotImplemented` with a
 dotted `graph.<profile>.<cap>.<method>` slot, which inbound adapters render as

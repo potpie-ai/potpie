@@ -213,7 +213,7 @@ def build_ui_api_router(host: Any) -> APIRouter:
     @router.get("/api/search")
     def search(
         q: str = Query(...),
-        type: str | None = Query(None),
+        entity_type: str | None = Query(None, alias="type"),
         predicate: str | None = Query(None),
         subgraph: str | None = Query(None),
         scope: str | None = Query(None),
@@ -229,7 +229,7 @@ def build_ui_api_router(host: Any) -> APIRouter:
                 GraphEntitySearchRequest(
                     pot_id=pot_id,
                     query=q,
-                    type=type,
+                    type=entity_type,
                     predicate=predicate,
                     subgraph=subgraph,
                     scope=_parse_scope(scope),

@@ -25,14 +25,19 @@ def _pid_alive(pid: int) -> bool:
 
 def write_pid_file(path: pathlib.Path, pid: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
+    while True:
         try:
-            existing = int(path.read_text().strip())
-        except ValueError:
-            existing = -1
-        if existing > 0 and _pid_alive(existing):
-            raise AlreadyRunning(f"daemon already running (pid={existing})")
-    _write_private_text(path, f"{pid}\n")
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            existing = read_pid_file(path)
+            if existing is not None and existing > 0 and _pid_alive(existing):
+                raise AlreadyRunning(f"daemon already running (pid={existing})")
+            remove_pid_file(path)
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(f"{pid}\n")
+        os.chmod(path, 0o600)
+        return
 
 
 def read_pid_file(path: pathlib.Path) -> int | None:

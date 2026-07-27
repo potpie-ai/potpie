@@ -1,6 +1,7 @@
 import os
 import pathlib
 import stat
+from unittest.mock import patch
 
 import pytest
 from potpie.daemon.process.pidfile import (
@@ -35,6 +36,16 @@ def test_pid_overwrites_stale(tmp_path: pathlib.Path):
     p.write_text("999999\n")
     write_pid_file(p, 12345)
     assert read_pid_file(p) == 12345
+
+
+def test_pid_file_is_created_exclusively(tmp_path: pathlib.Path):
+    p = tmp_path / "potpied.pid"
+
+    with patch("potpie.daemon.process.pidfile.os.open", wraps=os.open) as open_file:
+        write_pid_file(p, 12345)
+
+    flags = open_file.call_args.args[1]
+    assert flags & os.O_EXCL
 
 
 def test_discovery_roundtrip(tmp_path: pathlib.Path):
