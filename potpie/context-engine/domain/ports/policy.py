@@ -7,9 +7,8 @@ enable/disable gates that previously chained through routes.
 Call sites:
 
 - Every HTTP route in ``adapters/inbound/http/api/v1/context/router.py``
-  funnels through ``authorize`` before doing any work. MCP and CLI reach the
-  engine through HTTP, so the HTTP layer covers them transitively (MCP adds
-  its own pot allowlist as a pre-flight tenant boundary).
+  funnels through ``authorize`` before doing any work. The CLI reaches the
+  engine through HTTP, so the HTTP layer covers it transitively.
 - ``application/use_cases/process_batch.py`` calls ``apply.write`` once
   before invoking the reconciliation agent — one policy decision per batch
   covers every mutation the agent issues.
@@ -108,7 +107,7 @@ class PolicyPort(Protocol):
 
     Adapters return :class:`PolicyDecision` for one (resource, action) pair
     in a given context. Callers translate ``status_code`` to their transport
-    (HTTP status, CLI exit code, MCP error envelope).
+    (HTTP status or CLI exit code).
     """
 
     def authorize(

@@ -1,8 +1,7 @@
 """Graph Surface Lite contract tests (Graph V1.5 Step 0).
 
-Locks the catalog contract, the honest op partitioning, and — critically — that
-the MCP surface still exposes exactly the four ``context_*`` tools (the new
-graph surface is CLI-only in V1.5).
+Locks the catalog contract and the honest operation partitioning for the V1.5
+graph surface.
 """
 
 from __future__ import annotations
@@ -1106,24 +1105,3 @@ def test_mutate_passes_lowered_provenance_to_mutation_port() -> None:
     assert provenance.actor_user_id == "user:alice"
     assert provenance.actor_surface == "cli"
     assert provenance.actor_client_name == "codex"
-
-
-# --- MCP non-negotiable: exactly four context_* tools -----------------------
-
-
-def test_mcp_exposes_exactly_four_context_tools() -> None:
-    """The Graph Surface Lite surface is CLI-only in V1.5; MCP stays at four."""
-    import asyncio
-
-    from adapters.inbound.mcp import server
-
-    tools = asyncio.run(server.mcp.list_tools())
-    names = {t.name for t in tools}
-    assert names == {
-        "context_resolve",
-        "context_search",
-        "context_record",
-        "context_status",
-    }
-    # No graph_* tools leaked onto the MCP surface.
-    assert not any(n.startswith("graph") for n in names)

@@ -2,7 +2,7 @@
 
 The same service modules run inside either a local daemon or the managed API
 server; ``HostShell`` is the in-process facade that exposes them. Every CLI
-command (and every HTTP/MCP handler) reaches the system through one
+command (and every daemon HTTP handler) reaches the system through one
 ``HostShell`` instance:
 
     CLI command -> HostShell.<surface> -> service(s) -> ports -> backend/ledger
@@ -43,7 +43,7 @@ from domain.ports.services.graph_service import GraphService
 from domain.ports.services.pot_management import PotManagementService
 from domain.ports.services.setup import SetupOrchestrator
 from domain.ports.services.skill_manager import SkillManager
-from host.daemon import Daemon
+from potpie.daemon.lifecycle import Daemon
 
 
 @dataclass(slots=True)

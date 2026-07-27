@@ -1,6 +1,6 @@
 """Actor: who (user/system) and how (surface/client) submitted an event.
 
-Threaded through every ingestion path (CLI, MCP, HTTP, webhook) so events,
+Threaded through every ingestion path (CLI, HTTP, webhook) so events,
 reconciliation runs, and graph episodes all retain a first-class answer to
 "who produced this".
 """
@@ -11,8 +11,9 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 ActorSurface = Literal["cli", "mcp", "http", "webhook", "system"]
-"""Inbound surface. ``http`` = direct API caller; ``cli`` / ``mcp`` are clients
-that go through HTTP but self-declare via ``X-Potpie-Client``; ``webhook`` is an
+"""Inbound surface. ``http`` = direct API caller; ``cli`` is a client that goes
+through HTTP but self-declares via ``X-Potpie-Client``; ``mcp`` remains a
+historical compatibility value for persisted actor records; ``webhook`` is an
 external provider; ``system`` is internal jobs (backfills, workers)."""
 
 ActorAuthMethod = Literal["api_key", "session", "webhook_signature", "system"]

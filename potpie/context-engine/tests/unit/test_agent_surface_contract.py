@@ -1,12 +1,10 @@
 """Phase 8: agent surface contract tests.
 
-These pin the stable MCP/agent contract so future work cannot accidentally
-re-introduce per-context-family public tools or drift the recipe shape.
+These pin the stable agent-context manifest so future work cannot accidentally
+re-introduce per-context-family operations or drift the recipe shape.
 
 Covers:
 
-- MCP exposes exactly four tools: ``context_resolve``, ``context_search``,
-  ``context_record``, ``context_status``.
 - Every CONTEXT_RESOLVE_RECIPES entry is a valid ``context_resolve`` recipe
   (no one-off tool per intent), with an ``include`` list, a supported
   ``mode``, and a supported ``source_policy``.
@@ -18,11 +16,8 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
-from adapters.inbound.mcp.server import mcp
 from domain.agent_context_port import (
     CONTEXT_INCLUDE_VALUES,
     CONTEXT_RESOLVE_RECIPES,
@@ -43,14 +38,6 @@ VALID_MODES = {"fast", "balanced", "deep"}
 VALID_SOURCE_POLICIES = {"references_only", "summary", "verify", "snippets"}
 
 
-def test_mcp_exposes_exactly_the_four_agent_tools() -> None:
-    tools = asyncio.run(mcp.list_tools())
-    names = {t.name for t in tools}
-    assert names == EXPECTED_TOOLS, (
-        f"MCP tool surface drift: expected {EXPECTED_TOOLS}, got {names}"
-    )
-
-
 def test_every_recipe_is_a_context_resolve_shape() -> None:
     assert CONTEXT_RESOLVE_RECIPES, "recipe catalog must not be empty"
     for intent, recipe in CONTEXT_RESOLVE_RECIPES.items():
@@ -65,7 +52,7 @@ def test_every_recipe_is_a_context_resolve_shape() -> None:
         assert "tool" not in recipe
 
 
-def test_context_port_manifest_tool_keys_match_mcp_surface() -> None:
+def test_context_port_manifest_exposes_the_four_agent_operations() -> None:
     manifest = context_port_manifest()
     assert set(manifest["tools"]) == EXPECTED_TOOLS
     # Manifest recipes stay consistent with the canonical dict.

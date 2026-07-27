@@ -26,14 +26,14 @@ help: ## Show this help
 ##@ Potpie CLI
 
 # The `potpie` CLI installs from the root distribution in EDITABLE mode:
-# the global `potpie` / `potpie-mcp` on your PATH run straight from the repo
+# the global `potpie` / `potpie-daemon` on your PATH run straight from the repo
 # source, so code changes — including the in-process daemon — are live on the
 # next invocation with no reinstall. The CLI also auto-loads this repo's .env
 # (Neo4j/Postgres creds) regardless of which directory you run it from, so a
 # global `potpie` reaches your local backends out of the box. Re-run
 # `make cli-install` only when dependencies or entry points change.
 CE_DIR := potpie/context-engine
-UI_FRONTEND_DIR := $(CE_DIR)/adapters/inbound/http/ui/frontend
+UI_FRONTEND_DIR := potpie/daemon/http/ui/frontend
 CLI_TOOL := potpie
 CLI_PYTHON ?= >=3.12,<3.14
 
@@ -41,7 +41,7 @@ ui-build: ## Build the graph-explorer SPA (npm install + vite) into frontend/dis
 	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not installed — see https://nodejs.org/"; exit 1; }
 	cd $(UI_FRONTEND_DIR) && npm install && npm run build
 
-cli-install: ui-build ## Install potpie + potpie-mcp globally from the root package. Re-run after dep/entrypoint changes.
+cli-install: ui-build ## Install potpie + potpie-daemon globally from the root package. Re-run after dep/entrypoint changes.
 	@command -v uv >/dev/null 2>&1 || { echo "❌ uv not installed — see https://docs.astral.sh/uv/"; exit 1; }
 	@# Drop the pre-rename "context-engine" tool if a stale copy is lingering.
 	-@uv tool uninstall context-engine >/dev/null 2>&1 || true

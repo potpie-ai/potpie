@@ -1,4 +1,4 @@
-"""Merge env-backed pot ↔ repo maps for standalone HTTP/CLI/MCP."""
+"""Merge env-backed pot ↔ repo maps for standalone HTTP/CLI."""
 
 from __future__ import annotations
 

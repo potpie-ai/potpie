@@ -14,11 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 ENGINE_ROOT = ROOT / "potpie" / "context-engine"
 
 EXPECTED_ENGINE_CLI_IMPORTERS = {
-    "adapters/outbound/daemon_process/launcher.py",
     "adapters/outbound/skills/agent_installer.py",
     "adapters/outbound/skills/bundle_catalog.py",
     "bootstrap/sentry_metrics_runtime.py",
-    "host/daemon_main.py",
 }
 
 

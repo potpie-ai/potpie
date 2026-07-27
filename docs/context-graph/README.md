@@ -6,8 +6,7 @@ The Context Graph is Potpie's durable, shared **project memory for AI agents** �
 compact store of sourced **claims** (decisions, ownership, infra topology, prior
 bugs/fixes, conventions, features) so an agent doesn't rebuild context from raw
 code, PRs, tickets, and chat on every task. Humans and agents talk to the **same
-`potpie` CLI**; agents can also reach the same internals through four in-process
-MCP `context_*` tools. The `potpie graph …` workbench is **shipped today**
+`potpie` CLI**. The `potpie graph …` workbench is **shipped today**
 (data-plane contract `v1.5`, ontology `2026-06-graph`) alongside the legacy
 `resolve`/`search`/`record` compatibility wrappers — there is no separate "future
 V2." The same Pot Management, Graph, and Skill Manager service modules run inside
@@ -18,12 +17,9 @@ flowchart TB
   cg_human["Humans"]
   cg_agent["Agents<br/>(Claude Code, Codex, Cursor…)"]
   cg_cli["potpie CLI<br/>(graph workbench + V1 wrappers)"]
-  cg_mcp["in-process MCP<br/>(4 context_* tools)"]
 
   cg_human --> cg_cli
   cg_agent --> cg_cli
-  cg_agent --> cg_mcp
-  cg_mcp --> cg_cli
 
   subgraph cg_local["Local profile — shipped, default"]
     direction TB
@@ -76,7 +72,7 @@ key required**; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
 | [`vision.md`](./vision.md) | What the Context Graph is and why; claims-not-payloads; harness-owned intelligence; the three product boundaries (local OSS / managed [roadmap] / Event Ledger [roadmap]); pots-as-tenancy; anti-goals. |
 | [`architecture.md`](./architecture.md) | Hexagonal layers; the two composition roots (local agent spine vs ingestion server); the daemon model; the `GraphBackend` port + 6 capabilities + the backend coverage table; per-pot scoping and backend selection. |
 | [`ontology.md`](./ontology.md) | The three declarative catalogs (24 entity types / 25 predicates + `RELATED_TO` / record types); contract constants (versions, 7 truth classes, 10 mutation ops, 6 source authorities); 8 subgraphs / 9 views; identity keys and the environment qualifier. |
-| [`querying.md`](./querying.md) | Reading: the 4-tool MCP contract vs the CLI-only Graph Surface Lite; the single read trunk and 9 readers; the `AgentEnvelope` (ranked evidence, no server-side answers); ranking; the 3-axis model (Retrieve / Filter / Traverse — all shipped). |
+| [`querying.md`](./querying.md) | Reading: the CLI Graph Surface Lite and compatibility commands; the single read trunk and 9 readers; the `AgentEnvelope` (ranked evidence, no server-side answers); ranking; the 3-axis model (Retrieve / Filter / Traverse — all shipped). |
 | [`writing.md`](./writing.md) | Writing: the flat semantic-mutation DSL (10 ops); validation + runtime risk; the canonical write door `graph propose` → `graph commit --verify` (with `graph mutate` and `record` as the legacy wrappers); coarse `_global` concurrency; inbox; quality. |
 | [`ingestion-nudge.md`](./ingestion-nudge.md) | How raw episodes/events enter; the internal Postgres event store vs the external Event Ledger seam; connectors (github/notion only); windowed reconciliation (off by default); the zero-token nudge trigger model. |
 | [`skills.md`](./skills.md) | Harness-owned intelligence; the bundled CLI skills (potpie-graph teaches propose/commit); the Claude Code plugin + hooks; the separate server-side reconciliation skill surface (not the same thing). |
@@ -89,7 +85,7 @@ key required**; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
 | Term | Meaning |
 |---|---|
 | **Pot** | Unit of isolation/tenancy. Every query, source, inbox item, claim, semantic mutation, and graph operation is scoped to one pot; the pot id **is** the storage `group_id`. A pot is local or managed; the active pot determines routing. Cross-pot federation is an anti-goal. |
-| **Daemon** | Local background process (`host/daemon.py`) for lifecycle, IPC, health, and logs — **not** the business layer. Default host mode is detached (`daemon`); it also serves the read-only `potpie ui` explorer. |
+| **Daemon** | Local background process (`potpie/daemon/lifecycle.py`) for lifecycle, IPC, health, and logs — **not** the business layer. Default host mode is detached (`daemon`); it also serves the read-only `potpie ui` explorer. |
 | **Services** | Pot Management (control plane: pots, sources, readiness), Graph Service (data plane: reads, semantic mutations, workbench), and Skill Manager. The same modules run in the local daemon or a managed backend API. |
 | **GraphBackend** | Swappable capability bundle of 6 ports — canonical `mutation` + `claim_query`, plus rebuildable projections `semantic`, `inspection`, `analytics`, `snapshot` — with `capabilities()`/`provision()`. Default profile `falkordb_lite`. |
 | **Skill Manager** | CLI-managed skill catalog/installer for agent harnesses. Skills teach agents how to use the CLI; they are not graph facts or new tools. |

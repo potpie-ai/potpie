@@ -3,7 +3,7 @@
 Composes pot resolution, the connector and reader manifests, the event
 ledger health summary, the reconciliation ledger health summary, source
 listings, conflict probes, and the recipe lookup into one envelope. The
-HTTP / MCP / CLI surfaces are thin shells over this verb.
+HTTP / CLI surfaces are thin shells over this verb.
 """
 
 from __future__ import annotations

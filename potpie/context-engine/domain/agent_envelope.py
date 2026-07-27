@@ -1,7 +1,7 @@
 """Canonical agent envelope (rebuild plan P8).
 
 The one read-result shape, returned by both ``context_resolve`` and
-``context_search`` across every surface (CLI / MCP / managed HTTP). It carries
+``context_search`` across every surface (CLI / managed HTTP). It carries
 ranked evidence items + coverage; there is no server-side answer synthesis —
 the agent reasons over the evidence. This module defines that shape; the
 application layer's :class:`EnvelopeBuilder` produces it from ranked reader

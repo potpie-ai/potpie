@@ -8,7 +8,7 @@ then ``self.mutate`` so the record flows through validation, risk classification
 and the one lowerer.
 
 Compatibility: unknown ``record_type`` values still fall back to a free-form
-claim. Known structured record types are always validated, so CLI/MCP writes
+claim. Known structured record types are always validated, so CLI writes
 reject the same malformed payloads as the managed HTTP path instead of silently
 downgrading into generic summary-derived claims.
 

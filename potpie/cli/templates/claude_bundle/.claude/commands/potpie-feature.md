@@ -12,12 +12,6 @@ potpie graph read --subgraph decisions --view active_decisions --scope repo:<own
 potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:<name> --depth 2
 ```
 
-Otherwise, run `context_resolve` with this recipe (MCP):
-
-```json
-{"intent":"feature","include":["coding_preferences","infra_topology","decisions","owners","docs"],"mode":"fast","source_policy":"references_only"}
-```
-
 Expand the user's request into a good retrieval `--query`/`query` (add symptoms and
 synonyms a future searcher would type). Inspect coverage, freshness, quality,
 fallbacks, open conflicts, and source refs before relying on the result.

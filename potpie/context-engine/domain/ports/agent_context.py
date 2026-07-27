@@ -1,6 +1,6 @@
 """``AgentContextPort`` — the four-tool agent contract.
 
-This is the single public agent surface for CLI and MCP. There are exactly four
+This is the shared contract behind the four CLI compatibility commands. There are exactly four
 tools and there will only ever be four:
 
     context_resolve   resolve(ResolveRequest) -> AgentEnvelope

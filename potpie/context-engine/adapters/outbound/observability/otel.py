@@ -12,7 +12,7 @@ Provider-aware (the critical integration detail):
   existing provider and never call ``set_tracer_provider``. Our spans ride
   the same provider as the agent's, so model/tool spans nest under our
   event spans automatically.
-* **No parent provider** (standalone HTTP / CLI / MCP): we own a fresh
+* **No parent provider** (standalone HTTP / CLI): we own a fresh
   ``TracerProvider`` and register it.
 
 Configuration is entirely through standard ``OTEL_*`` env (the SDK reads

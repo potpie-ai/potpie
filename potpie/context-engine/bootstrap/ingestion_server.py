@@ -1,7 +1,7 @@
 """Composition root for the HTTP **ingestion/server** subsystem.
 
 Distinct from ``bootstrap.host_wiring.build_host_shell`` (the in-process agent
-spine behind the CLI + MCP). This root wires the async ingestion pipeline —
+spine behind the CLI). This root wires the async ingestion pipeline —
 graph backend, the Postgres batch/ledger/execution-log stores, source
 connectors, and the reconciliation agent — that backs the FastAPI surface in
 ``adapters/inbound/http``. It is intentionally kept separate while the pipeline

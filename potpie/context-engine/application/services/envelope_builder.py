@@ -117,7 +117,7 @@ class EnvelopeBuilder:
 def envelope_to_dict(envelope: AgentEnvelope) -> dict[str, object]:
     """Serialise the canonical envelope to a JSON-shaped dict.
 
-    Used by the HTTP/MCP boundary to send the envelope on the wire; ``intent``
+    Used by the HTTP boundary to send the envelope on the wire; ``intent``
     and ``include`` are already canonical strings.
     """
     return envelope.to_dict()
