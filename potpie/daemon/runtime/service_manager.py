@@ -93,10 +93,16 @@ class ServiceManager:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + spec.ready.timeout_s
         while loop.time() < deadline:
-            s = await backend.probe(spec)
+            remaining = deadline - loop.time()
+            try:
+                s = await asyncio.wait_for(backend.probe(spec), timeout=remaining)
+            except TimeoutError:
+                return False
             if s is HealthStatus.READY:
                 return True
-            await asyncio.sleep(spec.ready.interval_s)
+            remaining = deadline - loop.time()
+            if remaining > 0:
+                await asyncio.sleep(min(spec.ready.interval_s, remaining))
         return False
 
     async def down(self, name: str) -> None:

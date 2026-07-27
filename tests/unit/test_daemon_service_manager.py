@@ -1,3 +1,4 @@
+import asyncio
 import pathlib
 
 import pytest
@@ -5,6 +6,7 @@ import pytest
 from potpie.daemon.managed_services.subprocess_backend import SubprocessBackend
 from potpie.daemon.runtime.service_manager import (
     DependencyCycle,
+    ReadyTimeout,
     ServiceManager,
     ServiceNotFound,
     ServiceStatus,
@@ -63,10 +65,56 @@ class _StopFailsBackend:
         return HealthStatus.READY
 
 
+class _HangingProbeBackend:
+    async def start(self, spec: ServiceSpec, ctx: ShellContext) -> None:
+        del spec, ctx
+
+    async def stop(self, spec: ServiceSpec) -> None:
+        del spec
+
+    async def probe(self, spec: ServiceSpec) -> HealthStatus:
+        del spec
+        await asyncio.sleep(1)
+        return HealthStatus.READY
+
+
 def _failing_stop_backends(backend: _StopFailsBackend) -> Registry[ServiceBackend]:
     registry: Registry[ServiceBackend] = Registry()
     registry.register("failing", lambda: backend)
     return registry
+
+
+@pytest.mark.anyio
+async def test_wait_ready_caps_hanging_probe_at_overall_deadline(
+    daemon_ctx: ShellContext,
+):
+    backend = _HangingProbeBackend()
+    registry: Registry[ServiceBackend] = Registry()
+    registry.register("hanging", lambda: backend)
+    spec = ServiceSpec(
+        name="hanging",
+        backend="hanging",
+        config={},
+        ready=ReadyProbe(
+            kind="http",
+            target="http://127.0.0.1/health",
+            interval_s=0.01,
+            timeout_s=0.05,
+        ),
+        endpoint="http://127.0.0.1",
+    )
+    mgr = ServiceManager(
+        specs={spec.name: spec},
+        backends=registry,
+        ctx=daemon_ctx,
+    )
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    with pytest.raises(ReadyTimeout):
+        await mgr.up(spec.name)
+
+    assert loop.time() - started < 0.5
 
 
 @pytest.mark.anyio
