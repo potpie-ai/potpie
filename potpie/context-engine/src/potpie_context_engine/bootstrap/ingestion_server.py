@@ -20,15 +20,27 @@ from potpie_context_engine.adapters.outbound.connectors.github import (
     GitHubReadPort,
     PyGithubSourceControl,
 )
-from potpie_context_engine.adapters.outbound.connectors._bench_stubs import register_bench_stubs
+from potpie_context_engine.adapters.outbound.connectors._bench_stubs import (
+    register_bench_stubs,
+)
 from potpie_context_engine.adapters.outbound.connectors.notion import NotionConnector
 from potpie_context_engine.adapters.outbound.graph import GraphWriterPort
-from potpie_context_engine.adapters.outbound.graph import Neo4jGraphWriter as _Neo4jGraphWriter
+from potpie_context_engine.adapters.outbound.graph import (
+    Neo4jGraphWriter as _Neo4jGraphWriter,
+)
 from potpie_context_engine.adapters.outbound.graph.backends.neo4j_backend import (
     Neo4jGraphBackend as _Neo4jGraphBackend,
 )
 from potpie_context_engine.adapters.outbound.graph.backends import build_backend
-from potpie_context_engine.adapters.outbound.graph.context_graph_service import ContextGraphService
+from potpie_context_engine.adapters.outbound.graph.inbox_stores import (
+    LocalJsonGraphInboxStore,
+)
+from potpie_context_engine.adapters.outbound.graph.plan_stores import (
+    LocalJsonGraphPlanStore,
+)
+from potpie_context_engine.adapters.outbound.graph.context_graph_service import (
+    ContextGraphService,
+)
 from potpie_context_engine.adapters.outbound.reconciliation.context_graph_tools import (
     ContextGraphReconciliationTools,
 )
@@ -39,21 +51,30 @@ from potpie_context_engine.adapters.outbound.postgres.agent_checkpoint_store imp
 from potpie_context_engine.adapters.outbound.postgres.agent_execution_log import (
     PostgresAgentExecutionLog,
 )
-from potpie_context_engine.adapters.outbound.postgres.batch_repository import SqlAlchemyBatchRepository
-from potpie_context_engine.adapters.outbound.postgres.ingestion_config import SqlAlchemyIngestionConfig
+from potpie_context_engine.adapters.outbound.postgres.batch_repository import (
+    SqlAlchemyBatchRepository,
+)
+from potpie_context_engine.adapters.outbound.postgres.ingestion_config import (
+    SqlAlchemyIngestionConfig,
+)
 from potpie_context_engine.adapters.outbound.postgres.delegating_event_query_service import (
     DelegatingEventQueryService,
 )
 from potpie_context_engine.adapters.outbound.postgres.ingestion_event_store import (
     SqlAlchemyIngestionEventStore,
 )
-from potpie_context_engine.adapters.outbound.postgres.ledger import SqlAlchemyIngestionLedger
+from potpie_context_engine.adapters.outbound.postgres.ledger import (
+    SqlAlchemyIngestionLedger,
+)
 from potpie_context_engine.adapters.outbound.postgres.reconciliation_ledger import (
     SqlAlchemyReconciliationLedger,
 )
-from potpie_context_engine.adapters.outbound.settings_env import EnvContextEngineSettings
-from potpie_context_engine.application.services.graph_service import DefaultGraphService
-from potpie_context_engine.application.services.source_connector_registry import SourceConnectorRegistry
+from potpie_context_engine.adapters.outbound.settings_env import (
+    EnvContextEngineSettings,
+)
+from potpie_context_engine.application.services.source_connector_registry import (
+    SourceConnectorRegistry,
+)
 from potpie_context_engine.bootstrap.sentry_metrics_runtime import configure_metrics
 from potpie_context_engine.bootstrap.sentry_settings import load_sentry_settings
 from potpie_context_engine.domain.ports.event_query_service import EventQueryService
@@ -64,7 +85,9 @@ from potpie_context_engine.domain.ports.event_stream import (
 from potpie_context_engine.domain.ports.ingestion_config import IngestionConfigPort
 from potpie_context_engine.domain.ports.context_graph import ContextGraphPort
 from potpie_context_core.ports.graph.backend import GraphBackend
-from potpie_context_engine.domain.ports.ingestion_submission import IngestionSubmissionService
+from potpie_context_engine.domain.ports.ingestion_submission import (
+    IngestionSubmissionService,
+)
 from potpie_context_engine.domain.ports.context_graph_job_queue import (
     ContextGraphJobQueuePort,
     NoOpContextGraphJobQueue,
@@ -72,14 +95,20 @@ from potpie_context_engine.domain.ports.context_graph_job_queue import (
 from potpie_context_engine.domain.ports.policy import PolicyPort
 from potpie_context_core.ports.pot_resolution import PotResolutionPort
 from potpie_context_engine.domain.ports.pot_source_listing import PotSourceListingPort
-from potpie_context_engine.domain.ports.observability import NoOpObservability, ObservabilityPort
+from potpie_context_engine.domain.ports.observability import (
+    NoOpObservability,
+    ObservabilityPort,
+)
 from potpie_context_engine.bootstrap.observability_wiring import (
     default_observability as _shared_default_observability,
     observability_enabled as _shared_observability_enabled,
 )
-from potpie_context_engine.domain.ports.reconciliation_agent import ReconciliationAgentPort
+from potpie_context_engine.domain.ports.reconciliation_agent import (
+    ReconciliationAgentPort,
+)
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 from potpie_context_core.ports.graph_service import GraphService
+from potpie_context_core.api import build_graph_runtime
 from potpie_context_engine.domain.ports.telemetry import TelemetryPort
 from potpie_context_core.source_references import SourceReferenceRecord
 
@@ -250,7 +279,12 @@ def build_ingestion_server(
     # compatibility alias; application paths use ``backend.mutation``.
     backend = build_backend(backend_kind, settings=s)
     graph_writer = getattr(backend, "graph_writer", None)
-    graph = DefaultGraphService(backend=backend)
+    graph_runtime = build_graph_runtime(
+        backend,
+        LocalJsonGraphPlanStore(),
+        LocalJsonGraphInboxStore(),
+    )
+    graph = graph_runtime.graph
     context_graph = _build_context_graph_service(graph=graph, backend=backend)
     # Fail fast if the read trunk's reader set has drifted from the advertised
     # ``READER_BACKED_INCLUDES`` (see potpie_context_core.coherence).
@@ -297,7 +331,9 @@ def _default_telemetry() -> TelemetryPort:
 
         return NoOpTelemetry()
     try:
-        from potpie_context_engine.adapters.outbound.postgres.telemetry import SqlAlchemyTelemetry
+        from potpie_context_engine.adapters.outbound.postgres.telemetry import (
+            SqlAlchemyTelemetry,
+        )
 
         return SqlAlchemyTelemetry()
     except Exception:

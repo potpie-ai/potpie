@@ -11,7 +11,7 @@ Records (``context_record``) and reconciled source events both lower to a
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from potpie_context_core.graph_mutations import ProvenanceContext
 from potpie_context_core.reconciliation import MutationBatch, MutationResult
@@ -29,6 +29,7 @@ class BackendReadiness:
     capability_ready: Mapping[str, bool] = field(default_factory=dict)
 
 
+@runtime_checkable
 class GraphMutationPort(Protocol):
     """Apply typed mutation plans and lifecycle operations to the claim store."""
 

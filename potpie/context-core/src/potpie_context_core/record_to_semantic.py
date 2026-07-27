@@ -25,8 +25,8 @@ from typing import Any, Mapping
 from potpie_context_core.context_records import (
     validate_record_payload,
 )
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.identity import _slugify  # deterministic slug; reused for keys
-from potpie_context_core.ontology import ENTITY_TYPES, record_type_spec
 from potpie_context_core.ports.agent_context import RecordRequest
 from potpie_context_core.semantic_mutations import (
     MutationActor,
@@ -35,15 +35,17 @@ from potpie_context_core.semantic_mutations import (
 )
 
 _APPROVED_BY = "context_record"
-_PREFIX_TO_LABEL: dict[str, str] = {
-    spec.key_prefix: label for label, spec in ENTITY_TYPES.items()
-}
 
 
 def record_to_semantic_request(
-    request: RecordRequest, *, record_type: str, source_id: str
+    request: RecordRequest,
+    *,
+    record_type: str,
+    source_id: str,
+    definition: GraphDefinition | None = None,
 ) -> SemanticMutationRequest:
     """Build the semantic mutation request for a durable record."""
+    definition = definition or DEFAULT_GRAPH_DEFINITION
     details = dict(request.details)
     validate_record_payload(
         record_type=record_type, summary=request.summary, details=details
@@ -54,6 +56,7 @@ def record_to_semantic_request(
         request=request,
         details=details,
         source_id=source_id,
+        definition=definition,
     )
     op_payloads = raw_ops if isinstance(raw_ops, list) else [raw_ops]
     actor = MutationActor(
@@ -82,13 +85,14 @@ def _build_operation(
     request: RecordRequest,
     details: Mapping[str, Any],
     source_id: str,
+    definition: GraphDefinition,
 ) -> dict:
     scope = dict(request.scope)
     summary = request.summary or ""
     evidence_payload = [{"source_ref": ref} for ref in request.source_refs]
     target = _scope_target(scope, request.pot_id)
     code_scope = _code_scope(scope)
-    spec = record_type_spec(record_type)
+    spec = definition.record_types.get(record_type)
     anchor = spec.anchor_label if spec else None
 
     base = {
@@ -291,7 +295,7 @@ def _build_operation(
                     "predicate": "AFFECTS",
                     "truth": "user_decision",
                     "subject": decision,
-                    "object": _entity_ref_for_key(affected),
+                    "object": _entity_ref_for_key(affected, definition=definition),
                     "description": " • ".join(
                         p for p in (summary, f"affects {affected}") if p
                     ),
@@ -303,12 +307,24 @@ def _build_operation(
     # Document/Observation anchor to the scope target. RELATED_TO accepts any
     # endpoints, so it always lands and surfaces via raw_graph.
     anchor_label = anchor or "Document"
-    prefix = "observation" if anchor_label == "Observation" else "document"
+    entity_spec = definition.entity_types.get(anchor_label)
+    prefix = (
+        entity_spec.key_prefix
+        if entity_spec is not None
+        else ("observation" if anchor_label == "Observation" else "document")
+    )
+    predicate = spec.emits_predicate if spec and spec.emits_predicate else "RELATED_TO"
+    subgraph = "admin"
+    if spec and spec.reader_include:
+        view_name = definition.view_by_include.get(spec.reader_include)
+        view = definition.views.get(view_name) if view_name else None
+        if view is not None:
+            subgraph = view.subgraph
     return {
         **base,
         "op": "assert_claim",
-        "subgraph": "admin",
-        "predicate": "RELATED_TO",
+        "subgraph": subgraph,
+        "predicate": predicate,
         "truth": "agent_claim",
         "subject": {
             "key": f"{prefix}:{_slug(summary or source_id)}",
@@ -369,11 +385,13 @@ def _fix_ref(target_ref: str) -> str:
     return ref if ref.startswith("fix:") else f"fix:{_slug(ref)}"
 
 
-def _entity_ref_for_key(raw: str) -> dict[str, str]:
+def _entity_ref_for_key(
+    raw: str, *, definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
+) -> dict[str, str]:
     value = raw.strip()
     if ":" in value:
         prefix = value.partition(":")[0]
-        label = _PREFIX_TO_LABEL.get(prefix)
+        label = definition.entity_by_key_prefix.get(prefix)
         if label:
             return {"key": value, "type": label}
     return {"key": f"observation:{_slug(value)}", "type": "Observation"}

@@ -28,6 +28,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 )
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.lifecycle import DONE, SetupPlan, StepResult
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_core.ports.graph.backend import BackendCapabilities
@@ -42,16 +43,19 @@ class EmbeddedGraphBackend:
 
     home: Path = field(default_factory=default_home)
     embedder: EmbedderPort | None = None
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
+    shared_store: InMemoryClaimQueryStore | None = field(default=None, repr=False)
     _inner: InMemoryGraphBackend = field(init=False)
 
     def __post_init__(self) -> None:
-        store = self._load_store()
+        store = self.shared_store or self._load_store()
         store.embedder = self.embedder
         self._inner = InMemoryGraphBackend(
             store=store,
             profile_name=_PROFILE,
             on_change=self._save_store,
             embedder=self.embedder,
+            definition=self.definition,
         )
 
     @property
@@ -114,6 +118,14 @@ class EmbeddedGraphBackend:
             inspection=True,
             analytics=True,
             snapshot=True,
+        )
+
+    def bind_definition(self, definition: GraphDefinition) -> EmbeddedGraphBackend:
+        return EmbeddedGraphBackend(
+            home=self.home,
+            embedder=self.embedder,
+            definition=definition,
+            shared_store=self._inner.store,
         )
 
     def provision(self, plan: SetupPlan) -> StepResult:

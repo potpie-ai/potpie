@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Iterable, Mapping, Protocol
+from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +87,7 @@ class ClaimQueryFilter:
     fact_query: str | None = None
 
 
+@runtime_checkable
 class ClaimQueryPort(Protocol):
     """Read-only query surface against canonical claim edges."""
 
@@ -108,4 +109,24 @@ class ClaimQueryPort(Protocol):
         ...
 
 
-__all__ = ["ClaimQueryFilter", "ClaimQueryPort", "ClaimRow"]
+@runtime_checkable
+class AsyncClaimQueryPort(Protocol):
+    """Async-native counterpart for hosted database drivers."""
+
+    async def find_claims_async(self, filter_: ClaimQueryFilter) -> list[ClaimRow]: ...
+
+    async def entity_labels_async(
+        self, *, pot_id: str, entity_keys: Iterable[str]
+    ) -> Mapping[str, tuple[str, ...]]: ...
+
+    async def entity_properties_async(
+        self, *, pot_id: str, entity_key: str
+    ) -> Mapping[str, Any]: ...
+
+
+__all__ = [
+    "AsyncClaimQueryPort",
+    "ClaimQueryFilter",
+    "ClaimQueryPort",
+    "ClaimRow",
+]

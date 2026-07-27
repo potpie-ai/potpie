@@ -19,9 +19,11 @@ Two outputs per request:
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Mapping
 
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.graph_contract import (
     DEFERRED_OPS,
     EVIDENCE_REQUIRED_TRUTH_CLASSES,
@@ -29,7 +31,6 @@ from potpie_context_core.graph_contract import (
     MutationRisk,
     SemanticMutationOp,
     SourceAuthority,
-    entity_key_matches_type,
     entity_key_prefix,
     is_known_op,
     is_source_authority,
@@ -37,7 +38,7 @@ from potpie_context_core.graph_contract import (
     is_truth_class,
     normalize_entity_key,
 )
-from potpie_context_core.ontology import EDGE_TYPES, ENTITY_TYPES, edge_spec
+from potpie_context_core.ontology import EdgeTypeSpec, EntityTypeSpec
 from potpie_context_core.semantic_mutations import (
     GraphEntityRef,
     LoweredOperation,
@@ -59,19 +60,52 @@ _RETRACT_OPS = frozenset(
         SemanticMutationOp.retract_claim.value,
     }
 )
-_PREFIX_TO_ENTITY_TYPE: dict[str, str] = {
-    spec.key_prefix: label for label, spec in ENTITY_TYPES.items()
-}
 _STATE_PATCH_FIELDS = frozenset({"lifecycle_state", "status", "state"})
+_CURRENT_DEFINITION: ContextVar[GraphDefinition] = ContextVar(
+    "semantic_mutation_definition", default=DEFAULT_GRAPH_DEFINITION
+)
 
 
-def validate_semantic_request(request: SemanticMutationRequest) -> SemanticMutationPlan:
+def _entity_types() -> Mapping[str, EntityTypeSpec]:
+    return _CURRENT_DEFINITION.get().entity_types
+
+
+def _edge_types() -> Mapping[str, EdgeTypeSpec]:
+    return _CURRENT_DEFINITION.get().edge_types
+
+
+def _edge_spec(predicate: str) -> EdgeTypeSpec | None:
+    return _edge_types().get((predicate or "").strip().upper())
+
+
+def _key_matches_type(key: str, entity_type: str) -> bool:
+    spec = _entity_types().get(entity_type)
+    if spec is None:
+        return False
+    return normalize_entity_key(key).startswith(f"{spec.key_prefix}:")
+
+
+def validate_semantic_request(
+    request: SemanticMutationRequest,
+    *,
+    definition: GraphDefinition | None = None,
+) -> SemanticMutationPlan:
     """Validate + risk-classify a parsed semantic mutation request.
 
     Returns a :class:`SemanticMutationPlan` with ``batch=None`` (lowering is a
     separate step) carrying issues, per-op classification, the overall risk and
     the batch decision.
     """
+    token = _CURRENT_DEFINITION.set(definition or DEFAULT_GRAPH_DEFINITION)
+    try:
+        return _validate_semantic_request(request)
+    finally:
+        _CURRENT_DEFINITION.reset(token)
+
+
+def _validate_semantic_request(
+    request: SemanticMutationRequest,
+) -> SemanticMutationPlan:
     issues: list[SemanticMutationValidationIssue] = []
 
     if not is_supported_contract_version(request.graph_contract_version):
@@ -273,13 +307,13 @@ def _validate_entity_ref(ref, role, *, required, err, warn) -> None:
         if required:
             err("missing_entity", f"{role} entity is required for this op")
         return
-    if ref.type is not None and ref.type not in ENTITY_TYPES:
+    if ref.type is not None and ref.type not in _entity_types():
         err(
             "unknown_entity_type",
             f"{role} type {ref.type!r} is not a known entity type",
         )
         return
-    if ref.type is not None and not entity_key_matches_type(ref.key, ref.type):
+    if ref.type is not None and not _key_matches_type(ref.key, ref.type):
         err(
             "key_prefix_mismatch",
             f"{role} key {ref.key!r} does not match the canonical key prefix for "
@@ -306,11 +340,11 @@ def _validate_claim_op(op, *, err, warn) -> None:
     # Predicate must be a known canonical edge type.
     if not op.predicate:
         err("missing_predicate", "claim op requires a 'predicate'")
-    elif op.predicate not in EDGE_TYPES:
+    elif op.predicate not in _edge_types():
         err("unknown_predicate", f"predicate {op.predicate!r} is not a known edge type")
     elif op.object is not None and op.subject is not None:
         # Endpoint rules: when both endpoint types are declared, enforce them.
-        spec = edge_spec(op.predicate)
+        spec = _edge_spec(op.predicate)
         s_type, o_type = op.subject.type, op.object.type
         if spec and s_type and o_type and not spec.allows([s_type], [o_type]):
             allowed = ", ".join(f"{a}->{b}" for a, b in spec.allowed_pairs)
@@ -496,7 +530,7 @@ def _validate_merge_duplicate_entities_op(op, *, err, warn) -> None:
 def _validate_patch_entity_op(op, *, err, warn) -> None:
     _validate_entity_ref(op.subject, "subject", required=True, err=err, warn=warn)
     entity_type = _effective_entity_type(op.subject, None)
-    if entity_type not in ENTITY_TYPES:
+    if entity_type not in _entity_types():
         err("missing_entity_type", "patch_entity requires a known subject entity type")
         return
 
@@ -504,7 +538,7 @@ def _validate_patch_entity_op(op, *, err, warn) -> None:
         err("missing_patch", "patch_entity requires a non-empty 'patch' object")
         return
 
-    allowed = ENTITY_TYPES[entity_type].patchable_properties
+    allowed = _entity_types()[entity_type].patchable_properties
     for field, value in op.patch.items():
         if field not in allowed:
             err(
@@ -534,14 +568,14 @@ def _validate_patch_entity_op(op, *, err, warn) -> None:
 def _validate_transition_state_op(op, *, err, warn) -> None:
     _validate_entity_ref(op.subject, "subject", required=True, err=err, warn=warn)
     entity_type = _effective_entity_type(op.subject, None)
-    if entity_type not in ENTITY_TYPES:
+    if entity_type not in _entity_types():
         err(
             "missing_entity_type",
             "transition_state requires a known subject entity type",
         )
         return
 
-    spec = ENTITY_TYPES[entity_type]
+    spec = _entity_types()[entity_type]
     if not spec.lifecycle_states:
         err(
             "lifecycle_not_declared",
@@ -609,7 +643,7 @@ def _validate_predicate_and_endpoints(op, *, err) -> None:
     predicate = op.predicate
     if not predicate:
         return
-    if predicate not in EDGE_TYPES:
+    if predicate not in _edge_types():
         err("unknown_predicate", f"predicate {predicate!r} is not a known edge type")
         return
     if op.subject is not None and op.object is not None:
@@ -626,7 +660,7 @@ def _validate_predicate_and_endpoints(op, *, err) -> None:
 
 
 def _validate_activity_anchor(ref: GraphEntityRef, role: str, *, err) -> None:
-    spec = edge_spec("MENTIONS")
+    spec = _edge_spec("MENTIONS")
     ref_type = _effective_entity_type(ref, "Activity")
     if spec and ref_type and not spec.allows([ref_type], ["Observation"]):
         err(
@@ -646,7 +680,7 @@ def _validate_edge_endpoints(
     to_default: str | None,
     err,
 ) -> None:
-    spec = edge_spec(predicate)
+    spec = _edge_spec(predicate)
     from_type = _effective_entity_type(from_ref, from_default)
     to_type = _effective_entity_type(to_ref, to_default)
     if not (spec and from_type and to_type):
@@ -666,12 +700,12 @@ def _effective_entity_type(
 ) -> str | None:
     if ref is None:
         return default
-    if ref.type in ENTITY_TYPES:
+    if ref.type in _entity_types():
         return ref.type
     prefix = entity_key_prefix(ref.key)
     if prefix is None:
         return default
-    return _PREFIX_TO_ENTITY_TYPE.get(prefix, default)
+    return _CURRENT_DEFINITION.get().entity_by_key_prefix.get(prefix, default)
 
 
 def _check_evidence_or_low_authority(op, err) -> None:
@@ -784,8 +818,10 @@ def _subgraph_for(op: SemanticMutation) -> str:
         entity_type = _effective_entity_type(op.subject, None)
         if entity_type in _ENTITY_TYPE_SUBGRAPH:
             return _ENTITY_TYPE_SUBGRAPH[entity_type]
-        if entity_type in ENTITY_TYPES:
-            return _CATEGORY_SUBGRAPH.get(ENTITY_TYPES[entity_type].category, "memory")
+        if entity_type in _entity_types():
+            return _CATEGORY_SUBGRAPH.get(
+                _entity_types()[entity_type].category, "memory"
+            )
     return "memory"
 
 
@@ -825,11 +861,19 @@ _ENTITY_TYPE_SUBGRAPH = {
 }
 
 
-def subgraph_for_predicate(predicate: str) -> str:
+def subgraph_for_predicate(
+    predicate: str, *, definition: GraphDefinition | None = None
+) -> str:
+    if definition is not None:
+        token = _CURRENT_DEFINITION.set(definition)
+        try:
+            return subgraph_for_predicate(predicate)
+        finally:
+            _CURRENT_DEFINITION.reset(token)
     pred = (predicate or "").strip().upper()
     if pred in _MEMORY_PREDICATE_SUBGRAPH:
         return _MEMORY_PREDICATE_SUBGRAPH[pred]
-    spec = edge_spec(pred)
+    spec = _edge_spec(pred)
     if spec is not None:
         return _CATEGORY_SUBGRAPH.get(spec.category, "memory")
     return "memory"

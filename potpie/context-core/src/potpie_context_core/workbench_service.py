@@ -8,13 +8,19 @@ from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
-from typing import Any
+from typing import Any, Callable
 
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.semantic_mutation_lowering import lower_semantic_request
 from potpie_context_core.semantic_mutation_validator import validate_semantic_request
 from potpie_context_core.errors import CapabilityNotImplemented
-from potpie_context_core.graph_contract import GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION
-from potpie_context_core.graph_contract import EVIDENCE_REQUIRED_TRUTH_CLASSES, MutationRisk
+from potpie_context_core.graph_contract import (
+    GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION,
+)
+from potpie_context_core.graph_contract import (
+    EVIDENCE_REQUIRED_TRUTH_CLASSES,
+    MutationRisk,
+)
 from potpie_context_core.graph_history import (
     GraphHistoryEntry,
     GraphHistoryRequest,
@@ -27,6 +33,10 @@ from potpie_context_core.graph_inbox import (
     GraphInboxStatus,
 )
 from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.mutation_policy import (
+    DEFAULT_MUTATION_POLICY,
+    GraphMutationPolicy,
+)
 from potpie_context_core.graph_plans import (
     GraphIngestionVerificationResult,
     GraphMutationApproval,
@@ -54,7 +64,6 @@ from potpie_context_core.graph_workbench import (
     GraphUnsupportedResult,
 )
 from potpie_context_core.graph_workbench_ontology import ranked_catalog_views
-from potpie_context_core.ontology import EDGE_TYPES
 from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_core.ports.graph.inbox_store import GraphInboxStorePort
 from potpie_context_core.ports.graph.plan_store import GraphPlanStorePort
@@ -65,7 +74,6 @@ from potpie_context_core.semantic_mutations import (
     SemanticMutationRequest,
     SemanticMutationValidationIssue,
 )
-from potpie_context_core.singleton_predicates import is_singleton_predicate
 
 _DEFAULT_PLAN_TTL_SECONDS = 3600
 _QUALITY_SCAN_MAX = 5000
@@ -102,12 +110,32 @@ class GraphWorkbenchService:
         backend: GraphBackend,
         plan_store: GraphPlanStorePort,
         inbox_store: GraphInboxStorePort | None = None,
-        default_plan_ttl_seconds: int = _DEFAULT_PLAN_TTL_SECONDS,
+        definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
+        policy: GraphMutationPolicy = DEFAULT_MUTATION_POLICY,
+        validator: Callable[[SemanticMutationRequest], Any] | None = None,
+        lowerer: Callable[[SemanticMutationRequest, Any], Any] | None = None,
+        default_plan_ttl_seconds: int | None = None,
     ) -> None:
         self.backend = backend
         self.plan_store = plan_store
         self.inbox_store = inbox_store
-        self.default_plan_ttl_seconds = default_plan_ttl_seconds
+        self.definition = definition
+        self.policy = policy
+        self.validator = validator or (
+            lambda request: validate_semantic_request(
+                request, definition=self.definition
+            )
+        )
+        self.lowerer = lowerer or (
+            lambda request, plan: lower_semantic_request(
+                request, plan, definition=self.definition
+            )
+        )
+        self.default_plan_ttl_seconds = (
+            default_plan_ttl_seconds
+            if default_plan_ttl_seconds is not None
+            else policy.default_plan_ttl_seconds
+        )
 
     def propose(
         self,
@@ -158,13 +186,18 @@ class GraphWorkbenchService:
                 recommended_next_action="Fix the mutation JSON and run graph propose again.",
             )
 
-        semantic_plan = validate_semantic_request(request)
+        semantic_plan = self.validator(request)
         status = _status_for_proposal(semantic_plan, conflict=bool(conflict))
+        if (
+            status == GraphMutationPlanStatus.validated.value
+            and not self.policy.allow_auto_commit
+        ):
+            status = GraphMutationPlanStatus.review_required.value
         if status not in {
             GraphMutationPlanStatus.invalid.value,
             GraphMutationPlanStatus.conflict.value,
         }:
-            lower_semantic_request(request, semantic_plan)
+            self.lowerer(request, semantic_plan)
 
         claim_keys = tuple(
             key for op in semantic_plan.accepted_ops for key in op.claim_keys
@@ -313,7 +346,11 @@ class GraphWorkbenchService:
             )
 
         approval = record.approval
-        approval_error = _approval_error(record, approved_by=approved_by)
+        approval_error = _approval_error(
+            record,
+            approved_by=approved_by,
+            require_approval=self.policy.require_approval_for_review,
+        )
         if approval_error:
             return GraphMutationCommitResult(
                 ok=False,
@@ -345,7 +382,11 @@ class GraphWorkbenchService:
             self.plan_store.save(record)
 
         quality_before = (
-            _verification_quality_snapshot(self.backend, pot_id=pot_id)
+            _verification_quality_snapshot(
+                self.backend,
+                pot_id=pot_id,
+                definition=self.definition,
+            )
             if verify
             else None
         )
@@ -365,6 +406,7 @@ class GraphWorkbenchService:
                     pot_id=pot_id,
                     record=committed,
                     before_quality=quality_before,
+                    definition=self.definition,
                 )
                 if verify
                 else None
@@ -435,6 +477,7 @@ class GraphWorkbenchService:
                 pot_id=pot_id,
                 record=committed,
                 before_quality=quality_before,
+                definition=self.definition,
             )
             if verify
             else None
@@ -546,6 +589,7 @@ class GraphWorkbenchService:
                 self.backend,
                 pot_id=pot_id,
                 filters=filters,
+                definition=self.definition,
             )
 
         findings, metrics, unsupported = _quality_deep_report(
@@ -555,6 +599,7 @@ class GraphWorkbenchService:
             subgraph=subgraph,
             limit=clean_limit,
             confidence_threshold=confidence_threshold,
+            definition=self.definition,
         )
 
         status = _quality_status(findings, unsupported)
@@ -1152,10 +1197,15 @@ def _verify_ingestion_commit(
     pot_id: str,
     record: GraphMutationPlanRecord,
     before_quality: Mapping[str, Any] | None,
+    definition: GraphDefinition,
 ) -> GraphIngestionVerificationResult:
     claim_keys = _claim_keys_from_record(record)
     readback = _verification_readback(backend, pot_id=pot_id, claim_keys=claim_keys)
-    after_quality = _verification_quality_snapshot(backend, pot_id=pot_id)
+    after_quality = _verification_quality_snapshot(
+        backend,
+        pot_id=pot_id,
+        definition=definition,
+    )
     before_counts = _quality_count_map(before_quality)
     after_counts = _quality_count_map(after_quality)
     deltas = _quality_count_delta(before_counts, after_counts)
@@ -1274,6 +1324,7 @@ def _verification_quality_snapshot(
     backend: GraphBackend,
     *,
     pot_id: str,
+    definition: GraphDefinition,
 ) -> dict[str, Any]:
     try:
         result = _quality_summary_result(
@@ -1284,6 +1335,7 @@ def _verification_quality_snapshot(
                 "limit": 50,
                 "confidence_threshold": _DEFAULT_LOW_CONFIDENCE_THRESHOLD,
             },
+            definition=definition,
         )
     except CapabilityNotImplemented as exc:
         return {
@@ -1603,6 +1655,7 @@ def _quality_deep_report(
     subgraph: str | None,
     limit: int,
     confidence_threshold: float,
+    definition: GraphDefinition,
 ) -> tuple[
     tuple[GraphQualityFinding, ...],
     dict[str, Any],
@@ -1628,6 +1681,7 @@ def _quality_deep_report(
             pot_id=pot_id,
             subgraph=subgraph,
             limit=limit,
+            definition=definition,
         )
     if report == "orphan-entities":
         return _quality_orphan_entities(
@@ -1650,6 +1704,7 @@ def _quality_deep_report(
             pot_id=pot_id,
             subgraph=subgraph,
             limit=limit,
+            definition=definition,
         )
     raise ValueError(f"unknown quality report {report!r}")
 
@@ -1659,6 +1714,7 @@ def _quality_summary_result(
     *,
     pot_id: str,
     filters: Mapping[str, Any],
+    definition: GraphDefinition,
 ) -> GraphQualityResult:
     unsupported: list[Mapping[str, Any]] = []
     counts = _quality_analytics_call(
@@ -1696,6 +1752,7 @@ def _quality_summary_result(
             subgraph=subgraph,
             limit=limit,
             confidence_threshold=confidence_threshold,
+            definition=definition,
         )
         report_status = _quality_status(findings, report_unsupported)
         finding_count = len(findings)
@@ -1890,6 +1947,7 @@ def _quality_conflicting_claims(
     pot_id: str,
     subgraph: str | None,
     limit: int,
+    definition: GraphDefinition,
 ) -> tuple[
     tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]
 ]:
@@ -1903,7 +1961,13 @@ def _quality_conflicting_claims(
         backend, pot_id=pot_id, entity_keys=entity_keys, properties=False
     )
     unsupported += label_unsupported
-    findings = list(_singleton_conflict_findings(rows, limit=limit))
+    findings = list(
+        _singleton_conflict_findings(
+            rows,
+            limit=limit,
+            definition=definition,
+        )
+    )
     if len(findings) < limit:
         findings.extend(
             _predicate_family_conflict_findings(
@@ -2020,6 +2084,7 @@ def _quality_projection_drift(
     pot_id: str,
     subgraph: str | None,
     limit: int,
+    definition: GraphDefinition,
 ) -> tuple[
     tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]
 ]:
@@ -2029,7 +2094,13 @@ def _quality_projection_drift(
     if unsupported:
         return (), {"scanned_claims": 0}, unsupported
     findings = list(
-        _invalid_endpoint_findings(backend, pot_id=pot_id, rows=rows, limit=limit)
+        _invalid_endpoint_findings(
+            backend,
+            pot_id=pot_id,
+            rows=rows,
+            limit=limit,
+            definition=definition,
+        )
     )
     inspection_unsupported: tuple[Mapping[str, Any], ...] = ()
     try:
@@ -2257,10 +2328,14 @@ def _singleton_conflict_findings(
     rows: tuple[ClaimRow, ...],
     *,
     limit: int,
+    definition: GraphDefinition,
 ) -> tuple[GraphQualityFinding, ...]:
     buckets: dict[tuple[str, str], list[ClaimRow]] = defaultdict(list)
     for row in rows:
-        if row.invalid_at is None and is_singleton_predicate(row.predicate):
+        if (
+            row.invalid_at is None
+            and row.predicate in definition.singleton_predicates
+        ):
             buckets[(row.subject_key, row.predicate)].append(row)
     findings: list[GraphQualityFinding] = []
     for (subject, predicate), group in sorted(buckets.items()):
@@ -2364,6 +2439,7 @@ def _invalid_endpoint_findings(
     pot_id: str,
     rows: tuple[ClaimRow, ...],
     limit: int,
+    definition: GraphDefinition,
 ) -> tuple[GraphQualityFinding, ...]:
     entity_keys = sorted(
         {key for row in rows for key in (row.subject_key, row.object_key)}
@@ -2375,7 +2451,7 @@ def _invalid_endpoint_findings(
         return ()
     findings: list[GraphQualityFinding] = []
     for row in rows:
-        spec = EDGE_TYPES.get(row.predicate)
+        spec = definition.edge_types.get(row.predicate)
         if spec is None or not spec.allowed_pairs:
             continue
         subject_labels = labels.get(row.subject_key, ())
@@ -2683,14 +2759,16 @@ def _approval_error(
     record: GraphMutationPlanRecord,
     *,
     approved_by: str | None,
+    require_approval: bool = True,
 ) -> str | None:
     if record.review_required_ops:
         return (
             "plan contains review-required operations that the local commit path "
             "does not apply yet"
         )
-    if record.status == GraphMutationPlanStatus.review_required.value or (
-        record.risk in {MutationRisk.medium.value, MutationRisk.high.value}
+    if require_approval and (
+        record.status == GraphMutationPlanStatus.review_required.value
+        or record.risk in {MutationRisk.medium.value, MutationRisk.high.value}
     ):
         if not (record.approval or (approved_by and approved_by.strip())):
             return "approval required for medium- or high-risk plan"

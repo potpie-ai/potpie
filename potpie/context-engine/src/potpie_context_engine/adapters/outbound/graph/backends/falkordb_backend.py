@@ -8,7 +8,7 @@ shim details stay in outbound adapters.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from potpie_context_engine.adapters.outbound.graph.apply_plan import apply_mutation_batch
@@ -33,6 +33,7 @@ from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import 
     repaired_entity_properties,
 )
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_core.graph_mutations import ProvenanceContext
 from potpie_context_core.lifecycle import DONE, FAILED, SetupPlan, StepResult
@@ -79,6 +80,7 @@ class _FalkorDBMutation:
     settings: Any
     writer: GraphWriterPort
     profile: str = _PROFILE
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
 
     async def apply_async(
         self,
@@ -92,6 +94,7 @@ class _FalkorDBMutation:
             plan,
             expected_pot_id=expected_pot_id,
             provenance_context=provenance_context,
+            definition=self.definition,
         )
 
     def apply(
@@ -153,6 +156,7 @@ class FalkorDBGraphBackend:
     embedder: Any = None
     profile_name: str = _PROFILE
     force_mode: str | None = None
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
     _claim_query: ClaimQueryPort = field(init=False)
     _mutation: _FalkorDBMutation = field(init=False)
     _semantic: ClaimQuerySemanticSearch = field(init=False)
@@ -162,15 +166,24 @@ class FalkorDBGraphBackend:
             self.settings = _FalkorDBModeSettings(self.settings, self.force_mode)
         provider = self.graph_provider or FalkorDBGraphProvider(self.settings)
         writer = self.writer or FalkorDBGraphWriter(
-            self.settings, graph_provider=provider, embedder=self.embedder
+            self.settings,
+            graph_provider=provider,
+            embedder=self.embedder,
+            definition=self.definition,
         )
+        bind_writer = getattr(writer, "bind_definition", None)
+        if callable(bind_writer):
+            writer = bind_writer(self.definition)
         self.graph_provider = provider
         self.writer = writer
         self._claim_query = FalkorDBClaimQueryStore(
             self.settings, graph_provider=provider, embedder=self.embedder
         )
         self._mutation = _FalkorDBMutation(
-            self.settings, writer, profile=self.profile_name
+            self.settings,
+            writer,
+            profile=self.profile_name,
+            definition=self.definition,
         )
         self._semantic = ClaimQuerySemanticSearch(self._claim_query)
 
@@ -229,6 +242,9 @@ class FalkorDBGraphBackend:
             inspection=True,
             snapshot=False,
         )
+
+    def bind_definition(self, definition: GraphDefinition) -> FalkorDBGraphBackend:
+        return replace(self, definition=definition)
 
     def provision(self, plan: SetupPlan) -> StepResult:
         if not self.enabled:

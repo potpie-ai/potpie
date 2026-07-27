@@ -18,11 +18,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Sequence
 
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
     InMemoryClaimQueryStore,
     card_for_row,
 )
-from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import CONTRACT_EDGE_KEYS
+from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
+    CONTRACT_EDGE_KEYS,
+)
 from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
     ENTITY_SUMMARY_TARGET,
     repaired_entity_properties,
@@ -60,6 +63,7 @@ class _Mutation:
     on_change: Any = None
     profile: str = _PROFILE
     embedder: EmbedderPort | None = None
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
 
     def _notify(self) -> None:
         if self.on_change is not None:
@@ -75,7 +79,7 @@ class _Mutation:
         # Validate before mutating, exactly like the Neo4j/FalkorDB writers do
         # (both route apply through apply_mutation_batch → this validator). Keeps
         # the substrate from silently accepting malformed or cross-pot batches.
-        validate_reconciliation_plan(plan, expected_pot_id)
+        validate_reconciliation_plan(plan, expected_pot_id, definition=self.definition)
         summary = MutationSummary()
         mutation_id = uuid.uuid4().hex
         for ent in plan.entity_upserts:
@@ -590,6 +594,7 @@ class InMemoryGraphBackend:
     profile_name: str = _PROFILE
     on_change: Any = None
     embedder: EmbedderPort | None = None
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
     _mutation: _Mutation = field(init=False)
     _semantic: _Semantic = field(init=False)
     _inspection: _Inspection = field(init=False)
@@ -606,6 +611,7 @@ class InMemoryGraphBackend:
             on_change=self.on_change,
             profile=self.profile_name,
             embedder=self.store.embedder,
+            definition=self.definition,
         )
         self._semantic = _Semantic(self.store)
         self._inspection = _Inspection(self.store)
@@ -662,6 +668,16 @@ class InMemoryGraphBackend:
             state=DONE,
             detail=f"'{self.profile_name}' backend ready (ephemeral, no store to provision)",
             metadata={"profile": self.profile_name},
+        )
+
+    def bind_definition(self, definition: GraphDefinition) -> InMemoryGraphBackend:
+        """Return a definition-bound facade without mutating this backend."""
+        return InMemoryGraphBackend(
+            store=self.store,
+            profile_name=self.profile_name,
+            on_change=self.on_change,
+            embedder=self.embedder,
+            definition=definition,
         )
 
 
