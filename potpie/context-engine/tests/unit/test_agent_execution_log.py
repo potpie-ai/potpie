@@ -28,7 +28,7 @@ from potpie_context_engine.domain.ports.agent_execution_log import (
     NoOpAgentExecutionLog,
     ResumeState,
 )
-from potpie_context_engine.domain.ports.pot_resolution import (
+from potpie_context_core.ports.pot_resolution import (
     ResolvedPot,
     ResolvedPotRepo,
 )

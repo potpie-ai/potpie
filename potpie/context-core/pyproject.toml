@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "potpie-context-core"
+version = "0.1.0"
+description = "Context graph core: ontology, workbench, records, mutations, and graph ports."
+requires-python = ">=3.12,<3.15"
+# The core is a library: pydantic + stdlib only, no extras. If a module needs
+# anything else, it belongs in potpie-context-engine, not here.
+dependencies = [
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/potpie_context_core"]
+include = [
+    "src/potpie_context_core/playbooks/**/*.md",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/potpie_context_core",
+    "src/potpie_context_core/playbooks/**/*.md",
+]
+
+[tool.ruff]
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+markers = [
+    "unit: unit tests",
+]

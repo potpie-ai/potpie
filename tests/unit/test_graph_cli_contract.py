@@ -15,37 +15,37 @@ from potpie_context_engine.bootstrap import observability_runtime
 from potpie.cli.commands import _common, graph
 from potpie.cli.telemetry import product_analytics
 from potpie.cli.telemetry.context import TelemetryContext
-from potpie_context_engine.domain.graph_plans import (
+from potpie_context_core.graph_plans import (
     GraphIngestionVerificationResult,
     GraphMutationCommitResult,
     GraphMutationDiff,
     GraphMutationProposal,
 )
-from potpie_context_engine.domain.graph_history import (
+from potpie_context_core.graph_history import (
     GraphHistoryEntry,
     GraphHistoryResult,
 )
-from potpie_context_engine.domain.graph_inbox import GraphInboxItem, GraphInboxResult
-from potpie_context_engine.domain.graph_quality import (
+from potpie_context_core.graph_inbox import GraphInboxItem, GraphInboxResult
+from potpie_context_core.graph_quality import (
     GraphQualityFinding,
     GraphQualityResult,
 )
 from potpie_context_engine.domain.nudge import GraphNudgeResult
-from potpie_context_engine.domain.graph_views import views_for_catalog
-from potpie_context_engine.domain.ports.services.graph_service import (
+from potpie_context_core.graph_views import views_for_catalog
+from potpie_context_core.ports.graph_service import (
     DataPlaneStatus,
     GraphCatalogResult,
     GraphEntityCandidate,
     GraphEntitySearchResult,
     GraphReadResult,
 )
-from potpie_context_engine.domain.ports.graph.inspection import (
+from potpie_context_core.ports.graph.inspection import (
     GraphEdge,
     GraphNode,
     GraphSlice,
 )
-from potpie_context_engine.domain.ports.graph.analytics import RepairReport
-from potpie_context_engine.domain.ports.graph.backend import BackendCapabilities
+from potpie_context_core.ports.graph.analytics import RepairReport
+from potpie_context_core.ports.graph.backend import BackendCapabilities
 
 pytestmark = pytest.mark.unit
 
@@ -97,7 +97,7 @@ class _Graph:
     def describe(self, request):
         # Delegate to the real domain contract so payload assertions stay
         # meaningful; the stub only stands in for the transport.
-        from potpie_context_engine.domain.graph_workbench_ontology import (
+        from potpie_context_core.graph_workbench_ontology import (
             describe_contract,
         )
 
@@ -1567,7 +1567,7 @@ def test_graph_read_missing_required_scope_result_is_error_envelope() -> None:
 def test_graph_read_include_guess_error_carries_did_you_mean() -> None:
     # Audit item 17: a failed include-family guess returns machine-readable
     # migration guidance in the error envelope (never accepted as input).
-    from potpie_context_engine.domain.graph_views import (
+    from potpie_context_core.graph_views import (
         UnknownGraphViewError,
         include_guess_guidance,
     )
@@ -2049,7 +2049,7 @@ def test_graph_catalog_unknown_subgraph_uses_error_envelope() -> None:
 def test_graph_catalog_include_guess_error_carries_did_you_mean() -> None:
     # Audit item 17 first-contact path: an include family typed where a
     # subgraph is expected gets the same migration guidance as read.
-    from potpie_context_engine.domain.graph_views import (
+    from potpie_context_core.graph_views import (
         UnknownGraphViewError,
         include_guess_guidance,
     )

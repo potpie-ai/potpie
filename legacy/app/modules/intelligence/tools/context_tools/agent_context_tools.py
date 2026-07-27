@@ -8,14 +8,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.modules.context_graph.wiring import build_container_for_user_session
-from potpie_context_engine.domain.actor import Actor
-from potpie_context_engine.domain.agent_context_port import (
+from potpie_context_core.actor import Actor
+from potpie_context_core.agent_context_port import (
     build_context_record_source_id,
     context_port_manifest,
     context_recipe_for_intent,
     normalize_record_type,
 )
-from potpie_context_engine.domain.graph_query import (
+from potpie_context_core.graph_query import (
     ContextGraphGoal,
     ContextGraphQuery,
     ContextGraphScope,

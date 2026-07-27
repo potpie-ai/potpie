@@ -15,7 +15,7 @@ from potpie.cli.telemetry_context import (
     load_anonymous_install_id,
 )
 from potpie.cli.telemetry.identity_store import identity_path
-from potpie_context_engine.domain.errors import (
+from potpie_context_core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
     PotNotFound,

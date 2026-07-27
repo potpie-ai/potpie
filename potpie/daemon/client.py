@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
-from potpie_context_engine.domain.errors import (
+from potpie_context_core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
     PotNotFound,

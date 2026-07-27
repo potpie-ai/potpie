@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-from potpie_context_engine.domain.lifecycle import SetupPlan
+from potpie_context_core.lifecycle import SetupPlan
 
 
 class ConfigService(Protocol):

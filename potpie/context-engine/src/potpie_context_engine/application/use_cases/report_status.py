@@ -14,7 +14,7 @@ from typing import Any, Mapping
 from sqlalchemy.orm import Session
 
 from potpie_context_engine.bootstrap.ingestion_server import IngestionServerContainer
-from potpie_context_engine.domain.agent_context_port import (
+from potpie_context_core.agent_context_port import (
     DEFAULT_INTENT_INCLUDES,
     READER_BACKED_INCLUDES,
     context_port_manifest,
@@ -35,10 +35,10 @@ from potpie_context_engine.domain.context_status import (
     source_capability_matrix_to_payload,
     status_source_to_payload,
 )
-from potpie_context_engine.domain.graph_quality import assess_graph_quality
-from potpie_context_engine.domain.graph_quality import CoverageReport
-from potpie_context_engine.domain.graph_views import INCLUDE_TO_VIEW
-from potpie_context_engine.domain.source_references import SourceReferenceRecord
+from potpie_context_core.graph_quality import assess_graph_quality
+from potpie_context_core.graph_quality import CoverageReport
+from potpie_context_core.graph_views import INCLUDE_TO_VIEW
+from potpie_context_core.source_references import SourceReferenceRecord
 
 
 @dataclass(slots=True)

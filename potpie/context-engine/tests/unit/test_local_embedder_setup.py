@@ -21,7 +21,7 @@ from potpie_context_engine.application.services.config_service import LocalConfi
 from potpie_context_engine.application.services.setup_orchestrator import (
     DefaultSetupOrchestrator,
 )
-from potpie_context_engine.domain.lifecycle import DONE, FAILED, SetupPlan
+from potpie_context_core.lifecycle import DONE, FAILED, SetupPlan
 
 pytestmark = pytest.mark.unit
 

@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from typing import Awaitable, Callable, Sequence
 from urllib.parse import urlparse
 
-from potpie_context_engine.domain.source_references import (
+from potpie_context_core.source_references import (
     SourceReferenceRecord,
     normalize_source_policy,
 )

@@ -41,8 +41,8 @@ from potpie_context_engine.adapters.outbound.source_resolvers import (
 )
 from potpie_context_engine.bootstrap.container import ContextEngineContainer, build_container
 from potpie_context_engine.domain.context_status import StatusSource
-from potpie_context_engine.domain.source_references import SourceReferenceRecord
-from potpie_context_engine.domain.ports.pot_resolution import (
+from potpie_context_core.source_references import SourceReferenceRecord
+from potpie_context_core.ports.pot_resolution import (
     PotResolutionPort,
     RepoRef,
     ResolvedPot,

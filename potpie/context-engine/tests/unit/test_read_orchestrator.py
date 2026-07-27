@@ -10,7 +10,7 @@ from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
 from potpie_context_engine.application.services.read_orchestrator import (
     ReadOrchestrator,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimRow
+from potpie_context_core.ports.claim_query import ClaimRow
 
 pytestmark = pytest.mark.unit
 

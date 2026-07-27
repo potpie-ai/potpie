@@ -11,11 +11,11 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
     LocalJsonGraphPlanStore,
 )
-from potpie_context_engine.application.services.graph_workbench import (
+from potpie_context_core.workbench_service import (
     GraphWorkbenchService,
 )
-from potpie_context_engine.domain.graph_plans import GraphMutationPlanRecord
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter
+from potpie_context_core.graph_plans import GraphMutationPlanRecord
+from potpie_context_core.ports.claim_query import ClaimQueryFilter
 
 pytestmark = pytest.mark.unit
 

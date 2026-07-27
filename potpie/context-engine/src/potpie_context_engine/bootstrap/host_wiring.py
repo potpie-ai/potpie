@@ -52,7 +52,7 @@ from potpie_context_engine.application.services.agent_context import AgentContex
 from potpie_context_engine.application.services.auth_service import LocalAuthService
 from potpie_context_engine.application.services.config_service import LocalConfigService
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
-from potpie_context_engine.application.services.graph_workbench import (
+from potpie_context_core.workbench_service import (
     GraphWorkbenchService,
 )
 from potpie_context_engine.application.services.nudge_service import NudgeService
@@ -67,8 +67,8 @@ from potpie_context_engine.bootstrap.logging_setup import configure_logging
 from potpie_context_engine.bootstrap.observability_context import correlation_scope
 from potpie_context_engine.bootstrap.observability_runtime import set_observability
 from potpie_context_engine.bootstrap.observability_wiring import default_observability
-from potpie_context_engine.domain.coherence import assert_runtime_coherence
-from potpie_context_engine.domain.ports.graph.backend import GraphBackend
+from potpie_context_core.coherence import assert_runtime_coherence
+from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_engine.domain.ports.ledger.client import EventLedgerClientPort
 from potpie_context_engine.domain.ports.observability import ObservabilityPort
 from potpie.daemon.lifecycle import Daemon
