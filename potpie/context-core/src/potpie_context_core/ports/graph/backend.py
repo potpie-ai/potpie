@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from potpie_context_core.definition import GraphDefinition
 from potpie_context_core.lifecycle import SetupPlan, StepResult
 from potpie_context_core.ports.claim_query import ClaimQueryPort
 from potpie_context_core.ports.graph.analytics import GraphAnalyticsPort
@@ -99,6 +100,16 @@ class GraphBackend(Protocol):
     def snapshot(self) -> GraphSnapshotPort: ...
 
     def capabilities(self) -> BackendCapabilities: ...
+
+    def bind_definition(self, definition: GraphDefinition) -> "GraphBackend":
+        """Return a backend facade whose write semantics use ``definition``.
+
+        Implementations must not mutate process-global ontology state. Returning
+        ``self`` is valid when the backend is already definition-agnostic; a
+        backend that validates labels, predicates, or singleton behavior must
+        return an independently bound facade.
+        """
+        ...
 
     def provision(self, plan: SetupPlan) -> StepResult:
         """Stand up this backend's own store, idempotently (the setup seam).

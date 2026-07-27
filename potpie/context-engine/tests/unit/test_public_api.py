@@ -83,12 +83,19 @@ def test_api_reexports_are_the_internal_contracts() -> None:
     assert api.GraphInboxStorePort is GraphInboxStorePort
     assert api.GraphPlanStorePort is GraphPlanStorePort
     assert api.GraphService is GraphService
-    assert set(api.__all__) == {
+    assert {
         "GraphBackend",
         "GraphInboxStorePort",
         "GraphPlanStorePort",
         "GraphService",
-    }
+    } <= set(api.__all__)
+    assert {
+        "DEFAULT_GRAPH_DEFINITION",
+        "GraphDefinition",
+        "GraphExtension",
+        "GraphRuntime",
+        "build_graph_runtime",
+    } <= set(api.__all__)
 
 
 def test_legacy_top_level_packages_are_gone() -> None:

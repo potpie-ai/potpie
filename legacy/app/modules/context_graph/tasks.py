@@ -1,15 +1,19 @@
-"""Celery tasks for context-graph ingestion workflows."""
+"""Celery task for context-graph batch processing.
+
+One background job exists (see ``ContextGraphJobQueuePort``): a per-batch
+processor. Every admitted ingestion event lands in a batch; ``enqueue_batch``
+fires this task, which claims the batch and runs the reconciliation agent
+over it. Backfill and PR ingest are no longer standalone jobs — they flow
+through event admission into this same path.
+"""
 
 from celery import Task
 
 from app.celery.celery_app import celery_app
 from app.core.database import SessionLocal
-from app.modules.context_graph.wiring import build_container_for_session
+from app.modules.context_graph.wiring import build_ingestion_server_for_session
 from potpie_context_engine.application.use_cases.context_graph_jobs import (
-    handle_apply_episode,
-    handle_backfill_pot,
-    handle_ingest_pr,
-    handle_ingestion_agent_run,
+    handle_process_batch,
 )
 
 
@@ -33,82 +37,12 @@ class ContextGraphTask(Task):
 @celery_app.task(
     bind=True,
     base=ContextGraphTask,
-    name="app.modules.context_graph.tasks.context_graph_backfill_pot",
+    name="app.modules.context_graph.tasks.context_graph_process_batch",
     queue="context-graph-etl",
 )
-def context_graph_backfill_pot(
-    self, pot_id: str, target_repo_name: str | None = None
-) -> dict:
-    return handle_backfill_pot(
+def context_graph_process_batch(self, batch_id: str) -> dict:
+    return handle_process_batch(
         self.db,
-        pot_id,
-        target_repo_name=target_repo_name,
-        build_container=build_container_for_session,
+        batch_id,
+        build_ingestion_server=build_ingestion_server_for_session,
     )
-
-
-@celery_app.task(
-    bind=True,
-    base=ContextGraphTask,
-    name="app.modules.context_graph.tasks.context_graph_ingest_pr",
-    queue="context-graph-etl",
-)
-def context_graph_ingest_pr(
-    self,
-    pot_id: str,
-    pr_number: int,
-    is_live_bridge: bool = True,
-    repo_name: str | None = None,
-) -> dict:
-    return handle_ingest_pr(
-        self.db,
-        pot_id,
-        pr_number,
-        is_live_bridge=is_live_bridge,
-        repo_name=repo_name,
-        build_container=build_container_for_session,
-    )
-
-
-@celery_app.task(
-    bind=True,
-    base=ContextGraphTask,
-    name="app.modules.context_graph.tasks.context_graph_ingestion_agent_run",
-    queue="context-graph-etl",
-)
-def context_graph_ingestion_agent_run(self, event_id: str) -> dict:
-    return handle_ingestion_agent_run(
-        self.db, event_id, build_container=build_container_for_session
-    )
-
-
-@celery_app.task(
-    bind=True,
-    base=ContextGraphTask,
-    name="app.modules.context_graph.tasks.context_graph_apply_episode",
-    queue="context-graph-etl",
-)
-def context_graph_apply_episode(
-    self, pot_id: str, event_id: str, sequence: int
-) -> dict:
-    return handle_apply_episode(
-        self.db,
-        pot_id,
-        event_id,
-        sequence,
-        build_container=build_container_for_session,
-    )
-
-
-@celery_app.task(
-    bind=True,
-    base=ContextGraphTask,
-    name="app.modules.context_graph.tasks.context_graph_sync_linear_project_source",
-    queue="context-graph-etl",
-)
-def context_graph_sync_linear_project_source(self, project_source_id: str) -> dict:
-    return {
-        "status": "skipped",
-        "reason": "linear_sync_removed",
-        "project_source_id": project_source_id,
-    }

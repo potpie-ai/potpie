@@ -21,6 +21,7 @@ from potpie_context_engine.adapters.outbound.graph.cypher import (
     upsert_entities_async,
 )
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
@@ -39,11 +40,23 @@ class Neo4jGraphWriter(GraphWriterPort):
     """Production writer: applies typed mutations as Position-B :RELATES_TO edges."""
 
     def __init__(
-        self, settings: ContextEngineSettingsPort, *, embedder: Any | None = None
+        self,
+        settings: ContextEngineSettingsPort,
+        *,
+        embedder: Any | None = None,
+        definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
     ) -> None:
         self._settings = settings
         self._enabled = settings.is_enabled()
         self._embedder = embedder
+        self._definition = definition
+
+    def bind_definition(self, definition: GraphDefinition) -> Neo4jGraphWriter:
+        return Neo4jGraphWriter(
+            self._settings,
+            embedder=self._embedder,
+            definition=definition,
+        )
 
     @property
     def enabled(self) -> bool:
@@ -89,7 +102,13 @@ class Neo4jGraphWriter(GraphWriterPort):
         if not items:
             return 0
         return await self._with_driver(
-            lambda d: upsert_entities_async(d, pot_id, items, provenance)
+            lambda d: upsert_entities_async(
+                d,
+                pot_id,
+                items,
+                provenance,
+                definition=self._definition,
+            )
         )
 
     async def upsert_edges(
@@ -99,7 +118,12 @@ class Neo4jGraphWriter(GraphWriterPort):
             return 0
         return await self._with_driver(
             lambda d: upsert_edges_async(
-                d, pot_id, items, provenance, embedder=self._embedder
+                d,
+                pot_id,
+                items,
+                provenance,
+                embedder=self._embedder,
+                definition=self._definition,
             )
         )
 
@@ -109,7 +133,13 @@ class Neo4jGraphWriter(GraphWriterPort):
         if not items:
             return 0
         return await self._with_driver(
-            lambda d: delete_edges_async(d, pot_id, items, provenance)
+            lambda d: delete_edges_async(
+                d,
+                pot_id,
+                items,
+                provenance,
+                definition=self._definition,
+            )
         )
 
     async def invalidate(
@@ -118,7 +148,13 @@ class Neo4jGraphWriter(GraphWriterPort):
         if not items:
             return 0
         return await self._with_driver(
-            lambda d: apply_invalidations_async(d, pot_id, items, provenance)
+            lambda d: apply_invalidations_async(
+                d,
+                pot_id,
+                items,
+                provenance,
+                definition=self._definition,
+            )
         )
 
     async def reset_pot(self, pot_id: str) -> dict[str, Any]:

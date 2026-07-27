@@ -14,13 +14,14 @@ It produces no ``EventRef`` for non-event writes — provenance flows through
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import datetime, timezone
 
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.graph_contract import (
     DEFAULT_TRUTH_CLASS,
     GRAPH_CONTRACT_VERSION,
-    ONTOLOGY_VERSION,
     SemanticMutationOp,
     edge_identity_key,
     evidence_strength_for_truth,
@@ -34,7 +35,7 @@ from potpie_context_core.graph_mutations import (
     InvalidationOp,
     ProvenanceContext,
 )
-from potpie_context_core.ontology import ENTITY_TYPES, edge_spec
+from potpie_context_core.ontology import EdgeTypeSpec, EntityTypeSpec
 from potpie_context_core.reconciliation import MutationBatch
 from potpie_context_core.semantic_mutations import (
     GraphEntityRef,
@@ -46,16 +47,28 @@ from potpie_context_core.semantic_mutations import (
 
 # Reverse map: canonical key prefix → entity label, for inferring a label when
 # an entity ref omits ``type`` but its key carries a known prefix.
-_PREFIX_TO_LABEL: dict[str, str] = {
-    spec.key_prefix: label for label, spec in ENTITY_TYPES.items()
-}
+_CURRENT_DEFINITION: ContextVar[GraphDefinition] = ContextVar(
+    "semantic_lowering_definition", default=DEFAULT_GRAPH_DEFINITION
+)
+
+
+def _entity_types() -> Mapping[str, EntityTypeSpec]:
+    return _CURRENT_DEFINITION.get().entity_types
+
+
+def _edge_spec(predicate: str) -> EdgeTypeSpec | None:
+    return _CURRENT_DEFINITION.get().edge_types.get((predicate or "").strip().upper())
+
 
 # Default truth class per event/claim op when the caller omits one.
 _EVENT_TRUTH = "timeline_event"
 
 
 def lower_semantic_request(
-    request: SemanticMutationRequest, plan: SemanticMutationPlan
+    request: SemanticMutationRequest,
+    plan: SemanticMutationPlan,
+    *,
+    definition: GraphDefinition | None = None,
 ) -> SemanticMutationPlan:
     """Lower the plan's accepted ops into ``plan.batch`` + ``plan.provenance``.
 
@@ -63,6 +76,16 @@ def lower_semantic_request(
     deferred / rejected ops never reach the write tier). Each accepted op's
     ``claim_keys`` are filled in so the receipt can report them.
     """
+    token = _CURRENT_DEFINITION.set(definition or DEFAULT_GRAPH_DEFINITION)
+    try:
+        return _lower_semantic_request(request, plan)
+    finally:
+        _CURRENT_DEFINITION.reset(token)
+
+
+def _lower_semantic_request(
+    request: SemanticMutationRequest, plan: SemanticMutationPlan
+) -> SemanticMutationPlan:
     batch = MutationBatch()
     provenance = _provenance_from_request(request)
 
@@ -641,10 +664,10 @@ def _ensure_entity(
 
 def _label_for(ref: GraphEntityRef, default_label: str) -> str:
     prefix = normalize_entity_key(ref.key).partition(":")[0]
-    prefix_label = _PREFIX_TO_LABEL.get(prefix)
+    prefix_label = _CURRENT_DEFINITION.get().entity_by_key_prefix.get(prefix)
     if prefix_label:
         return prefix_label
-    if ref.type and ref.type in ENTITY_TYPES:
+    if ref.type and ref.type in _entity_types():
         return ref.type
     return default_label
 
@@ -689,7 +712,7 @@ def _claim_properties(
         "created_by": _actor_dict(request),
         "graph_contract_version": request.graph_contract_version
         or GRAPH_CONTRACT_VERSION,
-        "ontology_version": ONTOLOGY_VERSION,
+        "ontology_version": _CURRENT_DEFINITION.get().ontology_version,
         "idempotency_key": request.idempotency_key,
         "identity_key": list(
             edge_identity_key(
@@ -845,7 +868,7 @@ def _subgraph_for_predicate(predicate: str) -> str:
     pred = (predicate or "").strip().upper()
     if pred in _MEMORY_PREDICATE_SUBGRAPH:
         return _MEMORY_PREDICATE_SUBGRAPH[pred]
-    spec = edge_spec(pred)
+    spec = _edge_spec(pred)
     if spec is not None:
         return _CATEGORY_SUBGRAPH.get(spec.category, "memory")
     return "memory"
@@ -853,7 +876,7 @@ def _subgraph_for_predicate(predicate: str) -> str:
 
 def _subgraph_for_entity(ref: GraphEntityRef | None) -> str:
     label = _label_for(ref, "Observation") if ref is not None else "Observation"
-    spec = ENTITY_TYPES.get(label)
+    spec = _entity_types().get(label)
     if spec is None:
         return "admin"
     return _CATEGORY_SUBGRAPH.get(spec.category, "memory")

@@ -41,6 +41,8 @@ class IncludeResult:
 class EnvelopeBuilder:
     """Stateless service. Inject custom intent/include mappings via constructor."""
 
+    additional_includes: frozenset[str] = frozenset()
+
     def build(
         self,
         *,
@@ -58,7 +60,11 @@ class EnvelopeBuilder:
         # intent's default includes; unknown names → ``unsupported`` (never
         # silently dropped to zero).
         resolved = includes_for_request(intent, requested_list, [])
-        unsupported_names = unsupported_include_values(requested_list)
+        unsupported_names = [
+            name
+            for name in unsupported_include_values(requested_list)
+            if name not in self.additional_includes
+        ]
         unsupported_set = set(unsupported_names)
         matched = [inc for inc in resolved if inc not in unsupported_set]
         matched_set = set(matched)

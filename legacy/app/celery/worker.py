@@ -19,11 +19,7 @@ from app.modules.event_bus.tasks.event_tasks import (
     process_custom_event,
 )
 from app.modules.context_graph.tasks import (
-    context_graph_apply_episode,
-    context_graph_backfill_pot,
-    context_graph_ingest_pr,
-    context_graph_sync_linear_project_source,
-    context_graph_ingestion_agent_run,
+    context_graph_process_batch,
 )
 
 
@@ -43,11 +39,7 @@ def register_tasks():
     celery_app.tasks.register(process_custom_event)
 
     # Register context graph tasks
-    celery_app.tasks.register(context_graph_backfill_pot)
-    celery_app.tasks.register(context_graph_ingest_pr)
-    celery_app.tasks.register(context_graph_ingestion_agent_run)
-    celery_app.tasks.register(context_graph_apply_episode)
-    celery_app.tasks.register(context_graph_sync_linear_project_source)
+    celery_app.tasks.register(context_graph_process_batch)
     logger.info("Tasks registered successfully")
 
 

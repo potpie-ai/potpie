@@ -32,6 +32,12 @@ from potpie_context_engine.adapters.outbound.graph.backends.neo4j_backend import
     Neo4jGraphBackend as _Neo4jGraphBackend,
 )
 from potpie_context_engine.adapters.outbound.graph.backends import build_backend
+from potpie_context_engine.adapters.outbound.graph.inbox_stores import (
+    LocalJsonGraphInboxStore,
+)
+from potpie_context_engine.adapters.outbound.graph.plan_stores import (
+    LocalJsonGraphPlanStore,
+)
 from potpie_context_engine.adapters.outbound.graph.context_graph_service import (
     ContextGraphService,
 )
@@ -66,7 +72,6 @@ from potpie_context_engine.adapters.outbound.postgres.reconciliation_ledger impo
 from potpie_context_engine.adapters.outbound.settings_env import (
     EnvContextEngineSettings,
 )
-from potpie_context_engine.application.services.graph_service import DefaultGraphService
 from potpie_context_engine.application.services.source_connector_registry import (
     SourceConnectorRegistry,
 )
@@ -103,6 +108,7 @@ from potpie_context_engine.domain.ports.reconciliation_agent import (
 )
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 from potpie_context_core.ports.graph_service import GraphService
+from potpie_context_core.api import build_graph_runtime
 from potpie_context_engine.domain.ports.telemetry import TelemetryPort
 from potpie_context_core.source_references import SourceReferenceRecord
 
@@ -273,7 +279,12 @@ def build_ingestion_server(
     # compatibility alias; application paths use ``backend.mutation``.
     backend = build_backend(backend_kind, settings=s)
     graph_writer = getattr(backend, "graph_writer", None)
-    graph = DefaultGraphService(backend=backend)
+    graph_runtime = build_graph_runtime(
+        backend,
+        LocalJsonGraphPlanStore(),
+        LocalJsonGraphInboxStore(),
+    )
+    graph = graph_runtime.graph
     context_graph = _build_context_graph_service(graph=graph, backend=backend)
     # Fail fast if the read trunk's reader set has drifted from the advertised
     # ``READER_BACKED_INCLUDES`` (see potpie_context_core.coherence).

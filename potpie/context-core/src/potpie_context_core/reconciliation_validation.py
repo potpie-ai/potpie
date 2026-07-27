@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.canonical_label_inference import (
     _ensure_required_properties_for_label,
     enrich_reconciliation_plan_entity_labels,
@@ -23,7 +24,6 @@ from potpie_context_core.ontology import (
     EDGE_TYPES,
     ENTITY_TYPES,
     canonical_entity_labels,
-    is_canonical_edge_type,
     validate_structural_mutations,
 )
 from potpie_context_core.reconciliation import MutationBatch
@@ -46,7 +46,31 @@ _TEMPORAL_PROPERTY_KEYS = frozenset(
 _OBSERVATION_FALLBACK = "Observation"
 
 
-def validate_reconciliation_plan(plan: MutationBatch, expected_pot_id: str) -> None:
+def validate_reconciliation_plan(
+    plan: MutationBatch,
+    expected_pot_id: str,
+    *,
+    definition: GraphDefinition | None = None,
+) -> None:
+    definition = definition or DEFAULT_GRAPH_DEFINITION
+    if definition is not DEFAULT_GRAPH_DEFINITION:
+        plan.ontology_downgrades.clear()
+        _validate_hard(plan, expected_pot_id)
+        ontology_errors = definition.validate_structural_mutations(
+            plan.entity_upserts,
+            plan.edge_upserts,
+            plan.edge_deletes,
+        )
+        ontology_errors.extend(
+            _validate_invalidations(plan.invalidations, definition=definition)
+        )
+        if ontology_errors:
+            sample = "; ".join(ontology_errors[:8])
+            raise MutationBatchValidationError(
+                f"ontology validation failed: {sample}",
+                structured_issues=tuple(validation_lines_to_issues(ontology_errors)),
+            )
+        return
     plan.ontology_downgrades.clear()
     canonicalize_reconciliation_plan(plan)
     _validate_hard(plan, expected_pot_id)
@@ -75,7 +99,9 @@ def validate_reconciliation_plan(plan: MutationBatch, expected_pot_id: str) -> N
         plan.edge_upserts,
         plan.edge_deletes,
     )
-    ontology_errors.extend(_validate_invalidations(plan.invalidations))
+    ontology_errors.extend(
+        _validate_invalidations(plan.invalidations, definition=definition)
+    )
     if ontology_errors:
         sample = "; ".join(ontology_errors[:8])
         suffix = (
@@ -405,14 +431,18 @@ def _augment_evidence_warnings(plan: MutationBatch) -> None:
         plan.warnings.append(warning)
 
 
-def _validate_invalidations(items: list[InvalidationOp]) -> list[str]:
+def _validate_invalidations(
+    items: list[InvalidationOp],
+    *,
+    definition: GraphDefinition,
+) -> list[str]:
     errors: list[str] = []
     for item in items:
         if not item.target_entity_key and not item.target_edge:
             errors.append("invalidation must set target_entity_key or target_edge")
         if item.target_edge:
             edge_type = item.target_edge[0]
-            if not is_canonical_edge_type(edge_type):
+            if edge_type not in definition.edge_types:
                 errors.append(
                     f"invalidation target_edge has non-canonical edge_type: {edge_type!r}"
                 )

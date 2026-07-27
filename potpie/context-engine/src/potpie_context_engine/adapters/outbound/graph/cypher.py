@@ -26,6 +26,7 @@ import re
 from datetime import date, datetime, time, timezone
 from typing import Any
 
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
@@ -36,13 +37,9 @@ from potpie_context_core.graph_mutations import (
 from potpie_context_core.graph_entity_summary import compact_entity_summary
 from potpie_context_core.graph_contract import evidence_strength_for_truth
 from potpie_context_core.ontology import (
-    CANONICAL_EDGE_TYPES,
-    ENTITY_TYPES,
     canonical_entity_labels,
-    is_canonical_entity_label,
 )
 from potpie_context_engine.domain.retrieval_card import build_retrieval_card
-from potpie_context_core.singleton_predicates import is_singleton_predicate
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +62,7 @@ _RESERVED_EDGE_PROPERTY_KEYS: frozenset[str] = frozenset(
 
 _POT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _PREDICATE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_LABEL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 
 def _require_valid_pot_id(pot_id: str) -> None:
@@ -94,13 +92,15 @@ def _iso(value: Any) -> str | None:
     return str(value)
 
 
-def _is_valid_predicate(name: str) -> bool:
+def _is_valid_predicate(
+    name: str, *, definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
+) -> bool:
     """Predicate names are interpolated only into ``e.name = ...`` (parameterized);
     still require the canonical-vocab membership to bound surface area.
     """
     if not isinstance(name, str) or not _PREDICATE_RE.match(name):
         return False
-    return name in CANONICAL_EDGE_TYPES
+    return name in definition.edge_types
 
 
 def _clean_entity_text(value: Any) -> str:
@@ -274,6 +274,8 @@ async def upsert_entities_async(
     pot_id: str,
     items: list[EntityUpsert],
     provenance: ProvenanceRef,
+    *,
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> int:
     _require_valid_pot_id(pot_id)
     if not items:
@@ -317,19 +319,26 @@ async def upsert_entities_async(
                 a_summary=authored_summary,
                 a_description=authored_description,
             )
-            wanted_labels = set(canonical_entity_labels(item.labels))
+            wanted_labels: set[str] = set()
+            for label in item.labels:
+                canonical = canonical_entity_labels((label,))
+                candidates = canonical or (
+                    (label,) if label in definition.entity_types else ()
+                )
+                wanted_labels.update(
+                    candidate
+                    for candidate in candidates
+                    if candidate in definition.entity_types
+                    and _LABEL_RE.fullmatch(candidate)
+                )
             if wanted_labels:
-                for stale in sorted(set(ENTITY_TYPES) - wanted_labels):
+                for stale in sorted(set(definition.entity_types) - wanted_labels):
                     await session.run(
                         f"MATCH (e:Entity {{group_id: $gid, entity_key: $key}}) REMOVE e:{stale}",  # pyright: ignore[reportArgumentType]
                         gid=pot_id,
                         key=item.entity_key,
                     )
-            for lbl in item.labels:
-                if lbl == "Entity":
-                    continue
-                if not is_canonical_entity_label(lbl) or lbl not in ENTITY_TYPES:
-                    continue
+            for lbl in sorted(wanted_labels):
                 await session.run(
                     f"MATCH (e:Entity {{group_id: $gid, entity_key: $key}}) SET e:{lbl}",  # pyright: ignore[reportArgumentType]
                     gid=pot_id,
@@ -351,6 +360,7 @@ async def upsert_edges_async(
     provenance: ProvenanceRef,
     *,
     embedder: Any | None = None,
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> int:
     """Upsert every edge as a ``:RELATES_TO {name: <predicate>, ...}`` claim.
 
@@ -380,10 +390,10 @@ async def upsert_edges_async(
     async with driver.session() as session:
         for item in items:
             predicate = item.edge_type
-            if not _is_valid_predicate(predicate):
+            if not _is_valid_predicate(predicate, definition=definition):
                 logger.warning(
                     "skipping edge with unknown predicate name=%r "
-                    "(must be uppercase identifier in CANONICAL_EDGE_TYPES)",
+                    "(must be an uppercase identifier in the active definition)",
                     predicate,
                 )
                 continue
@@ -487,7 +497,7 @@ async def upsert_edges_async(
             # the same object is preserved (different source_ref, same
             # object → no supersession trigger).
             if (
-                is_singleton_predicate(predicate)
+                predicate in definition.singleton_predicates
                 and evidence_strength == "deterministic"
             ):
                 await _supersede_singleton_predecessors(
@@ -562,6 +572,8 @@ async def delete_edges_async(
     pot_id: str,
     items: list[EdgeDelete],
     provenance: ProvenanceRef,
+    *,
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> int:
     """Logically delete a claim by stamping ``invalid_at`` + ``expired_at``.
 
@@ -585,7 +597,7 @@ async def delete_edges_async(
     async with driver.session() as session:
         for item in items:
             predicate = item.edge_type
-            if not _is_valid_predicate(predicate):
+            if not _is_valid_predicate(predicate, definition=definition):
                 continue
             res = await session.run(
                 """
@@ -626,6 +638,8 @@ async def apply_invalidations_async(
     pot_id: str,
     items: list[InvalidationOp],
     provenance: ProvenanceRef,
+    *,
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> int:
     """Stamp ``invalid_at`` on entities/edges, optionally with a SUPERSEDES claim.
 
@@ -674,7 +688,7 @@ async def apply_invalidations_async(
                 count += matched
             elif item.target_edge:
                 edge_type, from_key, to_key = item.target_edge
-                if not _is_valid_predicate(edge_type):
+                if not _is_valid_predicate(edge_type, definition=definition):
                     continue
                 res = await session.run(
                     """

@@ -20,7 +20,7 @@ is actually selected.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from potpie_context_engine.adapters.outbound.graph.backends._unimplemented import (
@@ -34,6 +34,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytic
     ClaimQueryAnalytics,
 )
 from potpie_context_engine.adapters.outbound.graph.cypher import _coerce_props_for_neo4j
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
     ENTITY_SUMMARY_REPAIR_LIMIT,
     ENTITY_SUMMARY_SCAN_CYPHER,
@@ -85,12 +86,17 @@ class _Neo4jMutation:
     settings: Any
     writer: Any = None  # injected (shared) or lazily created on first use
     embedder: Any = None
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
 
     def _get_writer(self) -> Any:
         if self.writer is None:
             from potpie_context_engine.adapters.outbound.graph import Neo4jGraphWriter
 
-            self.writer = Neo4jGraphWriter(self.settings, embedder=self.embedder)
+            self.writer = Neo4jGraphWriter(
+                self.settings,
+                embedder=self.embedder,
+                definition=self.definition,
+            )
         return self.writer
 
     async def apply_async(
@@ -109,6 +115,7 @@ class _Neo4jMutation:
             plan,
             expected_pot_id=expected_pot_id,
             provenance_context=provenance_context,
+            definition=self.definition,
         )
 
     def apply(
@@ -164,6 +171,7 @@ class Neo4jGraphBackend:
     settings: Any
     writer: Any = None  # optional shared Neo4jGraphWriter; reused by the mutation
     embedder: Any = None
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
     _claim_query: ClaimQueryPort = field(init=False)
     _mutation: _Neo4jMutation = field(init=False)
     _semantic: ClaimQuerySemanticSearch = field(init=False)
@@ -175,8 +183,15 @@ class Neo4jGraphBackend:
         )
 
         self._claim_query = Neo4jClaimQueryStore(self.settings, embedder=self.embedder)
+        writer = self.writer
+        bind_writer = getattr(writer, "bind_definition", None)
+        if callable(bind_writer):
+            writer = bind_writer(self.definition)
         self._mutation = _Neo4jMutation(
-            self.settings, writer=self.writer, embedder=self.embedder
+            self.settings,
+            writer=writer,
+            embedder=self.embedder,
+            definition=self.definition,
         )
         self._semantic = ClaimQuerySemanticSearch(self._claim_query)
 
@@ -235,6 +250,9 @@ class Neo4jGraphBackend:
             inspection=False,
             snapshot=False,
         )
+
+    def bind_definition(self, definition: GraphDefinition) -> Neo4jGraphBackend:
+        return replace(self, definition=definition)
 
     def provision(self, plan: SetupPlan) -> StepResult:
         from potpie_context_core.lifecycle import DONE, FAILED

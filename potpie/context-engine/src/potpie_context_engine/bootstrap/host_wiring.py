@@ -51,10 +51,7 @@ from potpie_context_engine.adapters.outbound.skills.claude_target import (
 from potpie_context_engine.application.services.agent_context import AgentContextService
 from potpie_context_engine.application.services.auth_service import LocalAuthService
 from potpie_context_engine.application.services.config_service import LocalConfigService
-from potpie_context_engine.application.services.graph_service import DefaultGraphService
-from potpie_context_core.workbench_service import (
-    GraphWorkbenchService,
-)
+from potpie_context_core.api import build_graph_runtime
 from potpie_context_engine.application.services.nudge_service import NudgeService
 from potpie_context_engine.application.services.pot_management import (
     LocalPotManagementService,
@@ -115,12 +112,13 @@ def build_host_shell(
         backend = backend or build_backend(default_backend_profile(), settings=settings)
         pot_store = LocalPotStore()
 
-        graph = DefaultGraphService(backend=backend)
-        graph_workbench = GraphWorkbenchService(
-            backend=backend,
-            plan_store=LocalJsonGraphPlanStore(),
-            inbox_store=LocalJsonGraphInboxStore(),
+        graph_runtime = build_graph_runtime(
+            backend,
+            LocalJsonGraphPlanStore(),
+            LocalJsonGraphInboxStore(),
         )
+        graph = graph_runtime.graph
+        graph_workbench = graph_runtime.workbench
         assert_runtime_coherence(reader_backed_includes=graph.backed_includes)
         pots = LocalPotManagementService(store=pot_store, backend=backend)
         skills = DefaultSkillManager(

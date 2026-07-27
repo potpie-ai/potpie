@@ -22,25 +22,20 @@ direct-lowering path.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from potpie_context_engine.application.services.read_orchestrator import (
     ReadOrchestrator,
 )
-from potpie_context_core.record_to_semantic import (
-    record_to_semantic_request,
-)
-from potpie_context_core.semantic_mutation_lowering import (
-    lower_semantic_request,
-)
-from potpie_context_core.semantic_mutation_validator import (
-    validate_semantic_request,
-)
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_core.record_to_semantic import record_to_semantic_request
+from potpie_context_core.semantic_mutation_lowering import lower_semantic_request
+from potpie_context_core.semantic_mutation_validator import validate_semantic_request
 from potpie_context_core.agent_context_port import (
     build_context_record_source_id,
-    normalize_record_type,
 )
 from potpie_context_core.agent_envelope import AgentEnvelope, EvidenceItem
 from potpie_context_core.errors import CapabilityNotImplemented
@@ -48,31 +43,26 @@ from potpie_context_core.graph_contract import (
     APPLICABLE_MUTATION_OPS,
     DEFERRED_OPS,
     GRAPH_CONTRACT_VERSION,
-    ONTOLOGY_VERSION,
     REVIEW_REQUIRED_OPS,
     SOURCE_AUTHORITIES,
     TRUTH_CLASSES,
 )
-from potpie_context_core.graph_entity_summary import (
-    normalize_entity_properties,
-)
+from potpie_context_core.graph_entity_summary import normalize_entity_properties
 from potpie_context_core.graph_views import (
     GRAPH_VIEWS,
     UnknownGraphViewError,
     include_guess_guidance,
-    view_spec,
-    views_for_catalog,
 )
 from potpie_context_core.graph_workbench_ontology import (
     ViewContract,
     describe_contract,
     ontology_contract,
 )
-from potpie_context_core.ontology import (
-    EDGE_TYPES,
-    ENTITY_TYPES,
-    canonical_entity_labels,
+from potpie_context_core.mutation_policy import (
+    DEFAULT_MUTATION_POLICY,
+    GraphMutationPolicy,
 )
+from potpie_context_core.ontology import canonical_entity_labels
 from potpie_context_core.ports.agent_context import (
     RecordReceipt,
     RecordRequest,
@@ -100,9 +90,6 @@ from potpie_context_core.semantic_mutations import (
 )
 
 _COMMANDS = ("catalog", "read", "search-entities", "mutate")
-_KEY_PREFIX_TO_LABEL: dict[str, str] = {
-    spec.key_prefix: label for label, spec in ENTITY_TYPES.items()
-}
 
 
 @dataclass(slots=True)
@@ -110,11 +97,26 @@ class DefaultGraphService:
     """Data-plane service backed by a swappable ``GraphBackend``."""
 
     backend: GraphBackend
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
+    policy: GraphMutationPolicy = DEFAULT_MUTATION_POLICY
+    validator: Callable[[SemanticMutationRequest], Any] | None = None
+    lowerer: Callable[[SemanticMutationRequest, Any], Any] | None = None
     _orchestrator: ReadOrchestrator = field(init=False)
 
     def __post_init__(self) -> None:
         # One read trunk over the backend's canonical claim store.
-        self._orchestrator = ReadOrchestrator(claim_query=self.backend.claim_query)
+        self._orchestrator = ReadOrchestrator(
+            claim_query=self.backend.claim_query,
+            reader_registry=self.definition.readers,
+        )
+        if self.validator is None:
+            self.validator = lambda request: validate_semantic_request(
+                request, definition=self.definition
+            )
+        if self.lowerer is None:
+            self.lowerer = lambda request, plan: lower_semantic_request(
+                request, plan, definition=self.definition
+            )
 
     @property
     def backed_includes(self) -> frozenset[str]:
@@ -156,7 +158,12 @@ class DefaultGraphService:
     # --- writes -------------------------------------------------------------
     def record(self, request: RecordRequest) -> RecordReceipt:
         """Rewired through the semantic mutation path (Step 8)."""
-        record_type = normalize_record_type(request.record_type)
+        record_type = request.record_type.strip().lower()
+        if record_type not in self.definition.public_record_types:
+            allowed = ", ".join(sorted(self.definition.public_record_types))
+            raise ValueError(
+                f"unsupported context record type {record_type!r}; use one of: {allowed}"
+            )
         source_id = build_context_record_source_id(
             record_type=record_type,
             summary=request.summary,
@@ -165,7 +172,10 @@ class DefaultGraphService:
             idempotency_key=request.idempotency_key,
         )
         sem_request = record_to_semantic_request(
-            request, record_type=record_type, source_id=source_id
+            request,
+            record_type=record_type,
+            source_id=source_id,
+            definition=self.definition,
         )
         result = self.mutate(sem_request)
 
@@ -204,7 +214,7 @@ class DefaultGraphService:
     # --- Graph Surface Lite -------------------------------------------------
     def catalog(self, request: GraphCatalogRequest) -> GraphCatalogResult:
         # ``task`` is accepted but ignored in V1.5 (V2 turns it into a ranker).
-        views = views_for_catalog()
+        views = [spec.to_catalog_entry() for spec in self.definition.views.values()]
         if request.subgraph:
             subgraph = request.subgraph.strip()
             known_subgraphs = sorted({str(v["subgraph"]) for v in views})
@@ -213,15 +223,15 @@ class DefaultGraphService:
                 raise _unknown_subgraph_error(subgraph, known_subgraphs)
         return GraphCatalogResult(
             graph_contract_version=GRAPH_CONTRACT_VERSION,
-            ontology_version=ONTOLOGY_VERSION,
+            ontology_version=self.definition.ontology_version,
             commands=_COMMANDS,
             truth_classes=TRUTH_CLASSES,
             mutation_operations=APPLICABLE_MUTATION_OPS,
             review_required_operations=REVIEW_REQUIRED_OPS,
             deferred_operations=DEFERRED_OPS,
             views=tuple(views),
-            entity_types=tuple(_catalog_entity_types()),
-            predicates=tuple(_catalog_predicates()),
+            entity_types=tuple(_catalog_entity_types(self.definition)),
+            predicates=tuple(_catalog_predicates(self.definition)),
             match_mode=self._match_mode(),
             source_authorities=tuple(sorted(SOURCE_AUTHORITIES)),
         )
@@ -230,18 +240,75 @@ class DefaultGraphService:
         # Service-routed (not CLI-local) so the answer always reflects this
         # build's ontology and errors cross the RPC boundary like every other
         # graph command.
-        return describe_contract(
-            subgraph=request.subgraph,
-            view=request.view,
+        subgraph = (request.subgraph or "").strip()
+        definition_views = tuple(
+            spec for spec in self.definition.views.values() if spec.subgraph == subgraph
+        )
+        if not definition_views:
+            return describe_contract(
+                subgraph=subgraph,
+                view=request.view,
+                include_examples=request.include_examples,
+            )
+        extension_views = tuple(
+            spec for spec in definition_views if spec.name not in GRAPH_VIEWS
+        )
+        if not extension_views:
+            return describe_contract(
+                subgraph=subgraph,
+                view=request.view,
+                include_examples=request.include_examples,
+            )
+
+        qualified = f"{subgraph}.{request.view}" if request.view else None
+        if qualified and qualified not in self.definition.views:
+            known = ", ".join(sorted(spec.name for spec in definition_views))
+            raise UnknownGraphViewError(
+                f"unknown graph view {qualified!r} for subgraph {subgraph!r}. "
+                f"Known views: {known}."
+            )
+        if qualified in GRAPH_VIEWS:
+            return describe_contract(
+                subgraph=subgraph,
+                view=request.view,
+                include_examples=request.include_examples,
+            )
+        if not qualified and any(spec.name in GRAPH_VIEWS for spec in definition_views):
+            payload = describe_contract(
+                subgraph=subgraph,
+                include_examples=request.include_examples,
+            )
+            payload["ontology_version"] = self.definition.ontology_version
+            payload["extensions"] = dict(self.definition.extensions)
+            payload["subgraph"]["views"].extend(
+                _contract_from_view_spec(spec).to_dict(
+                    include_examples=request.include_examples
+                )
+                for spec in extension_views
+            )
+            return payload
+
+        payload = _describe_definition_subgraph(
+            definition=self.definition,
+            subgraph=subgraph,
+            views=definition_views,
             include_examples=request.include_examples,
         )
+        if qualified:
+            payload["view"] = _contract_from_view_spec(
+                self.definition.views[qualified]
+            ).to_dict(include_examples=request.include_examples)
+            payload["subgraph"]["views"] = [payload["view"]]
+        return payload
 
     def read(self, request: GraphReadRequest) -> GraphReadResult:
         detail = normalize_read_detail(request.detail)
         relations = normalize_read_relations(request.relations)
         view_name = _qualified_view_name(request.subgraph, request.view)
         contract = ontology_contract().view(view_name)
-        spec = view_spec(view_name)
+        spec = self.definition.views.get(view_name)
+        if spec is not None and contract is None:
+            contract = _contract_from_view_spec(spec)
         if contract is None or spec is None:
             raise _unknown_view_error(
                 view_name, subgraph=request.subgraph, view=request.view
@@ -291,7 +358,7 @@ class DefaultGraphService:
                 read_shape=contract.result_shape,
                 inline_relations=spec.inline_relations,
                 graph_contract_version=GRAPH_CONTRACT_VERSION,
-                ontology_version=ONTOLOGY_VERSION,
+                ontology_version=self.definition.ontology_version,
                 subgraph_versions=self._subgraph_versions(request.pot_id),
                 unsupported=unsupported_items,
                 detail=detail,
@@ -324,7 +391,7 @@ class DefaultGraphService:
             metadata={
                 **dict(env.metadata),
                 "graph_contract_version": GRAPH_CONTRACT_VERSION,
-                "ontology_version": ONTOLOGY_VERSION,
+                "ontology_version": self.definition.ontology_version,
                 "view": spec.name,
                 "subgraph": spec.subgraph,
                 "backed": spec.backed,
@@ -352,6 +419,7 @@ class DefaultGraphService:
             ),
             detail=detail,
             relations=relations,
+            definition=self.definition,
         )
 
     def search_entities(
@@ -392,7 +460,9 @@ class DefaultGraphService:
 
         candidates: list[GraphEntityCandidate] = []
         for key, bucket in agg.items():
-            labels = _display_labels_for_entity(key, labels_map.get(key, ()))
+            labels = _display_labels_for_entity(
+                key, labels_map.get(key, ()), definition=self.definition
+            )
             if request.type and request.type not in labels:
                 continue
             props = (
@@ -430,12 +500,14 @@ class DefaultGraphService:
             entities=tuple(candidates[: request.limit]),
             match_mode=self._match_mode(),
             graph_contract_version=GRAPH_CONTRACT_VERSION,
-            ontology_version=ONTOLOGY_VERSION,
+            ontology_version=self.definition.ontology_version,
             subgraph_versions=self._subgraph_versions(request.pot_id),
         )
 
     def mutate(self, request: SemanticMutationRequest) -> SemanticMutationResult:
-        plan = validate_semantic_request(request)
+        assert self.validator is not None
+        assert self.lowerer is not None
+        plan = self.validator(request)
         if plan.decision == "rejected":
             return SemanticMutationResult(
                 ok=False,
@@ -448,7 +520,7 @@ class DefaultGraphService:
             )
 
         # Lower the accepted ops (for preview counts + apply).
-        lower_semantic_request(request, plan)
+        self.lowerer(request, plan)
         preview = _batch_counts(plan)
         claim_keys = tuple(k for op in plan.accepted_ops for k in op.claim_keys)
         subgraphs = tuple(
@@ -468,6 +540,25 @@ class DefaultGraphService:
                 subgraphs=subgraphs,
                 warnings=_warnings(plan),
                 issues=plan.issues,
+            )
+
+        if (
+            plan.decision == "apply"
+            and not self.policy.allow_auto_commit
+            and not request.approved_by
+        ):
+            return SemanticMutationResult(
+                ok=True,
+                status="review_required",
+                risk=plan.risk,
+                pot_id=request.pot_id,
+                auto_committed=False,
+                operations_accepted=len(plan.accepted_ops),
+                claim_keys=claim_keys,
+                subgraphs=subgraphs,
+                warnings=_warnings(plan),
+                issues=plan.issues,
+                detail="runtime mutation policy requires explicit approval",
             )
 
         if plan.decision == "review_required":
@@ -532,6 +623,142 @@ class DefaultGraphService:
             detail=result.error,
         )
 
+    async def resolve_async(self, request: ResolveRequest) -> AgentEnvelope:
+        return await asyncio.to_thread(self.resolve, request)
+
+    async def search_async(self, request: SearchRequest) -> AgentEnvelope:
+        return await asyncio.to_thread(self.search, request)
+
+    async def record_async(self, request: RecordRequest) -> RecordReceipt:
+        return await asyncio.to_thread(self.record, request)
+
+    async def catalog_async(self, request: GraphCatalogRequest) -> GraphCatalogResult:
+        return self.catalog(request)
+
+    async def describe_async(self, request: GraphDescribeRequest) -> dict[str, Any]:
+        return self.describe(request)
+
+    async def read_async(self, request: GraphReadRequest) -> GraphReadResult:
+        return await asyncio.to_thread(self.read, request)
+
+    async def search_entities_async(
+        self, request: GraphEntitySearchRequest
+    ) -> GraphEntitySearchResult:
+        return await asyncio.to_thread(self.search_entities, request)
+
+    async def mutate_async(
+        self, request: SemanticMutationRequest
+    ) -> SemanticMutationResult:
+        """Async-native mutation; the backend sync bridge is never invoked."""
+        assert self.validator is not None
+        assert self.lowerer is not None
+        plan = self.validator(request)
+        if plan.decision == "rejected":
+            return SemanticMutationResult(
+                ok=False,
+                status="rejected",
+                risk=plan.risk,
+                pot_id=request.pot_id,
+                operations_accepted=len(plan.accepted_ops),
+                issues=plan.issues,
+                detail="; ".join(i.message for i in plan.errors) or None,
+            )
+        self.lowerer(request, plan)
+        preview = _batch_counts(plan)
+        claim_keys = tuple(k for op in plan.accepted_ops for k in op.claim_keys)
+        subgraphs = tuple(
+            sorted({op.subgraph for op in plan.accepted_ops if op.subgraph})
+        )
+        if request.dry_run:
+            return SemanticMutationResult(
+                ok=True,
+                status="validated",
+                risk=plan.risk,
+                pot_id=request.pot_id,
+                would_apply=(plan.decision == "apply"),
+                operations_accepted=len(plan.accepted_ops),
+                preview=preview,
+                claim_keys=claim_keys,
+                subgraphs=subgraphs,
+                warnings=_warnings(plan),
+                issues=plan.issues,
+            )
+        if (
+            plan.decision == "apply"
+            and not self.policy.allow_auto_commit
+            and not request.approved_by
+        ):
+            return SemanticMutationResult(
+                ok=True,
+                status="review_required",
+                risk=plan.risk,
+                pot_id=request.pot_id,
+                auto_committed=False,
+                operations_accepted=len(plan.accepted_ops),
+                claim_keys=claim_keys,
+                subgraphs=subgraphs,
+                warnings=_warnings(plan),
+                issues=plan.issues,
+                detail="runtime mutation policy requires explicit approval",
+            )
+        if plan.decision == "review_required":
+            return SemanticMutationResult(
+                ok=True,
+                status="review_required",
+                risk=plan.risk,
+                pot_id=request.pot_id,
+                auto_committed=False,
+                operations_accepted=len(plan.accepted_ops),
+                claim_keys=claim_keys,
+                subgraphs=subgraphs,
+                warnings=_warnings(plan),
+                issues=plan.issues,
+                detail="operations require review and have no auto-apply path in V1.5",
+            )
+        if plan.batch is None or not (
+            plan.batch.entity_upserts
+            or plan.batch.edge_upserts
+            or plan.batch.invalidations
+        ):
+            return SemanticMutationResult(
+                ok=True,
+                status="applied",
+                risk=plan.risk,
+                pot_id=request.pot_id,
+                auto_committed=True,
+                operations_accepted=len(plan.accepted_ops),
+                operations_applied=0,
+                mutations_applied=preview,
+                warnings=_warnings(plan),
+                issues=plan.issues,
+            )
+        result = await self.backend.mutation.apply_async(
+            plan.batch,
+            expected_pot_id=request.pot_id,
+            provenance_context=plan.provenance,
+        )
+        summary = result.mutation_summary
+        return SemanticMutationResult(
+            ok=result.ok,
+            status="applied" if result.ok else "error",
+            risk=plan.risk,
+            pot_id=request.pot_id,
+            auto_committed=result.ok,
+            mutation_id=result.mutation_id,
+            operations_accepted=len(plan.accepted_ops),
+            operations_applied=len(plan.accepted_ops) if result.ok else 0,
+            mutations_applied={
+                "entity_upserts": summary.entity_upserts_applied,
+                "edge_upserts": summary.edge_upserts_applied,
+                "invalidations": summary.invalidations_applied,
+            },
+            claim_keys=claim_keys,
+            subgraphs=subgraphs,
+            warnings=_warnings(plan),
+            issues=plan.issues,
+            detail=result.error,
+        )
+
     # --- status -------------------------------------------------------------
     def data_plane_status(self, pot_id: str) -> DataPlaneStatus:
         readiness = self.backend.mutation.readiness(pot_id)
@@ -569,9 +796,9 @@ class DefaultGraphService:
 # ---------------------------------------------------------------------------
 
 
-def _catalog_entity_types() -> list[dict]:
+def _catalog_entity_types(definition: GraphDefinition) -> list[dict]:
     out: list[dict] = []
-    for label, spec in ENTITY_TYPES.items():
+    for label, spec in definition.entity_types.items():
         if not spec.public:
             continue
         out.append(
@@ -586,9 +813,9 @@ def _catalog_entity_types() -> list[dict]:
     return out
 
 
-def _catalog_predicates() -> list[dict]:
+def _catalog_predicates(definition: GraphDefinition) -> list[dict]:
     out: list[dict] = []
-    for name, spec in EDGE_TYPES.items():
+    for name, spec in definition.edge_types.items():
         if not spec.public:
             continue
         out.append(
@@ -600,6 +827,71 @@ def _catalog_predicates() -> list[dict]:
             }
         )
     return out
+
+
+def _contract_from_view_spec(spec) -> ViewContract:
+    required = tuple(str(value) for value in spec.extra.get("required_scope", ()))
+    required_any = tuple(
+        str(value) for value in spec.extra.get("required_any_scope", ())
+    )
+    supported = tuple(
+        str(value)
+        for value in spec.extra.get(
+            "supported_filters",
+            (*spec.inputs, "since", "until", "source_ref"),
+        )
+    )
+    return ViewContract(
+        name=spec.name,
+        subgraph=spec.subgraph,
+        view=spec.view,
+        purpose=spec.description,
+        when_to_use=(),
+        v1_include=spec.v1_include,
+        backed=spec.backed,
+        required_scope=required,
+        required_any_scope=required_any,
+        optional_scope=tuple(
+            value
+            for value in spec.inputs
+            if value not in required and value not in required_any
+        ),
+        ranking_inputs=spec.ranking_inputs,
+        supported_filters=supported,
+        inline_relations=spec.inline_relations,
+        traversal=spec.traversal,
+        extra=spec.extra,
+    )
+
+
+def _describe_definition_subgraph(
+    *,
+    definition: GraphDefinition,
+    subgraph: str,
+    views: Sequence[Any],
+    include_examples: bool,
+) -> dict[str, Any]:
+    contracts = tuple(_contract_from_view_spec(spec) for spec in views)
+    return {
+        "contract_kind": "graph_workbench_ontology",
+        "ontology_version": definition.ontology_version,
+        "extensions": dict(definition.extensions),
+        "subgraph": {
+            "name": subgraph,
+            "purpose": "Definition-provided graph views.",
+            "when_to_use": [],
+            "entity_types": [],
+            "relation_types": [],
+            "views": [
+                contract.to_dict(include_examples=include_examples)
+                for contract in contracts
+            ],
+            "mutation_policies": [],
+            "source_authority_rules": [],
+            "truth_classes": list(TRUTH_CLASSES),
+            **({"examples": []} if include_examples else {"example_count": 0}),
+        },
+    }
 
 
 def _qualified_view_name(subgraph: str, view: str) -> str:
@@ -759,9 +1051,12 @@ def _read_result_from_envelope(
     backend_quality: Mapping[str, Any],
     detail: str,
     relations: str,
+    definition: GraphDefinition,
 ) -> GraphReadResult:
     meta = dict(env.metadata)
-    items = tuple(_normalize_read_item(item) for item in env.items)
+    items = tuple(
+        _normalize_read_item(item, definition=definition) for item in env.items
+    )
     source_refs = _source_refs_from_items(items)
     return GraphReadResult(
         view=contract.name,
@@ -781,7 +1076,7 @@ def _read_result_from_envelope(
         ),
         inline_relation_count=int(meta.get("inline_relation_count") or 0),
         graph_contract_version=GRAPH_CONTRACT_VERSION,
-        ontology_version=ONTOLOGY_VERSION,
+        ontology_version=definition.ontology_version,
         subgraph_versions=subgraph_versions,
         unsupported=tuple(
             {"name": item.name, "reason": item.reason}
@@ -804,7 +1099,11 @@ def _coverage_dict(report, *, view_name: str) -> dict[str, Any]:
     }
 
 
-def _normalize_read_item(item: EvidenceItem) -> dict[str, Any]:
+def _normalize_read_item(
+    item: EvidenceItem,
+    *,
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
+) -> dict[str, Any]:
     payload = dict(item.payload)
     entity = payload.get("entity") if isinstance(payload.get("entity"), Mapping) else {}
     relations_raw = (
@@ -821,7 +1120,9 @@ def _normalize_read_item(item: EvidenceItem) -> dict[str, Any]:
         source_refs = _source_refs_from_relations(relations)
         return {
             "entity_key": entity_key,
-            "entity_type": _entity_type_for_key(entity_key, labels),
+            "entity_type": _entity_type_for_key(
+                entity_key, labels, definition=definition
+            ),
             "score": item.score,
             "summary": _first_text(
                 entity.get("summary"),
@@ -843,7 +1144,7 @@ def _normalize_read_item(item: EvidenceItem) -> dict[str, Any]:
     entity_key = subject_key or object_key or item.candidate_key
     return {
         "entity_key": entity_key,
-        "entity_type": _entity_type_for_key(entity_key, ()),
+        "entity_type": _entity_type_for_key(entity_key, (), definition=definition),
         "score": item.score,
         "summary": _first_text(
             payload.get("description"),
@@ -974,10 +1275,15 @@ def _latest_timestamp_from_items(items: tuple[Mapping[str, Any], ...]) -> str | 
     return max(values) if values else None
 
 
-def _entity_type_for_key(entity_key: str, labels: tuple[str, ...]) -> str | None:
+def _entity_type_for_key(
+    entity_key: str,
+    labels: tuple[str, ...],
+    *,
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
+) -> str | None:
     prefix = entity_key.partition(":")[0]
-    if prefix in _KEY_PREFIX_TO_LABEL:
-        return _KEY_PREFIX_TO_LABEL[prefix]
+    if prefix in definition.entity_by_key_prefix:
+        return definition.entity_by_key_prefix[prefix]
     return next((label for label in labels if label != "Entity"), None)
 
 
@@ -1398,10 +1704,13 @@ def _safe_entity_labels(claim_query, *, pot_id: str, entity_keys: tuple[str, ...
 
 
 def _display_labels_for_entity(
-    entity_key: str, labels: tuple[str, ...]
+    entity_key: str,
+    labels: tuple[str, ...],
+    *,
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> tuple[str, ...]:
     prefix = entity_key.partition(":")[0]
-    prefix_label = _KEY_PREFIX_TO_LABEL.get(prefix)
+    prefix_label = definition.entity_by_key_prefix.get(prefix)
     if prefix_label:
         return (prefix_label,)
     canonical = tuple(
