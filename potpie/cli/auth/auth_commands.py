@@ -74,8 +74,8 @@ from adapters.outbound.cli_auth.token_exchange import exchange_authorization_cod
 
 auth_app = typer.Typer(
     help=(
-        "Integration auth status and deprecated provider aliases. "
-        "Use `potpie <provider>` for provider login/logout."
+        "Integration auth status (`auth status`). "
+        "Prefer `potpie <provider>` for login — aliases under this group are legacy."
     ),
 )
 linear_app = typer.Typer(help="Linear integration.")
@@ -893,7 +893,13 @@ def register_integration_commands(root: typer.Typer) -> None:
     root.add_typer(jira_app, name="jira")
     root.add_typer(confluence_app, name="confluence")
     root.add_typer(gitbucket_app, name="gitbucket")
-    root.add_typer(auth_app, name="auth")
+    # Keep `auth status` discoverable, but park the group below the happy path.
+    # Provider mirrors under this group are legacy; prefer `potpie <provider>`.
+    root.add_typer(
+        auth_app,
+        name="auth",
+        rich_help_panel="Legacy",
+    )
 
 
 def _print_jira_issue_row(row: dict[str, Any]) -> None:

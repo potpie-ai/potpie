@@ -58,10 +58,20 @@ def _version_callback(value: bool) -> None:
     raise typer.Exit()
 
 
+_ROOT_HELP = """\
+Potpie context graph CLI (host-routed: CLI → HostShell → services → ports).
+
+First run:
+  potpie setup --repo . --agent <harness>
+  potpie doctor
+  potpie status
+"""
+
+
 def build_app() -> typer.Typer:
     app = typer.Typer(
         name="potpie",
-        help="Potpie context graph CLI (host-routed: CLI → HostShell → services → ports).",
+        help=_ROOT_HELP,
         no_args_is_help=True,
         add_completion=False,
     )
@@ -120,7 +130,13 @@ def build_app() -> typer.Typer:
     app.add_typer(graph.timeline_app, name="timeline")
     app.add_typer(graph.backend_app, name="backend")
     app.add_typer(skills_cmds.skills_app, name="skills")
-    app.add_typer(cloud.cloud_app, name="cloud")
+    # Keep cloud discoverable but below the local happy path — managed routing
+    # is still in development (see cli-flow.md).
+    app.add_typer(
+        cloud.cloud_app,
+        name="cloud",
+        rich_help_panel="Coming soon",
+    )
     app.add_typer(telemetry.telemetry_app, name="telemetry")
 
     return app
