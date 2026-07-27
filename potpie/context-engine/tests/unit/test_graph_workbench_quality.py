@@ -211,6 +211,48 @@ def test_quality_projection_drift_reports_invalid_endpoint_pairs() -> None:
     assert result.findings[0].claim_keys == ("bad",)
 
 
+def test_quality_entity_label_drift_reports_conflicting_labels() -> None:
+    workbench, backend = _service()
+    backend.store.add(
+        _row(
+            "DEPLOYED_TO",
+            "service:web",
+            "environment:production",
+            claim_key="deploy",
+        )
+    )
+    backend.store.set_entity_label(
+        pot_id=POT,
+        entity_key="service:web",
+        labels=("Entity", "Service"),
+    )
+    backend.store.set_entity_label(
+        pot_id=POT,
+        entity_key="environment:production",
+        labels=(
+            "Entity",
+            "Activity",
+            "ConfigVariable",
+            "DeploymentTarget",
+            "Environment",
+        ),
+    )
+
+    result = workbench.quality(pot_id=POT, report="entity-label-drift")
+
+    assert result.status == "degraded"
+    assert result.findings[0].kind == "entity-label-drift"
+    assert result.findings[0].entity_keys == ("environment:production",)
+    assert result.findings[0].payload["expected_labels"] == [
+        "Entity",
+        "Environment",
+    ]
+    assert (
+        result.findings[0].suggested_action["command"]
+        == "graph repair --entity-labels"
+    )
+
+
 def test_quality_projection_drift_uses_ontology_endpoint_semantics() -> None:
     workbench, backend = _service()
     backend.store.add(

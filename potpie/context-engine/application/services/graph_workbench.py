@@ -54,7 +54,8 @@ from domain.graph_workbench import (
     GraphUnsupportedResult,
 )
 from domain.graph_workbench_ontology import ranked_catalog_views
-from domain.ontology import EDGE_TYPES
+from domain.entity_canonicalization import coherent_entity_labels
+from domain.ontology import EDGE_TYPES, ENTITY_TYPES
 from domain.ports.graph.backend import GraphBackend
 from domain.ports.graph.inbox_store import GraphInboxStorePort
 from domain.ports.graph.plan_store import GraphPlanStorePort
@@ -77,6 +78,7 @@ _QUALITY_SUMMARY_REPORTS = (
     "orphan-entities",
     "low-confidence",
     "projection-drift",
+    "entity-label-drift",
 )
 
 _CROSS_CUTTING_RESULT_KEYS = frozenset(
@@ -1560,6 +1562,8 @@ def _normalize_quality_report(report: str | None) -> str:
         "orphans": "orphan-entities",
         "low-confidence-claims": "low-confidence",
         "drift": "projection-drift",
+        "label-drift": "entity-label-drift",
+        "labels": "entity-label-drift",
     }
     clean = aliases.get(clean, clean)
     allowed = {
@@ -1570,6 +1574,7 @@ def _normalize_quality_report(report: str | None) -> str:
         "orphan-entities",
         "low-confidence",
         "projection-drift",
+        "entity-label-drift",
     }
     if clean not in allowed:
         raise ValueError(
@@ -1646,6 +1651,13 @@ def _quality_deep_report(
         )
     if report == "projection-drift":
         return _quality_projection_drift(
+            backend,
+            pot_id=pot_id,
+            subgraph=subgraph,
+            limit=limit,
+        )
+    if report == "entity-label-drift":
+        return _quality_entity_label_drift(
             backend,
             pot_id=pot_id,
             subgraph=subgraph,
@@ -2087,6 +2099,86 @@ def _quality_projection_drift(
         "projection_checked": sl is not None,
     }
     return tuple(findings[:limit]), metrics, unsupported
+
+
+def _quality_entity_label_drift(
+    backend: GraphBackend,
+    *,
+    pot_id: str,
+    subgraph: str | None,
+    limit: int,
+) -> tuple[
+    tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]
+]:
+    rows, unsupported = _quality_claim_rows(
+        backend, pot_id=pot_id, subgraph=subgraph, limit=limit
+    )
+    entity_keys = {
+        key for row in rows for key in (row.subject_key, row.object_key) if key
+    }
+    labels_by_key: dict[str, tuple[str, ...]] = {}
+    try:
+        graph_slice = backend.inspection.slice(
+            pot_id=pot_id,
+            filter_=ClaimQueryFilter(
+                pot_id=pot_id,
+                subgraph_in=(subgraph,) if subgraph else (),
+                limit=_quality_scan_limit(limit),
+            ),
+        )
+        for node in graph_slice.nodes:
+            entity_keys.add(node.key)
+            labels_by_key[node.key] = tuple(node.labels)
+    except CapabilityNotImplemented:
+        pass
+
+    missing_keys = sorted(entity_keys - labels_by_key.keys())
+    if missing_keys:
+        fetched, _, metadata_unsupported = _quality_entity_metadata(
+            backend,
+            pot_id=pot_id,
+            entity_keys=missing_keys,
+            properties=False,
+        )
+        labels_by_key.update(fetched)
+        unsupported += metadata_unsupported
+
+    findings: list[GraphQualityFinding] = []
+    for key in sorted(entity_keys):
+        current = tuple(labels_by_key.get(key, ()))
+        expected = coherent_entity_labels(key, current)
+        current_canonical = set(current) & set(ENTITY_TYPES)
+        expected_canonical = set(expected) & set(ENTITY_TYPES)
+        if current_canonical == expected_canonical:
+            continue
+        findings.append(
+            _quality_finding(
+                kind="entity-label-drift",
+                severity="error",
+                summary=f"{key} has canonical labels that conflict with its key",
+                entity_keys=(key,),
+                detail=(
+                    f"stored={sorted(current_canonical)!r}; "
+                    f"expected={sorted(expected_canonical)!r}"
+                ),
+                suggested_action={
+                    "type": "operator_repair",
+                    "command": "graph repair --entity-labels",
+                    "reason": "Remove stale canonical labels using the entity key.",
+                },
+                payload={
+                    "stored_labels": list(current),
+                    "expected_labels": list(expected),
+                },
+            )
+        )
+        if len(findings) >= limit:
+            break
+    return (
+        tuple(findings),
+        {"scanned_entities": len(entity_keys)},
+        unsupported,
+    )
 
 
 def _quality_claim_rows(

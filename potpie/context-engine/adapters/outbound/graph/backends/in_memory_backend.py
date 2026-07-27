@@ -28,6 +28,11 @@ from adapters.outbound.graph.entity_summary_repair import (
     repaired_entity_properties,
     wants_entity_summary_repair,
 )
+from adapters.outbound.graph.entity_label_repair import (
+    ENTITY_LABEL_TARGET,
+    repaired_entity_labels,
+    wants_entity_label_repair,
+)
 from application.services.reconciliation_validation import (
     validate_reconciliation_plan,
 )
@@ -493,15 +498,23 @@ class _Analytics:
         }
 
     def repair(self, pot_id: str, *, targets: Sequence[str] = ()) -> RepairReport:
+        repaired: dict[str, int] = {}
         if wants_entity_summary_repair(targets):
-            repaired = self._repair_entity_summaries(pot_id)
-            if repaired and self.on_change is not None:
+            repaired[ENTITY_SUMMARY_TARGET] = self._repair_entity_summaries(pot_id)
+        if wants_entity_label_repair(targets):
+            repaired[ENTITY_LABEL_TARGET] = self._repair_entity_labels(pot_id)
+        if repaired:
+            if any(repaired.values()) and self.on_change is not None:
                 self.on_change()
+            detail = ", ".join(
+                f"repaired {count} {target.replace('_', ' ')}"
+                for target, count in repaired.items()
+            )
             return RepairReport(
                 pot_id=pot_id,
                 targets=tuple(targets),
-                repaired={ENTITY_SUMMARY_TARGET: repaired},
-                detail=f"repaired {repaired} entity summaries",
+                repaired=repaired,
+                detail=detail,
             )
         return RepairReport(
             pot_id=pot_id,
@@ -527,6 +540,22 @@ class _Analytics:
                 continue
             self.store.set_entity_properties(
                 pot_id=pot_id, entity_key=entity_key, properties=fixed
+            )
+            repaired += 1
+        return repaired
+
+    def _repair_entity_labels(self, pot_id: str) -> int:
+        repaired = 0
+        for (pid, entity_key), labels in tuple(
+            self.store.entity_label_index.items()
+        ):
+            if pid != pot_id:
+                continue
+            fixed = repaired_entity_labels(entity_key, labels)
+            if fixed is None:
+                continue
+            self.store.set_entity_label(
+                pot_id=pot_id, entity_key=entity_key, labels=fixed
             )
             repaired += 1
         return repaired

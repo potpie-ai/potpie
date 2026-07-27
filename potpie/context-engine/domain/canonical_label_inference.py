@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from domain.entity_canonicalization import coherent_entity_labels
 from domain.ontology import ENTITY_TYPES, canonical_entity_labels
 from domain.ontology_classifier import build_signals, classify_entity
 from domain.reconciliation import ReconciliationPlan
@@ -65,15 +66,14 @@ def enrich_reconciliation_plan_entity_labels(plan: ReconciliationPlan) -> None:
             incoming_edge_names=incoming.get(ent.entity_key, ()),
         )
         additions = classify_entity(signals)
-        if not additions:
-            continue
-
         prior_canonical = frozenset(canonical_entity_labels(ent.labels))
         merged = set(ent.labels)
         props = dict(ent.properties)
         for label in additions:
             merged.add(label)
+        coherent = coherent_entity_labels(ent.entity_key, sorted(merged))
+        for label in canonical_entity_labels(coherent):
             if label not in prior_canonical:
                 _ensure_required_properties_for_label(props, label, ent.entity_key)
         ent.properties = props
-        ent.labels = tuple(sorted(merged))
+        ent.labels = coherent

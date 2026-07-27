@@ -78,6 +78,50 @@ def test_collapses_case_variant_duplicates_and_unions_labels() -> None:
     assert any("canonicalized 1" in w for w in plan.warnings)
 
 
+def test_key_prefix_rejects_accumulated_canonical_labels() -> None:
+    plan = _plan(
+        entity_upserts=[
+            EntityUpsert(
+                "environment:production",
+                (
+                    "Entity",
+                    "Activity",
+                    "ConfigVariable",
+                    "DeploymentTarget",
+                    "Environment",
+                ),
+                {"name": "production"},
+            )
+        ]
+    )
+
+    canonicalize_reconciliation_plan(plan)
+
+    assert plan.entity_upserts[0].labels == ("Entity", "Environment")
+
+
+def test_duplicate_retypes_resolve_to_key_prefix_type() -> None:
+    plan = _plan(
+        entity_upserts=[
+            EntityUpsert(
+                "environment:production",
+                ("Entity", "DeploymentTarget"),
+                {"name": "production"},
+            ),
+            EntityUpsert(
+                "environment:production",
+                ("Entity", "Environment"),
+                {"description": "production environment"},
+            ),
+        ]
+    )
+
+    merges = canonicalize_reconciliation_plan(plan)
+
+    assert merges == 1
+    assert plan.entity_upserts[0].labels == ("Entity", "Environment")
+
+
 def test_rewrites_edges_and_drops_self_loops_after_merge() -> None:
     plan = _plan(
         entity_upserts=[

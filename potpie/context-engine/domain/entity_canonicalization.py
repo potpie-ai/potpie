@@ -13,7 +13,8 @@ Conservative rules:
       as concrete collisions are identified by operators).
 
 When two upserts resolve to the same canonical key:
-    * Labels are unioned (first-seen order, deduped).
+    * Labels are unioned (first-seen order, deduped), then canonical entity
+      labels are constrained to the type declared by the key prefix.
     * Properties are merged with *first-seen-wins* for scalars — deterministic
       planners typically emit the richest record first (repo → PR → commit …).
     * Edge endpoints and invalidation targets are rewritten to the canonical
@@ -35,6 +36,8 @@ from domain.graph_mutations import (
     EntityUpsert,
     InvalidationOp,
 )
+from domain.graph_contract import entity_key_prefix
+from domain.ontology import ENTITY_TYPES
 from domain.reconciliation import ReconciliationPlan
 
 SYNONYMS: dict[str, str] = {}
@@ -50,6 +53,32 @@ def normalize_entity_key(key: str) -> str:
         return stripped
     collapsed = "_".join(stripped.lower().split())
     return SYNONYMS.get(collapsed, collapsed)
+
+
+def coherent_entity_labels(entity_key: str, labels: Iterable[str]) -> tuple[str, ...]:
+    """Keep at most the canonical type declared by ``entity_key``.
+
+    Generic or extension labels (not present in ``ENTITY_TYPES``) are retained.
+    For an unrecognized key prefix, labels are left unchanged so validation can
+    report the malformed identity instead of silently guessing a type.
+    """
+    expected = next(
+        (
+            label
+            for label, spec in ENTITY_TYPES.items()
+            if spec.key_prefix == entity_key_prefix(entity_key)
+        ),
+        None,
+    )
+    deduped = tuple(dict.fromkeys(labels))
+    if expected is None:
+        return deduped
+    return tuple(
+        [
+            *(label for label in deduped if label not in ENTITY_TYPES),
+            expected,
+        ]
+    )
 
 
 def canonicalize_reconciliation_plan(plan: ReconciliationPlan) -> int:
@@ -129,7 +158,11 @@ def _merge_entities(
     for item in items:
         canonical_key = _canonical(rewrite, item.entity_key)
         if canonical_key == item.entity_key and canonical_key not in by_key:
-            by_key[canonical_key] = item
+            by_key[canonical_key] = EntityUpsert(
+                entity_key=canonical_key,
+                labels=coherent_entity_labels(canonical_key, item.labels),
+                properties=dict(item.properties),
+            )
             order.append(canonical_key)
             continue
 
@@ -141,7 +174,7 @@ def _merge_entities(
         else:
             by_key[canonical_key] = EntityUpsert(
                 entity_key=canonical_key,
-                labels=item.labels,
+                labels=coherent_entity_labels(canonical_key, item.labels),
                 properties=dict(item.properties),
             )
             order.append(canonical_key)
@@ -151,7 +184,9 @@ def _merge_entities(
 def _merge_pair(
     prior: EntityUpsert, incoming: EntityUpsert, canonical_key: str
 ) -> EntityUpsert:
-    labels = tuple(dict.fromkeys([*prior.labels, *incoming.labels]))
+    labels = coherent_entity_labels(
+        canonical_key, [*prior.labels, *incoming.labels]
+    )
     merged_props = dict(prior.properties)
     for k, v in incoming.properties.items():
         merged_props.setdefault(k, v)

@@ -20,6 +20,10 @@ from adapters.outbound.graph.entity_summary_repair import (
     ENTITY_SUMMARY_TARGET,
     wants_entity_summary_repair,
 )
+from adapters.outbound.graph.entity_label_repair import (
+    ENTITY_LABEL_TARGET,
+    wants_entity_label_repair,
+)
 from domain.ports.claim_query import ClaimQueryFilter, ClaimQueryPort, ClaimRow
 from domain.ports.graph.analytics import RepairReport
 
@@ -34,6 +38,7 @@ class ClaimQueryAnalytics:
 
     claim_query: ClaimQueryPort
     entity_summary_repair: Callable[[str], int] | None = None
+    entity_label_repair: Callable[[str], int] | None = None
 
     def _rows(self, pot_id: str) -> list[ClaimRow]:
         return list(
@@ -72,15 +77,23 @@ class ClaimQueryAnalytics:
         }
 
     def repair(self, pot_id: str, *, targets: Sequence[str] = ()) -> RepairReport:
+        repaired: dict[str, int] = {}
         if self.entity_summary_repair is not None and wants_entity_summary_repair(
             targets
         ):
-            repaired = self.entity_summary_repair(pot_id)
+            repaired[ENTITY_SUMMARY_TARGET] = self.entity_summary_repair(pot_id)
+        if self.entity_label_repair is not None and wants_entity_label_repair(targets):
+            repaired[ENTITY_LABEL_TARGET] = self.entity_label_repair(pot_id)
+        if repaired:
+            detail = ", ".join(
+                f"repaired {count} {target.replace('_', ' ')}"
+                for target, count in repaired.items()
+            )
             return RepairReport(
                 pot_id=pot_id,
                 targets=tuple(targets),
-                repaired={ENTITY_SUMMARY_TARGET: repaired},
-                detail=f"repaired {repaired} entity summaries",
+                repaired=repaired,
+                detail=detail,
             )
         return RepairReport(
             pot_id=pot_id,

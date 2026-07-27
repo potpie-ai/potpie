@@ -38,6 +38,12 @@ from adapters.outbound.graph.entity_summary_repair import (
     ENTITY_SUMMARY_UPDATE_CYPHER,
     repaired_entity_properties,
 )
+from adapters.outbound.graph.entity_label_repair import (
+    ENTITY_LABEL_REPAIR_LIMIT,
+    ENTITY_LABEL_SCAN_CYPHER,
+    canonical_label_changes,
+    repaired_entity_labels,
+)
 from domain.graph_mutations import ProvenanceContext
 from domain.lifecycle import SetupPlan, StepResult
 from domain.ports.claim_query import ClaimQueryPort
@@ -213,6 +219,7 @@ class Neo4jGraphBackend:
         return ClaimQueryAnalytics(
             self._claim_query,
             entity_summary_repair=self._repair_entity_summaries,
+            entity_label_repair=self._repair_entity_labels,
         )
 
     @property
@@ -291,6 +298,51 @@ class Neo4jGraphBackend:
                         gid=pot_id,
                         key=key,
                         props=_coerce_props_for_neo4j(fixed),
+                    )
+                    rec = result.single()
+                    result.consume()
+                    repaired += int(rec["cnt"]) if rec is not None else 0
+        finally:
+            driver.close()
+        return repaired
+
+    def _repair_entity_labels(self, pot_id: str) -> int:
+        from neo4j import GraphDatabase
+
+        uri = self.settings.neo4j_uri()
+        user = self.settings.neo4j_user()
+        password = self.settings.neo4j_password()
+        if not uri or user is None or password is None:
+            raise RuntimeError("neo4j_unavailable")
+
+        repaired = 0
+        driver = GraphDatabase.driver(uri, auth=(user, password))
+        try:
+            with driver.session() as session:
+                rows = list(
+                    session.run(
+                        ENTITY_LABEL_SCAN_CYPHER,
+                        gid=pot_id,
+                        limit=ENTITY_LABEL_REPAIR_LIMIT,
+                    )
+                )
+                for row in rows:
+                    key = str(row.get("key") or "").strip()
+                    labels = tuple(row.get("labels") or ())
+                    fixed = repaired_entity_labels(key, labels)
+                    if not key or fixed is None:
+                        continue
+                    remove, add = canonical_label_changes(labels, fixed)
+                    clauses = [*(f"REMOVE e:{label}" for label in remove)]
+                    clauses.extend(f"SET e:{label}" for label in add)
+                    if not clauses:
+                        continue
+                    result = session.run(
+                        "MATCH (e:Entity {group_id: $gid, entity_key: $key}) "
+                        + " ".join(clauses)
+                        + " RETURN count(e) AS cnt",
+                        gid=pot_id,
+                        key=key,
                     )
                     rec = result.single()
                     result.consume()

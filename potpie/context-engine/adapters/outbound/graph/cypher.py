@@ -33,6 +33,7 @@ from domain.graph_mutations import (
     InvalidationOp,
     ProvenanceRef,
 )
+from domain.entity_canonicalization import coherent_entity_labels
 from domain.graph_entity_summary import compact_entity_summary
 from domain.graph_contract import evidence_strength_for_truth
 from domain.ontology import (
@@ -282,6 +283,7 @@ async def upsert_entities_async(
     prov_props = provenance.to_properties()
     async with driver.session() as session:
         for item in items:
+            labels = coherent_entity_labels(item.entity_key, item.labels)
             props = dict(item.properties)
             # Authored display/retrieval fields overwrite; key-derived
             # fallbacks only fill nodes that have no value yet, so a bare
@@ -317,7 +319,7 @@ async def upsert_entities_async(
                 a_summary=authored_summary,
                 a_description=authored_description,
             )
-            wanted_labels = set(canonical_entity_labels(item.labels))
+            wanted_labels = set(canonical_entity_labels(labels))
             if wanted_labels:
                 for stale in sorted(set(ENTITY_TYPES) - wanted_labels):
                     await session.run(
@@ -325,7 +327,7 @@ async def upsert_entities_async(
                         gid=pot_id,
                         key=item.entity_key,
                     )
-            for lbl in item.labels:
+            for lbl in labels:
                 if lbl == "Entity":
                     continue
                 if not is_canonical_entity_label(lbl) or lbl not in ENTITY_TYPES:
