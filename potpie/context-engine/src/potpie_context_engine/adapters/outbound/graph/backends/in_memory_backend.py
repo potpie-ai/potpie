@@ -53,6 +53,10 @@ from potpie_context_core.reconciliation import (
     MutationResult,
     MutationSummary,
 )
+from potpie_context_core.reconciliation_config import (
+    DEFAULT_RECONCILIATION_CONFIG,
+    ReconciliationConfig,
+)
 
 _PROFILE = "in_memory"
 
@@ -75,11 +79,17 @@ class _Mutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         # Validate before mutating, exactly like the Neo4j/FalkorDB writers do
         # (both route apply through apply_mutation_batch → this validator). Keeps
         # the substrate from silently accepting malformed or cross-pot batches.
-        validate_reconciliation_plan(plan, expected_pot_id, definition=self.definition)
+        validate_reconciliation_plan(
+            plan,
+            expected_pot_id,
+            definition=self.definition,
+            config=reconciliation_config or DEFAULT_RECONCILIATION_CONFIG,
+        )
         summary = MutationSummary()
         mutation_id = uuid.uuid4().hex
         for ent in plan.entity_upserts:
@@ -251,6 +261,7 @@ class _Mutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         # In-memory mutations are pure-sync CPU work (no I/O to await); the
         # async door just delegates so async callers get a uniform surface.
@@ -258,6 +269,7 @@ class _Mutation:
             plan,
             expected_pot_id=expected_pot_id,
             provenance_context=provenance_context,
+            reconciliation_config=reconciliation_config,
         )
 
     def invalidate(

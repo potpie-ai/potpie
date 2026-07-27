@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
+from potpie_context_core.ports.claim_query import ClaimQueryPort
+from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_core.ports.graph.inbox_store import GraphInboxStorePort
+from potpie_context_core.ports.graph.mutation import GraphMutationPort
+from potpie_context_core.ports.graph.plan_store import GraphPlanStorePort
 from potpie_context_core.api import (
     DEFAULT_GRAPH_DEFINITION,
     ClaimQueryFilter,
@@ -168,6 +173,81 @@ def test_public_runtime_extension_round_trip_and_status() -> None:
     assert status["definition"]["extensions"] == {"widgets": "1.0"}
 
 
+def test_runtime_exposed_ports_satisfy_their_runtime_protocols() -> None:
+    runtime = build_test_graph_runtime(definition=_definition())
+
+    assert isinstance(runtime.backend, GraphBackend)
+    assert isinstance(runtime.backend.mutation, GraphMutationPort)
+    assert isinstance(runtime.backend.claim_query, ClaimQueryPort)
+    assert isinstance(runtime.plan_store, GraphPlanStorePort)
+    assert isinstance(runtime.inbox_store, GraphInboxStorePort)
+
+
+class _RaisingObserver:
+    def observe(self, _event, _fields) -> None:
+        raise RuntimeError("telemetry is unavailable")
+
+
+class _CollectingObserver:
+    def __init__(self) -> None:
+        self.events = []
+
+    def observe(self, event, fields) -> None:
+        self.events.append((event, dict(fields)))
+
+
+def test_runtime_observes_started_completed_and_failed_lifecycle_phases() -> None:
+    observer = _CollectingObserver()
+    runtime = build_graph_runtime(
+        InMemoryGraphBackend(),
+        InMemoryGraphPlanStore(),
+        InMemoryGraphInboxStore(),
+        _definition(),
+        observability=observer,
+    )
+
+    runtime.status("pot:widgets")
+    try:
+        runtime.resolve(object())
+    except AttributeError:
+        pass
+
+    phases = {(event, fields["phase"]) for event, fields in observer.events}
+    assert ("graph.status", "started") in phases
+    assert ("graph.status", "completed") in phases
+    assert ("graph.resolve", "started") in phases
+    assert ("graph.resolve", "failed") in phases
+
+
+def test_observer_failure_never_changes_a_committed_operation_result() -> None:
+    runtime = build_graph_runtime(
+        InMemoryGraphBackend(),
+        InMemoryGraphPlanStore(),
+        InMemoryGraphInboxStore(),
+        _definition(),
+        observability=_RaisingObserver(),
+    )
+
+    proposal = runtime.propose(
+        {
+            "operations": [
+                {
+                    "op": "upsert_entity",
+                    "subject": {"key": "widget:observed", "type": "Widget"},
+                }
+            ]
+        },
+        pot_id="pot:widgets",
+    )
+    committed = runtime.commit(proposal.plan_id, pot_id="pot:widgets")
+
+    assert committed.ok
+    assert (
+        runtime.plan_store.get(pot_id="pot:widgets", plan_id=proposal.plan_id).status
+        == "committed"
+    )
+
+
 def test_public_runtime_retracts_extension_predicate() -> None:
     runtime = build_test_graph_runtime(definition=_definition())
 
@@ -175,9 +255,10 @@ def test_public_runtime_retracts_extension_predicate() -> None:
     retracted = runtime.mutate(_retract_request())
 
     assert retracted.ok
-    assert runtime.backend.claim_query.find_claims(
-        ClaimQueryFilter(pot_id="pot:widgets")
-    ) == []
+    assert (
+        runtime.backend.claim_query.find_claims(ClaimQueryFilter(pot_id="pot:widgets"))
+        == []
+    )
     history = runtime.backend.claim_query.find_claims(
         ClaimQueryFilter(pot_id="pot:widgets", include_invalidated=True)
     )
@@ -367,6 +448,9 @@ class _AsyncStore:
 
     async def get_async(self, **kwargs):
         return self.inner.get(**kwargs)
+
+    async def compare_and_set_async(self, **kwargs):
+        return self.inner.compare_and_set(**kwargs)
 
     async def list_async(self, **kwargs):
         return self.inner.list(**kwargs)

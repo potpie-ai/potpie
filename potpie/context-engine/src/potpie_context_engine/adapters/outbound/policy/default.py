@@ -33,11 +33,11 @@ from potpie_context_engine.domain.ports.policy import (
     PolicyDecision,
 )
 from potpie_context_core.ports.pot_resolution import PotResolutionPort
-from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
-from potpie_context_core.reconciliation_flags import (
-    agent_planner_enabled,
-    reconciliation_enabled,
+from potpie_context_core.reconciliation_config import (
+    DEFAULT_RECONCILIATION_CONFIG,
+    ReconciliationConfig,
 )
+from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 
 
 # Same dev-only switch the standalone HTTP auth dependency reads (kept as a
@@ -92,12 +92,14 @@ class DefaultPolicyAdapter:
         reconciliation_agent_available: bool,
         context_graph_available: bool,
         episodic_available: bool,
+        reconciliation_config: ReconciliationConfig = DEFAULT_RECONCILIATION_CONFIG,
     ) -> None:
         self._settings = settings
         self._pots = pots
         self._reconciliation_agent_available = reconciliation_agent_available
         self._context_graph_available = context_graph_available
         self._episodic_available = episodic_available
+        self._reconciliation_config = reconciliation_config
 
     def authorize(
         self,
@@ -188,12 +190,12 @@ class DefaultPolicyAdapter:
                 )
 
         if require_reco:
-            if not reconciliation_enabled():
+            if not self._reconciliation_config.enabled:
                 return PolicyDecision.deny(
                     REASON_RECONCILIATION_DISABLED,
                     detail="Reconciliation is disabled (CONTEXT_ENGINE_RECONCILIATION_ENABLED).",
                 )
-            if not agent_planner_enabled():
+            if not self._reconciliation_config.agent_planner_enabled:
                 return PolicyDecision.deny(
                     REASON_AGENT_PLANNER_DISABLED,
                     detail="Agent planner is disabled (CONTEXT_ENGINE_AGENT_PLANNER_ENABLED).",

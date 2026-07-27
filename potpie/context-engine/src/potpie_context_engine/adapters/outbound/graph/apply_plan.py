@@ -26,6 +26,10 @@ from potpie_context_core.reconciliation import (
     MutationResult,
     MutationSummary,
 )
+from potpie_context_core.reconciliation_config import (
+    DEFAULT_RECONCILIATION_CONFIG,
+    ReconciliationConfig,
+)
 
 
 def _stable_batch_source_id(plan: MutationBatch) -> str:
@@ -103,6 +107,7 @@ async def apply_mutation_batch(
     expected_pot_id: str,
     provenance_context: ProvenanceContext | None = None,
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
+    reconciliation_config: ReconciliationConfig = DEFAULT_RECONCILIATION_CONFIG,
 ) -> MutationResult:
     """Validate the batch, stamp provenance, and run the four mutation verbs.
 
@@ -110,7 +115,12 @@ async def apply_mutation_batch(
     (a per-apply UUID) so callers can later trace every produced edge
     back to this apply.
     """
-    validate_reconciliation_plan(plan, expected_pot_id, definition=definition)
+    validate_reconciliation_plan(
+        plan,
+        expected_pot_id,
+        definition=definition,
+        config=reconciliation_config,
+    )
 
     mutation_id = str(uuid4())
     graph_updated_at = datetime.now(timezone.utc)

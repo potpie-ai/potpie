@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping
@@ -36,6 +37,10 @@ from potpie_context_core.graph_mutations import ProvenanceContext
 from potpie_context_core.mutation_policy import (
     DEFAULT_MUTATION_POLICY,
     GraphMutationPolicy,
+)
+from potpie_context_core.reconciliation_config import (
+    DEFAULT_RECONCILIATION_CONFIG,
+    ReconciliationConfig,
 )
 from potpie_context_core.graph_plans import (
     GraphIngestionVerificationResult,
@@ -112,6 +117,7 @@ class GraphWorkbenchService:
         inbox_store: GraphInboxStorePort | None = None,
         definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
         policy: GraphMutationPolicy = DEFAULT_MUTATION_POLICY,
+        reconciliation_config: ReconciliationConfig = DEFAULT_RECONCILIATION_CONFIG,
         validator: Callable[[SemanticMutationRequest], Any] | None = None,
         lowerer: Callable[[SemanticMutationRequest, Any], Any] | None = None,
         default_plan_ttl_seconds: int | None = None,
@@ -121,6 +127,7 @@ class GraphWorkbenchService:
         self.inbox_store = inbox_store
         self.definition = definition
         self.policy = policy
+        self.reconciliation_config = reconciliation_config
         self.validator = validator or (
             lambda request: validate_semantic_request(
                 request, definition=self.definition
@@ -297,6 +304,8 @@ class GraphWorkbenchService:
                 detail=f"plan is {record.status} and cannot be committed",
                 recommended_next_action="Create a fresh proposal if a write is still needed.",
             )
+        if record.status == GraphMutationPlanStatus.committing.value:
+            return _concurrent_commit_result(record)
 
         if record.is_expired(now=now):
             expired = replace(
@@ -304,7 +313,12 @@ class GraphWorkbenchService:
                 status=GraphMutationPlanStatus.expired.value,
                 detail="plan expired before commit",
             )
-            self.plan_store.save(expired)
+            if not self.plan_store.compare_and_set(
+                expected=record, replacement=expired
+            ):
+                return _concurrent_commit_result(
+                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
+                )
             return GraphMutationCommitResult(
                 ok=False,
                 plan_id=expired.plan_id,
@@ -330,7 +344,12 @@ class GraphWorkbenchService:
                 current_subgraph_versions=current_versions,
                 detail=_conflict_message(conflict),
             )
-            self.plan_store.save(conflicted)
+            if not self.plan_store.compare_and_set(
+                expected=record, replacement=conflicted
+            ):
+                return _concurrent_commit_result(
+                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
+                )
             return GraphMutationCommitResult(
                 ok=False,
                 plan_id=conflicted.plan_id,
@@ -374,12 +393,21 @@ class GraphWorkbenchService:
                 approved_by=approved_by,
                 approved_at=now,
             )
-            record = replace(
-                record,
-                status=GraphMutationPlanStatus.approved.value,
-                approval=approval,
+
+        reserved = replace(
+            record,
+            status=GraphMutationPlanStatus.committing.value,
+            approval=approval,
+            detail=None,
+        )
+        if not self.plan_store.compare_and_set(
+            expected=record,
+            replacement=reserved,
+        ):
+            return _concurrent_commit_result(
+                self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
             )
-            self.plan_store.save(record)
+        record = reserved
 
         quality_before = (
             _verification_quality_snapshot(
@@ -399,7 +427,12 @@ class GraphWorkbenchService:
                 final_subgraph_versions=current_versions,
                 approval=approval,
             )
-            self.plan_store.save(committed)
+            if not self.plan_store.compare_and_set(
+                expected=record, replacement=committed
+            ):
+                return _concurrent_commit_result(
+                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
+                )
             verification = (
                 _verify_ingestion_commit(
                     self.backend,
@@ -430,12 +463,13 @@ class GraphWorkbenchService:
             )
 
         result = self.backend.mutation.apply(
-            record.lowered_batch,
+            deepcopy(record.lowered_batch),
             expected_pot_id=pot_id,
             provenance_context=_provenance_for_commit(
                 record.provenance,
                 approved_by=approved_by,
             ),
+            reconciliation_config=self.reconciliation_config,
         )
         if not result.ok:
             errored = replace(
@@ -445,7 +479,12 @@ class GraphWorkbenchService:
                 approval=approval,
                 detail=result.error,
             )
-            self.plan_store.save(errored)
+            if not self.plan_store.compare_and_set(
+                expected=record, replacement=errored
+            ):
+                return _concurrent_commit_result(
+                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
+                )
             return GraphMutationCommitResult(
                 ok=False,
                 plan_id=errored.plan_id,
@@ -470,7 +509,27 @@ class GraphWorkbenchService:
             final_subgraph_versions=final_versions,
             approval=approval,
         )
-        self.plan_store.save(committed)
+        if not self.plan_store.compare_and_set(expected=record, replacement=committed):
+            current = self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
+            return GraphMutationCommitResult(
+                ok=False,
+                plan_id=plan_id,
+                status=current.status,
+                risk=current.risk,
+                pot_id=pot_id,
+                mutation_id=result.mutation_id,
+                current_subgraph_versions=final_versions,
+                diff=current.diff,
+                claim_keys=_claim_keys_from_record(current),
+                approval=approval,
+                detail=(
+                    "backend mutation committed, but the plan store rejected the "
+                    "final compare-and-set; operator reconciliation is required"
+                ),
+                recommended_next_action=(
+                    "Inspect graph history by mutation_id and repair the plan record."
+                ),
+            )
         verification = (
             _verify_ingestion_commit(
                 self.backend,
@@ -749,7 +808,11 @@ class GraphWorkbenchService:
             claimed_by=_required_clean(claimed_by, "claimed_by"),
             claimed_at=now,
         )
-        store.save(claimed)
+        if not store.compare_and_set(expected=item, replacement=claimed):
+            return _concurrent_inbox_result(
+                store.get(pot_id=pot_id, item_id=item.item_id) or item,
+                action="claim",
+            )
         return GraphInboxResult(
             ok=True,
             pot_id=pot_id,
@@ -863,7 +926,11 @@ class GraphWorkbenchService:
             linked_mutation_id=linked_mutation_id,
             rejection_reason=rejection_reason,
         )
-        store.save(closed)
+        if not store.compare_and_set(expected=item, replacement=closed):
+            return _concurrent_inbox_result(
+                store.get(pot_id=pot_id, item_id=item.item_id) or item,
+                action=action,
+            )
         return GraphInboxResult(ok=True, pot_id=pot_id, action=action, item=closed)
 
     def _inbox_store(self) -> GraphInboxStorePort:
@@ -1179,6 +1246,34 @@ def _proposal_from_record(
         claim_keys=claim_keys,
         recommended_next_action=recommended_next_action,
         detail=record.detail,
+    )
+
+
+def _concurrent_commit_result(
+    record: GraphMutationPlanRecord,
+) -> GraphMutationCommitResult:
+    detail = (
+        "plan is already being committed concurrently by another caller"
+        if record.status == GraphMutationPlanStatus.committing.value
+        else f"plan state changed concurrently to {record.status!r}"
+    )
+    return GraphMutationCommitResult(
+        ok=False,
+        plan_id=record.plan_id,
+        status=record.status,
+        risk=record.risk,
+        pot_id=record.pot_id,
+        mutation_id=record.mutation_id,
+        expected_subgraph_versions=record.expected_subgraph_versions,
+        current_subgraph_versions=record.current_subgraph_versions,
+        new_subgraph_versions=record.final_subgraph_versions,
+        diff=record.diff,
+        claim_keys=_claim_keys_from_record(record),
+        approval=record.approval,
+        detail=detail,
+        recommended_next_action=(
+            "Inspect the stored plan state before deciding whether to retry."
+        ),
     )
 
 
@@ -2332,10 +2427,7 @@ def _singleton_conflict_findings(
 ) -> tuple[GraphQualityFinding, ...]:
     buckets: dict[tuple[str, str], list[ClaimRow]] = defaultdict(list)
     for row in rows:
-        if (
-            row.invalid_at is None
-            and row.predicate in definition.singleton_predicates
-        ):
+        if row.invalid_at is None and row.predicate in definition.singleton_predicates:
             buckets[(row.subject_key, row.predicate)].append(row)
     findings: list[GraphQualityFinding] = []
     for (subject, predicate), group in sorted(buckets.items()):
@@ -2748,6 +2840,23 @@ def _terminal_inbox_result(
         item=item,
         detail=f"inbox item is {item.status} and cannot be changed",
         recommended_next_action="Create a new inbox item if more graph work remains.",
+    )
+
+
+def _concurrent_inbox_result(
+    item: GraphInboxItem,
+    *,
+    action: str,
+) -> GraphInboxResult:
+    return GraphInboxResult(
+        ok=False,
+        pot_id=item.pot_id,
+        action=action,
+        item=item,
+        detail=("inbox item changed concurrently; this operation was not applied"),
+        recommended_next_action=(
+            "Refresh the inbox item and retry only if the new state still allows it."
+        ),
     )
 
 

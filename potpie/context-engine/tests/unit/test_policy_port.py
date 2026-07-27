@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_engine.adapters.outbound.policy import DefaultPolicyAdapter
 from potpie_context_core.actor import Actor
 from potpie_context_engine.domain.ports.policy import (
@@ -89,6 +90,7 @@ def _adapter(
         reconciliation_agent_available=agent_available,
         context_graph_available=context_graph_available,
         episodic_available=episodic_available,
+        reconciliation_config=reconciliation_config_from_env(),
     )
 
 

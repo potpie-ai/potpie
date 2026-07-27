@@ -1,14 +1,23 @@
 from __future__ import annotations
 
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 import json
+import threading
 
 import pytest
 
-from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import LocalJsonGraphPlanStore
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
+    LocalJsonGraphPlanStore,
+)
 from potpie_context_core.workbench_service import GraphWorkbenchService
-from potpie_context_core.graph_plans import GraphMutationPlanRecord
+from potpie_context_core.graph_plans import (
+    GraphMutationPlanRecord,
+    GraphMutationPlanStatus,
+)
 from potpie_context_core.ports.claim_query import ClaimQueryFilter
 
 pytestmark = pytest.mark.unit
@@ -19,12 +28,28 @@ POT = "p"
 class _MemoryPlanStore:
     def __init__(self) -> None:
         self.records: dict[tuple[str, str], GraphMutationPlanRecord] = {}
+        self.lock = threading.Lock()
 
     def save(self, record: GraphMutationPlanRecord) -> None:
-        self.records[(record.pot_id, record.plan_id)] = record
+        with self.lock:
+            self.records[(record.pot_id, record.plan_id)] = record
 
     def get(self, *, pot_id: str, plan_id: str) -> GraphMutationPlanRecord | None:
-        return self.records.get((pot_id, plan_id))
+        with self.lock:
+            return self.records.get((pot_id, plan_id))
+
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphMutationPlanRecord,
+        replacement: GraphMutationPlanRecord,
+    ) -> bool:
+        key = (expected.pot_id, expected.plan_id)
+        with self.lock:
+            if self.records.get(key) != expected:
+                return False
+            self.records[key] = replacement
+            return True
 
     def list(
         self,
@@ -36,7 +61,10 @@ class _MemoryPlanStore:
         until: datetime | None = None,
         limit: int | None = None,
     ) -> tuple[GraphMutationPlanRecord, ...]:
-        records = [record for (pid, _), record in self.records.items() if pid == pot_id]
+        with self.lock:
+            records = [
+                record for (pid, _), record in self.records.items() if pid == pot_id
+            ]
         if plan_id:
             records = [record for record in records if record.plan_id == plan_id]
         if mutation_id:
@@ -58,10 +86,50 @@ class _MemoryPlanStore:
         return tuple(records)
 
 
+class _RacingPlanStore(_MemoryPlanStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.committing = threading.Barrier(2)
+
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphMutationPlanRecord,
+        replacement: GraphMutationPlanRecord,
+    ) -> bool:
+        if replacement.status == GraphMutationPlanStatus.committing.value:
+            self.committing.wait(timeout=5)
+        return super().compare_and_set(
+            expected=expected,
+            replacement=replacement,
+        )
+
+
 def _service() -> tuple[GraphWorkbenchService, InMemoryGraphBackend, _MemoryPlanStore]:
     backend = InMemoryGraphBackend()
     store = _MemoryPlanStore()
     return GraphWorkbenchService(backend=backend, plan_store=store), backend, store
+
+
+def test_concurrent_commit_reserves_a_plan_before_mutating() -> None:
+    backend = InMemoryGraphBackend()
+    store = _RacingPlanStore()
+    workbench = GraphWorkbenchService(backend=backend, plan_store=store)
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(
+            future.result()
+            for future in (
+                pool.submit(workbench.commit, proposal.plan_id, pot_id=POT),
+                pool.submit(workbench.commit, proposal.plan_id, pot_id=POT),
+            )
+        )
+
+    assert sum(result.ok for result in results) == 1
+    losing = next(result for result in results if not result.ok)
+    assert "concurrent" in (losing.detail or "")
+    assert store.get(pot_id=POT, plan_id=proposal.plan_id).status == "committed"
 
 
 def _link_payload(

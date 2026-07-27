@@ -30,7 +30,9 @@ from potpie_context_engine.adapters.outbound.graph.backends._unimplemented impor
 from potpie_context_engine.adapters.outbound.graph.backends.claim_query_semantic import (
     ClaimQuerySemanticSearch,
 )
-from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytics import ClaimQueryAnalytics
+from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytics import (
+    ClaimQueryAnalytics,
+)
 from potpie_context_engine.adapters.outbound.graph.cypher import _coerce_props_for_neo4j
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
@@ -45,6 +47,10 @@ from potpie_context_core.ports.claim_query import ClaimQueryPort
 from potpie_context_core.ports.graph.backend import BackendCapabilities
 from potpie_context_core.ports.graph.mutation import BackendReadiness
 from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation_config import (
+    DEFAULT_RECONCILIATION_CONFIG,
+    ReconciliationConfig,
+)
 
 _PROFILE = "neo4j"
 
@@ -103,8 +109,11 @@ class _Neo4jMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
-        from potpie_context_engine.adapters.outbound.graph.apply_plan import apply_mutation_batch
+        from potpie_context_engine.adapters.outbound.graph.apply_plan import (
+            apply_mutation_batch,
+        )
 
         return await apply_mutation_batch(
             self._get_writer(),
@@ -112,6 +121,9 @@ class _Neo4jMutation:
             expected_pot_id=expected_pot_id,
             provenance_context=provenance_context,
             definition=self.definition,
+            reconciliation_config=(
+                reconciliation_config or DEFAULT_RECONCILIATION_CONFIG
+            ),
         )
 
     def apply(
@@ -120,12 +132,14 @@ class _Neo4jMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         return _run_sync(
             self.apply_async(
                 plan,
                 expected_pot_id=expected_pot_id,
                 provenance_context=provenance_context,
+                reconciliation_config=reconciliation_config,
             )
         )
 
@@ -174,7 +188,9 @@ class Neo4jGraphBackend:
 
     def __post_init__(self) -> None:
         # Lazy: only touch neo4j when this profile is selected.
-        from potpie_context_engine.adapters.outbound.graph.neo4j_reader import Neo4jClaimQueryStore
+        from potpie_context_engine.adapters.outbound.graph.neo4j_reader import (
+            Neo4jClaimQueryStore,
+        )
 
         self._claim_query = Neo4jClaimQueryStore(self.settings, embedder=self.embedder)
         writer = self.writer

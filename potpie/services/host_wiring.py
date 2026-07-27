@@ -28,6 +28,9 @@ from potpie_context_engine.adapters.outbound.graph.plan_stores import (
 from potpie_context_engine.adapters.outbound.install.local_installer import (
     LocalInstaller,
 )
+from potpie_context_engine.adapters.outbound.observability.graph_runtime import (
+    GraphRuntimeObserver,
+)
 from potpie_context_engine.adapters.outbound.ledger.cursor_store import (
     LocalLedgerCursorStore,
 )
@@ -52,8 +55,11 @@ from potpie_context_engine.application.services.agent_context import AgentContex
 from potpie.services.auth_service import LocalAuthService
 from potpie.services.config_service import LocalConfigService
 from potpie_context_core.api import build_graph_runtime
+from potpie_context_core.reconciliation_config import ReconciliationConfig
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_engine.application.services.nudge_service import NudgeService
 from potpie.services.pot_management import LocalPotManagementService
+from potpie.services.provisioning import ProvisionableGraphBackend
 from potpie.services.setup_orchestrator import DefaultSetupOrchestrator
 from potpie.services.skill_manager import DefaultSkillManager
 from potpie_context_engine.bootstrap.logging_setup import configure_logging
@@ -94,6 +100,7 @@ def build_host_shell(
     profile: str = "local",
     ledger_client: EventLedgerClientPort | None = None,
     observability: ObservabilityPort | None = None,
+    reconciliation_config: ReconciliationConfig | None = None,
     settings: Any = None,
 ) -> HostShell:
     """Compose a ``HostShell`` from the default local services + adapters.
@@ -103,15 +110,23 @@ def build_host_shell(
     profile. Pass ``ledger_client`` to inject a fixture ledger.
     """
     configure_logging()
-    set_observability(observability or default_observability())
+    observability_sink = observability or default_observability()
+    set_observability(observability_sink)
     with correlation_scope(source="host_shell"):
         backend = backend or build_backend(default_backend_profile(), settings=settings)
+        if not isinstance(backend, ProvisionableGraphBackend):
+            raise TypeError(
+                "host graph backend must implement the product provisioning contract"
+            )
         pot_store = LocalPotStore()
+        reconciliation = reconciliation_config or reconciliation_config_from_env()
 
         graph_runtime = build_graph_runtime(
             backend,
             LocalJsonGraphPlanStore(),
             LocalJsonGraphInboxStore(),
+            reconciliation_config=reconciliation,
+            observability=GraphRuntimeObserver(observability_sink),
         )
         graph = graph_runtime.graph
         graph_workbench = graph_runtime.workbench

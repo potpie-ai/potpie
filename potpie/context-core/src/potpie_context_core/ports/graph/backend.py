@@ -28,7 +28,6 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from potpie_context_core.definition import GraphDefinition
-from potpie_context_core.lifecycle import SetupPlan, StepResult
 from potpie_context_core.ports.claim_query import ClaimQueryPort
 from potpie_context_core.ports.graph.analytics import GraphAnalyticsPort
 from potpie_context_core.ports.graph.inspection import GraphInspectionPort
@@ -108,17 +107,6 @@ class GraphBackend(Protocol):
         ``self`` is valid when the backend is already definition-agnostic; a
         backend that validates labels, predicates, or singleton behavior must
         return an independently bound facade.
-        """
-        ...
-
-    def provision(self, plan: SetupPlan) -> StepResult:
-        """Stand up this backend's own store, idempotently (the setup seam).
-
-        A backend self-provisions: ``embedded`` ensures its local file, a
-        ``postgres`` profile creates the DB + enables pgvector + runs DDL, a
-        ``neo4j`` profile pulls its container and creates indexes. Called by the
-        setup orchestrator as a hard step; raises ``CapabilityNotImplemented``
-        until a profile builds it.
         """
         ...
 

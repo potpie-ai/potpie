@@ -62,6 +62,10 @@ from potpie_context_core.mutation_policy import (
     DEFAULT_MUTATION_POLICY,
     GraphMutationPolicy,
 )
+from potpie_context_core.reconciliation_config import (
+    DEFAULT_RECONCILIATION_CONFIG,
+    ReconciliationConfig,
+)
 from potpie_context_core.ontology import canonical_entity_labels
 from potpie_context_core.ports.agent_context import (
     RecordReceipt,
@@ -99,6 +103,7 @@ class DefaultGraphService:
     backend: GraphBackend
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
     policy: GraphMutationPolicy = DEFAULT_MUTATION_POLICY
+    reconciliation_config: ReconciliationConfig = DEFAULT_RECONCILIATION_CONFIG
     validator: Callable[[SemanticMutationRequest], Any] | None = None
     lowerer: Callable[[SemanticMutationRequest, Any], Any] | None = None
     _orchestrator: ReadOrchestrator = field(init=False)
@@ -599,6 +604,7 @@ class DefaultGraphService:
             plan.batch,
             expected_pot_id=request.pot_id,
             provenance_context=plan.provenance,
+            reconciliation_config=self.reconciliation_config,
         )
         summary = result.mutation_summary
         return SemanticMutationResult(
@@ -735,6 +741,7 @@ class DefaultGraphService:
             plan.batch,
             expected_pot_id=request.pot_id,
             provenance_context=plan.provenance,
+            reconciliation_config=self.reconciliation_config,
         )
         summary = result.mutation_summary
         return SemanticMutationResult(

@@ -15,6 +15,7 @@ from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from potpie_context_core.graph_mutations import ProvenanceContext
 from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +40,7 @@ class GraphMutationPort(Protocol):
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         """Apply a constrained mutation batch (entity/edge upserts, deletes,
         invalidations) against the canonical store for ``expected_pot_id``.
@@ -55,6 +57,7 @@ class GraphMutationPort(Protocol):
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         """Async-native ``apply``. Preferred when called from inside an event
         loop (FastAPI handlers, agent tools, Celery workers): backends whose

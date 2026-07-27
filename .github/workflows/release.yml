@@ -1,0 +1,79 @@
+name: Publish release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.7"
+
+      - name: Build release distributions
+        run: |
+          uv build --wheel --sdist --out-dir dist potpie/context-core
+          uv build --wheel --sdist --out-dir dist potpie/context-engine
+          uv build --wheel --sdist --out-dir dist .
+
+      - name: Verify release set
+        run: >-
+          python scripts/verify_release_artifacts.py dist
+          --tag "${{ github.event.release.tag_name }}"
+
+      - name: Strict type-check installed distributions
+        run: |
+          uv venv .typing-venv
+          uv pip install --python .typing-venv/bin/python \
+            dist/potpie_context_core-*.whl \
+            dist/potpie_context_engine-*.whl \
+            mypy
+          .typing-venv/bin/mypy --strict --disallow-any-unimported \
+            scripts/typecheck_public_api.py
+
+      - name: Upload release distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/potpie
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download release distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

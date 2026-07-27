@@ -20,6 +20,15 @@ class GraphInboxStorePort(Protocol):
         """Return one inbox item for a pot, if present."""
         ...
 
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphInboxItem,
+        replacement: GraphInboxItem,
+    ) -> bool:
+        """Atomically replace ``expected`` if it is still the stored item."""
+        ...
+
     def list(
         self,
         *,
@@ -43,6 +52,13 @@ class AsyncGraphInboxStorePort(Protocol):
     async def get_async(
         self, *, pot_id: str, item_id: str
     ) -> GraphInboxItem | None: ...
+
+    async def compare_and_set_async(
+        self,
+        *,
+        expected: GraphInboxItem,
+        replacement: GraphInboxItem,
+    ) -> bool: ...
 
     async def list_async(
         self,

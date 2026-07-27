@@ -11,7 +11,9 @@ from typing import Any
 
 import pytest
 
-from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
 from potpie_context_core.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
 from potpie_context_core.graph_mutations import ProvenanceContext
@@ -23,7 +25,11 @@ from potpie_context_core.ports.graph_service import (
     GraphReadRequest,
 )
 from potpie_context_core.graph_views import UnknownGraphViewError
-from potpie_context_core.reconciliation import MutationBatch, MutationResult, MutationSummary
+from potpie_context_core.reconciliation import (
+    MutationBatch,
+    MutationResult,
+    MutationSummary,
+)
 from potpie_context_core.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
@@ -1049,7 +1055,9 @@ class _CapturingMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config=None,
     ) -> MutationResult:
+        del reconciliation_config
         self.calls.append((plan, expected_pot_id, provenance_context))
         return MutationResult(
             ok=True,

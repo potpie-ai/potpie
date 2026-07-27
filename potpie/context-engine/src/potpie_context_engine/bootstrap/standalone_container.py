@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import os
 
-from potpie_context_engine.adapters.outbound.connectors._bench_stubs import register_bench_stubs
+from potpie_context_engine.adapters.outbound.connectors._bench_stubs import (
+    register_bench_stubs,
+)
 from potpie_context_engine.adapters.outbound.connectors.notion import NotionConnector
 from potpie_context_engine.adapters.outbound.reconciliation.factory import (
     try_pydantic_deep_reconciliation_agent,
 )
-from potpie_context_engine.application.services.source_connector_registry import SourceConnectorRegistry
+from potpie_context_engine.application.services.source_connector_registry import (
+    SourceConnectorRegistry,
+)
 from potpie_context_engine.bootstrap.ingestion_server import (
     IngestionServerContainer,
     build_ingestion_server,
@@ -18,6 +22,7 @@ from potpie_context_engine.bootstrap.ingestion_server import (
 from potpie_context_engine.bootstrap.env_pots import merged_pot_repo_map
 from potpie_context_engine.bootstrap.http_projects import ExplicitPotResolution
 from potpie_context_engine.bootstrap.queue_factory import get_context_graph_job_queue
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 
 
 def build_standalone_context_engine_container() -> IngestionServerContainer:
@@ -35,13 +40,15 @@ def build_standalone_context_engine_container() -> IngestionServerContainer:
     pots = ExplicitPotResolution(mapping)
     jobs = get_context_graph_job_queue()
     token = (os.getenv("CONTEXT_ENGINE_GITHUB_TOKEN") or "").strip()
-    reco = try_pydantic_deep_reconciliation_agent()
+    reconciliation = reconciliation_config_from_env()
+    reco = try_pydantic_deep_reconciliation_agent(reconciliation_config=reconciliation)
     if token:
         return build_ingestion_server_with_github_token(
             token=token,
             pots=pots,
             reconciliation_agent=reco,
             jobs=jobs,
+            reconciliation_config=reconciliation,
         )
     # Without a GitHub token the registry still ships with Notion so
     # ``context_status`` returns a non-empty connector manifest.
@@ -54,4 +61,5 @@ def build_standalone_context_engine_container() -> IngestionServerContainer:
         connectors=registry,
         reconciliation_agent=reco,
         jobs=jobs,
+        reconciliation_config=reconciliation,
     )

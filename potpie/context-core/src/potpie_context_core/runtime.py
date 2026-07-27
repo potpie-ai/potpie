@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import ContextVar
+from dataclasses import dataclass
 import importlib
 import inspect
-from dataclasses import dataclass
-from typing import Any, Mapping, Protocol, runtime_checkable
+import logging
+from time import perf_counter
+from typing import Any, Awaitable, Callable, Mapping, Protocol, runtime_checkable
 
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.mutation_policy import (
@@ -17,6 +19,10 @@ from potpie_context_core.mutation_policy import (
 from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_core.ports.graph.inbox_store import GraphInboxStorePort
 from potpie_context_core.ports.graph.plan_store import GraphPlanStorePort
+from potpie_context_core.reconciliation_config import (
+    DEFAULT_RECONCILIATION_CONFIG,
+    ReconciliationConfig,
+)
 from potpie_context_core.workbench_service import GraphWorkbenchService
 
 
@@ -27,6 +33,7 @@ class RuntimeCompositionError(TypeError):
 _BRIDGE_LOOP: ContextVar[asyncio.AbstractEventLoop | None] = ContextVar(
     "graph_runtime_bridge_loop", default=None
 )
+_LOG = logging.getLogger(__name__)
 
 
 class _AsyncPortBridge:
@@ -66,22 +73,120 @@ class _AsyncPortBridge:
         return call
 
 
+class _MutationPortBridge:
+    """Protocol-visible facade for a sync or async mutation port."""
+
+    def __init__(self, target: Any) -> None:
+        self._bridge = _AsyncPortBridge(target)
+
+    def apply(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.apply(*args, **kwargs)
+
+    async def apply_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.apply_async(*args, **kwargs)
+
+    def invalidate(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.invalidate(*args, **kwargs)
+
+    def reset_pot(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.reset_pot(*args, **kwargs)
+
+    def readiness(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.readiness(*args, **kwargs)
+
+
+class _ClaimQueryPortBridge:
+    """Protocol-visible facade for a sync or async claim-query port."""
+
+    def __init__(self, target: Any) -> None:
+        self._bridge = _AsyncPortBridge(target)
+
+    def find_claims(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.find_claims(*args, **kwargs)
+
+    def entity_labels(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.entity_labels(*args, **kwargs)
+
+    def entity_properties(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.entity_properties(*args, **kwargs)
+
+
+class _StoreBridge:
+    """Protocol-visible facade for a sync or async plan/inbox store."""
+
+    def __init__(self, target: Any) -> None:
+        self._bridge = _AsyncPortBridge(target)
+
+    def save(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.save(*args, **kwargs)
+
+    def get(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.get(*args, **kwargs)
+
+    def compare_and_set(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.compare_and_set(*args, **kwargs)
+
+    def list(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.list(*args, **kwargs)
+
+    async def save_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.save_async(*args, **kwargs)
+
+    async def get_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.get_async(*args, **kwargs)
+
+    async def compare_and_set_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.compare_and_set_async(*args, **kwargs)
+
+    async def list_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.list_async(*args, **kwargs)
+
+
 class _BackendBridge:
-    _PORTS = {
-        "mutation",
-        "claim_query",
-        "semantic",
-        "inspection",
-        "analytics",
-        "snapshot",
-    }
+    """Protocol-visible facade for a backend with async-capable nested ports."""
 
     def __init__(self, backend: Any) -> None:
         self._backend = backend
+        self._mutation = _MutationPortBridge(backend.mutation)
+        self._claim_query = _ClaimQueryPortBridge(backend.claim_query)
+        self._semantic = _AsyncPortBridge(backend.semantic)
+        self._inspection = _AsyncPortBridge(backend.inspection)
+        self._analytics = _AsyncPortBridge(backend.analytics)
+        self._snapshot = _AsyncPortBridge(backend.snapshot)
 
-    def __getattr__(self, name: str) -> Any:
-        value = getattr(self._backend, name)
-        return _AsyncPortBridge(value) if name in self._PORTS else value
+    @property
+    def profile(self) -> str:
+        return self._backend.profile
+
+    @property
+    def mutation(self) -> Any:
+        return self._mutation
+
+    @property
+    def claim_query(self) -> Any:
+        return self._claim_query
+
+    @property
+    def semantic(self) -> Any:
+        return self._semantic
+
+    @property
+    def inspection(self) -> Any:
+        return self._inspection
+
+    @property
+    def analytics(self) -> Any:
+        return self._analytics
+
+    @property
+    def snapshot(self) -> Any:
+        return self._snapshot
+
+    def capabilities(self) -> Any:
+        return self._backend.capabilities()
+
+    def bind_definition(self, definition: GraphDefinition) -> "_BackendBridge":
+        return _BackendBridge(self._backend.bind_definition(definition))
 
 
 @runtime_checkable
@@ -104,11 +209,12 @@ class GraphRuntime:
     inbox_store: GraphInboxStorePort | None
     definition: GraphDefinition
     policy: GraphMutationPolicy
+    reconciliation_config: ReconciliationConfig
     observability: GraphObserver
     graph: Any
     workbench: GraphWorkbenchService
 
-    def status(self, pot_id: str) -> dict[str, Any]:
+    def _status_payload(self, pot_id: str) -> dict[str, Any]:
         data_plane = self.graph.data_plane_status(pot_id)
         return {
             "pot_id": pot_id,
@@ -125,61 +231,140 @@ class GraphRuntime:
             "readers": sorted(data_plane.reader_backed_includes),
         }
 
+    def _notify(self, event: str, fields: Mapping[str, Any]) -> None:
+        try:
+            self.observability.observe(event, fields)
+        except Exception:
+            _LOG.warning("graph observer failed for %s", event, exc_info=True)
+
+    def _run_observed(
+        self,
+        operation: str,
+        fields: Mapping[str, Any],
+        callback: Callable[[], Any],
+    ) -> Any:
+        event = f"graph.{operation}"
+        started = perf_counter()
+        self._notify(event, {**fields, "phase": "started"})
+        try:
+            result = callback()
+        except Exception as exc:
+            self._notify(
+                event,
+                {
+                    **fields,
+                    "phase": "failed",
+                    "ok": False,
+                    "error_type": type(exc).__name__,
+                    "duration_ms": (perf_counter() - started) * 1000,
+                },
+            )
+            raise
+        self._notify(
+            event,
+            {
+                **fields,
+                **_result_observation(result),
+                "phase": "completed",
+                "duration_ms": (perf_counter() - started) * 1000,
+            },
+        )
+        return result
+
+    async def _run_observed_async(
+        self,
+        operation: str,
+        fields: Mapping[str, Any],
+        callback: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        event = f"graph.{operation}"
+        started = perf_counter()
+        self._notify(event, {**fields, "phase": "started"})
+        try:
+            result = await callback()
+        except Exception as exc:
+            self._notify(
+                event,
+                {
+                    **fields,
+                    "phase": "failed",
+                    "ok": False,
+                    "error_type": type(exc).__name__,
+                    "duration_ms": (perf_counter() - started) * 1000,
+                },
+            )
+            raise
+        self._notify(
+            event,
+            {
+                **fields,
+                **_result_observation(result),
+                "phase": "completed",
+                "duration_ms": (perf_counter() - started) * 1000,
+            },
+        )
+        return result
+
+    def status(self, pot_id: str) -> dict[str, Any]:
+        return self._run_observed(
+            "status", {"pot_id": pot_id}, lambda: self._status_payload(pot_id)
+        )
+
     def catalog(self, request):
-        return self.graph.catalog(request)
+        return self._run_observed(
+            "catalog", _request_fields(request), lambda: self.graph.catalog(request)
+        )
 
     def resolve(self, request):
-        return self.graph.resolve(request)
+        return self._run_observed(
+            "resolve", _request_fields(request), lambda: self.graph.resolve(request)
+        )
 
     def describe(self, request):
-        return self.graph.describe(request)
+        return self._run_observed(
+            "describe", _request_fields(request), lambda: self.graph.describe(request)
+        )
 
     def read(self, request):
-        result = self.graph.read(request)
-        self.observability.observe(
-            "graph.read",
+        return self._run_observed(
+            "read",
             {
-                "pot_id": request.pot_id,
+                **_request_fields(request),
                 "view": f"{request.subgraph}.{request.view}",
-                "ok": result.ok,
             },
+            lambda: self.graph.read(request),
         )
-        return result
 
     def search(self, request):
-        return self.graph.search(request)
+        return self._run_observed(
+            "search", _request_fields(request), lambda: self.graph.search(request)
+        )
 
     def record(self, request):
-        return self.graph.record(request)
+        return self._run_observed(
+            "record", _request_fields(request), lambda: self.graph.record(request)
+        )
 
     def search_entities(self, request):
-        return self.graph.search_entities(request)
+        return self._run_observed(
+            "search_entities",
+            _request_fields(request),
+            lambda: self.graph.search_entities(request),
+        )
 
     def mutate(self, request):
-        result = self.graph.mutate(request)
-        self.observability.observe(
-            "graph.mutate",
-            {
-                "pot_id": request.pot_id,
-                "status": result.status,
-                "mutation_id": result.mutation_id,
-                "ok": result.ok,
-            },
+        return self._run_observed(
+            "mutate", _request_fields(request), lambda: self.graph.mutate(request)
         )
-        return result
 
     def propose(self, payload, *, pot_id: str, ttl_seconds: int | None = None):
-        result = self.workbench.propose(payload, pot_id=pot_id, ttl_seconds=ttl_seconds)
-        self.observability.observe(
-            "graph.propose",
-            {
-                "pot_id": pot_id,
-                "plan_id": result.plan_id,
-                "status": result.status,
-                "ok": result.ok,
-            },
+        return self._run_observed(
+            "propose",
+            {"pot_id": pot_id},
+            lambda: self.workbench.propose(
+                payload, pot_id=pot_id, ttl_seconds=ttl_seconds
+            ),
         )
-        return result
 
     def commit(
         self,
@@ -189,117 +374,156 @@ class GraphRuntime:
         approved_by: str | None = None,
         verify: bool = False,
     ):
-        result = self.workbench.commit(
-            plan_id,
-            pot_id=pot_id,
-            approved_by=approved_by,
-            verify=verify,
+        return self._run_observed(
+            "commit",
+            {"pot_id": pot_id, "plan_id": plan_id},
+            lambda: self.workbench.commit(
+                plan_id,
+                pot_id=pot_id,
+                approved_by=approved_by,
+                verify=verify,
+            ),
         )
-        self.observability.observe(
-            "graph.commit",
-            {
-                "pot_id": pot_id,
-                "plan_id": plan_id,
-                "mutation_id": result.mutation_id,
-                "status": result.status,
-                "ok": result.ok,
-            },
-        )
-        return result
 
     def history(self, **kwargs):
-        return self.workbench.history(**kwargs)
+        return self._run_observed(
+            "history", _keyword_fields(kwargs), lambda: self.workbench.history(**kwargs)
+        )
 
     def quality(self, **kwargs):
-        return self.workbench.quality(**kwargs)
+        return self._run_observed(
+            "quality", _keyword_fields(kwargs), lambda: self.workbench.quality(**kwargs)
+        )
 
     def inbox_add(self, **kwargs):
-        return self.workbench.inbox_add(**kwargs)
+        return self._run_observed(
+            "inbox_add",
+            _keyword_fields(kwargs),
+            lambda: self.workbench.inbox_add(**kwargs),
+        )
 
     def inbox_list(self, **kwargs):
-        return self.workbench.inbox_list(**kwargs)
+        return self._run_observed(
+            "inbox_list",
+            _keyword_fields(kwargs),
+            lambda: self.workbench.inbox_list(**kwargs),
+        )
 
     def inbox_show(self, **kwargs):
-        return self.workbench.inbox_show(**kwargs)
+        return self._run_observed(
+            "inbox_show",
+            _keyword_fields(kwargs),
+            lambda: self.workbench.inbox_show(**kwargs),
+        )
 
     def inbox_claim(self, **kwargs):
-        return self.workbench.inbox_claim(**kwargs)
+        return self._run_observed(
+            "inbox_claim",
+            _keyword_fields(kwargs),
+            lambda: self.workbench.inbox_claim(**kwargs),
+        )
 
     def inbox_mark_applied(self, **kwargs):
-        return self.workbench.inbox_mark_applied(**kwargs)
+        return self._run_observed(
+            "inbox_mark_applied",
+            _keyword_fields(kwargs),
+            lambda: self.workbench.inbox_mark_applied(**kwargs),
+        )
 
     def inbox_mark_rejected(self, **kwargs):
-        return self.workbench.inbox_mark_rejected(**kwargs)
+        return self._run_observed(
+            "inbox_mark_rejected",
+            _keyword_fields(kwargs),
+            lambda: self.workbench.inbox_mark_rejected(**kwargs),
+        )
 
     def inbox_close(self, **kwargs):
-        return self.workbench.inbox_close(**kwargs)
+        return self._run_observed(
+            "inbox_close",
+            _keyword_fields(kwargs),
+            lambda: self.workbench.inbox_close(**kwargs),
+        )
 
     async def status_async(self, pot_id: str) -> dict[str, Any]:
-        return await _to_thread_with_bridge(self.status, pot_id)
+        return await self._run_observed_async(
+            "status",
+            {"pot_id": pot_id},
+            lambda: _to_thread_with_bridge(self._status_payload, pot_id),
+        )
 
     async def catalog_async(self, request):
-        return await _async_call(self.graph, "catalog", request)
+        return await self._run_observed_async(
+            "catalog",
+            _request_fields(request),
+            lambda: _async_call(self.graph, "catalog", request),
+        )
 
     async def resolve_async(self, request):
-        return await _async_call(self.graph, "resolve", request)
+        return await self._run_observed_async(
+            "resolve",
+            _request_fields(request),
+            lambda: _async_call(self.graph, "resolve", request),
+        )
 
     async def describe_async(self, request):
-        return await _async_call(self.graph, "describe", request)
+        return await self._run_observed_async(
+            "describe",
+            _request_fields(request),
+            lambda: _async_call(self.graph, "describe", request),
+        )
 
     async def read_async(self, request):
-        result = await _async_call(self.graph, "read", request)
-        self.observability.observe(
-            "graph.read",
+        return await self._run_observed_async(
+            "read",
             {
-                "pot_id": request.pot_id,
+                **_request_fields(request),
                 "view": f"{request.subgraph}.{request.view}",
-                "ok": result.ok,
             },
+            lambda: _async_call(self.graph, "read", request),
         )
-        return result
 
     async def search_async(self, request):
-        return await _async_call(self.graph, "search", request)
+        return await self._run_observed_async(
+            "search",
+            _request_fields(request),
+            lambda: _async_call(self.graph, "search", request),
+        )
 
     async def record_async(self, request):
-        return await _async_call(self.graph, "record", request)
+        return await self._run_observed_async(
+            "record",
+            _request_fields(request),
+            lambda: _async_call(self.graph, "record", request),
+        )
 
     async def search_entities_async(self, request):
-        return await _async_call(self.graph, "search_entities", request)
+        return await self._run_observed_async(
+            "search_entities",
+            _request_fields(request),
+            lambda: _async_call(self.graph, "search_entities", request),
+        )
 
     async def mutate_async(self, request):
-        result = await _async_call(self.graph, "mutate", request)
-        self.observability.observe(
-            "graph.mutate",
-            {
-                "pot_id": request.pot_id,
-                "status": result.status,
-                "mutation_id": result.mutation_id,
-                "ok": result.ok,
-            },
+        return await self._run_observed_async(
+            "mutate",
+            _request_fields(request),
+            lambda: _async_call(self.graph, "mutate", request),
         )
-        return result
 
     async def propose_async(
         self, payload, *, pot_id: str, ttl_seconds: int | None = None
     ):
-        result = await _async_call(
-            self.workbench,
+        return await self._run_observed_async(
             "propose",
-            payload,
-            pot_id=pot_id,
-            ttl_seconds=ttl_seconds,
+            {"pot_id": pot_id},
+            lambda: _async_call(
+                self.workbench,
+                "propose",
+                payload,
+                pot_id=pot_id,
+                ttl_seconds=ttl_seconds,
+            ),
         )
-        self.observability.observe(
-            "graph.propose",
-            {
-                "pot_id": pot_id,
-                "plan_id": result.plan_id,
-                "status": result.status,
-                "ok": result.ok,
-            },
-        )
-        return result
 
     async def commit_async(
         self,
@@ -309,52 +533,105 @@ class GraphRuntime:
         approved_by: str | None = None,
         verify: bool = False,
     ):
-        result = await _async_call(
-            self.workbench,
+        return await self._run_observed_async(
             "commit",
-            plan_id,
-            pot_id=pot_id,
-            approved_by=approved_by,
-            verify=verify,
+            {"pot_id": pot_id, "plan_id": plan_id},
+            lambda: _async_call(
+                self.workbench,
+                "commit",
+                plan_id,
+                pot_id=pot_id,
+                approved_by=approved_by,
+                verify=verify,
+            ),
         )
-        self.observability.observe(
-            "graph.commit",
-            {
-                "pot_id": pot_id,
-                "plan_id": plan_id,
-                "mutation_id": result.mutation_id,
-                "status": result.status,
-                "ok": result.ok,
-            },
-        )
-        return result
 
     async def history_async(self, **kwargs):
-        return await _async_call(self.workbench, "history", **kwargs)
+        return await self._run_observed_async(
+            "history",
+            _keyword_fields(kwargs),
+            lambda: _async_call(self.workbench, "history", **kwargs),
+        )
 
     async def quality_async(self, **kwargs):
-        return await _async_call(self.workbench, "quality", **kwargs)
+        return await self._run_observed_async(
+            "quality",
+            _keyword_fields(kwargs),
+            lambda: _async_call(self.workbench, "quality", **kwargs),
+        )
 
     async def inbox_add_async(self, **kwargs):
-        return await _async_call(self.workbench, "inbox_add", **kwargs)
+        return await self._run_observed_async(
+            "inbox_add",
+            _keyword_fields(kwargs),
+            lambda: _async_call(self.workbench, "inbox_add", **kwargs),
+        )
 
     async def inbox_list_async(self, **kwargs):
-        return await _async_call(self.workbench, "inbox_list", **kwargs)
+        return await self._run_observed_async(
+            "inbox_list",
+            _keyword_fields(kwargs),
+            lambda: _async_call(self.workbench, "inbox_list", **kwargs),
+        )
 
     async def inbox_show_async(self, **kwargs):
-        return await _async_call(self.workbench, "inbox_show", **kwargs)
+        return await self._run_observed_async(
+            "inbox_show",
+            _keyword_fields(kwargs),
+            lambda: _async_call(self.workbench, "inbox_show", **kwargs),
+        )
 
     async def inbox_claim_async(self, **kwargs):
-        return await _async_call(self.workbench, "inbox_claim", **kwargs)
+        return await self._run_observed_async(
+            "inbox_claim",
+            _keyword_fields(kwargs),
+            lambda: _async_call(self.workbench, "inbox_claim", **kwargs),
+        )
 
     async def inbox_mark_applied_async(self, **kwargs):
-        return await _async_call(self.workbench, "inbox_mark_applied", **kwargs)
+        return await self._run_observed_async(
+            "inbox_mark_applied",
+            _keyword_fields(kwargs),
+            lambda: _async_call(self.workbench, "inbox_mark_applied", **kwargs),
+        )
 
     async def inbox_mark_rejected_async(self, **kwargs):
-        return await _async_call(self.workbench, "inbox_mark_rejected", **kwargs)
+        return await self._run_observed_async(
+            "inbox_mark_rejected",
+            _keyword_fields(kwargs),
+            lambda: _async_call(self.workbench, "inbox_mark_rejected", **kwargs),
+        )
 
     async def inbox_close_async(self, **kwargs):
-        return await _async_call(self.workbench, "inbox_close", **kwargs)
+        return await self._run_observed_async(
+            "inbox_close",
+            _keyword_fields(kwargs),
+            lambda: _async_call(self.workbench, "inbox_close", **kwargs),
+        )
+
+
+def _request_fields(request: Any) -> dict[str, Any]:
+    pot_id = getattr(request, "pot_id", None)
+    return {"pot_id": pot_id} if pot_id is not None else {}
+
+
+def _keyword_fields(kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: kwargs[key]
+        for key in ("pot_id", "plan_id", "item_id")
+        if kwargs.get(key) is not None
+    }
+
+
+def _result_observation(result: Any) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for name in ("ok", "status", "plan_id", "mutation_id", "action"):
+        value = getattr(result, name, None)
+        if value is not None:
+            fields[name] = value
+    if "ok" not in fields:
+        fields["ok"] = True
+    return fields
 
 
 async def _async_call(target: Any, method: str, *args: Any, **kwargs: Any) -> Any:
@@ -383,12 +660,17 @@ def build_graph_runtime(
     inbox_store: GraphInboxStorePort | None = None,
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
     policy: GraphMutationPolicy = DEFAULT_MUTATION_POLICY,
+    reconciliation_config: ReconciliationConfig = DEFAULT_RECONCILIATION_CONFIG,
     observability: GraphObserver | None = None,
 ) -> GraphRuntime:
     """Validate composition and return the single supported graph runtime."""
 
     if not isinstance(definition, GraphDefinition):
         raise RuntimeCompositionError("definition must be a GraphDefinition")
+    if not isinstance(reconciliation_config, ReconciliationConfig):
+        raise RuntimeCompositionError(
+            "reconciliation_config must be a ReconciliationConfig"
+        )
     _require_methods(backend, "backend", ("bind_definition",))
     try:
         backend = backend.bind_definition(definition)
@@ -424,10 +706,16 @@ def build_graph_runtime(
         "backend.claim_query",
         ("find_claims", "entity_labels", "entity_properties"),
     )
-    _require_sync_or_async_methods(plan_store, "plan_store", ("save", "get", "list"))
+    _require_sync_or_async_methods(
+        plan_store,
+        "plan_store",
+        ("save", "get", "compare_and_set", "list"),
+    )
     if inbox_store is not None:
         _require_sync_or_async_methods(
-            inbox_store, "inbox_store", ("save", "get", "list")
+            inbox_store,
+            "inbox_store",
+            ("save", "get", "compare_and_set", "list"),
         )
     observer = observability or NoOpGraphObserver()
     _require_methods(observer, "observability", ("observe",))
@@ -440,14 +728,13 @@ def build_graph_runtime(
             "implementation"
         ) from exc
     runtime_backend = _BackendBridge(backend)
-    runtime_plan_store = _AsyncPortBridge(plan_store)
-    runtime_inbox_store = (
-        _AsyncPortBridge(inbox_store) if inbox_store is not None else None
-    )
+    runtime_plan_store = _StoreBridge(plan_store)
+    runtime_inbox_store = _StoreBridge(inbox_store) if inbox_store is not None else None
     graph = composition.build_graph_service(
         backend=runtime_backend,
         definition=definition,
         policy=policy,
+        reconciliation_config=reconciliation_config,
     )
     workbench = GraphWorkbenchService(
         backend=runtime_backend,
@@ -455,6 +742,7 @@ def build_graph_runtime(
         inbox_store=runtime_inbox_store,
         definition=definition,
         policy=policy,
+        reconciliation_config=reconciliation_config,
     )
     return GraphRuntime(
         backend=runtime_backend,
@@ -462,6 +750,7 @@ def build_graph_runtime(
         inbox_store=runtime_inbox_store,
         definition=definition,
         policy=policy,
+        reconciliation_config=reconciliation_config,
         observability=observer,
         graph=graph,
         workbench=workbench,

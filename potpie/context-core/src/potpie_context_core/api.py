@@ -131,6 +131,10 @@ from potpie_context_core.mutation_policy import (
     DEFAULT_MUTATION_POLICY,
     GraphMutationPolicy,
 )
+from potpie_context_core.reconciliation_config import (
+    DEFAULT_RECONCILIATION_CONFIG,
+    ReconciliationConfig,
+)
 from potpie_context_core.runtime import (
     GraphObserver,
     GraphRuntime,
@@ -281,7 +285,9 @@ __all__ = [
     "GraphMutationPlanStatus",
     "GraphMutationProposal",
     "DEFAULT_MUTATION_POLICY",
+    "DEFAULT_RECONCILIATION_CONFIG",
     "GraphMutationPolicy",
+    "ReconciliationConfig",
     "GraphObserver",
     "GraphRuntime",
     "NoOpGraphObserver",

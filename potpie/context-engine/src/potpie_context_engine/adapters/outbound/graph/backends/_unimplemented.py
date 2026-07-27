@@ -23,6 +23,7 @@ from potpie_context_core.ports.graph.inspection import GraphSlice
 from potpie_context_core.ports.graph.mutation import BackendReadiness
 from potpie_context_core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 
 def _raise(profile: str, capability: str, method: str) -> Any:
@@ -56,7 +57,9 @@ class UnimplementedMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
+        del reconciliation_config
         return _raise(self.profile, "mutation", "apply")
 
     def invalidate(

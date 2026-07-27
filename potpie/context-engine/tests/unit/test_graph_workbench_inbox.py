@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
+import threading
 
 import pytest
 
-from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from potpie_context_engine.adapters.outbound.graph.inbox_stores.local_json import LocalJsonGraphInboxStore
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.graph.inbox_stores.local_json import (
+    LocalJsonGraphInboxStore,
+)
 from potpie_context_core.workbench_service import GraphWorkbenchService
 from potpie_context_core.graph_inbox import GraphInboxItem
 from potpie_context_core.ports.claim_query import ClaimQueryFilter
@@ -22,8 +28,25 @@ class _UnusedPlanStore:
     def get(self, *, pot_id: str, plan_id: str):
         raise AssertionError("plan store should not be used by inbox tests")
 
+    def compare_and_set(self, **_kwargs):
+        raise AssertionError("plan store should not be used by inbox tests")
+
     def list(self, **_kwargs):
         raise AssertionError("plan store should not be used by inbox tests")
+
+
+class _RacingInboxStore(LocalJsonGraphInboxStore):
+    def __init__(self, *, home) -> None:
+        super().__init__(home=home)
+        self.claiming = threading.Barrier(2)
+
+    def compare_and_set(self, *, expected, replacement) -> bool:
+        if replacement.status == "claimed":
+            self.claiming.wait(timeout=5)
+        return super().compare_and_set(
+            expected=expected,
+            replacement=replacement,
+        )
 
 
 def _service(tmp_path) -> tuple[GraphWorkbenchService, InMemoryGraphBackend]:
@@ -60,6 +83,43 @@ def test_inbox_add_persists_pending_work_without_writing_graph_facts(tmp_path) -
     assert reloaded is not None
     assert reloaded.summary == "Possible graph update"
     assert backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT)) == []
+
+
+def test_concurrent_claim_allows_only_one_owner(tmp_path) -> None:
+    store = _RacingInboxStore(home=tmp_path)
+    workbench = GraphWorkbenchService(
+        backend=InMemoryGraphBackend(),
+        plan_store=_UnusedPlanStore(),
+        inbox_store=store,
+    )
+    added = workbench.inbox_add(pot_id=POT, summary="Race-safe work")
+    assert added.item is not None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(
+            future.result()
+            for future in (
+                pool.submit(
+                    workbench.inbox_claim,
+                    pot_id=POT,
+                    item_id=added.item.item_id,
+                    claimed_by="user:alice",
+                ),
+                pool.submit(
+                    workbench.inbox_claim,
+                    pot_id=POT,
+                    item_id=added.item.item_id,
+                    claimed_by="user:bob",
+                ),
+            )
+        )
+
+    assert sum(result.ok for result in results) == 1
+    losing = next(result for result in results if not result.ok)
+    assert "concurrent" in (losing.detail or "")
+    current = store.get(pot_id=POT, item_id=added.item.item_id)
+    assert current is not None
+    assert current.claimed_by in {"user:alice", "user:bob"}
 
 
 def test_inbox_claim_and_mark_applied_records_plan_and_mutation(tmp_path) -> None:

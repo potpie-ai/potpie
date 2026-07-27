@@ -12,8 +12,14 @@ from potpie_context_core.reconciliation_validation import (
 )
 from potpie_context_core.context_events import EventRef
 from potpie_context_core.errors import ReconciliationPlanValidationError
-from potpie_context_core.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp
+from potpie_context_core.graph_mutations import (
+    EdgeDelete,
+    EdgeUpsert,
+    EntityUpsert,
+    InvalidationOp,
+)
 from potpie_context_core.reconciliation import ReconciliationPlan
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 
 pytestmark = pytest.mark.unit
 
@@ -194,7 +200,9 @@ def test_validate_ontology_error_message_samples_first_8(
     ]
     plan = _valid_plan(entity_upserts=upserts)
     with pytest.raises(ReconciliationPlanValidationError) as exc_info:
-        validate_reconciliation_plan(plan, "p1")
+        validate_reconciliation_plan(
+            plan, "p1", config=reconciliation_config_from_env()
+        )
     message = str(exc_info.value)
     assert "more" in message  # suffix "... X more" should appear
 
@@ -215,6 +223,8 @@ def test_validate_ontology_error_no_suffix_when_8_or_fewer(
     ]
     plan = _valid_plan(entity_upserts=upserts)
     with pytest.raises(ReconciliationPlanValidationError) as exc_info:
-        validate_reconciliation_plan(plan, "p1")
+        validate_reconciliation_plan(
+            plan, "p1", config=reconciliation_config_from_env()
+        )
     message = str(exc_info.value)
     assert "more" not in message

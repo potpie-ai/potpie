@@ -1,8 +1,16 @@
-"""Feature flags for reconciliation (env-backed; no Potpie imports)."""
+"""Backward-compatible environment helpers for reconciliation settings.
+
+New composition roots should load one
+:class:`~potpie_context_core.reconciliation_config.ReconciliationConfig` and
+inject it. These functions remain for older callers that intentionally use
+process-wide environment configuration.
+"""
 
 from __future__ import annotations
 
 import os
+
+from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 
 def _truthy(raw: str | None, default: bool) -> bool:
@@ -79,3 +87,34 @@ def ontology_soft_fail_enabled() -> bool:
 def ontology_strict_enabled() -> bool:
     """Force strict ontology validation (disables soft downgrade; default: off)."""
     return _truthy(os.getenv("CONTEXT_ENGINE_ONTOLOGY_STRICT"), False)
+
+
+def reconciliation_config_from_env() -> ReconciliationConfig:
+    """Translate the current process environment into an immutable config."""
+
+    strict = ontology_strict_enabled()
+    return ReconciliationConfig(
+        enabled=reconciliation_enabled(),
+        agent_planner_enabled=agent_planner_enabled(),
+        infer_canonical_labels=infer_canonical_labels_enabled(),
+        conflict_detection=conflict_detection_enabled(),
+        auto_supersede=auto_supersede_enabled(),
+        causal_expand=causal_expand_enabled(),
+        strict_extraction=strict_extraction_enabled(),
+        ontology_soft_fail=ontology_soft_fail_enabled() and not strict,
+        ontology_strict=strict,
+    )
+
+
+__all__ = [
+    "agent_planner_enabled",
+    "auto_supersede_enabled",
+    "causal_expand_enabled",
+    "conflict_detection_enabled",
+    "infer_canonical_labels_enabled",
+    "ontology_soft_fail_enabled",
+    "ontology_strict_enabled",
+    "reconciliation_config_from_env",
+    "reconciliation_enabled",
+    "strict_extraction_enabled",
+]

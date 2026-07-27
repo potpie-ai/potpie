@@ -31,6 +31,7 @@ class GraphMutationPlanStatus(StrEnum):
     conflict = "conflict"
     review_required = "review_required"
     approved = "approved"
+    committing = "committing"
     committed = "committed"
     expired = "expired"
     abandoned = "abandoned"

@@ -5,7 +5,9 @@ from __future__ import annotations
 import pytest
 
 from potpie_context_core.reconciliation_validation import validate_reconciliation_plan
-from potpie_context_core.canonical_label_inference import enrich_reconciliation_plan_entity_labels
+from potpie_context_core.canonical_label_inference import (
+    enrich_reconciliation_plan_entity_labels,
+)
 from potpie_context_core.context_events import EventRef
 from potpie_context_core.graph_mutations import EdgeUpsert, EntityUpsert
 from potpie_context_core.ontology import (
@@ -14,6 +16,7 @@ from potpie_context_core.ontology import (
     is_canonical_entity_label,
 )
 from potpie_context_core.reconciliation import ReconciliationPlan
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 
 pytestmark = pytest.mark.unit
 
@@ -96,7 +99,7 @@ def test_validate_reconciliation_runs_enrich_when_flag(
             )
         ],
     )
-    validate_reconciliation_plan(plan, "p1")
+    validate_reconciliation_plan(plan, "p1", config=reconciliation_config_from_env())
     by_key = {e.entity_key: e for e in plan.entity_upserts}
     assert "Environment" in by_key["environment:prod"].labels
     assert "Service" in by_key["service:ledger"].labels

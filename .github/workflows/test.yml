@@ -96,6 +96,42 @@ jobs:
         working-directory: potpie/context-core
         run: uv run --project . pytest tests
 
+  distribution-contract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.7"
+
+      - name: Build public distributions
+        run: |
+          uv build --wheel --sdist --out-dir dist potpie/context-core
+          uv build --wheel --sdist --out-dir dist potpie/context-engine
+          uv build --wheel --sdist --out-dir dist .
+
+      - name: Verify distribution contract
+        run: python scripts/verify_release_artifacts.py dist
+
+      - name: Strict type-check installed distributions
+        run: |
+          uv venv .typing-venv
+          uv pip install --python .typing-venv/bin/python \
+            dist/potpie_context_core-*.whl \
+            dist/potpie_context_engine-*.whl \
+            mypy
+          .typing-venv/bin/mypy --strict --disallow-any-unimported \
+            scripts/typecheck_public_api.py
+
   potpie-root:
     runs-on: ubuntu-latest
     strategy:

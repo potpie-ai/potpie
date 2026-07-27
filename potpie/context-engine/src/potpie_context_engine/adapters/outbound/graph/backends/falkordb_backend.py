@@ -11,16 +11,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
-from potpie_context_engine.adapters.outbound.graph.apply_plan import apply_mutation_batch
+from potpie_context_engine.adapters.outbound.graph.apply_plan import (
+    apply_mutation_batch,
+)
 from potpie_context_engine.adapters.outbound.graph.backends._unimplemented import (
     UnimplementedSnapshot,
 )
-from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytics import ClaimQueryAnalytics
+from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytics import (
+    ClaimQueryAnalytics,
+)
 from potpie_context_engine.adapters.outbound.graph.backends.claim_query_semantic import (
     ClaimQuerySemanticSearch,
 )
-from potpie_context_engine.adapters.outbound.graph.falkordb_inspection import FalkorDBInspection
-from potpie_context_engine.adapters.outbound.graph.falkordb_reader import FalkorDBClaimQueryStore
+from potpie_context_engine.adapters.outbound.graph.falkordb_inspection import (
+    FalkorDBInspection,
+)
+from potpie_context_engine.adapters.outbound.graph.falkordb_reader import (
+    FalkorDBClaimQueryStore,
+)
 from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     FalkorDBGraphProvider,
     FalkorDBGraphWriter,
@@ -41,6 +49,10 @@ from potpie_context_core.ports.claim_query import ClaimQueryPort
 from potpie_context_core.ports.graph.backend import BackendCapabilities
 from potpie_context_core.ports.graph.mutation import BackendReadiness
 from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation_config import (
+    DEFAULT_RECONCILIATION_CONFIG,
+    ReconciliationConfig,
+)
 
 _PROFILE = "falkordb"
 _LITE_PROFILE = "falkordb_lite"
@@ -88,6 +100,7 @@ class _FalkorDBMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         return await apply_mutation_batch(
             self.writer,
@@ -95,6 +108,9 @@ class _FalkorDBMutation:
             expected_pot_id=expected_pot_id,
             provenance_context=provenance_context,
             definition=self.definition,
+            reconciliation_config=(
+                reconciliation_config or DEFAULT_RECONCILIATION_CONFIG
+            ),
         )
 
     def apply(
@@ -103,12 +119,14 @@ class _FalkorDBMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         return _run_sync(
             self.apply_async(
                 plan,
                 expected_pot_id=expected_pot_id,
                 provenance_context=provenance_context,
+                reconciliation_config=reconciliation_config,
             )
         )
 

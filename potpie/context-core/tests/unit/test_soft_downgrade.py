@@ -8,8 +8,13 @@ from potpie_context_core.reconciliation_validation import validate_reconciliatio
 from potpie_context_core.context_events import EventRef
 from potpie_context_core.errors import ReconciliationPlanValidationError
 from potpie_context_core.graph_mutations import EdgeUpsert, EntityUpsert
-from potpie_context_core.ontology import CANONICAL_EDGE_TYPES, CANONICAL_LABELS, EDGE_TYPES
+from potpie_context_core.ontology import (
+    CANONICAL_EDGE_TYPES,
+    CANONICAL_LABELS,
+    EDGE_TYPES,
+)
 from potpie_context_core.reconciliation import ReconciliationPlan
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 
 pytestmark = pytest.mark.unit
 
@@ -59,7 +64,7 @@ def test_soft_fail_coerces_adr_like_batch(monkeypatch: pytest.MonkeyPatch) -> No
             ),
         ],
     )
-    validate_reconciliation_plan(plan, "p1")
+    validate_reconciliation_plan(plan, "p1", config=reconciliation_config_from_env())
 
     assert plan.ontology_downgrades
     kinds = {d["kind"] for d in plan.ontology_downgrades}
@@ -96,7 +101,9 @@ def test_soft_fail_off_still_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
         edge_upserts=[],
     )
     with pytest.raises(ReconciliationPlanValidationError):
-        validate_reconciliation_plan(plan, "p1")
+        validate_reconciliation_plan(
+            plan, "p1", config=reconciliation_config_from_env()
+        )
 
 
 def test_strict_overrides_soft_fail(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,7 +124,9 @@ def test_strict_overrides_soft_fail(monkeypatch: pytest.MonkeyPatch) -> None:
         edge_upserts=[],
     )
     with pytest.raises(ReconciliationPlanValidationError):
-        validate_reconciliation_plan(plan, "p1")
+        validate_reconciliation_plan(
+            plan, "p1", config=reconciliation_config_from_env()
+        )
 
 
 def test_duplicate_entity_keys_are_merged_by_canonicalization() -> None:

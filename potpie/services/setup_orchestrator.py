@@ -41,15 +41,23 @@ from potpie_context_core.lifecycle import (
     SetupReport,
     StepResult,
 )
-from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_engine.domain.ports.install import Installer
 from potpie_context_engine.domain.ports.services.auth import AuthService
 from potpie_context_engine.domain.ports.services.config import ConfigService
-from potpie_context_engine.domain.ports.services.pot_management import PotManagementService
+from potpie_context_engine.domain.ports.services.pot_management import (
+    PotManagementService,
+)
 from potpie_context_engine.domain.ports.services.skill_manager import SkillManager
-from potpie_context_engine.domain.ports.services.state_store import MigrationPort, StateStorePort
-from potpie_context_engine.domain.ports.services.setup import NoOpSetupObserver, SetupObserver
+from potpie_context_engine.domain.ports.services.state_store import (
+    MigrationPort,
+    StateStorePort,
+)
+from potpie_context_engine.domain.ports.services.setup import (
+    NoOpSetupObserver,
+    SetupObserver,
+)
 from potpie.daemon.daemon import Daemon
+from potpie.services.provisioning import ProvisionableGraphBackend
 
 # Dependency-ordered seam plan: (step, owner, action template). Mirrors the
 # architecture.md "Seam → owner map"; the orchestrator depends only on each
@@ -155,7 +163,7 @@ class DefaultSetupOrchestrator:
 
     config: ConfigService
     installer: Installer
-    backend: GraphBackend
+    backend: ProvisionableGraphBackend
     pots: PotManagementService
     state_store: StateStorePort
     migrator: MigrationPort

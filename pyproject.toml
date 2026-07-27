@@ -62,13 +62,13 @@ include = [
     "potpie/cli/ui/assets/**/*",
 ]
 exclude = [
-    # Recursive globs, not bare directory names: the repo .gitignore (which
-    # hatchling merges into this spec) re-includes some nested files via `!`
-    # negations, and only a later file-level match wins those back.
-    "/potpie/context-engine/**",
-    "/potpie/integrations/**",
-    "/potpie/parsing/**",
-    "/potpie/sandbox/**",
+    # Recursive file globs keep workspace-only packages out even when
+    # .gitignore negations re-include files nested below these directories.
+    "potpie/context-core/**/*",
+    "potpie/context-engine/**/*",
+    "potpie/integrations/**/*",
+    "potpie/parsing/**/*",
+    "potpie/sandbox/**/*",
 ]
 
 [tool.hatch.build.force-include]
