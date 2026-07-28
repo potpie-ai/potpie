@@ -14,8 +14,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
 from potpie_context_core.graph_plans import GraphMutationPlanRecord
+from potpie_context_engine.adapters.outbound.graph._local_json_atomic import (
+    locked_json_store,
+)
+from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +32,39 @@ class LocalJsonGraphPlanStore:
         return self.home / "graph_plans.json"
 
     def save(self, record: GraphMutationPlanRecord) -> None:
-        state = self._load()
-        plans = state.setdefault("plans", {})
-        by_pot = plans.setdefault(record.pot_id, {})
-        by_pot[record.plan_id] = record.to_dict()
-        self._save(state)
+        with locked_json_store(self._path):
+            state = self._load()
+            plans = state.setdefault("plans", {})
+            by_pot = plans.setdefault(record.pot_id, {})
+            by_pot[record.plan_id] = record.to_dict()
+            self._save(state)
 
     def get(self, *, pot_id: str, plan_id: str) -> GraphMutationPlanRecord | None:
         raw = self._load().get("plans", {}).get(pot_id, {}).get(plan_id)
         if not isinstance(raw, dict):
             return None
         return GraphMutationPlanRecord.from_dict(raw)
+
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphMutationPlanRecord,
+        replacement: GraphMutationPlanRecord,
+    ) -> bool:
+        key = (expected.pot_id, expected.plan_id)
+        if key != (replacement.pot_id, replacement.plan_id):
+            raise ValueError("plan compare-and-set cannot change plan identity")
+        with locked_json_store(self._path):
+            state = self._load()
+            by_pot = state.setdefault("plans", {}).setdefault(expected.pot_id, {})
+            raw = by_pot.get(expected.plan_id)
+            if not isinstance(raw, dict):
+                return False
+            if GraphMutationPlanRecord.from_dict(raw) != expected:
+                return False
+            by_pot[replacement.plan_id] = replacement.to_dict()
+            self._save(state)
+            return True
 
     def list(
         self,

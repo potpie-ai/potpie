@@ -13,6 +13,8 @@ hook points at; new backends drop into ``FULL_PROFILES`` / ``PARTIAL_PROFILES``.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from potpie_context_engine.adapters.outbound.graph.backends import build_backend
@@ -92,6 +94,26 @@ def test_backend_satisfies_protocol(profile, tmp_path):
     backend = _build(profile, tmp_path)
     assert isinstance(backend, GraphBackend)
     assert backend.profile == profile
+
+
+def test_runtime_only_backend_does_not_need_provisioning() -> None:
+    from potpie_context_engine.testing import InMemoryGraphBackend
+
+    backend = InMemoryGraphBackend()
+    runtime_only = SimpleNamespace(
+        profile=backend.profile,
+        mutation=backend.mutation,
+        claim_query=backend.claim_query,
+        semantic=backend.semantic,
+        inspection=backend.inspection,
+        analytics=backend.analytics,
+        snapshot=backend.snapshot,
+        capabilities=backend.capabilities,
+        bind_definition=backend.bind_definition,
+    )
+
+    assert not hasattr(runtime_only, "provision")
+    assert isinstance(runtime_only, GraphBackend)
 
 
 @pytest.mark.parametrize("profile", FULL_PROFILES)

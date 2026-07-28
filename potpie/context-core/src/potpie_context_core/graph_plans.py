@@ -31,6 +31,7 @@ class GraphMutationPlanStatus(StrEnum):
     conflict = "conflict"
     review_required = "review_required"
     approved = "approved"
+    committing = "committing"
     committed = "committed"
     expired = "expired"
     abandoned = "abandoned"
@@ -150,6 +151,8 @@ class GraphMutationPlanRecord:
     detail: str | None = None
     graph_contract_version: str = GRAPH_CONTRACT_VERSION
     ontology_version: str = ONTOLOGY_VERSION
+    commit_attempt_id: str | None = None
+    commit_attempt_started_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -177,6 +180,10 @@ class GraphMutationPlanRecord:
             "warnings": list(self.warnings),
             "approval": self.approval.to_dict() if self.approval else None,
             "mutation_id": self.mutation_id,
+            "commit_attempt_id": self.commit_attempt_id,
+            "commit_attempt_started_at": self.commit_attempt_started_at.isoformat()
+            if self.commit_attempt_started_at is not None
+            else None,
             "committed_at": self.committed_at.isoformat()
             if self.committed_at is not None
             else None,
@@ -222,6 +229,10 @@ class GraphMutationPlanRecord:
             warnings=tuple(str(w) for w in raw.get("warnings") or ()),
             approval=GraphMutationApproval.from_dict(raw.get("approval")),
             mutation_id=str(raw.get("mutation_id") or "") or None,
+            commit_attempt_id=str(raw.get("commit_attempt_id") or "") or None,
+            commit_attempt_started_at=_parse_datetime(
+                raw.get("commit_attempt_started_at")
+            ),
             committed_at=_parse_datetime(raw.get("committed_at")),
             final_subgraph_versions=_int_mapping(raw.get("final_subgraph_versions")),
             detail=str(raw.get("detail") or "") or None,
@@ -512,6 +523,7 @@ def mutation_batch_from_dict(raw: Mapping[str, Any] | None) -> MutationBatch | N
 
 def provenance_context_to_dict(ctx: ProvenanceContext) -> dict[str, Any]:
     return {
+        "mutation_id": ctx.mutation_id,
         "source_event_id": ctx.source_event_id,
         "source_system": ctx.source_system,
         "source_kind": ctx.source_kind,
@@ -537,6 +549,7 @@ def provenance_context_from_dict(
     if not raw:
         return None
     return ProvenanceContext(
+        mutation_id=str(raw.get("mutation_id") or "") or None,
         source_event_id=str(raw.get("source_event_id") or "") or None,
         source_system=str(raw.get("source_system") or "") or None,
         source_kind=str(raw.get("source_kind") or "") or None,

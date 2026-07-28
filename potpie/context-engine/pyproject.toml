@@ -10,6 +10,7 @@ name = "potpie-context-engine"
 version = "0.1.0"
 description = "Context graph API and webhooks."
 requires-python = ">=3.12,<3.15"
+classifiers = ["Typing :: Typed"]
 # Base = dependencies imported by the public graph API surface
 # (potpie_context_engine + potpie_context_engine.api). Delivery surfaces and
 # storage backends live behind extras; importing the base package must not
@@ -91,6 +92,7 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/potpie_context_engine"]
 include = [
+    "src/potpie_context_engine/py.typed",
     "src/potpie_context_engine/benchmarks/use_cases/**/*.yaml",
     "src/potpie_context_engine/benchmarks/fixtures/raw_events/**/*.json",
     "src/potpie_context_engine/benchmarks/_legacy/data/**/*.json",

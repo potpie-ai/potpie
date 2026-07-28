@@ -131,6 +131,11 @@ from potpie_context_core.mutation_policy import (
     DEFAULT_MUTATION_POLICY,
     GraphMutationPolicy,
 )
+from potpie_context_core.reconciliation_config import (
+    DEFAULT_RECONCILIATION_CONFIG,
+    ReconciliationConfig,
+)
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_core.runtime import (
     GraphObserver,
     GraphRuntime,
@@ -179,6 +184,8 @@ from potpie_context_core.ports.graph.inspection import (
 from potpie_context_core.ports.graph.mutation import (
     BackendReadiness,
     GraphMutationPort,
+    MutationExecutionLookup,
+    MutationExecutionState,
 )
 from potpie_context_core.ports.graph.plan_store import (
     AsyncGraphPlanStorePort,
@@ -281,7 +288,10 @@ __all__ = [
     "GraphMutationPlanStatus",
     "GraphMutationProposal",
     "DEFAULT_MUTATION_POLICY",
+    "DEFAULT_RECONCILIATION_CONFIG",
     "GraphMutationPolicy",
+    "ReconciliationConfig",
+    "reconciliation_config_from_env",
     "GraphObserver",
     "GraphRuntime",
     "NoOpGraphObserver",
@@ -304,6 +314,8 @@ __all__ = [
     "AsyncGraphInboxStorePort",
     "GraphInboxStorePort",
     "GraphMutationPort",
+    "MutationExecutionLookup",
+    "MutationExecutionState",
     "AsyncGraphPlanStorePort",
     "GraphPlanStorePort",
     "GraphAnalyticsPort",

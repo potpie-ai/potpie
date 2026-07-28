@@ -27,11 +27,11 @@ from potpie_context_core.ontology import (
     validate_structural_mutations,
 )
 from potpie_context_core.reconciliation import MutationBatch
-from potpie_context_core.reconciliation_flags import (
-    infer_canonical_labels_enabled,
-    ontology_soft_fail_enabled,
-    ontology_strict_enabled,
+from potpie_context_core.reconciliation_config import (
+    ReconciliationConfig,
+    current_reconciliation_config,
 )
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_core.reconciliation_issues import validation_lines_to_issues
 
 _EDGE_TEMPORAL_BACKFILLS: tuple[str, ...] = ("valid_from", "valid_at", "observed_at")
@@ -51,7 +51,11 @@ def validate_reconciliation_plan(
     expected_pot_id: str,
     *,
     definition: GraphDefinition | None = None,
+    config: ReconciliationConfig | None = None,
 ) -> None:
+    config = (
+        config or current_reconciliation_config() or reconciliation_config_from_env()
+    )
     definition = definition or DEFAULT_GRAPH_DEFINITION
     if definition is not DEFAULT_GRAPH_DEFINITION:
         plan.ontology_downgrades.clear()
@@ -76,7 +80,7 @@ def validate_reconciliation_plan(
     _validate_hard(plan, expected_pot_id)
     _augment_evidence_warnings(plan)
 
-    if infer_canonical_labels_enabled():
+    if config.infer_canonical_labels:
         enrich_reconciliation_plan_entity_labels(plan)
 
     # Backfill missing required properties with safe defaults so that agent plans
@@ -87,7 +91,7 @@ def validate_reconciliation_plan(
         for label in canonical_entity_labels(ent.labels):
             _ensure_required_properties_for_label(ent.properties, label, ent.entity_key)
 
-    soft = ontology_soft_fail_enabled() and not ontology_strict_enabled()
+    soft = config.ontology_soft_fail and not config.ontology_strict
     if soft:
         _apply_soft_ontology_downgrades(plan)
 

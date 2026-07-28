@@ -62,6 +62,11 @@ from potpie_context_core.mutation_policy import (
     DEFAULT_MUTATION_POLICY,
     GraphMutationPolicy,
 )
+from potpie_context_core.reconciliation_config import (
+    ReconciliationConfig,
+    reconciliation_config_scope,
+)
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_core.ontology import canonical_entity_labels
 from potpie_context_core.ports.agent_context import (
     RecordReceipt,
@@ -99,6 +104,9 @@ class DefaultGraphService:
     backend: GraphBackend
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
     policy: GraphMutationPolicy = DEFAULT_MUTATION_POLICY
+    reconciliation_config: ReconciliationConfig = field(
+        default_factory=reconciliation_config_from_env
+    )
     validator: Callable[[SemanticMutationRequest], Any] | None = None
     lowerer: Callable[[SemanticMutationRequest, Any], Any] | None = None
     _orchestrator: ReadOrchestrator = field(init=False)
@@ -596,11 +604,12 @@ class DefaultGraphService:
                 issues=plan.issues,
             )
 
-        result = self.backend.mutation.apply(
-            plan.batch,
-            expected_pot_id=request.pot_id,
-            provenance_context=plan.provenance,
-        )
+        with reconciliation_config_scope(self.reconciliation_config):
+            result = self.backend.mutation.apply(
+                plan.batch,
+                expected_pot_id=request.pot_id,
+                provenance_context=plan.provenance,
+            )
         summary = result.mutation_summary
         return SemanticMutationResult(
             ok=result.ok,
@@ -732,11 +741,12 @@ class DefaultGraphService:
                 warnings=_warnings(plan),
                 issues=plan.issues,
             )
-        result = await self.backend.mutation.apply_async(
-            plan.batch,
-            expected_pot_id=request.pot_id,
-            provenance_context=plan.provenance,
-        )
+        with reconciliation_config_scope(self.reconciliation_config):
+            result = await self.backend.mutation.apply_async(
+                plan.batch,
+                expected_pot_id=request.pot_id,
+                provenance_context=plan.provenance,
+            )
         summary = result.mutation_summary
         return SemanticMutationResult(
             ok=result.ok,

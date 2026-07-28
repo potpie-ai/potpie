@@ -20,6 +20,15 @@ class GraphPlanStorePort(Protocol):
         """Return one plan for a pot, if present."""
         ...
 
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphMutationPlanRecord,
+        replacement: GraphMutationPlanRecord,
+    ) -> bool:
+        """Atomically replace ``expected`` if it is still the stored record."""
+        ...
+
     def list(
         self,
         *,
@@ -41,6 +50,13 @@ class AsyncGraphPlanStorePort(Protocol):
     async def get_async(
         self, *, pot_id: str, plan_id: str
     ) -> GraphMutationPlanRecord | None: ...
+
+    async def compare_and_set_async(
+        self,
+        *,
+        expected: GraphMutationPlanRecord,
+        replacement: GraphMutationPlanRecord,
+    ) -> bool: ...
 
     async def list_async(
         self,

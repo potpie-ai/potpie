@@ -41,8 +41,8 @@ from potpie_context_core.lifecycle import (
     SetupReport,
     StepResult,
 )
-from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_engine.domain.ports.install import Installer
+from potpie_context_engine.domain.ports.provisioning import ProvisionableGraphBackend
 from potpie_context_engine.domain.ports.services.auth import AuthService
 from potpie_context_engine.domain.ports.services.config import ConfigService
 from potpie_context_engine.domain.ports.services.pot_management import (
@@ -163,7 +163,7 @@ class DefaultSetupOrchestrator:
 
     config: ConfigService
     installer: Installer
-    backend: GraphBackend
+    backend: ProvisionableGraphBackend
     pots: PotManagementService
     state_store: StateStorePort
     migrator: MigrationPort

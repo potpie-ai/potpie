@@ -8,9 +8,14 @@ shim details stay in outbound adapters.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
+import uuid
 
+from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
+    MutationExecutionRegistry,
+)
 from potpie_context_engine.adapters.outbound.graph.apply_plan import (
     apply_mutation_batch,
 )
@@ -51,7 +56,12 @@ from potpie_context_core.lifecycle import DONE, FAILED, SetupPlan, StepResult
 from potpie_context_core.ports.claim_query import ClaimQueryPort
 from potpie_context_core.ports.graph.backend import BackendCapabilities
 from potpie_context_core.ports.graph.mutation import BackendReadiness
+from potpie_context_core.ports.graph.mutation import (
+    MutationExecutionLookup,
+    MutationExecutionState,
+)
 from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 _PROFILE = "falkordb"
 _LITE_PROFILE = "falkordb_lite"
@@ -92,6 +102,9 @@ class _FalkorDBMutation:
     writer: GraphWriterPort
     profile: str = _PROFILE
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
+    execution_registry: MutationExecutionRegistry = field(
+        default_factory=MutationExecutionRegistry
+    )
 
     async def apply_async(
         self,
@@ -99,13 +112,50 @@ class _FalkorDBMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
-        return await apply_mutation_batch(
-            self.writer,
+        mutation_id = (
+            provenance_context.mutation_id
+            if provenance_context is not None and provenance_context.mutation_id
+            else uuid.uuid4().hex
+        )
+        context = replace(
+            provenance_context or ProvenanceContext(),
+            mutation_id=mutation_id,
+        )
+        return await self.execution_registry.execute_async(
             plan,
             expected_pot_id=expected_pot_id,
-            provenance_context=provenance_context,
-            definition=self.definition,
+            mutation_id=mutation_id,
+            operation=lambda: apply_mutation_batch(
+                self.writer,
+                deepcopy(plan),
+                expected_pot_id=expected_pot_id,
+                provenance_context=context,
+                definition=self.definition,
+                reconciliation_config=reconciliation_config,
+            ),
+        )
+
+    def lookup_execution(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        mutation_id: str,
+    ) -> MutationExecutionLookup:
+        lookup = self.execution_registry.lookup(
+            plan,
+            expected_pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+        )
+        if lookup.state != MutationExecutionState.absent.value:
+            return lookup
+        return MutationExecutionLookup(
+            state=MutationExecutionState.unsupported.value,
+            mutation_id=mutation_id,
+            batch_fingerprint=lookup.batch_fingerprint,
+            detail="FalkorDB mutation receipts are not durable across processes",
         )
 
     def apply(
@@ -114,12 +164,14 @@ class _FalkorDBMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         return _run_sync(
             self.apply_async(
                 plan,
                 expected_pot_id=expected_pot_id,
                 provenance_context=provenance_context,
+                reconciliation_config=reconciliation_config,
             )
         )
 
@@ -168,6 +220,10 @@ class FalkorDBGraphBackend:
     profile_name: str = _PROFILE
     force_mode: str | None = None
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
+    execution_registry: MutationExecutionRegistry = field(
+        default_factory=MutationExecutionRegistry,
+        repr=False,
+    )
     _claim_query: ClaimQueryPort = field(init=False)
     _mutation: _FalkorDBMutation = field(init=False)
     _semantic: ClaimQuerySemanticSearch = field(init=False)
@@ -195,6 +251,7 @@ class FalkorDBGraphBackend:
             writer,
             profile=self.profile_name,
             definition=self.definition,
+            execution_registry=self.execution_registry,
         )
         self._semantic = ClaimQuerySemanticSearch(self._claim_query)
 

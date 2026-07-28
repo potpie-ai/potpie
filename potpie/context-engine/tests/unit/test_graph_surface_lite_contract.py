@@ -32,6 +32,10 @@ from potpie_context_core.reconciliation import (
     MutationResult,
     MutationSummary,
 )
+from potpie_context_core.reconciliation_config import (
+    ReconciliationConfig,
+    current_reconciliation_config,
+)
 from potpie_context_core.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
@@ -1051,7 +1055,15 @@ def test_decision_record_creates_decided_and_affects_memory(service) -> None:
 
 class _CapturingMutation:
     def __init__(self) -> None:
-        self.calls: list[tuple[MutationBatch, str, ProvenanceContext | None]] = []
+        self.calls: list[
+            tuple[
+                MutationBatch,
+                str,
+                ProvenanceContext | None,
+                ReconciliationConfig | None,
+                ReconciliationConfig | None,
+            ]
+        ] = []
 
     def apply(
         self,
@@ -1059,8 +1071,17 @@ class _CapturingMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
-        self.calls.append((plan, expected_pot_id, provenance_context))
+        self.calls.append(
+            (
+                plan,
+                expected_pot_id,
+                provenance_context,
+                reconciliation_config,
+                current_reconciliation_config(),
+            )
+        )
         return MutationResult(
             ok=True,
             mutation_id="mutation-1",
@@ -1079,7 +1100,11 @@ def test_mutate_passes_lowered_provenance_to_mutation_port() -> None:
     backend = InMemoryGraphBackend()
     mutation = _CapturingMutation()
     backend._mutation = mutation
-    service = DefaultGraphService(backend=backend)
+    reconciliation_config = ReconciliationConfig(infer_canonical_labels=False)
+    service = DefaultGraphService(
+        backend=backend,
+        reconciliation_config=reconciliation_config,
+    )
     request = SemanticMutationRequest.parse(
         {
             "pot_id": "p",
@@ -1108,7 +1133,9 @@ def test_mutate_passes_lowered_provenance_to_mutation_port() -> None:
 
     assert result.ok is True
     assert len(mutation.calls) == 1
-    _batch, expected_pot_id, provenance = mutation.calls[0]
+    _batch, expected_pot_id, provenance, passed_config, active_config = mutation.calls[
+        0
+    ]
     assert expected_pot_id == "p"
     assert provenance is not None
     assert provenance.source_ref == "idem-1"
@@ -1116,3 +1143,5 @@ def test_mutate_passes_lowered_provenance_to_mutation_port() -> None:
     assert provenance.actor_user_id == "user:alice"
     assert provenance.actor_surface == "cli"
     assert provenance.actor_client_name == "codex"
+    assert passed_config is None
+    assert active_config is reconciliation_config

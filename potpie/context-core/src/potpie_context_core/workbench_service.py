@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
+import logging
 from typing import Any, Callable
 
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
@@ -37,6 +39,11 @@ from potpie_context_core.mutation_policy import (
     DEFAULT_MUTATION_POLICY,
     GraphMutationPolicy,
 )
+from potpie_context_core.reconciliation_config import (
+    ReconciliationConfig,
+    reconciliation_config_scope,
+)
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_core.graph_plans import (
     GraphIngestionVerificationResult,
     GraphMutationApproval,
@@ -66,6 +73,10 @@ from potpie_context_core.graph_workbench import (
 from potpie_context_core.graph_workbench_ontology import ranked_catalog_views
 from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_core.ports.graph.inbox_store import GraphInboxStorePort
+from potpie_context_core.ports.graph.mutation import (
+    MutationExecutionLookup,
+    MutationExecutionState,
+)
 from potpie_context_core.ports.graph.plan_store import GraphPlanStorePort
 from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_core.semantic_mutations import (
@@ -76,6 +87,8 @@ from potpie_context_core.semantic_mutations import (
 )
 
 _DEFAULT_PLAN_TTL_SECONDS = 3600
+_DEFAULT_COMMIT_CLAIM_TIMEOUT_SECONDS = 300
+_LOG = logging.getLogger(__name__)
 _QUALITY_SCAN_MAX = 5000
 _DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.5
 _QUALITY_SUMMARY_REPORTS = (
@@ -112,15 +125,20 @@ class GraphWorkbenchService:
         inbox_store: GraphInboxStorePort | None = None,
         definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
         policy: GraphMutationPolicy = DEFAULT_MUTATION_POLICY,
+        reconciliation_config: ReconciliationConfig | None = None,
         validator: Callable[[SemanticMutationRequest], Any] | None = None,
         lowerer: Callable[[SemanticMutationRequest, Any], Any] | None = None,
         default_plan_ttl_seconds: int | None = None,
+        commit_claim_timeout_seconds: int = _DEFAULT_COMMIT_CLAIM_TIMEOUT_SECONDS,
     ) -> None:
         self.backend = backend
         self.plan_store = plan_store
         self.inbox_store = inbox_store
         self.definition = definition
         self.policy = policy
+        self.reconciliation_config = (
+            reconciliation_config or reconciliation_config_from_env()
+        )
         self.validator = validator or (
             lambda request: validate_semantic_request(
                 request, definition=self.definition
@@ -136,6 +154,7 @@ class GraphWorkbenchService:
             if default_plan_ttl_seconds is not None
             else policy.default_plan_ttl_seconds
         )
+        self.commit_claim_timeout_seconds = max(1, int(commit_claim_timeout_seconds))
 
     def propose(
         self,
@@ -267,6 +286,7 @@ class GraphWorkbenchService:
         pot_id: str,
         approved_by: str | None = None,
         verify: bool = False,
+        recover_stale: bool = False,
     ) -> GraphMutationCommitResult:
         """Apply an unexpired server-created plan by id."""
         now = datetime.now(timezone.utc)
@@ -281,6 +301,9 @@ class GraphWorkbenchService:
                 detail=f"mutation plan {plan_id!r} was not found for this pot",
                 recommended_next_action="Run graph propose and commit the returned plan_id.",
             )
+
+        if record.status == GraphMutationPlanStatus.committed.value:
+            return _committed_plan_result(record)
 
         if record.status in TERMINAL_PLAN_STATUSES:
             return GraphMutationCommitResult(
@@ -297,6 +320,43 @@ class GraphWorkbenchService:
                 detail=f"plan is {record.status} and cannot be committed",
                 recommended_next_action="Create a fresh proposal if a write is still needed.",
             )
+        retrying_execution = (
+            record.status == GraphMutationPlanStatus.error.value
+            and record.mutation_id is not None
+        )
+        recovering_stale = False
+        if record.status == GraphMutationPlanStatus.committing.value:
+            if not recover_stale:
+                return _concurrent_commit_result(record)
+            if not _commit_attempt_is_stale(
+                record,
+                now=now,
+                timeout_seconds=self.commit_claim_timeout_seconds,
+            ):
+                return _concurrent_commit_result(
+                    record,
+                    detail=(
+                        "commit attempt is still active and cannot be recovered yet"
+                    ),
+                )
+            recovering_stale = True
+
+        if retrying_execution or recovering_stale:
+            lookup = _lookup_mutation_execution(self.backend, record)
+            if lookup.state == MutationExecutionState.completed.value:
+                return self._complete_recovered_commit(
+                    record,
+                    lookup=lookup,
+                    now=now,
+                    verify=verify,
+                )
+            if lookup.state == MutationExecutionState.in_flight.value:
+                return _concurrent_commit_result(
+                    record,
+                    detail="the backend mutation is still in flight",
+                )
+            if lookup.state != MutationExecutionState.absent.value:
+                return self._fail_unsafe_recovery(record, lookup=lookup)
 
         if record.is_expired(now=now):
             expired = replace(
@@ -304,7 +364,13 @@ class GraphWorkbenchService:
                 status=GraphMutationPlanStatus.expired.value,
                 detail="plan expired before commit",
             )
-            self.plan_store.save(expired)
+            if not self.plan_store.compare_and_set(
+                expected=record,
+                replacement=expired,
+            ):
+                return _commit_state_changed_result(
+                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
+                )
             return GraphMutationCommitResult(
                 ok=False,
                 plan_id=expired.plan_id,
@@ -321,7 +387,8 @@ class GraphWorkbenchService:
 
         current_versions = _subgraph_versions(self.backend, pot_id)
         conflict = _version_conflict(
-            record.expected_subgraph_versions, current_versions
+            record.expected_subgraph_versions,
+            current_versions,
         )
         if conflict:
             conflicted = replace(
@@ -330,7 +397,13 @@ class GraphWorkbenchService:
                 current_subgraph_versions=current_versions,
                 detail=_conflict_message(conflict),
             )
-            self.plan_store.save(conflicted)
+            if not self.plan_store.compare_and_set(
+                expected=record,
+                replacement=conflicted,
+            ):
+                return _commit_state_changed_result(
+                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
+                )
             return GraphMutationCommitResult(
                 ok=False,
                 plan_id=conflicted.plan_id,
@@ -374,12 +447,6 @@ class GraphWorkbenchService:
                 approved_by=approved_by,
                 approved_at=now,
             )
-            record = replace(
-                record,
-                status=GraphMutationPlanStatus.approved.value,
-                approval=approval,
-            )
-            self.plan_store.save(record)
 
         quality_before = (
             _verification_quality_snapshot(
@@ -390,16 +457,43 @@ class GraphWorkbenchService:
             if verify
             else None
         )
+        execution_mutation_id = record.mutation_id or uuid.uuid4().hex
+        attempt_started_at = datetime.now(timezone.utc)
+        reserved = replace(
+            record,
+            status=GraphMutationPlanStatus.committing.value,
+            approval=approval,
+            mutation_id=execution_mutation_id,
+            commit_attempt_id=uuid.uuid4().hex,
+            commit_attempt_started_at=attempt_started_at,
+            detail=None,
+        )
+        if not self.plan_store.compare_and_set(
+            expected=record,
+            replacement=reserved,
+        ):
+            return _commit_state_changed_result(
+                self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
+            )
+        record = reserved
 
         if record.lowered_batch is None or not _batch_has_work(record.lowered_batch):
             committed = replace(
                 record,
                 status=GraphMutationPlanStatus.committed.value,
+                commit_attempt_id=None,
+                commit_attempt_started_at=None,
                 committed_at=now,
                 final_subgraph_versions=current_versions,
                 approval=approval,
             )
-            self.plan_store.save(committed)
+            if not self.plan_store.compare_and_set(
+                expected=record,
+                replacement=committed,
+            ):
+                return _commit_state_changed_result(
+                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
+                )
             verification = (
                 _verify_ingestion_commit(
                     self.backend,
@@ -417,6 +511,7 @@ class GraphWorkbenchService:
                 status=committed.status,
                 risk=committed.risk,
                 pot_id=committed.pot_id,
+                mutation_id=execution_mutation_id,
                 applied_at=now,
                 expected_subgraph_versions=committed.expected_subgraph_versions,
                 current_subgraph_versions=current_versions,
@@ -429,48 +524,123 @@ class GraphWorkbenchService:
                 recommended_next_action=_verification_next_action(verification),
             )
 
-        result = self.backend.mutation.apply(
-            record.lowered_batch,
-            expected_pot_id=pot_id,
-            provenance_context=_provenance_for_commit(
-                record.provenance,
-                approved_by=approved_by,
-            ),
+        commit_actor = approved_by or (
+            approval.approved_by if approval is not None else None
         )
+        try:
+            with reconciliation_config_scope(self.reconciliation_config):
+                result = self.backend.mutation.apply(
+                    deepcopy(record.lowered_batch),
+                    expected_pot_id=pot_id,
+                    provenance_context=_provenance_for_commit(
+                        record.provenance,
+                        approved_by=commit_actor,
+                        mutation_id=execution_mutation_id,
+                    ),
+                )
+            final_versions = (
+                _subgraph_versions(self.backend, pot_id) if result.ok else None
+            )
+        except Exception:
+            _LOG.exception(
+                "graph backend mutation failed unexpectedly "
+                "(pot_id=%s, plan_id=%s, mutation_id=%s)",
+                pot_id,
+                plan_id,
+                execution_mutation_id,
+            )
+            detail = "backend_exception: backend mutation failed unexpectedly"
+            errored = replace(
+                record,
+                status=GraphMutationPlanStatus.error.value,
+                current_subgraph_versions=current_versions,
+                commit_attempt_id=None,
+                commit_attempt_started_at=None,
+                approval=approval,
+                detail=detail,
+            )
+            if not self.plan_store.compare_and_set(
+                expected=record,
+                replacement=errored,
+            ):
+                return _commit_state_changed_result(
+                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
+                )
+            return _errored_commit_result(
+                errored,
+                current_subgraph_versions=current_versions,
+                detail=detail,
+                recommended_next_action=(
+                    "Retry this plan_id. Recovery will replay only when the "
+                    "backend can prove the mutation is absent or completed. If "
+                    "a worker crashed, wait for the claim timeout and retry with "
+                    "recover_stale=True."
+                ),
+            )
+
         if not result.ok:
             errored = replace(
                 record,
                 status=GraphMutationPlanStatus.error.value,
                 current_subgraph_versions=current_versions,
+                commit_attempt_id=None,
+                commit_attempt_started_at=None,
                 approval=approval,
                 detail=result.error,
             )
-            self.plan_store.save(errored)
-            return GraphMutationCommitResult(
-                ok=False,
-                plan_id=errored.plan_id,
-                status=errored.status,
-                risk=errored.risk,
-                pot_id=errored.pot_id,
-                expected_subgraph_versions=errored.expected_subgraph_versions,
+            if not self.plan_store.compare_and_set(
+                expected=record,
+                replacement=errored,
+            ):
+                return _commit_state_changed_result(
+                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
+                )
+            return _errored_commit_result(
+                errored,
                 current_subgraph_versions=current_versions,
-                diff=errored.diff,
-                claim_keys=_claim_keys_from_record(errored),
-                approval=approval,
                 detail=result.error,
                 recommended_next_action="Inspect backend readiness with `potpie graph status --json`.",
             )
 
-        final_versions = _subgraph_versions(self.backend, pot_id)
+        assert final_versions is not None
         committed = replace(
             record,
             status=GraphMutationPlanStatus.committed.value,
-            mutation_id=result.mutation_id,
+            mutation_id=execution_mutation_id,
+            commit_attempt_id=None,
+            commit_attempt_started_at=None,
             committed_at=now,
             final_subgraph_versions=final_versions,
             approval=approval,
         )
-        self.plan_store.save(committed)
+        if not self.plan_store.compare_and_set(
+            expected=record,
+            replacement=committed,
+        ):
+            current = self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
+            return GraphMutationCommitResult(
+                ok=False,
+                plan_id=plan_id,
+                status=current.status,
+                risk=current.risk,
+                pot_id=pot_id,
+                mutation_id=execution_mutation_id,
+                applied_at=now,
+                expected_subgraph_versions=current.expected_subgraph_versions,
+                current_subgraph_versions=final_versions,
+                new_subgraph_versions=final_versions,
+                diff=current.diff,
+                claim_keys=_claim_keys_from_record(current),
+                approval=approval,
+                detail=(
+                    "backend mutation completed, but the plan store rejected the "
+                    "final compare-and-set; the stable mutation_id is recoverable"
+                ),
+                recommended_next_action=(
+                    "Inspect the stored plan. If it remains committing after the "
+                    "claim timeout, retry with recover_stale=True."
+                ),
+            )
         verification = (
             _verify_ingestion_commit(
                 self.backend,
@@ -488,7 +658,7 @@ class GraphWorkbenchService:
             status=committed.status,
             risk=committed.risk,
             pot_id=committed.pot_id,
-            mutation_id=result.mutation_id,
+            mutation_id=execution_mutation_id,
             applied_at=now,
             expected_subgraph_versions=committed.expected_subgraph_versions,
             current_subgraph_versions=current_versions,
@@ -498,6 +668,159 @@ class GraphWorkbenchService:
             approval=approval,
             verification=verification,
             recommended_next_action=_verification_next_action(verification),
+        )
+
+    def _complete_recovered_commit(
+        self,
+        record: GraphMutationPlanRecord,
+        *,
+        lookup: MutationExecutionLookup,
+        now: datetime,
+        verify: bool,
+    ) -> GraphMutationCommitResult:
+        """Finalize a plan from a backend-proven completed execution receipt."""
+
+        result = lookup.result
+        if (
+            result is None
+            or not record.mutation_id
+            or result.mutation_id != record.mutation_id
+        ):
+            invalid_lookup = replace(
+                lookup,
+                state=MutationExecutionState.ambiguous.value,
+                detail=None,
+            )
+            return self._fail_unsafe_recovery(record, lookup=invalid_lookup)
+
+        current_versions = _subgraph_versions(self.backend, record.pot_id)
+        if not result.ok:
+            errored = replace(
+                record,
+                status=GraphMutationPlanStatus.error.value,
+                current_subgraph_versions=current_versions,
+                commit_attempt_id=None,
+                commit_attempt_started_at=None,
+                detail=result.error,
+            )
+            if not self.plan_store.compare_and_set(
+                expected=record,
+                replacement=errored,
+            ):
+                return _commit_state_changed_result(
+                    self.plan_store.get(
+                        pot_id=record.pot_id,
+                        plan_id=record.plan_id,
+                    )
+                    or record
+                )
+            return _errored_commit_result(
+                errored,
+                current_subgraph_versions=current_versions,
+                detail=result.error,
+                recommended_next_action=(
+                    "Inspect backend readiness before creating a fresh proposal."
+                ),
+            )
+
+        committed = replace(
+            record,
+            status=GraphMutationPlanStatus.committed.value,
+            mutation_id=result.mutation_id,
+            commit_attempt_id=None,
+            commit_attempt_started_at=None,
+            committed_at=now,
+            final_subgraph_versions=current_versions,
+            detail=None,
+        )
+        if not self.plan_store.compare_and_set(
+            expected=record,
+            replacement=committed,
+        ):
+            return _commit_state_changed_result(
+                self.plan_store.get(
+                    pot_id=record.pot_id,
+                    plan_id=record.plan_id,
+                )
+                or record
+            )
+        verification = (
+            _verify_ingestion_commit(
+                self.backend,
+                pot_id=record.pot_id,
+                record=committed,
+                before_quality=None,
+                definition=self.definition,
+            )
+            if verify
+            else None
+        )
+        return GraphMutationCommitResult(
+            ok=True,
+            plan_id=committed.plan_id,
+            status=committed.status,
+            risk=committed.risk,
+            pot_id=committed.pot_id,
+            mutation_id=committed.mutation_id,
+            applied_at=committed.committed_at,
+            expected_subgraph_versions=committed.expected_subgraph_versions,
+            current_subgraph_versions=current_versions,
+            new_subgraph_versions=current_versions,
+            diff=committed.diff,
+            claim_keys=_claim_keys_from_record(committed),
+            approval=committed.approval,
+            verification=verification,
+            detail="recovered the backend's persisted mutation receipt",
+            recommended_next_action=_verification_next_action(verification),
+        )
+
+    def _fail_unsafe_recovery(
+        self,
+        record: GraphMutationPlanRecord,
+        *,
+        lookup: MutationExecutionLookup,
+    ) -> GraphMutationCommitResult:
+        """Refuse to execute again when the backend cannot prove it is safe."""
+
+        state = str(lookup.state)
+        detail = (
+            "mutation_recovery_unsupported: the backend cannot prove whether "
+            "the reserved mutation executed"
+            if state == MutationExecutionState.unsupported.value
+            else "mutation_recovery_ambiguous: backend execution state is uncertain"
+        )
+        current = record
+        if record.status == GraphMutationPlanStatus.committing.value:
+            errored = replace(
+                record,
+                status=GraphMutationPlanStatus.error.value,
+                commit_attempt_id=None,
+                commit_attempt_started_at=None,
+                detail=detail,
+            )
+            if not self.plan_store.compare_and_set(
+                expected=record,
+                replacement=errored,
+            ):
+                return _commit_state_changed_result(
+                    self.plan_store.get(
+                        pot_id=record.pot_id,
+                        plan_id=record.plan_id,
+                    )
+                    or record
+                )
+            current = errored
+        return _errored_commit_result(
+            current,
+            current_subgraph_versions=_subgraph_versions(
+                self.backend,
+                record.pot_id,
+            ),
+            detail=detail,
+            recommended_next_action=(
+                "Inspect graph history using the mutation_id. Create a fresh "
+                "proposal only after reconciling whether the mutation landed."
+            ),
         )
 
     def history(
@@ -1180,6 +1503,163 @@ def _proposal_from_record(
         recommended_next_action=recommended_next_action,
         detail=record.detail,
     )
+
+
+def _lookup_mutation_execution(
+    backend: GraphBackend,
+    record: GraphMutationPlanRecord,
+) -> MutationExecutionLookup:
+    """Query optional backend apply-once state without assuming support."""
+
+    mutation_id = record.mutation_id or ""
+    unsupported = MutationExecutionLookup(
+        state=MutationExecutionState.unsupported.value,
+        mutation_id=mutation_id,
+        batch_fingerprint="",
+    )
+    if not mutation_id or record.lowered_batch is None:
+        return unsupported
+    lookup_method = getattr(backend.mutation, "lookup_execution", None)
+    if not callable(lookup_method):
+        return unsupported
+    try:
+        lookup = lookup_method(
+            record.lowered_batch,
+            expected_pot_id=record.pot_id,
+            mutation_id=mutation_id,
+        )
+    except (AttributeError, CapabilityNotImplemented):
+        return unsupported
+    except Exception:
+        _LOG.exception(
+            "graph backend execution lookup failed "
+            "(pot_id=%s, plan_id=%s, mutation_id=%s)",
+            record.pot_id,
+            record.plan_id,
+            mutation_id,
+        )
+        return MutationExecutionLookup(
+            state=MutationExecutionState.ambiguous.value,
+            mutation_id=mutation_id,
+            batch_fingerprint="",
+        )
+    if not isinstance(lookup, MutationExecutionLookup):
+        return MutationExecutionLookup(
+            state=MutationExecutionState.ambiguous.value,
+            mutation_id=mutation_id,
+            batch_fingerprint="",
+        )
+    if lookup.mutation_id != mutation_id:
+        return replace(
+            lookup,
+            state=MutationExecutionState.ambiguous.value,
+            result=None,
+            detail=None,
+        )
+    return lookup
+
+
+def _committed_plan_result(
+    record: GraphMutationPlanRecord,
+) -> GraphMutationCommitResult:
+    """Reconstruct an idempotent commit receipt from the persisted plan."""
+
+    return GraphMutationCommitResult(
+        ok=True,
+        plan_id=record.plan_id,
+        status=record.status,
+        risk=record.risk,
+        pot_id=record.pot_id,
+        mutation_id=record.mutation_id,
+        applied_at=record.committed_at,
+        expected_subgraph_versions=record.expected_subgraph_versions,
+        current_subgraph_versions=record.current_subgraph_versions,
+        new_subgraph_versions=record.final_subgraph_versions,
+        diff=record.diff,
+        claim_keys=_claim_keys_from_record(record),
+        approval=record.approval,
+        detail="plan was already committed; returning persisted mutation receipt",
+    )
+
+
+def _errored_commit_result(
+    record: GraphMutationPlanRecord,
+    *,
+    current_subgraph_versions: Mapping[str, int],
+    detail: str | None,
+    recommended_next_action: str,
+) -> GraphMutationCommitResult:
+    return GraphMutationCommitResult(
+        ok=False,
+        plan_id=record.plan_id,
+        status=record.status,
+        risk=record.risk,
+        pot_id=record.pot_id,
+        mutation_id=record.mutation_id,
+        expected_subgraph_versions=record.expected_subgraph_versions,
+        current_subgraph_versions=current_subgraph_versions,
+        diff=record.diff,
+        claim_keys=_claim_keys_from_record(record),
+        approval=record.approval,
+        detail=detail,
+        recommended_next_action=recommended_next_action,
+    )
+
+
+def _commit_state_changed_result(
+    record: GraphMutationPlanRecord,
+) -> GraphMutationCommitResult:
+    if record.status == GraphMutationPlanStatus.committed.value:
+        return _committed_plan_result(record)
+    return _concurrent_commit_result(record)
+
+
+def _concurrent_commit_result(
+    record: GraphMutationPlanRecord,
+    *,
+    detail: str | None = None,
+) -> GraphMutationCommitResult:
+    if detail is None:
+        detail = (
+            "plan is already being committed concurrently by another caller"
+            if record.status == GraphMutationPlanStatus.committing.value
+            else f"plan state changed concurrently to {record.status!r}"
+        )
+    return GraphMutationCommitResult(
+        ok=False,
+        plan_id=record.plan_id,
+        status=record.status,
+        risk=record.risk,
+        pot_id=record.pot_id,
+        mutation_id=record.mutation_id,
+        applied_at=record.committed_at,
+        expected_subgraph_versions=record.expected_subgraph_versions,
+        current_subgraph_versions=record.current_subgraph_versions,
+        new_subgraph_versions=record.final_subgraph_versions,
+        diff=record.diff,
+        claim_keys=_claim_keys_from_record(record),
+        approval=record.approval,
+        detail=detail,
+        recommended_next_action=(
+            "Inspect the stored plan state. Recover a stale committing attempt "
+            "with recover_stale=True after the configured claim timeout."
+        ),
+    )
+
+
+def _commit_attempt_is_stale(
+    record: GraphMutationPlanRecord,
+    *,
+    now: datetime,
+    timeout_seconds: int,
+) -> bool:
+    started_at = record.commit_attempt_started_at
+    if started_at is None:
+        return True
+    try:
+        return now - started_at >= timedelta(seconds=timeout_seconds)
+    except TypeError:
+        return True
 
 
 def _claim_keys_from_record(record: GraphMutationPlanRecord) -> tuple[str, ...]:
@@ -2785,14 +3265,18 @@ def _provenance_for_commit(
     provenance: ProvenanceContext | None,
     *,
     approved_by: str | None,
-) -> ProvenanceContext | None:
-    if not approved_by:
-        return provenance
+    mutation_id: str,
+) -> ProvenanceContext:
     if provenance is None:
-        return ProvenanceContext(actor_user_id=approved_by)
-    if provenance.actor_user_id:
-        return provenance
-    return replace(provenance, actor_user_id=approved_by)
+        return ProvenanceContext(
+            actor_user_id=approved_by,
+            mutation_id=mutation_id,
+        )
+    return replace(
+        provenance,
+        actor_user_id=provenance.actor_user_id or approved_by,
+        mutation_id=mutation_id,
+    )
 
 
 __all__ = [

@@ -65,9 +65,11 @@ from potpie_context_engine.bootstrap.observability_context import correlation_sc
 from potpie_context_engine.bootstrap.observability_runtime import set_observability
 from potpie_context_engine.bootstrap.observability_wiring import default_observability
 from potpie_context_core.coherence import assert_runtime_coherence
-from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_core.reconciliation_config import ReconciliationConfig
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_engine.domain.ports.ledger.client import EventLedgerClientPort
 from potpie_context_engine.domain.ports.observability import ObservabilityPort
+from potpie_context_engine.domain.ports.provisioning import ProvisionableGraphBackend
 from potpie.daemon.lifecycle import Daemon
 from potpie_context_engine.host.shell import HostShell, LedgerFacade
 
@@ -94,28 +96,37 @@ def default_host_mode() -> str:
 
 def build_host_shell(
     *,
-    backend: GraphBackend | None = None,
+    backend: ProvisionableGraphBackend | None = None,
     profile: str = "local",
     ledger_client: EventLedgerClientPort | None = None,
     observability: ObservabilityPort | None = None,
+    reconciliation_config: ReconciliationConfig | None = None,
     settings: Any = None,
 ) -> HostShell:
     """Compose a ``HostShell`` from the default local services + adapters.
 
-    Pass ``backend`` to inject a specific ``GraphBackend`` (tests inject a shared
-    ``InMemoryGraphBackend``); otherwise one is built from the configured
-    profile. Pass ``ledger_client`` to inject a fixture ledger.
+    Pass ``backend`` to inject a provisionable graph backend (tests inject a
+    shared ``InMemoryGraphBackend``); otherwise one is built from the configured
+    profile. Runtime-only backends belong in :func:`build_graph_runtime`.
+    Pass ``ledger_client`` to inject a fixture ledger.
     """
     configure_logging()
     set_observability(observability or default_observability())
     with correlation_scope(source="host_shell"):
         backend = backend or build_backend(default_backend_profile(), settings=settings)
+        if not isinstance(backend, ProvisionableGraphBackend):
+            raise TypeError(
+                "host shell backend must implement deployment provisioning; "
+                "use build_graph_runtime for runtime-only backends"
+            )
         pot_store = LocalPotStore()
+        reconciliation = reconciliation_config or reconciliation_config_from_env()
 
         graph_runtime = build_graph_runtime(
             backend,
             LocalJsonGraphPlanStore(),
             LocalJsonGraphInboxStore(),
+            reconciliation_config=reconciliation,
         )
         graph = graph_runtime.graph
         graph_workbench = graph_runtime.workbench

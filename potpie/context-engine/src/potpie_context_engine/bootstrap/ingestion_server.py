@@ -85,6 +85,8 @@ from potpie_context_engine.domain.ports.event_stream import (
 from potpie_context_engine.domain.ports.ingestion_config import IngestionConfigPort
 from potpie_context_engine.domain.ports.context_graph import ContextGraphPort
 from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_core.reconciliation_config import ReconciliationConfig
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_engine.domain.ports.ingestion_submission import (
     IngestionSubmissionService,
 )
@@ -152,6 +154,9 @@ class IngestionServerContainer:
     """Live activity / status publisher. NoOp by default; the API process
     swaps in a Redis adapter so the events screen can stream agent activity
     end-to-end."""
+    reconciliation_config: ReconciliationConfig = field(
+        default_factory=reconciliation_config_from_env
+    )
 
     def policy(self) -> PolicyPort:
         """Return the centralized authorization port for this container.
@@ -167,6 +172,7 @@ class IngestionServerContainer:
             reconciliation_agent_available=self.reconciliation_agent is not None,
             context_graph_available=self.context_graph is not None,
             episodic_available=self._graph_available(),
+            reconciliation_config=self.reconciliation_config,
         )
 
     def _graph_available(self) -> bool:
@@ -250,11 +256,13 @@ def build_ingestion_server(
     telemetry: TelemetryPort | None = None,
     observability: ObservabilityPort | None = None,
     event_stream_publisher: EventStreamPublisherPort | None = None,
+    reconciliation_config: ReconciliationConfig | None = None,
 ) -> IngestionServerContainer:
     s = settings or EnvContextEngineSettings()
     configure_metrics(load_sentry_settings())
     telemetry_sink = telemetry or _default_telemetry()
     observability_sink = observability or _default_observability()
+    reconciliation = reconciliation_config or reconciliation_config_from_env()
     # Publish to the process-global accessor so middleware / the Celery
     # worker / infra wrappers see the same sink the container holds.
     from potpie_context_engine.bootstrap.observability_runtime import set_observability
@@ -283,6 +291,7 @@ def build_ingestion_server(
         backend,
         LocalJsonGraphPlanStore(),
         LocalJsonGraphInboxStore(),
+        reconciliation_config=reconciliation,
     )
     graph = graph_runtime.graph
     context_graph = _build_context_graph_service(graph=graph, backend=backend)
@@ -308,6 +317,7 @@ def build_ingestion_server(
         telemetry=telemetry_sink,
         observability=observability_sink,
         event_stream_publisher=stream_publisher,
+        reconciliation_config=reconciliation,
     )
 
 
@@ -444,6 +454,7 @@ def build_ingestion_server_with_github_token(
     settings: ContextEngineSettingsPort | None = None,
     reconciliation_agent: ReconciliationAgentPort | None = None,
     jobs: ContextGraphJobQueuePort | None = None,
+    reconciliation_config: ReconciliationConfig | None = None,
 ) -> IngestionServerContainer:
     """Build a container with the GitHub + Notion connectors pre-wired.
 
@@ -493,4 +504,5 @@ def build_ingestion_server_with_github_token(
         connectors=registry,
         reconciliation_agent=reconciliation_agent,
         jobs=jobs,
+        reconciliation_config=reconciliation_config,
     )

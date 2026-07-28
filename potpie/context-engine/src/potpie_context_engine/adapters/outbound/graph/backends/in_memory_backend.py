@@ -12,6 +12,7 @@ embeddings, and traversal is naive — but the *contract* is complete.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -30,6 +31,9 @@ from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import 
     ENTITY_SUMMARY_TARGET,
     repaired_entity_properties,
     wants_entity_summary_repair,
+)
+from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
+    MutationExecutionRegistry,
 )
 from potpie_context_core.reconciliation_validation import (
     validate_reconciliation_plan,
@@ -57,6 +61,7 @@ from potpie_context_core.reconciliation import (
     MutationResult,
     MutationSummary,
 )
+from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 _PROFILE = "in_memory"
 
@@ -68,6 +73,9 @@ class _Mutation:
     profile: str = _PROFILE
     embedder: EmbedderPort | None = None
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
+    execution_registry: MutationExecutionRegistry = field(
+        default_factory=MutationExecutionRegistry
+    )
 
     def _notify(self) -> None:
         if self.on_change is not None:
@@ -79,13 +87,56 @@ class _Mutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         # Validate before mutating, exactly like the Neo4j/FalkorDB writers do
         # (both route apply through apply_mutation_batch → this validator). Keeps
         # the substrate from silently accepting malformed or cross-pot batches.
-        validate_reconciliation_plan(plan, expected_pot_id, definition=self.definition)
+        validated_plan = deepcopy(plan)
+        validate_reconciliation_plan(
+            validated_plan,
+            expected_pot_id,
+            definition=self.definition,
+            config=reconciliation_config,
+        )
+        mutation_id = (
+            provenance_context.mutation_id
+            if provenance_context is not None and provenance_context.mutation_id
+            else uuid.uuid4().hex
+        )
+        return self.execution_registry.execute(
+            plan,
+            expected_pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+            operation=lambda: self._apply_uncached(
+                validated_plan,
+                expected_pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+            ),
+            on_completed=self._notify,
+        )
+
+    def lookup_execution(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        mutation_id: str,
+    ):
+        return self.execution_registry.lookup(
+            plan,
+            expected_pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+        )
+
+    def _apply_uncached(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        mutation_id: str,
+    ) -> MutationResult:
         summary = MutationSummary()
-        mutation_id = uuid.uuid4().hex
         for ent in plan.entity_upserts:
             self.store.set_entity_label(
                 pot_id=expected_pot_id, entity_key=ent.entity_key, labels=ent.labels
@@ -118,7 +169,6 @@ class _Mutation:
         summary.invalidations_applied = self._apply_invalidations(
             plan, pot_id=expected_pot_id
         )
-        self._notify()
         return MutationResult(
             ok=True, mutation_id=mutation_id, mutation_summary=summary
         )
@@ -255,6 +305,7 @@ class _Mutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         # In-memory mutations are pure-sync CPU work (no I/O to await); the
         # async door just delegates so async callers get a uniform surface.
@@ -262,6 +313,7 @@ class _Mutation:
             plan,
             expected_pot_id=expected_pot_id,
             provenance_context=provenance_context,
+            reconciliation_config=reconciliation_config,
         )
 
     def invalidate(
@@ -291,6 +343,7 @@ class _Mutation:
             self.store.entity_label_index.pop(key, None)
         for key in [k for k in self.store.entity_property_index if k[0] == pot_id]:
             self.store.entity_property_index.pop(key, None)
+        self.execution_registry.discard_pot(pot_id)
         self._notify()
         return {"removed_claims": before - len(self.store.rows)}
 
@@ -599,6 +652,10 @@ class InMemoryGraphBackend:
     on_change: Any = None
     embedder: EmbedderPort | None = None
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
+    execution_registry: MutationExecutionRegistry = field(
+        default_factory=MutationExecutionRegistry,
+        repr=False,
+    )
     _mutation: _Mutation = field(init=False)
     _semantic: _Semantic = field(init=False)
     _inspection: _Inspection = field(init=False)
@@ -616,6 +673,7 @@ class InMemoryGraphBackend:
             profile=self.profile_name,
             embedder=self.store.embedder,
             definition=self.definition,
+            execution_registry=self.execution_registry,
         )
         self._semantic = _Semantic(self.store)
         self._inspection = _Inspection(self.store)
@@ -682,6 +740,7 @@ class InMemoryGraphBackend:
             on_change=self.on_change,
             embedder=self.embedder,
             definition=definition,
+            execution_registry=self.execution_registry,
         )
 
 

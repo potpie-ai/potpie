@@ -11,6 +11,7 @@ Records (``context_record``) and reconciled source events both lower to a
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from potpie_context_core.graph_mutations import ProvenanceContext
@@ -27,6 +28,25 @@ class BackendReadiness:
     ready: bool
     detail: str | None = None
     capability_ready: Mapping[str, bool] = field(default_factory=dict)
+
+
+class MutationExecutionState(StrEnum):
+    absent = "absent"
+    in_flight = "in_flight"
+    completed = "completed"
+    ambiguous = "ambiguous"
+    unsupported = "unsupported"
+
+
+@dataclass(frozen=True, slots=True)
+class MutationExecutionLookup:
+    """Optional apply-once receipt lookup for recovery-aware mutation ports."""
+
+    state: str
+    mutation_id: str
+    batch_fingerprint: str
+    result: MutationResult | None = None
+    detail: str | None = None
 
 
 @runtime_checkable
@@ -85,4 +105,9 @@ class GraphMutationPort(Protocol):
         ...
 
 
-__all__ = ["BackendReadiness", "GraphMutationPort"]
+__all__ = [
+    "BackendReadiness",
+    "GraphMutationPort",
+    "MutationExecutionLookup",
+    "MutationExecutionState",
+]

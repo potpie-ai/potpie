@@ -8,6 +8,8 @@ in-memory backend. This is the "feel of things / find anything missing" check.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
@@ -231,6 +233,24 @@ def test_stub_backend_profiles_registered_and_fail_closed():
             backend.inspection.neighborhood(pot_id="p", entity_key="e")
         with pytest.raises(CapabilityNotImplemented):
             backend.provision(SetupPlan(backend=profile))
+
+
+def test_host_shell_rejects_runtime_only_backend() -> None:
+    backend = InMemoryGraphBackend()
+    runtime_only = SimpleNamespace(
+        profile=backend.profile,
+        mutation=backend.mutation,
+        claim_query=backend.claim_query,
+        semantic=backend.semantic,
+        inspection=backend.inspection,
+        analytics=backend.analytics,
+        snapshot=backend.snapshot,
+        capabilities=backend.capabilities,
+        bind_definition=backend.bind_definition,
+    )
+
+    with pytest.raises(TypeError, match="must implement deployment provisioning"):
+        build_host_shell(backend=runtime_only)
 
 
 def test_search_returns_envelope(host):

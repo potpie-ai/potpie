@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import threading
 from typing import Callable
 
 from potpie_context_core.api import (
@@ -29,12 +30,30 @@ class InMemoryGraphPlanStore:
     _records: dict[tuple[str, str], GraphMutationPlanRecord] = field(
         default_factory=dict
     )
+    _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def save(self, record: GraphMutationPlanRecord) -> None:
-        self._records[(record.pot_id, record.plan_id)] = record
+        with self._lock:
+            self._records[(record.pot_id, record.plan_id)] = record
 
     def get(self, *, pot_id: str, plan_id: str) -> GraphMutationPlanRecord | None:
-        return self._records.get((pot_id, plan_id))
+        with self._lock:
+            return self._records.get((pot_id, plan_id))
+
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphMutationPlanRecord,
+        replacement: GraphMutationPlanRecord,
+    ) -> bool:
+        key = (expected.pot_id, expected.plan_id)
+        if key != (replacement.pot_id, replacement.plan_id):
+            raise ValueError("plan compare-and-set cannot change plan identity")
+        with self._lock:
+            if self._records.get(key) != expected:
+                return False
+            self._records[key] = replacement
+            return True
 
     def list(
         self,
@@ -46,15 +65,16 @@ class InMemoryGraphPlanStore:
         until: datetime | None = None,
         limit: int | None = None,
     ) -> tuple[GraphMutationPlanRecord, ...]:
-        records = [
-            record
-            for (record_pot, _), record in self._records.items()
-            if record_pot == pot_id
-            and (plan_id is None or record.plan_id == plan_id)
-            and (mutation_id is None or record.mutation_id == mutation_id)
-            and (since is None or record.created_at >= since)
-            and (until is None or record.created_at <= until)
-        ]
+        with self._lock:
+            records = [
+                record
+                for (record_pot, _), record in self._records.items()
+                if record_pot == pot_id
+                and (plan_id is None or record.plan_id == plan_id)
+                and (mutation_id is None or record.mutation_id == mutation_id)
+                and (since is None or record.created_at >= since)
+                and (until is None or record.created_at <= until)
+            ]
         records.sort(key=lambda record: record.created_at, reverse=True)
         return tuple(records[:limit] if limit is not None else records)
 
@@ -65,6 +85,14 @@ class InMemoryGraphPlanStore:
         self, *, pot_id: str, plan_id: str
     ) -> GraphMutationPlanRecord | None:
         return self.get(pot_id=pot_id, plan_id=plan_id)
+
+    async def compare_and_set_async(
+        self,
+        *,
+        expected: GraphMutationPlanRecord,
+        replacement: GraphMutationPlanRecord,
+    ) -> bool:
+        return self.compare_and_set(expected=expected, replacement=replacement)
 
     async def list_async(self, **kwargs):
         return self.list(**kwargs)

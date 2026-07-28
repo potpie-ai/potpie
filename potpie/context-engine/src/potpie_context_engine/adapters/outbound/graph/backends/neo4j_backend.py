@@ -20,9 +20,14 @@ is actually selected.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
+import uuid
 
+from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
+    MutationExecutionRegistry,
+)
 from potpie_context_engine.adapters.outbound.graph.backends._unimplemented import (
     UnimplementedInspection,
     UnimplementedSnapshot,
@@ -46,7 +51,12 @@ from potpie_context_core.lifecycle import SetupPlan, StepResult
 from potpie_context_core.ports.claim_query import ClaimQueryPort
 from potpie_context_core.ports.graph.backend import BackendCapabilities
 from potpie_context_core.ports.graph.mutation import BackendReadiness
+from potpie_context_core.ports.graph.mutation import (
+    MutationExecutionLookup,
+    MutationExecutionState,
+)
 from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 _PROFILE = "neo4j"
 
@@ -87,6 +97,9 @@ class _Neo4jMutation:
     writer: Any = None  # injected (shared) or lazily created on first use
     embedder: Any = None
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
+    execution_registry: MutationExecutionRegistry = field(
+        default_factory=MutationExecutionRegistry
+    )
 
     def _get_writer(self) -> Any:
         if self.writer is None:
@@ -105,17 +118,54 @@ class _Neo4jMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         from potpie_context_engine.adapters.outbound.graph.apply_plan import (
             apply_mutation_batch,
         )
 
-        return await apply_mutation_batch(
-            self._get_writer(),
+        mutation_id = (
+            provenance_context.mutation_id
+            if provenance_context is not None and provenance_context.mutation_id
+            else uuid.uuid4().hex
+        )
+        context = replace(
+            provenance_context or ProvenanceContext(),
+            mutation_id=mutation_id,
+        )
+        return await self.execution_registry.execute_async(
             plan,
             expected_pot_id=expected_pot_id,
-            provenance_context=provenance_context,
-            definition=self.definition,
+            mutation_id=mutation_id,
+            operation=lambda: apply_mutation_batch(
+                self._get_writer(),
+                deepcopy(plan),
+                expected_pot_id=expected_pot_id,
+                provenance_context=context,
+                definition=self.definition,
+                reconciliation_config=reconciliation_config,
+            ),
+        )
+
+    def lookup_execution(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        mutation_id: str,
+    ) -> MutationExecutionLookup:
+        lookup = self.execution_registry.lookup(
+            plan,
+            expected_pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+        )
+        if lookup.state != MutationExecutionState.absent.value:
+            return lookup
+        return MutationExecutionLookup(
+            state=MutationExecutionState.unsupported.value,
+            mutation_id=mutation_id,
+            batch_fingerprint=lookup.batch_fingerprint,
+            detail="Neo4j mutation receipts are not durable across processes",
         )
 
     def apply(
@@ -124,12 +174,14 @@ class _Neo4jMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         return _run_sync(
             self.apply_async(
                 plan,
                 expected_pot_id=expected_pot_id,
                 provenance_context=provenance_context,
+                reconciliation_config=reconciliation_config,
             )
         )
 
@@ -172,6 +224,10 @@ class Neo4jGraphBackend:
     writer: Any = None  # optional shared Neo4jGraphWriter; reused by the mutation
     embedder: Any = None
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
+    execution_registry: MutationExecutionRegistry = field(
+        default_factory=MutationExecutionRegistry,
+        repr=False,
+    )
     _claim_query: ClaimQueryPort = field(init=False)
     _mutation: _Neo4jMutation = field(init=False)
     _semantic: ClaimQuerySemanticSearch = field(init=False)
@@ -192,6 +248,7 @@ class Neo4jGraphBackend:
             writer=writer,
             embedder=self.embedder,
             definition=self.definition,
+            execution_registry=self.execution_registry,
         )
         self._semantic = ClaimQuerySemanticSearch(self._claim_query)
 

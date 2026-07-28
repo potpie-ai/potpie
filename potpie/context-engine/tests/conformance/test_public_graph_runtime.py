@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 from potpie_context_core.api import (
     DEFAULT_GRAPH_DEFINITION,
@@ -10,13 +12,32 @@ from potpie_context_core.api import (
     GraphCatalogRequest,
     GraphDescribeRequest,
     GraphExtension,
+    GraphMutationPlanStatus,
     GraphReadRequest,
     GraphReaderSpec,
     GraphViewSpec,
     IdentityClass,
+    ReconciliationConfig,
     SemanticMutationRequest,
     build_graph_runtime,
 )
+from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.ports.claim_query import (
+    AsyncClaimQueryPort,
+    ClaimQueryPort,
+)
+from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_core.ports.graph.inbox_store import (
+    AsyncGraphInboxStorePort,
+    GraphInboxStorePort,
+)
+from potpie_context_core.ports.graph.mutation import GraphMutationPort
+from potpie_context_core.ports.graph.plan_store import (
+    AsyncGraphPlanStorePort,
+    GraphPlanStorePort,
+)
+from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation_config import current_reconciliation_config
 from potpie_context_engine.api import Candidate, RankedItem, ReadResponse
 from potpie_context_engine.testing import (
     InMemoryGraphBackend,
@@ -148,6 +169,22 @@ def _retract_request() -> SemanticMutationRequest:
     )
 
 
+class _FailingObserver:
+    def observe(self, event, fields) -> None:
+        del event, fields
+        raise RuntimeError("observer unavailable")
+
+
+def _runtime_with_failing_observer():
+    return build_graph_runtime(
+        InMemoryGraphBackend(),
+        InMemoryGraphPlanStore(),
+        InMemoryGraphInboxStore(),
+        _definition(),
+        observability=_FailingObserver(),
+    )
+
+
 def test_public_runtime_extension_round_trip_and_status() -> None:
     runtime = build_test_graph_runtime(definition=_definition())
 
@@ -166,6 +203,113 @@ def test_public_runtime_extension_round_trip_and_status() -> None:
     assert any(view["name"] == "widgets.network" for view in catalog.views)
     assert read.items[0]["entity_type"] == "Widget"
     assert status["definition"]["extensions"] == {"widgets": "1.0"}
+
+
+def test_runtime_bridges_satisfy_advertised_runtime_protocols() -> None:
+    runtime = build_test_graph_runtime(definition=_definition())
+
+    assert isinstance(runtime.backend, GraphBackend)
+    assert isinstance(runtime.backend.mutation, GraphMutationPort)
+    assert isinstance(runtime.backend.claim_query, ClaimQueryPort)
+    assert isinstance(runtime.backend.claim_query, AsyncClaimQueryPort)
+    assert isinstance(runtime.plan_store, GraphPlanStorePort)
+    assert isinstance(runtime.plan_store, AsyncGraphPlanStorePort)
+    assert isinstance(runtime.inbox_store, GraphInboxStorePort)
+    assert isinstance(runtime.inbox_store, AsyncGraphInboxStorePort)
+
+
+def test_public_async_runtime_recovers_a_stale_commit_attempt() -> None:
+    async def journey() -> None:
+        runtime = build_test_graph_runtime(definition=_definition())
+        proposal = runtime.propose(
+            {
+                "operations": [
+                    {
+                        "op": "upsert_entity",
+                        "subject": {"key": "widget:recovered", "type": "Widget"},
+                    }
+                ]
+            },
+            pot_id="pot:widgets",
+        )
+        record = runtime.plan_store.get(
+            pot_id="pot:widgets",
+            plan_id=proposal.plan_id,
+        )
+        assert record is not None
+        crashed = replace(
+            record,
+            status=GraphMutationPlanStatus.committing.value,
+            mutation_id="mutation:runtime-recovery",
+            commit_attempt_id="attempt:crashed-runtime",
+            commit_attempt_started_at=datetime.now(timezone.utc)
+            - timedelta(minutes=10),
+        )
+        assert runtime.plan_store.compare_and_set(
+            expected=record,
+            replacement=crashed,
+        )
+
+        recovered = await runtime.commit_async(
+            proposal.plan_id,
+            pot_id="pot:widgets",
+            recover_stale=True,
+        )
+
+        assert recovered.ok
+        assert recovered.mutation_id == "mutation:runtime-recovery"
+
+    asyncio.run(journey())
+
+
+def test_runtime_snapshots_reconciliation_environment_per_instance(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_RECONCILIATION_ENABLED", "0")
+    monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "0")
+    first = build_test_graph_runtime()
+
+    monkeypatch.setenv("CONTEXT_ENGINE_RECONCILIATION_ENABLED", "1")
+    monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "1")
+    second = build_test_graph_runtime()
+
+    monkeypatch.setenv("CONTEXT_ENGINE_RECONCILIATION_ENABLED", "0")
+    monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "0")
+
+    assert first.reconciliation_config.enabled is False
+    assert first.reconciliation_config.infer_canonical_labels is False
+    assert second.reconciliation_config.enabled is True
+    assert second.reconciliation_config.infer_canonical_labels is True
+
+
+def test_observer_failure_does_not_hide_sync_runtime_results() -> None:
+    runtime = _runtime_with_failing_observer()
+
+    mutation = runtime.mutate(_request())
+    read = runtime.read(
+        GraphReadRequest(
+            pot_id="pot:widgets",
+            subgraph="widgets",
+            view="network",
+        )
+    )
+    proposal = runtime.propose(
+        {
+            "operations": [
+                {
+                    "op": "upsert_entity",
+                    "subject": {"key": "widget:c", "type": "Widget"},
+                }
+            ]
+        },
+        pot_id="pot:widgets",
+    )
+    commit = runtime.commit(proposal.plan_id, pot_id="pot:widgets")
+
+    assert mutation.ok
+    assert read.items
+    assert proposal.ok
+    assert commit.ok
 
 
 def test_public_runtime_retracts_extension_predicate() -> None:
@@ -324,12 +468,57 @@ def test_async_runtime_runs_inside_an_active_event_loop() -> None:
     asyncio.run(journey())
 
 
+def test_observer_failure_does_not_hide_async_runtime_results() -> None:
+    async def journey() -> None:
+        runtime = _runtime_with_failing_observer()
+
+        mutation = await runtime.mutate_async(_request())
+        read = await runtime.read_async(
+            GraphReadRequest(
+                pot_id="pot:widgets",
+                subgraph="widgets",
+                view="network",
+            )
+        )
+        proposal = await runtime.propose_async(
+            {
+                "operations": [
+                    {
+                        "op": "upsert_entity",
+                        "subject": {"key": "widget:c", "type": "Widget"},
+                    }
+                ]
+            },
+            pot_id="pot:widgets",
+        )
+        commit = await runtime.commit_async(proposal.plan_id, pot_id="pot:widgets")
+
+        assert mutation.ok
+        assert read.items
+        assert proposal.ok
+        assert commit.ok
+
+    asyncio.run(journey())
+
+
 class _AsyncMutation:
     def __init__(self, inner) -> None:
         self.inner = inner
+        self.seen_configs: list[ReconciliationConfig | None] = []
 
-    async def apply_async(self, *args, **kwargs):
-        return await self.inner.apply_async(*args, **kwargs)
+    async def apply_async(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        provenance_context: ProvenanceContext | None = None,
+    ) -> MutationResult:
+        self.seen_configs.append(current_reconciliation_config())
+        return await self.inner.apply_async(
+            plan,
+            expected_pot_id=expected_pot_id,
+            provenance_context=provenance_context,
+        )
 
     async def invalidate_async(self, **kwargs):
         return self.inner.invalidate(**kwargs)
@@ -369,6 +558,9 @@ class _AsyncStore:
     async def get_async(self, **kwargs):
         return self.inner.get(**kwargs)
 
+    async def compare_and_set_async(self, **kwargs):
+        return self.inner.compare_and_set(**kwargs)
+
     async def list_async(self, **kwargs):
         return self.inner.list(**kwargs)
 
@@ -403,11 +595,14 @@ class _AsyncOnlyBackend:
 
 def test_async_only_ports_use_the_serving_loop_bridge() -> None:
     async def journey() -> None:
+        backend = _AsyncOnlyBackend()
+        config = ReconciliationConfig(infer_canonical_labels=False)
         runtime = build_graph_runtime(
-            _AsyncOnlyBackend(),
+            backend,
             _AsyncStore(InMemoryGraphPlanStore()),
             _AsyncStore(InMemoryGraphInboxStore()),
             _definition(),
+            reconciliation_config=config,
         )
         mutation = await runtime.mutate_async(_request())
         read = await runtime.read_async(
@@ -433,6 +628,8 @@ def test_async_only_ports_use_the_serving_loop_bridge() -> None:
         assert mutation.ok
         assert read.items
         assert commit.ok
+        assert backend.mutation.seen_configs == [config, config]
+        assert current_reconciliation_config() is None
 
     asyncio.run(journey())
 
@@ -440,9 +637,21 @@ def test_async_only_ports_use_the_serving_loop_bridge() -> None:
 class _SyncMutation:
     def __init__(self, inner) -> None:
         self.inner = inner
+        self.seen_configs: list[ReconciliationConfig | None] = []
 
-    def apply(self, *args, **kwargs):
-        return self.inner.apply(*args, **kwargs)
+    def apply(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        provenance_context: ProvenanceContext | None = None,
+    ) -> MutationResult:
+        self.seen_configs.append(current_reconciliation_config())
+        return self.inner.apply(
+            plan,
+            expected_pot_id=expected_pot_id,
+            provenance_context=provenance_context,
+        )
 
     def invalidate(self, **kwargs):
         return self.inner.invalidate(**kwargs)
@@ -481,15 +690,51 @@ class _SyncOnlyBackend:
 
 def test_sync_only_mutation_uses_non_blocking_async_bridge() -> None:
     async def journey() -> None:
+        backend = _SyncOnlyBackend()
+        config = ReconciliationConfig(infer_canonical_labels=False)
         runtime = build_graph_runtime(
-            _SyncOnlyBackend(),
+            backend,
             InMemoryGraphPlanStore(),
             InMemoryGraphInboxStore(),
             _definition(),
+            reconciliation_config=config,
         )
 
         mutation = await runtime.mutate_async(_request())
 
         assert mutation.ok
+        assert backend.mutation.seen_configs == [config]
+        assert current_reconciliation_config() is None
 
     asyncio.run(journey())
+
+
+def test_old_sync_mutation_signature_supports_runtime_mutation_and_commit() -> None:
+    backend = _SyncOnlyBackend()
+    config = ReconciliationConfig(infer_canonical_labels=False)
+    runtime = build_graph_runtime(
+        backend,
+        InMemoryGraphPlanStore(),
+        InMemoryGraphInboxStore(),
+        _definition(),
+        reconciliation_config=config,
+    )
+
+    mutation = runtime.mutate(_request())
+    proposal = runtime.propose(
+        {
+            "operations": [
+                {
+                    "op": "upsert_entity",
+                    "subject": {"key": "widget:legacy-port", "type": "Widget"},
+                }
+            ]
+        },
+        pot_id="pot:widgets",
+    )
+    commit = runtime.commit(proposal.plan_id, pot_id="pot:widgets")
+
+    assert mutation.ok
+    assert commit.ok
+    assert backend.mutation.seen_configs == [config, config]
+    assert current_reconciliation_config() is None

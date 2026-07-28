@@ -16,6 +16,7 @@ def test_every_declared_export_resolves() -> None:
 
 def test_api_reexports_are_the_internal_contracts() -> None:
     from potpie_context_core import api
+    from potpie_context_core.reconciliation_config import ReconciliationConfig
     from potpie_context_core.workbench_service import (
         GraphWorkbenchService,
     )
@@ -25,3 +26,5 @@ def test_api_reexports_are_the_internal_contracts() -> None:
     assert api.GraphBackend is GraphBackend
     assert api.GraphService is GraphService
     assert api.GraphWorkbenchService is GraphWorkbenchService
+    assert api.ReconciliationConfig is ReconciliationConfig
+    assert api.DEFAULT_RECONCILIATION_CONFIG == ReconciliationConfig()

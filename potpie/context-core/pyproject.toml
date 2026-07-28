@@ -7,6 +7,7 @@ name = "potpie-context-core"
 version = "0.1.0"
 description = "Context graph core: ontology, workbench, records, mutations, and graph ports."
 requires-python = ">=3.12,<3.15"
+classifiers = ["Typing :: Typed"]
 # The core is a library: pydantic + stdlib only, no extras. If a module needs
 # anything else, it belongs in potpie-context-engine, not here.
 dependencies = [
@@ -23,6 +24,7 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/potpie_context_core"]
 include = [
+    "src/potpie_context_core/py.typed",
     "src/potpie_context_core/playbooks/**/*.md",
 ]
 
