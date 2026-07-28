@@ -17,8 +17,9 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 COPY --from=ghcr.io/astral-sh/uv:0.9.6 /uv /uvx /bin/
 
 # Copy dependency metadata and local path packages (editable deps in uv.lock)
-COPY pyproject.toml uv.lock ./
-COPY legacy/pyproject.toml ./legacy/pyproject.toml
+# README.md + LICENSE are required for hatchling metadata validation during uv sync
+COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY legacy/pyproject.toml legacy/README.md ./legacy/
 COPY potpie/context-engine ./potpie/context-engine
 COPY potpie/integrations ./potpie/integrations
 COPY potpie/parsing ./potpie/parsing

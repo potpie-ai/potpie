@@ -8,6 +8,10 @@
 # Frontend app (separate Docker build under potpie-ui/)
 potpie-ui
 
+# Removed package path — if present locally it matches workspace members potpie/*
+# and breaks `uv sync` (no pyproject.toml).
+potpie/observability
+
 # Not required at runtime for API / Celery / Convo images
 docs
 seed

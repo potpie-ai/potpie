@@ -1,0 +1,73 @@
+name: Build and Upload image to Artifact Registry
+
+on:
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.STAGE_GCLOUD_PROJECT_ID }}
+  IMAGE: potpie-latest
+  GAR_ZONE: us-central1
+  GAR_REPO: potpie
+  DOCKERFILE: legacy/dockerfile
+
+jobs:
+  setup-build-publish:
+    name: Setup, Build, and Publish
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: "read"
+      id-token: "write"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - id: "auth"
+        uses: "google-github-actions/auth@v2"
+        with:
+          credentials_json: "${{ secrets.STAGE_GKE_SA_KEY }}"
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Create Artifact Registry repository if needed
+        run: |-
+          if ! gcloud artifacts repositories describe "$GAR_REPO" \
+            --location="$GAR_ZONE" \
+            --project="$PROJECT_ID" >/dev/null 2>&1; then
+            echo "Repository $GAR_REPO does not exist. Creating..."
+            gcloud artifacts repositories create "$GAR_REPO" \
+              --repository-format=docker \
+              --location="$GAR_ZONE" \
+              --project="$PROJECT_ID" \
+              --description="Docker repository for potpie full-repo images"
+            echo "Repository $GAR_REPO created successfully"
+          else
+            echo "Repository $GAR_REPO already exists"
+          fi
+
+      - name: Docker configuration
+        run: |-
+          gcloud auth configure-docker "$GAR_ZONE-docker.pkg.dev" --quiet
+
+      - name: Build
+        run: |-
+          SHORT_SHA=$(echo "$GITHUB_SHA" | cut -c1-7)
+          IMAGE_BASE="$GAR_ZONE-docker.pkg.dev/$PROJECT_ID/$GAR_REPO/$IMAGE"
+          IMAGE_TAG_SHA="${IMAGE_BASE}:${SHORT_SHA}"
+          IMAGE_TAG_LATEST="${IMAGE_BASE}:latest"
+          echo "IMAGE_TAG_SHA=$IMAGE_TAG_SHA" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG_LATEST=$IMAGE_TAG_LATEST" >> "$GITHUB_ENV"
+          # Match Jenkins: apply legacy/.dockerignore at the repo-root build context.
+          cp legacy/.dockerignore .dockerignore
+          docker build \
+            --tag "$IMAGE_TAG_SHA" \
+            --tag "$IMAGE_TAG_LATEST" \
+            -f "$DOCKERFILE" \
+            .
+
+      - name: Publish
+        run: |-
+          docker push "$IMAGE_TAG_SHA"
+          docker push "$IMAGE_TAG_LATEST"
