@@ -23,7 +23,7 @@ from potpie_context_engine.application.readers._common import (
     row_in_anchor_set,
     scoped_entity_keys,
 )
-from potpie_context_engine.domain.ports.claim_query import (
+from potpie_context_core.ports.claim_query import (
     ClaimQueryFilter,
     ClaimQueryPort,
     ClaimRow,

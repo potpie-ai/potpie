@@ -15,14 +15,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
-from potpie_context_engine.domain.graph_mutations import ProvenanceContext
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
-from potpie_context_engine.domain.ports.graph.analytics import RepairReport
-from potpie_context_engine.domain.ports.graph.inspection import GraphSlice
-from potpie_context_engine.domain.ports.graph.mutation import BackendReadiness
-from potpie_context_engine.domain.ports.graph.snapshot import SnapshotManifest
-from potpie_context_engine.domain.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_core.ports.graph.analytics import RepairReport
+from potpie_context_core.ports.graph.inspection import GraphSlice
+from potpie_context_core.ports.graph.mutation import BackendReadiness
+from potpie_context_core.ports.graph.snapshot import SnapshotManifest
+from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 
 def _raise(profile: str, capability: str, method: str) -> Any:
@@ -56,7 +57,9 @@ class UnimplementedMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
+        del plan, expected_pot_id, provenance_context, reconciliation_config
         return _raise(self.profile, "mutation", "apply")
 
     def invalidate(

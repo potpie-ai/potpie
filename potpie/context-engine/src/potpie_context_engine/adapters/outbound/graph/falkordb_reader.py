@@ -29,10 +29,15 @@ from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import 
     stamp_scored_rows,
     stamp_similarity,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 
+# Endpoint-free on purpose, twice over: re-matching each KNN hit through a
+# ``(a)-[rel]->(b) WHERE id(rel) = id(r)`` pattern costs one full edge scan per
+# hit (O(k * E)), and falkordb_lite additionally drops endpoint-resolving plans
+# for yielded relationships after an RDB reload. Every filter below reads edge
+# properties only; label filters are applied in Python via ``entity_labels``.
 _VECTOR_CLAIMS_CYPHER = """
 CALL db.idx.vector.queryRelationships(
     'RELATES_TO',
@@ -40,25 +45,20 @@ CALL db.idx.vector.queryRelationships(
     $k,
     vecf32($embedding)
 ) YIELD relationship AS r, score
-WITH r, score
-MATCH (a:Entity {group_id: $gid})-[rel:RELATES_TO]->(b:Entity {group_id: $gid})
-WHERE id(rel) = id(r)
-  AND rel.group_id = $gid
-  AND ($preds IS NULL OR rel.name IN $preds)
-  AND ($subjects IS NULL OR rel.subject_key IN $subjects)
-  AND ($objects IS NULL OR rel.object_key IN $objects)
-  AND ($claim_keys IS NULL OR rel.claim_key IN $claim_keys)
-  AND ($subgraphs IS NULL OR rel.subgraph IN $subgraphs)
-  AND ($mutation_ids IS NULL OR rel.mutation_id IN $mutation_ids)
-  AND ($source_refs IS NULL OR rel.source_ref IN $source_refs OR any(ref IN coalesce(rel.source_refs, []) WHERE ref IN $source_refs))
-  AND ($sources IS NULL OR rel.source_system IN $sources)
-  AND ($include_invalid OR rel.invalid_at IS NULL)
-  AND ($as_of IS NULL OR rel.valid_at IS NULL OR rel.valid_at <= $as_of)
-  AND ($va_after IS NULL OR (rel.valid_at IS NOT NULL AND rel.valid_at >= $va_after))
-  AND ($va_before IS NULL OR rel.valid_at IS NULL OR rel.valid_at <= $va_before)
-  AND ($subject_label IS NULL OR $subject_label IN labels(a))
-  AND ($object_label IS NULL OR $object_label IN labels(b))
-RETURN rel{.*} AS props, score
+WHERE r.group_id = $gid
+  AND ($preds IS NULL OR r.name IN $preds)
+  AND ($subjects IS NULL OR r.subject_key IN $subjects)
+  AND ($objects IS NULL OR r.object_key IN $objects)
+  AND ($claim_keys IS NULL OR r.claim_key IN $claim_keys)
+  AND ($subgraphs IS NULL OR r.subgraph IN $subgraphs)
+  AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
+  AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN coalesce(r.source_refs, []) WHERE ref IN $source_refs))
+  AND ($sources IS NULL OR r.source_system IN $sources)
+  AND ($include_invalid OR r.invalid_at IS NULL)
+  AND ($as_of IS NULL OR r.valid_at IS NULL OR r.valid_at <= $as_of)
+  AND ($va_after IS NULL OR (r.valid_at IS NOT NULL AND r.valid_at >= $va_after))
+  AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
+RETURN r{.*, fact_embedding: NULL} AS props, score
 ORDER BY score ASC
 LIMIT $limit
 """
@@ -150,14 +150,18 @@ class FalkorDBClaimQueryStore:
         assert filter_.fact_query is not None
         assert self._embedder is not None
         limit = filter_.limit if filter_.limit is not None and filter_.limit > 0 else 10
+        k = max(limit * 5, 50)
+        label_filtered = bool(filter_.subject_label or filter_.object_label)
         try:
             vector_params = {
                 **dict(params),
                 "embedding": [
                     float(x) for x in self._embedder.embed(filter_.fact_query)
                 ],
-                "k": max(limit * 5, 50),
-                "limit": limit,
+                "k": k,
+                # Label filters run in Python below, so keep the full candidate
+                # set until they have been applied.
+                "limit": k if label_filtered else limit,
             }
             result = self._get_graph().query(
                 _VECTOR_CLAIMS_CYPHER, params=vector_params
@@ -171,7 +175,31 @@ class FalkorDBClaimQueryStore:
             )
             for rec in _records_from_result(result)
         ]
-        return stamp_scored_rows(scored)
+        if label_filtered:
+            scored = self._filter_by_entity_labels(filter_, scored)
+        return stamp_scored_rows(scored[:limit])
+
+    def _filter_by_entity_labels(
+        self,
+        filter_: ClaimQueryFilter,
+        scored: list[tuple[float, ClaimRow]],
+    ) -> list[tuple[float, ClaimRow]]:
+        keys = {row.subject_key for _, row in scored if row.subject_key}
+        keys |= {row.object_key for _, row in scored if row.object_key}
+        labels = self.entity_labels(pot_id=filter_.pot_id, entity_keys=keys)
+
+        def keep(row: ClaimRow) -> bool:
+            if filter_.subject_label is not None and filter_.subject_label not in (
+                labels.get(row.subject_key) or ()
+            ):
+                return False
+            if filter_.object_label is not None and filter_.object_label not in (
+                labels.get(row.object_key) or ()
+            ):
+                return False
+            return True
+
+        return [(score, row) for score, row in scored if keep(row)]
 
     def entity_labels(
         self, *, pot_id: str, entity_keys: Iterable[str]

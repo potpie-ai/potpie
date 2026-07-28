@@ -12,7 +12,7 @@ from potpie.daemon.http.ui.router import (
     _slice_to_graph,
     build_ui_api_router,
 )
-from potpie_context_engine.domain.ports.graph.inspection import (
+from potpie_context_core.ports.graph.inspection import (
     GraphEdge,
     GraphNode,
     GraphSlice,

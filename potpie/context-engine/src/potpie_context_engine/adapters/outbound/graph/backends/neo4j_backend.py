@@ -20,9 +20,14 @@ is actually selected.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
+import uuid
 
+from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
+    MutationExecutionRegistry,
+)
 from potpie_context_engine.adapters.outbound.graph.backends._unimplemented import (
     UnimplementedInspection,
     UnimplementedSnapshot,
@@ -34,18 +39,24 @@ from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytic
     ClaimQueryAnalytics,
 )
 from potpie_context_engine.adapters.outbound.graph.cypher import _coerce_props_for_neo4j
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
     ENTITY_SUMMARY_REPAIR_LIMIT,
     ENTITY_SUMMARY_SCAN_CYPHER,
     ENTITY_SUMMARY_UPDATE_CYPHER,
     repaired_entity_properties,
 )
-from potpie_context_engine.domain.graph_mutations import ProvenanceContext
-from potpie_context_engine.domain.lifecycle import SetupPlan, StepResult
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryPort
-from potpie_context_engine.domain.ports.graph.backend import BackendCapabilities
-from potpie_context_engine.domain.ports.graph.mutation import BackendReadiness
-from potpie_context_engine.domain.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.lifecycle import SetupPlan, StepResult
+from potpie_context_core.ports.claim_query import ClaimQueryPort
+from potpie_context_core.ports.graph.backend import BackendCapabilities
+from potpie_context_core.ports.graph.mutation import BackendReadiness
+from potpie_context_core.ports.graph.mutation import (
+    MutationExecutionLookup,
+    MutationExecutionState,
+)
+from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 _PROFILE = "neo4j"
 
@@ -85,12 +96,20 @@ class _Neo4jMutation:
     settings: Any
     writer: Any = None  # injected (shared) or lazily created on first use
     embedder: Any = None
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
+    execution_registry: MutationExecutionRegistry = field(
+        default_factory=MutationExecutionRegistry
+    )
 
     def _get_writer(self) -> Any:
         if self.writer is None:
             from potpie_context_engine.adapters.outbound.graph import Neo4jGraphWriter
 
-            self.writer = Neo4jGraphWriter(self.settings, embedder=self.embedder)
+            self.writer = Neo4jGraphWriter(
+                self.settings,
+                embedder=self.embedder,
+                definition=self.definition,
+            )
         return self.writer
 
     async def apply_async(
@@ -99,16 +118,54 @@ class _Neo4jMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         from potpie_context_engine.adapters.outbound.graph.apply_plan import (
             apply_mutation_batch,
         )
 
-        return await apply_mutation_batch(
-            self._get_writer(),
+        mutation_id = (
+            provenance_context.mutation_id
+            if provenance_context is not None and provenance_context.mutation_id
+            else uuid.uuid4().hex
+        )
+        context = replace(
+            provenance_context or ProvenanceContext(),
+            mutation_id=mutation_id,
+        )
+        return await self.execution_registry.execute_async(
             plan,
             expected_pot_id=expected_pot_id,
-            provenance_context=provenance_context,
+            mutation_id=mutation_id,
+            operation=lambda: apply_mutation_batch(
+                self._get_writer(),
+                deepcopy(plan),
+                expected_pot_id=expected_pot_id,
+                provenance_context=context,
+                definition=self.definition,
+                reconciliation_config=reconciliation_config,
+            ),
+        )
+
+    def lookup_execution(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        mutation_id: str,
+    ) -> MutationExecutionLookup:
+        lookup = self.execution_registry.lookup(
+            plan,
+            expected_pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+        )
+        if lookup.state != MutationExecutionState.absent.value:
+            return lookup
+        return MutationExecutionLookup(
+            state=MutationExecutionState.unsupported.value,
+            mutation_id=mutation_id,
+            batch_fingerprint=lookup.batch_fingerprint,
+            detail="Neo4j mutation receipts are not durable across processes",
         )
 
     def apply(
@@ -117,12 +174,14 @@ class _Neo4jMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
         return _run_sync(
             self.apply_async(
                 plan,
                 expected_pot_id=expected_pot_id,
                 provenance_context=provenance_context,
+                reconciliation_config=reconciliation_config,
             )
         )
 
@@ -130,7 +189,7 @@ class _Neo4jMutation:
         self, *, pot_id: str, claim_keys: Any, reason: str | None = None
     ) -> int:
         # TODO(stage-N): cypher invalidation by claim key.
-        from potpie_context_engine.domain.errors import CapabilityNotImplemented
+        from potpie_context_core.errors import CapabilityNotImplemented
 
         raise CapabilityNotImplemented(
             "graph.neo4j.mutation.invalidate",
@@ -164,6 +223,11 @@ class Neo4jGraphBackend:
     settings: Any
     writer: Any = None  # optional shared Neo4jGraphWriter; reused by the mutation
     embedder: Any = None
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
+    execution_registry: MutationExecutionRegistry = field(
+        default_factory=MutationExecutionRegistry,
+        repr=False,
+    )
     _claim_query: ClaimQueryPort = field(init=False)
     _mutation: _Neo4jMutation = field(init=False)
     _semantic: ClaimQuerySemanticSearch = field(init=False)
@@ -175,8 +239,16 @@ class Neo4jGraphBackend:
         )
 
         self._claim_query = Neo4jClaimQueryStore(self.settings, embedder=self.embedder)
+        writer = self.writer
+        bind_writer = getattr(writer, "bind_definition", None)
+        if callable(bind_writer):
+            writer = bind_writer(self.definition)
         self._mutation = _Neo4jMutation(
-            self.settings, writer=self.writer, embedder=self.embedder
+            self.settings,
+            writer=writer,
+            embedder=self.embedder,
+            definition=self.definition,
+            execution_registry=self.execution_registry,
         )
         self._semantic = ClaimQuerySemanticSearch(self._claim_query)
 
@@ -236,8 +308,11 @@ class Neo4jGraphBackend:
             snapshot=False,
         )
 
+    def bind_definition(self, definition: GraphDefinition) -> Neo4jGraphBackend:
+        return replace(self, definition=definition)
+
     def provision(self, plan: SetupPlan) -> StepResult:
-        from potpie_context_engine.domain.lifecycle import DONE, FAILED
+        from potpie_context_core.lifecycle import DONE, FAILED
 
         if not self.enabled:
             return StepResult(

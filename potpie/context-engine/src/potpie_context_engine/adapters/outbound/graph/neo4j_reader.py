@@ -28,7 +28,7 @@ from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import 
     stamp_scored_rows,
     stamp_similarity,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 
@@ -53,7 +53,7 @@ WHERE r.group_id = $gid
   AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
   AND ($subject_label IS NULL OR $subject_label IN labels(a))
   AND ($object_label IS NULL OR $object_label IN labels(b))
-RETURN r{.*} AS props, score
+RETURN r{.*, fact_embedding: NULL} AS props, score
 ORDER BY score DESC
 LIMIT $limit
 """

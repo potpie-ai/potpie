@@ -22,6 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
+    "potpie-context-core>=0.1.0,<0.2.0",
     "potpie-context-engine[all]>=0.1.0,<0.2.0",
     "potpie-integrations>=0.1.0,<0.2.0",
     "aiohttp>=3.14.1",
@@ -139,6 +140,7 @@ override-dependencies = [
 
 [tool.uv.sources]
 potpie-parsing = { path = "../potpie/parsing" }
+potpie-context-core = { path = "../potpie/context-core", editable = true }
 potpie-context-engine = { path = "../potpie/context-engine", editable = true }
 potpie-integrations = { path = "../potpie/integrations", editable = true }
 potpie-sandbox = { path = "../potpie/sandbox", editable = true }

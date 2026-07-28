@@ -32,6 +32,12 @@ from potpie_context_engine.adapters.outbound.graph.backends.neo4j_backend import
     Neo4jGraphBackend as _Neo4jGraphBackend,
 )
 from potpie_context_engine.adapters.outbound.graph.backends import build_backend
+from potpie_context_engine.adapters.outbound.graph.inbox_stores import (
+    LocalJsonGraphInboxStore,
+)
+from potpie_context_engine.adapters.outbound.graph.plan_stores import (
+    LocalJsonGraphPlanStore,
+)
 from potpie_context_engine.adapters.outbound.graph.context_graph_service import (
     ContextGraphService,
 )
@@ -66,7 +72,6 @@ from potpie_context_engine.adapters.outbound.postgres.reconciliation_ledger impo
 from potpie_context_engine.adapters.outbound.settings_env import (
     EnvContextEngineSettings,
 )
-from potpie_context_engine.application.services.graph_service import DefaultGraphService
 from potpie_context_engine.application.services.source_connector_registry import (
     SourceConnectorRegistry,
 )
@@ -79,7 +84,9 @@ from potpie_context_engine.domain.ports.event_stream import (
 )
 from potpie_context_engine.domain.ports.ingestion_config import IngestionConfigPort
 from potpie_context_engine.domain.ports.context_graph import ContextGraphPort
-from potpie_context_engine.domain.ports.graph.backend import GraphBackend
+from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_core.reconciliation_config import ReconciliationConfig
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_engine.domain.ports.ingestion_submission import (
     IngestionSubmissionService,
 )
@@ -88,7 +95,7 @@ from potpie_context_engine.domain.ports.context_graph_job_queue import (
     NoOpContextGraphJobQueue,
 )
 from potpie_context_engine.domain.ports.policy import PolicyPort
-from potpie_context_engine.domain.ports.pot_resolution import PotResolutionPort
+from potpie_context_core.ports.pot_resolution import PotResolutionPort
 from potpie_context_engine.domain.ports.pot_source_listing import PotSourceListingPort
 from potpie_context_engine.domain.ports.observability import (
     NoOpObservability,
@@ -102,9 +109,10 @@ from potpie_context_engine.domain.ports.reconciliation_agent import (
     ReconciliationAgentPort,
 )
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
-from potpie_context_engine.domain.ports.services.graph_service import GraphService
+from potpie_context_core.ports.graph_service import GraphService
+from potpie_context_core.api import build_graph_runtime
 from potpie_context_engine.domain.ports.telemetry import TelemetryPort
-from potpie_context_engine.domain.source_references import SourceReferenceRecord
+from potpie_context_core.source_references import SourceReferenceRecord
 
 Neo4jGraphWriter = _Neo4jGraphWriter
 Neo4jGraphBackend = _Neo4jGraphBackend
@@ -146,6 +154,9 @@ class IngestionServerContainer:
     """Live activity / status publisher. NoOp by default; the API process
     swaps in a Redis adapter so the events screen can stream agent activity
     end-to-end."""
+    reconciliation_config: ReconciliationConfig = field(
+        default_factory=reconciliation_config_from_env
+    )
 
     def policy(self) -> PolicyPort:
         """Return the centralized authorization port for this container.
@@ -161,6 +172,7 @@ class IngestionServerContainer:
             reconciliation_agent_available=self.reconciliation_agent is not None,
             context_graph_available=self.context_graph is not None,
             episodic_available=self._graph_available(),
+            reconciliation_config=self.reconciliation_config,
         )
 
     def _graph_available(self) -> bool:
@@ -244,11 +256,13 @@ def build_ingestion_server(
     telemetry: TelemetryPort | None = None,
     observability: ObservabilityPort | None = None,
     event_stream_publisher: EventStreamPublisherPort | None = None,
+    reconciliation_config: ReconciliationConfig | None = None,
 ) -> IngestionServerContainer:
     s = settings or EnvContextEngineSettings()
     configure_metrics(load_sentry_settings())
     telemetry_sink = telemetry or _default_telemetry()
     observability_sink = observability or _default_observability()
+    reconciliation = reconciliation_config or reconciliation_config_from_env()
     # Publish to the process-global accessor so middleware / the Celery
     # worker / infra wrappers see the same sink the container holds.
     from potpie_context_engine.bootstrap.observability_runtime import set_observability
@@ -273,11 +287,17 @@ def build_ingestion_server(
     # compatibility alias; application paths use ``backend.mutation``.
     backend = build_backend(backend_kind, settings=s)
     graph_writer = getattr(backend, "graph_writer", None)
-    graph = DefaultGraphService(backend=backend)
+    graph_runtime = build_graph_runtime(
+        backend,
+        LocalJsonGraphPlanStore(),
+        LocalJsonGraphInboxStore(),
+        reconciliation_config=reconciliation,
+    )
+    graph = graph_runtime.graph
     context_graph = _build_context_graph_service(graph=graph, backend=backend)
     # Fail fast if the read trunk's reader set has drifted from the advertised
-    # ``READER_BACKED_INCLUDES`` (see potpie_context_engine.domain.coherence).
-    from potpie_context_engine.domain.coherence import assert_runtime_coherence
+    # ``READER_BACKED_INCLUDES`` (see potpie_context_core.coherence).
+    from potpie_context_core.coherence import assert_runtime_coherence
 
     assert_runtime_coherence(reader_backed_includes=context_graph.backed_includes)
     _attach_reconciliation_context(reconciliation_agent, graph, context_graph)
@@ -297,6 +317,7 @@ def build_ingestion_server(
         telemetry=telemetry_sink,
         observability=observability_sink,
         event_stream_publisher=stream_publisher,
+        reconciliation_config=reconciliation,
     )
 
 
@@ -433,6 +454,7 @@ def build_ingestion_server_with_github_token(
     settings: ContextEngineSettingsPort | None = None,
     reconciliation_agent: ReconciliationAgentPort | None = None,
     jobs: ContextGraphJobQueuePort | None = None,
+    reconciliation_config: ReconciliationConfig | None = None,
 ) -> IngestionServerContainer:
     """Build a container with the GitHub + Notion connectors pre-wired.
 
@@ -482,4 +504,5 @@ def build_ingestion_server_with_github_token(
         connectors=registry,
         reconciliation_agent=reconciliation_agent,
         jobs=jobs,
+        reconciliation_config=reconciliation_config,
     )

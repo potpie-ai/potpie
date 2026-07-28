@@ -14,18 +14,19 @@ portable snapshot) remain backend-specific TODOs.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timezone
 from typing import Any, Callable, Mapping, Sequence
 
 from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
     ENTITY_SUMMARY_TARGET,
     wants_entity_summary_repair,
 )
-from potpie_context_engine.domain.ports.claim_query import (
+from potpie_context_core.ports.claim_query import (
     ClaimQueryFilter,
     ClaimQueryPort,
     ClaimRow,
 )
-from potpie_context_engine.domain.ports.graph.analytics import RepairReport
+from potpie_context_core.ports.graph.analytics import RepairReport
 
 # Pull a generous page; analytics over a single pot's claim set. Backends that
 # need true streaming aggregation can override this adapter.
@@ -60,7 +61,15 @@ class ClaimQueryAnalytics:
         }
 
     def freshness(self, pot_id: str) -> Mapping[str, Any]:
-        stamps = [r.valid_at for r in self._rows(pot_id) if r.valid_at is not None]
+        # Naive stamps are treated as UTC: rows can mix naive and aware
+        # datetimes (older writers), and Python refuses to compare the two.
+        stamps = [
+            r.valid_at
+            if r.valid_at.tzinfo is not None
+            else r.valid_at.replace(tzinfo=timezone.utc)
+            for r in self._rows(pot_id)
+            if r.valid_at is not None
+        ]
         return {
             "oldest": min(stamps).isoformat() if stamps else None,
             "newest": max(stamps).isoformat() if stamps else None,

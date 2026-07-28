@@ -53,9 +53,9 @@ from potpie_context_engine.application.services.config_service import (
 )
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
 from potpie_context_engine.domain.embedding_modes import normalize_embedding_mode
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
-from potpie_context_engine.domain.lifecycle import SetupPlan, SetupReport
-from potpie_context_engine.domain.ports.agent_context import StatusRequest
+from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.lifecycle import SetupPlan, SetupReport
+from potpie_context_core.ports.agent_context import StatusRequest
 
 
 def _effective_current_repo_pot_id(

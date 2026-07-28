@@ -39,10 +39,17 @@ from potpie_context_engine.adapters.outbound.source_resolvers import (
     DocumentationUriResolver,
     GitHubPullRequestResolver,
 )
-from potpie_context_engine.bootstrap.container import ContextEngineContainer, build_container
+from potpie_context_engine.bootstrap.container import (
+    ContextEngineContainer,
+    build_container,
+)
+from potpie_context_engine.bootstrap.ingestion_server import (
+    IngestionServerContainer,
+    build_ingestion_server,
+)
 from potpie_context_engine.domain.context_status import StatusSource
-from potpie_context_engine.domain.source_references import SourceReferenceRecord
-from potpie_context_engine.domain.ports.pot_resolution import (
+from potpie_context_core.source_references import SourceReferenceRecord
+from potpie_context_core.ports.pot_resolution import (
     PotResolutionPort,
     RepoRef,
     ResolvedPot,
@@ -443,6 +450,41 @@ def build_container_for_session(db: Session) -> ContextEngineContainer:
     container.pot_source_listing = SqlalchemyPotSourceListing(db)
     resolver = _build_source_resolver(db, source_for_repo)
     container.source_resolver = resolver
+    return container
+
+
+def build_ingestion_server_for_session(db: Session) -> IngestionServerContainer:
+    """Worker-scoped ingestion-server container (batch processing, webhooks).
+
+    Session-scoped like ``build_container_for_session`` so the Celery
+    ``process_batch`` job can rebuild it per call with a live DB session.
+    """
+    container = build_ingestion_server(
+        settings=PotpieContextEngineSettings(),
+        pots=SqlalchemyPotResolution(db),
+        reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
+        jobs=get_context_graph_job_queue(),
+    )
+    container.pot_source_listing = SqlalchemyPotSourceListing(db)
+    return container
+
+
+def build_ingestion_server_for_user_session(
+    db: Session, user_id: str
+) -> IngestionServerContainer:
+    """User-scoped ingestion-server container for the mounted context HTTP routes.
+
+    Pot access control flows through ``container.policy()`` over the
+    user-scoped pot resolver, replacing the removed ``enforce_pot_access``
+    router flag.
+    """
+    container = build_ingestion_server(
+        settings=PotpieContextEngineSettings(),
+        pots=UserScopedContextGraphPotResolution(db, user_id),
+        reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
+        jobs=get_context_graph_job_queue(),
+    )
+    container.pot_source_listing = SqlalchemyPotSourceListing(db)
     return container
 
 

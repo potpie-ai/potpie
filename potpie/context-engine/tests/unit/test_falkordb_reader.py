@@ -15,7 +15,7 @@ import pytest
 from potpie_context_engine.adapters.outbound.graph.falkordb_reader import (
     FalkorDBClaimQueryStore,
 )
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter
+from potpie_context_core.ports.claim_query import ClaimQueryFilter
 
 pytestmark = pytest.mark.unit
 
@@ -202,10 +202,15 @@ def test_fact_query_uses_native_relationship_vector_index_when_embedder_present(
     cypher, params = graph.captured[0]
     assert "db.idx.vector.queryRelationships" in cypher
     assert "vecf32($embedding)" in cypher
-    assert "id(rel) = id(r)" in cypher
+    # Endpoint-free: no per-hit re-MATCH join, no labels() access, and the
+    # embedding is nulled out of the returned props.
+    assert "MATCH" not in cypher
+    assert "labels(" not in cypher
+    assert "fact_embedding: NULL" in cypher
     assert "ORDER BY score ASC" in cypher
     assert params["embedding"] == [0.1, 0.2, 0.3]
     assert params["k"] == 50
+    assert params["limit"] == 3
     assert rows[0].subject_key == "a"
     assert rows[0].properties["semantic_similarity"] == pytest.approx(0.88)
 
@@ -251,6 +256,95 @@ def test_limit_truncates() -> None:
     rows = store.find_claims(
         ClaimQueryFilter(pot_id="p1", predicate_in=("X",), limit=2)
     )
+    assert len(rows) == 2
+
+
+class _DispatchGraph:
+    """Fake graph that answers vector and entity-label queries differently."""
+
+    def __init__(self, vector_rows, label_rows):
+        self._vector_rows = vector_rows
+        self._label_rows = label_rows
+        self.captured: list[tuple[str, dict]] = []
+
+    def query(self, cypher, params=None):
+        self.captured.append((cypher, params or {}))
+        if "db.idx.vector.queryRelationships" in cypher:
+            return _FakeResult([[1, "props"], [1, "score"]], self._vector_rows)
+        return _FakeResult([[1, "key"], [1, "labels"]], self._label_rows)
+
+
+def test_fact_query_applies_label_filters_in_python() -> None:
+    vector_rows = [
+        [
+            {
+                "group_id": "p1",
+                "name": "X",
+                "subject_key": "service:web",
+                "object_key": "team:platform",
+                "fact": "match",
+            },
+            0.1,
+        ],
+        [
+            {
+                "group_id": "p1",
+                "name": "X",
+                "subject_key": "doc:readme",
+                "object_key": "team:platform",
+                "fact": "match",
+            },
+            0.2,
+        ],
+    ]
+    label_rows = [
+        ["service:web", ["Entity", "Service"]],
+        ["doc:readme", ["Entity", "Document"]],
+        ["team:platform", ["Entity", "Team"]],
+    ]
+    graph = _DispatchGraph(vector_rows, label_rows)
+    store = FalkorDBClaimQueryStore(
+        settings=object(), graph=graph, embedder=_FakeEmbedder()
+    )  # type: ignore[arg-type]
+
+    rows = store.find_claims(
+        ClaimQueryFilter(
+            pot_id="p1",
+            fact_query="match",
+            subject_label="Service",
+            limit=5,
+        )
+    )
+
+    assert [r.subject_key for r in rows] == ["service:web"]
+    vector_cypher, vector_params = graph.captured[0]
+    assert "labels(" not in vector_cypher
+    # With a label filter pending in Python, the query keeps the whole
+    # candidate set instead of pre-trimming to the requested limit.
+    assert vector_params["limit"] == vector_params["k"]
+
+
+def test_fact_query_vector_result_clamped_to_limit() -> None:
+    vector_rows = [
+        [
+            {
+                "group_id": "p1",
+                "name": "X",
+                "subject_key": f"s{i}",
+                "object_key": "o",
+                "fact": "match",
+            },
+            0.1 * i,
+        ]
+        for i in range(5)
+    ]
+    graph = _DispatchGraph(vector_rows, [])
+    store = FalkorDBClaimQueryStore(
+        settings=object(), graph=graph, embedder=_FakeEmbedder()
+    )  # type: ignore[arg-type]
+
+    rows = store.find_claims(ClaimQueryFilter(pot_id="p1", fact_query="match", limit=2))
+
     assert len(rows) == 2
 
 

@@ -139,16 +139,7 @@ def configure_celery(queue_prefix: str):
             "app.modules.event_bus.tasks.event_tasks.process_custom_event": {
                 "queue": "external-event"
             },
-            "app.modules.context_graph.tasks.context_graph_backfill_pot": {
-                "queue": "context-graph-etl"
-            },
-            "app.modules.context_graph.tasks.context_graph_ingest_pr": {
-                "queue": "context-graph-etl"
-            },
-            "app.modules.context_graph.tasks.context_graph_ingestion_agent_run": {
-                "queue": "context-graph-etl"
-            },
-            "app.modules.context_graph.tasks.context_graph_apply_episode": {
+            "app.modules.context_graph.tasks.context_graph_process_batch": {
                 "queue": "context-graph-etl"
             },
         },

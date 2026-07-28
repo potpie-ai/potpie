@@ -14,19 +14,19 @@ from datetime import datetime
 from typing import Iterable, Mapping, Sequence
 
 from potpie_context_engine.application.readers._common import ReadResponse
-from potpie_context_engine.domain.agent_context_port import (
+from potpie_context_core.agent_context_port import (
     includes_for_request,
     normalize_context_intent,
     unsupported_include_values,
 )
-from potpie_context_engine.domain.agent_envelope import (
+from potpie_context_core.agent_envelope import (
     AgentEnvelope,
     CoverageReport,
     EvidenceItem,
     UnsupportedInclude,
     derive_overall_confidence,
 )
-from potpie_context_engine.domain.graph_views import INCLUDE_TO_VIEW
+from potpie_context_core.graph_views import INCLUDE_TO_VIEW
 
 
 @dataclass(slots=True)
@@ -40,6 +40,8 @@ class IncludeResult:
 @dataclass(slots=True)
 class EnvelopeBuilder:
     """Stateless service. Inject custom intent/include mappings via constructor."""
+
+    additional_includes: frozenset[str] = frozenset()
 
     def build(
         self,
@@ -58,7 +60,11 @@ class EnvelopeBuilder:
         # intent's default includes; unknown names → ``unsupported`` (never
         # silently dropped to zero).
         resolved = includes_for_request(intent, requested_list, [])
-        unsupported_names = unsupported_include_values(requested_list)
+        unsupported_names = [
+            name
+            for name in unsupported_include_values(requested_list)
+            if name not in self.additional_includes
+        ]
         unsupported_set = set(unsupported_names)
         matched = [inc for inc in resolved if inc not in unsupported_set]
         matched_set = set(matched)

@@ -137,7 +137,7 @@ def test_standalone_container_delegates_to_ingestion_server_build(
     monkeypatch.setattr(
         standalone_container,
         "try_pydantic_deep_reconciliation_agent",
-        lambda: None,
+        lambda **_kwargs: None,
     )
     monkeypatch.delenv("CONTEXT_ENGINE_GITHUB_TOKEN", raising=False)
     monkeypatch.setattr(standalone_container, "build_ingestion_server", build)
@@ -149,7 +149,7 @@ def test_standalone_container_delegates_to_ingestion_server_build(
 
 
 def _patch_container_graph(monkeypatch: pytest.MonkeyPatch) -> None:
-    import potpie_context_engine.domain.coherence as coherence
+    import potpie_context_core.coherence as coherence
 
     monkeypatch.setattr(
         ingestion_server,

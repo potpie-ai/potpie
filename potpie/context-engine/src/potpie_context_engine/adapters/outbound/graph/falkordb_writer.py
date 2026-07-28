@@ -38,7 +38,8 @@ from potpie_context_engine.adapters.outbound.graph.cypher import (
     upsert_entities_async,
 )
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
-from potpie_context_engine.domain.graph_mutations import (
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
     EntityUpsert,
@@ -192,12 +193,23 @@ class FalkorDBGraphWriter(GraphWriterPort):
         graph: Any | None = None,
         graph_provider: Callable[[], Any] | None = None,
         embedder: Any | None = None,
+        definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
     ) -> None:
         self._settings = settings
         self._enabled = settings.is_enabled()
         self._graph = graph  # injectable for unit tests
         self._graph_provider = graph_provider  # shared handle from the container
         self._embedder = embedder
+        self._definition = definition
+
+    def bind_definition(self, definition: GraphDefinition) -> FalkorDBGraphWriter:
+        return FalkorDBGraphWriter(
+            self._settings,
+            graph=self._graph,
+            graph_provider=self._graph_provider,
+            embedder=self._embedder,
+            definition=definition,
+        )
 
     @property
     def enabled(self) -> bool:
@@ -249,7 +261,13 @@ class FalkorDBGraphWriter(GraphWriterPort):
         if not items:
             return 0
         return await self._with_driver(
-            lambda d: upsert_entities_async(d, pot_id, items, provenance)
+            lambda d: upsert_entities_async(
+                d,
+                pot_id,
+                items,
+                provenance,
+                definition=self._definition,
+            )
         )
 
     async def upsert_edges(
@@ -258,7 +276,13 @@ class FalkorDBGraphWriter(GraphWriterPort):
         if not items:
             return 0
         written = await self._with_driver(
-            lambda d: upsert_edges_async(d, pot_id, items, provenance)
+            lambda d: upsert_edges_async(
+                d,
+                pot_id,
+                items,
+                provenance,
+                definition=self._definition,
+            )
         )
         if self._embedder is not None and written:
             await asyncio.to_thread(
@@ -276,7 +300,13 @@ class FalkorDBGraphWriter(GraphWriterPort):
         if not items:
             return 0
         return await self._with_driver(
-            lambda d: delete_edges_async(d, pot_id, items, provenance)
+            lambda d: delete_edges_async(
+                d,
+                pot_id,
+                items,
+                provenance,
+                definition=self._definition,
+            )
         )
 
     async def invalidate(
@@ -285,7 +315,13 @@ class FalkorDBGraphWriter(GraphWriterPort):
         if not items:
             return 0
         return await self._with_driver(
-            lambda d: apply_invalidations_async(d, pot_id, items, provenance)
+            lambda d: apply_invalidations_async(
+                d,
+                pot_id,
+                items,
+                provenance,
+                definition=self._definition,
+            )
         )
 
     async def reset_pot(self, pot_id: str) -> dict[str, Any]:

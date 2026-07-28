@@ -8,8 +8,8 @@ import math
 from datetime import datetime
 from typing import Any, Iterable, Mapping
 
-from potpie_context_engine.domain.graph_contract import evidence_strength_for_truth
-from potpie_context_engine.domain.ports.claim_query import ClaimRow
+from potpie_context_core.graph_contract import evidence_strength_for_truth
+from potpie_context_core.ports.claim_query import ClaimRow
 
 # Edge properties that are part of the canonical V1.5 contract or backend system
 # frame. These are hydrated into first-class ``ClaimRow`` fields or intentionally
@@ -217,6 +217,9 @@ def stamp_scored_rows(scored: Iterable[tuple[float, ClaimRow]]) -> list[ClaimRow
     return out
 
 
+# ``fact_embedding: NULL`` overrides the ``.*`` projection: embeddings are a
+# write/index-side concern, and shipping a full vector per row dominates the
+# reply size (and, on redis backends, RESP parse time) of every claim scan.
 FIND_CLAIMS_CYPHER = """
 MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
 WHERE ($preds IS NULL OR r.name IN $preds)
@@ -233,7 +236,7 @@ WHERE ($preds IS NULL OR r.name IN $preds)
   AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
   AND ($subject_label IS NULL OR $subject_label IN labels(a))
   AND ($object_label IS NULL OR $object_label IN labels(b))
-RETURN r{.*} AS props
+RETURN r{.*, fact_embedding: NULL} AS props
 """
 
 

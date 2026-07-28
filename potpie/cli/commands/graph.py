@@ -19,7 +19,7 @@ from typing import Any
 import typer
 
 from potpie_context_engine.bootstrap.observability_runtime import get_observability
-from potpie_context_engine.application.services.graph_workbench import (
+from potpie_context_core.workbench_service import (
     graph_error_envelope,
     graph_not_implemented_envelope,
     graph_success_envelope,
@@ -53,18 +53,18 @@ from potpie.cli.telemetry.product_analytics import AnalyticsValue
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
-from potpie_context_engine.domain.graph_contract import (
+from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.graph_contract import (
     GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION,
 )
-from potpie_context_engine.domain.graph_contract import ONTOLOGY_VERSION
-from potpie_context_engine.domain.graph_workbench import (
+from potpie_context_core.graph_contract import ONTOLOGY_VERSION
+from potpie_context_core.graph_workbench import (
     GRAPH_WORKBENCH_COMMANDS,
     GraphUnsupported,
     GraphWorkbenchStatus,
 )
 from potpie_context_engine.domain.ports.observability import SPAN_KIND_INTERNAL
-from potpie_context_engine.domain.graph_views import INCLUDE_TO_VIEW
+from potpie_context_core.graph_views import INCLUDE_TO_VIEW
 from potpie_context_engine.domain.nudge import NUDGE_EVENT_HELP
 
 graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
@@ -490,7 +490,7 @@ def graph_catalog(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Discover the graph contract: versions, views, mutation ops, ontology."""
-    from potpie_context_engine.domain.ports.services.graph_service import (
+    from potpie_context_core.ports.graph_service import (
         GraphCatalogRequest,
     )
 
@@ -577,7 +577,7 @@ def graph_read(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """V2-style read over a named view (routes through the read trunk)."""
-    from potpie_context_engine.domain.ports.services.graph_service import (
+    from potpie_context_core.ports.graph_service import (
         GraphReadRequest,
     )
 
@@ -685,7 +685,7 @@ def timeline_recent(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Recent project events from the active/current pot, across all repo sources."""
-    from potpie_context_engine.domain.ports.services.graph_service import (
+    from potpie_context_core.ports.graph_service import (
         GraphReadRequest,
     )
 
@@ -761,7 +761,7 @@ def graph_search_entities(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Narrow entity/claim lookup for identity resolution before a write."""
-    from potpie_context_engine.domain.ports.services.graph_service import (
+    from potpie_context_core.ports.graph_service import (
         GraphEntitySearchRequest,
     )
 
@@ -1366,7 +1366,7 @@ def graph_describe(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.describe") as ctx:
-        from potpie_context_engine.domain.ports.services.graph_service import (
+        from potpie_context_core.ports.graph_service import (
             GraphDescribeRequest,
         )
 

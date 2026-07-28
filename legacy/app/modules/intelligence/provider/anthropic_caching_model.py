@@ -61,7 +61,6 @@ try:
         BetaRawMessageStreamEvent,
         BetaTextBlockParam,
         BetaToolChoiceParam,
-        BetaToolParam,
     )
 except ImportError as e:
     raise ImportError(
@@ -552,18 +551,20 @@ class CachingAnthropicModel(AnthropicModel):
 
             yield item
 
-    def _get_tools(
+    def _prepare_tools_and_tool_choice(
         self,
-        model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
-    ) -> list[BetaToolParam]:
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[Any], BetaToolChoiceParam | None]:
         """
         Override to add cache_control to the last tool, enabling caching of all tool definitions.
 
         Anthropic caches all content UP TO AND INCLUDING the block with cache_control.
         By placing cache_control on the last tool, we cache all tools.
         """
-        tools = super()._get_tools(model_request_parameters, model_settings)
+        tools, tool_choice = super()._prepare_tools_and_tool_choice(
+            model_settings, model_request_parameters
+        )
 
         if tools and self._enable_tool_caching:
             # Add cache_control to the last tool to cache all tools
@@ -576,7 +577,7 @@ class CachingAnthropicModel(AnthropicModel):
                 f"total tools: {len(tools)}"
             )
 
-        return tools
+        return tools, tool_choice
 
     async def _messages_create(  # type: ignore[override]
         self,
@@ -591,21 +592,9 @@ class CachingAnthropicModel(AnthropicModel):
         This method adds a cache_control breakpoint to the system prompt,
         enabling Anthropic to cache the instructions across requests.
         """
-        tools = self._get_tools(model_request_parameters, model_settings)
-        tool_choice: BetaToolChoiceParam | None
-
-        if not tools:
-            tool_choice = None
-        else:
-            if not model_request_parameters.allow_text_output:
-                tool_choice = {"type": "any"}
-            else:
-                tool_choice = {"type": "auto"}
-
-            if (
-                allow_parallel_tool_calls := model_settings.get("parallel_tool_calls")
-            ) is not None:
-                tool_choice["disable_parallel_tool_use"] = not allow_parallel_tool_calls
+        tools, tool_choice = self._prepare_tools_and_tool_choice(
+            model_settings, model_request_parameters
+        )
 
         system_prompt, anthropic_messages = await self._map_message(
             messages, model_request_parameters, model_settings

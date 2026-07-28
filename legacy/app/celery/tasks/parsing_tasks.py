@@ -55,13 +55,11 @@ def process_parsing(
             self.run_async(run_parsing())
 
             if config_provider.get_context_graph_config().get("enabled"):
-                from app.modules.context_graph.tasks import context_graph_backfill_pot
-
-                context_graph_backfill_pot.delay(project_id)
-                logger.info(
-                    "Enqueued context graph backfill after parsing",
-                    pot_id=project_id,
+                from app.modules.context_graph.reconciliation_submit import (
+                    submit_agent_reconciliation,
                 )
+
+                submit_agent_reconciliation(self.db, project_id, trigger="parsed")
         except Exception:
             raise
         finally:

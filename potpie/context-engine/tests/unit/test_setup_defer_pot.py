@@ -9,7 +9,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 )
 from potpie_context_engine.application.services import setup_orchestrator
 from potpie_context_engine.bootstrap.host_wiring import build_host_shell
-from potpie_context_engine.domain.lifecycle import SKIPPED, SetupPlan
+from potpie_context_core.lifecycle import SKIPPED, SetupPlan
 
 
 @pytest.fixture()

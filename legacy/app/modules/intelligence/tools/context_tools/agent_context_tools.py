@@ -7,22 +7,26 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.modules.context_graph.wiring import build_container_for_user_session
-from potpie_context_engine.domain.actor import Actor
-from potpie_context_engine.domain.agent_context_port import (
+from app.modules.context_graph.wiring import build_ingestion_server_for_user_session
+from potpie_context_core.actor import Actor
+from potpie_context_core.agent_context_port import (
     build_context_record_source_id,
     context_port_manifest,
     context_recipe_for_intent,
     normalize_record_type,
 )
-from potpie_context_engine.domain.graph_query import (
+from potpie_context_core.graph_query import (
     ContextGraphGoal,
     ContextGraphQuery,
     ContextGraphScope,
     ContextGraphStrategy,
 )
-from potpie_context_engine.domain.ingestion_event_models import IngestionSubmissionRequest
-from potpie_context_engine.domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
+from potpie_context_engine.domain.ingestion_event_models import (
+    IngestionSubmissionRequest,
+)
+from potpie_context_engine.domain.ingestion_kinds import (
+    INGESTION_KIND_AGENT_RECONCILIATION,
+)
 
 
 def _split_csv(value: Optional[str]) -> list[str]:
@@ -140,7 +144,7 @@ class AgentContextTools:
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
         self.user_id = user_id
-        self._container = build_container_for_user_session(sql_db, user_id)
+        self._container = build_ingestion_server_for_user_session(sql_db, user_id)
 
     def _assert_pot_access(self, pot_id: str) -> None:
         if self._container.pots.resolve_pot(pot_id) is None:

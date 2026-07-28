@@ -34,16 +34,14 @@ from potpie_context_engine.application.services.envelope_builder import (
     EnvelopeBuilder,
     IncludeResult,
 )
-from potpie_context_engine.domain.agent_context_port import (
+from potpie_context_core.agent_context_port import (
     CONTEXT_INCLUDE_VALUES,
     includes_for_request,
     normalize_context_intent,
 )
-from potpie_context_engine.domain.agent_envelope import (
-    AgentEnvelope,
-    UnsupportedInclude,
-)
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryPort
+from potpie_context_core.agent_envelope import AgentEnvelope, UnsupportedInclude
+from potpie_context_core.definition import GraphReaderSpec
+from potpie_context_core.ports.claim_query import ClaimQueryPort
 from potpie_context_engine.domain.ranking import RankingService
 
 
@@ -58,6 +56,7 @@ class ReadOrchestrator:
     claim_query: ClaimQueryPort
     ranker: RankingService = field(default_factory=RankingService)
     builder: EnvelopeBuilder = field(default_factory=EnvelopeBuilder)
+    reader_registry: Mapping[str, GraphReaderSpec] = field(default_factory=dict)
     _routing: dict[str, _ReaderT] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -76,6 +75,13 @@ class ReadOrchestrator:
             # incl. generic RELATED_TO) for the graph explorer — not a UC slice.
             "raw_graph": RawGraphReader(claim_query=cq, ranker=rk),
         }
+        for include, spec in self.reader_registry.items():
+            if spec.factory is None:
+                continue
+            self._routing[include] = _build_reader(
+                spec.factory, claim_query=cq, ranker=rk
+            )
+        self.builder.additional_includes = frozenset(self.reader_registry)
 
     @property
     def backed_includes(self) -> frozenset[str]:
@@ -146,3 +152,20 @@ class ReadOrchestrator:
 
 
 __all__ = ["ReadOrchestrator"]
+
+
+def _build_reader(factory: Any, *, claim_query: ClaimQueryPort, ranker: RankingService):
+    if not callable(factory):
+        if not callable(getattr(factory, "read", None)):
+            raise TypeError("graph reader must be callable or expose read(request)")
+        return factory
+    try:
+        reader = factory(claim_query=claim_query, ranker=ranker)
+    except TypeError:
+        try:
+            reader = factory(claim_query=claim_query)
+        except TypeError:
+            reader = factory(claim_query)
+    if not callable(getattr(reader, "read", None)):
+        raise TypeError("graph reader factory must return an object with read(request)")
+    return reader

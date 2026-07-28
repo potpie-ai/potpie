@@ -13,6 +13,8 @@ hook points at; new backends drop into ``FULL_PROFILES`` / ``PARTIAL_PROFILES``.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from potpie_context_engine.adapters.outbound.graph.backends import build_backend
@@ -22,15 +24,15 @@ from potpie_context_engine.adapters.outbound.graph.inbox_stores.local_json impor
 from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
     LocalJsonGraphPlanStore,
 )
-from potpie_context_engine.application.services.graph_workbench import (
+from potpie_context_core.workbench_service import (
     GraphWorkbenchService,
 )
-from potpie_context_engine.domain.context_events import EventRef
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
-from potpie_context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert
-from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter
-from potpie_context_engine.domain.ports.graph.backend import GraphBackend
-from potpie_context_engine.domain.reconciliation import ReconciliationPlan
+from potpie_context_core.context_events import EventRef
+from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.graph_mutations import EdgeUpsert, EntityUpsert
+from potpie_context_core.ports.claim_query import ClaimQueryFilter
+from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_core.reconciliation import ReconciliationPlan
 
 POT = "conformance-pot"
 
@@ -92,6 +94,26 @@ def test_backend_satisfies_protocol(profile, tmp_path):
     backend = _build(profile, tmp_path)
     assert isinstance(backend, GraphBackend)
     assert backend.profile == profile
+
+
+def test_runtime_only_backend_does_not_need_provisioning() -> None:
+    from potpie_context_engine.testing import InMemoryGraphBackend
+
+    backend = InMemoryGraphBackend()
+    runtime_only = SimpleNamespace(
+        profile=backend.profile,
+        mutation=backend.mutation,
+        claim_query=backend.claim_query,
+        semantic=backend.semantic,
+        inspection=backend.inspection,
+        analytics=backend.analytics,
+        snapshot=backend.snapshot,
+        capabilities=backend.capabilities,
+        bind_definition=backend.bind_definition,
+    )
+
+    assert not hasattr(runtime_only, "provision")
+    assert isinstance(runtime_only, GraphBackend)
 
 
 @pytest.mark.parametrize("profile", FULL_PROFILES)

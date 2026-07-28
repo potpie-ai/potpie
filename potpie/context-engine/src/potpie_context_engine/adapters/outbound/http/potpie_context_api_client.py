@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import httpx
 
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
+from potpie_context_core.errors import CapabilityNotImplemented
 
 CONTEXT_API_PREFIX = "/api/v2/context"
 

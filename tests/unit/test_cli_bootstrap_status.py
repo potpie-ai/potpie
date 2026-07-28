@@ -16,7 +16,7 @@ from potpie.cli import main as cli_main
 from potpie.cli.commands import _common, bootstrap
 from potpie.cli.commands._common import EXIT_DEGRADED
 from potpie_context_engine.bootstrap.host_wiring import default_host_mode
-from potpie_context_engine.domain.lifecycle import (
+from potpie_context_core.lifecycle import (
     DONE,
     FAILED,
     PlannedSetupStep,
@@ -25,9 +25,9 @@ from potpie_context_engine.domain.lifecycle import (
     SetupReport,
     StepResult,
 )
-from potpie_context_engine.domain.ports.agent_context import StatusReport, StatusRequest
-from potpie_context_engine.domain.ports.graph.backend import BackendCapabilities
-from potpie_context_engine.domain.ports.graph.mutation import BackendReadiness
+from potpie_context_core.ports.agent_context import StatusReport, StatusRequest
+from potpie_context_core.ports.graph.backend import BackendCapabilities
+from potpie_context_core.ports.graph.mutation import BackendReadiness
 
 runner = CliRunner()
 

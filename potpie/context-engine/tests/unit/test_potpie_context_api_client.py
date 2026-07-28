@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import pytest
 
-from potpie_context_engine.domain.errors import CapabilityNotImplemented
+from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_engine.adapters.outbound.http.potpie_context_api_client import (
     IngestRejectedError,
     PotpieContextApiClient,

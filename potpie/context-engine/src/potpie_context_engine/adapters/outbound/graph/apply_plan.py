@@ -1,8 +1,8 @@
 """Apply a validated :class:`MutationBatch` to the graph.
 
 One function, one async path. The caller produced the batch; this routine
-generates a per-apply ``mutation_id``, stamps it into provenance, and
-runs the four mutation verbs in order against the single
+uses a caller-reserved ``mutation_id`` when present (or generates one),
+stamps it into provenance, and runs the four mutation verbs against the single
 :class:`GraphWriterPort`. No episodic narrative, no sync→async bridge.
 """
 
@@ -14,35 +14,34 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
-from potpie_context_engine.application.services.reconciliation_validation import (
+from potpie_context_core.reconciliation_validation import (
     validate_reconciliation_plan,
 )
-from potpie_context_engine.domain.errors import ReconciliationApplyError
-from potpie_context_engine.domain.graph_mutations import (
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_core.errors import ReconciliationApplyError
+from potpie_context_core.graph_mutations import (
     ProvenanceContext,
     ProvenanceRef,
 )
-from potpie_context_engine.domain.graph_plans import mutation_batch_to_dict
-from potpie_context_engine.domain.reconciliation import (
+from potpie_context_core.graph_plans import mutation_batch_to_dict
+from potpie_context_core.reconciliation import (
     MutationBatch,
     MutationResult,
     MutationSummary,
 )
+from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 
 def _stable_batch_source_id(plan: MutationBatch) -> str:
     """Deterministic provenance source id for an event-ref-less, context-less batch.
 
-    The per-apply ``mutation_id`` is a fresh ``uuid4`` every call, so using it as
-    the provenance ``source_event_id`` makes a retried batch look like a brand-new
-    event — and the edge writer (which derives its default ``source_ref`` from
-    ``source_event_id``) mints duplicate claims instead of MERGE-updating the same
-    edge. Fingerprint the *full* batch payload instead: a genuine retry of the same
-    batch carries the same source id and stays idempotent, while two batches that
-    share graph shape but differ in claim properties / evidence / confidence /
-    invalidation timestamps get distinct ids (no provenance conflation). Reuse the
-    canonical ``mutation_batch_to_dict`` serializer so the digest never drifts from
-    the batch schema.
+    The execution ``mutation_id`` may be caller-reserved or generated here, but
+    it is not the source event identity. Fingerprint the *full* batch payload:
+    a genuine retry carries the same source id and stays idempotent, while two
+    batches that share graph shape but differ in claim properties, evidence,
+    confidence, or invalidation timestamps get distinct ids. Reuse the canonical
+    ``mutation_batch_to_dict`` serializer so the digest never drifts from the
+    batch schema.
     """
     encoded = json.dumps(
         mutation_batch_to_dict(plan),
@@ -104,16 +103,26 @@ async def apply_mutation_batch(
     *,
     expected_pot_id: str,
     provenance_context: ProvenanceContext | None = None,
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
+    reconciliation_config: ReconciliationConfig | None = None,
 ) -> MutationResult:
     """Validate the batch, stamp provenance, and run the four mutation verbs.
 
-    Returns a :class:`MutationResult` carrying the ``mutation_id``
-    (a per-apply UUID) so callers can later trace every produced edge
-    back to this apply.
+    Returns a :class:`MutationResult` carrying the caller-reserved mutation id,
+    or a generated UUID when no reservation was supplied.
     """
-    validate_reconciliation_plan(plan, expected_pot_id)
+    validate_reconciliation_plan(
+        plan,
+        expected_pot_id,
+        definition=definition,
+        config=reconciliation_config,
+    )
 
-    mutation_id = str(uuid4())
+    mutation_id = (
+        provenance_context.mutation_id
+        if provenance_context is not None and provenance_context.mutation_id
+        else str(uuid4())
+    )
     graph_updated_at = datetime.now(timezone.utc)
     prov = _build_provenance(
         plan,
