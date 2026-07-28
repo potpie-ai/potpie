@@ -322,11 +322,11 @@ async def upsert_entities_async(
                 a_summary=authored_summary,
                 a_description=authored_description,
             )
-            wanted_labels: set[str] = set()
-            for label in labels:
-                if label in definition.entity_types and _LABEL_RE.fullmatch(label):
-                    wanted_labels.add(label)
-            stale_labels = sorted(set(definition.entity_types) - wanted_labels)
+            valid_entity_types = {
+                label for label in definition.entity_types if _LABEL_RE.fullmatch(label)
+            }
+            wanted_labels = {label for label in labels if label in valid_entity_types}
+            stale_labels = sorted(valid_entity_types - wanted_labels)
             if stale_labels:
                 remove_clause = ":".join(stale_labels)
                 await session.run(
