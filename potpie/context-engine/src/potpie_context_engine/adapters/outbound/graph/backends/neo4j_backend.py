@@ -415,10 +415,18 @@ class Neo4jGraphBackend:
                     for row in rows:
                         key = str(row.get("key") or "").strip()
                         labels = tuple(row.get("labels") or ())
-                        fixed = repaired_entity_labels(key, labels)
+                        fixed = repaired_entity_labels(
+                            key,
+                            labels,
+                            entity_types=self.definition.entity_types,
+                        )
                         if not key or fixed is None:
                             continue
-                        remove, add = canonical_label_changes(labels, fixed)
+                        remove, add = canonical_label_changes(
+                            labels,
+                            fixed,
+                            entity_types=self.definition.entity_types,
+                        )
                         clauses = [*(f"REMOVE e:{label}" for label in remove)]
                         clauses.extend(f"SET e:{label}" for label in add)
                         if not clauses:

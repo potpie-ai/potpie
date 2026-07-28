@@ -527,6 +527,7 @@ class _Inspection:
 class _Analytics:
     store: InMemoryClaimQueryStore
     on_change: Any = None
+    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
 
     def _rows(self, pot_id: str) -> list[ClaimRow]:
         return [r for r in self.store.rows if r.pot_id == pot_id]
@@ -610,7 +611,11 @@ class _Analytics:
         for (pid, entity_key), labels in tuple(self.store.entity_label_index.items()):
             if pid != pot_id:
                 continue
-            fixed = repaired_entity_labels(entity_key, labels)
+            fixed = repaired_entity_labels(
+                entity_key,
+                labels,
+                entity_types=self.definition.entity_types,
+            )
             if fixed is None:
                 continue
             self.store.set_entity_label(
@@ -704,7 +709,11 @@ class InMemoryGraphBackend:
         )
         self._semantic = _Semantic(self.store)
         self._inspection = _Inspection(self.store)
-        self._analytics = _Analytics(self.store, on_change=self.on_change)
+        self._analytics = _Analytics(
+            self.store,
+            on_change=self.on_change,
+            definition=self.definition,
+        )
         self._snapshot = _Snapshot(self.store)
 
     @property

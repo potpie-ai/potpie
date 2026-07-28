@@ -10,8 +10,10 @@ from __future__ import annotations
 import pytest
 
 from potpie_context_core.context_events import EventRef
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphExtension
 from potpie_context_core.entity_canonicalization import (
     canonicalize_reconciliation_plan,
+    coherent_entity_labels,
     normalize_entity_key,
 )
 from potpie_context_core.graph_mutations import (
@@ -21,6 +23,8 @@ from potpie_context_core.graph_mutations import (
     InvalidationOp,
 )
 from potpie_context_core.reconciliation import ReconciliationPlan
+from potpie_context_core.identity import IdentityClass
+from potpie_context_core.ontology import EntityTypeSpec
 
 pytestmark = pytest.mark.unit
 
@@ -98,6 +102,33 @@ def test_key_prefix_rejects_accumulated_canonical_labels() -> None:
     canonicalize_reconciliation_plan(plan)
 
     assert plan.entity_upserts[0].labels == ("Entity", "Environment")
+
+
+def test_coherent_labels_use_bound_graph_definition() -> None:
+    definition = DEFAULT_GRAPH_DEFINITION.extend(
+        GraphExtension(
+            name="widgets",
+            version="1",
+            entity_types={
+                "Widget": EntityTypeSpec(
+                    label="Widget",
+                    category="topology",
+                    description="Widget.",
+                    identity_class=IdentityClass.SLUG_ALIAS,
+                    key_prefix="widget",
+                    identity_policy="widget:<slug>",
+                )
+            },
+        )
+    )
+
+    labels = coherent_entity_labels(
+        "widget:a",
+        ("Entity", "Service", "Widget"),
+        entity_types=definition.entity_types,
+    )
+
+    assert labels == ("Entity", "Widget")
 
 
 def test_duplicate_retypes_resolve_to_key_prefix_type() -> None:

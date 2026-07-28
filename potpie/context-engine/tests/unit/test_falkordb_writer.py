@@ -290,6 +290,49 @@ async def test_writer_uses_bound_extension_labels_and_predicates() -> None:
     )
 
 
+async def test_writer_removes_builtin_label_conflicting_with_extension_key() -> None:
+    definition = DEFAULT_GRAPH_DEFINITION.extend(
+        GraphExtension(
+            name="widgets",
+            version="1",
+            entity_types={
+                "Widget": EntityTypeSpec(
+                    label="Widget",
+                    category="topology",
+                    description="Widget.",
+                    identity_class=IdentityClass.SLUG_ALIAS,
+                    key_prefix="widget",
+                    identity_policy="widget:<slug>",
+                )
+            },
+        )
+    )
+    graph = _FakeGraph()
+    writer = FalkorDBGraphWriter(
+        _FakeSettings(),
+        graph=graph,
+        definition=definition,
+    )
+
+    await writer.upsert_entities(
+        "p1",
+        [
+            EntityUpsert(
+                "widget:a",
+                ("Entity", "Service", "Widget"),
+                {},
+            )
+        ],
+        ProvenanceRef(pot_id="p1", source_event_id="e1"),
+    )
+
+    removals = [query for query, _ in graph.queries if " REMOVE e:" in query]
+    assert len(removals) == 1
+    assert ":Service" in removals[0]
+    assert ":Widget" not in removals[0]
+    assert any("SET e:Widget" in query for query, _ in graph.queries)
+
+
 async def test_writer_uses_bound_extension_predicate_for_invalidation() -> None:
     definition = DEFAULT_GRAPH_DEFINITION.extend(
         GraphExtension(

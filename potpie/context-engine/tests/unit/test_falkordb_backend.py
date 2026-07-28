@@ -13,18 +13,25 @@ from potpie_context_engine.adapters.outbound.graph.backends import (
 from potpie_context_engine.adapters.outbound.graph.backends.falkordb_backend import (
     FalkorDBGraphBackend,
 )
+from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
+    canonical_label_changes,
+    repaired_entity_labels,
+)
 from potpie_context_engine.bootstrap.host_wiring import (
     build_host_shell,
     default_backend_profile,
 )
 from potpie_context_engine.bootstrap.ingestion_server import build_ingestion_server
 from potpie_context_core.context_events import EventRef
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphExtension
 from potpie_context_core.graph_mutations import (
     EdgeUpsert,
     EntityUpsert,
     ProvenanceRef,
 )
 from potpie_context_core.lifecycle import SetupPlan
+from potpie_context_core.identity import IdentityClass
+from potpie_context_core.ontology import EntityTypeSpec
 from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_core.reconciliation import ReconciliationPlan
 
@@ -286,3 +293,36 @@ def test_falkordb_entity_label_repair_scans_every_page() -> None:
     assert report.repaired == {"entity_labels": 2}
     assert graph.scan_cursors == ["", "environment:a", "environment:b"]
     assert graph.updated_keys == ["environment:a", "environment:b"]
+
+
+def test_entity_label_repair_uses_bound_graph_definition() -> None:
+    definition = DEFAULT_GRAPH_DEFINITION.extend(
+        GraphExtension(
+            name="widgets",
+            version="1",
+            entity_types={
+                "Widget": EntityTypeSpec(
+                    label="Widget",
+                    category="topology",
+                    description="Widget.",
+                    identity_class=IdentityClass.SLUG_ALIAS,
+                    key_prefix="widget",
+                    identity_policy="widget:<slug>",
+                )
+            },
+        )
+    )
+    current = ("Entity", "Service", "Widget")
+
+    fixed = repaired_entity_labels(
+        "widget:a",
+        current,
+        entity_types=definition.entity_types,
+    )
+
+    assert fixed == ("Entity", "Widget")
+    assert canonical_label_changes(
+        current,
+        fixed,
+        entity_types=definition.entity_types,
+    ) == (("Service",), ())

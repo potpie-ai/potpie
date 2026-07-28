@@ -2703,7 +2703,11 @@ def _quality_entity_label_drift(
         current = tuple(labels_by_key[key])
         if not current:
             continue
-        expected = coherent_entity_labels(key, current)
+        expected = coherent_entity_labels(
+            key,
+            current,
+            entity_types=definition.entity_types,
+        )
         current_canonical = set(current) & set(definition.entity_types)
         expected_canonical = set(expected) & set(definition.entity_types)
         if current_canonical == expected_canonical:

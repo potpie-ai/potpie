@@ -7,6 +7,9 @@ import pytest
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphExtension
+from potpie_context_core.identity import IdentityClass
+from potpie_context_core.ontology import EntityTypeSpec
 from potpie_context_core.workbench_service import (
     GraphWorkbenchService,
 )
@@ -271,6 +274,55 @@ def test_quality_entity_label_drift_skips_unresolved_claim_only_keys() -> None:
 
     assert result.status == "ok"
     assert result.findings == ()
+
+
+def test_quality_entity_label_drift_uses_bound_graph_definition() -> None:
+    definition = DEFAULT_GRAPH_DEFINITION.extend(
+        GraphExtension(
+            name="widgets",
+            version="1",
+            entity_types={
+                "Widget": EntityTypeSpec(
+                    label="Widget",
+                    category="topology",
+                    description="Widget.",
+                    identity_class=IdentityClass.SLUG_ALIAS,
+                    key_prefix="widget",
+                    identity_policy="widget:<slug>",
+                )
+            },
+        )
+    )
+    backend = InMemoryGraphBackend(definition=definition)
+    workbench = GraphWorkbenchService(
+        backend=backend,
+        plan_store=_UnusedPlanStore(),
+        definition=definition,
+    )
+    backend.store.add(
+        _row(
+            "RELATED_TO",
+            "widget:a",
+            "service:web",
+            claim_key="widget-scope",
+        )
+    )
+    backend.store.set_entity_label(
+        pot_id=POT,
+        entity_key="widget:a",
+        labels=("Entity", "Service", "Widget"),
+    )
+    backend.store.set_entity_label(
+        pot_id=POT,
+        entity_key="service:web",
+        labels=("Entity", "Service"),
+    )
+
+    result = workbench.quality(pot_id=POT, report="entity-label-drift")
+
+    assert result.status == "degraded"
+    assert result.findings[0].entity_keys == ("widget:a",)
+    assert result.findings[0].payload["expected_labels"] == ["Entity", "Widget"]
 
 
 def test_quality_projection_drift_uses_ontology_endpoint_semantics() -> None:

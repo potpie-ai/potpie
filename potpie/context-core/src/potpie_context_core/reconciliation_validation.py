@@ -57,9 +57,16 @@ def validate_reconciliation_plan(
         config or current_reconciliation_config() or reconciliation_config_from_env()
     )
     definition = definition or DEFAULT_GRAPH_DEFINITION
+    plan.ontology_downgrades.clear()
+    canonicalize_reconciliation_plan(
+        plan,
+        enforce_label_coherence=config.infer_canonical_labels,
+        entity_types=definition.entity_types,
+    )
     if definition is not DEFAULT_GRAPH_DEFINITION:
-        plan.ontology_downgrades.clear()
         _validate_hard(plan, expected_pot_id)
+        if config.infer_canonical_labels:
+            enrich_reconciliation_plan_entity_labels(plan, definition=definition)
         ontology_errors = definition.validate_structural_mutations(
             plan.entity_upserts,
             plan.edge_upserts,
@@ -75,16 +82,11 @@ def validate_reconciliation_plan(
                 structured_issues=tuple(validation_lines_to_issues(ontology_errors)),
             )
         return
-    plan.ontology_downgrades.clear()
-    canonicalize_reconciliation_plan(
-        plan,
-        enforce_label_coherence=config.infer_canonical_labels,
-    )
     _validate_hard(plan, expected_pot_id)
     _augment_evidence_warnings(plan)
 
     if config.infer_canonical_labels:
-        enrich_reconciliation_plan_entity_labels(plan)
+        enrich_reconciliation_plan_entity_labels(plan, definition=definition)
 
     # Backfill missing required properties with safe defaults so that agent plans
     # that choose the right canonical labels but omit required fields do not fail
@@ -92,7 +94,12 @@ def validate_reconciliation_plan(
     # being lenient for LLM-generated reconciliation plans.
     for ent in plan.entity_upserts:
         for label in canonical_entity_labels(ent.labels):
-            _ensure_required_properties_for_label(ent.properties, label, ent.entity_key)
+            _ensure_required_properties_for_label(
+                ent.properties,
+                label,
+                ent.entity_key,
+                definition=definition,
+            )
 
     soft = config.ontology_soft_fail and not config.ontology_strict
     if soft:

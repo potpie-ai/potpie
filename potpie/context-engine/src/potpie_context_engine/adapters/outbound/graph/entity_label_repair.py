@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from potpie_context_core.entity_canonicalization import coherent_entity_labels
-from potpie_context_core.ontology import ENTITY_TYPES
+from potpie_context_core.ontology import ENTITY_TYPES, EntityTypeSpec
 
 ENTITY_LABEL_TARGET = "entity_labels"
 ENTITY_LABEL_TARGETS = frozenset(
@@ -30,24 +30,35 @@ def wants_entity_label_repair(targets: Sequence[str] = ()) -> bool:
 
 
 def repaired_entity_labels(
-    entity_key: str, raw_labels: Iterable[str]
+    entity_key: str,
+    raw_labels: Iterable[str],
+    *,
+    entity_types: Mapping[str, EntityTypeSpec] = ENTITY_TYPES,
 ) -> tuple[str, ...] | None:
     """Return coherent canonical labels, or ``None`` when no repair is needed."""
     labels = tuple(dict.fromkeys(str(label) for label in raw_labels))
-    fixed = coherent_entity_labels(entity_key, labels)
+    fixed = coherent_entity_labels(
+        entity_key,
+        labels,
+        entity_types=entity_types,
+    )
     if set(fixed) == set(labels):
         return None
     return fixed
 
 
 def canonical_label_changes(
-    current: Iterable[str], fixed: Iterable[str]
+    current: Iterable[str],
+    fixed: Iterable[str],
+    *,
+    entity_types: Mapping[str, EntityTypeSpec] = ENTITY_TYPES,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return safe canonical labels to remove and add."""
     current_set = set(current)
     fixed_set = set(fixed)
-    remove = tuple(sorted((current_set - fixed_set) & set(ENTITY_TYPES)))
-    add = tuple(sorted((fixed_set - current_set) & set(ENTITY_TYPES)))
+    canonical_labels = set(entity_types)
+    remove = tuple(sorted((current_set - fixed_set) & canonical_labels))
+    add = tuple(sorted((fixed_set - current_set) & canonical_labels))
     return remove, add
 
 
