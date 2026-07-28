@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import pytest
 
-from adapters.outbound.cli_auth.gitlab_client import (
+from potpie_context_engine.adapters.outbound.cli_auth.gitlab_client import (
     GitLabAuthErrorKind,
     gitlab_auth_headers,
     instance_host,
@@ -16,12 +16,14 @@ from adapters.outbound.cli_auth.gitlab_client import (
     verify_instance_access,
     verify_read_api_scope,
 )
-from adapters.outbound.cli_auth.integration_profile import (
+from potpie_context_engine.adapters.outbound.cli_auth.integration_profile import (
     build_gitlab_integration_record,
     gitlab_account_from_entry,
 )
-from adapters.outbound.cli_auth.integration_verify import verify_integration_access
-from adapters.outbound.cli_auth.provider_config import (
+from potpie_context_engine.adapters.outbound.cli_auth.integration_verify import (
+    verify_integration_access,
+)
+from potpie_context_engine.adapters.outbound.cli_auth.provider_config import (
     GITLAB_DEFAULT_INSTANCE,
     gitlab_api_base_url,
     gitlab_pat_page_url,
@@ -259,7 +261,7 @@ def test_verify_instance_access_forbidden() -> None:
 
 
 def test_verify_instance_access_unreachable() -> None:
-    from adapters.outbound.cli_auth.http import AuthHttpError
+    from potpie_context_engine.adapters.outbound.cli_auth.http import AuthHttpError
 
     def _raise(*a, **kw):
         raise AuthHttpError("connection refused")

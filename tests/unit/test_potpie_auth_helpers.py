@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from adapters.outbound.cli_auth.http import AuthHttpError
+from potpie_context_engine.adapters.outbound.cli_auth.http import AuthHttpError
 from potpie.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
 import pytest
@@ -20,10 +20,10 @@ from typer.testing import CliRunner
 
 from potpie.cli import main as cli_main
 from potpie.cli.auth import _login_impl
-from adapters.outbound.cli_auth import firebase_session
-from adapters.outbound.cli_auth import potpie as potpie_auth
-from bootstrap import runtime_settings
-from adapters.outbound.cli_auth.firebase_session import (
+from potpie_context_engine.adapters.outbound.cli_auth import firebase_session
+from potpie_context_engine.adapters.outbound.cli_auth import potpie as potpie_auth
+from potpie_context_engine.bootstrap import runtime_settings
+from potpie_context_engine.adapters.outbound.cli_auth.firebase_session import (
     FirebaseSession,
     FirebaseSessionError,
     exchange_custom_token,

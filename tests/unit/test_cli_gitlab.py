@@ -6,8 +6,8 @@ from __future__ import annotations
 import pytest
 import typer
 
-from adapters.outbound.cli_auth import credentials_store as cs
-from adapters.outbound.cli_auth.gitlab_read_client import (
+from potpie_context_engine.adapters.outbound.cli_auth import credentials_store as cs
+from potpie_context_engine.adapters.outbound.cli_auth.gitlab_read_client import (
     GitLabReadError,
 )
 
@@ -282,7 +282,7 @@ def test_list_integration_providers_includes_gitlab() -> None:
 
 
 def test_load_gitlab_read_credentials_raises_when_not_connected() -> None:
-    from adapters.outbound.cli_auth.gitlab_read_client import (
+    from potpie_context_engine.adapters.outbound.cli_auth.gitlab_read_client import (
         load_gitlab_read_credentials,
     )
 
@@ -291,7 +291,7 @@ def test_load_gitlab_read_credentials_raises_when_not_connected() -> None:
 
 
 def test_load_gitlab_read_credentials_raises_when_no_token() -> None:
-    from adapters.outbound.cli_auth.gitlab_read_client import (
+    from potpie_context_engine.adapters.outbound.cli_auth.gitlab_read_client import (
         load_gitlab_read_credentials,
     )
 

@@ -14,24 +14,24 @@ ROOT = Path(__file__).resolve().parents[2]
 ENGINE_ROOT = ROOT / "potpie" / "context-engine"
 
 EXPECTED_ENGINE_DAEMON_IMPORTERS = {
-    "application/services/setup_orchestrator.py",
-    "bootstrap/host_wiring.py",
-    "host/__init__.py",
-    "host/shell.py",
+    "src/potpie_context_engine/application/services/setup_orchestrator.py",
+    "src/potpie_context_engine/bootstrap/host_wiring.py",
+    "src/potpie_context_engine/host/__init__.py",
+    "src/potpie_context_engine/host/shell.py",
 }
 
 LEGACY_DAEMON_NAMESPACES = {
-    "adapters.inbound.daemon_http",
-    "adapters.inbound.http.ui",
-    "adapters.outbound.daemon_process",
-    "adapters.outbound.managed_services",
-    "application.services.managed_service_manager",
-    "domain.ports.daemon",
-    "host.daemon",
-    "host.daemon_client",
-    "host.daemon_main",
-    "host.daemon_rpc",
-    "host.daemon_runtime",
+    "potpie_context_engine.adapters.inbound.daemon_http",
+    "potpie_context_engine.adapters.inbound.http.ui",
+    "potpie_context_engine.adapters.outbound.daemon_process",
+    "potpie_context_engine.adapters.outbound.managed_services",
+    "potpie_context_engine.application.services.managed_service_manager",
+    "potpie_context_engine.domain.ports.daemon",
+    "potpie_context_engine.host.daemon",
+    "potpie_context_engine.host.daemon_client",
+    "potpie_context_engine.host.daemon_main",
+    "potpie_context_engine.host.daemon_rpc",
+    "potpie_context_engine.host.daemon_runtime",
 }
 
 
@@ -94,4 +94,6 @@ def test_mcp_process_and_dependency_are_removed() -> None:
     assert "potpie-mcp" not in root_metadata["project"]["scripts"]
     assert "mcp" not in _dependency_names(root_metadata)
     assert "mcp" not in _dependency_names(engine_metadata)
-    assert not (ENGINE_ROOT / "adapters" / "inbound" / "mcp").exists()
+    assert not (
+        ENGINE_ROOT / "src" / "potpie_context_engine" / "adapters" / "inbound" / "mcp"
+    ).exists()

@@ -19,28 +19,30 @@ import click
 import typer
 from rich.markup import escape
 
-from adapters.outbound.cli_auth.credentials_store import (
+from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
     ProviderCredentialError,
     credentials_path,
     get_integration_status,
     integration_token_storage,
 )
-from adapters.outbound.cli_auth.gitbucket_client import (
+from potpie_context_engine.adapters.outbound.cli_auth.gitbucket_client import (
     GitBucketClientError,
     gitbucket_token_page_url,
     normalize_gitbucket_host_url,
     verify_gitbucket_token,
 )
-from adapters.outbound.cli_auth.gitbucket_read_client import (
+from potpie_context_engine.adapters.outbound.cli_auth.gitbucket_read_client import (
     GitBucketReadError,
     list_gitbucket_repos,
 )
 from potpie.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
 from potpie.cli.ui.output import emit_error, print_json_blob, print_plain_line
-from adapters.outbound.cli_auth.provider_config import (
+from potpie_context_engine.adapters.outbound.cli_auth.provider_config import (
     GITBUCKET_TOKEN_ENV_VARS,
 )
-from bootstrap.runtime_settings import ensure_runtime_environment_loaded
+from potpie_context_engine.bootstrap.runtime_settings import (
+    ensure_runtime_environment_loaded,
+)
 
 T = TypeVar("T")
 

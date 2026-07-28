@@ -15,16 +15,22 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.graph.backends import build_backend
-from adapters.outbound.graph.inbox_stores.local_json import LocalJsonGraphInboxStore
-from adapters.outbound.graph.plan_stores.local_json import LocalJsonGraphPlanStore
-from application.services.graph_workbench import GraphWorkbenchService
-from domain.context_events import EventRef
-from domain.errors import CapabilityNotImplemented
-from domain.graph_mutations import EdgeUpsert, EntityUpsert
-from domain.ports.claim_query import ClaimQueryFilter
-from domain.ports.graph.backend import GraphBackend
-from domain.reconciliation import ReconciliationPlan
+from potpie_context_engine.adapters.outbound.graph.backends import build_backend
+from potpie_context_engine.adapters.outbound.graph.inbox_stores.local_json import (
+    LocalJsonGraphInboxStore,
+)
+from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
+    LocalJsonGraphPlanStore,
+)
+from potpie_context_engine.application.services.graph_workbench import (
+    GraphWorkbenchService,
+)
+from potpie_context_engine.domain.context_events import EventRef
+from potpie_context_engine.domain.errors import CapabilityNotImplemented
+from potpie_context_engine.domain.graph_mutations import EdgeUpsert, EntityUpsert
+from potpie_context_engine.domain.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.domain.ports.graph.backend import GraphBackend
+from potpie_context_engine.domain.reconciliation import ReconciliationPlan
 
 POT = "conformance-pot"
 
@@ -38,7 +44,7 @@ PARTIAL_PROFILES = ["neo4j", "falkordb", "falkordb_lite"]
 
 def _build(profile, tmp_path):
     if profile == "embedded":
-        from adapters.outbound.graph.backends.embedded_backend import (
+        from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
             EmbeddedGraphBackend,
         )
 
@@ -154,7 +160,9 @@ async def test_neo4j_sync_apply_refuses_inside_event_loop():
     # would corrupt the driver if run on the caller's loop. Inside a loop it must
     # refuse (pointing callers at apply_async) rather than bind to a dead loop —
     # and must not even construct the writer (so no driver is required here).
-    from adapters.outbound.graph.backends.neo4j_backend import _Neo4jMutation
+    from potpie_context_engine.adapters.outbound.graph.backends.neo4j_backend import (
+        _Neo4jMutation,
+    )
 
     mutation = _Neo4jMutation(settings=object())
     with pytest.raises(RuntimeError, match="event loop"):
@@ -189,7 +197,9 @@ def test_reset_clears_pot(profile, tmp_path):
 
 
 def test_embedded_persists_across_instances(tmp_path):
-    from adapters.outbound.graph.backends.embedded_backend import EmbeddedGraphBackend
+    from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
+        EmbeddedGraphBackend,
+    )
 
     EmbeddedGraphBackend(home=tmp_path).mutation.apply(_plan(), expected_pot_id=POT)
     # A fresh backend over the same home must see the persisted claim.
@@ -215,7 +225,9 @@ def test_embedded_unbuilt_profile_fails_closed():
     """A profile that has not built a capability must raise
     CapabilityNotImplemented — proven via the neo4j projections, which are
     derivable stubs (no live driver needed to construct the stub)."""
-    from adapters.outbound.graph.backends._unimplemented import UnimplementedSemantic
+    from potpie_context_engine.adapters.outbound.graph.backends._unimplemented import (
+        UnimplementedSemantic,
+    )
 
     stub = UnimplementedSemantic("neo4j")
     with pytest.raises(CapabilityNotImplemented) as exc:

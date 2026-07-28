@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import pytest
 
-from domain.ontology_classifier import build_signals, classify_entity
+from potpie_context_engine.domain.ontology_classifier import (
+    build_signals,
+    classify_entity,
+)
 
 pytestmark = pytest.mark.unit
 

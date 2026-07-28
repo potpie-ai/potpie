@@ -9,7 +9,7 @@ from potpie.cli.telemetry.sentry_runtime import (
 def configure_daemon_sentry() -> None:
     try:
         from potpie.cli.telemetry import settings
-        from bootstrap import sentry_metrics_runtime
+        from potpie_context_engine.bootstrap import sentry_metrics_runtime
 
         sentry_metrics_runtime.configure_metrics(settings.load_sentry_settings())
     except Exception:  # noqa: BLE001

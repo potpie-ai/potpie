@@ -29,12 +29,12 @@ from potpie.cli.repo_location import (
     normalize_repo_ref as shared_normalize_repo_ref,
     repo_identity_key,
 )
-from domain.errors import (
+from potpie_context_engine.domain.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
     PotNotFound,
 )
-from domain.ports.cli_auth.credentials import CredentialStore
+from potpie_context_engine.domain.ports.cli_auth.credentials import CredentialStore
 
 # --- exit codes (cli-flow.md output contract) -------------------------------
 EXIT_OK = 0
@@ -108,7 +108,7 @@ def get_host():
                 _state["host"] = RemoteHostShell()
                 return _state["host"]
 
-        from bootstrap.host_wiring import build_host_shell
+        from potpie_context_engine.bootstrap.host_wiring import build_host_shell
 
         _state["host"] = build_host_shell()
     return _state["host"]
@@ -123,12 +123,14 @@ def get_store() -> CredentialStore:
     """Return the process-wide ``CredentialStore`` (built lazily).
 
     The auth/credential subsystem persists through this domain port; the concrete
-    is chosen at the composition root (``bootstrap.cli_auth_wiring``), so this
+    is chosen at the composition root (``potpie_context_engine.bootstrap.cli_auth_wiring``), so this
     inbound module never imports an adapter. The default is the real
     file-backed store; tests inject an in-memory fake via ``set_store``.
     """
     if _state["store"] is None:
-        from bootstrap.cli_auth_wiring import build_credential_store
+        from potpie_context_engine.bootstrap.cli_auth_wiring import (
+            build_credential_store,
+        )
 
         _state["store"] = build_credential_store()
     return _state["store"]
@@ -297,7 +299,7 @@ def _record_cli_contract_metrics(
     result: str,
     error_code: str,
 ) -> None:
-    from bootstrap import sentry_metrics_runtime
+    from potpie_context_engine.bootstrap import sentry_metrics_runtime
 
     attributes = _cli_metric_attributes(result=result, error_code=error_code)
     duration_ms = max((time.perf_counter() - started_at) * 1000.0, 0.0)

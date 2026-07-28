@@ -10,7 +10,7 @@ import pytest
 from potpie.cli.ui import setup_ux
 from potpie.cli.ui import setup_wizard_ui
 from potpie.cli.ui.setup_wizard_ui import SetupWizardUI
-from domain.lifecycle import (
+from potpie_context_engine.domain.lifecycle import (
     DONE,
     NOT_IMPLEMENTED,
     PlannedSetupStep,

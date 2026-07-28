@@ -28,7 +28,7 @@ def _serve(home: pathlib.Path) -> None:
         write_discovery,
         write_pid_file,
     )
-    from bootstrap.host_wiring import build_host_shell
+    from potpie_context_engine.bootstrap.host_wiring import build_host_shell
     from potpie.daemon.runtime.config import build_daemon_config
     from potpie.daemon.runtime.shell import (
         DaemonRuntime,

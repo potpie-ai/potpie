@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from adapters.inbound.cli import main as cli_main
-from adapters.inbound.cli import skill_catalog, skill_lock, skill_targets
-from adapters.inbound.cli.skill_manager import SkillManager
+from potpie_context_engine.adapters.inbound.cli import main as cli_main
+from potpie_context_engine.adapters.inbound.cli import skill_catalog, skill_lock, skill_targets
+from potpie_context_engine.adapters.inbound.cli.skill_manager import SkillManager
 
 pytestmark = pytest.mark.unit
 

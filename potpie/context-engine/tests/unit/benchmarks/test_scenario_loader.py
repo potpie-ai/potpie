@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from benchmarks.core.scenario import (
+from potpie_context_engine.benchmarks.core.scenario import (
     DEFAULT_AXIS_WEIGHTS,
     AxisWeights,
     ScenarioLoadError,

@@ -99,8 +99,10 @@ def build_app() -> typer.Typer:
             configure_cli_logging,
             configure_error_output,
         )
-        from bootstrap.runtime_settings import ensure_runtime_environment_loaded
-        from bootstrap import sentry_metrics_runtime
+        from potpie_context_engine.bootstrap.runtime_settings import (
+            ensure_runtime_environment_loaded,
+        )
+        from potpie_context_engine.bootstrap import sentry_metrics_runtime
 
         set_json(json_)
         set_verbose(verbose)
