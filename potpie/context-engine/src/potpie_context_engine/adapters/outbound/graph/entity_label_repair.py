@@ -15,7 +15,9 @@ ENTITY_LABEL_REPAIR_LIMIT = 100_000
 
 ENTITY_LABEL_SCAN_CYPHER = """
 MATCH (e:Entity {group_id: $gid})
+WHERE e.entity_key > $after
 RETURN e.entity_key AS key, labels(e) AS labels
+ORDER BY e.entity_key
 LIMIT $limit
 """
 

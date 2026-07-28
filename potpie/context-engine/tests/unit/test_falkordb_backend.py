@@ -109,6 +109,38 @@ class _RepairGraph:
         return _FakeResult([], [])
 
 
+class _PagedLabelRepairGraph:
+    def __init__(self) -> None:
+        self.scan_cursors: list[str] = []
+        self.updated_keys: list[str] = []
+
+    def query(self, cypher: str, params: dict | None = None) -> _FakeResult:
+        params = params or {}
+        if "labels(e) AS labels" in cypher:
+            after = str(params["after"])
+            self.scan_cursors.append(after)
+            pages = {
+                "": [
+                    [
+                        "environment:a",
+                        ["Entity", "Activity", "Environment"],
+                    ]
+                ],
+                "environment:a": [
+                    [
+                        "environment:b",
+                        ["Entity", "DeploymentTarget", "Environment"],
+                    ]
+                ],
+                "environment:b": [],
+            }
+            return _FakeResult(["key", "labels"], pages[after])
+        if "RETURN count(e) AS cnt" in cypher:
+            self.updated_keys.append(str(params["key"]))
+            return _FakeResult(["cnt"], [[1]])
+        return _FakeResult([], [])
+
+
 def test_build_backend_registers_falkordb_without_connecting() -> None:
     assert "falkordb" in KNOWN_PROFILES
     backend = build_backend("falkordb", settings=_Settings(mode="server"))
@@ -240,3 +272,17 @@ def test_falkordb_repair_backfills_entity_summaries() -> None:
     assert graph.updates[0]["props"]["description"] == "Web frontend service."
     assert graph.updates[1]["props"]["summary"] == "auth"
     assert graph.updates[1]["props"]["description"] == "auth"
+
+
+def test_falkordb_entity_label_repair_scans_every_page() -> None:
+    graph = _PagedLabelRepairGraph()
+    backend = FalkorDBGraphBackend(
+        _Settings(),
+        graph_provider=lambda: graph,
+    )
+
+    report = backend.analytics.repair("p1", targets=["entity_labels"])
+
+    assert report.repaired == {"entity_labels": 2}
+    assert graph.scan_cursors == ["", "environment:a", "environment:b"]
+    assert graph.updated_keys == ["environment:a", "environment:b"]

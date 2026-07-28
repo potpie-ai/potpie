@@ -252,9 +252,25 @@ def test_quality_entity_label_drift_reports_conflicting_labels() -> None:
         "Environment",
     ]
     assert (
-        result.findings[0].suggested_action["command"]
-        == "graph repair --entity-labels"
+        result.findings[0].suggested_action["command"] == "graph repair --entity-labels"
     )
+
+
+def test_quality_entity_label_drift_skips_unresolved_claim_only_keys() -> None:
+    workbench, backend = _service()
+    backend.store.add(
+        _row(
+            "DEPENDS_ON",
+            "service:unresolved",
+            "service:also-unresolved",
+            claim_key="claim-only",
+        )
+    )
+
+    result = workbench.quality(pot_id=POT, report="entity-label-drift")
+
+    assert result.status == "ok"
+    assert result.findings == ()
 
 
 def test_quality_projection_drift_uses_ontology_endpoint_semantics() -> None:

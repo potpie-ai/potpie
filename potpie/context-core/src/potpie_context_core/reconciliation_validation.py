@@ -76,7 +76,10 @@ def validate_reconciliation_plan(
             )
         return
     plan.ontology_downgrades.clear()
-    canonicalize_reconciliation_plan(plan)
+    canonicalize_reconciliation_plan(
+        plan,
+        enforce_label_coherence=config.infer_canonical_labels,
+    )
     _validate_hard(plan, expected_pot_id)
     _augment_evidence_warnings(plan)
 

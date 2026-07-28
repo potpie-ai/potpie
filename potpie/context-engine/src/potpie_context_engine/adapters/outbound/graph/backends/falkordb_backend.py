@@ -385,32 +385,41 @@ class FalkorDBGraphBackend:
 
     def _repair_entity_labels(self, pot_id: str) -> int:
         graph = self.graph_provider()
-        rows = _records_from_result(
-            graph.query(
-                ENTITY_LABEL_SCAN_CYPHER,
-                params={"gid": pot_id, "limit": ENTITY_LABEL_REPAIR_LIMIT},
-            )
-        )
         repaired = 0
-        for row in rows:
-            key = str(row.get("key") or "").strip()
-            labels = tuple(row.get("labels") or ())
-            fixed = repaired_entity_labels(key, labels)
-            if not key or fixed is None:
-                continue
-            remove, add = canonical_label_changes(labels, fixed)
-            clauses = [*(f"REMOVE e:{label}" for label in remove)]
-            clauses.extend(f"SET e:{label}" for label in add)
-            if not clauses:
-                continue
-            result = graph.query(
-                "MATCH (e:Entity {group_id: $gid, entity_key: $key}) "
-                + " ".join(clauses)
-                + " RETURN count(e) AS cnt",
-                params={"gid": pot_id, "key": key},
+        after = ""
+        while True:
+            rows = _records_from_result(
+                graph.query(
+                    ENTITY_LABEL_SCAN_CYPHER,
+                    params={
+                        "gid": pot_id,
+                        "after": after,
+                        "limit": ENTITY_LABEL_REPAIR_LIMIT,
+                    },
+                )
             )
-            records = _records_from_result(result)
-            repaired += int(records[0].get("cnt") or 0) if records else 1
+            if not rows:
+                break
+            for row in rows:
+                key = str(row.get("key") or "").strip()
+                labels = tuple(row.get("labels") or ())
+                fixed = repaired_entity_labels(key, labels)
+                if not key or fixed is None:
+                    continue
+                remove, add = canonical_label_changes(labels, fixed)
+                clauses = [*(f"REMOVE e:{label}" for label in remove)]
+                clauses.extend(f"SET e:{label}" for label in add)
+                if not clauses:
+                    continue
+                result = graph.query(
+                    "MATCH (e:Entity {group_id: $gid, entity_key: $key}) "
+                    + " ".join(clauses)
+                    + " RETURN count(e) AS cnt",
+                    params={"gid": pot_id, "key": key},
+                )
+                records = _records_from_result(result)
+                repaired += int(records[0].get("cnt") or 0) if records else 1
+            after = str(rows[-1].get("key") or "")
         return repaired
 
 

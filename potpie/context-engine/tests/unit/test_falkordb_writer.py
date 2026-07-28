@@ -205,6 +205,28 @@ async def test_upsert_entities_issues_merge_via_shim() -> None:
     assert any("MERGE (e:Entity" in q for q, _ in graph.queries)
 
 
+async def test_upsert_entities_removes_stale_labels_in_one_query() -> None:
+    graph = _FakeGraph()
+    writer = FalkorDBGraphWriter(_FakeSettings(), graph=graph)
+
+    await writer.upsert_entities(
+        "p1",
+        [
+            EntityUpsert(
+                entity_key="environment:production",
+                labels=("Entity", "Environment"),
+                properties={},
+            )
+        ],
+        ProvenanceRef(pot_id="p1", source_event_id="e1"),
+    )
+
+    removals = [query for query, _ in graph.queries if " REMOVE e:" in query]
+    assert len(removals) == 1
+    assert "Environment" not in removals[0]
+    assert removals[0].count(":") > 1
+
+
 async def test_upsert_entities_empty_is_noop() -> None:
     graph = _FakeGraph()
     w = FalkorDBGraphWriter(_FakeSettings(), graph=graph)

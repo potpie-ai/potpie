@@ -2698,7 +2698,11 @@ def _quality_entity_label_drift(
 
     findings: list[GraphQualityFinding] = []
     for key in sorted(entity_keys):
-        current = tuple(labels_by_key.get(key, ()))
+        if key not in labels_by_key:
+            continue
+        current = tuple(labels_by_key[key])
+        if not current:
+            continue
         expected = coherent_entity_labels(key, current)
         current_canonical = set(current) & set(definition.entity_types)
         expected_canonical = set(expected) & set(definition.entity_types)

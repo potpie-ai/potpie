@@ -333,13 +333,14 @@ async def upsert_entities_async(
                     if candidate in definition.entity_types
                     and _LABEL_RE.fullmatch(candidate)
                 )
-            if wanted_labels:
-                for stale in sorted(set(definition.entity_types) - wanted_labels):
-                    await session.run(
-                        f"MATCH (e:Entity {{group_id: $gid, entity_key: $key}}) REMOVE e:{stale}",  # pyright: ignore[reportArgumentType]
-                        gid=pot_id,
-                        key=item.entity_key,
-                    )
+            stale_labels = sorted(set(definition.entity_types) - wanted_labels)
+            if stale_labels:
+                remove_clause = ":".join(stale_labels)
+                await session.run(
+                    f"MATCH (e:Entity {{group_id: $gid, entity_key: $key}}) REMOVE e:{remove_clause}",  # pyright: ignore[reportArgumentType]
+                    gid=pot_id,
+                    key=item.entity_key,
+                )
             for lbl in sorted(wanted_labels):
                 await session.run(
                     f"MATCH (e:Entity {{group_id: $gid, entity_key: $key}}) SET e:{lbl}",  # pyright: ignore[reportArgumentType]

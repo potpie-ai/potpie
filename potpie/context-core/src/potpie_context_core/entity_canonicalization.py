@@ -81,12 +81,18 @@ def coherent_entity_labels(entity_key: str, labels: Iterable[str]) -> tuple[str,
     )
 
 
-def canonicalize_reconciliation_plan(plan: ReconciliationPlan) -> int:
+def canonicalize_reconciliation_plan(
+    plan: ReconciliationPlan, *, enforce_label_coherence: bool = True
+) -> int:
     """Normalize keys and merge duplicates in place. Returns merge count."""
     rewrite = _build_rewrite_map(plan.entity_upserts)
     rewrite.update(_extra_rewrites_from_edges(plan, rewrite))
 
-    merged, merge_count = _merge_entities(plan.entity_upserts, rewrite)
+    merged, merge_count = _merge_entities(
+        plan.entity_upserts,
+        rewrite,
+        enforce_label_coherence=enforce_label_coherence,
+    )
     plan.entity_upserts = merged
     plan.edge_upserts = _rewrite_edges(plan.edge_upserts, rewrite)
     plan.edge_deletes = _rewrite_edge_deletes(plan.edge_deletes, rewrite)
@@ -150,7 +156,10 @@ def _canonical(rewrite: dict[str, str], key: str) -> str:
 
 
 def _merge_entities(
-    items: list[EntityUpsert], rewrite: dict[str, str]
+    items: list[EntityUpsert],
+    rewrite: dict[str, str],
+    *,
+    enforce_label_coherence: bool,
 ) -> tuple[list[EntityUpsert], int]:
     by_key: dict[str, EntityUpsert] = {}
     order: list[str] = []
@@ -158,9 +167,14 @@ def _merge_entities(
     for item in items:
         canonical_key = _canonical(rewrite, item.entity_key)
         if canonical_key == item.entity_key and canonical_key not in by_key:
+            labels = (
+                coherent_entity_labels(canonical_key, item.labels)
+                if enforce_label_coherence
+                else tuple(item.labels)
+            )
             by_key[canonical_key] = EntityUpsert(
                 entity_key=canonical_key,
-                labels=coherent_entity_labels(canonical_key, item.labels),
+                labels=labels,
                 properties=dict(item.properties),
             )
             order.append(canonical_key)
@@ -168,13 +182,21 @@ def _merge_entities(
 
         if canonical_key in by_key:
             by_key[canonical_key] = _merge_pair(
-                by_key[canonical_key], item, canonical_key
+                by_key[canonical_key],
+                item,
+                canonical_key,
+                enforce_label_coherence=enforce_label_coherence,
             )
             merges += 1
         else:
+            labels = (
+                coherent_entity_labels(canonical_key, item.labels)
+                if enforce_label_coherence
+                else tuple(item.labels)
+            )
             by_key[canonical_key] = EntityUpsert(
                 entity_key=canonical_key,
-                labels=coherent_entity_labels(canonical_key, item.labels),
+                labels=labels,
                 properties=dict(item.properties),
             )
             order.append(canonical_key)
@@ -182,10 +204,17 @@ def _merge_entities(
 
 
 def _merge_pair(
-    prior: EntityUpsert, incoming: EntityUpsert, canonical_key: str
+    prior: EntityUpsert,
+    incoming: EntityUpsert,
+    canonical_key: str,
+    *,
+    enforce_label_coherence: bool,
 ) -> EntityUpsert:
-    labels = coherent_entity_labels(
-        canonical_key, [*prior.labels, *incoming.labels]
+    combined_labels = tuple(dict.fromkeys([*prior.labels, *incoming.labels]))
+    labels = (
+        coherent_entity_labels(canonical_key, combined_labels)
+        if enforce_label_coherence
+        else combined_labels
     )
     merged_props = dict(prior.properties)
     for k, v in incoming.properties.items():

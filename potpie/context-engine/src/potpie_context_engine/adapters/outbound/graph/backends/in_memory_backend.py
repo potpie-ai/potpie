@@ -607,9 +607,7 @@ class _Analytics:
 
     def _repair_entity_labels(self, pot_id: str) -> int:
         repaired = 0
-        for (pid, entity_key), labels in tuple(
-            self.store.entity_label_index.items()
-        ):
+        for (pid, entity_key), labels in tuple(self.store.entity_label_index.items()):
             if pid != pot_id:
                 continue
             fixed = repaired_entity_labels(entity_key, labels)
