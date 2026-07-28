@@ -25,7 +25,6 @@ from potpie.cli.commands import (
     graph,
     ledger,
     pots,
-    service,
     telemetry,
 )
 from potpie.cli.commands import query as query_cmds
@@ -126,7 +125,6 @@ def build_app() -> typer.Typer:
     app.add_typer(pots.pot_app, name="pot")
     app.add_typer(pots.source_app, name="source")
     app.add_typer(daemon.daemon_app, name="daemon")
-    app.add_typer(service.service_app, name="service")
     app.add_typer(ledger.ledger_app, name="ledger")
     app.add_typer(graph.graph_app, name="graph")
     app.add_typer(graph.timeline_app, name="timeline")

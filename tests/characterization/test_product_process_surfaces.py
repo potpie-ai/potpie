@@ -44,7 +44,6 @@ EXPECTED_CLI_COMMANDS = {
     "record",
     "resolve",
     "search",
-    "service",
     "setup",
     "skills",
     "source",

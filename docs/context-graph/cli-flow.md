@@ -84,7 +84,6 @@ and `add_typer` sub-apps. Note the corrections vs older docs: there is **no
 | `ui` | `commands/ui.py` | ensures daemon, opens read-only graph explorer |
 | `pot` `source` | `commands/pots.py` | `HostShell.pots` (`PotManagementService`) |
 | `daemon` | `commands/daemon.py` | `HostShell.daemon` (`Daemon`) |
-| `service` | `commands/service.py` | daemon `/admin/services` IPC |
 | `ledger` | `commands/ledger.py` | `HostShell.ledger` (clients are stubs — roadmap) |
 | `graph` (+ nested `inbox`, `quality`, `bulk`) | `commands/graph.py` | `HostShell.graph` / `graph_workbench` / `backend` / `nudge` |
 | `timeline` | `commands/graph.py` | `HostShell.graph` (alias of a recent-changes read) |
@@ -208,21 +207,17 @@ potpie source remove <id> [--pot <ref>]
 
 ---
 
-## Daemon & service (local infra)
+## Daemon (local infra)
 
 ```bash
 potpie daemon start | status | logs [--follow] | restart | stop
-
-potpie service up   <name>
-potpie service down <name>
-potpie service status
-potpie service logs <name> [-f/--follow]
 ```
 
 - **`daemon`** (`commands/daemon.py` → `host.daemon`) — local recovery tooling, not
   onboarding steps. `DaemonStartError` → exit 2.
-- **`service`** (`commands/service.py`) — drives the daemon's `/admin/services` IPC
-  via `ipc_client.client_for(home)`; exit 2 when no daemon is running.
+- Supporting-service admin CLI (`potpie service …`) is not part of the OSS surface;
+  the detached daemon does not expose a compatible `/admin/services` discovery
+  contract for those commands.
 
 ---
 
