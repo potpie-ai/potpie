@@ -171,7 +171,7 @@ def run_cli(argv: list[str] | None = None) -> None:
     configure_cli_logging(is_verbose())
 
     try:
-        app(args, standalone_mode=False)
+        exit_code = app(args, standalone_mode=False)
     except (Abort, click.Abort):
         raise typer.Exit(code=1) from None
     except ClickException as exc:
@@ -184,6 +184,9 @@ def run_cli(argv: list[str] | None = None) -> None:
             )
         exc.show(file=sys.stderr)
         sys.exit(exc.exit_code)
+
+    if exit_code:
+        raise typer.Exit(code=int(exit_code))
 
 
 def main() -> None:
