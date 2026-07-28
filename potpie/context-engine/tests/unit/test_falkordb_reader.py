@@ -276,10 +276,26 @@ class _DispatchGraph:
 
 def test_fact_query_applies_label_filters_in_python() -> None:
     vector_rows = [
-        [{"group_id": "p1", "name": "X", "subject_key": "service:web",
-          "object_key": "team:platform", "fact": "match"}, 0.1],
-        [{"group_id": "p1", "name": "X", "subject_key": "doc:readme",
-          "object_key": "team:platform", "fact": "match"}, 0.2],
+        [
+            {
+                "group_id": "p1",
+                "name": "X",
+                "subject_key": "service:web",
+                "object_key": "team:platform",
+                "fact": "match",
+            },
+            0.1,
+        ],
+        [
+            {
+                "group_id": "p1",
+                "name": "X",
+                "subject_key": "doc:readme",
+                "object_key": "team:platform",
+                "fact": "match",
+            },
+            0.2,
+        ],
     ]
     label_rows = [
         ["service:web", ["Entity", "Service"]],
@@ -310,8 +326,16 @@ def test_fact_query_applies_label_filters_in_python() -> None:
 
 def test_fact_query_vector_result_clamped_to_limit() -> None:
     vector_rows = [
-        [{"group_id": "p1", "name": "X", "subject_key": f"s{i}",
-          "object_key": "o", "fact": "match"}, 0.1 * i]
+        [
+            {
+                "group_id": "p1",
+                "name": "X",
+                "subject_key": f"s{i}",
+                "object_key": "o",
+                "fact": "match",
+            },
+            0.1 * i,
+        ]
         for i in range(5)
     ]
     graph = _DispatchGraph(vector_rows, [])
@@ -319,9 +343,7 @@ def test_fact_query_vector_result_clamped_to_limit() -> None:
         settings=object(), graph=graph, embedder=_FakeEmbedder()
     )  # type: ignore[arg-type]
 
-    rows = store.find_claims(
-        ClaimQueryFilter(pot_id="p1", fact_query="match", limit=2)
-    )
+    rows = store.find_claims(ClaimQueryFilter(pot_id="p1", fact_query="match", limit=2))
 
     assert len(rows) == 2
 

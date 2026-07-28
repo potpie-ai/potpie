@@ -64,7 +64,8 @@ class ClaimQueryAnalytics:
         # Naive stamps are treated as UTC: rows can mix naive and aware
         # datetimes (older writers), and Python refuses to compare the two.
         stamps = [
-            r.valid_at if r.valid_at.tzinfo is not None
+            r.valid_at
+            if r.valid_at.tzinfo is not None
             else r.valid_at.replace(tzinfo=timezone.utc)
             for r in self._rows(pot_id)
             if r.valid_at is not None

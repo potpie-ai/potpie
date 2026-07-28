@@ -5,7 +5,9 @@ from __future__ import annotations
 import pytest
 
 from potpie_context_core.reconciliation_validation import validate_reconciliation_plan
-from potpie_context_core.canonical_label_inference import enrich_reconciliation_plan_entity_labels
+from potpie_context_core.canonical_label_inference import (
+    enrich_reconciliation_plan_entity_labels,
+)
 from potpie_context_core.context_events import EventRef
 from potpie_context_core.graph_mutations import EdgeUpsert, EntityUpsert
 from potpie_context_core.ontology import (

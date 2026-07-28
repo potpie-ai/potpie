@@ -12,7 +12,12 @@ from potpie_context_core.reconciliation_validation import (
 )
 from potpie_context_core.context_events import EventRef
 from potpie_context_core.errors import ReconciliationPlanValidationError
-from potpie_context_core.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp
+from potpie_context_core.graph_mutations import (
+    EdgeDelete,
+    EdgeUpsert,
+    EntityUpsert,
+    InvalidationOp,
+)
 from potpie_context_core.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.unit
