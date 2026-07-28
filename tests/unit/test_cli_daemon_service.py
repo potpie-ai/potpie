@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import httpx
 from typer.testing import CliRunner
 
 from potpie.cli import main as host_cli
@@ -84,86 +82,13 @@ def test_daemon_lifecycle_commands_use_detached_daemon(tmp_path: Path) -> None:
     assert daemon.calls == ["start", "status", "stop", "start", "stop"]
 
 
-def test_service_status_fails_cleanly_when_daemon_is_down(tmp_path: Path) -> None:
+def test_service_command_group_is_removed(tmp_path: Path) -> None:
     _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
 
     result = runner.invoke(host_cli.app, ["--json", "service", "status"])
 
-    assert result.exit_code == _common.EXIT_UNAVAILABLE
-    payload = json.loads(result.stdout)
-    assert payload["code"] == "daemon_not_running"
-
-
-def test_service_logs_reads_service_log_without_running_daemon(tmp_path: Path) -> None:
-    log_dir = tmp_path / "logs"
-    log_dir.mkdir()
-    (log_dir / "service-graph.log").write_text("hello\n", encoding="utf-8")
-    _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
-
-    result = runner.invoke(host_cli.app, ["--json", "service", "logs", "graph"])
-
-    assert result.exit_code == 0, result.stdout
-    assert json.loads(result.stdout)["lines"] == ["hello"]
-
-
-def test_service_logs_falkordb_lite_explains_embedded_backend(tmp_path: Path) -> None:
-    _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
-
-    result = CliRunner().invoke(
-        host_cli.app, ["--json", "service", "logs", "falkordb_lite"]
-    )
-
-    assert result.exit_code == 0, result.stdout
-    payload = json.loads(result.stdout)
-    assert payload["status"] == "embedded_backend"
-    assert payload["profile"] == "falkordb_lite"
-    assert payload["recommended_log_command"] == "potpie daemon logs"
-    assert "database_path" in payload
-    assert "no separate service log" in result.stdout
-
-
-def test_service_logs_returns_helpful_message_when_daemon_ipc_fails(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    @contextmanager
-    def _failing_client(_home: Path):
-        class _Client:
-            def get(self, _path: str) -> None:
-                raise httpx.ConnectError("stale daemon socket")
-
-        yield _Client()
-
-    monkeypatch.setattr(
-        "potpie.cli.commands.service.client_for",
-        _failing_client,
-    )
-    _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
-
-    result = runner.invoke(host_cli.app, ["--json", "service", "logs", "graph"])
-
-    assert result.exit_code == 0, result.stdout
-    payload = json.loads(result.stdout)
-    assert payload["status"] == "no_log_file"
-    assert "no log file for 'graph'" in payload["message"]
-
-
-def test_service_logs_follow_exits_cleanly_on_keyboard_interrupt(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    log_dir = tmp_path / "logs"
-    log_dir.mkdir()
-    (log_dir / "service-graph.log").write_text("", encoding="utf-8")
-    _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
-    monkeypatch.setattr(
-        "time.sleep",
-        lambda _interval: (_ for _ in ()).throw(KeyboardInterrupt),
-    )
-
-    result = runner.invoke(host_cli.app, ["service", "logs", "graph", "--follow"])
-
-    assert result.exit_code == 0, result.stdout
+    assert result.exit_code == 2
+    assert "No such command 'service'" in result.output
 
 
 def test_setup_daemon_dry_run_marks_daemon_host_mode(

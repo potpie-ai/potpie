@@ -52,6 +52,19 @@ def test_unknown_subcommand_emits_structured_json_via_run_cli(
     assert payload["recommended_next_action"]
 
 
+def test_removed_service_group_emits_structured_unknown_command(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(typer.Exit) as exc_info:
+        host_cli.run_cli(["--json", "service", "status"])
+
+    assert exc_info.value.exit_code == _common.EXIT_VALIDATION
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["code"] == "usage_error"
+    assert "service" in payload["message"]
+
+
 @pytest.mark.parametrize(
     "argv, expected",
     [
