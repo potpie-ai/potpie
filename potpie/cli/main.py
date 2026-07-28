@@ -58,10 +58,20 @@ def _version_callback(value: bool) -> None:
     raise typer.Exit()
 
 
+_ROOT_HELP = """\
+Potpie context graph CLI (host-routed: CLI → HostShell → services → ports).
+
+First run:
+  potpie setup --repo . --agent <harness>
+  potpie doctor
+  potpie status
+"""
+
+
 def build_app() -> typer.Typer:
     app = typer.Typer(
         name="potpie",
-        help="Potpie context graph CLI (host-routed: CLI → HostShell → services → ports).",
+        help=_ROOT_HELP,
         no_args_is_help=True,
         add_completion=False,
     )
@@ -89,8 +99,10 @@ def build_app() -> typer.Typer:
             configure_cli_logging,
             configure_error_output,
         )
-        from bootstrap.runtime_settings import ensure_runtime_environment_loaded
-        from bootstrap import sentry_metrics_runtime
+        from potpie_context_engine.bootstrap.runtime_settings import (
+            ensure_runtime_environment_loaded,
+        )
+        from potpie_context_engine.bootstrap import sentry_metrics_runtime
 
         set_json(json_)
         set_verbose(verbose)
@@ -120,7 +132,13 @@ def build_app() -> typer.Typer:
     app.add_typer(graph.timeline_app, name="timeline")
     app.add_typer(graph.backend_app, name="backend")
     app.add_typer(skills_cmds.skills_app, name="skills")
-    app.add_typer(cloud.cloud_app, name="cloud")
+    # Keep cloud discoverable but below the local happy path — managed routing
+    # is still in development (see cli-flow.md).
+    app.add_typer(
+        cloud.cloud_app,
+        name="cloud",
+        rich_help_panel="Coming soon",
+    )
     app.add_typer(telemetry.telemetry_app, name="telemetry")
 
     return app
@@ -153,7 +171,7 @@ def run_cli(argv: list[str] | None = None) -> None:
     configure_cli_logging(is_verbose())
 
     try:
-        app(args, standalone_mode=False)
+        exit_code = app(args, standalone_mode=False)
     except (Abort, click.Abort):
         raise typer.Exit(code=1) from None
     except ClickException as exc:
@@ -166,6 +184,9 @@ def run_cli(argv: list[str] | None = None) -> None:
             )
         exc.show(file=sys.stderr)
         sys.exit(exc.exit_code)
+
+    if exit_code:
+        raise typer.Exit(code=int(exit_code))
 
 
 def main() -> None:

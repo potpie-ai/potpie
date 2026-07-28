@@ -23,19 +23,23 @@ pytestmark = pytest.mark.integration
 # Import name is ``redislite`` (distribution: falkordblite); skip if absent.
 falkordb_client = pytest.importorskip("redislite.falkordb_client")
 
-from adapters.outbound.graph.falkordb_reader import FalkorDBClaimQueryStore  # noqa: E402
-from adapters.outbound.graph.falkordb_writer import FalkorDBGraphWriter  # noqa: E402
-from adapters.outbound.graph.backends.falkordb_backend import (  # noqa: E402
+from potpie_context_engine.adapters.outbound.graph.backends.falkordb_backend import (  # noqa: E402
     FalkorDBGraphBackend,
 )
-from application.services.graph_workbench import GraphWorkbenchService  # noqa: E402
-from domain.graph_mutations import (  # noqa: E402
+from potpie_context_engine.adapters.outbound.graph.falkordb_reader import (  # noqa: E402
+    FalkorDBClaimQueryStore,
+)
+from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (  # noqa: E402
+    FalkorDBGraphWriter,
+)
+from potpie_context_core.workbench_service import GraphWorkbenchService  # noqa: E402
+from potpie_context_core.graph_mutations import (  # noqa: E402
     EdgeUpsert,
     EntityUpsert,
     InvalidationOp,
     ProvenanceRef,
 )
-from domain.ports.claim_query import ClaimQueryFilter  # noqa: E402
+from potpie_context_core.ports.claim_query import ClaimQueryFilter  # noqa: E402
 
 
 class _Settings:

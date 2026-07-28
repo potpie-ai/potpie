@@ -1,15 +1,28 @@
 from __future__ import annotations
 
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 import json
+import multiprocessing
+import threading
 
 import pytest
 
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.graph.plan_stores.local_json import LocalJsonGraphPlanStore
-from application.services.graph_workbench import GraphWorkbenchService
-from domain.graph_plans import GraphMutationPlanRecord
-from domain.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
+    LocalJsonGraphPlanStore,
+)
+from potpie_context_core.workbench_service import (
+    GraphWorkbenchService,
+)
+from potpie_context_core.graph_plans import (
+    GraphMutationPlanRecord,
+    GraphMutationPlanStatus,
+)
+from potpie_context_core.ports.claim_query import ClaimQueryFilter
 
 pytestmark = pytest.mark.unit
 
@@ -19,12 +32,28 @@ POT = "p"
 class _MemoryPlanStore:
     def __init__(self) -> None:
         self.records: dict[tuple[str, str], GraphMutationPlanRecord] = {}
+        self.lock = threading.Lock()
 
     def save(self, record: GraphMutationPlanRecord) -> None:
-        self.records[(record.pot_id, record.plan_id)] = record
+        with self.lock:
+            self.records[(record.pot_id, record.plan_id)] = record
 
     def get(self, *, pot_id: str, plan_id: str) -> GraphMutationPlanRecord | None:
-        return self.records.get((pot_id, plan_id))
+        with self.lock:
+            return self.records.get((pot_id, plan_id))
+
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphMutationPlanRecord,
+        replacement: GraphMutationPlanRecord,
+    ) -> bool:
+        key = (expected.pot_id, expected.plan_id)
+        with self.lock:
+            if self.records.get(key) != expected:
+                return False
+            self.records[key] = replacement
+            return True
 
     def list(
         self,
@@ -36,7 +65,10 @@ class _MemoryPlanStore:
         until: datetime | None = None,
         limit: int | None = None,
     ) -> tuple[GraphMutationPlanRecord, ...]:
-        records = [record for (pid, _), record in self.records.items() if pid == pot_id]
+        with self.lock:
+            records = [
+                record for (pid, _), record in self.records.items() if pid == pot_id
+            ]
         if plan_id:
             records = [record for record in records if record.plan_id == plan_id]
         if mutation_id:
@@ -58,10 +90,247 @@ class _MemoryPlanStore:
         return tuple(records)
 
 
+class _RacingPlanStore(_MemoryPlanStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.commit_claims = threading.Barrier(2)
+        self.claim_rejected = threading.Event()
+        self.rejected_claim_observed = threading.Event()
+
+    def get(self, *, pot_id: str, plan_id: str) -> GraphMutationPlanRecord | None:
+        record = super().get(pot_id=pot_id, plan_id=plan_id)
+        if (
+            self.claim_rejected.is_set()
+            and record is not None
+            and record.status == GraphMutationPlanStatus.committing.value
+        ):
+            self.rejected_claim_observed.set()
+        return record
+
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphMutationPlanRecord,
+        replacement: GraphMutationPlanRecord,
+    ) -> bool:
+        if replacement.status == GraphMutationPlanStatus.committing.value:
+            self.commit_claims.wait(timeout=5)
+        claimed = super().compare_and_set(
+            expected=expected,
+            replacement=replacement,
+        )
+        if replacement.status == GraphMutationPlanStatus.committing.value:
+            if claimed:
+                assert self.rejected_claim_observed.wait(timeout=5)
+            else:
+                self.claim_rejected.set()
+        return claimed
+
+
+class _ProcessRacingLocalStore(LocalJsonGraphPlanStore):
+    __slots__ = ("loaded",)
+
+    def __init__(self, *, home, loaded) -> None:
+        super().__init__(home=home)
+        self.loaded = loaded
+
+    def _load(self):
+        state = super()._load()
+        try:
+            self.loaded.wait(timeout=1)
+        except threading.BrokenBarrierError:
+            pass
+        return state
+
+
+def _local_json_cas_worker(
+    home,
+    expected,
+    replacement,
+    ready,
+    loaded,
+    results,
+) -> None:
+    store = _ProcessRacingLocalStore(home=home, loaded=loaded)
+    ready.wait(timeout=5)
+    try:
+        changed = store.compare_and_set(
+            expected=expected,
+            replacement=replacement,
+        )
+    except Exception as exc:
+        results.put(("error", repr(exc)))
+    else:
+        results.put(("ok", changed))
+
+
+class _RaiseOnceMutation:
+    def __init__(self, inner, *, after_side_effect: bool) -> None:
+        self.inner = inner
+        self.after_side_effect = after_side_effect
+        self.mutation_ids: list[str | None] = []
+        self.raised = False
+
+    def apply(self, plan, **kwargs):
+        provenance = kwargs.get("provenance_context")
+        self.mutation_ids.append(
+            provenance.mutation_id if provenance is not None else None
+        )
+        if not self.raised:
+            self.raised = True
+            if self.after_side_effect:
+                self.inner.apply(plan, **kwargs)
+            raise RuntimeError("injected mutation failure")
+        return self.inner.apply(plan, **kwargs)
+
+    def lookup_execution(self, plan, **kwargs):
+        return self.inner.lookup_execution(plan, **kwargs)
+
+
 def _service() -> tuple[GraphWorkbenchService, InMemoryGraphBackend, _MemoryPlanStore]:
     backend = InMemoryGraphBackend()
     store = _MemoryPlanStore()
     return GraphWorkbenchService(backend=backend, plan_store=store), backend, store
+
+
+def test_concurrent_commit_claims_a_plan_before_mutating() -> None:
+    mutation_count = 0
+    mutation_lock = threading.Lock()
+
+    def count_mutation() -> None:
+        nonlocal mutation_count
+        with mutation_lock:
+            mutation_count += 1
+
+    backend = InMemoryGraphBackend(on_change=count_mutation)
+    store = _RacingPlanStore()
+    workbench = GraphWorkbenchService(backend=backend, plan_store=store)
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(workbench.commit, proposal.plan_id, pot_id=POT)
+        second = pool.submit(workbench.commit, proposal.plan_id, pot_id=POT)
+        results = (first.result(), second.result())
+
+    assert sum(result.ok for result in results) == 1
+    winner = next(result for result in results if result.ok)
+    loser = next(result for result in results if not result.ok)
+    assert winner.mutation_id
+    assert loser.mutation_id == winner.mutation_id
+    assert "concurrent" in (loser.detail or "")
+    stored = store.get(pot_id=POT, plan_id=proposal.plan_id)
+    assert stored is not None
+    assert stored.status == "committed"
+    assert mutation_count == 1
+    assert {result.mutation_id for result in results if result.mutation_id} == {
+        stored.mutation_id
+    }
+
+
+def test_crashed_committing_plan_has_single_stale_recovery_claimer() -> None:
+    mutation_count = 0
+    mutation_lock = threading.Lock()
+
+    def count_mutation() -> None:
+        nonlocal mutation_count
+        with mutation_lock:
+            mutation_count += 1
+
+    backend = InMemoryGraphBackend(on_change=count_mutation)
+    store = _RacingPlanStore()
+    workbench = GraphWorkbenchService(
+        backend=backend,
+        plan_store=store,
+        commit_claim_timeout_seconds=1,
+    )
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+    proposed = store.get(pot_id=POT, plan_id=proposal.plan_id)
+    assert proposed is not None
+    store.save(
+        replace(
+            proposed,
+            status=GraphMutationPlanStatus.committing.value,
+            mutation_id="mutation:crash-recovery",
+            commit_attempt_id="attempt:crashed-worker",
+            commit_attempt_started_at=datetime.now(timezone.utc)
+            - timedelta(seconds=10),
+        )
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(
+            workbench.commit,
+            proposal.plan_id,
+            pot_id=POT,
+            recover_stale=True,
+        )
+        second = pool.submit(
+            workbench.commit,
+            proposal.plan_id,
+            pot_id=POT,
+            recover_stale=True,
+        )
+        results = (first.result(), second.result())
+
+    assert sum(result.ok for result in results) == 1
+    assert mutation_count == 1
+    assert {result.mutation_id for result in results} == {"mutation:crash-recovery"}
+    stored = store.get(pot_id=POT, plan_id=proposal.plan_id)
+    assert stored is not None
+    assert stored.status == GraphMutationPlanStatus.committed.value
+    assert stored.commit_attempt_id is None
+    assert stored.commit_attempt_started_at is None
+
+
+def test_stale_recovery_during_backend_callback_does_not_reapply() -> None:
+    callback_entered = threading.Event()
+    release_callback = threading.Event()
+    mutation_count = 0
+
+    def block_after_mutation() -> None:
+        nonlocal mutation_count
+        mutation_count += 1
+        callback_entered.set()
+        assert release_callback.wait(timeout=10)
+
+    backend = InMemoryGraphBackend(on_change=block_after_mutation)
+    store = _MemoryPlanStore()
+    workbench = GraphWorkbenchService(
+        backend=backend,
+        plan_store=store,
+        commit_claim_timeout_seconds=0,
+    )
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        owner = pool.submit(workbench.commit, proposal.plan_id, pot_id=POT)
+        assert callback_entered.wait(timeout=10)
+        active = store.get(pot_id=POT, plan_id=proposal.plan_id)
+        assert active is not None
+        store.save(
+            replace(
+                active,
+                commit_attempt_started_at=datetime.now(timezone.utc)
+                - timedelta(seconds=10),
+            )
+        )
+        recovering = pool.submit(
+            workbench.commit,
+            proposal.plan_id,
+            pot_id=POT,
+            recover_stale=True,
+        ).result(timeout=10)
+        store.save(active)
+        release_callback.set()
+        committed = owner.result(timeout=10)
+
+    assert recovering.ok is False
+    assert recovering.status == GraphMutationPlanStatus.committing.value
+    assert "still in flight" in (recovering.detail or "")
+    assert committed.ok is True
+    assert recovering.mutation_id == committed.mutation_id
+    assert mutation_count == 1
+    assert len(backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))) == 1
 
 
 def _link_payload(
@@ -203,6 +472,112 @@ def test_commit_applies_exact_stored_plan_by_id() -> None:
     rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
     assert len(rows) == 1
     assert rows[0].predicate == "DEPENDS_ON"
+
+
+def test_retrying_committed_plan_returns_persisted_receipt() -> None:
+    workbench, _backend, store = _service()
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+    committed = workbench.commit(proposal.plan_id, pot_id=POT)
+    stored = store.get(pot_id=POT, plan_id=proposal.plan_id)
+
+    retried = workbench.commit(proposal.plan_id, pot_id=POT)
+
+    assert stored is not None
+    assert retried.ok is True
+    assert retried.status == GraphMutationPlanStatus.committed.value
+    assert retried.mutation_id == committed.mutation_id == stored.mutation_id
+    assert retried.applied_at == committed.applied_at == stored.committed_at
+    assert retried.expected_subgraph_versions == stored.expected_subgraph_versions
+    assert retried.current_subgraph_versions == stored.current_subgraph_versions
+    assert retried.new_subgraph_versions == stored.final_subgraph_versions
+    assert retried.diff == stored.diff
+    assert retried.claim_keys == committed.claim_keys
+
+
+def test_backend_exception_before_side_effect_releases_plan_for_retry() -> None:
+    workbench, backend, store = _service()
+    flaky = _RaiseOnceMutation(backend.mutation, after_side_effect=False)
+    backend._mutation = flaky
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+
+    failed = workbench.commit(proposal.plan_id, pot_id=POT)
+    failed_record = store.get(pot_id=POT, plan_id=proposal.plan_id)
+
+    assert failed.ok is False
+    assert failed.status == GraphMutationPlanStatus.error.value
+    assert failed.mutation_id
+    assert failed_record is not None
+    assert failed_record.status == GraphMutationPlanStatus.error.value
+    assert failed_record.commit_attempt_id is None
+    assert failed_record.commit_attempt_started_at is None
+    assert failed.detail == "backend_exception: backend mutation failed unexpectedly"
+    assert failed_record.detail == failed.detail
+    assert "injected mutation failure" not in failed.detail
+    assert backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT)) == []
+
+    retried = workbench.commit(proposal.plan_id, pot_id=POT)
+
+    assert retried.ok is True
+    assert retried.mutation_id == failed.mutation_id
+    assert flaky.mutation_ids == [failed.mutation_id, failed.mutation_id]
+
+
+def test_retry_after_confirmed_absence_rechecks_graph_versions() -> None:
+    workbench, backend, _store = _service()
+    flaky = _RaiseOnceMutation(backend.mutation, after_side_effect=False)
+    backend._mutation = flaky
+    stale = workbench.propose(_link_payload(), pot_id=POT)
+
+    failed = workbench.commit(stale.plan_id, pot_id=POT)
+    fresh = workbench.propose(
+        _link_payload(subject="service:api", object_="service:db"),
+        pot_id=POT,
+    )
+    assert workbench.commit(fresh.plan_id, pot_id=POT).ok
+
+    retried = workbench.commit(stale.plan_id, pot_id=POT)
+
+    assert failed.status == GraphMutationPlanStatus.error.value
+    assert retried.ok is False
+    assert retried.status == GraphMutationPlanStatus.conflict.value
+    assert retried.expected_subgraph_versions["_global"] == 0
+    assert retried.current_subgraph_versions["_global"] == 1
+    assert flaky.mutation_ids.count(failed.mutation_id) == 1
+
+
+def test_backend_exception_after_side_effect_retries_idempotently() -> None:
+    mutation_count = 0
+
+    def count_mutation() -> None:
+        nonlocal mutation_count
+        mutation_count += 1
+
+    backend = InMemoryGraphBackend(on_change=count_mutation)
+    store = _MemoryPlanStore()
+    workbench = GraphWorkbenchService(backend=backend, plan_store=store)
+    flaky = _RaiseOnceMutation(backend.mutation, after_side_effect=True)
+    backend._mutation = flaky
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+
+    failed = workbench.commit(proposal.plan_id, pot_id=POT)
+    rows_after_failure = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
+    retried = workbench.commit(proposal.plan_id, pot_id=POT)
+    rows_after_retry = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
+
+    assert failed.ok is False
+    assert failed.status == GraphMutationPlanStatus.error.value
+    assert failed.mutation_id
+    assert len(rows_after_failure) == 1
+    assert rows_after_failure[0].mutation_id == failed.mutation_id
+    assert retried.ok is True
+    assert retried.mutation_id == failed.mutation_id
+    assert flaky.mutation_ids == [failed.mutation_id]
+    assert mutation_count == 1
+    assert len(rows_after_retry) == 1
+    assert rows_after_retry[0].mutation_id == failed.mutation_id
+    stored = store.get(pot_id=POT, plan_id=proposal.plan_id)
+    assert stored is not None
+    assert stored.status == GraphMutationPlanStatus.committed.value
 
 
 def test_commit_verify_reads_back_claim_and_quality_summary() -> None:
@@ -429,6 +804,88 @@ def test_local_json_plan_store_round_trips_lowered_plan(tmp_path) -> None:
     assert reloaded.lowered_batch.edge_upserts[0].edge_type == "DEPENDS_ON"
     raw = json.loads((tmp_path / "graph_plans.json").read_text(encoding="utf-8"))
     assert proposal.plan_id in raw["plans"][POT]
+
+
+def test_local_json_plan_store_rejects_a_stale_state_transition(tmp_path) -> None:
+    first_store = LocalJsonGraphPlanStore(home=tmp_path)
+    workbench = GraphWorkbenchService(
+        backend=InMemoryGraphBackend(),
+        plan_store=first_store,
+    )
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+    expected = first_store.get(pot_id=POT, plan_id=proposal.plan_id)
+    assert expected is not None
+    attempt_started_at = datetime.now(timezone.utc)
+    claimed = replace(
+        expected,
+        status=GraphMutationPlanStatus.committing.value,
+        mutation_id="mutation:local-cas",
+        commit_attempt_id="attempt:local-cas",
+        commit_attempt_started_at=attempt_started_at,
+    )
+
+    second_store = LocalJsonGraphPlanStore(home=tmp_path)
+    assert second_store.compare_and_set(
+        expected=expected,
+        replacement=claimed,
+    )
+    assert not first_store.compare_and_set(
+        expected=expected,
+        replacement=replace(expected, status=GraphMutationPlanStatus.expired.value),
+    )
+    reloaded = first_store.get(pot_id=POT, plan_id=proposal.plan_id)
+    assert reloaded is not None
+    assert reloaded.mutation_id == "mutation:local-cas"
+    assert reloaded.commit_attempt_id == "attempt:local-cas"
+    assert reloaded.commit_attempt_started_at == attempt_started_at
+
+
+def test_local_json_plan_store_compare_and_set_is_process_safe(tmp_path) -> None:
+    store = LocalJsonGraphPlanStore(home=tmp_path)
+    workbench = GraphWorkbenchService(
+        backend=InMemoryGraphBackend(),
+        plan_store=store,
+    )
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+    expected = store.get(pot_id=POT, plan_id=proposal.plan_id)
+    assert expected is not None
+    replacements = (
+        replace(expected, status=GraphMutationPlanStatus.committing.value),
+        replace(expected, status=GraphMutationPlanStatus.expired.value),
+    )
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Barrier(2)
+    loaded = context.Barrier(2)
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_local_json_cas_worker,
+            args=(tmp_path, expected, replacement, ready, loaded, results),
+        )
+        for replacement in replacements
+    ]
+    for process in processes:
+        process.start()
+    try:
+        for process in processes:
+            process.join(timeout=10)
+        outcomes = [results.get(timeout=2) for _ in processes]
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+            process.join(timeout=2)
+        results.close()
+
+    assert all(process.exitcode == 0 for process in processes)
+    assert sorted(outcomes) == [("ok", False), ("ok", True)]
+    current = store.get(pot_id=POT, plan_id=proposal.plan_id)
+    assert current is not None
+    assert current.status in {
+        GraphMutationPlanStatus.committing.value,
+        GraphMutationPlanStatus.expired.value,
+    }
 
 
 def test_history_by_plan_shows_validation_commit_and_sources() -> None:

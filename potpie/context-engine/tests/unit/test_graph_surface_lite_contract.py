@@ -1,8 +1,7 @@
 """Graph Surface Lite contract tests (Graph V1.5 Step 0).
 
-Locks the catalog contract, the honest op partitioning, and — critically — that
-the MCP surface still exposes exactly the four ``context_*`` tools (the new
-graph surface is CLI-only in V1.5).
+Locks the catalog contract and the honest operation partitioning for the V1.5
+graph surface.
 """
 
 from __future__ import annotations
@@ -11,20 +10,33 @@ from typing import Any
 
 import pytest
 
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from application.services.graph_service import DefaultGraphService
-from domain.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
-from domain.graph_mutations import ProvenanceContext
-from domain.ports.agent_context import RecordRequest
-from domain.ports.claim_query import ClaimRow
-from domain.ports.services.graph_service import (
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
+from potpie_context_engine.application.services.graph_service import DefaultGraphService
+from potpie_context_core.graph_contract import (
+    GRAPH_CONTRACT_VERSION,
+    ONTOLOGY_VERSION,
+)
+from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.ports.agent_context import RecordRequest
+from potpie_context_core.ports.claim_query import ClaimRow
+from potpie_context_core.ports.graph_service import (
     GraphCatalogRequest,
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
-from domain.graph_views import UnknownGraphViewError
-from domain.reconciliation import MutationBatch, MutationResult, MutationSummary
-from domain.semantic_mutations import SemanticMutationRequest
+from potpie_context_core.graph_views import UnknownGraphViewError
+from potpie_context_core.reconciliation import (
+    MutationBatch,
+    MutationResult,
+    MutationSummary,
+)
+from potpie_context_core.reconciliation_config import (
+    ReconciliationConfig,
+    current_reconciliation_config,
+)
+from potpie_context_core.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
 
@@ -701,7 +713,9 @@ def test_read_missing_required_scope_is_validation_failure(service) -> None:
 def test_describe_routes_through_service(service) -> None:
     # `graph describe` must answer from the service (daemon-side ontology),
     # not a CLI-local contract lookup — same routing as every graph command.
-    from domain.ports.services.graph_service import GraphDescribeRequest
+    from potpie_context_core.ports.graph_service import (
+        GraphDescribeRequest,
+    )
 
     payload = service.describe(
         GraphDescribeRequest(subgraph="debugging", view="prior_occurrences")
@@ -1041,7 +1055,15 @@ def test_decision_record_creates_decided_and_affects_memory(service) -> None:
 
 class _CapturingMutation:
     def __init__(self) -> None:
-        self.calls: list[tuple[MutationBatch, str, ProvenanceContext | None]] = []
+        self.calls: list[
+            tuple[
+                MutationBatch,
+                str,
+                ProvenanceContext | None,
+                ReconciliationConfig | None,
+                ReconciliationConfig | None,
+            ]
+        ] = []
 
     def apply(
         self,
@@ -1049,8 +1071,17 @@ class _CapturingMutation:
         *,
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
-        self.calls.append((plan, expected_pot_id, provenance_context))
+        self.calls.append(
+            (
+                plan,
+                expected_pot_id,
+                provenance_context,
+                reconciliation_config,
+                current_reconciliation_config(),
+            )
+        )
         return MutationResult(
             ok=True,
             mutation_id="mutation-1",
@@ -1069,7 +1100,11 @@ def test_mutate_passes_lowered_provenance_to_mutation_port() -> None:
     backend = InMemoryGraphBackend()
     mutation = _CapturingMutation()
     backend._mutation = mutation
-    service = DefaultGraphService(backend=backend)
+    reconciliation_config = ReconciliationConfig(infer_canonical_labels=False)
+    service = DefaultGraphService(
+        backend=backend,
+        reconciliation_config=reconciliation_config,
+    )
     request = SemanticMutationRequest.parse(
         {
             "pot_id": "p",
@@ -1098,7 +1133,9 @@ def test_mutate_passes_lowered_provenance_to_mutation_port() -> None:
 
     assert result.ok is True
     assert len(mutation.calls) == 1
-    _batch, expected_pot_id, provenance = mutation.calls[0]
+    _batch, expected_pot_id, provenance, passed_config, active_config = mutation.calls[
+        0
+    ]
     assert expected_pot_id == "p"
     assert provenance is not None
     assert provenance.source_ref == "idem-1"
@@ -1106,24 +1143,5 @@ def test_mutate_passes_lowered_provenance_to_mutation_port() -> None:
     assert provenance.actor_user_id == "user:alice"
     assert provenance.actor_surface == "cli"
     assert provenance.actor_client_name == "codex"
-
-
-# --- MCP non-negotiable: exactly four context_* tools -----------------------
-
-
-def test_mcp_exposes_exactly_four_context_tools() -> None:
-    """The Graph Surface Lite surface is CLI-only in V1.5; MCP stays at four."""
-    import asyncio
-
-    from adapters.inbound.mcp import server
-
-    tools = asyncio.run(server.mcp.list_tools())
-    names = {t.name for t in tools}
-    assert names == {
-        "context_resolve",
-        "context_search",
-        "context_record",
-        "context_status",
-    }
-    # No graph_* tools leaked onto the MCP surface.
-    assert not any(n.startswith("graph") for n in names)
+    assert passed_config is None
+    assert active_config is reconciliation_config

@@ -9,11 +9,11 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from bootstrap.queue_factory import get_context_graph_job_queue
-from adapters.outbound.reconciliation.factory import (
+from potpie_context_engine.bootstrap.queue_factory import get_context_graph_job_queue
+from potpie_context_engine.adapters.outbound.reconciliation.factory import (
     try_pydantic_deep_reconciliation_agent,
 )
-from adapters.outbound.settings_env import (
+from potpie_context_engine.adapters.outbound.settings_env import (
     context_engine_falkordb_graph_name,
     context_engine_falkordb_lite_path,
     context_engine_falkordb_mode,
@@ -34,22 +34,29 @@ from app.modules.context_graph.context_graph_pot_repository_model import (
 from app.modules.context_graph.context_graph_pot_source_model import (
     ContextGraphPotSource,
 )
-from adapters.outbound.source_resolvers import (
+from potpie_context_engine.adapters.outbound.source_resolvers import (
     CompositeSourceResolver,
     DocumentationUriResolver,
     GitHubPullRequestResolver,
 )
-from bootstrap.container import ContextEngineContainer, build_container
-from domain.context_status import StatusSource
-from domain.source_references import SourceReferenceRecord
-from domain.ports.pot_resolution import (
+from potpie_context_engine.bootstrap.container import (
+    ContextEngineContainer,
+    build_container,
+)
+from potpie_context_engine.bootstrap.ingestion_server import (
+    IngestionServerContainer,
+    build_ingestion_server,
+)
+from potpie_context_engine.domain.context_status import StatusSource
+from potpie_context_core.source_references import SourceReferenceRecord
+from potpie_context_core.ports.pot_resolution import (
     PotResolutionPort,
     RepoRef,
     ResolvedPot,
     ResolvedPotRepo,
 )
-from domain.ports.pot_source_listing import PotSourceListingPort
-from domain.ports.settings import ContextEngineSettingsPort
+from potpie_context_engine.domain.ports.pot_source_listing import PotSourceListingPort
+from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 
 
 class PotpieContextEngineSettings(ContextEngineSettingsPort):
@@ -443,6 +450,41 @@ def build_container_for_session(db: Session) -> ContextEngineContainer:
     container.pot_source_listing = SqlalchemyPotSourceListing(db)
     resolver = _build_source_resolver(db, source_for_repo)
     container.source_resolver = resolver
+    return container
+
+
+def build_ingestion_server_for_session(db: Session) -> IngestionServerContainer:
+    """Worker-scoped ingestion-server container (batch processing, webhooks).
+
+    Session-scoped like ``build_container_for_session`` so the Celery
+    ``process_batch`` job can rebuild it per call with a live DB session.
+    """
+    container = build_ingestion_server(
+        settings=PotpieContextEngineSettings(),
+        pots=SqlalchemyPotResolution(db),
+        reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
+        jobs=get_context_graph_job_queue(),
+    )
+    container.pot_source_listing = SqlalchemyPotSourceListing(db)
+    return container
+
+
+def build_ingestion_server_for_user_session(
+    db: Session, user_id: str
+) -> IngestionServerContainer:
+    """User-scoped ingestion-server container for the mounted context HTTP routes.
+
+    Pot access control flows through ``container.policy()`` over the
+    user-scoped pot resolver, replacing the removed ``enforce_pot_access``
+    router flag.
+    """
+    container = build_ingestion_server(
+        settings=PotpieContextEngineSettings(),
+        pots=UserScopedContextGraphPotResolution(db, user_id),
+        reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
+        jobs=get_context_graph_job_queue(),
+    )
+    container.pot_source_listing = SqlalchemyPotSourceListing(db)
     return container
 
 

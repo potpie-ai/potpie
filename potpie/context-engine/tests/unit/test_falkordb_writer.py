@@ -11,12 +11,24 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.graph.falkordb_writer import (
+from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     FalkorDBGraphWriter,
     _records_from_result,
     build_falkordb_graph,
 )
-from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
+from potpie_context_core.api import (
+    DEFAULT_GRAPH_DEFINITION,
+    EdgeTypeSpec,
+    EntityTypeSpec,
+    GraphExtension,
+    IdentityClass,
+)
+from potpie_context_core.graph_mutations import (
+    EdgeUpsert,
+    EntityUpsert,
+    InvalidationOp,
+    ProvenanceRef,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -201,6 +213,107 @@ async def test_upsert_entities_empty_is_noop() -> None:
     )
     assert n == 0
     assert graph.queries == []
+
+
+async def test_writer_uses_bound_extension_labels_and_predicates() -> None:
+    definition = DEFAULT_GRAPH_DEFINITION.extend(
+        GraphExtension(
+            name="widgets",
+            version="1",
+            entity_types={
+                "Widget": EntityTypeSpec(
+                    label="Widget",
+                    category="topology",
+                    description="Widget.",
+                    identity_class=IdentityClass.SLUG_ALIAS,
+                    key_prefix="widget",
+                    identity_policy="widget:<slug>",
+                )
+            },
+            edge_types={
+                "CONNECTS_WIDGET": EdgeTypeSpec(
+                    edge_type="CONNECTS_WIDGET",
+                    description="Connects widgets.",
+                    allowed_pairs=(("Widget", "Widget"),),
+                )
+            },
+        )
+    )
+    graph = _FakeGraph()
+    writer = FalkorDBGraphWriter(
+        _FakeSettings(),
+        graph=graph,
+        definition=definition,
+    )
+    provenance = ProvenanceRef(pot_id="p1", source_event_id="e1")
+
+    await writer.upsert_entities(
+        "p1",
+        [
+            EntityUpsert("widget:a", ("Widget",), {}),
+            EntityUpsert("widget:b", ("Widget",), {}),
+        ],
+        provenance,
+    )
+    written = await writer.upsert_edges(
+        "p1",
+        [EdgeUpsert("CONNECTS_WIDGET", "widget:a", "widget:b")],
+        provenance,
+    )
+
+    assert written == 1
+    assert any("SET e:Widget" in query for query, _ in graph.queries)
+    assert any(
+        params.get("predicate") == "CONNECTS_WIDGET" for _, params in graph.queries
+    )
+
+
+async def test_writer_uses_bound_extension_predicate_for_invalidation() -> None:
+    definition = DEFAULT_GRAPH_DEFINITION.extend(
+        GraphExtension(
+            name="widgets",
+            version="1",
+            entity_types={
+                "Widget": EntityTypeSpec(
+                    label="Widget",
+                    category="topology",
+                    description="Widget.",
+                    identity_class=IdentityClass.SLUG_ALIAS,
+                    key_prefix="widget",
+                    identity_policy="widget:<slug>",
+                )
+            },
+            edge_types={
+                "CONNECTS_WIDGET": EdgeTypeSpec(
+                    edge_type="CONNECTS_WIDGET",
+                    description="Connects widgets.",
+                    allowed_pairs=(("Widget", "Widget"),),
+                )
+            },
+        )
+    )
+    graph = _FakeGraph()
+    writer = FalkorDBGraphWriter(
+        _FakeSettings(),
+        graph=graph,
+        definition=definition,
+    )
+
+    await writer.invalidate(
+        "p1",
+        [
+            InvalidationOp(
+                target_entity_key=None,
+                target_edge=("CONNECTS_WIDGET", "widget:a", "widget:b"),
+                reason="superseded",
+            )
+        ],
+        ProvenanceRef(pot_id="p1", source_event_id="e1"),
+    )
+
+    assert any(
+        params.get("predicate") == "CONNECTS_WIDGET" for _, params in graph.queries
+    )
 
 
 async def test_upsert_edges_writes_falkordb_vecf32_embedding() -> None:

@@ -16,7 +16,9 @@ error dict (the production failure shape) instead of raising into the agent.
 
 from __future__ import annotations
 
-from adapters.outbound.connectors.github.agent_tools import build_github_tools
+from potpie_context_engine.adapters.outbound.connectors.github.agent_tools import (
+    build_github_tools,
+)
 
 
 class _State:

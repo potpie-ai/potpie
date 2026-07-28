@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from potpie.cli.telemetry import sentry_runtime
-from bootstrap import sentry_metrics_runtime
+from potpie_context_engine.bootstrap import sentry_metrics_runtime
 from potpie.cli.telemetry.context import TelemetryContext
 from potpie.cli.telemetry.sentry_runtime import (
     capture_unexpected_cli_error,

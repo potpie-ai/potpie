@@ -21,9 +21,11 @@ from potpie.cli.telemetry.product_analytics import (
     ProductAnalyticsEvent,
     set_product_analytics_sink,
 )
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from bootstrap.host_wiring import build_host_shell
-from domain.lifecycle import SetupPlan
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
+from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie_context_core.lifecycle import SetupPlan
 
 
 @dataclass

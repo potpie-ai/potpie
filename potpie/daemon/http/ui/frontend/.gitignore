@@ -1,0 +1,5 @@
+node_modules/
+.vite/
+dist/
+*.local
+!package-lock.json

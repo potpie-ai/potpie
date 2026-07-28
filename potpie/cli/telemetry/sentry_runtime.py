@@ -4,7 +4,10 @@ import importlib
 from types import ModuleType
 from typing import Protocol
 
-from bootstrap.sentry_metrics_runtime import configure_metrics, metrics_configured
+from potpie_context_engine.bootstrap.sentry_metrics_runtime import (
+    configure_metrics,
+    metrics_configured,
+)
 
 from .context import (
     TelemetryContext,

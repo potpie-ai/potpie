@@ -14,19 +14,18 @@ server-side answer summary anywhere in the read trunk.
 
 ---
 
-## 1. Two altitudes, one data plane
+## 1. One CLI, one data plane
 
-There are two read surfaces, and they sit at different altitudes over the **same**
-service and the **same** canonical claim store. Both are shipped today (the data
-plane is `GRAPH_CONTRACT_VERSION="v1.5"`, `ONTOLOGY_VERSION="2026-06-graph"`).
+The CLI exposes two read shapes over the **same** service and canonical claim
+store. Both are shipped today (the data plane is
+`GRAPH_CONTRACT_VERSION="v1.5"`, `ONTOLOGY_VERSION="2026-06-graph"`).
 
 | Altitude | Surface | Who | Commands |
 |---|---|---|---|
-| **4-tool agent contract** | MCP `context_*` tools (`adapters/inbound/mcp/server.py`) bound by `AgentContextService` (`application/services/agent_context.py`) | harnesses over MCP | `context_resolve`, `context_search`, `context_record`, `context_status` |
+| **Compatibility commands** | `AgentContextService` (`application/services/agent_context.py`) | humans + harnesses over the CLI | `resolve`, `search`, `record`, `status` |
 | **Graph Surface Lite** | the `potpie graph …` workbench (`potpie/cli/commands/graph.py`) over `DefaultGraphService` | humans + harnesses over the CLI | `graph catalog/read/search-entities/neighborhood/describe/status/history` (+ the write/inbox/quality commands in [`writing.md`](./writing.md)) |
 
-The MCP surface is **exactly four tools** — `context_record` is its only write. The
-richer workbench is **CLI-only**; it is not mirrored onto MCP. `resolve`/`search`/
+The richer workbench and compatibility commands are both CLI surfaces. `resolve`/`search`/
 `record` on `AgentContextService` delegate straight to `GraphService`; only `status`
 is composite (data-plane status + `PotManagementService` + a `SkillManager` install
 nudge). Both altitudes are implemented by `DefaultGraphService`
@@ -41,7 +40,7 @@ nudge). Both altitudes are implemented by `DefaultGraphService`
 
 ## 2. The single read trunk (P8/P9)
 
-Every read — MCP `resolve`/`search`, `graph read`, named views, and the zero-token
+Every read — `resolve`/`search`, `graph read`, named views, and the zero-token
 nudge ([`ingestion-nudge.md`](./ingestion-nudge.md)) — collapses onto one path:
 
 ```mermaid
@@ -384,9 +383,9 @@ Full flag lists live in [`cli-flow.md`](./cli-flow.md); this is the read-side or
 | `graph neighborhood --entity <key>` | **Traverse** axis (§7); `graph inspect <key>` is a legacy alias. |
 | `graph history` | mutation/claim/entity history (audit trail). |
 
-At the MCP altitude, `context_resolve`/`context_search` cover Retrieve, and
-`context_status` is the composite readiness/nudge tool. There is no `context_neighborhood`
-or `context_search_entities`; the workbench Filter/Traverse axes are CLI-only.
+The compatibility `resolve`/`search` commands cover Retrieve, while `status` is
+the composite readiness/nudge command. The workbench adds the Filter and Traverse
+axes through `graph search-entities` and `graph neighborhood`.
 
 ---
 

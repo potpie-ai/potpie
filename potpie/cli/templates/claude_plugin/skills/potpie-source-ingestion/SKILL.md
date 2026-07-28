@@ -57,8 +57,7 @@ potpie --json graph describe debugging --view prior_occurrences --examples
 ```
 
 5. If the CLI is unavailable or broken, continue discovery, build the proposed
-   evidence matrix, and stop before committing graph writes. Use MCP
-   `context_record` only as a compatibility fallback when explicitly available.
+   evidence matrix, and stop before committing graph writes.
 
 ## Phase 1: Todo Plan
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from adapters.outbound.cli_auth.oauth_client_id_messages import (
+from potpie_context_engine.adapters.outbound.cli_auth.oauth_client_id_messages import (
     missing_github_client_id_message,
     missing_linear_client_id_message,
 )

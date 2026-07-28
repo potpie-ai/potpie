@@ -32,7 +32,7 @@ import subprocess
 import sys
 from typing import Any
 
-# Nudge events understood by `potpie graph nudge` (must match domain.nudge.NudgeEvent).
+# Nudge events understood by `potpie graph nudge` (must match potpie_context_engine.domain.nudge.NudgeEvent).
 NUDGE_EVENTS = frozenset(
     {"session_start", "pre_edit", "pre_deploy", "test_failed", "test_passed", "stop"}
 )

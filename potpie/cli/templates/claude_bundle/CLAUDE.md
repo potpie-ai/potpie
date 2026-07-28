@@ -34,32 +34,6 @@ Use text output for routine orientation and context reads. Add `--json` when a
 workflow needs exact machine parsing, mutation plans, commits, history
 verification, or full evidence/debug payloads.
 
-When only MCP is configured, use `context_status`, `context_resolve`,
-`context_search`, and `context_record`. Valid include families:
-`coding_preferences`, `infra_topology`, `features`, `prior_bugs`, `timeline`,
-`decisions`, `owners`, `docs`, `raw_graph`.
-
-Valid `context_record` types:
-preference|policy|bug_pattern|fix|verification|decision|doc_reference|workflow|runbook_note|incident_summary|investigation|diagnostic_signal|service_note|feature_note|integration_note
-
-Feature/code work:
-
-```json
-{"intent":"feature","include":["coding_preferences","infra_topology","decisions","owners","docs"],"mode":"fast","source_policy":"references_only"}
-```
-
-Debugging:
-
-```json
-{"intent":"debugging","include":["prior_bugs","infra_topology","timeline"],"mode":"fast","source_policy":"references_only"}
-```
-
-Operations:
-
-```json
-{"intent":"operations","include":["infra_topology","timeline","owners"],"mode":"balanced","source_policy":"summary"}
-```
-
 ## Use-Case Skills
 
 - `potpie-project-preferences`: coding preferences for error handling, structure,
@@ -93,7 +67,7 @@ what durable facts exist, resolves identity, and writes graph plans through
 `propose`/`commit`. Local repo inspection with `rg`, `rg --files`, `git`,
 manifests, docs, routes, configs, tests, and CI files is expected for repo
 understanding; the forbidden part is blindly turning a tree walk into graph
-facts. If only MCP is configured, `context_record` is the compatibility fallback.
+facts.
 
 For explicit repository ingestion, use a todo-driven workflow: preflight
 pot/source/graph state, create discovery todos, use read-only subagents for

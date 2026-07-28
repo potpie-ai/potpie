@@ -15,9 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
-from app.modules.context_graph.tasks import (
-    context_graph_backfill_pot,
-    context_graph_sync_linear_project_source,
+from app.modules.context_graph.reconciliation_submit import (
+    submit_agent_reconciliation,
 )
 from integrations.application.bootstrap import load_providers
 from integrations.adapters.outbound.postgres.integration_model import Integration
@@ -266,26 +265,13 @@ async def sync_project_sources(
         .first()
     ) is not None
     if has_github:
-        context_graph_backfill_pot.delay(project_id)
-    linear_sources = (
-        db.query(ProjectSource)
-        .filter(
-            ProjectSource.project_id == project_id,
-            ProjectSource.provider == "linear",
-            ProjectSource.sync_enabled.is_(True),
-        )
-        .all()
-    )
-    for ls in linear_sources:
-        try:
-            context_graph_sync_linear_project_source.delay(ls.id)
-        except Exception as e:
-            logger.warning("Failed to enqueue linear sync %s: %s", ls.id, e)
+        submit_agent_reconciliation(db, project_id, trigger="sources_sync")
     return {
         "status": "enqueued",
         "project_id": project_id,
         "github_backfill": has_github,
-        "linear_sources_queued": len(linear_sources),
+        # Linear ETL was removed; linear sources are read live at query time.
+        "linear_sources_queued": 0,
     }
 
 
@@ -315,10 +301,14 @@ async def sync_one_project_source(
     if not row:
         raise HTTPException(status_code=404, detail="source_not_found")
     if row.provider == "linear":
-        context_graph_sync_linear_project_source.delay(row.id)
-        return {"status": "enqueued", "source_id": source_id, "kind": "linear"}
+        return {
+            "status": "skipped",
+            "reason": "linear_sync_removed",
+            "source_id": source_id,
+            "kind": "linear",
+        }
     if row.provider == "github":
-        context_graph_backfill_pot.delay(project_id)
+        submit_agent_reconciliation(db, project_id, trigger="source_sync")
         return {"status": "enqueued", "source_id": source_id, "kind": "github"}
     raise HTTPException(status_code=400, detail="unsupported_provider")
 
@@ -362,25 +352,10 @@ async def linear_sources_webhook(
             "note": "No team_id in payload; nothing enqueued.",
         }
 
-    rows = (
-        db.query(ProjectSource)
-        .filter(
-            ProjectSource.provider == "linear",
-            ProjectSource.sync_enabled.is_(True),
-            ProjectSource.scope_json["team_id"].astext == str(team_id),
-        )
-        .all()
-    )
-    n = 0
-    for s in rows:
-        try:
-            context_graph_sync_linear_project_source.delay(s.id)
-            n += 1
-        except Exception as e:
-            logger.warning("Webhook enqueue failed for source %s: %s", s.id, e)
+    # Linear ETL was removed; acknowledge the webhook without enqueueing.
     return {
         "status": "accepted",
-        "enqueued": n,
+        "enqueued": 0,
         "action": action,
-        "note": "Signature verified only if LINEAR_WEBHOOK_SECRET is set.",
+        "note": "Linear sync removed; sources are read live at query time.",
     }

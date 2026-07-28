@@ -78,11 +78,21 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
     artifacts = list(tmp_path.iterdir())
     wheel = next(path for path in artifacts if path.suffix == ".whl")
     sdist = next(path for path in artifacts if path.name.endswith(".tar.gz"))
+    with zipfile.ZipFile(wheel) as archive:
+        stray = [
+            name
+            for name in archive.namelist()
+            if not name.startswith("potpie_context_engine/")
+            and ".dist-info/" not in name
+        ]
+        assert not stray, f"wheel ships members outside the namespace: {stray}"
     for artifact in (wheel, sdist):
         distribution_defaults = _archive_text(
-            artifact, "bootstrap/_distribution_defaults.py"
+            artifact, "potpie_context_engine/bootstrap/_distribution_defaults.py"
         )
-        build_info = _archive_text(artifact, "bootstrap/_build_info.py")
+        build_info = _archive_text(
+            artifact, "potpie_context_engine/bootstrap/_build_info.py"
+        )
         assert "DISTRIBUTION_DEFAULTS = {" in distribution_defaults
         assert "'environment': 'prod_oss'" in distribution_defaults
         assert "'sentry_dsn': 'https://sentry.example.invalid/1'" in (
@@ -96,5 +106,6 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
         assert "'github_client_id': 'github-smoke-client'" in distribution_defaults
         assert "GIT_SHA = 'smoke-sha'" in build_info
         assert "BUILD_TIME = '2026-06-28T00:00:00Z'" in build_info
-    assert not (context_engine / "bootstrap" / "_distribution_defaults.py").exists()
-    assert not (context_engine / "bootstrap" / "_build_info.py").exists()
+    generated_dir = context_engine / "src" / "potpie_context_engine" / "bootstrap"
+    assert not (generated_dir / "_distribution_defaults.py").exists()
+    assert not (generated_dir / "_build_info.py").exists()

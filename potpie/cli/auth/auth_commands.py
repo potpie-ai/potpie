@@ -22,28 +22,32 @@ from potpie.cli.auth.atlassian_read import (
     run_confluence_use_flow,
     run_jira_use_flow,
 )
-from adapters.outbound.cli_auth.linear_read_client import (
+from potpie_context_engine.adapters.outbound.cli_auth.linear_read_client import (
     LinearReadError,
     fetch_linear_workspaces,
 )
 from potpie.cli.auth.linear_read import run_linear_use_flow
-from adapters.outbound.cli_auth.callback_server import (
+from potpie_context_engine.adapters.outbound.cli_auth.callback_server import (
     OAuthCallbackResult,
     start_oauth_callback_server,
     wait_for_oauth_callback,
 )
-from adapters.outbound.cli_auth.credentials_store import (
+from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
     ProviderCredentialError,
     credentials_path,
     get_integration_status,
     get_integration_tokens,
 )
-from bootstrap.runtime_settings import ensure_runtime_environment_loaded
-from adapters.outbound.cli_auth.integration_session import (
+from potpie_context_engine.bootstrap.runtime_settings import (
+    ensure_runtime_environment_loaded,
+)
+from potpie_context_engine.adapters.outbound.cli_auth.integration_session import (
     ensure_valid_integration_tokens,
     token_needs_refresh,
 )
-from adapters.outbound.cli_auth.integration_verify import verify_integration_access
+from potpie_context_engine.adapters.outbound.cli_auth.integration_verify import (
+    verify_integration_access,
+)
 from potpie.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
 from potpie.cli.telemetry.onboarding_events import (
     capture_integration_auth_event,
@@ -56,11 +60,11 @@ from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
 from potpie.cli.ui.output import emit_error, print_json_blob, print_plain_line
-from adapters.outbound.cli_auth.pkce import generate_pkce_pair
-from adapters.outbound.cli_auth.oauth_client_id_messages import (
+from potpie_context_engine.adapters.outbound.cli_auth.pkce import generate_pkce_pair
+from potpie_context_engine.adapters.outbound.cli_auth.oauth_client_id_messages import (
     missing_linear_client_id_message,
 )
-from adapters.outbound.cli_auth.provider_config import (
+from potpie_context_engine.adapters.outbound.cli_auth.provider_config import (
     Provider,
     authorization_url,
     get_callback_host,
@@ -70,12 +74,14 @@ from adapters.outbound.cli_auth.provider_config import (
     get_redirect_uri_for_port,
     get_scopes,
 )
-from adapters.outbound.cli_auth.token_exchange import exchange_authorization_code
+from potpie_context_engine.adapters.outbound.cli_auth.token_exchange import (
+    exchange_authorization_code,
+)
 
 auth_app = typer.Typer(
     help=(
-        "Integration auth status and deprecated provider aliases. "
-        "Use `potpie <provider>` for provider login/logout."
+        "Integration auth status (`auth status`). "
+        "Prefer `potpie <provider>` for login — aliases under this group are legacy."
     ),
 )
 linear_app = typer.Typer(help="Linear integration.")
@@ -83,8 +89,17 @@ jira_app = typer.Typer(help="Jira integration and read.")
 confluence_app = typer.Typer(help="Confluence integration and read.")
 
 _OAUTH_CALLBACK_TIMEOUT = 300.0
-_ALL_PROVIDERS: tuple[Provider, ...] = ("github", "linear", "jira", "confluence")
-IntegrationAuthProvider = Literal["linear", "atlassian", "jira", "confluence"]
+_ALL_PROVIDERS: tuple[Provider, ...] = (
+    "github",
+    "linear",
+    "jira",
+    "confluence",
+    "gitlab",
+    "gitbucket",
+)
+IntegrationAuthProvider = Literal[
+    "linear", "atlassian", "jira", "confluence", "gitbucket"
+]
 
 
 def _canonical_provider_for_json(product: str) -> str:
@@ -258,7 +273,7 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
                     as_json=False,
                 )
         else:
-            from adapters.outbound.cli_auth.credentials_store import (
+            from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
                 list_linear_organizations,
             )
 
@@ -417,7 +432,7 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
 
 def _integration_auth_provider(provider: str) -> IntegrationAuthProvider:
     key = provider.strip().lower()
-    if key in {"linear", "atlassian", "jira", "confluence"}:
+    if key in {"linear", "atlassian", "jira", "confluence", "gitbucket"}:
         return key
     raise ValueError(f"Unknown integration provider {provider!r}.")
 
@@ -462,6 +477,15 @@ def run_integration_login(provider: str, *, force: bool = False) -> None:
     def _run() -> None:
         if key == "linear":
             _run_linear_oauth_flow(force=force)
+            return
+        if key == "gitbucket":
+            from potpie.cli.auth.gitbucket_commands import (
+                run_gitbucket_api_token_auth,
+            )
+
+            ensure_runtime_environment_loaded()
+            j, v = _flags()
+            run_gitbucket_api_token_auth(force=force, as_json=j, verbose=v)
             return
         ensure_runtime_environment_loaded()
         j, v = _flags()
@@ -543,6 +567,10 @@ def integration_status(
             parts.append(f"site={_esc(row['site_name'])}")
         if row.get("site_url"):
             parts.append(f"url={_esc(row['site_url'])}")
+        if row.get("host_url"):
+            parts.append(f"host={_esc(row['host_url'])}")
+        if row.get("instance_host"):
+            parts.append(f"instance={_esc(row['instance_host'])}")
         if row.get("expires_at") is not None:
             parts.append(f"expires_at={_esc(row['expires_at'])}")
         if row.get("cloud_id"):
@@ -632,6 +660,11 @@ def auth_logout(provider: str) -> None:
 
         github_logout_impl()
         return
+    if key == "gitlab":
+        from potpie.cli.auth.gitlab_commands import gitlab_logout_impl
+
+        gitlab_logout_impl()
+        return
 
     store = get_store()
     existing = get_integration_status(key)
@@ -654,7 +687,7 @@ def auth_logout(provider: str) -> None:
 def auth_logout_cmd(
     provider: str = typer.Argument(
         ...,
-        help="Deprecated. Provider to log out: github, linear, jira, or confluence.",
+        help="Deprecated. Provider to log out: github, linear, jira, confluence, gitlab, or gitbucket.",
     ),
 ) -> None:
     """Deprecated: use ``potpie <provider> logout``."""
@@ -839,11 +872,15 @@ def _register_auth_compat_providers() -> None:
     from potpie.cli.auth.github_commands import (
         _build_auth_compat_github,
     )
+    from potpie.cli.auth.gitbucket_commands import (
+        _build_auth_compat_gitbucket,
+    )
 
     register_provider_app("github", _build_auth_compat_github())
     register_provider_app("linear", _build_auth_compat_linear())
     register_provider_app("jira", _build_auth_compat_jira())
     register_provider_app("confluence", _build_auth_compat_confluence())
+    register_provider_app("gitbucket", _build_auth_compat_gitbucket())
 
 
 def register_integration_commands(root: typer.Typer) -> None:
@@ -852,13 +889,23 @@ def register_integration_commands(root: typer.Typer) -> None:
         git_app,
         github_app,
     )
+    from potpie.cli.auth.gitbucket_commands import gitbucket_app
+    from potpie.cli.auth.gitlab_commands import gitlab_app
 
     root.add_typer(github_app, name="github")
     root.add_typer(git_app, name="git")
+    root.add_typer(gitlab_app, name="gitlab")
     root.add_typer(linear_app, name="linear")
     root.add_typer(jira_app, name="jira")
     root.add_typer(confluence_app, name="confluence")
-    root.add_typer(auth_app, name="auth")
+    root.add_typer(gitbucket_app, name="gitbucket")
+    # Keep `auth status` discoverable, but park the group below the happy path.
+    # Provider mirrors under this group are legacy; prefer `potpie <provider>`.
+    root.add_typer(
+        auth_app,
+        name="auth",
+        rich_help_panel="Legacy",
+    )
 
 
 def _print_jira_issue_row(row: dict[str, Any]) -> None:

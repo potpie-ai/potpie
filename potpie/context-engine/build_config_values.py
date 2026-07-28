@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Final
 
-DISTRIBUTION_DEFAULTS_OUT = Path("bootstrap/_distribution_defaults.py")
-BUILD_INFO_OUT = Path("bootstrap/_build_info.py")
+DISTRIBUTION_DEFAULTS_OUT = Path(
+    "src/potpie_context_engine/bootstrap/_distribution_defaults.py"
+)
+BUILD_INFO_OUT = Path("src/potpie_context_engine/bootstrap/_build_info.py")
 DISTRIBUTION_DEFAULT_INPUT_NAMES_BY_FIELD = {
     "environment": "POTPIE_ENVIRONMENT",
     "sentry_dsn": "POTPIE_SENTRY_DSN",
