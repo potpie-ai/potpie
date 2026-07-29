@@ -358,6 +358,7 @@ async def test_writer_never_embeds_unsafe_registered_labels_in_cypher() -> None:
         ProvenanceRef(pot_id="p1", source_event_id="e1"),
     )
 
+    assert graph.queries
     assert all("Bad-Label" not in query for query, _ in graph.queries)
 
 
