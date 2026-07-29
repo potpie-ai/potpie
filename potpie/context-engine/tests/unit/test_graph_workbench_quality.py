@@ -355,7 +355,10 @@ def test_quality_entity_label_drift_reports_incomplete_coverage_with_findings(
     result = workbench.quality(pot_id=POT, report="entity-label-drift")
 
     assert result.status == "degraded"
-    assert result.detail == "entity-label-drift has incomplete coverage on the active backend"
+    assert (
+        result.detail
+        == "entity-label-drift has incomplete coverage on the active backend"
+    )
     assert result.unsupported[0]["reason"] == "truncated"
     assert result.findings[0].entity_keys == ("environment:production",)
 

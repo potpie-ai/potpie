@@ -245,7 +245,10 @@ class FalkorDBInspection:
         if requested_limit is not None and requested_limit >= 0:
             probe_limit = requested_limit + 1
         rows = self._claim_query.find_claims(
-            replace(filter_, limit=probe_limit if probe_limit is not None else requested_limit)
+            replace(
+                filter_,
+                limit=probe_limit if probe_limit is not None else requested_limit,
+            )
         )
         truncated = probe_limit is not None and len(rows) > requested_limit
         if truncated and requested_limit is not None:
@@ -284,7 +287,6 @@ class FalkorDBInspection:
                 filter_.include_invalidated,
                 filter_.as_of,
                 filter_.source_system_in,
-                filter_.limit is not None,
                 filter_.fact_query,
             )
         )

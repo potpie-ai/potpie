@@ -94,9 +94,7 @@ class _CapGraph:
             rows = [["person:y", "repo:x", "PERFORMED"]] * edge_count
             return _FakeResult(["source", "target", "predicate"], rows)
         node_count = params["limit"] - (0 if self.extra_node else 1)
-        rows = [
-            ["repo:x", ["Entity", "Repository"], {"name": "x"}]
-        ] * node_count
+        rows = [["repo:x", ["Entity", "Repository"], {"name": "x"}]] * node_count
         return _FakeResult(["key", "labels", "props"], rows)
 
 
@@ -153,6 +151,24 @@ def test_slice_uses_claim_query_for_scoped_filters() -> None:
     assert sl.edges[0].predicate == "DEPLOYED_TO"
     assert {node.key for node in sl.nodes} == {"repo:x", "person:y"}
     assert sl.truncated is False
+
+
+def test_slice_keeps_unscoped_limit_on_full_graph_path() -> None:
+    claim_query = _ScopedClaimQuery()
+    insp = FalkorDBInspection(
+        settings=object(),
+        graph=_FakeGraph(),
+        claim_query=claim_query,
+    )
+
+    sl = insp.slice(
+        pot_id=POT,
+        filter_=ClaimQueryFilter(pot_id=POT, limit=1),
+    )
+
+    assert claim_query.filters == []
+    assert {node.key for node in sl.nodes} == {"repo:x", "person:y"}
+    assert len(sl.edges) == 1
 
 
 def test_slice_does_not_mark_exact_cap_as_truncated() -> None:
