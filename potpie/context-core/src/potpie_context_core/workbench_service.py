@@ -930,10 +930,10 @@ class GraphWorkbenchService:
         status = _quality_status(findings, unsupported)
         detail = None
         recommended = None
-        if unsupported and not findings:
-            detail = f"{clean_report} is unavailable for the active backend"
+        if unsupported:
+            detail = f"{clean_report} has incomplete coverage on the active backend"
             recommended = "Use graph status to inspect backend capabilities."
-        elif findings:
+        if findings:
             recommended = (
                 "Review findings, then use graph propose/commit for semantic "
                 "fact corrections or graph inbox add for uncertain work."
@@ -2670,6 +2670,7 @@ def _quality_entity_label_drift(
         key for row in rows for key in (row.subject_key, row.object_key) if key
     }
     labels_by_key: dict[str, tuple[str, ...]] = {}
+    inspection_complete = True
     try:
         graph_slice = backend.inspection.slice(
             pot_id=pot_id,
@@ -2682,8 +2683,18 @@ def _quality_entity_label_drift(
         for node in graph_slice.nodes:
             entity_keys.add(node.key)
             labels_by_key[node.key] = tuple(node.labels)
-    except CapabilityNotImplemented:
-        pass
+        if graph_slice.truncated:
+            inspection_complete = False
+            unsupported += (
+                {
+                    "name": "inspection.slice",
+                    "reason": "truncated",
+                    "detail": "Entity label inspection reached the backend scan limit.",
+                },
+            )
+    except CapabilityNotImplemented as exc:
+        inspection_complete = False
+        unsupported += (_unsupported_from_exception(exc, fallback="inspection.slice"),)
 
     missing_keys = sorted(entity_keys - labels_by_key.keys())
     if missing_keys:
@@ -2737,7 +2748,10 @@ def _quality_entity_label_drift(
             break
     return (
         tuple(findings),
-        {"scanned_entities": len(entity_keys)},
+        {
+            "scanned_entities": len(entity_keys),
+            "inspection_complete": inspection_complete,
+        },
         unsupported,
     )
 

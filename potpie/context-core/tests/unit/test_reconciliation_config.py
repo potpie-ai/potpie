@@ -126,5 +126,28 @@ def test_explicit_validation_configs_ignore_later_environment_changes(
     inferred = {item.entity_key: item for item in inferred_plan.entity_upserts}
     uninferred = {item.entity_key: item for item in uninferred_plan.entity_upserts}
     assert "Environment" in inferred["environment:prod"].labels
-    assert "Environment" not in uninferred["environment:prod"].labels
-    assert "Observation" in uninferred["environment:prod"].labels
+    assert "Environment" in uninferred["environment:prod"].labels
+    assert "Observation" not in uninferred["environment:prod"].labels
+
+
+def test_label_coherence_remains_enabled_when_inference_is_disabled() -> None:
+    """Keep key-prefix coherence active when classifier inference is disabled."""
+    plan = ReconciliationPlan(
+        event_ref=EventRef(event_id="e1", pot_id="p1", source_system="test"),
+        summary="test",
+        entity_upserts=[
+            EntityUpsert(
+                entity_key="environment:prod",
+                labels=("Entity", "Service", "Environment"),
+                properties={"name": "prod"},
+            )
+        ],
+    )
+
+    validate_reconciliation_plan(
+        plan,
+        "p1",
+        config=ReconciliationConfig(infer_canonical_labels=False),
+    )
+
+    assert plan.entity_upserts[0].labels == ("Entity", "Environment")

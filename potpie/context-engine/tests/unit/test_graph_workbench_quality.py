@@ -1,19 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
 
-from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
-    InMemoryGraphBackend,
-)
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphExtension
+from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_core.identity import IdentityClass
 from potpie_context_core.ontology import EntityTypeSpec
+from potpie_context_core.ports.claim_query import ClaimRow
 from potpie_context_core.workbench_service import (
     GraphWorkbenchService,
 )
-from potpie_context_core.ports.claim_query import ClaimRow
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -274,6 +276,88 @@ def test_quality_entity_label_drift_skips_unresolved_claim_only_keys() -> None:
 
     assert result.status == "ok"
     assert result.findings == ()
+
+
+def test_quality_entity_label_drift_is_partial_without_inspection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Report partial coverage when the backend cannot inspect all entities."""
+    workbench, backend = _service()
+
+    def unsupported_slice(*_args, **_kwargs):
+        """Simulate a backend without slice inspection."""
+        raise CapabilityNotImplemented("inspection.slice")
+
+    monkeypatch.setattr(type(backend.inspection), "slice", unsupported_slice)
+
+    result = workbench.quality(pot_id=POT, report="entity-label-drift")
+
+    assert result.status == "partial"
+    assert result.metrics["inspection_complete"] is False
+    assert result.unsupported[0]["name"] == "inspection.slice"
+    assert result.unsupported[0]["reason"] == "not_implemented"
+
+
+def test_quality_entity_label_drift_is_partial_when_inspection_is_truncated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Report partial coverage when the backend truncates entity inspection."""
+    workbench, backend = _service()
+    inspection_type = type(backend.inspection)
+    original_slice = inspection_type.slice
+
+    def truncated_slice(self, **kwargs):
+        """Force the otherwise complete in-memory slice to be truncated."""
+        return replace(original_slice(self, **kwargs), truncated=True)
+
+    monkeypatch.setattr(inspection_type, "slice", truncated_slice)
+
+    result = workbench.quality(pot_id=POT, report="entity-label-drift")
+
+    assert result.status == "partial"
+    assert result.metrics["inspection_complete"] is False
+    assert result.unsupported[0]["name"] == "inspection.slice"
+    assert result.unsupported[0]["reason"] == "truncated"
+
+
+def test_quality_entity_label_drift_reports_incomplete_coverage_with_findings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve incomplete-coverage detail even when drift findings exist."""
+    workbench, backend = _service()
+    inspection_type = type(backend.inspection)
+    original_slice = inspection_type.slice
+    backend.store.add(
+        _row(
+            "DEPLOYED_TO",
+            "service:web",
+            "environment:production",
+            claim_key="deploy",
+        )
+    )
+    backend.store.set_entity_label(
+        pot_id=POT,
+        entity_key="service:web",
+        labels=("Entity", "Service"),
+    )
+    backend.store.set_entity_label(
+        pot_id=POT,
+        entity_key="environment:production",
+        labels=("Entity", "Service", "Environment"),
+    )
+
+    def truncated_slice(self, **kwargs):
+        """Force the otherwise complete in-memory slice to be truncated."""
+        return replace(original_slice(self, **kwargs), truncated=True)
+
+    monkeypatch.setattr(inspection_type, "slice", truncated_slice)
+
+    result = workbench.quality(pot_id=POT, report="entity-label-drift")
+
+    assert result.status == "degraded"
+    assert result.detail == "entity-label-drift has incomplete coverage on the active backend"
+    assert result.unsupported[0]["reason"] == "truncated"
+    assert result.findings[0].entity_keys == ("environment:production",)
 
 
 def test_quality_entity_label_drift_uses_bound_graph_definition() -> None:

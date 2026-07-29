@@ -293,6 +293,7 @@ class FalkorDBGraphBackend:
             self.settings,
             graph_provider=self.graph_provider,
             embedder=self.embedder,
+            claim_query=self._claim_query,
         )
 
     @property

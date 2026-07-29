@@ -60,7 +60,7 @@ def validate_reconciliation_plan(
     plan.ontology_downgrades.clear()
     canonicalize_reconciliation_plan(
         plan,
-        enforce_label_coherence=config.infer_canonical_labels,
+        enforce_label_coherence=True,
         entity_types=definition.entity_types,
     )
     if definition is not DEFAULT_GRAPH_DEFINITION:

@@ -15,6 +15,7 @@ and easy to cap.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Callable, Iterable, Mapping
 
 from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
@@ -22,6 +23,7 @@ from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     build_falkordb_graph,
 )
 from potpie_context_core.ports.claim_query import ClaimQueryFilter
+from potpie_context_core.ports.claim_query import ClaimQueryPort
 from potpie_context_core.ports.graph.inspection import (
     GraphEdge,
     GraphNode,
@@ -97,6 +99,7 @@ class FalkorDBInspection:
         graph: Any | None = None,
         graph_provider: Callable[[], Any] | None = None,
         embedder: EmbedderPort | None = None,
+        claim_query: ClaimQueryPort | None = None,
     ) -> None:
         self._settings = settings
         self._graph = graph  # injectable for unit tests
@@ -106,6 +109,7 @@ class FalkorDBInspection:
         # Structural inspection reads embeddings already written by the writer,
         # so it never embeds at read time — kept for that uniform wiring.
         self._embedder = embedder
+        self._claim_query = claim_query
 
     def _get_graph(self) -> Any:
         if self._graph is None:
@@ -197,15 +201,17 @@ class FalkorDBInspection:
         )
 
     def slice(self, *, pot_id: str, filter_: ClaimQueryFilter) -> GraphSlice:
+        if self._claim_query is not None and self._requires_filtered_slice(filter_):
+            return self._filtered_slice(pot_id=pot_id, filter_=filter_)
         preds = list(filter_.predicate_in) or None
-        node_recs = self._query(_NODES_CYPHER, {"gid": pot_id, "limit": _MAX_NODES})
+        node_recs = self._query(_NODES_CYPHER, {"gid": pot_id, "limit": _MAX_NODES + 1})
         edge_recs = self._query(
             _EDGES_CYPHER,
             {
                 "gid": pot_id,
                 "preds": preds,
                 "include_invalid": bool(filter_.include_invalidated),
-                "limit": _MAX_EDGES,
+                "limit": _MAX_EDGES + 1,
             },
         )
         nodes = tuple(
@@ -227,9 +233,60 @@ class FalkorDBInspection:
         )
         return GraphSlice(
             pot_id=pot_id,
-            nodes=nodes,
-            edges=edges,
-            truncated=len(node_recs) >= _MAX_NODES or len(edge_recs) >= _MAX_EDGES,
+            nodes=nodes[:_MAX_NODES],
+            edges=edges[:_MAX_EDGES],
+            truncated=len(node_recs) > _MAX_NODES or len(edge_recs) > _MAX_EDGES,
+        )
+
+    def _filtered_slice(self, *, pot_id: str, filter_: ClaimQueryFilter) -> GraphSlice:
+        assert self._claim_query is not None
+        requested_limit = filter_.limit
+        probe_limit = None
+        if requested_limit is not None and requested_limit >= 0:
+            probe_limit = requested_limit + 1
+        rows = self._claim_query.find_claims(
+            replace(filter_, limit=probe_limit if probe_limit is not None else requested_limit)
+        )
+        truncated = probe_limit is not None and len(rows) > requested_limit
+        if truncated and requested_limit is not None:
+            rows = rows[:requested_limit]
+        node_keys = {k for row in rows for k in (row.subject_key, row.object_key)}
+        return GraphSlice(
+            pot_id=pot_id,
+            nodes=self._hydrate_nodes(pot_id, sorted(node_keys)),
+            edges=tuple(
+                GraphEdge(
+                    predicate=row.predicate,
+                    from_key=row.subject_key,
+                    to_key=row.object_key,
+                    properties=dict(row.properties),
+                )
+                for row in rows
+            ),
+            truncated=truncated,
+        )
+
+    @staticmethod
+    def _requires_filtered_slice(filter_: ClaimQueryFilter) -> bool:
+        return any(
+            (
+                filter_.predicate_in,
+                filter_.subject_key_in,
+                filter_.object_key_in,
+                filter_.claim_key_in,
+                filter_.subgraph_in,
+                filter_.mutation_id_in,
+                filter_.source_ref_in,
+                filter_.subject_label,
+                filter_.object_label,
+                filter_.valid_at_after,
+                filter_.valid_at_before,
+                filter_.include_invalidated,
+                filter_.as_of,
+                filter_.source_system_in,
+                filter_.limit is not None,
+                filter_.fact_query,
+            )
         )
 
     def labels(
