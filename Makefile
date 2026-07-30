@@ -1,8 +1,7 @@
 # Potpie root Makefile
 #
-# Installs the local `potpie` CLI globally. The day-to-day dev
-# stack (infra, API, worker, migrations, tests) lives in legacy/Makefile — run
-# those with `make -C legacy <target>`.
+# Builds and installs the local `potpie` CLI and daemon globally. Package-level
+# development commands live in the workspaces under `potpie/`.
 #
 # Quick start:
 #   make cli-install   # build graph-explorer UI + install potpie on your PATH (editable)
