@@ -203,6 +203,74 @@ jobs:
           ENV: "development"
         run: uv run --project . pytest tests -m "not premerge_journey"
 
+  windows-sqlite-backend:
+    runs-on: windows-latest
+    env:
+      CONTEXT_ENGINE_HOME: ${{ runner.temp }}\potpie-sqlite
+      CONTEXT_ENGINE_HOST_MODE: in_process
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.7"
+
+      - name: Verify lock
+        run: uv lock --check
+
+      - name: Build product wheels
+        run: |
+          uv build --package potpie-context-core --wheel --out-dir dist
+          uv build --package potpie-context-engine --wheel --out-dir dist
+          uv build --package potpie --wheel --out-dir dist
+
+      - name: Install clean binary-only wheel environment
+        shell: pwsh
+        run: |
+          uv venv --python "${{ matrix.python-version }}" .venv-clean
+          $wheel = (Get-ChildItem "dist/potpie-2.0.0-*.whl").FullName
+          uv pip install --python ".venv-clean/Scripts/python.exe" --only-binary :all: --find-links dist $wheel "pytest==9.0.3"
+
+      - name: Verify Windows dependency selection
+        shell: pwsh
+        run: |
+          & ".venv-clean/Scripts/python.exe" -c "import importlib.util, sqlite_vec; assert sqlite_vec.__version__ == '0.1.9'; assert importlib.util.find_spec('falkordblite') is None"
+
+      - name: Cache MiniLM model
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\potpie-sqlite\models\sentence-transformers
+          key: hf-hub-${{ runner.os }}-${{ matrix.python-version }}-all-MiniLM-L6-v2-v1
+          restore-keys: |
+            hf-hub-${{ runner.os }}-${{ matrix.python-version }}-
+            hf-hub-${{ runner.os }}-
+
+      - name: Run SQLite backend conformance and restart tests
+        shell: pwsh
+        run: |
+          & ".venv-clean/Scripts/python.exe" -m pytest potpie/context-engine/tests/unit/test_sqlite_backend.py potpie/context-engine/tests/integration/test_sqlite_minilm_quality.py -q
+
+      - name: Run native setup and readiness journey
+        shell: pwsh
+        run: |
+          & ".venv-clean/Scripts/potpie.exe" --json setup -y --in-process --backend sqlite --embeddings sentence-transformers --embedding-model all-MiniLM-L6-v2
+          $doctor = (& ".venv-clean/Scripts/potpie.exe" --json backend doctor | ConvertFrom-Json)
+          if ($doctor.profile -ne "sqlite" -or -not $doctor.ready) {
+            throw "SQLite backend doctor did not report ready: $($doctor | ConvertTo-Json -Compress)"
+          }
+
   premerge-cli-journey:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

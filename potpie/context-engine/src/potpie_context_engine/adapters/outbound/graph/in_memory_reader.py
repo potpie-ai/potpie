@@ -72,6 +72,16 @@ class InMemoryClaimQueryStore:
     def entity_properties(self, *, pot_id: str, entity_key: str) -> dict[str, Any]:
         return dict(self.entity_property_index.get((pot_id, entity_key), {}))
 
+    def entity_properties_many(
+        self, *, pot_id: str, entity_keys: Iterable[str]
+    ) -> Mapping[str, Mapping[str, Any]]:
+        result: dict[str, Mapping[str, Any]] = {}
+        for key in entity_keys:
+            properties = self.entity_property_index.get((pot_id, key))
+            if properties is not None:
+                result[key] = dict(properties)
+        return result
+
     # ------------------------------------------------------------------
     # ClaimQueryPort
     # ------------------------------------------------------------------

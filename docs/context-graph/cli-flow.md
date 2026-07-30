@@ -131,10 +131,11 @@ potpie ui      [--open/--no-open] [--pot <ref>]
   explicit integration-auth report.
 - **`setup`** — idempotent first-run that builds a `SetupPlan`
   (config/storage/daemon/active `default` pot/source registration/skills). `--backend`
-  picks the GraphBackend profile (default `falkordb_lite`); `--scan` is an **opt-in**
-  working-tree scan (**default off**); `--daemon`/`--in-process` selects host mode
-  (daemon mode calls `host.daemon.ensure()` first); `--dry-run` returns a preview
-  without executing. `--pot` only overrides the initial pot name.
+  picks and persists the GraphBackend profile (default `sqlite` on Windows x64,
+  `falkordb_lite` on POSIX); `--scan` is an **opt-in** working-tree scan
+  (**default off**); `--daemon`/`--in-process` selects host mode (daemon mode
+  calls `host.daemon.ensure()` first); `--dry-run` returns a preview without
+  executing. `--pot` only overrides the initial pot name.
 - **`doctor`** — local diagnostics composed from `backend.capabilities()` +
   `backend.mutation.readiness()` + `daemon.status()` + `ledger.status()`; also
   reports `effective_current_repo_pot` and `repo_default_pot` (the repo→pot
@@ -483,7 +484,8 @@ potpie graph repair [--semantic-index] [--entity-summaries] [--all] [--pot <ref>
 
 > **Roadmap (not yet wired):** `snapshot` (`graph export/import`) is real only on the
 > `in_memory`/`embedded` backends; `graph inspect`/`neighborhood` is unavailable on
-> `neo4j`. On the OSS default `falkordb_lite`, export/import are unavailable.
+> `neo4j`. Export/import are unavailable on both local defaults:
+> `falkordb_lite` on POSIX and `sqlite` on Windows.
 
 ---
 
@@ -496,9 +498,9 @@ potpie backend use <profile>        # advisory only — NOT persisted
 potpie backend doctor               # backend.mutation.readiness()
 ```
 
-`KNOWN_PROFILES` = `in_memory, embedded, neo4j, falkordb, falkordb_lite, postgres,
-chroma, hosted`. **`backend use` is advisory only** (`persisted: False`) — it
-suggests setting `CONTEXT_ENGINE_BACKEND`; it does not switch the live backend.
+`KNOWN_PROFILES` = `in_memory, embedded, neo4j, falkordb, falkordb_lite, sqlite,
+postgres, chroma, hosted`. **`backend use` is advisory only** (`persisted: False`)
+— it suggests setting `CONTEXT_ENGINE_BACKEND`; it does not switch the live backend.
 CLI code never queries SQLite/Neo4j/vector indexes/state tables directly — it routes
 through services and capability ports.
 
@@ -508,7 +510,7 @@ through services and capability ports.
 
 | Variable | Purpose / default |
 |---|---|
-| `CONTEXT_ENGINE_BACKEND` | preferred backend selector (host default `falkordb_lite`) |
+| `CONTEXT_ENGINE_BACKEND` | preferred backend selector (platform default: Windows `sqlite`, POSIX `falkordb_lite`) |
 | `GRAPH_DB_BACKEND` | legacy fallback selector (ingestion server default `neo4j`) |
 | `CONTEXT_ENGINE_HOST_MODE` | `daemon` (default) \| `in_process` |
 | `CONTEXT_ENGINE_EMBEDDER` | `none` disables the bundled local embedder |
@@ -539,8 +541,8 @@ flowchart LR
   cf_write -.-> cf_read
 ```
 
-Local first run (OSS default — `falkordb_lite`, detached daemon, skills installed
-during setup):
+Local first run (OSS platform default — Windows `sqlite`, POSIX `falkordb_lite`;
+detached daemon and skills installed during setup):
 
 **Published package:**
 

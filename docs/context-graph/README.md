@@ -25,7 +25,7 @@ flowchart TB
     direction TB
     cg_daemon["local daemon<br/>(detached by default)"]
     cg_services["services:<br/>Pot Mgmt · Graph · Skill Manager"]
-    cg_backend["GraphBackend<br/>(default falkordb_lite, embedded)"]
+    cg_backend["GraphBackend<br/>(POSIX falkordb_lite · Windows sqlite)"]
     cg_daemon --> cg_services --> cg_backend
   end
 
@@ -66,11 +66,12 @@ potpie status
 ```
 
 `setup` also registers your repo as a source. A working-tree scan is **opt-in**
-via `--scan` (default off). The OSS/CLI default backend is **`falkordb_lite`** —
-an embedded FalkorDB over a local file, with **no Docker, server, Neo4j, or cloud
-key required**; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
-(precedence: `CONTEXT_ENGINE_BACKEND` > legacy `GRAPH_DB_BACKEND` >
-`falkordb_lite`). Full flags live in [`cli-flow.md`](./cli-flow.md).
+via `--scan` (default off). The OSS/CLI platform default is **`sqlite` on
+Windows x64** and **`falkordb_lite` on POSIX**. Both persist locally with no
+Docker, external server, Neo4j, or cloud key required. Override the selection
+with `--backend` or `CONTEXT_ENGINE_BACKEND` (precedence:
+`CONTEXT_ENGINE_BACKEND` > legacy `GRAPH_DB_BACKEND` > setup-persisted backend >
+platform default). Full flags live in [`cli-flow.md`](./cli-flow.md).
 
 > **Roadmap (not yet wired):** Managed-backend routing is designed but not
 > functional — `pot use --managed`, `pot list --managed`, and the whole `cloud`

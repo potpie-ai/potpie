@@ -116,7 +116,7 @@ There are three intended product boundaries. Only the first is shipped today.
 
 | Boundary | Status | Description |
 |---|---|---|
-| **Local OSS self-serve** | **Shipped (V1.5)** | Installed with the CLI. `potpie setup` provisions config, local stores, the active `default` pot, source registration, the daemon, and skills. State stays local by default. Default backend `falkordb_lite` (no Docker/Neo4j/cloud needed). |
+| **Local OSS self-serve** | **Shipped (V1.5)** | Installed with the CLI. `potpie setup` provisions config, local stores, the active `default` pot, source registration, the daemon, and skills. State stays local by default. Platform backend defaults: `sqlite` on Windows x64 and `falkordb_lite` on POSIX (no Docker/Neo4j/cloud needed). |
 | **Managed Potpie graph** | **Roadmap** | A managed backend API hosting the *same* service modules on hosted stores with hosted auth/collaboration. The graph model is identical — `HostShell` "swaps the wiring without changing the facade." |
 | **Event Ledger** | **Roadmap** | A separate managed-or-self-hostable source-event service (webhooks, polling, replay cursors) that local or managed graphs *pull* from; it is never the graph source of truth. |
 

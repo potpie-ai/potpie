@@ -15,6 +15,7 @@ their step independently.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import sys
 from typing import Any, Mapping
 
 # StepResult.state values.
@@ -29,7 +30,7 @@ _OK_STATES = frozenset({DONE, SKIPPED, PLANNED})
 
 def default_setup_backend() -> str:
     """Default CLI setup backend."""
-    return "falkordb_lite"
+    return "sqlite" if sys.platform == "win32" else "falkordb_lite"
 
 
 @dataclass(frozen=True, slots=True)

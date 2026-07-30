@@ -15,7 +15,7 @@ Only three things are FalkorDB-specific and live here:
 3. ``reset_pot`` — FalkorDB has no ``CALL {} IN TRANSACTIONS``, so it deletes
    in a client-side batched loop scoped to ``group_id``.
 
-The default local backend is **FalkorDBLite** — an embedded Redis (via
+The default POSIX local backend is **FalkorDBLite** — an embedded Redis (via
 ``redislite``) backed by a local file, so ``pip install`` is enough (no server
 or Docker). Server/container mode (``falkordb_url`` over a redis URL) is kept
 as a deferred profile and requires the optional ``falkordb`` client.
@@ -155,7 +155,7 @@ def build_falkordb_graph(settings: ContextEngineSettingsPort) -> Any:
         from falkordb import FalkorDB
 
         return FalkorDB.from_url(url).select_graph(name)
-    # Lite (default): embedded FalkorDBLite over a local file — no server.
+    # Lite (POSIX default): embedded FalkorDBLite over a local file — no server.
     from redislite.falkordb_client import FalkorDB as LiteFalkorDB
 
     path = settings.falkordb_lite_path()

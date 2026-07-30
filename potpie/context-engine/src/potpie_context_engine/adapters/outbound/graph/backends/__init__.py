@@ -5,10 +5,11 @@ storage option means adding a profile here and implementing the six capability
 ports behind it — never changing the services that depend on ``GraphBackend``.
 
     in_memory   real, tests + conformance + POC          (InMemoryGraphBackend)
-    embedded    OSS local default (real, JSON-persisted)  (EmbeddedGraphBackend)
+    embedded    JSON-persisted local fallback             (EmbeddedGraphBackend)
     neo4j       shape-first production target            (Neo4jGraphBackend)
     falkordb    lightweight graph profile                (FalkorDBGraphBackend)
     falkordb_lite embedded FalkorDBLite profile          (FalkorDBLiteGraphBackend)
+    sqlite      strict SQLite + sqlite-vec local profile (SQLiteGraphBackend)
     postgres    pgvector profile (registered stub)       (StubGraphBackend)
     chroma      vector profile (registered stub)         (StubGraphBackend)
     hosted      managed profile (registered stub)        (StubGraphBackend)
@@ -41,6 +42,7 @@ KNOWN_PROFILES: tuple[str, ...] = (
     "neo4j",
     "falkordb",
     "falkordb_lite",
+    "sqlite",
     "postgres",
     "chroma",
     "hosted",
@@ -56,7 +58,8 @@ def build_backend(
     """Construct the ``GraphBackend`` for a profile name.
 
     ``in_memory`` and ``embedded`` need no settings; ``neo4j`` / ``falkordb`` /
-    ``falkordb_lite`` need engine settings (lazy-imported so the graph drivers are optional).
+    ``falkordb_lite`` / ``sqlite`` use engine settings (lazy-imported so
+    optional graph dependencies remain isolated).
     ``postgres`` / ``chroma`` / ``hosted`` resolve to a fail-closed
     ``StubGraphBackend``.
     Unknown profiles raise ``ValueError`` — the CLI maps that to a validation error.
@@ -64,6 +67,8 @@ def build_backend(
     ``embedder`` (an :class:`EmbedderPort`) powers semantic retrieval on graph
     backends; when omitted the bundled local embedder is built by default so
     retrieval needs no API key (``CONTEXT_ENGINE_EMBEDDER=none`` disables it).
+    The ``sqlite`` profile is the exception: it requires 384-d MiniLM and never
+    accepts hashing or lexical fallback.
     """
     name = (profile or "").strip().lower().replace("-", "_")
     if name == "falkordblite":
@@ -123,6 +128,24 @@ def build_backend(
 
             settings = EnvContextEngineSettings()
         return FalkorDBLiteGraphBackend(settings, embedder=embedder)
+    if name == "sqlite":
+        from potpie_context_engine.adapters.outbound.graph.backends.sqlite_backend import (
+            SQLiteGraphBackend,
+        )
+
+        if embedder is None:
+            from potpie_context_engine.adapters.outbound.intelligence.local_embedder import (
+                build_strict_sentence_transformer_embedder,
+            )
+
+            embedder = build_strict_sentence_transformer_embedder()
+        if settings is None:
+            from potpie_context_engine.adapters.outbound.settings_env import (
+                EnvContextEngineSettings,
+            )
+
+            settings = EnvContextEngineSettings()
+        return SQLiteGraphBackend(settings=settings, embedder=embedder)
     if name in _STUB_PROFILES:
         return StubGraphBackend(name)
     raise ValueError(

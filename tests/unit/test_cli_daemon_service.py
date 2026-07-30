@@ -130,6 +130,7 @@ def test_setup_daemon_uses_daemon_status_for_backend_validation(
     assert result.exit_code == 0, result.stdout
     assert host.setup.host_mode == "daemon"
     assert host.daemon.calls == ["ensure:embedded", "status"]
+    assert host.config.values["backend"] == "embedded"
 
 
 def test_setup_daemon_fails_when_requested_backend_cannot_be_verified(
@@ -194,14 +195,24 @@ class _Backend:
 
 
 @dataclass
+class _Config:
+    values: dict[str, str] = field(default_factory=dict)
+
+    def set(self, key: str, value: str) -> None:
+        self.values[key] = value
+
+
+@dataclass
 class _SetupHost:
     home: Path
     profile: str = "local"
     backend: _Backend = field(init=False)
     daemon: _FakeDaemon = field(init=False)
     setup: _Setup = field(init=False)
+    config: _Config = field(init=False)
 
     def __post_init__(self) -> None:
         self.backend = _Backend()
         self.daemon = _FakeDaemon(home=self.home, in_process=False)
         self.setup = _Setup()
+        self.config = _Config()

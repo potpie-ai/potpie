@@ -311,6 +311,71 @@ def build_embedder() -> EmbedderPort | None:
     return HashingEmbedder()
 
 
+def build_strict_sentence_transformer_embedder() -> SentenceTransformerEmbedder:
+    """Build the exact MiniLM embedder required by the SQLite graph profile.
+
+    Unlike :func:`build_embedder`, this path never falls back to hashing or
+    lexical matching. It accepts an unset configuration as the SQLite profile's
+    MiniLM default, but rejects explicit non-semantic modes and model drift.
+    """
+
+    configured_choice = configured_embedder_choice()
+    choice = normalize_embedding_mode(
+        configured_choice if configured_choice is not None else "sentence-transformers"
+    )
+    if choice not in SEMANTIC_EMBEDDER_ALIASES:
+        raise RuntimeError(
+            "the sqlite backend requires CONTEXT_ENGINE_EMBEDDER="
+            "sentence-transformers; hashing, local, and lexical modes are unsupported"
+        )
+    if not _sentence_transformers_installed():
+        raise RuntimeError(
+            "the sqlite backend requires sentence-transformers and "
+            "all-MiniLM-L6-v2; install Potpie's embeddings dependencies"
+        )
+    configured_model = configured_embedding_model().strip()
+    normalized_model = configured_model.lower()
+    prefix = "sentence-transformers/"
+    if normalized_model.startswith(prefix):
+        normalized_model = normalized_model[len(prefix) :]
+    if normalized_model != DEFAULT_SENTENCE_TRANSFORMER_MODEL.lower():
+        raise RuntimeError(
+            "the sqlite backend requires embedding model "
+            f"{DEFAULT_SENTENCE_TRANSFORMER_MODEL!r}, found "
+            f"{configured_model or 'no model'}"
+        )
+    return SentenceTransformerEmbedder(
+        model_name=DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+        cache_folder=default_sentence_transformer_cache(),
+    )
+
+
+def validate_strict_minilm_embedder(embedder: EmbedderPort) -> None:
+    """Reject an injected embedder unless it identifies as 384-d MiniLM."""
+
+    name = str(getattr(embedder, "name", "") or "")
+    normalized_name = name.strip().lower()
+    expected = (
+        f"sentence-transformers/{DEFAULT_SENTENCE_TRANSFORMER_MODEL}".lower()
+    )
+    if normalized_name != expected:
+        raise RuntimeError(
+            f"the sqlite backend requires {expected}, found "
+            f"{name or 'an unidentified embedder'}"
+        )
+    try:
+        dimensions = int(embedder.dimensions)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "the sqlite backend could not verify the MiniLM embedding dimension"
+        ) from exc
+    if dimensions != 384:
+        raise RuntimeError(
+            f"the sqlite backend requires 384-dimensional MiniLM vectors, "
+            f"found {dimensions}"
+        )
+
+
 def configured_embedder_choice(*, include_env: bool = True) -> str | None:
     if include_env:
         raw = (os.getenv("CONTEXT_ENGINE_EMBEDDER") or "").strip()
@@ -399,7 +464,9 @@ __all__ = [
     "SEMANTIC_EMBEDDER_ALIASES",
     "SentenceTransformerEmbedder",
     "build_embedder",
+    "build_strict_sentence_transformer_embedder",
     "configured_embedder_choice",
     "configured_embedding_model",
     "default_sentence_transformer_cache",
+    "validate_strict_minilm_embedder",
 ]

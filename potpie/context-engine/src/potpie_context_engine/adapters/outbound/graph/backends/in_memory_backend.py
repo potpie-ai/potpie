@@ -17,7 +17,7 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
@@ -35,13 +35,15 @@ from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import 
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionRegistry,
 )
+from potpie_context_engine.adapters.outbound.graph.backends.claim_query_inspection import (
+    ClaimQueryInspection,
+)
 from potpie_context_core.reconciliation_validation import (
     validate_reconciliation_plan,
 )
 from potpie_context_core.graph_contract import evidence_strength_for_truth
 from potpie_context_core.graph_entity_summary import (
     merge_entity_display_properties,
-    normalize_entity_properties,
 )
 from potpie_context_core.graph_mutations import ProvenanceContext
 from potpie_context_core.lifecycle import DONE, SetupPlan, StepResult
@@ -49,11 +51,6 @@ from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_core.ports.graph.analytics import RepairReport
 from potpie_context_core.ports.graph.backend import BackendCapabilities
-from potpie_context_core.ports.graph.inspection import (
-    GraphEdge,
-    GraphNode,
-    GraphSlice,
-)
 from potpie_context_core.ports.graph.mutation import BackendReadiness
 from potpie_context_core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_core.reconciliation import (
@@ -394,131 +391,6 @@ class _Semantic:
 
 
 @dataclass(slots=True)
-class _Inspection:
-    store: InMemoryClaimQueryStore
-
-    def neighborhood(
-        self,
-        *,
-        pot_id: str,
-        entity_key: str,
-        depth: int = 1,
-        direction: str = "both",
-        predicates: tuple[str, ...] = (),
-        limit: int | None = None,
-    ) -> GraphSlice:
-        seen_nodes: dict[str, GraphNode] = {}
-        edges: list[GraphEdge] = []
-        seen_edges: set[tuple[str, str, str]] = set()
-        frontier = {entity_key}
-        max_edges = max(0, int(limit)) if limit is not None else None
-        predicate_set = {p.upper() for p in predicates if p}
-        walk_out = direction in ("out", "both")
-        walk_in = direction in ("in", "both")
-        truncated = False
-        visited_frontier: set[str] = set()
-        for _ in range(max(1, depth)):
-            next_frontier: set[str] = set()
-            current = frontier - visited_frontier
-            if not current:
-                break
-            visited_frontier.update(current)
-            for row in self.store.rows:
-                if row.pot_id != pot_id:
-                    continue
-                if row.invalid_at is not None:
-                    # Invalidated claims are history, not current structure; the
-                    # FalkorDB inspection path excludes them too.
-                    continue
-                if predicate_set and row.predicate.upper() not in predicate_set:
-                    continue
-                follows_out = walk_out and row.subject_key in current
-                follows_in = walk_in and row.object_key in current
-                if not (follows_out or follows_in):
-                    continue
-                edge_key = (row.subject_key, row.predicate, row.object_key)
-                if edge_key not in seen_edges:
-                    seen_edges.add(edge_key)
-                    edges.append(_edge(row))
-                    if max_edges is not None and len(edges) >= max_edges:
-                        truncated = True
-                for key in (row.subject_key, row.object_key):
-                    if key not in seen_nodes:
-                        seen_nodes[key] = self._node(pot_id, key)
-                if follows_out:
-                    next_frontier.add(row.object_key)
-                if follows_in:
-                    next_frontier.add(row.subject_key)
-                if truncated:
-                    break
-            if truncated:
-                break
-            frontier = next_frontier - visited_frontier
-            if not frontier:
-                break
-        return GraphSlice(
-            pot_id=pot_id,
-            nodes=tuple(seen_nodes.values()),
-            edges=tuple(edges),
-            truncated=truncated,
-        )
-
-    def path(
-        self, *, pot_id: str, from_key: str, to_key: str, max_depth: int = 4
-    ) -> GraphSlice:
-        # Naive BFS over undirected claim edges.
-        adjacency: dict[str, list[ClaimRow]] = {}
-        for row in self.store.rows:
-            if row.pot_id != pot_id:
-                continue
-            adjacency.setdefault(row.subject_key, []).append(row)
-            adjacency.setdefault(row.object_key, []).append(row)
-        queue: list[tuple[str, list[ClaimRow]]] = [(from_key, [])]
-        visited = {from_key}
-        while queue:
-            node, trail = queue.pop(0)
-            if node == to_key:
-                nodes = {from_key, to_key}
-                for r in trail:
-                    nodes.update({r.subject_key, r.object_key})
-                return GraphSlice(
-                    pot_id=pot_id,
-                    nodes=tuple(self._node(pot_id, k) for k in nodes),
-                    edges=tuple(_edge(r) for r in trail),
-                )
-            if len(trail) >= max_depth:
-                continue
-            for row in adjacency.get(node, []):
-                nxt = row.object_key if row.subject_key == node else row.subject_key
-                if nxt not in visited:
-                    visited.add(nxt)
-                    queue.append((nxt, trail + [row]))
-        return GraphSlice(pot_id=pot_id)
-
-    def labels(
-        self, *, pot_id: str, entity_keys: Iterable[str]
-    ) -> Mapping[str, tuple[str, ...]]:
-        return self.store.entity_labels(pot_id=pot_id, entity_keys=entity_keys)
-
-    def slice(self, *, pot_id: str, filter_: ClaimQueryFilter) -> GraphSlice:
-        rows = self.store.find_claims(filter_)
-        node_keys = {k for r in rows for k in (r.subject_key, r.object_key)}
-        return GraphSlice(
-            pot_id=pot_id,
-            nodes=tuple(self._node(pot_id, k) for k in node_keys),
-            edges=tuple(_edge(r) for r in rows),
-        )
-
-    def _node(self, pot_id: str, key: str) -> GraphNode:
-        labels = self.store.entity_label_index.get((pot_id, key), ())
-        props = normalize_entity_properties(
-            self.store.entity_properties(pot_id=pot_id, entity_key=key),
-            entity_key=key,
-        )
-        return GraphNode(key=key, labels=labels, properties=props)
-
-
-@dataclass(slots=True)
 class _Analytics:
     store: InMemoryClaimQueryStore
     on_change: Any = None
@@ -658,7 +530,7 @@ class InMemoryGraphBackend:
     )
     _mutation: _Mutation = field(init=False)
     _semantic: _Semantic = field(init=False)
-    _inspection: _Inspection = field(init=False)
+    _inspection: ClaimQueryInspection = field(init=False)
     _analytics: _Analytics = field(init=False)
     _snapshot: _Snapshot = field(init=False)
 
@@ -676,7 +548,7 @@ class InMemoryGraphBackend:
             execution_registry=self.execution_registry,
         )
         self._semantic = _Semantic(self.store)
-        self._inspection = _Inspection(self.store)
+        self._inspection = ClaimQueryInspection(self.store)
         self._analytics = _Analytics(self.store, on_change=self.on_change)
         self._snapshot = _Snapshot(self.store)
 
@@ -701,7 +573,7 @@ class InMemoryGraphBackend:
         return self._semantic
 
     @property
-    def inspection(self) -> _Inspection:
+    def inspection(self) -> ClaimQueryInspection:
         return self._inspection
 
     @property
@@ -742,34 +614,6 @@ class InMemoryGraphBackend:
             definition=definition,
             execution_registry=self.execution_registry,
         )
-
-
-def _edge(row: ClaimRow) -> GraphEdge:
-    properties = {
-        **dict(row.properties),
-        "claim_key": row.claim_key,
-        "subgraph": row.subgraph,
-        "truth": row.truth,
-        "confidence": row.confidence,
-        "description": row.description,
-        "environment": row.environment,
-        "fact": row.fact,
-        "source_system": row.source_system,
-        "source_ref": row.source_ref,
-        "source_refs": list(row.source_refs),
-        "valid_at": _dt_iso(row.valid_at),
-        "valid_until": _dt_iso(row.valid_until),
-        "observed_at": _dt_iso(row.observed_at),
-        "mutation_id": row.mutation_id,
-    }
-    return GraphEdge(
-        predicate=row.predicate,
-        from_key=row.subject_key,
-        to_key=row.object_key,
-        properties={
-            key: value for key, value in properties.items() if value is not None
-        },
-    )
 
 
 def _with_invalid_at(row: ClaimRow, when: datetime) -> ClaimRow:

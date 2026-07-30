@@ -36,14 +36,17 @@ http = [
 ]
 local = [
     "falkordb>=1.6.1",
-    # Default CLI backend is FalkorDBLite on Python 3.12+.
-    "falkordblite>=0.10.0; python_version >= '3.12'",
+    # POSIX CLI default. FalkorDB Lite does not publish Windows wheels.
+    "falkordblite>=0.10.0; python_version >= '3.12' and sys_platform != 'win32'",
     # redis 8 enables maintenance notifications that break FalkorDBLite's
     # hostless embedded connection; keep the bound wherever falkordblite ships.
-    "redis>=7.1,<8; python_version >= '3.12'",
+    "redis>=7.1,<8; python_version >= '3.12' and sys_platform != 'win32'",
     # Without hiredis, redis-py parses RESP replies element-by-element in pure
     # Python — graph reads spend seconds in the parser on large result sets.
-    "hiredis>=3.0.0; python_version >= '3.12'",
+    "hiredis>=3.0.0; python_version >= '3.12' and sys_platform != 'win32'",
+    # Native Windows x64 local graph backend. Exact pin is part of the on-disk
+    # schema contract because sqlite-vec is still pre-v1.
+    "sqlite-vec==0.1.9; sys_platform == 'win32' and (platform_machine == 'AMD64' or platform_machine == 'x86_64')",
 ]
 neo4j = [
     "neo4j>=5.28.0",

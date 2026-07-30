@@ -7,15 +7,17 @@ Postgres pipeline + connectors + reconciliation agent), which is being migrated
 onto ``HostShell`` and is not imported on the CLI path.
 
 Profile selection:
-    backend profile defaults to ``falkordb_lite`` (embedded FalkorDBLite local
-    stack). ``$CONTEXT_ENGINE_BACKEND`` overrides it; ``neo4j`` is the
-    shape-first production target. The ledger defaults to an unbound dummy
-    client; tests can inject a ``FixtureEventLedgerClient``.
+    backend profile defaults to ``sqlite`` on Windows x64 and
+    ``falkordb_lite`` on POSIX. Environment overrides take precedence over the
+    backend persisted by setup; ``neo4j`` is the shape-first production target.
+    The ledger defaults to an unbound dummy client; tests can inject a
+    ``FixtureEventLedgerClient``.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 from typing import Any
 
 from potpie_context_engine.adapters.outbound.graph.backends import build_backend
@@ -75,13 +77,21 @@ from potpie_context_engine.host.shell import HostShell, LedgerFacade
 
 
 def default_backend_profile() -> str:
-    # 'falkordb_lite' is the OSS local default: a graph-native, persistent
-    # backend across CLI invocations.
+    # FalkorDB Lite has no Windows wheel. Native Windows uses the strict
+    # SQLite + sqlite-vec profile; POSIX retains the graph-native Lite default.
+    # Setup persists an explicit selection so later CLI processes use the same
+    # store without requiring a permanent environment variable.
     for env_name in ("CONTEXT_ENGINE_BACKEND", "GRAPH_DB_BACKEND"):
         profile = (os.getenv(env_name) or "").strip().lower()
         if profile:
             return profile
-    return "falkordb_lite"
+    try:
+        persisted = (LocalConfigService().get("backend") or "").strip().lower()
+    except (AttributeError, OSError):
+        persisted = ""
+    if persisted:
+        return persisted
+    return "sqlite" if sys.platform == "win32" else "falkordb_lite"
 
 
 def default_host_mode() -> str:

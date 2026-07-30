@@ -1,4 +1,4 @@
-"""Embedded ``GraphBackend`` — the OSS local default (JSON-persisted POC).
+"""Embedded ``GraphBackend`` — the JSON-persisted local fallback.
 
 The intended ``pip install potpie`` default: a local, no-Docker, persistent store
 so the CLI round-trips ``record`` → ``resolve`` across separate invocations

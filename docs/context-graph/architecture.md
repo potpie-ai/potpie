@@ -64,7 +64,7 @@ flowchart TB
     cg_cli["potpie CLI · daemon HTTP"]
     cg_shell["HostShell facade (host/shell.py)"]
     cg_services["services: graph · graph_workbench · agent_context · pots · skills · nudge · ledger"]
-    cg_lite[("default backend: falkordb_lite<br/>default host mode: daemon")]
+    cg_lite[("default backend: POSIX falkordb_lite · Windows sqlite<br/>default host mode: daemon")]
     cg_cli --> cg_shell --> cg_services --> cg_lite
   end
 
@@ -189,7 +189,7 @@ of the six-cap bundle: `inbox_store.py` and `plan_store.py`.
 
 The registry (`adapters/outbound/graph/backends/__init__.py`) is
 `build_backend(profile, *, settings, embedder)`. `KNOWN_PROFILES = (in_memory,
-embedded, neo4j, falkordb, falkordb_lite, postgres, chroma, hosted)`. It
+embedded, neo4j, falkordb, falkordb_lite, sqlite, postgres, chroma, hosted)`. It
 normalizes names (`falkordblite`→`falkordb_lite`, dashes→underscores) and, when
 `embedder is None` for a real profile, default-builds the bundled local embedder
 (disable via `CONTEXT_ENGINE_EMBEDDER=none`).
@@ -204,7 +204,8 @@ and raises `CapabilityNotImplemented`.
 |---|---|---:|---|
 | `in_memory` | `InMemoryGraphBackend` | **6/6** | Conformance/reference; genuinely real (validates, MERGEs by identity, bitemporal invalidation, embeds on write); `dump_store`/`load_store`. |
 | `embedded` | `EmbeddedGraphBackend` | **6/6** (delegated) | OSS JSON-persisted fallback wrapping `in_memory`; persists to `<home>/graph.json` after each mutation (atomic tmp-replace). |
-| `falkordb_lite` | `FalkorDBLiteGraphBackend` | **5/6** (no snapshot) | **The OSS/CLI default.** Embedded FalkorDBLite via `redislite` over a local file — no server, no Docker. |
+| `falkordb_lite` | `FalkorDBLiteGraphBackend` | **5/6** (no snapshot) | **The POSIX OSS/CLI default.** Embedded FalkorDBLite via `redislite` over a local file — no server, no Docker. |
+| `sqlite` | `SQLiteGraphBackend` | **5/6** (no snapshot) | **The Windows x64 OSS/CLI default.** Canonical SQLite tables plus pinned `sqlite-vec` cosine search with strict `all-MiniLM-L6-v2`. |
 | `falkordb` | `FalkorDBGraphBackend` | **5/6** (no snapshot) | Full FalkorDB server over a redis URL; needs the optional `falkordb` client. |
 | `neo4j` | `Neo4jGraphBackend` | **4/6** (no inspection, no snapshot) | "Shape-first production target"; native relationship vector index. |
 | `postgres` / `chroma` / `hosted` | `StubGraphBackend` | **0/6** | Fail-closed seam: every port and `provision` raise `CapabilityNotImplemented("graph.<profile>.<cap>.<method>")`. Documented but unbuilt; `backend list` still shows them. |
@@ -214,9 +215,10 @@ and raises `CapabilityNotImplemented`.
 - Claim-key `mutation.invalidate` raises on **both** Neo4j and FalkorDB (that
   invalidation path is unbuilt there).
 - `snapshot` (export/import) is real only on `in_memory`/`embedded`.
-- `inspection` is real on `in_memory`/`embedded`/`falkordb` but **not** Neo4j.
+- `inspection` is real on `in_memory`/`embedded`/`falkordb`/`sqlite` but **not** Neo4j.
 - Net effect: **FalkorDB is more complete than Neo4j** (5 vs 4 ports), and the
-  OSS default `falkordb_lite` is a first-class backend, not a stub.
+  local defaults (`falkordb_lite` on POSIX and `sqlite` on Windows) are
+  first-class backends, not stubs.
 
 > **Roadmap (not yet wired):** `snapshot` on falkordb/neo4j; `inspection` on
 > neo4j; the `postgres`/`chroma`/`hosted` backends (all `StubGraphBackend`);
@@ -281,15 +283,19 @@ lowering, the 4-verb idempotent apply, inbox, and quality — is owned by
 
 ## Persistence & per-pot scoping
 
-Every fact is scoped by **`pot_id`, which IS the Cypher `group_id`** on every
-`:Entity` node and `:RELATES_TO` edge. `reset_pot` is `MATCH (n {group_id:$gid})
-DETACH DELETE n`. There is no cross-pot federation (an explicit anti-goal).
+Every fact is scoped by logical **`pot_id`**. Cypher backends persist it as
+`group_id` on every `:Entity` node and `:RELATES_TO` edge; SQLite persists it
+directly as `pot_id`. Cypher `reset_pot` uses
+`MATCH (n {group_id:$gid}) DETACH DELETE n`; SQLite deletes the same partition
+transactionally from its canonical and vector tables. There is no cross-pot
+federation (an explicit anti-goal).
 
 | Profile | Where it persists | Pot isolation |
 |---|---|---|
 | `in_memory` | Process-local, ephemeral | by `group_id` |
 | `embedded` | One multi-pot `<home>/graph.json`, atomic rewrite per mutation | by `group_id` |
 | `falkordb_lite` | `redislite` file at `falkordb_lite_path()` (default `.potpie/context_graph/falkordb.db`), single keyspace `context_graph` | by `group_id` |
+| `sqlite` | One multi-pot `<home>/context_graph/graph.sqlite3`; canonical rows and `sqlite-vec` projection commit together | by `pot_id` |
 | `neo4j` | External server, one DB | by `group_id` |
 
 Relevant settings (`domain/ports/settings.py`): `graph_db_backend()='neo4j'`,
@@ -300,14 +306,15 @@ credentials.
 ## Backend selection precedence
 
 - **Host / CLI:** `CONTEXT_ENGINE_BACKEND` (preferred) > legacy
-  `GRAPH_DB_BACKEND` > `default_backend_profile()` = **`falkordb_lite`**.
+  `GRAPH_DB_BACKEND` > setup-persisted `backend` > platform default
+  (**`sqlite` on Windows, `falkordb_lite` on POSIX**).
 - **Ingestion server:** `settings.graph_db_backend()` default **`neo4j`**, but it
   also routes through `build_backend`, so FalkorDB works there too.
 
 There is **no `NotImplementedError` gate** on FalkorDB anywhere — the old
 "selecting falkordb raises NotImplementedError, use neo4j" guidance is obsolete.
-`backend use <profile>` is **advisory only** (it suggests
-`CONTEXT_ENGINE_BACKEND`, it does not persist a selection).
+`backend use <profile>` remains **advisory only**. An explicit successful
+`potpie setup --backend <profile>` persists the selection.
 
 ## Setup & provisioning (orientation)
 
@@ -320,9 +327,10 @@ skipped | not_implemented | failed`.
 
 Two corrections worth stating here:
 
-- The default backend a fresh `setup` provisions is **`falkordb_lite`** (a local
-  `redislite` file), not `embedded` or `neo4j`. `postgres`/`chroma`/`hosted`
-  cannot be provisioned — `StubGraphBackend.provision()` raises (the prior
+- A fresh `setup` provisions **`sqlite` on Windows x64** and
+  **`falkordb_lite` on POSIX**, not `embedded` or `neo4j`.
+  `postgres`/`chroma`/`hosted` cannot be provisioned —
+  `StubGraphBackend.provision()` raises (the prior
   "postgres creates the DB, enables pgvector, runs DDL" claim was aspirational).
 - `--scan` is **opt-in** (default off): `setup` registers the repo as a source
   but does not scan or ingest the working tree.
@@ -457,7 +465,7 @@ duplicate ontology enums in docs/CLI.
 ## Invariants
 
 - OSS graph use works with no cloud auth and no mandatory Docker/Neo4j/Postgres
-  (the default `falkordb_lite` is embedded).
+  (both platform-local defaults are embedded stores).
 - The CLI is the user and agent surface.
 - The canonical claim store is the only source of truth; semantic/inspection/
   analytics/snapshot are rebuildable projections.

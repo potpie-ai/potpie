@@ -360,6 +360,49 @@ def test_setup_success_emits_run_and_step_metrics(
         assert "gpt-9" not in call.attributes.values()
 
 
+def test_setup_persists_explicit_backend_only_after_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_host = MagicMock()
+    mock_host.profile = "local"
+    mock_host.backend.profile = "sqlite"
+    mock_host.daemon.in_process = True
+    _patch_local_setup_host(monkeypatch, mock_host)
+    monkeypatch.setattr(
+        bootstrap.setup_ux,
+        "run_setup_plain",
+        lambda _setup, plan, **_kwargs: SetupReport(
+            plan=plan,
+            steps=(StepResult("backend.provision", DONE, hard=True),),
+        ),
+    )
+    monkeypatch.setattr(
+        "potpie.cli.ui.setup_ux.rich_enabled",
+        lambda **_k: False,
+    )
+
+    result = runner.invoke(
+        cli_main.app,
+        [
+            "setup",
+            "--yes",
+            "--in-process",
+            "--backend",
+            "sqlite",
+            "--embeddings",
+            "sentence-transformers",
+            "--embedding-model",
+            "all-MiniLM-L6-v2",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert mock_host.config.set.call_count == 3
+    mock_host.config.set.assert_any_call("backend", "sqlite")
+    mock_host.config.set.assert_any_call("embedder", "sentence-transformers")
+    mock_host.config.set.assert_any_call("embedding_model", "all-MiniLM-L6-v2")
+
+
 def test_setup_degraded_report_preserves_exit_code_and_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

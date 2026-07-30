@@ -280,6 +280,15 @@ def register(root: typer.Typer) -> None:
                 hard_failed_step=_first_hard_failed_step(report),
                 soft_warning_count=_soft_warning_count(report),
             )
+            if report.ok and backend:
+                # ``--backend`` is an explicit durable selection. Persist only
+                # after provisioning succeeds so a failed switch leaves the
+                # previously working backend active for the next CLI process.
+                host.config.set("backend", selected_backend)
+            if report.ok and embeddings is not None:
+                host.config.set("embedder", selected_embeddings)
+            if report.ok and embedding_model is not None:
+                host.config.set("embedding_model", selected_embedding_model)
             if report.ok and not interactive_onboarding:
                 _capture_plain_project_binding(report)
             _emit_setup_run_metric(
