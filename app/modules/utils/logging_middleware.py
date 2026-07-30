@@ -46,7 +46,12 @@ class LoggingContextMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         # Generate unique request ID
-        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request_id = (
+            getattr(request.state, "request_id", None)
+            or request.headers.get("X-Request-ID")
+            or str(uuid.uuid4())
+        )
+        request.state.request_id = request_id
 
         # Extract user_id from request state (set by AuthService.check_auth)
         user_id = None

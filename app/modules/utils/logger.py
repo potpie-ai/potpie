@@ -19,6 +19,13 @@ SHOW_STACK_TRACES = os.getenv("LOG_STACK_TRACES", "true").lower() in (
     "yes",
 )
 
+# Keep Loguru variable inspection disabled unless explicitly enabled for development.
+ENABLE_LOG_DIAGNOSE = os.getenv("LOG_DIAGNOSE", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Sensitive data patterns to redact in logs
 SENSITIVE_PATTERNS = [
     # Credentials in key=value format
@@ -57,9 +64,11 @@ SENSITIVE_PATTERNS = [
     # Redis/Database URLs with passwords
     (
         re.compile(
-            r"(redis|postgresql|mysql|mongodb)://([^:]+):([^@]+)@", re.IGNORECASE
+            r"((?:rediss?|postgres(?:ql)?(?:\+[a-z0-9_-]+)?|mysql|"
+            r"mongodb(?:\+srv)?|amqps?)://[^:/@\s?#]+):([^/@\s?#]+)@",
+            re.IGNORECASE,
         ),
-        r"\1://\2:***REDACTED***@",
+        r"\1:***REDACTED***@",
     ),
     # OAuth authorization codes (typically 20-100 chars alphanumeric)
     (
@@ -100,6 +109,92 @@ def filter_sensitive_data(text: str) -> str:
         filtered = pattern.sub(replacement, filtered)
 
     return filtered
+
+
+_SENSITIVE_FIELD_PARTS = (
+    "authorization",
+    "cookie",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "private_key",
+    "client_id",
+    "credential",
+    "session_id",
+)
+
+_MAX_SENSITIVE_VALUE_DEPTH = 20
+
+
+def filter_sensitive_value(
+    value,
+    key: str | None = None,
+    *,
+    _depth: int = 0,
+    _active_container_ids: set[int] | None = None,
+):
+    """Recursively redact credentials and unsafe structured log branches."""
+    if key and any(part in key.lower() for part in _SENSITIVE_FIELD_PARTS):
+        return "***REDACTED***"
+    if _depth >= _MAX_SENSITIVE_VALUE_DEPTH:
+        return "***REDACTED***"
+
+    if isinstance(value, (dict, list, tuple, set)):
+        if _active_container_ids is None:
+            _active_container_ids = set()
+
+        value_id = id(value)
+        if value_id in _active_container_ids:
+            return "***REDACTED***"
+
+        _active_container_ids.add(value_id)
+        try:
+            if isinstance(value, dict):
+                return {
+                    item_key: filter_sensitive_value(
+                        item_value,
+                        str(item_key),
+                        _depth=_depth + 1,
+                        _active_container_ids=_active_container_ids,
+                    )
+                    for item_key, item_value in value.items()
+                }
+            if isinstance(value, list):
+                return [
+                    filter_sensitive_value(
+                        item,
+                        _depth=_depth + 1,
+                        _active_container_ids=_active_container_ids,
+                    )
+                    for item in value
+                ]
+            if isinstance(value, tuple):
+                return tuple(
+                    filter_sensitive_value(
+                        item,
+                        _depth=_depth + 1,
+                        _active_container_ids=_active_container_ids,
+                    )
+                    for item in value
+                )
+            return {
+                filter_sensitive_value(
+                    item,
+                    _depth=_depth + 1,
+                    _active_container_ids=_active_container_ids,
+                )
+                for item in value
+            }
+        finally:
+            _active_container_ids.remove(value_id)
+    if isinstance(value, bytes):
+        return filter_sensitive_data(value.decode("utf-8", errors="replace"))
+    if isinstance(value, str):
+        return filter_sensitive_data(value)
+    return value
 
 
 def production_log_sink(message):
@@ -151,10 +246,7 @@ def production_log_sink(message):
     for key, value in extras.items():
         if key != "name":  # Already included as "logger"
             # Convert value to string and filter if it's a string-like type
-            if isinstance(value, (str, bytes)):
-                log_data[key] = filter_sensitive_data(str(value))
-            else:
-                log_data[key] = value
+            log_data[key] = filter_sensitive_value(value, key)
 
     # Add exception if present
     if exception:
@@ -229,7 +321,7 @@ def configure_logging(level: Optional[str] = None):
             level=level,
             serialize=True,  # Get structured record, then format in sink
             backtrace=SHOW_STACK_TRACES,
-            diagnose=SHOW_STACK_TRACES,
+            diagnose=False,
         )
     else:
 
@@ -249,8 +341,7 @@ def configure_logging(level: Optional[str] = None):
             # Filter extra fields
             extra_value = ""
             for key, value in record.get("extra", {}).items():
-                if isinstance(value, (str, bytes)):
-                    record["extra"][key] = filter_sensitive_data(str(value))
+                record["extra"][key] = filter_sensitive_value(value, key)
                 if key != "name":
                     extra_value += f" {key}: {record['extra'][key]},"
             if extra_value:
@@ -264,7 +355,7 @@ def configure_logging(level: Optional[str] = None):
             colorize=True,
             filter=_filter,
             backtrace=SHOW_STACK_TRACES,
-            diagnose=SHOW_STACK_TRACES,
+            diagnose=ENABLE_LOG_DIAGNOSE,
         )
 
     intercept_handler = InterceptHandler()

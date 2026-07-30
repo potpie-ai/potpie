@@ -1056,10 +1056,12 @@ class IntegrationsService:
                 success=True, data=integration_schema, error=None
             )
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error creating integration")
             self.db.rollback()
-            return IntegrationResponse(success=False, data=None, error=str(e))
+            return IntegrationResponse(
+                success=False, data=None, error="Failed to create integration"
+            )
 
     async def update_integration(
         self, integration_id: str, request: IntegrationUpdateRequest
@@ -1101,12 +1103,14 @@ class IntegrationsService:
                 success=True, data=integration_schema, error=None
             )
 
-        except Exception as e:
+        except Exception:
             logger.exception(
                 "Error updating integration", integration_id=integration_id
             )
             self.db.rollback()
-            return IntegrationResponse(success=False, data=None, error=str(e))
+            return IntegrationResponse(
+                success=False, data=None, error="Failed to update integration"
+            )
 
     async def get_integration_schema(self, integration_id: str) -> IntegrationResponse:
         """Get integration by ID using schema model"""
@@ -1129,9 +1133,11 @@ class IntegrationsService:
                 success=True, data=integration_schema, error=None
             )
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error getting integration")
-            return IntegrationResponse(success=False, data=None, error=str(e))
+            return IntegrationResponse(
+                success=False, data=None, error="Failed to retrieve integration"
+            )
 
     async def list_integrations_schema(
         self,
@@ -1171,10 +1177,13 @@ class IntegrationsService:
                 error=None,
             )
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error listing integrations")
             return IntegrationListResponse(
-                success=False, count=0, integrations={}, error=str(e)
+                success=False,
+                count=0,
+                integrations={},
+                error="Failed to list integrations",
             )
 
     async def validate_oauth_configuration(self) -> Dict[str, Any]:
@@ -1301,7 +1310,9 @@ class IntegrationsService:
                 f"Error deleting integration (schema) {integration_id}: {str(e)}"
             )
             self.db.rollback()
-            return IntegrationResponse(success=False, data=None, error=str(e))
+            return IntegrationResponse(
+                success=False, data=None, error="Failed to delete integration"
+            )
 
     async def log_linear_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """Log Linear webhook data for debugging and processing"""

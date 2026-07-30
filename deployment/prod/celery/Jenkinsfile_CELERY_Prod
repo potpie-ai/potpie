@@ -17,16 +17,9 @@ pipeline {
         stage('Checkout') {
             steps {
                 script {
-                    // Determine environment based on branch
-                    def branch = env.GIT_BRANCH
-
-                    if (branch == "origin/dir-restruct") {
-                        env.ENVIRONMENT = 'dir-restruct'
-                    } else if (branch == "origin/main"){
-                        env.ENVIORNMENT = 'main'
-                    } else {
-                        error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
-                    }
+                    def branch = env.GIT_BRANCH ?: 'detached'
+                    env.ENVIRONMENT = branch
+                    echo "Deploying ref: ${branch}"
 
                     checkout scm
                     // Capture the short Git commit hash to use as the image tag

@@ -6,6 +6,10 @@ import json
 from typing import Optional, AsyncGenerator
 from datetime import datetime
 from functools import partial
+from app.core.api_errors import (
+    client_safe_error_message,
+    sanitize_and_log_client_payload,
+)
 from app.core.config_provider import ConfigProvider
 from app.modules.utils.logger import setup_logger
 
@@ -329,10 +333,16 @@ class ToolCallStreamManager:
                         # Check for end events
                         if event.get("type") == "tool_call_stream_end":
                             logger.debug(f"Tool call stream {key} ended")
-                            yield event
+                            yield sanitize_and_log_client_payload(
+                                event,
+                                channel=f"tool-call-stream:{key}",
+                            )
                             return
 
-                        yield event
+                        yield sanitize_and_log_client_payload(
+                            event,
+                            channel=f"tool-call-stream:{key}",
+                        )
 
         except Exception as e:
             logger.error(f"Error consuming tool call stream {key}: {str(e)}")
@@ -340,7 +350,7 @@ class ToolCallStreamManager:
                 "type": "tool_call_stream_end",
                 "call_id": call_id,
                 "status": "error",
-                "message": f"Stream error: {str(e)}",
+                "message": client_safe_error_message(e),
                 "stream_id": cursor or "0-0",
             }
 

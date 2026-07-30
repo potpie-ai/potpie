@@ -18,6 +18,43 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 
+def parse_repository_structure(repo_dir: str, project_id: str):
+    """Build an in-memory repository graph without initializing Neo4j."""
+    # Lazy imports keep the heavy parsing_repomap module (RepoMap,
+    # tree_sitter, grep_ast) off the critical path for callers that
+    # never parse (matches store_graph_from_artifacts below).
+    import os
+    from pathlib import Path
+
+    from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
+
+    repo_dir = str(Path(repo_dir).resolve())
+    logger.info(
+        "[STRUCTURE PARSING] Starting repository structure parsing",
+        project_id=project_id,
+        repo_dir=repo_dir,
+        repo_exists=os.path.exists(repo_dir),
+        repo_is_dir=os.path.isdir(repo_dir),
+    )
+
+    # create_graph() only dispatches to the rust/python graph builders, so
+    # the token-counter/io collaborators (removed on this base) aren't needed.
+    repo_map = RepoMap(root=repo_dir, verbose=True)
+    parse_start = time.time()
+    graph = repo_map.create_graph(repo_dir)
+    parse_time = time.time() - parse_start
+    logger.info(
+        "[STRUCTURE PARSING] Parsed repository: "
+        f"{graph.number_of_nodes()} nodes, "
+        f"{graph.number_of_edges()} relationships in {parse_time:.2f}s",
+        project_id=project_id,
+        node_count=graph.number_of_nodes(),
+        relationship_count=graph.number_of_edges(),
+        parse_time_seconds=parse_time,
+    )
+    return graph
+
+
 class CodeGraphService:
     def __init__(self, neo4j_uri, neo4j_user, neo4j_password, db: Session):
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -143,7 +180,7 @@ class CodeGraphService:
             # Step 3: Batch insert nodes
             node_insert_start = time.time()
             logger.info(
-                f"[GRAPH GENERATION] Step 4/4: Inserting {node_count} nodes into Neo4j",
+                f"[GRAPH GENERATION] Step 3/4: Inserting {node_count} nodes into Neo4j",
                 project_id=project_id,
                 total_nodes=node_count,
             )
@@ -281,7 +318,7 @@ class CodeGraphService:
             # Step 4: Insert relationships
             rel_insert_start = time.time()
             logger.info(
-                f"[GRAPH GENERATION] Inserting {relationship_count} relationships into Neo4j",
+                f"[GRAPH GENERATION] Step 4/4: Inserting {relationship_count} relationships into Neo4j",
                 project_id=project_id,
                 total_relationships=relationship_count,
             )

@@ -19,6 +19,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import router as potpie_api_router
 from app.core.base_model import Base
 from app.core.database import SessionLocal, engine
+from app.core.api_errors import (
+    ServerErrorSanitizationMiddleware,
+    register_api_error_handlers,
+)
 from app.core.models import *  # noqa #necessary for models to not give import errors
 from app.modules.analytics.analytics_router import router as analytics_router
 from app.modules.auth.auth_router import auth_router
@@ -87,9 +91,11 @@ class MainApp:
             await self.shutdown_event()
 
         self.app = FastAPI(lifespan=lifespan)
-        self.setup_cors()
+        register_api_error_handlers(self.app)
         self.setup_logging_middleware()
+        self.setup_error_sanitization()
         self.setup_socket_io()
+        self.setup_cors()
         self.include_routers()
 
     def setup_sentry(self):
@@ -149,6 +155,10 @@ class MainApp:
         """
         self.app.add_middleware(LoggingContextMiddleware)
         logger.info("Logging context middleware configured")
+
+    def setup_error_sanitization(self):
+        self.app.add_middleware(ServerErrorSanitizationMiddleware)
+        logger.info("API error sanitization configured")
 
     def setup_socket_io(self):
         """Mount Socket.IO ASGI app at /ws for workspace tunnel."""

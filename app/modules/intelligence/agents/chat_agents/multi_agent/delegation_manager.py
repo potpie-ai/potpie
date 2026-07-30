@@ -644,7 +644,7 @@ class DelegationManager:
                 exc_info=True,
             )
             # Put error response in queue
-            error_message = f"*Error in subagent execution: {str(e)}*"
+            error_message = "*The delegated operation could not be completed.*"
             error_chunk = self.create_error_response(error_message)
             collected_chunks.append(error_chunk)
             await stream_queue.put(error_chunk)
@@ -655,7 +655,7 @@ class DelegationManager:
             # Use async version to avoid blocking the event loop
             if call_id:
                 try:
-                    error_message = f"*Error in subagent execution: {str(e)}*"
+                    error_message = "*The delegated operation could not be completed.*"
                     await self.tool_call_stream_manager.publish_stream_part_async(
                         call_id=call_id,
                         stream_part=error_message,

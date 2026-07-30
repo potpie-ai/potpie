@@ -140,7 +140,7 @@ markers = [
     "asyncio: Async tests",
     "github_live: marks tests that hit the live GitHub API",
     "stress: Stress tests (exclude with -m 'not stress')",
-    "real_parse: Real parsing tests requiring Postgres + Neo4j (exclude with -m 'not real_parse')",
+    "real_parse: Real parsing tests requiring Postgres (exclude with -m 'not real_parse')",
 ]
 asyncio_mode = "auto"
 addopts = "-v --strict-markers --tb=short --disable-warnings -ra --durations=5"

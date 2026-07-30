@@ -17,18 +17,25 @@ pipeline {
         stage('Checkout') {
             steps {
                 script {
-                    // Determine environment based on branch
-                    def branch = env.GIT_BRANCH
+                    def scmVars = checkout scm
+                    def branch = scmVars.GIT_BRANCH ?: env.GIT_BRANCH ?: ''
+                    def approvedReleaseRefs = [
+                        'origin/main': 'main',
+                        'origin/dir-restruct': 'dir-restruct',
+                    ]
+                    def isHotfixRef = branch ==~ /^(origin\/)?hotfix\/[A-Za-z0-9][A-Za-z0-9._\/-]*$/
 
-                    if (branch == "origin/dir-restruct") {
-                        env.ENVIRONMENT = 'dir-restruct'
-                    } else if (branch == "origin/main"){
-                        env.ENVIORNMENT = 'main'
+                    if (approvedReleaseRefs.containsKey(branch)) {
+                        env.ENVIRONMENT = approvedReleaseRefs[branch]
+                    } else if (isHotfixRef) {
+                        env.ENVIRONMENT = 'hotfix'
                     } else {
-                        error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
+                        error("Refusing to deploy unapproved ref: ${branch ?: '<missing>'}")
                     }
 
-                    checkout scm
+                    env.DEPLOY_REF = branch
+                    echo "Deploying approved ref: ${env.DEPLOY_REF}"
+
                     // Capture the short Git commit hash to use as the image tag
                     env.GIT_COMMIT_HASH = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
                 }

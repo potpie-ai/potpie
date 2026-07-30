@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.api_errors import public_error_response
+
 logger = logging.getLogger(__name__)
 
 from app.core.database import get_async_db, get_db
@@ -86,8 +88,9 @@ class AuthAPI:
             id_token = res.get("idToken")
             return JSONResponse(content={"token": id_token}, status_code=200)
         except ValueError:
-            return JSONResponse(
-                content={"error": "Invalid email or password"}, status_code=401
+            return public_error_response(
+                "Invalid email or password",
+                status_code=401,
             )
         except HTTPException as he:
             return JSONResponse(
@@ -151,13 +154,9 @@ class AuthAPI:
 
         # Validate
         if not uid:
-            return Response(
-                content=json.dumps({"error": "Missing uid"}), status_code=400
-            )
+            return public_error_response("Missing uid", status_code=400)
         if not email:
-            return Response(
-                content=json.dumps({"error": "Missing email"}), status_code=400
-            )
+            return public_error_response("Missing email", status_code=400)
 
         async_user_service = AsyncUserService(async_db)
         unified_auth = UnifiedAuthService(db)
@@ -844,10 +843,10 @@ class AuthAPI:
                         status_code=404,
                     )
 
-            except ValueError as ve:
+            except ValueError:
                 # Cannot unlink last provider
-                return JSONResponse(
-                    content={"error": str(ve)},
+                return public_error_response(
+                    "Cannot unlink the only authentication provider",
                     status_code=400,
                 )
 

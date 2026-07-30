@@ -667,10 +667,10 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                 citations=[],
             )
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error in standard run method")
             return ChatAgentResponse(
-                response=f"An error occurred while processing your request: {str(e)}",
+                response="The request could not be completed.",
                 tool_calls=[],
                 citations=[],
             )
@@ -1223,22 +1223,22 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                         f"Pydantic-ai error in fallback agent iteration: {pydantic_error}"
                     )
                     yield ChatAgentResponse(
-                        response=f"\n\n*The agent encountered an error while processing your request: {str(pydantic_error)}*\n\n",
+                        response="\n\n*The request could not be completed.*\n\n",
                         tool_calls=[],
                         citations=[],
                     )
-                except Exception as e:
+                except Exception:
                     logger.exception("Unexpected error in fallback agent iteration")
                     yield ChatAgentResponse(
-                        response=f"\n\n*An unexpected error occurred: {str(e)}*\n\n",
+                        response="\n\n*The request could not be completed.*\n\n",
                         tool_calls=[],
                         citations=[],
                     )
 
-        except (ModelRetry, AgentRunError, UserError) as pydantic_error:
+        except (ModelRetry, AgentRunError, UserError):
             logger.exception("Pydantic-ai error in run_stream method")
             yield ChatAgentResponse(
-                response=f"\n\n*The agent encountered an error: {str(pydantic_error)}*\n\n",
+                response="\n\n*The request could not be completed.*\n\n",
                 tool_calls=[],
                 citations=[],
             )

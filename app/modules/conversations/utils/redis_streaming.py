@@ -6,6 +6,10 @@ from datetime import datetime
 from typing import Generator, Optional
 
 from app.core.config_provider import ConfigProvider
+from app.core.api_errors import (
+    client_safe_error_message,
+    sanitize_and_log_client_payload,
+)
 from app.modules.utils.logger import setup_logger
 from app.modules.intelligence.provider.openrouter_usage_context import estimate_cost_for_log
 
@@ -189,17 +193,23 @@ class RedisStreamManager:
                                     "[LLM cost] no usage data in stream — cost is logged in the Celery worker; "
                                     "run worker with -Q staging_agent_tasks to see it (e.g. ./scripts/run_celery_worker.sh)"
                                 )
-                            yield event
+                            yield sanitize_and_log_client_payload(
+                                event,
+                                channel=f"redis-stream:{key}",
+                            )
                             return
 
-                        yield event
+                        yield sanitize_and_log_client_payload(
+                            event,
+                            channel=f"redis-stream:{key}",
+                        )
 
         except Exception as e:
             logger.error(f"Error consuming Redis stream {key}: {str(e)}")
             yield {
                 "type": "end",
                 "status": "error",
-                "message": f"Stream error: {str(e)}",
+                "message": client_safe_error_message(e),
                 "stream_id": cursor or "0-0",
             }
 

@@ -24,7 +24,7 @@ import pytest_asyncio
 from httpx import AsyncClient
 from starlette.requests import Request
 from starlette.responses import Response
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -143,14 +143,22 @@ def setup_test_database():
 @pytest.fixture(scope="function")
 def db_session(setup_test_database) -> Session:
     """Provides a synchronous SQLAlchemy session for tests.
-    Uses real commits so both sync and async app code see the same data (client uses both get_db and get_async_db)."""
+    Uses real commits so both sync and async app code see the same data (client uses both get_db and get_async_db).
+    Truncates test tables before each test because transaction rollback cannot undo those commits."""
     engine = create_engine(os.getenv("DATABASE_URL"))
+    table_names = ", ".join(f'"{name}"' for name in inspect(engine).get_table_names())
+    if table_names:
+        with engine.begin() as connection:
+            connection.execute(
+                text(f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE")
+            )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = SessionLocal()
     try:
         yield session
     finally:
         session.close()
+        engine.dispose()
 
 
 @pytest_asyncio.fixture(scope="function")

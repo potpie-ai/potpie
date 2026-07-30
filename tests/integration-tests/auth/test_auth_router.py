@@ -153,7 +153,14 @@ class TestCustomTokenEndpoint:
             )
 
             assert response.status_code == 500
-            assert "Failed" in response.json()["error"]
+            payload = response.json()
+            assert payload["detail"] == (
+                "An internal error occurred. Please try again later."
+            )
+            assert payload["code"] == "internal_error"
+            assert payload["request_id"]
+            assert response.headers["x-request-id"] == payload["request_id"]
+            assert "Failed to create custom token" not in response.text
 
 
 class TestSSOLoginEndpoint:
@@ -316,4 +323,3 @@ class TestProviderLinkingEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["message"] == "Linking cancelled"
-

@@ -1,13 +1,13 @@
 """
 Tests for Redis-related async fixes: streaming does not block the event loop.
 
-- wait_for_task_start: offloaded via asyncio.to_thread so N concurrent requests
-  complete in ~1x wait time, not Nx.
-- Stream consumption: redis_stream_generator_async runs sync consume_stream in a
-  thread and yields via a queue; the mock consume_stream is used in that thread.
+- wait_for_task_start uses async Redis so N concurrent requests complete in
+  approximately one wait interval, not N wait intervals.
+- Stream consumption uses the shared synchronous Redis stream fixture and ends
+  immediately so the test measures only task-start concurrency.
 
-Before fix: sync wait_for_task_start blocked the event loop → N requests took ~ N * wait_secs.
-After fix: wait_for_task_start runs in a thread → N requests take ~ wait_secs (concurrent).
+Before fix: sync wait_for_task_start blocked the event loop and N requests took
+approximately N * wait_secs. After the fix, the async waits overlap.
 
 Run all: pytest tests/integration-tests/conversations/test_concurrent_stream_timing.py -v
 
@@ -16,11 +16,11 @@ Before/after timing comparison (use -s to see output):
 """
 import asyncio
 import time
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+from app.modules.usage.usage_service import UsageService
 
 
 # Timing-sensitive test: opt-in via `-m stress`
@@ -36,33 +36,43 @@ CONCURRENT_REQUESTS = 3
 SERIAL_WALL_SECS = WAIT_SECS * CONCURRENT_REQUESTS
 MAX_WALL_SECS = SERIAL_WALL_SECS * 0.9
 
-# Module where asyncio.to_thread is used in production (router calls start_celery_task_and_stream via to_thread)
-CONVERSATIONS_ROUTER_MODULE = "app.modules.conversations.conversations_router"
-
-
 @pytest.fixture
-def slow_redis_stream_manager(monkeypatch):
-    """RedisStreamManager mock whose wait_for_task_start sleeps WAIT_SECS then returns True."""
-    mock_manager = MagicMock(spec=RedisStreamManager)
+def slow_redis_stream_manager(app, monkeypatch, mock_redis_stream_manager):
+    """Async Redis mock whose task-start wait is slow but non-blocking."""
+    original_manager = getattr(app.state, "async_redis_stream_manager", None)
+    mock_manager = MagicMock()
+    mock_manager.set_task_status = AsyncMock()
+    mock_manager.publish_event = AsyncMock()
+    mock_manager.set_task_id = AsyncMock()
+    mock_manager.get_task_status = AsyncMock(return_value="running")
     mock_manager.redis_client = MagicMock()
-    mock_manager.redis_client.exists.return_value = False
+    mock_manager.redis_client.exists = AsyncMock(return_value=False)
+    mock_manager.redis_client.set = AsyncMock(return_value=True)
+    mock_manager.redis_client.delete = AsyncMock(return_value=None)
     mock_manager.stream_key.side_effect = (
         lambda conversation_id, run_id: f"stream:{conversation_id}:{run_id}"
     )
-    # End stream immediately so response body consumption doesn't hang
-    mock_manager.consume_stream.side_effect = lambda *a, **k: iter([{"type": "end"}])
 
-    def slow_wait_for_task_start(*args, **kwargs):
-        time.sleep(WAIT_SECS)
+    async def consume_stream(*args, **kwargs):
+        yield MagicMock(dict=lambda: {"type": "end"})
+
+    async def slow_wait_for_task_start(*args, **kwargs):
+        await asyncio.sleep(WAIT_SECS)
         return True
 
-    mock_manager.wait_for_task_start.side_effect = slow_wait_for_task_start
-    # Patch where RedisStreamManager is used (conversation_routing) so the mock is used
+    async def allow_usage(*args, **kwargs):
+        return True
+
+    mock_manager.consume_stream = consume_stream
+    mock_manager.wait_for_task_start = AsyncMock(side_effect=slow_wait_for_task_start)
+    monkeypatch.setattr(UsageService, "check_usage_limit", allow_usage)
     monkeypatch.setattr(
-        "app.modules.conversations.utils.conversation_routing.RedisStreamManager",
-        lambda: mock_manager,
+        "app.modules.conversations.conversations_router.ConversationController",
+        MagicMock(),
     )
-    return mock_manager
+    app.state.async_redis_stream_manager = mock_manager
+    yield mock_manager
+    app.state.async_redis_stream_manager = original_manager
 
 
 @pytest.mark.asyncio
@@ -73,8 +83,8 @@ async def test_concurrent_stream_requests_not_serialized(
     setup_test_conversation_committed,
 ):
     """
-    With wait_for_task_start offloaded to a thread, N concurrent streaming
-    requests should complete in ~1x wait time, not Nx.
+    With async wait_for_task_start, N concurrent streaming requests should
+    complete in ~1x wait time, not Nx.
     """
     conversation_id = setup_test_conversation_committed.id
     url = f"/api/v1/conversations/{conversation_id}/message"
@@ -132,7 +142,7 @@ async def test_concurrent_stream_timing_before_vs_after(
 ):
     """
     Run the same N concurrent requests twice: once with wait_for_task_start
-    blocking the event loop (simulated "before" fix), once with thread offload
+    blocking the event loop (simulated "before" fix), once with an async wait
     ("after" fix). Print both timings so you can see the difference.
 
     Run with: pytest ... -k before_vs_after -s
@@ -141,20 +151,17 @@ async def test_concurrent_stream_timing_before_vs_after(
     url = f"/api/v1/conversations/{conversation_id}/message"
     form_data = {"content": "Timing before/after test."}
 
-    # Simulate "before" fix: make to_thread run the callable on the event loop (blocking)
-    async def _blocking_impl(f, *args, **kwargs):
-        return f(*args, **kwargs)
+    async def blocking_wait_for_task_start(*args, **kwargs):
+        time.sleep(WAIT_SECS)
+        return True
 
-    def blocking_to_thread(f, *args, **kwargs):
-        return _blocking_impl(f, *args, **kwargs)
-
-    # Save real to_thread before patching (same object is used by the module)
-    real_to_thread = asyncio.to_thread
+    async def async_wait_for_task_start(*args, **kwargs):
+        await asyncio.sleep(WAIT_SECS)
+        return True
 
     # "Before": wait runs on event loop (blocking) → requests serialize
-    monkeypatch.setattr(
-        f"{CONVERSATIONS_ROUTER_MODULE}.asyncio.to_thread",
-        blocking_to_thread,
+    slow_redis_stream_manager.wait_for_task_start = AsyncMock(
+        side_effect=blocking_wait_for_task_start
     )
     wall_before, resp_before = await _run_concurrent_requests(
         client, url, form_data, CONCURRENT_REQUESTS
@@ -162,10 +169,9 @@ async def test_concurrent_stream_timing_before_vs_after(
     for r in resp_before:
         assert r.status_code == 200, getattr(r, "text", str(r))
 
-    # "After": restore real to_thread so wait runs in thread pool → requests concurrent
-    monkeypatch.setattr(
-        f"{CONVERSATIONS_ROUTER_MODULE}.asyncio.to_thread",
-        real_to_thread,
+    # "After": async Redis wait yields to the event loop, so requests overlap
+    slow_redis_stream_manager.wait_for_task_start = AsyncMock(
+        side_effect=async_wait_for_task_start
     )
 
     wall_after, resp_after = await _run_concurrent_requests(
@@ -179,16 +185,16 @@ async def test_concurrent_stream_timing_before_vs_after(
     print(f"  Simulated delay in wait_for_task_start: {WAIT_SECS}s")
     print(f"  Concurrent requests: {CONCURRENT_REQUESTS}")
     print(f"  BEFORE (sync on event loop): {wall_before:.2f}s wall")
-    print(f"  AFTER  (thread offload):    {wall_after:.2f}s wall")
+    print(f"  AFTER  (async Redis wait):  {wall_after:.2f}s wall")
     print(f"  Serial estimate (N × delay): ~{SERIAL_WALL_SECS:.1f}s")
     print(f"  Speedup: {wall_before / wall_after:.2f}x")
     print("--------------------------------------------------------\n")
 
     # Allow up to 15% tolerance: "after" should be faster or within noise of "before".
     # In CI/mocked env both runs can be similar; we fail only if "after" is clearly slower
-    # (e.g. thread offload regressed and became serial).
+    # (e.g. the async wait regressed and became serial).
     tolerance = max(wall_before * 0.15, 0.5)
     assert wall_after <= wall_before + tolerance, (
         f"After ({wall_after:.2f}s) should be faster or within {tolerance:.2f}s of before ({wall_before:.2f}s). "
-        "If thread offload regressed, after would be much larger."
+        "If async task-start waiting regressed, after would be much larger."
     )

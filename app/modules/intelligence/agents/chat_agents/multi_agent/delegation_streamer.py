@@ -430,7 +430,7 @@ class DelegationStreamer:
                             exc_info=True,
                         )
                         yield ChatAgentResponse(
-                            response=f"\n*Error getting next step: {str(e)[:100]}*\n",
+                            response="\n*The next step could not be determined.*\n",
                             tool_calls=[],
                             citations=[],
                         )
@@ -475,7 +475,7 @@ class DelegationStreamer:
                             exc_info=True,
                         )
                         yield ChatAgentResponse(
-                            response=f"\n*Error in node: {str(e)[:100]}*\n",
+                            response="\n*The operation could not be completed.*\n",
                             tool_calls=[],
                             citations=[],
                         )
@@ -692,7 +692,7 @@ class DelegationStreamer:
                             exc_info=True,
                         )
                         yield ChatAgentResponse(
-                            response=f"\n*Stream error: {str(e)[:100]}*\n",
+                            response="\n*The operation could not be completed.*\n",
                             tool_calls=[],
                             citations=[],
                         )
@@ -770,7 +770,7 @@ class DelegationStreamer:
                 exc_info=True,
             )
             yield ChatAgentResponse(
-                response=f"\n*Stream error: {str(e)[:100]}*\n",
+                response="\n*The operation could not be completed.*\n",
                 tool_calls=[],
                 citations=[],
             )
@@ -810,7 +810,7 @@ class DelegationStreamer:
                     f"[SUBAGENT] Node #{node_count}: tool stream context error: {e}"
                 )
                 yield ChatAgentResponse(
-                    response=f"\n*Tool initialization error: {str(e)[:100]}*\n",
+                    response="\n*The tool could not be initialized.*\n",
                     tool_calls=[],
                     citations=[],
                 )
@@ -889,7 +889,7 @@ class DelegationStreamer:
                     exc_info=True,
                 )
                 yield ChatAgentResponse(
-                    response=f"\n*Tool '{current_tool_name}' error: {str(e)[:100]}*\n",
+                    response=f"\n*Tool '{current_tool_name}' could not be completed.*\n",
                     tool_calls=[],
                     citations=[],
                 )
@@ -924,7 +924,7 @@ class DelegationStreamer:
                 exc_info=True,
             )
             yield ChatAgentResponse(
-                response=f"\n*Unexpected tool error: {str(e)[:100]}*\n",
+                response="\n*The tool could not be completed.*\n",
                 tool_calls=[],
                 citations=[],
             )

@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.api_errors import public_error_detail
 from app.core.database import get_db, get_async_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.utils.logger import setup_logger, log_context
@@ -223,7 +224,8 @@ class ConversationAPI:
         # Validate message content
         if content == "" or content is None or content.isspace():
             raise HTTPException(
-                status_code=400, detail="Message content cannot be empty"
+                status_code=400,
+                detail=public_error_detail("Message content cannot be empty"),
             )
 
         user_id = user["user_id"]
@@ -277,7 +279,8 @@ class ConversationAPI:
                     parsed_node_ids = json.loads(node_ids)
                 except json.JSONDecodeError as err:
                     raise HTTPException(
-                        status_code=400, detail="Invalid node_ids format"
+                        status_code=400,
+                        detail=public_error_detail("Invalid node_ids format"),
                     ) from err
 
             # Create message request

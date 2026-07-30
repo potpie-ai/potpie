@@ -7,6 +7,7 @@ import hmac
 import hashlib
 import base64
 import json
+import os
 import time
 from app.modules.utils.logger import setup_logger
 from integrations import hash_user_id
@@ -64,6 +65,15 @@ def _linear_oauth_callback_redirect_uri(request: Request) -> str:
         return f"{scheme}://{host}/api/v1/integrations/linear/callback"
     netloc = request.url.netloc
     return f"{scheme}://{netloc}/api/v1/integrations/linear/callback"
+
+
+def require_debug_access(
+    user: dict = Depends(AuthService.check_auth),
+) -> dict:
+    env = (os.getenv("ENV") or "").strip().lower()
+    if env not in {"local", "development", "dev"}:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return user
 
 
 def sanitize_headers(headers: Dict[str, str]) -> Dict[str, str]:
@@ -449,8 +459,6 @@ async def linear_oauth_callback(
         # Extract OAuth parameters
         code = request.query_params.get("code")
         state = request.query_params.get("state")
-        error = request.query_params.get("error")
-        error_description = request.query_params.get("error_description")
 
         # Verify signed state to get user_id
         user_id = _verify_oauth_state(state)
@@ -521,7 +529,7 @@ async def linear_oauth_callback(
                 )
                 return RedirectResponse(url=redirect_url)
 
-            except Exception as e:
+            except Exception:
                 try:
                     db.close()
                 except Exception:
@@ -538,7 +546,9 @@ async def linear_oauth_callback(
                 ):
                     frontend_url = f"https://{frontend_url}"
 
-                error_message = urllib.parse.quote(str(e), safe="")
+                error_message = urllib.parse.quote(
+                    "OAuth authorization could not be completed", safe=""
+                )
                 redirect_url = f"{frontend_url}/integrations/linear/redirect?error={error_message}&user_id={user_id}"
 
                 return RedirectResponse(url=redirect_url)
@@ -551,17 +561,13 @@ async def linear_oauth_callback(
             if frontend_url and not frontend_url.startswith(("http://", "https://")):
                 frontend_url = f"https://{frontend_url}"
 
-            error_msg = "No authorization code received from Linear"
-            if error:
-                error_msg = f"OAuth error: {error}"
-            elif error_description:
-                error_msg = f"OAuth error: {error_description}"
-
-            error_message = urllib.parse.quote(error_msg, safe="")
+            error_message = urllib.parse.quote(
+                "OAuth authorization could not be completed", safe=""
+            )
             redirect_url = f"{frontend_url}/integrations/linear/redirect?error={error_message}&user_id={user_id}"
 
             return RedirectResponse(url=redirect_url)
-    except Exception as e:
+    except Exception:
         logger.exception("Linear OAuth callback failed")
 
         # Redirect to frontend with error
@@ -573,7 +579,7 @@ async def linear_oauth_callback(
             frontend_url = f"https://{frontend_url}"
 
         error_message = urllib.parse.quote(
-            f"Linear OAuth callback failed: {str(e)}", safe=""
+            "OAuth authorization could not be completed", safe=""
         )
         redirect_url = (
             f"{frontend_url}/integrations/linear/redirect?error={error_message}"
@@ -635,12 +641,12 @@ async def save_linear_integration(
         user_id = user["user_id"]
         result = await integrations_service.save_linear_integration(request, user_id)
         return LinearSaveResponse(success=True, data=result, error=None)
-    except Exception as e:
+    except Exception:
         logger.exception("Error saving Linear integration")
         return LinearSaveResponse(
             success=False,
             data=None,
-            error=f"Failed to save Linear integration: {str(e)}",
+            error="Failed to save Linear integration",
         )
 
 
@@ -694,8 +700,6 @@ async def jira_oauth_callback(
         # Extract OAuth params
         code = request.query_params.get("code")
         state = request.query_params.get("state")
-        error = request.query_params.get("error")
-        error_description = request.query_params.get("error_description")
 
         # Verify signed state to get user_id
         user_id = _verify_oauth_state(state)
@@ -771,7 +775,7 @@ async def jira_oauth_callback(
 
                 return RedirectResponse(url=redirect_url)
 
-            except Exception as e:
+            except Exception:
                 logger.exception("Failed to save Jira integration")
 
                 # Redirect to frontend with error
@@ -783,7 +787,9 @@ async def jira_oauth_callback(
                 ):
                     frontend_url = f"https://{frontend_url}"
 
-                error_message = urllib.parse.quote(str(e), safe="")
+                error_message = urllib.parse.quote(
+                    "OAuth authorization could not be completed", safe=""
+                )
                 redirect_url = f"{frontend_url}/integrations/jira/redirect?error={error_message}&user_id={user_id}"
 
                 return RedirectResponse(url=redirect_url)
@@ -796,21 +802,18 @@ async def jira_oauth_callback(
             if frontend_url and not frontend_url.startswith(("http://", "https://")):
                 frontend_url = f"https://{frontend_url}"
 
-            error_msg = "No authorization code received from Jira"
-            if error:
-                error_msg = f"OAuth error: {error}"
-            elif error_description:
-                error_msg = f"OAuth error: {error_description}"
-
-            error_message = urllib.parse.quote(error_msg, safe="")
+            error_message = urllib.parse.quote(
+                "OAuth authorization could not be completed", safe=""
+            )
             redirect_url = f"{frontend_url}/integrations/jira/redirect?error={error_message}&user_id={user_id}"
 
             return RedirectResponse(url=redirect_url)
 
-    except Exception as exc:
+    except Exception:
         logger.exception("Jira OAuth callback failed")
         raise HTTPException(
-            status_code=400, detail=f"Jira OAuth callback failed: {str(exc)}"
+            status_code=400,
+            detail="OAuth authorization could not be completed",
         )
 
 
@@ -978,12 +981,12 @@ async def save_jira_integration(
         user_id = user["user_id"]
         result = await integrations_service.save_jira_integration(request, user_id)
         return JiraSaveResponse(success=True, data=result, error=None)
-    except Exception as e:
+    except Exception:
         logger.exception("Error saving Jira integration")
         return JiraSaveResponse(
             success=False,
             data=None,
-            error=f"Failed to save Jira integration: {str(e)}",
+            error="Failed to save Jira integration",
         )
 
 
@@ -1035,8 +1038,6 @@ async def confluence_oauth_callback(
         # Extract OAuth params
         code = request.query_params.get("code")
         state = request.query_params.get("state")
-        error = request.query_params.get("error")
-        error_description = request.query_params.get("error_description")
 
         # Verify signed state to get user_id
         user_id = _verify_oauth_state(state)
@@ -1094,7 +1095,7 @@ async def confluence_oauth_callback(
                 redirect_url = f"{frontend_url}/integrations/confluence/redirect?success=true&user_id={user_id}&integration_id={result.get('integration_id', '')}"
                 return RedirectResponse(url=redirect_url)
 
-            except Exception as save_error:
+            except Exception:
                 logger.exception("Error saving Confluence integration")
                 # Redirect to frontend with error
                 config = Config()
@@ -1104,7 +1105,9 @@ async def confluence_oauth_callback(
                 ):
                     frontend_url = f"https://{frontend_url}"
 
-                error_message = urllib.parse.quote(str(save_error), safe="")
+                error_message = urllib.parse.quote(
+                    "OAuth authorization could not be completed", safe=""
+                )
                 redirect_url = f"{frontend_url}/integrations/confluence/redirect?error={error_message}&user_id={user_id}"
                 return RedirectResponse(url=redirect_url)
             finally:
@@ -1117,20 +1120,17 @@ async def confluence_oauth_callback(
             if frontend_url and not frontend_url.startswith(("http://", "https://")):
                 frontend_url = f"https://{frontend_url}"
 
-            error_msg = "No authorization code received from Confluence"
-            if error:
-                error_msg = f"OAuth error: {error}"
-            elif error_description:
-                error_msg = f"OAuth error: {error_description}"
-
-            error_message = urllib.parse.quote(error_msg, safe="")
+            error_message = urllib.parse.quote(
+                "OAuth authorization could not be completed", safe=""
+            )
             redirect_url = f"{frontend_url}/integrations/confluence/redirect?error={error_message}&user_id={user_id}"
             return RedirectResponse(url=redirect_url)
 
-    except Exception as exc:
+    except Exception:
         logger.exception("Confluence OAuth callback failed")
         raise HTTPException(
-            status_code=400, detail=f"Confluence OAuth callback failed: {str(exc)}"
+            status_code=400,
+            detail="OAuth authorization could not be completed",
         )
 
 
@@ -1263,12 +1263,12 @@ async def save_confluence_integration(
             request, user_id
         )
         return ConfluenceSaveResponse(success=True, data=result, error=None)
-    except Exception as e:
+    except Exception:
         logger.exception("Error saving Confluence integration")
         return ConfluenceSaveResponse(
             success=False,
             data=None,
-            error=f"Failed to save Confluence integration: {str(e)}",
+            error="Failed to save Confluence integration",
         )
 
 
@@ -1375,14 +1375,14 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
                     "event_type": event_type,
                     "integration_id": integration_id,
                 }
-            except Exception as e:
+            except Exception:
                 logger.exception("Failed to publish Sentry webhook to event bus")
                 # Continue with normal response even if event bus fails
                 return {
                     "status": "success",
                     "message": "Sentry webhook logged successfully (event bus failed)",
                     "logged_at": time.time(),
-                    "event_bus_error": str(e),
+                    "event_bus_error": "Internal event delivery failed",
                 }
         else:
             logger.warning("No integration_id provided in Sentry webhook request")
@@ -1521,7 +1521,7 @@ async def linear_webhook(
                     "webhook_id": webhook_id,
                     "service_result": result,
                 }
-            except Exception as e:
+            except Exception:
                 logger.exception("Event bus publishing failed")
 
                 # Continue with normal response even if event bus fails
@@ -1529,7 +1529,7 @@ async def linear_webhook(
                     "status": "success",
                     "message": "Linear webhook logged successfully (event bus failed)",
                     "logged_at": time.time(),
-                    "event_bus_error": str(e),
+                    "event_bus_error": "Internal event delivery failed",
                     "organization_id": organization_id,
                     "webhook_id": webhook_id,
                     "service_result": result,
@@ -1926,13 +1926,13 @@ async def jira_webhook(
                     "integration_id": integration_id,
                     "service_result": result,
                 }
-            except Exception as e:
+            except Exception:
                 logger.exception("Failed to publish Jira webhook to event bus")
                 return {
                     "status": "success",
                     "message": "Jira webhook logged successfully (event bus failed)",
                     "logged_at": time.time(),
-                    "event_bus_error": str(e),
+                    "event_bus_error": "Internal event delivery failed",
                     "service_result": result,
                 }
 
@@ -1963,12 +1963,12 @@ async def save_sentry_integration(
         user_id = user["user_id"]
         result = await integrations_service.save_sentry_integration(request, user_id)
         return SentrySaveResponse(success=True, data=result, error=None)
-    except Exception as e:
+    except Exception:
         logger.exception("Error saving Sentry integration")
         return SentrySaveResponse(
             success=False,
             data=None,
-            error=f"Failed to save Sentry integration: {str(e)}",
+            error="Failed to save Sentry integration",
         )
 
 
@@ -1984,12 +1984,12 @@ async def save_integration(
         user_id = user["user_id"]
         result = await integrations_service.save_integration(request, user_id)
         return IntegrationSaveResponse(success=True, data=result, error=None)
-    except Exception as e:
+    except Exception:
         logger.exception("Error saving integration")
         return IntegrationSaveResponse(
             success=False,
             data=None,
-            error=f"Failed to save integration: {str(e)}",
+            error="Failed to save integration",
         )
 
 
@@ -2295,12 +2295,12 @@ async def update_integration_schema(
             )
 
         return result
-    except Exception as e:
+    except Exception:
         logger.exception(
             "Error updating integration name", integration_id=integration_id
         )
         return IntegrationResponse(
-            success=False, data=None, error=f"Failed to update integration: {str(e)}"
+            success=False, data=None, error="Failed to update integration"
         )
 
 
@@ -2351,12 +2351,12 @@ async def delete_integration_schema(
             )
 
         return result
-    except Exception as e:
+    except Exception:
         logger.exception(
             "Error deleting integration (schema)", integration_id=integration_id
         )
         return IntegrationResponse(
-            success=False, data=None, error=f"Failed to delete integration: {str(e)}"
+            success=False, data=None, error="Failed to delete integration"
         )
 
 
@@ -2582,9 +2582,10 @@ async def get_sentry_token_status(
         }
 
 
-@router.get("/debug/oauth-config")
+@router.get("/debug/oauth-config", include_in_schema=False)
 async def debug_oauth_config(
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    _user: dict = Depends(require_debug_access),
 ) -> Dict[str, Any]:
     """Debug endpoint to check OAuth configuration"""
     try:
@@ -2601,65 +2602,41 @@ async def debug_oauth_config(
 
         debug_info = {
             "status": "success",
-            "validation": validation_result,
+            "validation": {
+                "is_valid": bool(validation_result.get("is_valid")),
+                "validation_errors": validation_result.get("validation_errors", []),
+            },
             "raw_config": {
                 "client_id": {
-                    "value": client_id,
+                    "configured": bool(client_id),
                     "length": len(client_id),
-                    "preview": (
-                        client_id[:8] + "..." if len(client_id) > 8 else client_id
-                    ),
-                    "is_hex": (
-                        all(c in "0123456789abcdef" for c in client_id.lower())
-                        if client_id
-                        else False
-                    ),
                 },
                 "client_secret": {
-                    "value": client_secret,
+                    "configured": bool(client_secret),
                     "length": len(client_secret),
-                    "preview": (
-                        client_secret[:8] + "..."
-                        if len(client_secret) > 8
-                        else client_secret
-                    ),
-                    "is_hex": (
-                        all(c in "0123456789abcdef" for c in client_secret.lower())
-                        if client_secret
-                        else False
-                    ),
                 },
                 "redirect_uri": {
-                    "value": redirect_uri,
+                    "configured": bool(redirect_uri),
                     "length": len(redirect_uri),
-                    "is_url": (
-                        redirect_uri.startswith(("http://", "https://"))
-                        if redirect_uri
-                        else False
-                    ),
                 },
-            },
-            "environment_check": {
-                "python_version": __import__("sys").version,
-                "httpx_available": True,
-                "starlette_config_available": True,
             },
         }
 
         return debug_info
-    except Exception as e:
+    except Exception:
         logger.exception("Error checking OAuth config")
         return {
             "status": "error",
-            "error": str(e),
+            "error": "Unable to inspect OAuth configuration",
         }
 
 
-@router.post("/debug/test-token-exchange")
+@router.post("/debug/test-token-exchange", include_in_schema=False)
 async def debug_test_token_exchange(
     code: str,
     redirect_uri: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    _user: dict = Depends(require_debug_access),
 ) -> Dict[str, Any]:
     """Debug endpoint to test OAuth token exchange with detailed logging"""
     try:
@@ -2674,15 +2651,21 @@ async def debug_test_token_exchange(
         return {
             "status": "success",
             "message": "Token exchange test completed",
-            "result": result,
+            "result": {
+                "token_received": bool(result.get("access_token")),
+                "refresh_token_received": bool(result.get("refresh_token")),
+                "expires_in": result.get("expires_in"),
+            },
         }
-    except Exception as e:
+    except Exception:
         logger.exception("Debug token exchange failed")
-        return {"status": "error", "error": str(e), "error_type": type(e).__name__}
+        return {"status": "error", "error": "Token exchange test failed"}
 
 
-@router.get("/debug/sentry-app-info")
-async def debug_sentry_app_info() -> Dict[str, Any]:
+@router.get("/debug/sentry-app-info", include_in_schema=False)
+async def debug_sentry_app_info(
+    _user: dict = Depends(require_debug_access),
+) -> Dict[str, Any]:
     """Debug endpoint to provide Sentry app configuration guidance"""
     return {
         "status": "success",

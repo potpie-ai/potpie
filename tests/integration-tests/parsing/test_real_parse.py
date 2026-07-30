@@ -1,34 +1,35 @@
 """
-Real parse test: runs ParsingService.parse_directory with real Postgres, Neo4j, and a local repo path.
+Real parse test: runs ParsingService.parse_directory with Postgres and a local repo.
 
 This test catches regressions in core parsing logic that mocked tests miss.
 Requires:
   - Postgres running (POSTGRES_SERVER env var)
-  - Neo4j running (NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD env vars)
 
 Run with: uv run pytest tests/integration-tests/parsing/test_real_parse.py -v -m real_parse
 Skip with: uv run pytest -m "not real_parse"
 """
 
 import uuid
+from unittest.mock import patch
+
 import pytest
 
+from app.modules.parsing.graph_construction import code_graph_service
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
-from app.modules.projects.projects_service import ProjectService
 from app.modules.projects.projects_schema import ProjectStatusEnum
+from app.modules.projects.projects_service import ProjectService
 
 
 pytestmark = [pytest.mark.real_parse, pytest.mark.asyncio]
 
 
 class TestRealParse:
-    """Real parsing tests with actual Postgres + Neo4j + local repo."""
+    """Real parsing tests with actual Postgres and a local repository."""
 
     async def test_parse_local_repo_succeeds(
         self,
         db_session,
-        neo4j_config,
         test_repo_path,
         setup_test_user_committed,
     ):
@@ -49,10 +50,9 @@ class TestRealParse:
 
         repo_details = ParsingRequest(repo_path=test_repo_path)
 
-        parsing_service = ParsingService.create_from_config(
-            db=db_session,
-            user_id=user_id,
-            neo4j_config=neo4j_config,
+        parsing_service = ParsingService(
+            db_session,
+            user_id,
             raise_library_exceptions=True,
         )
 
@@ -80,7 +80,6 @@ class TestRealParse:
     async def test_parse_local_repo_detects_python(
         self,
         db_session,
-        neo4j_config,
         test_repo_path,
         setup_test_user_committed,
     ):
@@ -90,16 +89,13 @@ class TestRealParse:
         detected = ParseHelper.detect_repo_language(test_repo_path)
         assert detected == "python", f"Expected 'python', got '{detected}'"
 
-    async def test_parse_creates_graph_nodes(
+    async def test_parse_local_repo_permanently_bypasses_neo4j(
         self,
         db_session,
-        neo4j_config,
         test_repo_path,
         setup_test_user_committed,
     ):
-        """Parse creates at least some nodes in Neo4j for the project."""
-        from neo4j import GraphDatabase
-
+        """A real parse reaches READY without constructing a Neo4j driver."""
         user_id = setup_test_user_committed.uid
         user_email = setup_test_user_committed.email or "test@example.com"
         project_id = str(uuid.uuid4())
@@ -116,36 +112,26 @@ class TestRealParse:
 
         repo_details = ParsingRequest(repo_path=test_repo_path)
 
-        parsing_service = ParsingService.create_from_config(
-            db=db_session,
-            user_id=user_id,
-            neo4j_config=neo4j_config,
+        parsing_service = ParsingService(
+            db_session,
+            user_id,
             raise_library_exceptions=True,
         )
 
-        await parsing_service.parse_directory(
-            repo_details=repo_details,
-            user_id=user_id,
-            user_email=user_email,
-            project_id=project_id,
-            cleanup_graph=True,
-        )
-
-        driver = GraphDatabase.driver(
-            neo4j_config["uri"],
-            auth=(neo4j_config["username"], neo4j_config["password"]),
-        )
-        try:
-            with driver.session() as session:
-                result = session.run(
-                    "MATCH (n) WHERE n.repoId = $project_id RETURN count(n) AS cnt",
-                    project_id=project_id,
-                )
-                record = result.single()
-                node_count = record["cnt"] if record else 0
-
-            assert node_count > 0, (
-                f"Expected at least some nodes for project {project_id}, got {node_count}"
+        with patch.object(
+            code_graph_service.GraphDatabase,
+            "driver",
+            side_effect=AssertionError("Neo4j driver was constructed"),
+        ) as mock_driver:
+            await parsing_service.parse_directory(
+                repo_details=repo_details,
+                user_id=user_id,
+                user_email=user_email,
+                project_id=project_id,
+                cleanup_graph=True,
             )
-        finally:
-            driver.close()
+
+        project = await project_service.get_project_from_db_by_id(project_id)
+        assert project is not None
+        assert project.get("status") == ProjectStatusEnum.READY.value
+        mock_driver.assert_not_called()

@@ -30,13 +30,11 @@ from app.modules.intelligence.tools.sandbox.project_sandbox import (
     ProjectSandbox,
     get_project_sandbox,
 )
-from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
     ParsingFailedError,
     ParsingServiceError,
 )
-from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
@@ -77,7 +75,8 @@ class ParsingService:
         self.db = db
         self.parse_helper = ParseHelper(db)
         self.project_service = ProjectService(db)
-        self.inference_service = InferenceService(db, user_id)
+        # Neo4j bypassed: InferenceService (neo4j driver + embedding model)
+        # is intentionally not constructed anymore.
         self.search_service = SearchService(db)
         self.github_service = CodeProviderService(db)
         self._neo4j_config = neo4j_config
@@ -85,13 +84,7 @@ class ParsingService:
         self._project_sandbox = project_sandbox or get_project_sandbox()
 
     def close(self) -> None:
-        """Close Neo4j-backed services (e.g. inference_service). Call when done with this instance."""
-        if hasattr(self, "inference_service") and self.inference_service is not None:
-            try:
-                self.inference_service.close()
-            except Exception:
-                pass
-            self.inference_service = None
+        """Release parsing service resources (Neo4j-backed services bypassed)."""
 
     @classmethod
     def create_from_config(
@@ -202,33 +195,16 @@ class ParsingService:
                         }
 
                 if cleanup_graph:
-                    neo4j_config = self._get_neo4j_config()
-                    code_graph_service = None
-                    try:
-                        code_graph_service = CodeGraphService(
-                            neo4j_config["uri"],
-                            neo4j_config["username"],
-                            neo4j_config["password"],
-                            self.db,
-                        )
-                        code_graph_service.cleanup_graph(str(project_id))
-                    except Exception:
-                        logger.exception(
-                            "Error in cleanup_graph",
-                            project_id=project_id,
-                            user_id=user_id,
-                        )
-                        if self._raise_library_exceptions:
-                            raise ParsingServiceError("Failed to cleanup graph")
-                        raise HTTPException(
-                            status_code=500, detail="Internal server error"
-                        )
-                    finally:
-                        if code_graph_service is not None:
-                            try:
-                                code_graph_service.close()
-                            except Exception:
-                                pass
+                    # Neo4j is bypassed: no graph is written during parsing
+                    # anymore, so there is nothing to clean up either. Keeping
+                    # the branch (rather than deleting the parameter) preserves
+                    # the public API for library callers.
+                    logger.info(
+                        "[PARSING] Neo4j graph cleanup permanently bypassed",
+                        project_id=project_id,
+                        user_id=user_id,
+                        graph_cleaned=False,
+                    )
 
                 # Resolve the user's GitHub OAuth token; ProjectSandbox
                 # picks an env / GitHub-App fallback if this is None.
@@ -496,101 +472,49 @@ class ParsingService:
                 await ParseWebhookHelper().send_slack_notification(
                     project_id, "Other"
                 )
-            self.inference_service.log_graph_stats(project_id)
             raise ParsingFailedError(
                 "Repository doesn't consist of a language currently supported."
             )
 
-        neo4j_config = self._get_neo4j_config()
-        service: CodeGraphService | None = None
-        try:
-            service = CodeGraphService(
-                neo4j_config["uri"],
-                neo4j_config["username"],
-                neo4j_config["password"],
-                self.db,
-            )
-            graph_gen_start = time.time()
-            logger.info(
-                "[PARSING] Step 2/3: writing graph to neo4j + qdrant",
-                project_id=project_id,
-            )
-            service.store_graph_from_artifacts(artifacts, str(project_id), user_id)
-            graph_gen_time = time.time() - graph_gen_start
+        # ------------------------------------------------------------------
+        # Neo4j permanently bypassed: the in-sandbox parse above already
+        # validated the repository and produced the structure counts, so we
+        # skip the neo4j/qdrant graph write and the inference pass entirely
+        # and mark the project READY directly.
+        # ------------------------------------------------------------------
+        await self.project_service.update_project_status(
+            project_id, ProjectStatusEnum.READY
+        )
 
-            await self.project_service.update_project_status(
-                project_id, ProjectStatusEnum.PARSED
+        if not self._raise_library_exceptions and user_email:
+            task = create_task(
+                EmailHelper().send_email(user_email, repo_name, branch_name)
             )
 
-            logger.info(
-                "[PARSING] Step 3/3: running inference",
-                project_id=project_id,
-            )
-            inference_start = time.time()
-            cache_stats = await self.inference_service.run_inference(
-                str(project_id)
-            )
-            inference_time = time.time() - inference_start
-            self.inference_service.log_graph_stats(project_id)
-
-            await self.project_service.update_project_status(
-                project_id, ProjectStatusEnum.READY
-            )
-
-            if not self._raise_library_exceptions and user_email:
-                task = create_task(
-                    EmailHelper().send_email(user_email, repo_name, branch_name)
-                )
-
-                def _on_email_done(t: asyncio.Task) -> None:
-                    if t.cancelled():
-                        return
-                    try:
-                        exc = t.exception()
-                    except asyncio.CancelledError:
-                        return
-                    if exc is not None:
-                        logger.exception("Failed to send email", exc_info=exc)
-
-                task.add_done_callback(_on_email_done)
-
-            total_time = time.time() - analysis_start_time
-            cache_hit_rate = 0.0
-            if cache_stats and isinstance(cache_stats, dict):
-                total_cacheable = cache_stats.get(
-                    "cache_hits", 0
-                ) + cache_stats.get("cache_misses", 0)
-                if total_cacheable > 0:
-                    cache_hit_rate = (
-                        cache_stats.get("cache_hits", 0) / total_cacheable
-                    ) * 100
-                logger.info(
-                    f"[PARSING] Cache stats — hits: {cache_stats.get('cache_hits', 0)}, "
-                    f"misses: {cache_stats.get('cache_misses', 0)}, "
-                    f"uncacheable: {cache_stats.get('uncacheable_nodes', 0)}, "
-                    f"hit rate (cacheable only): {cache_hit_rate:.1f}%",
-                    project_id=project_id,
-                )
-
-            logger.info(
-                "[PARSING] Done in %.2fs (parse: %.2fs, graph: %.2fs, infer: %.2fs)",
-                total_time,
-                parse_time,
-                graph_gen_time,
-                inference_time,
-                project_id=project_id,
-                total_analysis_time_seconds=total_time,
-                parse_time_seconds=parse_time,
-                graph_gen_time_seconds=graph_gen_time,
-                inference_time_seconds=inference_time,
-            )
-            self.inference_service.log_graph_stats(project_id)
-        finally:
-            if service is not None:
+            def _on_email_done(t: asyncio.Task) -> None:
+                if t.cancelled():
+                    return
                 try:
-                    service.close()
-                except Exception:
-                    pass
+                    exc = t.exception()
+                except asyncio.CancelledError:
+                    return
+                if exc is not None:
+                    logger.exception("Failed to send email", exc_info=exc)
+
+            task.add_done_callback(_on_email_done)
+
+        total_time = time.time() - analysis_start_time
+        logger.info(
+            "[PARSING] Analysis completed with Neo4j permanently bypassed",
+            project_id=project_id,
+            user_id=user_id,
+            node_count=len(artifacts.nodes),
+            relationship_count=len(artifacts.relationships),
+            graph_created=False,
+            inference_completed=False,
+            parse_time_seconds=parse_time,
+            total_analysis_time_seconds=total_time,
+        )
 
     def create_neo4j_indices(self, graph_manager):
         # Create existing indices from blar_graph
@@ -619,92 +543,11 @@ class ParsingService:
 
 
 async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
+    """Clone search indices while bypassing Neo4j graph duplication."""
     await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
-    node_batch_size = 3000  # Fixed batch size for nodes
-    relationship_batch_size = 3000  # Fixed batch size for relationships
-    try:
-        # Step 1: Fetch and duplicate nodes in batches
-        with self.inference_service.driver.session() as session:
-            offset = 0
-            while True:
-                nodes_query = """
-                    MATCH (n:NODE {repoId: $old_repo_id})
-                    RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path,
-                           n.start_line AS start_line, n.end_line AS end_line, n.name AS name,
-                           COALESCE(n.docstring, '') AS docstring,
-                           COALESCE(n.embedding, []) AS embedding,
-                           labels(n) AS labels
-                    SKIP $offset LIMIT $limit
-                    """
-                nodes_result = session.run(
-                    nodes_query,
-                    old_repo_id=old_repo_id,
-                    offset=offset,
-                    limit=node_batch_size,
-                )
-                nodes = [dict(record) for record in nodes_result]
-
-                if not nodes:
-                    break
-
-                # Insert nodes under the new repo ID, preserving labels, docstring, and embedding
-                create_query = """
-                    UNWIND $batch AS node
-                    CALL apoc.create.node(node.labels, {
-                        repoId: $new_repo_id,
-                        node_id: node.node_id,
-                        text: node.text,
-                        file_path: node.file_path,
-                        start_line: node.start_line,
-                        end_line: node.end_line,
-                        name: node.name,
-                        docstring: node.docstring,
-                        embedding: node.embedding
-                    }) YIELD node AS new_node
-                    RETURN new_node
-                    """
-                session.run(create_query, new_repo_id=new_repo_id, batch=nodes)
-                offset += node_batch_size
-
-        # Step 2: Fetch and duplicate relationships in batches
-        with self.inference_service.driver.session() as session:
-            offset = 0
-            while True:
-                relationships_query = """
-                    MATCH (n:NODE {repoId: $old_repo_id})-[r]->(m:NODE)
-                    RETURN n.node_id AS start_node_id, type(r) AS relationship_type, m.node_id AS end_node_id
-                    SKIP $offset LIMIT $limit
-                    """
-                relationships_result = session.run(
-                    relationships_query,
-                    old_repo_id=old_repo_id,
-                    offset=offset,
-                    limit=relationship_batch_size,
-                )
-                relationships = [dict(record) for record in relationships_result]
-
-                if not relationships:
-                    break
-
-                relationship_query = """
-                    UNWIND $batch AS relationship
-                    MATCH (a:NODE {repoId: $new_repo_id, node_id: relationship.start_node_id}),
-                          (b:NODE {repoId: $new_repo_id, node_id: relationship.end_node_id})
-                    CALL apoc.create.relationship(a, relationship.relationship_type, {}, b) YIELD rel
-                    RETURN rel
-                    """
-                session.run(
-                    relationship_query, new_repo_id=new_repo_id, batch=relationships
-                )
-                offset += relationship_batch_size
-
-        logger.info(
-            f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
-        )
-
-    except Exception:
-        logger.exception(
-            "Error duplicating graph",
-            old_repo_id=old_repo_id,
-            new_repo_id=new_repo_id,
-        )
+    logger.info(
+        "[PARSING] Neo4j graph duplication permanently bypassed",
+        old_repo_id=old_repo_id,
+        new_repo_id=new_repo_id,
+        graph_duplicated=False,
+    )

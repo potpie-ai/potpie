@@ -15,6 +15,7 @@ RUN_ID_RESERVATION_TTL = 120
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
+from app.core.api_errors import client_safe_error_message
 from app.modules.conversations.conversation.conversation_schema import (
     ChatMessageResponse,
 )
@@ -318,7 +319,7 @@ async def start_celery_task_and_wait(
                 {
                     "type": "end",
                     "status": "error",
-                    "message": f"Stream error: {str(e)}",
+                    "message": client_safe_error_message(e),
                 }
             )
         return events
