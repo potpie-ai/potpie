@@ -74,9 +74,24 @@ def sanitize_git_error(message: str) -> str:
 
 
 def run(cmd: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd, capture_output=True, text=True, timeout=timeout, check=False
-    )
+    try:
+        return subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except subprocess.TimeoutExpired:
+        # Never let TimeoutExpired propagate: its message embeds the full
+        # command line, and for clone/fetch that includes the tokenized
+        # remote URL — which leaked a user OAuth token into production
+        # logs. Re-raise with the URL redacted; ``from None`` drops the
+        # chained original so the token can't surface via the traceback.
+        redacted = " ".join(
+            "<redacted-url>" if arg.startswith("http") else arg for arg in cmd
+        )
+        raise RepoCacheUnavailable(
+            f"git command timed out after {timeout}s: {redacted} "
+            "(large repo or slow network; raise SANDBOX_GIT_TIMEOUT_S if "
+            "this repo is legitimately this big)"
+        ) from None
 
 
 def raise_git_error(operation: str, stderr: str) -> None:

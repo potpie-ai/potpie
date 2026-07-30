@@ -37,6 +37,21 @@ from sandbox.domain.models import (
 )
 
 
+def _git_timeout_s() -> int:
+    """Clone/fetch timeout for the bare-repo cache.
+
+    The old hardcoded 300s fetch timeout failed on large repos
+    (openclaw/openclaw took >5min behind a throttled CPU limit) and the
+    resulting TimeoutExpired leaked the tokenized URL into logs. Large
+    monorepos legitimately need tens of minutes on a cold cache.
+    """
+    raw = os.getenv("SANDBOX_GIT_TIMEOUT_S", "1800")
+    try:
+        return max(60, int(float(raw)))
+    except ValueError:
+        return 1800
+
+
 class LocalRepoCacheProvider:
     """Bare-repo cache rooted under ``repos_base_path``."""
 
@@ -145,7 +160,7 @@ class LocalRepoCacheProvider:
                 fetch_url,
                 str(bare_path),
             ],
-            timeout=600,
+            timeout=_git_timeout_s(),
         )
         if result.returncode != 0:
             raise_git_error("git clone failed", result.stderr)
@@ -175,7 +190,7 @@ class LocalRepoCacheProvider:
         # of a cache shared between users.
         result = run(
             ["git", "-C", str(bare_path), "fetch", "--", fetch_url, ref],
-            timeout=300,
+            timeout=_git_timeout_s(),
         )
         if result.returncode != 0:
             raise_git_error("git fetch failed", result.stderr)
