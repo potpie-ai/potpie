@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 
 from sandbox.adapters.outbound.local._git_ops import (
@@ -188,10 +189,29 @@ class LocalRepoCacheProvider:
         # Pass the tokenized URL explicitly instead of relying on
         # ``origin`` so the credential never lands in ``.git/config``
         # of a cache shared between users.
+        #
+        # An explicit-URL fetch WITHOUT a refspec only updates FETCH_HEAD —
+        # it never creates ``refs/heads/<ref>`` in the bare repo, so any
+        # branch newer than the original clone made the subsequent
+        # ``git worktree add <ref>`` fail with "invalid reference"
+        # (production: potpie-ai/pie @ main and @ spike/ce-service).
+        # Branch-like refs therefore fetch with an explicit refspec that
+        # (force-)writes the local head; bare SHAs fetch plain, since a
+        # detached ``worktree add`` only needs the objects present.
+        is_sha = re.fullmatch(r"[0-9a-fA-F]{7,40}", ref or "") is not None
+        refspec = ref if is_sha else f"+refs/heads/{ref}:refs/heads/{ref}"
         result = run(
-            ["git", "-C", str(bare_path), "fetch", "--", fetch_url, ref],
+            ["git", "-C", str(bare_path), "fetch", "--", fetch_url, refspec],
             timeout=_git_timeout_s(),
         )
+        if result.returncode != 0 and not is_sha:
+            # Tags and other non-branch refs don't live under refs/heads;
+            # fall back to a plain fetch so those still resolve via the
+            # objects + existing refs.
+            result = run(
+                ["git", "-C", str(bare_path), "fetch", "--", fetch_url, ref],
+                timeout=_git_timeout_s(),
+            )
         if result.returncode != 0:
             raise_git_error("git fetch failed", result.stderr)
 
