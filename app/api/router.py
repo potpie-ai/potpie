@@ -261,12 +261,14 @@ async def list_agents(
     db: Session = Depends(get_db),
     user=Depends(get_api_key_user),
 ):
+    from app.modules.intelligence.agents.agent_list_scope import AgentListMode
+
     user_id: str = user["user_id"]
     llm_provider = ProviderService(db, user_id)
     tools_provider = ToolService(db, user_id)
     prompt_provider = PromptService(db)
     controller = AgentsController(db, llm_provider, prompt_provider, tools_provider)
-    return await controller.list_available_agents(user, True)
+    return await controller.list_available_agents(user, AgentListMode.RUNTIME)
 
 
 @router.post("/search", response_model=SearchResponse)

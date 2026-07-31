@@ -15,6 +15,7 @@ from app.modules.intelligence.prompts.prompt_service import (
     PromptServiceError,
 )
 from app.modules.intelligence.agents.agents_service import AgentsService
+from app.modules.intelligence.agents.agent_list_scope import AgentListMode
 from app.modules.intelligence.prompts.prompt_schema import RequestModel
 from app.modules.conversations.conversation.conversation_model import Conversation
 from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent
@@ -127,7 +128,7 @@ class PromptController:
             db, llm_provider, prompt_provider, tools_provider
         )
         available_agents = await agents_service.list_available_agents(
-            user, list_system_agents=True
+            user, mode=AgentListMode.RUNTIME
         )
 
         agent_ids = (

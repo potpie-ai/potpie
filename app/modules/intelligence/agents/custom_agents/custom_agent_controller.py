@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.modules.intelligence.agents.agent_list_scope import AgentListMode
 from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
     Agent,
     AgentCreate,
@@ -245,11 +246,18 @@ class CustomAgentController:
     async def list_agents(
         self,
         user_id: str,
-        include_public: bool = True,
-        include_shared: bool = True,
+        mode: AgentListMode = AgentListMode.OWNED,
     ) -> List[Agent]:
-        """List all agents accessible to the user"""
+        """List agents using a server-defined mode (never client privilege flags)."""
         try:
+            if mode is AgentListMode.OWNED:
+                include_public = False
+                include_shared = False
+            else:
+                # runtime: own + shared-with-caller (not public marketplace)
+                include_public = False
+                include_shared = True
+
             return await self.service.list_agents(
                 user_id, include_public, include_shared
             )

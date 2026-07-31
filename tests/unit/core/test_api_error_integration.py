@@ -50,6 +50,9 @@ def test_main_app_registers_cors_as_outermost_user_middleware():
         "setup_error_sanitization"
     )
     assert setup_calls.index("setup_cors") > setup_calls.index("setup_socket_io")
+    assert setup_calls.index("setup_security_headers") > setup_calls.index(
+        "setup_cors"
+    )
 
 
 def test_outer_cors_adds_headers_to_sanitized_server_errors():

@@ -11,6 +11,7 @@ from app.modules.intelligence.agents.chat_agents.system_agents import sweb_debug
 from app.modules.intelligence.agents.chat_agents.system_agents.general_purpose_agent import (
     GeneralPurposeAgent,
 )
+from app.modules.intelligence.agents.agent_list_scope import AgentListMode
 from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
     AgentVisibility,
 )
@@ -193,27 +194,42 @@ class AgentsService:
             yield chunk
 
     async def list_available_agents(
-        self, current_user: dict, list_system_agents: bool
+        self,
+        current_user: dict,
+        mode: AgentListMode = AgentListMode.RUNTIME,
     ) -> List[AgentInfo]:
-        system_agents = [
-            AgentInfo(
-                id=id,
-                name=self.system_agents[id].name,
-                description=self.system_agents[id].description,
-                status="SYSTEM",
-            )
-            for (id) in self.system_agents
-        ]
+        """List agents using a server-defined mode (never client privilege flags)."""
+        include_system = mode is AgentListMode.RUNTIME
+        # owned: caller-owned only. runtime: own + shared-with-caller (not public).
+        include_public = False
+        include_shared = mode is AgentListMode.RUNTIME
+
+        system_agents: List[AgentInfo] = []
+        if include_system:
+            system_agents = [
+                AgentInfo(
+                    id=agent_id,
+                    name=self.system_agents[agent_id].name,
+                    description=self.system_agents[agent_id].description,
+                    status="SYSTEM",
+                )
+                for agent_id in self.system_agents
+            ]
 
         try:
             custom_agents = await CustomAgentService(
                 self.db, self.llm_provider, self.tools_provider
-            ).list_agents(current_user["user_id"])
+            ).list_agents(
+                current_user["user_id"],
+                include_public=include_public,
+                include_shared=include_shared,
+            )
         except Exception:
             logger.exception(
                 "Failed to fetch custom agents", user_id=current_user["user_id"]
             )
             custom_agents = []
+
         agent_info_list = [
             AgentInfo(
                 id=agent.id,
@@ -225,10 +241,9 @@ class AgentsService:
             for agent in custom_agents
         ]
 
-        if list_system_agents:
+        if include_system:
             return system_agents + agent_info_list
-        else:
-            return agent_info_list
+        return agent_info_list
 
     async def validate_agent_id(self, user_id: str, agent_id: str) -> str | None:
         """Validate if an agent ID is valid"""

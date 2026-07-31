@@ -23,6 +23,7 @@ from app.core.api_errors import (
     ServerErrorSanitizationMiddleware,
     register_api_error_handlers,
 )
+from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.models import *  # noqa #necessary for models to not give import errors
 from app.modules.analytics.analytics_router import router as analytics_router
 from app.modules.auth.auth_router import auth_router
@@ -96,6 +97,7 @@ class MainApp:
         self.setup_error_sanitization()
         self.setup_socket_io()
         self.setup_cors()
+        self.setup_security_headers()
         self.include_routers()
 
     def setup_sentry(self):
@@ -140,6 +142,11 @@ class MainApp:
             allow_headers=["*"],
         )
         logger.info(f"CORS configured with allowed origins: {origins}")
+
+    def setup_security_headers(self):
+        """Attach HSTS (HTTPS) and anti-framing headers on all responses."""
+        self.app.add_middleware(SecurityHeadersMiddleware)
+        logger.info("Security headers middleware configured (HSTS + anti-framing)")
 
     def setup_logging_middleware(self):
         """
