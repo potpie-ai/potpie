@@ -403,10 +403,11 @@ class ParsingService:
         back, and we feed the reconstructed graph straight into neo4j
         and qdrant via :meth:`CodeGraphService.store_graph_from_artifacts`.
 
-        Refuses to proceed if the parser produced only FILE nodes —
-        that's the new "language not supported" gate, replacing the
-        host-side ``detect_repo_language``. parsing_rs handles every
-        language we care about, so empty output ⇒ no parseable code.
+        With Neo4j permanently bypassed we no longer require CLASS/FUNCTION
+        nodes (the old "language not supported" gate). Clone + in-sandbox
+        parse completing with any FILE inventory is enough to mark READY.
+        An empty artifact stream still fails — that means the workspace
+        had nothing to index at all.
         """
         analysis_start_time = time.time()
         project_details = await self.project_service.get_project_from_db_by_id(
@@ -450,21 +451,16 @@ class ParsingService:
             1 for n in artifacts.nodes if getattr(n, "node_type", None) != "FILE"
         )
         logger.info(
-            "[PARSING] In-sandbox parse complete: %d nodes (%d non-FILE), "
-            "%d edges in %.2fs",
-            len(artifacts.nodes),
-            non_file_nodes,
-            len(artifacts.relationships),
-            parse_time,
+            "[PARSING] In-sandbox parse complete",
             project_id=project_id,
+            node_count=len(artifacts.nodes),
+            non_file_nodes=non_file_nodes,
+            edge_count=len(artifacts.relationships),
+            parse_time_seconds=parse_time,
         )
 
-        # Replaces the legacy "if language != 'other'" gate. parsing_rs
-        # handles every language we ship a tree-sitter grammar for, so
-        # an empty non-FILE node count means the repo doesn't carry
-        # parseable code and the inference / search pipeline has
-        # nothing to chew on.
-        if non_file_nodes == 0:
+        # Empty clone / empty worktree — nothing to continue with.
+        if not artifacts.nodes:
             await self.project_service.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
             )
@@ -474,6 +470,17 @@ class ParsingService:
                 )
             raise ParsingFailedError(
                 "Repository doesn't consist of a language currently supported."
+            )
+
+        if non_file_nodes == 0:
+            # FILE-only is common for docs/HTML/CSS/arrow-only JS; with
+            # Neo4j bypassed we still mark READY so cloning/parsing can
+            # finish and the chat flow can proceed.
+            logger.warning(
+                "[PARSING] No CLASS/FUNCTION nodes; continuing READY "
+                "(Neo4j bypassed)",
+                project_id=project_id,
+                node_count=len(artifacts.nodes),
             )
 
         # ------------------------------------------------------------------
