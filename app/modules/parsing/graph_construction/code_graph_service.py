@@ -30,7 +30,7 @@ def parse_repository_structure(repo_dir: str, project_id: str):
 
     repo_dir = str(Path(repo_dir).resolve())
     logger.info(
-        "[STRUCTURE PARSING] Starting repository structure parsing",
+        "[GRAPH GENERATION] Step 1/4: Parsing repository structure",
         project_id=project_id,
         repo_dir=repo_dir,
         repo_exists=os.path.exists(repo_dir),
@@ -161,7 +161,7 @@ class CodeGraphService:
             # Step 2: Create indices
             index_start = time.time()
             logger.info(
-                "[GRAPH GENERATION] Step 3/4: Creating Neo4j indices",
+                "[GRAPH GENERATION] Step 2/4: Creating Neo4j indices",
                 project_id=project_id,
             )
             session.run(

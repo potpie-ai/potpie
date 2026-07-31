@@ -167,10 +167,24 @@ def _is_error_envelope(payload: Any) -> bool:
     )
 
 
+def _dict_has_error_context_fields(payload: dict[str, Any]) -> bool:
+    return any(str(key).lower() in _ERROR_CONTEXT_KEYS for key in payload)
+
+
 def sanitize_client_payload(payload: Any, error_context: bool = False) -> Any:
-    """Recursively remove private details from error-shaped client payloads."""
+    """Recursively remove private details from error-shaped client payloads.
+
+    Context fields such as ``content``, ``message``, ``detail``, ``response``,
+    and ``tool_response`` are rewritten only for payloads identified by
+    ``_is_error_envelope`` (or nested under such an envelope via
+    ``error_context``). Successful / non-error payloads keep those fields
+    unchanged unless they carry an explicit error marker or envelope signal.
+    """
     if isinstance(payload, dict):
-        current_error_context = error_context or _is_error_envelope(payload)
+        is_envelope = _is_error_envelope(payload)
+        # Inherit error context only from a genuine error-envelope ancestor —
+        # never from HTTP status alone.
+        in_error_tree = is_envelope or error_context
         sanitized = {}
         for key, value in payload.items():
             key_lower = str(key).lower()
@@ -178,12 +192,12 @@ def sanitize_client_payload(payload: Any, error_context: bool = False) -> Any:
                 sanitized[key] = client_safe_error_message(value)
             elif key_lower in _ERROR_VALUE_KEYS:
                 sanitized[key] = _sanitize_error_value(value)
-            elif current_error_context and key_lower in _ERROR_CONTEXT_KEYS:
+            elif in_error_tree and key_lower in _ERROR_CONTEXT_KEYS:
                 sanitized[key] = _sanitize_error_value(value)
             else:
                 sanitized[key] = sanitize_client_payload(
                     value,
-                    error_context=current_error_context,
+                    error_context=in_error_tree,
                 )
         return sanitized
     if isinstance(payload, list):
@@ -197,6 +211,28 @@ def sanitize_client_payload(payload: Any, error_context: bool = False) -> Any:
             for item in payload
         )
     return payload
+
+
+def _headers_with_request_id(
+    headers: list[tuple[bytes, bytes]],
+    request_id: str,
+) -> list[tuple[bytes, bytes]]:
+    """Preserve original response headers; only (re)set X-Request-ID.
+
+    Drops the internal public-error marker used by this middleware so it is
+    not exposed to clients, while keeping validators such as ETag/Content-MD5.
+    """
+    preserved = [
+        (key, value)
+        for key, value in headers
+        if key.lower()
+        not in (
+            b"x-request-id",
+            _PUBLIC_ERROR_HEADER_BYTES,
+        )
+    ]
+    preserved.append((b"x-request-id", request_id.encode("latin-1")))
+    return preserved
 
 
 def sanitize_and_log_client_payload(payload: Any, channel: str) -> Any:
@@ -333,6 +369,7 @@ class ServerErrorSanitizationMiddleware:
         explicitly_public_error = False
         inspect_success_json = False
         passthrough_response_body = False
+        suppress_remaining_body = False
         response_started = False
         response_body = bytearray()
 
@@ -399,7 +436,8 @@ class ServerErrorSanitizationMiddleware:
 
         async def send_sanitized(message: Message) -> None:
             nonlocal explicitly_public_error, inspect_success_json
-            nonlocal passthrough_response_body, response_body, start_message
+            nonlocal passthrough_response_body, suppress_remaining_body
+            nonlocal response_body, start_message
 
             if message["type"] == "http.response.start":
                 status_code = message["status"]
@@ -436,6 +474,10 @@ class ServerErrorSanitizationMiddleware:
                 await send_tracked(message)
                 return
 
+            if suppress_remaining_body:
+                # Oversized error body already replaced; drop trailing chunks.
+                return
+
             if passthrough_response_body:
                 await send_tracked(message)
                 return
@@ -450,20 +492,50 @@ class ServerErrorSanitizationMiddleware:
 
             message_body = message.get("body", b"")
             if (
-                inspect_success_json
-                and len(response_body) + len(message_body)
+                len(response_body) + len(message_body)
                 > _SUCCESS_JSON_INSPECTION_LIMIT_BYTES
             ):
+                if inspect_success_json:
+                    buffered_start = dict(start_message)
+                    buffered_body = bytes(response_body) + message_body
+                    # Stale Content-Length would disagree with the flushed
+                    # (and possibly still-streaming) body — drop it.
+                    buffered_start["headers"] = [
+                        (key, value)
+                        for key, value in buffered_start.get("headers", [])
+                        if key.lower()
+                        not in (b"content-length", b"content-md5", b"etag")
+                    ]
+                    start_message = None
+                    response_body.clear()
+                    passthrough_response_body = True
+
+                    flushed_body_message = dict(message)
+                    flushed_body_message["body"] = buffered_body
+                    await send_tracked(buffered_start)
+                    await send_tracked(flushed_body_message)
+                    return
+
+                # Error inspection exceeded the bound — fail closed instead of
+                # flushing the private body (success path may passthrough).
+                status_code = start_message["status"]
+                private_body = bytes(response_body) + message_body
+                log_private_response(status_code, private_body)
+                body = json.dumps(
+                    _error_payload(status_code, request_id),
+                    separators=(",", ":"),
+                ).encode("utf-8")
                 buffered_start = start_message
-                buffered_body = bytes(response_body) + message_body
+                buffered_start["headers"] = replace_headers(
+                    buffered_start.get("headers", []),
+                    body,
+                    content_type="application/json",
+                )
                 start_message = None
                 response_body.clear()
-                passthrough_response_body = True
-
-                flushed_body_message = dict(message)
-                flushed_body_message["body"] = buffered_body
+                suppress_remaining_body = True
                 await send_tracked(buffered_start)
-                await send_tracked(flushed_body_message)
+                await send_tracked({"type": "http.response.body", "body": body})
                 return
 
             response_body.extend(message_body)
@@ -489,16 +561,28 @@ class ServerErrorSanitizationMiddleware:
             else:
                 payload = parse_json_body(original_body)
                 if payload is not None:
-                    sanitized_payload = sanitize_client_payload(
-                        payload,
-                        error_context=status_code >= 400,
-                    )
+                    # Envelope detection only — do not treat all 4xx bodies as
+                    # error context (preserves success-shaped field names).
+                    sanitized_payload = sanitize_client_payload(payload)
                     if sanitized_payload != payload:
                         log_private_response(status_code, original_body)
                         body = json.dumps(
                             sanitized_payload,
                             separators=(",", ":"),
                             default=str,
+                        ).encode("utf-8")
+                        content_type = "application/json"
+                        changed = True
+                    elif (
+                        status_code >= 400
+                        and isinstance(payload, dict)
+                        and _dict_has_error_context_fields(payload)
+                    ):
+                        # Non-envelope 4xx with unchecked detail/message/etc.
+                        log_private_response(status_code, original_body)
+                        body = json.dumps(
+                            _error_payload(status_code, request_id),
+                            separators=(",", ":"),
                         ).encode("utf-8")
                         content_type = "application/json"
                         changed = True
@@ -511,10 +595,17 @@ class ServerErrorSanitizationMiddleware:
                     content_type = "application/json"
                     changed = True
 
-            start_message["headers"] = replace_headers(
-                start_message.get("headers", []),
-                body,
-                content_type=content_type if changed else None,
+            start_message["headers"] = (
+                replace_headers(
+                    start_message.get("headers", []),
+                    body,
+                    content_type=content_type,
+                )
+                if changed
+                else _headers_with_request_id(
+                    start_message.get("headers", []),
+                    request_id,
+                )
             )
             await send_tracked(start_message)
             await send_tracked({"type": "http.response.body", "body": body})

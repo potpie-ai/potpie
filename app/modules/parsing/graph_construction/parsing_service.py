@@ -548,13 +548,12 @@ class ParsingService:
                 """
             session.run(rel_type_query)
 
-
-async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
-    """Clone search indices while bypassing Neo4j graph duplication."""
-    await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
-    logger.info(
-        "[PARSING] Neo4j graph duplication permanently bypassed",
-        old_repo_id=old_repo_id,
-        new_repo_id=new_repo_id,
-        graph_duplicated=False,
-    )
+    async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
+        """Clone search indices while bypassing Neo4j graph duplication."""
+        await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
+        logger.info(
+            "[PARSING] Neo4j graph duplication permanently bypassed",
+            old_repo_id=old_repo_id,
+            new_repo_id=new_repo_id,
+            graph_duplicated=False,
+        )

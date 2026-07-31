@@ -49,7 +49,7 @@ def _git_timeout_s() -> int:
     raw = os.getenv("SANDBOX_GIT_TIMEOUT_S", "1800")
     try:
         return max(60, int(float(raw)))
-    except ValueError:
+    except (ValueError, OverflowError):
         return 1800
 
 
@@ -205,13 +205,20 @@ class LocalRepoCacheProvider:
             timeout=_git_timeout_s(),
         )
         if result.returncode != 0 and not is_sha:
-            # Tags and other non-branch refs don't live under refs/heads;
-            # fall back to a plain fetch so those still resolve via the
-            # objects + existing refs.
+            # Tags don't live under refs/heads — fetch with an explicit
+            # tag refspec so ``refs/tags/<tag>`` is persisted locally.
+            tag_refspec = f"+refs/tags/{ref}:refs/tags/{ref}"
             result = run(
-                ["git", "-C", str(bare_path), "fetch", "--", fetch_url, ref],
+                ["git", "-C", str(bare_path), "fetch", "--", fetch_url, tag_refspec],
                 timeout=_git_timeout_s(),
             )
+            if result.returncode != 0:
+                # Other non-branch refs: fall back to a plain fetch so
+                # those still resolve via objects + existing refs.
+                result = run(
+                    ["git", "-C", str(bare_path), "fetch", "--", fetch_url, ref],
+                    timeout=_git_timeout_s(),
+                )
         if result.returncode != 0:
             raise_git_error("git fetch failed", result.stderr)
 

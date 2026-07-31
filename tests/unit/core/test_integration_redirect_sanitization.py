@@ -3,8 +3,9 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from starlette.requests import Request
 
-from app.modules.integrations import integrations_router
-
+from app.src.integrations.integrations.adapters.inbound.http import (
+    integrations_router,
+)
 
 SENSITIVE_DATABASE_ERROR = (
     "(psycopg2.OperationalError) connection to server at "

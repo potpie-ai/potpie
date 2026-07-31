@@ -98,6 +98,17 @@ def _build_app() -> FastAPI:
             "message": "Repository contains postgresql:// examples.",
         }
 
+    @app.get("/success-with-validators")
+    async def success_with_validators():
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "message": "ok"},
+            headers={
+                "ETag": '"stable-success-body"',
+                "Content-MD5": "stable-content-digest",
+            },
+        )
+
     @app.get("/nested-failure-envelope")
     async def nested_failure_envelope():
         return {
@@ -321,6 +332,19 @@ def test_success_false_envelope_is_sanitized_but_success_payload_is_unchanged():
     }
 
 
+def test_unchanged_success_json_preserves_etag_and_content_md5():
+    response = TestClient(_build_app(), raise_server_exceptions=False).get(
+        "/success-with-validators",
+        headers={"X-Request-ID": "request-success-validators"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "message": "ok"}
+    assert response.headers["etag"] == '"stable-success-body"'
+    assert response.headers["content-md5"] == "stable-content-digest"
+    assert response.headers["x-request-id"] == "request-success-validators"
+
+
 def test_all_developer_supplied_4xx_details_are_sanitized():
     client = TestClient(_build_app(), raise_server_exceptions=False)
 
@@ -347,7 +371,9 @@ def test_review_sensitive_4xx_details_are_fail_closed(case_index):
     assert exception_response.status_code == 400
     assert exception_response.json()["detail"] == "Invalid request."
     assert direct_response.status_code == 400
-    assert direct_response.json()["detail"] == "The operation could not be completed."
+    assert direct_response.json()["detail"] == "Invalid request."
+    assert direct_response.json()["code"] == "invalid_request"
+    assert "request_id" in direct_response.json()
     assert REVIEW_SENSITIVE_4XX_DETAILS[case_index] not in exception_response.text
     assert REVIEW_SENSITIVE_4XX_DETAILS[case_index] not in direct_response.text
 
@@ -492,11 +518,100 @@ async def test_declared_bounded_success_json_stops_buffering_after_limit():
     await middleware(scope, receive, send)
 
     assert sent_messages[0]["status"] == 200
+    forwarded_headers = {
+        key.lower(): value for key, value in sent_messages[0].get("headers", [])
+    }
+    assert b"content-length" not in forwarded_headers
+    assert forwarded_headers.get(b"content-type") == b"application/json"
     assert b"".join(
         message.get("body", b"")
         for message in sent_messages
         if message["type"] == "http.response.body"
     ) == prefix + oversized_chunk + suffix
+
+
+@pytest.mark.asyncio
+async def test_oversized_error_json_is_fail_closed_not_flushed():
+    sent_messages = []
+    prefix = b'{"detail":"'
+    oversized_chunk = b"x" * (64 * 1024 + 1)
+    suffix = b'"}'
+
+    async def app(scope, receive, send):
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 400,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (
+                        b"content-length",
+                        str(
+                            len(prefix) + len(oversized_chunk) + len(suffix)
+                        ).encode("ascii"),
+                    ),
+                ],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": prefix,
+                "more_body": True,
+            }
+        )
+        assert sent_messages == []
+
+        await send(
+            {
+                "type": "http.response.body",
+                "body": oversized_chunk,
+                "more_body": True,
+            }
+        )
+        assert [message["type"] for message in sent_messages] == [
+            "http.response.start",
+            "http.response.body",
+        ]
+
+        await send(
+            {
+                "type": "http.response.body",
+                "body": suffix,
+                "more_body": False,
+            }
+        )
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        sent_messages.append(message)
+
+    middleware = ServerErrorSanitizationMiddleware(app)
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/large-error-json",
+        "headers": [],
+        "state": {},
+    }
+
+    await middleware(scope, receive, send)
+
+    assert sent_messages[0]["status"] == 400
+    body = b"".join(
+        message.get("body", b"")
+        for message in sent_messages
+        if message["type"] == "http.response.body"
+    )
+    assert oversized_chunk not in body
+    payload = json.loads(body)
+    assert payload["detail"] == "Invalid request."
+    assert payload["code"] == "invalid_request"
+    assert "request_id" in payload
+    assert len(sent_messages) == 2
+    assert len(body) < 512
 
 
 @pytest.mark.asyncio
@@ -543,6 +658,19 @@ def test_validation_response_does_not_echo_submitted_value():
     assert response.status_code == 422
     assert "super-secret-user-input" not in response.text
     assert response.json()["code"] == "validation_error"
+
+
+def test_success_shaped_context_fields_are_preserved_without_error_envelope():
+    payload = {
+        "success": True,
+        "content": "repository README with postgresql:// examples",
+        "message": "clone finished",
+        "detail": "branch main",
+        "response": {"ok": True},
+        "tool_response": "file contents look fine",
+    }
+
+    assert sanitize_client_payload(payload) == payload
 
 
 def test_stream_and_tool_error_payloads_are_sanitized():
