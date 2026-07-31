@@ -4,13 +4,12 @@ Covers:
 * :meth:`CodeGraphService.store_graph_from_artifacts` — the new entry
   point that takes a parsed payload and writes it to neo4j/qdrant.
 * :meth:`ParsingService.analyze_workspace` — orchestrator that calls
-  ``ProjectSandbox.parse`` and feeds the result into the graph
-  service. Replaces the legacy ``analyze_directory``.
+  ``ProjectSandbox.parse``; Neo4j graph writes are permanently bypassed.
 * :meth:`ParsingService.parse_directory` end-to-end with a fake sandbox.
 
 Heavy DB work (real neo4j/qdrant inserts) lives in the
 ``real_parse``-marked integration tests; these unit tests stub the
-graph service so they run in milliseconds and don't need infra.
+sandbox so they run in milliseconds and don't need infra.
 """
 
 from __future__ import annotations
@@ -190,23 +189,9 @@ def parsing_service(fake_sandbox):
         yield service
 
 
-@pytest.fixture
-def stub_code_graph_service():
-    """Stand-in for CodeGraphService call assertions.
-
-    Neo4j is permanently bypassed in ParsingService, so CodeGraphService
-    is no longer imported there. Keep a MagicMock so existing tests can
-    still assert the graph write path was not invoked.
-    """
-    instance = MagicMock(name="CodeGraphService_instance")
-    instance.store_graph_from_artifacts = MagicMock()
-    instance.close = MagicMock()
-    yield instance
-
-
 @pytest.mark.asyncio
 async def test_analyze_workspace_happy_path(
-    parsing_service, fake_sandbox, stub_code_graph_service
+    parsing_service, fake_sandbox
 ):
     handle = _make_handle()
     repo_details = ParsingRequest(
@@ -222,7 +207,6 @@ async def test_analyze_workspace_happy_path(
     # Neo4j permanently bypassed: parse runs, graph/inference do not.
     assert len(fake_sandbox.parse_calls) == 1
     assert fake_sandbox.parse_calls[0]["handle"] is handle
-    stub_code_graph_service.store_graph_from_artifacts.assert_not_called()
 
     statuses = [
         call.args[1]
@@ -234,7 +218,7 @@ async def test_analyze_workspace_happy_path(
 
 @pytest.mark.asyncio
 async def test_analyze_workspace_file_only_still_ready_when_neo4j_bypassed(
-    parsing_service, fake_sandbox, stub_code_graph_service
+    parsing_service, fake_sandbox
 ):
     """FILE-only repos (docs/HTML/arrow-only JS) used to trip the old
     language gate. With Neo4j bypassed they must still become READY."""
@@ -253,7 +237,6 @@ async def test_analyze_workspace_file_only_still_ready_when_neo4j_bypassed(
         user_email="", repo_details=repo_details,
     )
 
-    stub_code_graph_service.store_graph_from_artifacts.assert_not_called()
     statuses = [
         call.args[1]
         for call in parsing_service.project_service.update_project_status.await_args_list
@@ -263,7 +246,7 @@ async def test_analyze_workspace_file_only_still_ready_when_neo4j_bypassed(
 
 @pytest.mark.asyncio
 async def test_analyze_workspace_rejects_empty_artifact_stream(
-    parsing_service, fake_sandbox, stub_code_graph_service
+    parsing_service, fake_sandbox
 ):
     """Truly empty parse output still fails — nothing was cloned/indexed."""
     fake_sandbox.artifacts = ParseArtifacts(nodes=[], relationships=[])
@@ -285,12 +268,10 @@ async def test_analyze_workspace_rejects_empty_artifact_stream(
             user_email="", repo_details=repo_details,
         )
 
-    stub_code_graph_service.store_graph_from_artifacts.assert_not_called()
-
 
 @pytest.mark.asyncio
 async def test_analyze_workspace_propagates_parser_failure(
-    parsing_service, fake_sandbox, stub_code_graph_service
+    parsing_service, fake_sandbox
 ):
     """A parser-internal failure (e.g. potpie-parse exited non-zero)
     should bubble up as ParsingServiceError when the service is in
@@ -312,8 +293,6 @@ async def test_analyze_workspace_propagates_parser_failure(
             user_email="", repo_details=repo_details,
         )
 
-    stub_code_graph_service.store_graph_from_artifacts.assert_not_called()
-
 
 # ---------------------------------------------------------------------------
 # parse_directory end-to-end (with the sandbox flow stubbed)
@@ -322,7 +301,7 @@ async def test_analyze_workspace_propagates_parser_failure(
 
 @pytest.mark.asyncio
 async def test_parse_directory_uses_sandbox_path(
-    parsing_service, fake_sandbox, stub_code_graph_service
+    parsing_service, fake_sandbox
 ):
     """Top-level smoke: parse_directory should provision the sandbox,
     parse via it, and persist the result. No call to clone_or_copy /
@@ -342,8 +321,6 @@ async def test_parse_directory_uses_sandbox_path(
     )
     parsing_service.project_service.update_project_status = AsyncMock()
 
-    # cleanup_graph creates a CodeGraphService instance and immediately
-    # closes it; the stub_code_graph_service fixture covers that too.
     repo_details = ParsingRequest(
         repo_name="owner/repo",
         branch_name="main",
@@ -378,4 +355,3 @@ async def test_parse_directory_uses_sandbox_path(
 
     # Parse happened; Neo4j graph write is permanently bypassed.
     assert len(fake_sandbox.parse_calls) == 1
-    stub_code_graph_service.store_graph_from_artifacts.assert_not_called()
