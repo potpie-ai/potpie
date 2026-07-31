@@ -495,7 +495,10 @@ class ServerErrorSanitizationMiddleware:
                 len(response_body) + len(message_body)
                 > _SUCCESS_JSON_INSPECTION_LIMIT_BYTES
             ):
-                if inspect_success_json:
+                # Oversized successes and explicitly approved public errors
+                # must be flushed unchanged; only unapproved error bodies
+                # fail closed to a generic payload.
+                if inspect_success_json or explicitly_public_error:
                     buffered_start = dict(start_message)
                     buffered_body = bytes(response_body) + message_body
                     # Stale Content-Length would disagree with the flushed
@@ -504,8 +507,17 @@ class ServerErrorSanitizationMiddleware:
                         (key, value)
                         for key, value in buffered_start.get("headers", [])
                         if key.lower()
-                        not in (b"content-length", b"content-md5", b"etag")
+                        not in (
+                            b"content-length",
+                            b"content-md5",
+                            b"etag",
+                            _PUBLIC_ERROR_HEADER_BYTES,
+                        )
                     ]
+                    buffered_start["headers"] = _headers_with_request_id(
+                        buffered_start["headers"],
+                        request_id,
+                    )
                     start_message = None
                     response_body.clear()
                     passthrough_response_body = True
@@ -517,7 +529,7 @@ class ServerErrorSanitizationMiddleware:
                     return
 
                 # Error inspection exceeded the bound — fail closed instead of
-                # flushing the private body (success path may passthrough).
+                # flushing the private body.
                 status_code = start_message["status"]
                 private_body = bytes(response_body) + message_body
                 log_private_response(status_code, private_body)

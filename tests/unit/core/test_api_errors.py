@@ -615,6 +615,89 @@ async def test_oversized_error_json_is_fail_closed_not_flushed():
 
 
 @pytest.mark.asyncio
+async def test_oversized_explicitly_public_error_is_flushed_unchanged():
+    """Approved public 4xx bodies must not be replaced when over the buffer limit."""
+    from app.core.api_errors import _PUBLIC_ERROR_HEADER_BYTES
+
+    sent_messages = []
+    prefix = b'{"detail":"'
+    oversized_chunk = b"y" * (64 * 1024 + 1)
+    suffix = b'"}'
+    public_body = prefix + oversized_chunk + suffix
+
+    async def app(scope, receive, send):
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 400,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (_PUBLIC_ERROR_HEADER_BYTES, b"1"),
+                    (b"content-length", b"1024"),
+                ],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": prefix,
+                "more_body": True,
+            }
+        )
+        assert sent_messages == []
+
+        await send(
+            {
+                "type": "http.response.body",
+                "body": oversized_chunk,
+                "more_body": True,
+            }
+        )
+        assert [message["type"] for message in sent_messages] == [
+            "http.response.start",
+            "http.response.body",
+        ]
+
+        await send(
+            {
+                "type": "http.response.body",
+                "body": suffix,
+                "more_body": False,
+            }
+        )
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        sent_messages.append(message)
+
+    middleware = ServerErrorSanitizationMiddleware(app)
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/large-public-error-json",
+        "headers": [],
+        "state": {},
+    }
+
+    await middleware(scope, receive, send)
+
+    assert sent_messages[0]["status"] == 400
+    forwarded_headers = {
+        key.lower(): value for key, value in sent_messages[0].get("headers", [])
+    }
+    assert b"content-length" not in forwarded_headers
+    assert _PUBLIC_ERROR_HEADER_BYTES not in forwarded_headers
+    assert b"x-request-id" in forwarded_headers
+    assert b"".join(
+        message.get("body", b"")
+        for message in sent_messages
+        if message["type"] == "http.response.body"
+    ) == public_body
+
+
+@pytest.mark.asyncio
 async def test_exception_after_response_start_is_reraised():
     sent_messages = []
 
