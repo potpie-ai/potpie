@@ -248,7 +248,10 @@ class ToolCallStreamManager:
                 )
                 for event_id, event_data in events:
                     formatted_event = self._format_event(event_id, event_data)
-                    yield formatted_event
+                    yield sanitize_and_log_client_payload(
+                        formatted_event,
+                        channel=f"tool-call-stream:{key}",
+                    )
 
             # Set starting point for live events
             if cursor and events:

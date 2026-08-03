@@ -4,13 +4,12 @@ Covers:
 * :meth:`CodeGraphService.store_graph_from_artifacts` — the new entry
   point that takes a parsed payload and writes it to neo4j/qdrant.
 * :meth:`ParsingService.analyze_workspace` — orchestrator that calls
-  ``ProjectSandbox.parse`` and feeds the result into the graph
-  service. Replaces the legacy ``analyze_directory``.
+  ``ProjectSandbox.parse``; Neo4j graph writes are permanently bypassed.
 * :meth:`ParsingService.parse_directory` end-to-end with a fake sandbox.
 
 Heavy DB work (real neo4j/qdrant inserts) lives in the
 ``real_parse``-marked integration tests; these unit tests stub the
-graph service so they run in milliseconds and don't need infra.
+sandbox so they run in milliseconds and don't need infra.
 """
 
 from __future__ import annotations
@@ -162,15 +161,14 @@ def fake_sandbox() -> FakeProjectSandbox:
 
 @pytest.fixture
 def parsing_service(fake_sandbox):
-    """Construct a ParsingService with mocked DB / project / inference
-    services so we can exercise the orchestration without standing up
-    Postgres or Neo4j.
+    """Construct a ParsingService with mocked DB / project services so we
+    can exercise orchestration without standing up Postgres or Neo4j.
+    InferenceService is no longer constructed (Neo4j bypassed).
     """
     from app.modules.parsing.graph_construction import parsing_service as ps_mod
 
     db = MagicMock(name="db_session")
     with patch.object(ps_mod, "ProjectService") as ProjectServiceMock, \
-         patch.object(ps_mod, "InferenceService") as InferenceServiceMock, \
          patch.object(ps_mod, "SearchService"), \
          patch.object(ps_mod, "CodeProviderService"), \
          patch.object(ps_mod, "ParseHelper"):
@@ -180,13 +178,6 @@ def parsing_service(fake_sandbox):
         )
         project_service.update_project_status = AsyncMock()
 
-        inference = InferenceServiceMock.return_value
-        inference.run_inference = AsyncMock(return_value={"cache_hits": 5,
-                                                          "cache_misses": 2,
-                                                          "cache_hit_rate": 71.4})
-        inference.log_graph_stats = MagicMock()
-        inference.close = MagicMock()
-
         service = ps_mod.ParsingService(
             db=db,
             user_id="u1",
@@ -194,30 +185,13 @@ def parsing_service(fake_sandbox):
             raise_library_exceptions=True,
             project_sandbox=fake_sandbox,  # type: ignore[arg-type]
         )
-        # Replace the cached project_service / inference_service
-        # references the constructor wired up.
         service.project_service = project_service
-        service.inference_service = inference
         yield service
-
-
-@pytest.fixture
-def stub_code_graph_service():
-    """Replace CodeGraphService with a MagicMock so tests don't need
-    a live neo4j/qdrant. Captures store_graph_from_artifacts calls
-    so the orchestrator's contract is observable."""
-    from app.modules.parsing.graph_construction import parsing_service as ps_mod
-
-    instance = MagicMock(name="CodeGraphService_instance")
-    instance.store_graph_from_artifacts = MagicMock()
-    instance.close = MagicMock()
-    with patch.object(ps_mod, "CodeGraphService", return_value=instance):
-        yield instance
 
 
 @pytest.mark.asyncio
 async def test_analyze_workspace_happy_path(
-    parsing_service, fake_sandbox, stub_code_graph_service
+    parsing_service, fake_sandbox
 ):
     handle = _make_handle()
     repo_details = ParsingRequest(
@@ -230,35 +204,52 @@ async def test_analyze_workspace_happy_path(
         user_email="x@y.com", repo_details=repo_details,
     )
 
-    # Sandbox parse + graph write + inference are all wired up.
+    # Neo4j permanently bypassed: parse runs, graph/inference do not.
     assert len(fake_sandbox.parse_calls) == 1
     assert fake_sandbox.parse_calls[0]["handle"] is handle
-    stub_code_graph_service.store_graph_from_artifacts.assert_called_once()
-    parsing_service.inference_service.run_inference.assert_awaited_once_with("p1")
 
-    # Status transitions: PARSED → READY (the test fixture stubs
-    # update_project_status as AsyncMock, capturing the trail).
     statuses = [
         call.args[1]
         for call in parsing_service.project_service.update_project_status.await_args_list
     ]
-    assert ProjectStatusEnum.PARSED in statuses
     assert ProjectStatusEnum.READY in statuses
+    assert ProjectStatusEnum.ERROR not in statuses
 
 
 @pytest.mark.asyncio
-async def test_analyze_workspace_rejects_repo_with_no_parseable_code(
-    parsing_service, fake_sandbox, stub_code_graph_service
+async def test_analyze_workspace_file_only_still_ready_when_neo4j_bypassed(
+    parsing_service, fake_sandbox
 ):
-    """Replaces the legacy ``language != 'other'`` gate. parsing_rs
-    handles every supported language; if it produced only FILE nodes
-    (no classes/functions/etc.), there's nothing for the inference
-    pipeline to chew on, so we error out the same way the language
-    gate did."""
+    """FILE-only repos (docs/HTML/arrow-only JS) used to trip the old
+    language gate. With Neo4j bypassed they must still become READY."""
     fake_sandbox.artifacts = ParseArtifacts(
         nodes=[_node(), _node(id="b.py", file="b.py", name="b.py")],
         relationships=[],
     )
+    handle = _make_handle()
+    repo_details = ParsingRequest(
+        repo_name="owner/docs", branch_name="main",
+        repo_path=None, commit_id="abc",
+    )
+
+    await parsing_service.analyze_workspace(
+        handle=handle, project_id="p1", user_id="u1",
+        user_email="", repo_details=repo_details,
+    )
+
+    statuses = [
+        call.args[1]
+        for call in parsing_service.project_service.update_project_status.await_args_list
+    ]
+    assert ProjectStatusEnum.READY in statuses
+
+
+@pytest.mark.asyncio
+async def test_analyze_workspace_rejects_empty_artifact_stream(
+    parsing_service, fake_sandbox
+):
+    """Truly empty parse output still fails — nothing was cloned/indexed."""
+    fake_sandbox.artifacts = ParseArtifacts(nodes=[], relationships=[])
     handle = _make_handle()
     repo_details = ParsingRequest(
         repo_name="owner/empty", branch_name="main",
@@ -277,16 +268,10 @@ async def test_analyze_workspace_rejects_repo_with_no_parseable_code(
             user_email="", repo_details=repo_details,
         )
 
-    # The graph-store path must NOT have run for an empty repo —
-    # neo4j inserts on a no-op graph would still touch the DB,
-    # but more importantly the inference pipeline mustn't fire.
-    stub_code_graph_service.store_graph_from_artifacts.assert_not_called()
-    parsing_service.inference_service.run_inference.assert_not_called()
-
 
 @pytest.mark.asyncio
 async def test_analyze_workspace_propagates_parser_failure(
-    parsing_service, fake_sandbox, stub_code_graph_service
+    parsing_service, fake_sandbox
 ):
     """A parser-internal failure (e.g. potpie-parse exited non-zero)
     should bubble up as ParsingServiceError when the service is in
@@ -308,8 +293,6 @@ async def test_analyze_workspace_propagates_parser_failure(
             user_email="", repo_details=repo_details,
         )
 
-    stub_code_graph_service.store_graph_from_artifacts.assert_not_called()
-
 
 # ---------------------------------------------------------------------------
 # parse_directory end-to-end (with the sandbox flow stubbed)
@@ -318,7 +301,7 @@ async def test_analyze_workspace_propagates_parser_failure(
 
 @pytest.mark.asyncio
 async def test_parse_directory_uses_sandbox_path(
-    parsing_service, fake_sandbox, stub_code_graph_service
+    parsing_service, fake_sandbox
 ):
     """Top-level smoke: parse_directory should provision the sandbox,
     parse via it, and persist the result. No call to clone_or_copy /
@@ -338,8 +321,6 @@ async def test_parse_directory_uses_sandbox_path(
     )
     parsing_service.project_service.update_project_status = AsyncMock()
 
-    # cleanup_graph creates a CodeGraphService instance and immediately
-    # closes it; the stub_code_graph_service fixture covers that too.
     repo_details = ParsingRequest(
         repo_name="owner/repo",
         branch_name="main",
@@ -372,6 +353,5 @@ async def test_parse_directory_uses_sandbox_path(
     assert ensure_kwargs["repo"].base_ref == "deadbeef"
     assert ensure_kwargs["auth_token"] == "tk"
 
-    # Parse + write happened.
+    # Parse happened; Neo4j graph write is permanently bypassed.
     assert len(fake_sandbox.parse_calls) == 1
-    stub_code_graph_service.store_graph_from_artifacts.assert_called_once()

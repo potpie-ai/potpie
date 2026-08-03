@@ -362,3 +362,49 @@ async def test_acquire_session_without_cache_provider_skips_cache(
     # though — that's the wiring the service is responsible for.
     assert workspace.id.startswith("ws_")
     assert len(await service._store.list_repo_caches()) == 0
+
+
+def test_git_timeout_falls_back_on_overflow(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sandbox.adapters.outbound.local import repo_cache as repo_cache_mod
+
+    monkeypatch.setenv("SANDBOX_GIT_TIMEOUT_S", "1e309")
+    assert repo_cache_mod._git_timeout_s() == 1800
+
+    monkeypatch.setenv("SANDBOX_GIT_TIMEOUT_S", "not-a-number")
+    assert repo_cache_mod._git_timeout_s() == 1800
+
+
+def test_fetch_ref_tries_tag_refspec_before_plain_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Non-branch refs try ``refs/tags/<tag>`` before a plain fetch."""
+    from sandbox.adapters.outbound.local import repo_cache as repo_cache_mod
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kw):
+        calls.append(cmd)
+        # Fail branch + tag attempts; succeed on plain fetch.
+        if any(part.startswith("+refs/heads/") for part in cmd):
+            return subprocess.CompletedProcess(cmd, 1, "", "not a branch")
+        if any(part.startswith("+refs/tags/") for part in cmd):
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(repo_cache_mod, "run", fake_run)
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    LocalRepoCacheProvider._fetch_ref(bare, "https://example.com/repo.git", "v1.2.3")
+
+    assert any(
+        "+refs/heads/v1.2.3:refs/heads/v1.2.3" in cmd for cmd in calls
+    ), "branch refspec should be tried first"
+    assert any(
+        "+refs/tags/v1.2.3:refs/tags/v1.2.3" in cmd for cmd in calls
+    ), "tag refspec should be tried after branch failure"
+    # Plain fallback should not run when tag fetch succeeds.
+    assert not any(
+        cmd[-1] == "v1.2.3" and not any(":" in part for part in cmd)
+        for cmd in calls
+        if "fetch" in cmd
+    )

@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -119,8 +119,20 @@ class AgentSharesResponse(BaseModel):
 
 
 class ListAgentsRequest(BaseModel):
-    include_public: bool = True
-    include_shared: bool = True
+    """List custom agents using a server-defined mode (FW003).
+
+    Legacy include_public/include_shared are accepted for compatibility but ignored.
+    """
+
+    mode: Literal["runtime", "owned"] = "owned"
+    include_public: Optional[bool] = Field(
+        default=None,
+        description="Deprecated. Ignored; use mode instead.",
+    )
+    include_shared: Optional[bool] = Field(
+        default=None,
+        description="Deprecated. Ignored; use mode instead.",
+    )
 
 
 class NodeContext(BaseModel):

@@ -99,14 +99,19 @@ async def list_agents(
     db: Session = Depends(get_db),
     user=Depends(auth_handler.check_auth),
 ):
-    """List all agents accessible to the user including public and shared agents"""
+    """List custom agents for the authenticated user using a server-defined mode.
+
+    Legacy include_public/include_shared query params are ignored for authorization.
+    """
+    from app.modules.intelligence.agents.agent_list_scope import AgentListMode
+
     user_id = user["user_id"]
     custom_agent_controller = CustomAgentController(user_id, db)
+    mode = AgentListMode(request.mode)
     try:
         return await custom_agent_controller.list_agents(
             user_id=user_id,
-            include_public=request.include_public,
-            include_shared=request.include_shared,
+            mode=mode,
         )
     except HTTPException as he:
         raise he

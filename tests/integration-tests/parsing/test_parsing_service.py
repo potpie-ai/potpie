@@ -8,7 +8,6 @@ no real Neo4j/Git/RepoManager required.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from neo4j.exceptions import ServiceUnavailable
 
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParsingServiceError,
@@ -96,13 +95,14 @@ class TestParseDirectory:
 
     @pytest.mark.asyncio
     async def test_parse_directory_cleanup_bypassed(self, db_session):
-        """cleanup_graph=True no longer touches Neo4j; flow proceeds past cleanup.
+        """cleanup_graph=True no longer touches Neo4j; flow proceeds to sandbox.
 
         Neo4j is permanently bypassed, so the old CodeGraphService cleanup
         cannot fail parse_directory anymore. We prove the flow gets past the
-        cleanup step by making the *next* step (repo clone) raise a sentinel.
+        cleanup step by making project_sandbox.ensure raise a sentinel.
         """
         project_id = "proj-cleanup-bypass"
+        sentinel = FileNotFoundError("sentinel: reached step after cleanup")
         mock_project_manager = MagicMock()
         mock_project_manager.get_project_from_db_by_id = AsyncMock(
             return_value={"id": project_id, "status": "submitted"}
@@ -110,9 +110,8 @@ class TestParseDirectory:
         mock_project_manager.update_project_status = AsyncMock()
         mock_parse_helper = MagicMock()
         mock_parse_helper.check_commit_status = AsyncMock(return_value=False)
-        mock_parse_helper.clone_or_copy_repository = AsyncMock(
-            side_effect=FileNotFoundError("sentinel: reached step after cleanup")
-        )
+        mock_sandbox = MagicMock()
+        mock_sandbox.ensure = AsyncMock(side_effect=sentinel)
         with patch(
             "app.modules.parsing.graph_construction.parsing_service.ProjectService",
             return_value=mock_project_manager,
@@ -121,10 +120,15 @@ class TestParseDirectory:
             return_value=mock_parse_helper,
         ):
             service = ParsingService(
-                db_session, "test-user", raise_library_exceptions=True
+                db_session,
+                "test-user",
+                raise_library_exceptions=True,
+                project_sandbox=mock_sandbox,
             )
             repo_details = ParsingRequest(repo_name="owner/repo")
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(
+                ParsingServiceError, match="sentinel: reached step after cleanup"
+            ):
                 await service.parse_directory(
                     repo_details,
                     user_id="test-user",
@@ -132,61 +136,21 @@ class TestParseDirectory:
                     project_id=project_id,
                     cleanup_graph=True,
                 )
-            # Whatever failed, it was NOT the (removed) Neo4j cleanup.
-            assert "cleanup" not in str(exc_info.value).lower()
+            mock_sandbox.ensure.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_parse_directory_setup_returns_none(self, db_session):
-        """clone_or_copy_repository raises; expect exception or 500 path."""
+        """project_sandbox.ensure raises; expect ParsingServiceError wrapping it."""
         project_id = "proj-setup-fail"
         mock_project_manager = MagicMock()
         mock_project_manager.get_project_from_db_by_id = AsyncMock(
             return_value={"id": project_id, "status": "submitted"}
         )
-        mock_parse_helper = MagicMock()
-        mock_parse_helper.check_commit_status = AsyncMock(return_value=False)
-        mock_parse_helper.clone_or_copy_repository = AsyncMock(
-            side_effect=FileNotFoundError("clone failed")
-        )
-        with patch(
-            "app.modules.parsing.graph_construction.parsing_service.ProjectService",
-            return_value=mock_project_manager,
-        ), patch(
-            "app.modules.parsing.graph_construction.parsing_service.ParseHelper",
-            return_value=mock_parse_helper,
-        ):
-            service = ParsingService(
-                db_session, "test-user", raise_library_exceptions=True
-            )
-            repo_details = ParsingRequest(repo_name="owner/repo")
-            with pytest.raises((ParsingServiceError, FileNotFoundError, Exception)):
-                await service.parse_directory(
-                    repo_details,
-                    user_id="test-user",
-                    user_email="test@example.com",
-                    project_id=project_id,
-                    cleanup_graph=True,
-                )
-
-
-class TestNeo4jFailures:
-    """Neo4j is permanently bypassed; an outage must not fail parsing."""
-
-    @pytest.mark.asyncio
-    async def test_neo4j_outage_cannot_fail_cleanup(self, db_session):
-        """A dead Neo4j can no longer surface through parse_directory cleanup."""
-        project_id = "proj-neo4j-fail"
-        mock_project_manager = MagicMock()
-        mock_project_manager.get_project_from_db_by_id = AsyncMock(
-            return_value={"id": project_id, "status": "submitted"}
-        )
         mock_project_manager.update_project_status = AsyncMock()
         mock_parse_helper = MagicMock()
         mock_parse_helper.check_commit_status = AsyncMock(return_value=False)
-        mock_parse_helper.clone_or_copy_repository = AsyncMock(
-            side_effect=FileNotFoundError("sentinel: reached step after cleanup")
-        )
-
+        mock_sandbox = MagicMock()
+        mock_sandbox.ensure = AsyncMock(side_effect=FileNotFoundError("clone failed"))
         with patch(
             "app.modules.parsing.graph_construction.parsing_service.ProjectService",
             return_value=mock_project_manager,
@@ -195,10 +159,13 @@ class TestNeo4jFailures:
             return_value=mock_parse_helper,
         ):
             service = ParsingService(
-                db_session, "test-user", raise_library_exceptions=True
+                db_session,
+                "test-user",
+                raise_library_exceptions=True,
+                project_sandbox=mock_sandbox,
             )
             repo_details = ParsingRequest(repo_name="owner/repo")
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(ParsingServiceError, match="clone failed"):
                 await service.parse_directory(
                     repo_details,
                     user_id="test-user",
@@ -206,9 +173,12 @@ class TestNeo4jFailures:
                     project_id=project_id,
                     cleanup_graph=True,
                 )
-            # The failure must never be a Neo4j connectivity error.
-            assert not isinstance(exc_info.value, ServiceUnavailable)
-            assert "cleanup" not in str(exc_info.value).lower()
+
+
+# TestNeo4jFailures removed: Neo4j cleanup is permanently bypassed and the
+# sentinel-via-sandbox.ensure coverage lives in
+# test_parse_directory_cleanup_bypassed above.
+
 
 class TestProjectServiceOwnership:
     """Test ProjectService ownership checks (Part 4.6 of plan)."""
