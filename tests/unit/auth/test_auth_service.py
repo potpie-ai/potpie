@@ -179,7 +179,9 @@ class TestAuthServiceSignup:
         mock_user.email = "newuser@example.com"
 
         with patch("app.modules.auth.auth_service.auth.create_user", return_value=mock_user):
-            result, error = service.signup("newuser@example.com", "securepass", "New User")
+            result, error = service.signup(
+                "newuser@example.com", "ValidPassword1!", "New User"
+            )
 
             assert error is None
             assert result["user"].uid == "new-user-123"
@@ -204,7 +206,9 @@ class TestAuthServiceSignup:
             ):
                 mock_create.side_effect = mock_error
 
-                result, error = service.signup("existing@example.com", "pass", "User")
+                result, error = service.signup(
+                    "existing@example.com", "ValidPassword1!", "User"
+                )
 
                 assert result is None
                 assert "Firebase error" in error["error"]
@@ -217,7 +221,7 @@ class TestAuthServiceSignup:
         with patch("app.modules.auth.auth_service.auth.create_user") as mock_create:
             mock_create.side_effect = ValueError("Invalid email format")
 
-            result, error = service.signup("invalid-email", "pass", "User")
+            result, error = service.signup("invalid-email", "ValidPassword1!", "User")
 
             assert result is None
             assert "Invalid input" in error["error"]
@@ -229,7 +233,9 @@ class TestAuthServiceSignup:
         with patch("app.modules.auth.auth_service.auth.create_user") as mock_create:
             mock_create.side_effect = RuntimeError("Unexpected failure")
 
-            result, error = service.signup("test@example.com", "pass", "User")
+            result, error = service.signup(
+                "test@example.com", "ValidPassword1!", "User"
+            )
 
             assert result is None
             assert "unexpected error" in error["error"]

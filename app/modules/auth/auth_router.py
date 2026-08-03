@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 from app.core.database import get_async_db, get_db
 from app.modules.auth.auth_schema import (
     LoginRequest,
+    RegisterEmailRequest,
     SSOLoginRequest,
     ConfirmLinkingRequest,
     UnlinkProviderRequest,
@@ -29,6 +30,7 @@ from app.modules.auth.auth_schema import (
 )
 from app.modules.auth.auth_service import auth_handler, AuthService
 from app.modules.auth.auth_provider_model import UserAuthProvider
+from app.modules.auth.password_policy import PASSWORD_POLICY_ERROR
 from app.modules.auth.unified_auth_service import (
     UnifiedAuthService,
     PROVIDER_TYPE_FIREBASE_GITHUB,
@@ -98,6 +100,73 @@ class AuthAPI:
             )
         except Exception as e:
             return JSONResponse(content={"error": f"ERROR: {str(e)}"}, status_code=400)
+
+    @auth_router.post("/auth/register-email")
+    async def register_email(body: RegisterEmailRequest):
+        """FW001: validate password policy, then create Firebase user via Admin SDK.
+
+        Weak passwords are rejected here and never sent to Firebase.
+        Returns uid + customToken so the client can signInWithCustomToken
+        and continue with the existing /signup DB registration flow.
+        """
+        email = (body.email or "").strip()
+        display_name = (body.display_name or "").strip() or (
+            email.split("@")[0] if email else "User"
+        )
+        if not email or "@" not in email:
+            return public_error_response(
+                "Please enter a valid email address.",
+                status_code=400,
+            )
+
+        result, error = auth_handler.signup(
+            email=email,
+            password=body.password,
+            name=display_name,
+        )
+        if error:
+            code = error.get("code")
+            message = error.get("error", "Signup failed")
+            if code == "weak_password":
+                return public_error_response(
+                    PASSWORD_POLICY_ERROR,
+                    status_code=400,
+                )
+            # Firebase email-already-exists and similar — no password leak.
+            lower = message.lower()
+            if "already exists" in lower or "email_exists" in lower:
+                return public_error_response(
+                    "Email already in use",
+                    status_code=409,
+                )
+            return public_error_response(
+                "Account creation failed. Please try again.",
+                status_code=400,
+            )
+
+        user = result["user"]
+        uid = getattr(user, "uid", None)
+        if not uid:
+            return JSONResponse(
+                content={"error": "Account creation failed. Please try again."},
+                status_code=500,
+            )
+
+        custom_token = AuthService.create_custom_token(uid)
+        if not custom_token:
+            return JSONResponse(
+                content={"error": "Account creation failed. Please try again."},
+                status_code=500,
+            )
+
+        return JSONResponse(
+            content={
+                "uid": uid,
+                "email": getattr(user, "email", email) or email,
+                "customToken": custom_token,
+            },
+            status_code=201,
+        )
 
     @auth_router.post("/signup")
     async def signup(

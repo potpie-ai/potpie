@@ -8,6 +8,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
 from firebase_admin.exceptions import FirebaseError
 
+from app.modules.auth.password_policy import PasswordPolicyError, validate_password
+
 load_dotenv(override=True)
 
 # Timeout for Firebase Identity Toolkit (default 30s read, 10s connect)
@@ -91,8 +93,12 @@ class AuthService:
 
     def signup(self, email: str, password: str, name: str) -> tuple:
         try:
+            # FW001: reject weak passwords before Firebase Admin create_user.
+            validate_password(password)
             user = auth.create_user(email=email, password=password, display_name=name)
             return {"user": user, "message": "New user created successfully"}, None
+        except PasswordPolicyError as pe:
+            return None, {"error": pe.message, "code": "weak_password"}
         except FirebaseError as fe:
             return None, {"error": f"Firebase error: {fe.message}"}
         except ValueError as _ve:

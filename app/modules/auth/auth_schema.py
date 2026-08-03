@@ -12,6 +12,14 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RegisterEmailRequest(BaseModel):
+    """Create a Firebase email/password account after FW001 policy checks."""
+
+    email: str
+    password: str
+    display_name: Optional[str] = None
+
+
 # ===== Multi-Provider Auth Schemas =====
 
 
