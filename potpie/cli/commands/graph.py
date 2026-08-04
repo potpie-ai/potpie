@@ -2019,6 +2019,21 @@ def graph_quality_projection_drift(
     )
 
 
+@quality_app.command("entity-label-drift")
+def graph_quality_entity_label_drift(
+    subgraph: str = typer.Option(None, "--subgraph"),
+    limit: int = typer.Option(50, "--limit"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    _run_quality_report(
+        command="graph.quality.entity-label-drift",
+        report="entity-label-drift",
+        pot=pot,
+        subgraph=subgraph,
+        limit=limit,
+    )
+
+
 def _run_quality_report(
     *,
     command: str,
@@ -2124,6 +2139,7 @@ def graph_import(
 def graph_repair(
     semantic_index: bool = typer.Option(False, "--semantic-index"),
     entity_summaries: bool = typer.Option(False, "--entity-summaries"),
+    entity_labels: bool = typer.Option(False, "--entity-labels"),
     all_: bool = typer.Option(False, "--all"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
@@ -2137,6 +2153,8 @@ def graph_repair(
                 targets.append("semantic_index")
             if entity_summaries:
                 targets.append("entity_summaries")
+            if entity_labels:
+                targets.append("entity_labels")
         report = host.backend.analytics.repair(pot_id, targets=targets)
         _emit_graph_result(
             ctx,

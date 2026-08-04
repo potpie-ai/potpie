@@ -34,11 +34,9 @@ from potpie_context_core.graph_mutations import (
     InvalidationOp,
     ProvenanceRef,
 )
+from potpie_context_core.entity_canonicalization import coherent_entity_labels
 from potpie_context_core.graph_entity_summary import compact_entity_summary
 from potpie_context_core.graph_contract import evidence_strength_for_truth
-from potpie_context_core.ontology import (
-    canonical_entity_labels,
-)
 from potpie_context_engine.domain.retrieval_card import build_retrieval_card
 
 logger = logging.getLogger(__name__)
@@ -284,6 +282,11 @@ async def upsert_entities_async(
     prov_props = provenance.to_properties()
     async with driver.session() as session:
         for item in items:
+            labels = coherent_entity_labels(
+                item.entity_key,
+                item.labels,
+                entity_types=definition.entity_types,
+            )
             props = dict(item.properties)
             # Authored display/retrieval fields overwrite; key-derived
             # fallbacks only fill nodes that have no value yet, so a bare
@@ -319,25 +322,18 @@ async def upsert_entities_async(
                 a_summary=authored_summary,
                 a_description=authored_description,
             )
-            wanted_labels: set[str] = set()
-            for label in item.labels:
-                canonical = canonical_entity_labels((label,))
-                candidates = canonical or (
-                    (label,) if label in definition.entity_types else ()
+            valid_entity_types = {
+                label for label in definition.entity_types if _LABEL_RE.fullmatch(label)
+            }
+            wanted_labels = {label for label in labels if label in valid_entity_types}
+            stale_labels = sorted(valid_entity_types - wanted_labels)
+            if stale_labels:
+                remove_clause = ":".join(stale_labels)
+                await session.run(
+                    f"MATCH (e:Entity {{group_id: $gid, entity_key: $key}}) REMOVE e:{remove_clause}",  # pyright: ignore[reportArgumentType]
+                    gid=pot_id,
+                    key=item.entity_key,
                 )
-                wanted_labels.update(
-                    candidate
-                    for candidate in candidates
-                    if candidate in definition.entity_types
-                    and _LABEL_RE.fullmatch(candidate)
-                )
-            if wanted_labels:
-                for stale in sorted(set(definition.entity_types) - wanted_labels):
-                    await session.run(
-                        f"MATCH (e:Entity {{group_id: $gid, entity_key: $key}}) REMOVE e:{stale}",  # pyright: ignore[reportArgumentType]
-                        gid=pot_id,
-                        key=item.entity_key,
-                    )
             for lbl in sorted(wanted_labels):
                 await session.run(
                     f"MATCH (e:Entity {{group_id: $gid, entity_key: $key}}) SET e:{lbl}",  # pyright: ignore[reportArgumentType]

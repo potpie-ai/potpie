@@ -70,6 +70,24 @@ def test_enrich_plan_adds_inferred_endpoint_labels(
     assert "Environment" in by_key["environment:prod"].labels
 
 
+def test_enrich_plan_does_not_accumulate_type_conflicting_with_key() -> None:
+    plan = ReconciliationPlan(
+        event_ref=EventRef(event_id="e1", source_system="test", pot_id="p1"),
+        summary="t",
+        entity_upserts=[
+            EntityUpsert(
+                entity_key="environment:prod",
+                labels=("Entity", "Activity", "Environment"),
+                properties={"name": "prod", "status": "active"},
+            )
+        ],
+    )
+
+    enrich_reconciliation_plan_entity_labels(plan)
+
+    assert plan.entity_upserts[0].labels == ("Entity", "Environment")
+
+
 def test_validate_reconciliation_runs_enrich_when_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -23,12 +23,16 @@ pytestmark = pytest.mark.integration
 # Import name is ``redislite`` (distribution: falkordblite); skip if absent.
 falkordb_client = pytest.importorskip("redislite.falkordb_client")
 
-from potpie_context_engine.adapters.outbound.graph.falkordb_reader import (
+from potpie_context_engine.adapters.outbound.graph.backends.falkordb_backend import (  # noqa: E402
+    FalkorDBGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.graph.falkordb_reader import (  # noqa: E402
     FalkorDBClaimQueryStore,
-)  # noqa: E402
-from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
+)
+from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (  # noqa: E402
     FalkorDBGraphWriter,
-)  # noqa: E402
+)
+from potpie_context_core.workbench_service import GraphWorkbenchService  # noqa: E402
 from potpie_context_core.graph_mutations import (  # noqa: E402
     EdgeUpsert,
     EntityUpsert,
@@ -60,6 +64,17 @@ class _FakeEmbedder:
 
     def embed_many(self, texts):
         return [self.embed(t) for t in texts]
+
+
+class _UnusedPlanStore:
+    def save(self, _record) -> None:
+        raise AssertionError("plan store should not be used")
+
+    def get(self, *, pot_id: str, plan_id: str):
+        raise AssertionError("plan store should not be used")
+
+    def list(self, **_kwargs):
+        raise AssertionError("plan store should not be used")
 
 
 @pytest.fixture()
@@ -162,6 +177,77 @@ def test_write_read_reset_roundtrip(shared_graph) -> None:
     final = asyncio.run(writer.reset_pot(pot))
     assert final["ok"] is True
     assert final["group_id_nodes_remaining"] == 0
+
+
+def test_entity_upsert_rejects_canonical_labels_conflicting_with_key(
+    shared_graph,
+) -> None:
+    settings = _Settings()
+    writer = FalkorDBGraphWriter(settings, graph=shared_graph)
+    reader = FalkorDBClaimQueryStore(settings, graph=shared_graph)
+    pot = "potRetype"
+    prov = ProvenanceRef(pot_id=pot, source_event_id="e1", source_system="agent")
+    key = "environment:production"
+
+    async def _write() -> None:
+        await writer.upsert_entities(
+            pot,
+            [
+                EntityUpsert(
+                    key,
+                    (
+                        "Entity",
+                        "Activity",
+                        "ConfigVariable",
+                        "DeploymentTarget",
+                        "Environment",
+                    ),
+                    {"name": "production"},
+                )
+            ],
+            prov,
+        )
+
+    asyncio.run(_write())
+
+    assert set(reader.entity_labels(pot_id=pot, entity_keys=[key])[key]) == {
+        "Entity",
+        "Environment",
+    }
+
+
+def test_entity_label_repair_cleans_existing_pollution(shared_graph) -> None:
+    settings = _Settings()
+    backend = FalkorDBGraphBackend(
+        settings,
+        graph_provider=lambda: shared_graph,
+    )
+    workbench = GraphWorkbenchService(
+        backend=backend,
+        plan_store=_UnusedPlanStore(),
+    )
+    reader = FalkorDBClaimQueryStore(settings, graph=shared_graph)
+    pot = "potRepairLabels"
+    key = "environment:production"
+    shared_graph.query(
+        "MERGE (e:Entity {group_id: $gid, entity_key: $key}) "
+        "SET e:Activity:ConfigVariable:DeploymentTarget:Environment",
+        params={"gid": pot, "key": key},
+    )
+
+    before = workbench.quality(pot_id=pot, report="entity-label-drift")
+    report = backend.analytics.repair(pot, targets=["entity_labels"])
+    after = workbench.quality(pot_id=pot, report="entity-label-drift")
+
+    assert before.status == "degraded"
+    assert before.findings[0].entity_keys == (key,)
+    assert report.repaired == {"entity_labels": 1}
+    assert after.status == "ok"
+    assert after.findings == ()
+    assert set(reader.entity_labels(pot_id=pot, entity_keys=[key])[key]) == {
+        "Entity",
+        "Environment",
+    }
 
 
 def test_vector_search_orders_by_cosine_distance(shared_graph) -> None:

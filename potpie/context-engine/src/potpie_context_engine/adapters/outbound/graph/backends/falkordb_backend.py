@@ -48,6 +48,12 @@ from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import 
     ENTITY_SUMMARY_UPDATE_CYPHER,
     repaired_entity_properties,
 )
+from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
+    ENTITY_LABEL_REPAIR_LIMIT,
+    ENTITY_LABEL_SCAN_CYPHER,
+    canonical_label_changes,
+    repaired_entity_labels,
+)
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.errors import CapabilityNotImplemented
@@ -287,6 +293,7 @@ class FalkorDBGraphBackend:
             self.settings,
             graph_provider=self.graph_provider,
             embedder=self.embedder,
+            claim_query=self._claim_query,
         )
 
     @property
@@ -297,6 +304,7 @@ class FalkorDBGraphBackend:
             fallback=ClaimQueryAnalytics(
                 self._claim_query,
                 entity_summary_repair=self._repair_entity_summaries,
+                entity_label_repair=self._repair_entity_labels,
             ),
         )
 
@@ -374,6 +382,53 @@ class FalkorDBGraphBackend:
                 repaired += 1
                 continue
             repaired += int(records[0].get("cnt") or 0)
+        return repaired
+
+    def _repair_entity_labels(self, pot_id: str) -> int:
+        graph = self.graph_provider()
+        repaired = 0
+        after = ""
+        while True:
+            rows = _records_from_result(
+                graph.query(
+                    ENTITY_LABEL_SCAN_CYPHER,
+                    params={
+                        "gid": pot_id,
+                        "after": after,
+                        "limit": ENTITY_LABEL_REPAIR_LIMIT,
+                    },
+                )
+            )
+            if not rows:
+                break
+            for row in rows:
+                key = str(row.get("key") or "").strip()
+                labels = tuple(row.get("labels") or ())
+                fixed = repaired_entity_labels(
+                    key,
+                    labels,
+                    entity_types=self.definition.entity_types,
+                )
+                if not key or fixed is None:
+                    continue
+                remove, add = canonical_label_changes(
+                    labels,
+                    fixed,
+                    entity_types=self.definition.entity_types,
+                )
+                clauses = [*(f"REMOVE e:{label}" for label in remove)]
+                clauses.extend(f"SET e:{label}" for label in add)
+                if not clauses:
+                    continue
+                result = graph.query(
+                    "MATCH (e:Entity {group_id: $gid, entity_key: $key}) "
+                    + " ".join(clauses)
+                    + " RETURN count(e) AS cnt",
+                    params={"gid": pot_id, "key": key},
+                )
+                records = _records_from_result(result)
+                repaired += int(records[0].get("cnt") or 0) if records else 1
+            after = str(rows[-1].get("key") or "")
         return repaired
 
 

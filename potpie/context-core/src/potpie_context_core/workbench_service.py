@@ -70,6 +70,7 @@ from potpie_context_core.graph_workbench import (
     GraphUnsupported,
     GraphUnsupportedResult,
 )
+from potpie_context_core.entity_canonicalization import coherent_entity_labels
 from potpie_context_core.graph_workbench_ontology import ranked_catalog_views
 from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_core.ports.graph.inbox_store import GraphInboxStorePort
@@ -98,6 +99,7 @@ _QUALITY_SUMMARY_REPORTS = (
     "orphan-entities",
     "low-confidence",
     "projection-drift",
+    "entity-label-drift",
 )
 
 _CROSS_CUTTING_RESULT_KEYS = frozenset(
@@ -928,10 +930,10 @@ class GraphWorkbenchService:
         status = _quality_status(findings, unsupported)
         detail = None
         recommended = None
-        if unsupported and not findings:
-            detail = f"{clean_report} is unavailable for the active backend"
+        if unsupported:
+            detail = f"{clean_report} has incomplete coverage on the active backend"
             recommended = "Use graph status to inspect backend capabilities."
-        elif findings:
+        if findings:
             recommended = (
                 "Review findings, then use graph propose/commit for semantic "
                 "fact corrections or graph inbox add for uncertain work."
@@ -2092,6 +2094,8 @@ def _normalize_quality_report(report: str | None) -> str:
         "orphans": "orphan-entities",
         "low-confidence-claims": "low-confidence",
         "drift": "projection-drift",
+        "label-drift": "entity-label-drift",
+        "labels": "entity-label-drift",
     }
     clean = aliases.get(clean, clean)
     allowed = {
@@ -2102,6 +2106,7 @@ def _normalize_quality_report(report: str | None) -> str:
         "orphan-entities",
         "low-confidence",
         "projection-drift",
+        "entity-label-drift",
     }
     if clean not in allowed:
         raise ValueError(
@@ -2180,6 +2185,14 @@ def _quality_deep_report(
         )
     if report == "projection-drift":
         return _quality_projection_drift(
+            backend,
+            pot_id=pot_id,
+            subgraph=subgraph,
+            limit=limit,
+            definition=definition,
+        )
+    if report == "entity-label-drift":
+        return _quality_entity_label_drift(
             backend,
             pot_id=pot_id,
             subgraph=subgraph,
@@ -2638,6 +2651,109 @@ def _quality_projection_drift(
         "projection_checked": sl is not None,
     }
     return tuple(findings[:limit]), metrics, unsupported
+
+
+def _quality_entity_label_drift(
+    backend: GraphBackend,
+    *,
+    pot_id: str,
+    subgraph: str | None,
+    limit: int,
+    definition: GraphDefinition,
+) -> tuple[
+    tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]
+]:
+    rows, unsupported = _quality_claim_rows(
+        backend, pot_id=pot_id, subgraph=subgraph, limit=limit
+    )
+    entity_keys = {
+        key for row in rows for key in (row.subject_key, row.object_key) if key
+    }
+    labels_by_key: dict[str, tuple[str, ...]] = {}
+    inspection_complete = True
+    try:
+        graph_slice = backend.inspection.slice(
+            pot_id=pot_id,
+            filter_=ClaimQueryFilter(
+                pot_id=pot_id,
+                subgraph_in=(subgraph,) if subgraph else (),
+                limit=_quality_scan_limit(limit),
+            ),
+        )
+        for node in graph_slice.nodes:
+            entity_keys.add(node.key)
+            labels_by_key[node.key] = tuple(node.labels)
+        if graph_slice.truncated:
+            inspection_complete = False
+            unsupported += (
+                {
+                    "name": "inspection.slice",
+                    "reason": "truncated",
+                    "detail": "Entity label inspection reached the backend scan limit.",
+                },
+            )
+    except CapabilityNotImplemented as exc:
+        inspection_complete = False
+        unsupported += (_unsupported_from_exception(exc, fallback="inspection.slice"),)
+
+    missing_keys = sorted(entity_keys - labels_by_key.keys())
+    if missing_keys:
+        fetched, _, metadata_unsupported = _quality_entity_metadata(
+            backend,
+            pot_id=pot_id,
+            entity_keys=missing_keys,
+            properties=False,
+        )
+        labels_by_key.update(fetched)
+        unsupported += metadata_unsupported
+
+    findings: list[GraphQualityFinding] = []
+    for key in sorted(entity_keys):
+        if key not in labels_by_key:
+            continue
+        current = tuple(labels_by_key[key])
+        if not current:
+            continue
+        expected = coherent_entity_labels(
+            key,
+            current,
+            entity_types=definition.entity_types,
+        )
+        current_canonical = set(current) & set(definition.entity_types)
+        expected_canonical = set(expected) & set(definition.entity_types)
+        if current_canonical == expected_canonical:
+            continue
+        findings.append(
+            _quality_finding(
+                kind="entity-label-drift",
+                severity="error",
+                summary=f"{key} has canonical labels that conflict with its key",
+                entity_keys=(key,),
+                detail=(
+                    f"stored={sorted(current_canonical)!r}; "
+                    f"expected={sorted(expected_canonical)!r}"
+                ),
+                suggested_action={
+                    "type": "operator_repair",
+                    "command": "graph repair --entity-labels",
+                    "reason": "Remove stale canonical labels using the entity key.",
+                },
+                payload={
+                    "stored_labels": list(current),
+                    "expected_labels": list(expected),
+                },
+            )
+        )
+        if len(findings) >= limit:
+            break
+    return (
+        tuple(findings),
+        {
+            "scanned_entities": len(entity_keys),
+            "inspection_complete": inspection_complete,
+        },
+        unsupported,
+    )
 
 
 def _quality_claim_rows(
