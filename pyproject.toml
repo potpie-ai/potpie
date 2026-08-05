@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Software Development",
 ]
 dependencies = [
-    "aiohttp>=3.14.1",
+    "aiohttp>=3.14.2",
     "click>=8.1.8",
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
@@ -100,7 +100,8 @@ override-dependencies = [
     "openai>=2.7.1",
     "idna>=3.15",
     "cryptography>=48.0.1",
-    "aiohttp>=3.14.1",
+    # CVE-2026-59881 / CVE-2026-69243: aiohttp <= 3.14.1; 3.14.2 is the first patched release.
+    "aiohttp>=3.14.2",
     "starlette>=1.3.1",
     "pyjwt>=2.13.0",
     "pydantic-settings>=2.14.2",
