@@ -12,7 +12,7 @@ resolution-markers = [
 
 [manifest]
 constraints = [
-    { name = "aiohttp", specifier = ">=3.14.2" },
+    { name = "aiohttp", specifier = ">=3.14.3" },
     { name = "cryptography", specifier = ">=48.0.1" },
     { name = "idna", specifier = ">=3.15" },
     { name = "pydantic-ai-slim", specifier = ">=1.102.0" },
@@ -2106,8 +2106,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", marker = "extra == 'all'", specifier = ">=3.14.2" },
-    { name = "aiohttp", marker = "extra == 'hatchet'", specifier = ">=3.14.2" },
+    { name = "aiohttp", marker = "extra == 'all'", specifier = ">=3.14.3" },
+    { name = "aiohttp", marker = "extra == 'hatchet'", specifier = ">=3.14.3" },
     { name = "falkordb", marker = "extra == 'all'", specifier = ">=1.6.1" },
     { name = "falkordb", marker = "extra == 'falkordb'", specifier = ">=1.6.1" },
     { name = "falkordblite", marker = "python_full_version >= '3.12'", specifier = ">=0.10.0" },

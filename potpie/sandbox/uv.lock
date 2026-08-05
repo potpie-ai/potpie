@@ -4,7 +4,7 @@ requires-python = ">=3.12, <3.15"
 
 [manifest]
 constraints = [
-    { name = "aiohttp", specifier = ">=3.14.2" },
+    { name = "aiohttp", specifier = ">=3.14.3" },
     { name = "cryptography", specifier = ">=48.0.1" },
     { name = "idna", specifier = ">=3.15" },
     { name = "pydantic-ai-slim", specifier = ">=1.102.0" },
@@ -893,7 +893,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", marker = "extra == 'daytona'", specifier = ">=3.14.2" },
+    { name = "aiohttp", marker = "extra == 'daytona'", specifier = ">=3.14.3" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.134.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
