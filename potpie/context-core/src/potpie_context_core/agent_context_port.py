@@ -95,7 +95,13 @@ DEFAULT_INTENT_INCLUDES: dict[str, tuple[str, ...]] = {
     "refactor": ("infra_topology", "coding_preferences", "timeline"),
     "test": ("coding_preferences", "timeline"),
     "security": ("infra_topology", "prior_bugs", "decisions"),
-    "unknown": ("infra_topology", "timeline", "decisions"),
+    # ``unknown`` is what bare ``potpie search`` resolves to, so it is the one
+    # intent that must not be narrow: an agent searching a phrase it read in a
+    # document gets nothing back if ``docs`` is absent, with no hint that an
+    # include would have found it. Cross-include demotion in the envelope
+    # builder is what keeps a document corpus from crowding out project memory
+    # here.
+    "unknown": ("infra_topology", "timeline", "decisions", "docs"),
 }
 
 CONTEXT_RESOLVE_RECIPES: dict[str, dict[str, Any]] = {

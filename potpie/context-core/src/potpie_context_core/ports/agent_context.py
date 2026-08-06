@@ -82,6 +82,10 @@ class SearchRequest:
     mode: ResolveMode = "fast"
     source_policy: str = "references_only"
     max_items: int = 12
+    # Search used to be pinned to ``unknown``, which made the intent's default
+    # includes the only thing a caller could get and left no way to narrow a
+    # lookup short of naming every include by hand.
+    intent: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 

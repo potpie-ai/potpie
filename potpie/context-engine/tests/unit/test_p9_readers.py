@@ -9,6 +9,7 @@ F1/F2/F4 fix paths produce the right answers.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -1290,6 +1291,220 @@ class TestNewUseCaseReaders:
         assert [r.candidate.payload["predicate"] for r in response.items] == [
             "DOCUMENTS"
         ]
+
+
+# ---------------------------------------------------------------------------
+# DocsReader relevance floor
+#
+# A KNN returns k rows whether or not any of them answers the query, so a docs
+# read without a floor pads its reply to the limit with whatever the corpus
+# holds. Measured on the resource corpus before this landed: a database
+# incident question returned 12 hits spanning 0.021 of score, all from a cloud
+# cost spreadsheet, with the runbook section holding the literal error string
+# absent entirely.
+#
+# Similarities are set explicitly here rather than computed, because the whole
+# point is behaviour across a *scale*: real scores on that corpus top out near
+# 0.60 and clamp to exactly 0.0 at orthogonal.
+# ---------------------------------------------------------------------------
+
+
+def _scored(row: ClaimRow, similarity: float | None) -> ClaimRow:
+    properties = dict(row.properties)
+    if similarity is None:
+        properties.pop("semantic_similarity", None)
+    else:
+        properties["semantic_similarity"] = similarity
+    return replace(row, properties=properties)
+
+
+def _doc_label(entity_key: str) -> str | None:
+    if entity_key.startswith("document:"):
+        return "Document"
+    if entity_key.startswith("docsection:"):
+        return "DocumentSection"
+    return None
+
+
+class _StubDocClaimQuery:
+    """Claim-query stub with per-row control over the stamped similarity.
+
+    Mirrors the one backend behaviour that matters here: a query carries a
+    similarity onto every row it returns, and a lookup **by key** does not —
+    which is why the reader's one-hop ``SECTION_OF`` expansion arrives
+    unscored.
+    """
+
+    def __init__(self, rows: Sequence[tuple[ClaimRow, float | None]]) -> None:
+        self._rows = list(rows)
+
+    def find_claims(self, filter_) -> list[ClaimRow]:
+        out: list[ClaimRow] = []
+        for row, similarity in self._rows:
+            if filter_.predicate_in and row.predicate not in filter_.predicate_in:
+                continue
+            if filter_.subject_key_in and row.subject_key not in filter_.subject_key_in:
+                continue
+            if filter_.object_key_in and row.object_key not in filter_.object_key_in:
+                continue
+            if (
+                filter_.subject_label
+                and _doc_label(row.subject_key) != filter_.subject_label
+            ):
+                continue
+            out.append(_scored(row, similarity if filter_.fact_query else None))
+        return out
+
+    def entity_labels(self, *, pot_id: str, entity_keys):  # pragma: no cover - unused
+        return {}
+
+
+def _docs_reader(rows: Sequence[tuple[ClaimRow, float | None]]) -> DocsReader:
+    return DocsReader(claim_query=_StubDocClaimQuery(rows), ranker=RankingService())
+
+
+def _documents_row(subject_key: str, fact: str) -> ClaimRow:
+    return _row(
+        predicate="DOCUMENTS",
+        subject_key=subject_key,
+        object_key="service:payments-api",
+        fact=fact,
+    )
+
+
+class TestDocsReaderRelevanceFloor:
+    def test_drops_rows_far_below_the_best_match_in_the_pool(self) -> None:
+        best = _documents_row("docsection:alpha:one", "quarterly capacity forecast")
+        near = _documents_row("docsection:alpha:two", "capacity planning notes")
+        filler = _documents_row("docsection:beta:one", "vendor invoice totals")
+        reader = _docs_reader([(best, 0.60), (near, 0.31), (filler, 0.10)])
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", query="quarterly capacity forecast")
+        )
+
+        # Floor is half of the pool's best (0.60) — 0.31 clears it, 0.10 does not.
+        assert [r.candidate.payload["subject_key"] for r in response.items] == [
+            "docsection:alpha:one",
+            "docsection:alpha:two",
+        ]
+
+    def test_keeps_an_exact_lexical_match_below_the_floor(self) -> None:
+        """The strongest relevance signal is the weakest embedding signal.
+
+        A rare identifier is one token to a reader and noise to a sentence
+        embedder, so a verbatim hit survives on its text even when the vector
+        channel scored it near zero.
+        """
+        best = _documents_row("docsection:alpha:one", "connection pooling overview")
+        verbatim = _documents_row(
+            "docsection:beta:one",
+            "raise pool_max_conns when DBConnectionPoolExhausted fires",
+        )
+        reader = _docs_reader([(best, 0.60), (verbatim, 0.02)])
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", query="DBConnectionPoolExhausted")
+        )
+
+        assert "docsection:beta:one" in {
+            r.candidate.payload["subject_key"] for r in response.items
+        }
+
+    def test_returns_nothing_when_the_whole_pool_scored_zero(self) -> None:
+        """A tail of exact zeros is not a weak answer, it is no answer.
+
+        Every row at or past orthogonal clamps to 0.0, so a purely relative
+        floor would admit the entire tail on the strength of its own worst
+        member.
+        """
+        rows = [
+            (_documents_row(f"docsection:alpha:{i}", f"unrelated section {i}"), 0.0)
+            for i in range(3)
+        ]
+        reader = _docs_reader(rows)
+
+        response = reader.read(ReadRequest(pot_id="pot-1", query="how to make a cake"))
+
+        assert response.items == ()
+        assert response.coverage_status == "empty"
+
+    def test_no_query_returns_the_whole_pool(self) -> None:
+        rows = [
+            (_documents_row(f"docsection:alpha:{i}", f"section {i}"), None)
+            for i in range(3)
+        ]
+        reader = _docs_reader(rows)
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "payments-api"})
+        )
+
+        assert len(response.items) == 3
+
+
+class TestDocsReaderStructuralRows:
+    """The one-hop ``SECTION_OF`` expansion is fetched by key, never scored.
+
+    The query here deliberately shares no token with either row, so these
+    exercise the floor rather than the lexical rescue.
+    """
+
+    QUERY = "database connection pooling"
+
+    def _rows(
+        self, section_similarity: float
+    ) -> Sequence[tuple[ClaimRow, float | None]]:
+        section = _documents_row("docsection:alpha:one", "quarterly capacity forecast")
+        structure = _row(
+            predicate="SECTION_OF",
+            subject_key="docsection:alpha:one",
+            object_key="document:alpha",
+            fact="capacity forecast section",
+            source_ref="potpie://res/alpha/one/0000",
+        )
+        return [(section, section_similarity), (structure, None)]
+
+    def test_kept_when_its_section_cleared_the_floor(self) -> None:
+        """Dropping it would take the section's fetchable chunk ids with it."""
+        reader = _docs_reader(self._rows(0.60))
+
+        response = reader.read(ReadRequest(pot_id="pot-1", query=self.QUERY))
+
+        predicates = [r.candidate.payload["predicate"] for r in response.items]
+        assert "SECTION_OF" in predicates
+        chunk_ids = [
+            ref
+            for item in response.items
+            for ref in item.candidate.payload.get("chunk_ids", [])
+        ]
+        assert "potpie://res/alpha/one/0000" in chunk_ids
+
+    def test_dropped_when_its_section_did_not(self) -> None:
+        reader = _docs_reader(self._rows(0.0))
+
+        response = reader.read(ReadRequest(pot_id="pot-1", query=self.QUERY))
+
+        assert response.items == ()
+
+    def test_is_scored_as_its_section_not_as_unknown(self) -> None:
+        """Regression: an unscored row takes the ranker's neutral 0.5 default.
+
+        On a corpus whose real scores top out near 0.60 that puts "never
+        compared to the query" above every row that was compared and matched —
+        measured, four such rows held the top of a scoped read. It was admitted
+        because its section matched, so it is scored the same way.
+        """
+        reader = _docs_reader(self._rows(0.60))
+
+        response = reader.read(ReadRequest(pot_id="pot-1", query=self.QUERY))
+
+        structural = next(
+            item
+            for item in response.items
+            if item.candidate.payload["predicate"] == "SECTION_OF"
+        )
+        assert structural.breakdown["semantic_similarity"] == 0.60
 
 
 # ---------------------------------------------------------------------------

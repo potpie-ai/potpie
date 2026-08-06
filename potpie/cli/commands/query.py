@@ -21,11 +21,24 @@ from potpie.cli.telemetry.onboarding_events import (
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
+from potpie_context_core.agent_context_port import (
+    CONTEXT_INTENTS,
+    READER_BACKED_INCLUDES,
+)
 from potpie_context_core.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
     SearchRequest,
 )
+
+# Spelled out in --help because the values are not guessable: an agent with no
+# list in front of it reaches for the subgraph names it saw in `graph catalog`
+# and gets an unsupported_include back. Derived, so the help cannot drift from
+# what the orchestrator actually answers.
+_INCLUDE_HELP = "Comma-separated include families: " + ", ".join(
+    sorted(READER_BACKED_INCLUDES - {"raw_graph"})
+)
+_INTENT_HELP = "One of: " + ", ".join(sorted(CONTEXT_INTENTS))
 
 
 def _split(value: str | None) -> tuple[str, ...]:
@@ -38,10 +51,8 @@ def register(root: typer.Typer) -> None:
     @root.command()
     def resolve(
         task: str = typer.Argument(..., help="The task to pull context for."),
-        intent: str = typer.Option("feature", "--intent"),
-        include: str = typer.Option(
-            None, "--include", help="Comma-separated include families."
-        ),
+        intent: str = typer.Option("feature", "--intent", help=_INTENT_HELP),
+        include: str = typer.Option(None, "--include", help=_INCLUDE_HELP),
         mode: str = typer.Option(
             "fast", "--mode", help="fast | balanced | verify | deep"
         ),
@@ -66,7 +77,12 @@ def register(root: typer.Typer) -> None:
     @root.command()
     def search(
         query: str = typer.Argument(..., help="A known phrase or entity to look up."),
-        include: str = typer.Option(None, "--include"),
+        include: str = typer.Option(None, "--include", help=_INCLUDE_HELP),
+        intent: str = typer.Option(
+            None,
+            "--intent",
+            help=f"Narrow the search to one intent's families. {_INTENT_HELP}",
+        ),
         pot: str = typer.Option(None, "--pot"),
     ) -> None:
         """context_search — narrow follow-up lookup."""
@@ -74,7 +90,12 @@ def register(root: typer.Typer) -> None:
             host = get_host()
             pot_id = resolve_pot_id(host, pot)
             env = host.agent_context.search(
-                SearchRequest(pot_id=pot_id, query=query, include=_split(include))
+                SearchRequest(
+                    pot_id=pot_id,
+                    query=query,
+                    include=_split(include),
+                    intent=intent,
+                )
             )
             _capture_context_activation(command="search", item_count=len(env.items))
             emit(_envelope_payload(env), human=_envelope_human(env))

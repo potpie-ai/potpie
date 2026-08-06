@@ -36,6 +36,7 @@ from potpie_context_core.semantic_mutation_lowering import lower_semantic_reques
 from potpie_context_core.semantic_mutation_validator import validate_semantic_request
 from potpie_context_core.agent_context_port import (
     build_context_record_source_id,
+    normalize_context_intent,
 )
 from potpie_context_core.agent_envelope import AgentEnvelope, EvidenceItem
 from potpie_context_core.errors import CapabilityNotImplemented
@@ -155,7 +156,9 @@ class DefaultGraphService:
     def search(self, request: SearchRequest) -> AgentEnvelope:
         return self._orchestrator.resolve(
             pot_id=request.pot_id,
-            intent="unknown",
+            # Unset (and unrecognized) normalizes to ``unknown``, which is the
+            # intent whose defaults are tuned for a bare lookup.
+            intent=normalize_context_intent(request.intent),
             query=request.query,
             scope=dict(request.scope),
             include=list(request.include) or None,

@@ -157,6 +157,71 @@ class TestSemanticSimilarity:
         assert ranked[0].candidate.candidate_key == "near"
 
 
+class TestQueryWeightProfile:
+    """A read carrying a query is scored for relevance, not for standing."""
+
+    def _stale_match_vs_fresh_miss(self) -> list[Candidate]:
+        return [
+            _make_candidate(
+                key="stale_answer",
+                strength="stated",
+                valid_at=_NOW - timedelta(days=400),
+                semantic_similarity=0.6,
+            ),
+            _make_candidate(
+                key="fresh_filler",
+                strength="deterministic",
+                valid_at=_NOW - timedelta(hours=1),
+                corroboration=4,
+                semantic_similarity=0.0,
+            ),
+        ]
+
+    def test_query_context_puts_the_answer_first(self) -> None:
+        ranked = RankingService().rank(
+            self._stale_match_vs_fresh_miss(), _ctx(query="liability cap")
+        )
+        assert ranked[0].candidate.candidate_key == "stale_answer"
+
+    def test_without_a_query_standing_still_wins(self) -> None:
+        """The control: same candidates, no query, default profile.
+
+        Browsing a scope should surface the strong, fresh, corroborated claim.
+        Only a query makes "answers *this*" the question being asked.
+        """
+        ranked = RankingService().rank(self._stale_match_vs_fresh_miss(), _ctx())
+        assert ranked[0].candidate.candidate_key == "fresh_filler"
+
+    def test_query_profile_widens_the_gap_relevance_opens(self) -> None:
+        """Relevance is 22% of the default score and ~47% of the query score.
+
+        The measured symptom this addresses: 12 hits spanning 0.02 of final
+        score, where a 0.0022 margin decided which document answered.
+        """
+        candidates = [
+            _make_candidate(key="match", semantic_similarity=0.6),
+            _make_candidate(key="miss", semantic_similarity=0.0),
+        ]
+        service = RankingService()
+
+        browsing = service.rank(candidates, _ctx())
+        querying = service.rank(candidates, _ctx(query="liability cap"))
+
+        browse_gap = browsing[0].score - browsing[1].score
+        query_gap = querying[0].score - querying[1].score
+        assert query_gap > browse_gap * 1.5
+
+    def test_injected_query_weights_are_honoured(self) -> None:
+        """A tuned ranker owns both profiles, not just the default one."""
+        service = RankingService(
+            query_weights={"recency": 1.0, "semantic_similarity": 0.0}
+        )
+        ranked = service.rank(
+            self._stale_match_vs_fresh_miss(), _ctx(query="liability cap")
+        )
+        assert ranked[0].candidate.candidate_key == "fresh_filler"
+
+
 class TestNoVeto:
     def test_zero_soft_signal_does_not_collapse_strong_candidate(self) -> None:
         """R3: a zero semantic score must re-rank, never veto.

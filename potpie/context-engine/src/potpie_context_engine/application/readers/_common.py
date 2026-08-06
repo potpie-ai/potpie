@@ -63,6 +63,8 @@ def make_task_context(req: ReadRequest) -> TaskContext:
         intent=req.intent,
         freshness_preference=req.freshness_preference,
         now=req.as_of,
+        # Carrying the query selects the ranker's relevance-led weight profile.
+        query=req.query,
     )
 
 
@@ -233,6 +235,14 @@ def row_in_anchor_set(row: ClaimRow, anchor_keys: Iterable[str]) -> bool:
 _PATH_SCOPE_KEYS = ("file_path", "path")
 QUERY_SIMILARITY_THRESHOLD = 0.70
 
+# Keep a row only while it scores at least this fraction of the pool's best
+# match. 0.5 was chosen against the measured corpus: it keeps every hit an
+# adversarial verifier judged correct, and drops the flat tail that made a
+# 12-hit result set span 0.02 of final score.
+RELEVANCE_FLOOR_FRACTION = 0.5
+# Absolute floor for a pool where nothing matched at all.
+RELEVANCE_FLOOR_MINIMUM = 0.05
+
 
 def graph_read_scope(scope: Mapping[str, Any]) -> dict[str, str]:
     """Normalize scope keys used as hard filters by graph-read readers."""
@@ -308,6 +318,38 @@ def code_scope_conflicts(
     if requested_path and rule_path and not _paths_overlap(rule_path, requested_path):
         return True
     return False
+
+
+def relative_relevance_floor(
+    rows: Iterable[ClaimRow],
+    *,
+    fraction: float = RELEVANCE_FLOOR_FRACTION,
+    minimum: float = RELEVANCE_FLOOR_MINIMUM,
+) -> float:
+    """A relevance floor derived from the best match in this pool.
+
+    Deliberately relative. Similarity here is
+    ``1 - distance`` over the backend's ANN result, which is not a calibrated
+    probability: measured against the resource corpus (MiniLM-L6-v2, three
+    ingested documents) the *best* hit for a well-formed query lands at
+    0.50-0.60, and anything at or past orthogonal clamps to exactly 0.0. So an
+    absolute floor is unusable across corpora and embedders — in particular
+    :data:`QUERY_SIMILARITY_THRESHOLD` (0.70), the value ``--query-threshold``
+    defaults to, is above every score that corpus can produce and would empty
+    every read. What *is* stable is the shape: a real answer sits well clear of
+    the tail behind it, so cutting at a fraction of the pool's best keeps the
+    answer and drops the filler regardless of where the scale happens to sit.
+
+    ``minimum`` exists for the pathological pool where nothing scored at all —
+    a tail of exact 0.0 rows carries no evidence of relevance and must not be
+    admitted just because the top of its own pool was also 0.0.
+    """
+    best = 0.0
+    for row in rows:
+        similarity = claim_semantic_similarity(row)
+        if similarity is not None and similarity > best:
+            best = similarity
+    return max(best * fraction, minimum)
 
 
 def row_matches_query(
@@ -471,6 +513,7 @@ __all__ = [
     "graph_read_scope",
     "make_task_context",
     "rank_candidates",
+    "relative_relevance_floor",
     "row_in_anchor_set",
     "row_matches_query",
     "scope_ref_matches",
