@@ -397,7 +397,10 @@ Each entity row declares a `fact_family`, `source_of_truth`, and
 `freshness_ttl_hours`; `SOURCE_OF_TRUTH_POLICIES` and
 `FACT_FAMILY_FRESHNESS_TTL_HOURS` are the derived policy tables. At read time the
 quality layer derives a source-ref TTL from the fact family
-(`fact_family_for_source_type`) to flag stale facts. Quality findings are purely
+(`fact_family_for_source_type`) to flag stale facts. `Document` /
+`DocumentSection` use `fact_family=documents` (distinct from soft-fail
+`evidence`) so a doc corpus does not inherit Observation freshness/ranking
+policy — see [`resources.md`](./resources.md) P9. Quality findings are purely
 diagnostic and never write directly — they propose `propose`/`commit` corrections
 or inbox items (full quality flow in [`writing.md`](./writing.md)).
 
