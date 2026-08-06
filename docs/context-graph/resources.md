@@ -2,9 +2,9 @@
 
 | Status | Date | Owner | Code |
 |--------|------|-------|------|
-| P1–P5, P7 landed | 2026-08-06 | nndn | `context-core/ontology.py`, `context-core/ports/resource_store.py`, `context-core/resource_to_semantic.py`, `context-engine/.../adapters/outbound/resources/`, `.../application/readers/docs.py`, `.../application/services/pot_management.py`, `.../host/shell.py`, `cli/commands/resource.py`, `cli/commands/pots.py`, `.../graph/document_key_repair.py`, `cli/templates/*/skills/potpie-resource-*/` |
+| P1–P5, P7, P9 landed | 2026-08-06 | nndn | `context-core/ontology.py`, `context-core/ports/resource_store.py`, `context-core/resource_to_semantic.py`, `context-engine/.../adapters/outbound/resources/`, `.../application/readers/docs.py`, `.../application/services/pot_management.py`, `.../host/shell.py`, `cli/commands/resource.py`, `cli/commands/pots.py`, `.../graph/document_key_repair.py`, `cli/templates/*/skills/potpie-resource-*/`, `.../application/services/envelope_builder.py`, `.../adapters/outbound/graph/{canonical_claim_query,falkordb_reader,neo4j_reader}.py` |
 
-P8–P9 are unimplemented; **P6 (export/import round-trip) is dropped** — resource bytes are
+P8 is unimplemented; **P6 (export/import round-trip) is dropped** — resource bytes are
 deliberately outside the graph snapshot, see [Non-goals](#non-goals). The end-to-end path
 works: `potpie resource import` writes bytes to the local store *and* the document's structure
 to the graph, so an imported document is findable by search and by
@@ -13,8 +13,9 @@ Pot teardown (`pot reset` / `pot archive`) purges the resource tree with the gra
 `resource rm` retracts section claims (P5). The per-format extraction skills landed as P7:
 `potpie-resource-pdf` / `-spreadsheet` / `-markdown` in both skill bundles, with the shared
 flow (resolve-before-import, script-emitted chunk directory, two-pass summaries, `DOCUMENTS`
-linking) pinned by content-contract tests. What is still missing: section claims still share
-a fact family with project memory (P9).
+linking) pinned by content-contract tests. Section claims use their own `documents` fact
+family and are demoted / excluded from project-memory reads (P9). What is still missing:
+`source add` kind dispatch / ingest deprecations (P8).
 
 ## Problem
 
@@ -170,7 +171,7 @@ Simulating a 120-page contract and a 50-document corpus, these dominate — in o
 2. **Section size caps the last hop.** Search resolves to a section; from there the agent picks a chunk by label alone. Big sections mean guessing. This is why 1–5 chunks is a rule and `label` is required.
 3. **Round trips, not bytes.** ~0.7s per daemon call means the call *count* dominates, not chunk size. Two calls to text is the design target; batching keeps a multi-chunk read at two.
 4. **Scoping at ingest decides structural discoverability.** A document with no `DOCUMENTS` edge is findable only by semantic luck. Import should flag a document that lands with zero scope edges.
-5. **Section claims compete with project memory.** Fifty documents put thousands of section claims into the same embedding space as decisions, bugs, and preferences. Sections need their own fact family and must not leak into `prior_bugs` / `debugging_memory` includes, or ingesting a doc corpus degrades the graph's original job.
+5. **Section claims compete with project memory.** Fifty documents put thousands of section claims into the same embedding space as decisions, bugs, and preferences. Sections use their own `documents` fact family; the `docs` include is demoted in mixed envelopes; non-docs readers exclude the `knowledge` subgraph and over-fetch ANN candidates when predicates are selective — so a document corpus cannot crowd out `prior_bugs` / debugging memory.
 6. **Structured sources retrieve badly as text.** Chunked spreadsheet rows match poorly on natural-language queries. For sheets the *claims* must carry the derived facts, with chunks as backup evidence — otherwise ingestion looks successful and silently answers nothing.
 7. **Boundary loss is silent.** With no overlap by design, a fact spanning two chunks is retrieved in halves. Splitting only on paragraph boundaries plus `--with-neighbors` covers most of it.
 
@@ -187,7 +188,7 @@ P1 and P2 are independent and can land in either order; everything after depends
 | ~~**P5 — Pot lifecycle**~~ *(landed)* | `LocalPotManagementService.reset_pot` / `archive_pot` and `hard_reset_pot` call `purge_pot` after a successful graph reset (graph writers stay graph-only; orchestration owns the second store). `resource rm` retracts `SECTION_OF` claims via `resource_delete_to_semantic_request` before deleting bytes. **`source remove` ignores resources** — registration only; there is no source→document FK (`source_ref` is a free URI), so cleanup is `resource rm` or pot teardown. | P2, P4 |
 | ~~**P6 — Export/import**~~ *(dropped)* | Bundling the chunk tree into `graph export` is not planned. The snapshot stays graph-only; re-import is the recovery path. See [Non-goals](#non-goals). | — |
 | ~~**P7 — Skills**~~ *(landed)* | `potpie-resource-pdf` / `-spreadsheet` / `-markdown` in `claude_plugin` + `agent_bundle` (byte-identical; the bundle catalog auto-registers them for `skills install`): script-writing, stable section slugs, the 1–5 chunk rule, the two-pass summarize flow, resolve-before-import, and — for spreadsheets — deriving facts as claims with chunk-id evidence. Existing skills updated in step: `potpie-graph` v6 (find-then-fetch read path), `potpie-source-ingestion` v2 (payload routing), `potpie-cli` v3 (`resource` group), plus AGENTS.md/CLAUDE.md routing. Content contract pinned in `tests/unit/test_agent_templates_v15.py`. | P3, P4 |
-| **P9 — Section fact family** | Give section claims their own fact family and ranking weight; keep them out of `prior_bugs` / `debugging_memory` includes so a document corpus cannot crowd out project memory. | P4 |
+| ~~**P9 — Section fact family**~~ *(landed)* | `Document` / `DocumentSection` use `fact_family=documents`; `docs` is demoted in `EnvelopeBuilder` cross-include ranking; non-docs readers pass `subgraph_not_in=("knowledge",)`; selective vector queries over-fetch ANN candidates so section embeddings cannot starve `prior_bugs`. | P4 |
 | **P8 — Deprecations** | Real `kind` dispatch in `source add` (today a single `== "repo"` branch, `cli/commands/pots.py:457`). Retire `POST /api/v1/context/ingest` (`.../v1/context/router.py:415`) after checking for hosted rows. | P7 |
 
 ## Verification
