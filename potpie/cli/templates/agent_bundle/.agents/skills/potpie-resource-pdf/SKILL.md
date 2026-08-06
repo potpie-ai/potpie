@@ -1,6 +1,6 @@
 ---
 name: potpie-resource-pdf
-version: "1"
+version: "2"
 description: "Use when the user asks to ingest a PDF (report, contract, paper, manual, slide export) into Potpie so agents can search and cite it. Teaches the extraction-script flow: resolve the document's identity, split on the PDF's own structure into sections and ~4k-char chunks, import with `potpie resource import`, write retrieval-grade section summaries, and link the document with DOCUMENTS claims. Chunk text never passes through the agent's own output."
 ---
 
@@ -81,6 +81,12 @@ Hard limits, enforced at import:
 | `slug` | lowercase/digits/hyphens; **stable across re-imports** |
 | `content_hash` | script-computed digest of the section's text; if empty, every re-import treats the section as changed |
 
+Those caps compound: a five-chunk section holds up to 40,000 characters and is
+indexed by at most 2,000 of summary — roughly 20:1, and anything the summary
+does not name is reachable only *after* search has already landed on that
+section. Where the outline offers a finer level, take it; two small sections
+index better than one at the ceiling.
+
 Pick section slugs by *meaning* (`limitation-of-liability`), never by deriving
 them from the heading text or its number — a retitled or renumbered heading
 must not mint a new node and orphan the old section's claims.
@@ -153,18 +159,25 @@ lexical fallback.
 ## Step 4 — Import and read the report
 
 ```bash
-potpie resource import ./out --doc q3-capacity-review --source-ref "file:///abs/path/q3-review.pdf" --source-kind pdf
+potpie --json resource import ./out --doc q3-capacity-review --source-ref "file:///abs/path/q3-review.pdf" --source-kind pdf
 ```
 
 Import is atomic — a failure leaves any prior revision untouched. Pass `--pot`
-when pot scope is ambiguous. Then check the report:
+when pot scope is ambiguous. Run it with `--json`: the fields below are the
+`--json` report, and human mode prints a condensed summary instead. Then check
+it:
 
-- `graph.written` must be true. Bytes land before graph state, so a rejected
-  graph write means `resource get` works while **search finds nothing** — fix
-  the reported issue and re-import.
+- `graph.written` must be true. It is readback-backed, not status-backed — a
+  write the graph accepted but a read cannot see reports `false` and names the
+  `missing_claim_keys`. Bytes land before graph state, so a rejected graph
+  write means `resource get` works while **search finds nothing** — fix the
+  reported issue and re-import.
 - `sections_added / kept / changed / removed` — `changed` is the re-summarize
   list on a refresh.
 - `summary_pending` — sections still invisible to semantic search.
+- `recommended_next_action` — the one thing still missing, in order: a summary
+  to write, a `DOCUMENTS` link when the document has none live (Step 5), or the
+  retrieval check in Step 6.
 - Errors carry stable codes: `resource_chunk_too_large` → fix the script's
   packing and re-run it; `resource_slug_invalid` → fix the slug;
   `resource_manifest_invalid` → fix `meta.json`. All are caller mistakes; the
@@ -209,9 +222,15 @@ potpie resource get potpie://res/q3-capacity-review/capacity-planning/0000 --wit
 
 A section hit already carries its chunk ids, so text is two calls away:
 search, then one batched `resource get` (several ids in one call;
-`--with-neighbors` covers a fact that spans a chunk boundary). If a phrase you
-know is in the document does not surface a section, its summary is weak —
-rewrite it and re-import.
+`--with-neighbors` covers a fact that spans a chunk boundary). Bare `search`
+already includes document sections, and mixes them with project memory the way
+a future agent will see them.
+
+If a phrase you know is in the document does not surface a section, re-run the
+search with `--include docs` — that narrows the envelope to documents alone and
+splits the two causes apart. A hit there but not in the bare search means the
+summary works and was simply outranked; nothing there means the summary is weak
+— rewrite it and re-import.
 
 ## Refreshing and removing
 

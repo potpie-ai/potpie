@@ -465,7 +465,10 @@ def test_resource_skills_route_chunk_text_through_a_script(skill_id: str) -> Non
     # or echoes document body text itself.
     assert "chunk text never passes through your own output" in collapsed
     assert "extraction *script*" in collapsed
-    assert "potpie resource import" in collapsed
+    # `graph.written` is a `--json` field, so the worked example has to carry the
+    # flag: the agent is told to check a field the command it was shown never
+    # prints otherwise.
+    assert "potpie --json resource import" in collapsed
     # R1, restated where the authoring happens.
     assert "payloads never enter the graph" in collapsed
 
@@ -488,6 +491,12 @@ def test_resource_skills_teach_the_retrieval_quality_rules(skill_id: str) -> Non
     assert '"predicate": "documents"' in collapsed
     # The read path a future agent uses: batched two-call fetch.
     assert "potpie resource get" in collapsed and "--with-neighbors" in collapsed
+    # The index budget: 5 chunks of 8,000 chars indexed by 2,000 of summary is
+    # 20:1, which is the real argument for the section rule above.
+    assert "indexed by at most 2,000" in collapsed
+    # Verification has to separate "summary is weak" from "summary is fine and
+    # was outranked" — otherwise a good ingest reads as a failed one.
+    assert "--include docs" in collapsed
 
 
 def test_spreadsheet_skill_requires_derived_fact_claims() -> None:

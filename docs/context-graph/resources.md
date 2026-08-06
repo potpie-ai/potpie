@@ -8,7 +8,7 @@ Every planned phase has landed; **P6 (export/import round-trip) is dropped** —
 deliberately outside the graph snapshot, see [Non-goals](#non-goals). The end-to-end path
 works: `potpie resource import` writes bytes to the local store *and* the document's structure
 to the graph, so an imported document is findable by search and by
-`graph describe document:<slug>`, and `resource get` resolves a chunk id with no graph query.
+`graph neighborhood --entity document:<slug>`, and `resource get` resolves a chunk id with no graph query.
 Pot teardown (`pot reset` / `pot archive`) purges the resource tree with the graph, and
 `resource rm` retracts section claims (P5). The per-format extraction skills landed as P7:
 `potpie-resource-pdf` / `-spreadsheet` / `-markdown` in both skill bundles, with the shared
@@ -71,7 +71,7 @@ Ingest: the agent picks the skill for the format, writes a script that walks the
 
 Find, then fetch: an agent searches as usual. Section summaries are embedded like any claim, so semantic search lands on a section; `DOCUMENTS` edges answer the structural version ("what documentation covers `service:payments-api`"). Either path yields chunk IDs, and `resource get` resolves the ID straight to a file path — no graph round-trip on the hot path.
 
-Re-import replaces: the same slug deletes the old chunk set, writes the new one, bumps `revision`, and invalidates claims from the prior revision using supersession the claim store already has.
+Re-import replaces: the same slug deletes the old chunk set, writes the new one, bumps `revision`, and invalidates claims from the prior revision using supersession the claim store already has. `revision` advances only when the section set actually moved (something added, changed, or removed) — re-importing a byte-identical directory is a genuine no-op, because R7 hangs prior-revision invalidation on this counter and a number that ticks on no-ops cannot say which revision a claim was made against.
 
 ## Contracts
 
@@ -131,7 +131,7 @@ potpie resource rm <slug> --confirm                              # destructive; 
 
 `import` reports `sections_added / kept / changed / removed`, where **changed** is what is left after the other three — the answer to "what needs re-summarizing" (R14), derived by the CLI so no caller repeats the subtraction.
 
-All commands use the `contract()` boundary: stable `--json` fields, errors carrying `code`, `message`, `detail`, `recommended_next_action`, and exit codes `0/1/2/3/4` per [cli-flow.md](./cli-flow.md). Store failures report their own stable code (`resource_chunk_too_large`, `resource_not_found`, …) rather than a flat `validation_error`, because an agent retries a bad slug and an oversized chunk differently; all of them exit `1`, since every one is a caller mistake and not an unavailable dependency. The code survives the daemon hop through `error_code` on the RPC error payload. There is no `resource manifest` command — the manifest is the graph (`graph describe document:<slug>`).
+All commands use the `contract()` boundary: stable `--json` fields, errors carrying `code`, `message`, `detail`, `recommended_next_action`, and exit codes `0/1/2/3/4` per [cli-flow.md](./cli-flow.md). Store failures report their own stable code (`resource_chunk_too_large`, `resource_not_found`, …) rather than a flat `validation_error`, because an agent retries a bad slug and an oversized chunk differently; all of them exit `1`, since every one is a caller mistake and not an unavailable dependency. The code survives the daemon hop through `error_code` on the RPC error payload. There is no `resource manifest` command — the manifest is the graph: `graph neighborhood --entity document:<slug> --detail full` returns the document node carrying `revision`, `source_ref`, `source_kind`, and `section_count`, with one `SECTION_OF` edge per live section. (`graph describe` takes a *subgraph* name, not an entity key, and rejects one; `graph inspect` also resolves an entity key but self-describes as legacy and points at `neighborhood`.)
 
 The graph write is `resource_to_semantic.py`: one `upsert_entity` for the document (carrying `revision`, `source_ref`, `source_kind`), one `assert_claim`/`SECTION_OF` per section whose description *is* its summary and whose evidence is that section's chunk ids, and one `retract_claim` per section the prior revision had and this one does not. Import emits semantic ops and hands them to `GraphService.mutate` rather than lowering a `MutationBatch` itself, so a document is validated, risk-classified, and embedded by exactly the path an agent's own write takes; the request is pre-approved (`approved_by="resource_import"`) because a re-import's retractions are medium-risk and dead-ending them would leave the graph describing sections whose chunks were just deleted. **R1 is structural here**: the module reads a manifest, which holds slugs, titles, summaries, hashes, and chunk ids — no chunk text is in scope to leak. The `graph` block in `import`'s payload reports `written` / `status` / `entity_key` / `claim_keys`, and a graph write that did not apply becomes a warning, because bytes-without-structure is otherwise silent: `get` keeps working while search returns nothing.
 
@@ -172,7 +172,7 @@ Simulating a 120-page contract and a 50-document corpus, these dominate — in o
 1. **Summary quality is retrieval quality.** The summary is the only index into a section's chunks, so a weak one makes that content permanently invisible and nothing reports the failure. Cheap partial defense: section *titles* come free from structure and carry real signal (`12. Limitation of Liability`), so title-only sections still retrieve somewhat.
 2. **Section size caps the last hop.** Search resolves to a section; from there the agent picks a chunk by label alone. Big sections mean guessing. This is why 1–5 chunks is a rule and `label` is required.
 3. **Round trips, not bytes.** ~0.7s per daemon call means the call *count* dominates, not chunk size. Two calls to text is the design target; batching keeps a multi-chunk read at two.
-4. **Scoping at ingest decides structural discoverability.** A document with no `DOCUMENTS` edge is findable only by semantic luck. Import should flag a document that lands with zero scope edges.
+4. **Scoping at ingest decides structural discoverability.** A document with no `DOCUMENTS` edge is findable only by semantic luck, so import counts the live scope claims on the document *and its sections* — the skills teach section-level links — and recommends one only at zero. A nudge that fires on every import cannot tell a linked document from an unlinked one, which is the only thing it is for.
 5. **Section claims compete with project memory.** Fifty documents put thousands of section claims into the same embedding space as decisions, bugs, and preferences. Sections use their own `documents` fact family; the `docs` include is demoted in mixed envelopes; non-docs readers exclude the `knowledge` subgraph and over-fetch ANN candidates when predicates are selective — so a document corpus cannot crowd out `prior_bugs` / debugging memory.
 6. **Structured sources retrieve badly as text.** Chunked spreadsheet rows match poorly on natural-language queries. For sheets the *claims* must carry the derived facts, with chunks as backup evidence — otherwise ingestion looks successful and silently answers nothing.
 7. **Boundary loss is silent.** With no overlap by design, a fact spanning two chunks is retrieved in halves. Splitting only on paragraph boundaries plus `--with-neighbors` covers most of it.
@@ -198,21 +198,21 @@ P1 and P2 are independent and can land in either order; everything after depends
 ```bash
 # R2, R3 — named doc, structural sections, graph identity
 potpie resource import ./out --doc q3-review --source-ref file:///q3.pdf --json
-potpie graph describe document:q3-review --json        # revision 1, sections, source_ref
+potpie graph neighborhood --entity document:q3-review --detail full --json   # revision 1, section_count, source_ref
 potpie graph search-entities --query "q3 review"       # resolves document:q3-review
 
 # R3, R11 — section search finds it; get does no graph work
-potpie graph read --view document_context --scope service:payments-api --json
+potpie graph read --subgraph knowledge --view document_context --scope service:payments-api --json
 potpie resource get potpie://res/q3-review/capacity/0000 --json    # text + chars
 
 # R4 — oversized chunk is refused at import, with the standard error contract
 potpie resource import ./oversized --doc big --json     # exit 1, code=resource_chunk_too_large, no partial write
 
 # R6 — atomicity: kill mid-import, nothing partially visible
-potpie graph describe document:killed --json            # not found; no orphan sections
+potpie graph neighborhood --entity document:killed --json   # 0 nodes, 0 relations; no orphan sections
 
 # R12, R13 — search result already carries chunk ids; multi-chunk read is one call
-potpie search --query "liability cap" --json            # section claim, source_refs = chunk ids
+potpie search "liability cap" --json                    # section claim, source_refs = chunk ids
 potpie resource get <id-a> <id-b> --with-neighbors --json
 
 # R7, R14 — replacement, supersession, and incremental re-summary

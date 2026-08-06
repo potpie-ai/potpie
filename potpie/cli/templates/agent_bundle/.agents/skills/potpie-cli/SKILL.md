@@ -1,6 +1,6 @@
 ---
 name: potpie-cli
-version: "4"
+version: "5"
 description: "Use when the task is centered on running, explaining, configuring, or troubleshooting the `potpie` command: doctor, login, pot management, source registration, search, graph workbench reads/writes, resource (document payload) commands, and pot scope behavior."
 ---
 
@@ -71,8 +71,15 @@ A document is not a source: `source add pdf ./q3.pdf` exits 1 with
 potpie search "query"
 potpie --json search "query"
 potpie search "query" --include decisions,features
+potpie search "query" --intent debugging
 potpie search "query" --pot <pot-id-or-alias>
 ```
+
+The query is positional — there is no `--query`. Bare search resolves intent
+`unknown`, which covers infra topology, timeline, decisions, and ingested
+documents; `--intent` swaps in another task's families and `--include` names
+families directly. `--help` lists both vocabularies, so neither has to be
+guessed from subgraph names.
 
 ## Resources (document payloads)
 
