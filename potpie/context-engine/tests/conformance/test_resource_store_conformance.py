@@ -277,6 +277,93 @@ def test_reimport_bumps_the_revision_and_drops_the_old_chunks(kind, tmp_path):
 
 
 @pytest.mark.parametrize("kind", STORES)
+def test_reimport_of_an_unchanged_document_does_not_bump_the_revision(kind, tmp_path):
+    # P1-3: the counter R7 hangs prior-revision claim invalidation on must mean
+    # "the content moved", not "somebody ran the command". Re-running the
+    # extraction script — which agents do, e.g. to re-read the report as JSON —
+    # used to burn a revision and rewrite every section's revision property.
+    store = _build(kind, tmp_path)
+    store.import_dir(pot_id=POT, slug=DOC, source_dir=_simple_dir(tmp_path / "v1"))
+
+    second = store.import_dir(
+        pot_id=POT, slug=DOC, source_dir=_simple_dir(tmp_path / "v1-again")
+    )
+    third = store.import_dir(
+        pot_id=POT, slug=DOC, source_dir=_simple_dir(tmp_path / "v1-again-again")
+    )
+
+    assert second.revision == 1
+    assert third.revision == 1
+    assert second.sections_kept == ("body",)
+    assert not second.sections_added and not second.sections_removed
+
+
+@pytest.mark.parametrize("kind", STORES)
+@pytest.mark.parametrize(
+    "second_dir",
+    [
+        # content changed in place
+        pytest.param(
+            lambda root: _simple_dir(
+                root, texts=("rewritten",), content_hash="body-v2"
+            ),
+            id="changed",
+        ),
+        # a section arrived
+        pytest.param(
+            lambda root: write_import_directory(
+                root,
+                [
+                    _section("body", chunks=[{"label": "part 0", "text": "alpha"}]),
+                    _section(
+                        "risks", chunks=[{"label": "one", "text": "gamma"}], ordinal=1
+                    ),
+                ],
+            ),
+            id="added",
+        ),
+    ],
+)
+def test_reimport_bumps_the_revision_when_the_section_set_moves(
+    kind, second_dir, tmp_path
+):
+    store = _build(kind, tmp_path)
+    store.import_dir(
+        pot_id=POT, slug=DOC, source_dir=_simple_dir(tmp_path / "v1", texts=("alpha",))
+    )
+
+    manifest = store.import_dir(
+        pot_id=POT, slug=DOC, source_dir=second_dir(tmp_path / "v2")
+    )
+
+    assert manifest.revision == 2
+
+
+@pytest.mark.parametrize("kind", STORES)
+def test_reimport_that_only_removes_a_section_bumps_the_revision(kind, tmp_path):
+    # A removal is what retracts SECTION_OF claims, so it must be a new revision
+    # even though nothing that survived changed.
+    store = _build(kind, tmp_path)
+    first = write_import_directory(
+        tmp_path / "v1",
+        [
+            _section("body", chunks=[{"label": "one", "text": "alpha"}]),
+            _section("capacity", chunks=[{"label": "two", "text": "omega"}], ordinal=1),
+        ],
+    )
+    second = write_import_directory(
+        tmp_path / "v2",
+        [_section("body", chunks=[{"label": "one", "text": "alpha"}])],
+    )
+    store.import_dir(pot_id=POT, slug=DOC, source_dir=first)
+
+    manifest = store.import_dir(pot_id=POT, slug=DOC, source_dir=second)
+
+    assert manifest.revision == 2
+    assert manifest.sections_removed == ("capacity",)
+
+
+@pytest.mark.parametrize("kind", STORES)
 def test_reimport_reports_added_kept_and_removed_sections(kind, tmp_path):
     store = _build(kind, tmp_path)
     first = write_import_directory(

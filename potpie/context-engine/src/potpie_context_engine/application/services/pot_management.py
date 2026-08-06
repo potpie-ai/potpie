@@ -22,6 +22,7 @@ from potpie_context_core.ports.resource_store import ResourceStorePort
 from potpie_context_engine.domain.ports.services.pot_management import (
     PotAggregateStatus,
     PotInfo,
+    PotTeardownResult,
     SourceInfo,
 )
 
@@ -70,7 +71,7 @@ class LocalPotManagementService:
             raise PotNotFound(f"No pot matching '{ref}'.")
         return _pot(row)
 
-    def reset_pot(self, *, ref: str, confirm: bool = False) -> PotInfo:
+    def reset_pot(self, *, ref: str, confirm: bool = False) -> PotTeardownResult:
         # Resolve the pot, clear its graph partition, then drop its resource
         # tree. Graph first: a failed purge leaves orphan files (harmless,
         # overwritten on the next import); the reverse would leave live claims
@@ -82,10 +83,12 @@ class LocalPotManagementService:
         )
         if target is None:
             raise PotNotFound(f"No pot matching '{ref}'.")
-        self._teardown_pot_data(target["pot_id"])
-        return _pot(target)
+        return PotTeardownResult(
+            pot=_pot(target),
+            resources_purged=self._teardown_pot_data(target["pot_id"]),
+        )
 
-    def archive_pot(self, *, ref: str) -> PotInfo:
+    def archive_pot(self, *, ref: str) -> PotTeardownResult:
         # Archive is pot deletion from the control plane: soft-flag the pot,
         # and tear down the graph partition plus resource tree so an archived
         # pot cannot leave dangling chunk files behind (R8).
@@ -95,16 +98,23 @@ class LocalPotManagementService:
         )
         if target is None:
             raise PotNotFound(f"No pot matching '{ref}'.")
-        self._teardown_pot_data(target["pot_id"])
+        purged = self._teardown_pot_data(target["pot_id"])
         row = self.store.archive(ref=ref)
         if row is None:
             raise PotNotFound(f"No pot matching '{ref}'.")
-        return _pot(row)
+        return PotTeardownResult(pot=_pot(row), resources_purged=purged)
 
-    def _teardown_pot_data(self, pot_id: str) -> None:
+    def _teardown_pot_data(self, pot_id: str) -> bool | None:
+        """Clear both data planes; report what the resource store actually did.
+
+        ``None`` when no resource store is wired — the caller must be able to
+        tell "nothing to purge" from "purged nothing", because it reports the
+        answer to a user.
+        """
         self.backend.mutation.reset_pot(pot_id)
-        if self.resources is not None:
-            self.resources.purge_pot(pot_id)
+        if self.resources is None:
+            return None
+        return bool(self.resources.purge_pot(pot_id))
 
     # --- sources ------------------------------------------------------------
     def add_source(

@@ -82,8 +82,35 @@ def test_archive_pot_tears_down_graph_and_resources(tmp_path):
 
     archived = pots.archive_pot(ref=pot.pot_id)
 
-    assert archived.archived is True
+    assert archived.pot.archived is True
+    assert archived.resources_purged is True
     assert not pot_root.exists()
+
+
+def test_teardown_reports_no_purge_on_a_pot_that_held_no_resources(tmp_path):
+    """P1-2: ``resources_purged`` is the store's answer, not a literal True."""
+    home = tmp_path / "home"
+    pots = LocalPotManagementService(
+        store=LocalPotStore(home=home),
+        backend=InMemoryGraphBackend(),
+        resources=LocalResourceStore(home=home),
+    )
+    pot = pots.create_pot(name=POT_NAME, use=True)
+
+    assert pots.reset_pot(ref=pot.pot_id, confirm=True).resources_purged is False
+    assert pots.archive_pot(ref=pot.pot_id).resources_purged is False
+
+
+def test_teardown_reports_unknown_purge_when_no_resource_store_is_wired(tmp_path):
+    """Nothing to purge is not the same answer as purged nothing."""
+    home = tmp_path / "home"
+    pots = LocalPotManagementService(
+        store=LocalPotStore(home=home),
+        backend=InMemoryGraphBackend(),
+    )
+    pot = pots.create_pot(name=POT_NAME, use=True)
+
+    assert pots.reset_pot(ref=pot.pot_id, confirm=True).resources_purged is None
 
 
 def test_remove_source_does_not_touch_resources(tmp_path):

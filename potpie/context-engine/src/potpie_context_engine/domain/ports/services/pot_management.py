@@ -29,6 +29,21 @@ class PotInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class PotTeardownResult:
+    """A pot plus what tearing its data down actually did.
+
+    ``reset``/``archive`` report a ``resources_purged`` field, and reporting it
+    as a literal ``True`` told users a resource tree had been cleared on pots
+    that never held one. The store's own boolean travels with the pot instead.
+    ``None`` means no resource store was wired, which is neither purged nor
+    a failed purge.
+    """
+
+    pot: PotInfo
+    resources_purged: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SourceInfo:
     """A source registered to a pot (repo, integration binding, …)."""
 
@@ -81,11 +96,11 @@ class PotManagementService(Protocol):
 
     def rename_pot(self, *, ref: str, new_name: str) -> PotInfo: ...
 
-    def reset_pot(self, *, ref: str, confirm: bool = False) -> PotInfo:
+    def reset_pot(self, *, ref: str, confirm: bool = False) -> PotTeardownResult:
         """Clear a pot's graph partition and purge its resource store tree."""
         ...
 
-    def archive_pot(self, *, ref: str) -> PotInfo:
+    def archive_pot(self, *, ref: str) -> PotTeardownResult:
         """Soft-archive a pot and tear down its graph + resource data."""
         ...
 

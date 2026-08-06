@@ -113,7 +113,11 @@ class _Host:
         runtime = build_test_graph_runtime() if with_graph else None
         self.runtime = runtime
         self.graph = runtime.graph if runtime else None
-        self.resources = ResourceFacade(store=store, graph=self.graph)
+        self.resources = ResourceFacade(
+            store=store,
+            graph=self.graph,
+            claims=runtime.backend.claim_query if runtime else None,
+        )
 
 
 def _host(*, with_graph: bool = True) -> _Host:
@@ -219,6 +223,39 @@ def test_import_says_so_when_no_graph_is_wired(tmp_path):
     assert any("search cannot find it" in w for w in payload["warnings"])
 
 
+def test_import_reports_written_false_when_claims_do_not_read_back(tmp_path):
+    """``graph.written`` must come from a read, not from the writer's opinion.
+
+    The writer counts submitted operations, so a mutation that applies onto an
+    existing tombstone returns ``status: applied`` while the claim stays
+    invisible to every read. That combination — bytes on disk, ``written:
+    true``, nothing findable — is the exact failure the graph block exists to
+    surface, so it is asserted against a claim query that reports the claim
+    missing rather than against a hypothetical.
+    """
+    host = _host()
+    real_find = host.runtime.backend.claim_query.find_claims
+
+    def _find_claims(filter_):
+        # Only the readback probe filters by claim_key; everything else is
+        # left alone so the import itself behaves normally.
+        if filter_.claim_key_in:
+            return []
+        return real_find(filter_)
+
+    host.resources.claims = MagicMock()
+    host.resources.claims.find_claims.side_effect = _find_claims
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["graph"]["status"] == "applied"
+    assert payload["graph"]["written"] is False
+    assert payload["graph"]["missing_claim_keys"]
+    assert any("cannot be read back" in w for w in payload["warnings"])
+
+
 def test_import_carries_chunk_ids_as_claim_evidence(tmp_path):
     """R13: a section's search hit already holds the ids ``get`` takes."""
     host = _host()
@@ -294,6 +331,107 @@ def test_import_points_at_the_missing_scope_edge(tmp_path):
 
     action = json.loads(result.stdout)["recommended_next_action"]
     assert "DOCUMENTS" in action and f"document:{DOC}" in action
+
+
+def _link(host, subject_key: str, *, object_key: str = "service:payments-api") -> None:
+    """Write the scope edge an agent would write, through the normal door."""
+    workbench = host.runtime.workbench
+    proposal = workbench.propose(
+        {
+            "operations": [
+                {
+                    "op": "assert_claim",
+                    "subgraph": "knowledge",
+                    "subject": {"key": subject_key},
+                    "predicate": "DOCUMENTS",
+                    "object": {"key": object_key, "type": "Service"},
+                    "truth": "source_observation",
+                    "evidence": [{"source_ref": format_resource_id(DOC, "body", 0)}],
+                    "description": f"{subject_key} covers {object_key}",
+                }
+            ]
+        },
+        pot_id="p",
+    )
+    assert proposal.ok is True, proposal.detail
+    assert workbench.commit(proposal.plan_id, pot_id="p", approved_by="test").ok
+
+
+def test_import_stops_nudging_once_the_document_is_linked(tmp_path):
+    """P1-4: the scope nudge has to be a check, not a constant.
+
+    It fired on every import regardless of how many ``DOCUMENTS`` claims the
+    document already had, which made it useless for the one thing
+    ``resources.md`` asks it for — telling a linked document from an unlinked
+    one.
+    """
+    host = _seed(tmp_path)
+    _link(host, f"document:{DOC}")
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    action = json.loads(result.stdout)["recommended_next_action"]
+    assert "DOCUMENTS" not in action
+    assert "--include docs" in action
+
+
+def test_import_counts_a_section_level_link_as_scope(tmp_path):
+    """The skills teach linking one section rather than the whole document, so
+    a section-only link is a linked document."""
+    host = _seed(tmp_path)
+    _link(host, f"docsection:{DOC}:body")
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    assert "DOCUMENTS" not in json.loads(result.stdout)["recommended_next_action"]
+
+
+def test_import_nudges_again_when_the_last_scope_edge_is_retracted(tmp_path):
+    """A re-import that drops the linked section takes the scope edge with it
+    (P0-2), which puts the document back in the state the nudge is for."""
+    host = _host()
+    kept = _section("kept", chunks=[{"label": "a", "text": "alpha"}])
+    dropped = _section("dropped", chunks=[{"label": "b", "text": "beta"}])
+    assert (
+        _run(
+            [
+                "import",
+                str(_import_dir(tmp_path / "in1", [kept, dropped])),
+                "--doc",
+                DOC,
+            ]
+        ).exit_code
+        == 0
+    )
+    _link(host, f"docsection:{DOC}:dropped")
+
+    result = _run(["import", str(_import_dir(tmp_path / "in2", [kept])), "--doc", DOC])
+
+    action = json.loads(result.stdout)["recommended_next_action"]
+    assert "DOCUMENTS" in action and f"document:{DOC}" in action
+
+
+def test_import_nudges_for_scope_when_no_claim_query_is_wired(tmp_path):
+    """Unknown is not 'linked': with nothing to count, the nudge is the honest
+    default — a document nothing can find is the costlier silence."""
+    host = _host()
+    host.resources.claims = None
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    assert "DOCUMENTS" in json.loads(result.stdout)["recommended_next_action"]
+
+
+def test_import_scope_nudge_points_at_the_commands_the_catalog_lists(tmp_path):
+    """It used to point at ``graph mutate``, which self-describes as a legacy
+    transition wrapper and is not in the catalog's command list."""
+    _host()
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    action = json.loads(result.stdout)["recommended_next_action"]
+    assert "graph propose" in action and "graph commit" in action
+    assert "graph mutate" not in action
 
 
 def test_import_flags_sections_that_still_need_a_summary(tmp_path):
@@ -637,6 +775,132 @@ def test_rm_of_an_absent_document_is_a_no_op(tmp_path):
 
     assert payload["removed"] is False
     assert payload["graph_retracted"] is False
+
+
+# --- dependent claims (P0-2) ------------------------------------------------
+
+
+def test_rm_retracts_agent_written_claims_about_the_sections(tmp_path):
+    """A deleted document must not keep answering through somebody else's claim.
+
+    ``rm`` retracts ``SECTION_OF``, which is the structure this store wrote. But
+    the skills tell agents to link individual sections to what they cover, and
+    those ``DOCUMENTS`` claims used to survive the delete — still ranking in
+    ``search --include docs``, still handing out chunk ids that now return
+    ``resource_not_found``.
+    """
+    host = _seed(tmp_path)
+    workbench = host.runtime.workbench
+    proposal = workbench.propose(
+        {
+            "operations": [
+                {
+                    "op": "assert_claim",
+                    "subgraph": "knowledge",
+                    "subject": {"key": f"docsection:{DOC}:body"},
+                    "predicate": "DOCUMENTS",
+                    "object": {"key": "service:payments-api", "type": "Service"},
+                    "truth": "source_observation",
+                    "evidence": [{"source_ref": format_resource_id(DOC, "body", 0)}],
+                    "description": "the body section covers the payments api",
+                }
+            ]
+        },
+        pot_id="p",
+    )
+    assert proposal.ok is True, proposal.detail
+    assert workbench.commit(proposal.plan_id, pot_id="p", approved_by="test").ok
+
+    def live_documents():
+        return host.runtime.backend.claim_query.find_claims(
+            ClaimQueryFilter(pot_id="p", predicate_in=("DOCUMENTS",))
+        )
+
+    assert len(live_documents()) == 1
+
+    assert _run(["rm", DOC, "--confirm"]).exit_code == 0
+
+    assert live_documents() == [], "a DOCUMENTS claim outlived the chunks it cites"
+
+
+def test_reimport_retracts_claims_about_a_section_it_drops(tmp_path):
+    """Same defect on the normal path: a re-import that drops one section.
+
+    This is how it is actually reached — nobody has to delete a document for a
+    section to disappear; re-importing a changed source is enough.
+    """
+    host = _host()
+    kept = _section("kept", chunks=[{"label": "a", "text": "alpha"}])
+    dropped = _section("dropped", chunks=[{"label": "b", "text": "beta"}])
+    first = _import_dir(tmp_path / "in1", [kept, dropped])
+    assert _run(["import", str(first), "--doc", DOC]).exit_code == 0
+
+    workbench = host.runtime.workbench
+    proposal = workbench.propose(
+        {
+            "operations": [
+                {
+                    "op": "assert_claim",
+                    "subgraph": "knowledge",
+                    "subject": {"key": f"docsection:{DOC}:dropped"},
+                    "predicate": "DOCUMENTS",
+                    "object": {"key": "service:payments-api", "type": "Service"},
+                    "truth": "source_observation",
+                    "evidence": [{"source_ref": format_resource_id(DOC, "dropped", 0)}],
+                    "description": "the dropped section covers the payments api",
+                }
+            ]
+        },
+        pot_id="p",
+    )
+    assert proposal.ok is True, proposal.detail
+    assert workbench.commit(proposal.plan_id, pot_id="p", approved_by="test").ok
+
+    second = _import_dir(tmp_path / "in2", [kept])
+    assert _run(["import", str(second), "--doc", DOC]).exit_code == 0
+
+    live = host.runtime.backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id="p", predicate_in=("DOCUMENTS",))
+    )
+    assert live == [], "a claim about a dropped section stayed live"
+
+
+def test_claims_about_sections_that_stay_are_left_alone(tmp_path):
+    """The cleanup must be surgical: only the departing section's claims go."""
+    host = _host()
+    kept = _section("kept", chunks=[{"label": "a", "text": "alpha"}])
+    dropped = _section("dropped", chunks=[{"label": "b", "text": "beta"}])
+    first = _import_dir(tmp_path / "in1", [kept, dropped])
+    assert _run(["import", str(first), "--doc", DOC]).exit_code == 0
+
+    workbench = host.runtime.workbench
+    for slug in ("kept", "dropped"):
+        proposal = workbench.propose(
+            {
+                "operations": [
+                    {
+                        "op": "assert_claim",
+                        "subgraph": "knowledge",
+                        "subject": {"key": f"docsection:{DOC}:{slug}"},
+                        "predicate": "DOCUMENTS",
+                        "object": {"key": "service:payments-api", "type": "Service"},
+                        "truth": "source_observation",
+                        "evidence": [{"source_ref": format_resource_id(DOC, slug, 0)}],
+                        "description": f"the {slug} section covers the payments api",
+                    }
+                ]
+            },
+            pot_id="p",
+        )
+        assert workbench.commit(proposal.plan_id, pot_id="p", approved_by="test").ok
+
+    second = _import_dir(tmp_path / "in2", [kept])
+    assert _run(["import", str(second), "--doc", DOC]).exit_code == 0
+
+    live = host.runtime.backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id="p", predicate_in=("DOCUMENTS",))
+    )
+    assert [row.subject_key for row in live] == [f"docsection:{DOC}:kept"]
 
 
 # --- transport --------------------------------------------------------------

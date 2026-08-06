@@ -269,6 +269,49 @@ def test_search_returns_envelope(host):
     assert env.pot_id == pot.pot_id
 
 
+def test_bare_search_reaches_ingested_documents(host):
+    """P1-1: ``potpie search "<phrase>"`` resolves intent ``unknown``, and
+    ``unknown`` used to exclude ``docs`` — so a phrase lifted straight out of an
+    ingested document returned nothing, with no include in the response to
+    suggest what would have found it."""
+    pot = host.pots.create_pot(name="default", use=True)
+
+    env = host.agent_context.search(
+        SearchRequest(pot_id=pot.pot_id, query="limitation of liability cap")
+    )
+
+    assert env.intent == "unknown"
+    assert "docs" in {report.include for report in env.coverage}
+
+
+def test_search_honours_an_explicit_intent(host):
+    """The narrow-lookup door can now be pointed, instead of only ever
+    answering with one intent's families."""
+    from potpie_context_core.agent_context_port import DEFAULT_INTENT_INCLUDES
+
+    pot = host.pots.create_pot(name="default", use=True)
+
+    env = host.agent_context.search(
+        SearchRequest(pot_id=pot.pot_id, query="pool exhausted", intent="debugging")
+    )
+
+    assert env.intent == "debugging"
+    assert {report.include for report in env.coverage} == set(
+        DEFAULT_INTENT_INCLUDES["debugging"]
+    )
+    assert "docs" not in {report.include for report in env.coverage}
+
+
+def test_search_falls_back_to_unknown_on_an_unrecognized_intent(host):
+    pot = host.pots.create_pot(name="default", use=True)
+
+    env = host.agent_context.search(
+        SearchRequest(pot_id=pot.pot_id, query="anything", intent="not-an-intent")
+    )
+
+    assert env.intent == "unknown"
+
+
 def test_unsupported_include_is_flagged_not_crashed(host):
     pot = host.pots.create_pot(name="default", use=True)
     env = host.agent_context.resolve(

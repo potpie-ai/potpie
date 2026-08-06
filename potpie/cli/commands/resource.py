@@ -178,11 +178,17 @@ def resource_rm(
                 message=f"removing document '{doc}' discards its stored chunks",
                 next_action=f"re-run with 'potpie resource rm {doc} --confirm'",
             )
-        removed = host.resources.delete(pot_id=pot_id, slug=doc)
+        result = host.resources.delete(pot_id=pot_id, slug=doc)
+        removed = result.removed
+        # ``graph_retracted`` reports the retraction's own result. It used to be
+        # ``removed`` echoed back, which claimed a graph write had happened on
+        # runs where none did.
+        retracted = result.graph_retracted
         emit(
-            {"doc": doc, "removed": removed, "graph_retracted": removed},
+            {"doc": doc, "removed": removed, "graph_retracted": retracted},
             human=(
-                f"removed document '{doc}' (chunks and section claims)"
+                f"removed document '{doc}' "
+                + ("(chunks and section claims)" if retracted else "(chunks)")
                 if removed
                 else f"no document '{doc}' stored in this pot"
             ),
@@ -262,7 +268,7 @@ def _import_payload(result: ResourceImportResult) -> dict[str, Any]:
         "summary_pending": list(pending),
         "graph": graph,
         "warnings": warnings,
-        "recommended_next_action": _import_next_action(manifest.doc, pending),
+        "recommended_next_action": _import_next_action(result, pending),
     }
 
 
@@ -287,14 +293,23 @@ def _graph_payload(result: ResourceImportResult) -> dict[str, Any]:
             ],
         }
     payload: dict[str, Any] = {
-        "written": mutation.ok and mutation.status == "applied",
+        # Readback-backed, not status-backed: a write that applies onto a
+        # retracted claim reports 'applied' and is still invisible to search.
+        "written": result.graph_written,
         "status": mutation.status,
         "entity_key": f"document:{result.manifest.doc}",
         "operations_applied": mutation.operations_applied,
         "claim_keys": list(mutation.claim_keys),
         "warnings": [],
     }
-    if not payload["written"]:
+    if result.missing_claim_keys:
+        payload["missing_claim_keys"] = list(result.missing_claim_keys)
+        payload["warnings"] = [
+            f"the graph write reported '{mutation.status}' but "
+            f"{len(result.missing_claim_keys)} of {len(mutation.claim_keys)} claims "
+            "cannot be read back, so this document is not fully findable."
+        ]
+    elif not payload["written"]:
         detail = mutation.detail or "; ".join(
             issue.message for issue in mutation.issues if issue.is_error
         )
@@ -305,18 +320,30 @@ def _graph_payload(result: ResourceImportResult) -> dict[str, Any]:
     return payload
 
 
-def _import_next_action(doc: str, pending: Sequence[str]) -> str:
+def _import_next_action(result: ResourceImportResult, pending: Sequence[str]) -> str:
     """One next step, chosen by what is actually missing.
 
-    Scope is the default because it is the failure nobody notices: a document
-    with no ``DOCUMENTS`` edge is findable by semantic luck alone, and import
-    has no way to guess what the document is *about*.
+    Scope is the second check because it is the failure nobody notices: a
+    document with no ``DOCUMENTS`` edge is findable by semantic luck alone, and
+    import has no way to guess what the document is *about*. It fires only at
+    zero live scope claims — recommending a link on a document that already has
+    one made the signal unusable for telling linked from unlinked, which is the
+    whole reason ``resources.md`` asks for it.
+
+    ``scope_claim_count is None`` means nobody could look. Nudging then is the
+    honest default: an unlinked document is the common case on a fresh import,
+    and the cost of a redundant suggestion is lower than the cost of silence
+    about a document nothing can find.
     """
+    doc = result.manifest.doc
     if pending:
         return f"Write a summary for: {', '.join(pending)}"
+    if result.scope_claim_count:
+        return f'Verify retrieval: potpie search "<a phrase from {doc}>" --include docs'
     return (
         f"Link document:{doc} to what it covers with a DOCUMENTS claim "
-        f"(potpie graph mutate), or it is findable by search alone."
+        "(potpie graph propose, then potpie graph commit --verify), or it is "
+        "findable by search alone."
     )
 
 

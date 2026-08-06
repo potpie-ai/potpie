@@ -205,6 +205,13 @@ def build_import_manifest(
     the extraction script over an unchanged source emits them empty; taking
     that verbatim would blank the index (R12) for exactly the content R14 says
     must not be re-summarized.
+
+    ``revision`` advances only when the section set actually moved. R7 hangs
+    prior-revision claim invalidation on this number and the risk note admits
+    replacement only while ``graph history`` can say which revision a claim was
+    made against — a counter that ticks on a byte-identical re-import cannot
+    carry that, and it rewrote every section's ``revision`` property for
+    nothing. Re-importing an unchanged directory is now a genuine no-op.
     """
     prior_sections = {row.slug: row for row in prior.sections} if prior else {}
     prior_hashes = {slug: row.content_hash for slug, row in prior_sections.items()}
@@ -217,10 +224,15 @@ def build_import_manifest(
         )
     )
     unchanged = set(kept)
+    added = tuple(sorted(slug for slug in current if slug not in prior_hashes))
+    removed = tuple(sorted(slug for slug in prior_hashes if slug not in current))
+    # Changed is what added/kept/removed do not account for — the same
+    # subtraction the CLI reports, done here because it decides the revision.
+    changed = tuple(sorted(set(current) - unchanged - set(added)))
     return DocumentManifest(
         pot_id=pot_id,
         doc=doc,
-        revision=prior.revision + 1 if prior else 1,
+        revision=_next_revision(prior, moved=bool(added or changed or removed)),
         source_ref=source_ref if source_ref is not None else source.source_ref,
         source_kind=source_kind if source_kind is not None else source.source_kind,
         sections=tuple(
@@ -229,15 +241,24 @@ def build_import_manifest(
             else row
             for row in source.sections
         ),
-        sections_added=tuple(
-            sorted(slug for slug in current if slug not in prior_hashes)
-        ),
+        sections_added=added,
         sections_kept=kept,
-        sections_removed=tuple(
-            sorted(slug for slug in prior_hashes if slug not in current)
-        ),
+        sections_removed=removed,
         warnings=source.warnings,
     )
+
+
+def _next_revision(prior: DocumentManifest | None, *, moved: bool) -> int:
+    """The revision this import produces.
+
+    A re-import that changes nothing keeps the prior number. The write it
+    produces is still applied — section descriptions and summaries can move
+    without a content hash moving, and those land by claim identity, which is
+    the chunk id and not the revision.
+    """
+    if prior is None:
+        return 1
+    return prior.revision + 1 if moved else prior.revision
 
 
 def _with_carried_summary(

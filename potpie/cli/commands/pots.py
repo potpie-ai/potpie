@@ -437,10 +437,18 @@ def pot_reset(
                 ),
                 next_action=f"re-run with 'potpie pot reset {target} --confirm'",
             )
-        pot = host.pots.reset_pot(ref=target, confirm=confirm)
+        teardown = host.pots.reset_pot(ref=target, confirm=confirm)
+        pot = teardown.pot
+        # ``resources_purged`` is the store's own answer, not a literal: it
+        # used to report a cleared resource tree on pots that never held one.
+        purged = teardown.resources_purged
         emit(
-            {"id": pot.pot_id, "reset": True, "resources_purged": True},
-            human=f"reset graph and resources for '{pot.name}'",
+            {"id": pot.pot_id, "reset": True, "resources_purged": purged},
+            human=(
+                f"reset graph and resources for '{pot.name}'"
+                if purged
+                else f"reset graph for '{pot.name}' (no stored resources)"
+            ),
         )
 
 
@@ -463,14 +471,20 @@ def pot_archive(
                 ),
                 next_action=f"re-run with 'potpie pot archive {ref} --confirm'",
             )
-        pot = get_host().pots.archive_pot(ref=ref)
+        teardown = get_host().pots.archive_pot(ref=ref)
+        pot = teardown.pot
+        purged = teardown.resources_purged
         emit(
             {
                 "id": pot.pot_id,
                 "archived": True,
-                "resources_purged": True,
+                "resources_purged": purged,
             },
-            human=f"archived '{pot.name}' (graph and resources cleared)",
+            human=(
+                f"archived '{pot.name}' (graph and resources cleared)"
+                if purged
+                else f"archived '{pot.name}' (graph cleared; no stored resources)"
+            ),
         )
 
 

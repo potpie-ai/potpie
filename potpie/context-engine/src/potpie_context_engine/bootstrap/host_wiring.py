@@ -159,8 +159,11 @@ def build_host_shell(
 
         # The graph service comes along because an import writes both halves —
         # bytes here, structure through the same write door every other
-        # mutation uses.
-        resources = ResourceFacade(store=resource_store, graph=graph)
+        # mutation uses. The claim query is the read side of the same join: what
+        # else points at a section before it is removed, and did the write land.
+        resources = ResourceFacade(
+            store=resource_store, graph=graph, claims=backend.claim_query
+        )
 
         # The nudge brain reads through the graph service and dedups via a local
         # per-session injection ledger (both deterministic; no model on this path).

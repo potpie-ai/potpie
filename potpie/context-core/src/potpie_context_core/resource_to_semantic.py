@@ -47,6 +47,10 @@ _SURFACE = "cli"
 DOCUMENT_TYPE = "Document"
 SECTION_TYPE = "DocumentSection"
 SECTION_PREDICATE = "SECTION_OF"
+# The scope edge: what the document (or one of its sections) is reference
+# material *for*. Import never writes one — only an agent knows what a document
+# covers — so import's job is to notice when none exists.
+SCOPE_PREDICATE = "DOCUMENTS"
 RESOURCE_SUBGRAPH = "knowledge"
 
 # The structure is read off the source document itself, not judged — a
@@ -72,6 +76,71 @@ class ResourceImportResult:
 
     manifest: DocumentManifest
     graph: SemanticMutationResult | None = None
+    missing_claim_keys: tuple[str, ...] = ()
+    """Claims the write reported as applied that a read cannot see.
+
+    Non-empty means the mutation succeeded on paper and the document is still
+    not findable — which is the exact failure this whole report block exists to
+    surface, and one ``status == "applied"`` alone cannot detect.
+    """
+    scope_claim_count: int | None = None
+    """Live ``DOCUMENTS`` claims on this document or any of its sections.
+
+    ``None`` means nobody looked (no claim query wired), which is different
+    from zero and must not be reported as "unlinked". Zero is the state the
+    import nudge exists for: chunks and structure landed, but nothing says what
+    the document is *about*, so it is findable by semantic luck alone.
+    """
+
+    @property
+    def graph_written(self) -> bool:
+        """True only when the structure both applied *and* reads back."""
+        return (
+            self.graph is not None
+            and self.graph.ok
+            and self.graph.status == "applied"
+            and not self.missing_claim_keys
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceDeleteResult:
+    """What ``resource rm`` did, in both halves of the split.
+
+    ``removed`` is the store's answer; ``graph`` is the retraction's own result
+    and is ``None`` when there was nothing to retract or no graph was wired.
+    Kept separate on purpose: the CLI used to derive its ``graph_retracted``
+    field from ``removed``, which reported a successful retraction on a write
+    that never happened.
+    """
+
+    removed: bool
+    graph: SemanticMutationResult | None = None
+
+    @property
+    def graph_retracted(self) -> bool:
+        """True only when a retraction was applied — the honest version."""
+        return (
+            self.graph is not None and self.graph.ok and self.graph.status == "applied"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DependentClaim:
+    """A live claim, written by somebody else, about a section that is leaving.
+
+    ``SECTION_OF`` is the store's own structure and this module knows how to
+    retract it. Everything *else* pointing at a section — the ``DOCUMENTS``
+    links the skills teach agents to write, or anything citing the section as
+    evidence — was written by an agent through the normal write door, so the
+    only way to find it is to ask the graph. The caller does that lookup and
+    passes the answers in, keeping this module free of a backend dependency.
+    """
+
+    predicate: str
+    subject_key: str
+    object_key: str
+    subgraph: str = RESOURCE_SUBGRAPH
 
 
 def document_key(doc: str) -> str:
@@ -82,8 +151,36 @@ def section_key(doc: str, section: str) -> str:
     return f"docsection:{doc}:{section}"
 
 
+def _dependent_retractions(
+    claims: tuple[DependentClaim, ...], *, reason: str
+) -> list[dict]:
+    """Retract claims left dangling by a section's removal.
+
+    Without this a departed section keeps answering: its ``SECTION_OF`` edge is
+    gone, but an agent-written ``DOCUMENTS`` claim stays live, keeps ranking in
+    ``search --include docs``, and keeps handing out chunk ids that now resolve
+    to ``resource_not_found``. Structure cleanup that only cleans up the
+    structure *this module* wrote is not cleanup.
+    """
+    return [
+        {
+            "op": "retract_claim",
+            "subgraph": claim.subgraph,
+            "predicate": claim.predicate,
+            # Keys only: these entities already exist with their real types, and
+            # asserting a type here would just be this module guessing at one.
+            "subject": {"key": claim.subject_key},
+            "object": {"key": claim.object_key},
+            "reason": reason,
+        }
+        for claim in claims
+    ]
+
+
 def resource_import_to_semantic_request(
     manifest: DocumentManifest,
+    *,
+    dependent_claims: tuple[DependentClaim, ...] = (),
 ) -> SemanticMutationRequest:
     """Build the graph write for one completed import.
 
@@ -92,6 +189,10 @@ def resource_import_to_semantic_request(
     ``retract_claim`` per section the prior revision had and this one does not —
     that last group is what stops a re-import from leaving the graph pointing at
     sections whose chunks were just deleted.
+
+    ``dependent_claims`` are the *other* live claims about those departing
+    sections, which the caller looked up; they are retracted in the same write
+    so a re-import can never leave a live claim citing a deleted chunk.
     """
     document = {
         "key": document_key(manifest.doc),
@@ -175,6 +276,16 @@ def resource_import_to_semantic_request(
             }
         )
 
+    ops.extend(
+        _dependent_retractions(
+            dependent_claims,
+            reason=(
+                f"the section it describes left revision {manifest.revision} of "
+                f"document '{manifest.doc}'; its chunks were deleted"
+            ),
+        )
+    )
+
     return SemanticMutationRequest(
         pot_id=manifest.pot_id,
         operations=tuple(SemanticMutation.parse(op) for op in ops),
@@ -192,6 +303,7 @@ def resource_delete_to_semantic_request(
     pot_id: str,
     doc: str,
     section_slugs: tuple[str, ...],
+    dependent_claims: tuple[DependentClaim, ...] = (),
 ) -> SemanticMutationRequest:
     """Build the graph write that retracts every section of a removed document.
 
@@ -201,6 +313,11 @@ def resource_delete_to_semantic_request(
     ``SECTION_OF`` claim is what stops the document from answering reads. The
     Document node may linger as an orphan until a pot reset; that is cheaper
     than inventing a hard-delete op just for this path.
+
+    ``dependent_claims`` carries whatever else was live about those sections
+    (see :class:`DependentClaim`). Retracting only ``SECTION_OF`` would leave an
+    agent's ``DOCUMENTS`` claim answering searches with chunk ids that no longer
+    resolve — a deleted document still returning citations.
     """
     document_ref = {"key": document_key(doc), "type": DOCUMENT_TYPE}
     ops = [
@@ -219,6 +336,15 @@ def resource_delete_to_semantic_request(
         }
         for slug in section_slugs
     ]
+    ops.extend(
+        _dependent_retractions(
+            dependent_claims,
+            reason=(
+                f"document '{doc}' was removed; the section it describes no "
+                "longer exists and its chunks were deleted"
+            ),
+        )
+    )
     return SemanticMutationRequest(
         pot_id=pot_id,
         operations=tuple(SemanticMutation.parse(op) for op in ops),
@@ -266,6 +392,8 @@ __all__ = [
     "RESOURCE_SUBGRAPH",
     "SECTION_PREDICATE",
     "SECTION_TYPE",
+    "DependentClaim",
+    "ResourceDeleteResult",
     "ResourceImportResult",
     "document_key",
     "resource_delete_to_semantic_request",
