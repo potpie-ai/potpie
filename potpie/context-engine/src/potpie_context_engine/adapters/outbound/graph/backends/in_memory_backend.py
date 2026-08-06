@@ -37,6 +37,10 @@ from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
     repaired_entity_labels,
     wants_entity_label_repair,
 )
+from potpie_context_engine.adapters.outbound.graph.document_key_repair import (
+    document_key_finding,
+    wants_document_key_repair,
+)
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionRegistry,
 )
@@ -52,7 +56,7 @@ from potpie_context_core.graph_mutations import ProvenanceContext
 from potpie_context_core.lifecycle import DONE, SetupPlan, StepResult
 from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
-from potpie_context_core.ports.graph.analytics import RepairReport
+from potpie_context_core.ports.graph.analytics import RepairFinding, RepairReport
 from potpie_context_core.ports.graph.backend import BackendCapabilities
 from potpie_context_core.ports.graph.inspection import (
     GraphEdge,
@@ -391,6 +395,8 @@ class _Semantic:
                 object_label=base.object_label,
                 include_invalidated=base.include_invalidated,
                 source_system_in=base.source_system_in,
+                subgraph_in=base.subgraph_in,
+                subgraph_not_in=base.subgraph_not_in,
                 fact_query=query,
                 limit=k,
             )
@@ -561,22 +567,27 @@ class _Analytics:
 
     def repair(self, pot_id: str, *, targets: Sequence[str] = ()) -> RepairReport:
         repaired: dict[str, int] = {}
+        findings: list[RepairFinding] = []
         if wants_entity_summary_repair(targets):
             repaired[ENTITY_SUMMARY_TARGET] = self._repair_entity_summaries(pot_id)
         if wants_entity_label_repair(targets):
             repaired[ENTITY_LABEL_TARGET] = self._repair_entity_labels(pot_id)
-        if repaired:
+        if wants_document_key_repair(targets):
+            findings.append(document_key_finding(self._entity_keys(pot_id)))
+        parts = [
+            f"repaired {count} {target.replace('_', ' ')}"
+            for target, count in repaired.items()
+        ]
+        parts.extend(finding.detail for finding in findings if finding.detail)
+        if parts:
             if any(repaired.values()) and self.on_change is not None:
                 self.on_change()
-            detail = ", ".join(
-                f"repaired {count} {target.replace('_', ' ')}"
-                for target, count in repaired.items()
-            )
             return RepairReport(
                 pot_id=pot_id,
                 targets=tuple(targets),
                 repaired=repaired,
-                detail=detail,
+                detail=", ".join(parts),
+                findings=tuple(findings),
             )
         return RepairReport(
             pot_id=pot_id,
@@ -584,6 +595,18 @@ class _Analytics:
             repaired={},
             detail="in_memory projections are computed on read; nothing to rebuild",
         )
+
+    def _entity_keys(self, pot_id: str) -> set[str]:
+        keys = {
+            key
+            for row in self._rows(pot_id)
+            for key in (row.subject_key, row.object_key)
+        }
+        keys.update(key for pid, key in self.store.entity_label_index if pid == pot_id)
+        keys.update(
+            key for pid, key in self.store.entity_property_index if pid == pot_id
+        )
+        return keys
 
     def _repair_entity_summaries(self, pot_id: str) -> int:
         entity_keys = {

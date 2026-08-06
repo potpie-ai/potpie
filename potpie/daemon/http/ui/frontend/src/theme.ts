@@ -42,6 +42,7 @@ const PALETTE: Record<string, string> = {
   Fix: "#8DCC93",
   Decision: "#FFD86E",
   Document: "#6DCE9E",
+  DocumentSection: "#4FB185",
   Period: "#A5ABB6",
   // soft-fail fallback types — muted so they read as "uncategorized"
   Observation: "#9FB3C8",
@@ -82,6 +83,7 @@ const TYPE_CATEGORY: Record<string, Category> = {
   Fix: "memory",
   Decision: "memory",
   Document: "memory",
+  DocumentSection: "memory",
   Observation: "memory",
   QualityIssue: "memory",
 };

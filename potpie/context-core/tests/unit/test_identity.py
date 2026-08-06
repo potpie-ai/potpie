@@ -9,6 +9,7 @@ from potpie_context_core.identity import (
     IdentityError,
     IdentitySpec,
     get_identity,
+    is_valid_slug_body,
     mint_entity_key,
     register_identity,
     validate_entity_key,
@@ -131,6 +132,20 @@ class TestValidateEntityKey:
         assert svc is not None
         assert validate_entity_key(svc, "") is False
         assert validate_entity_key(svc, "service:") is False
+
+
+class TestSlugBodyPredicate:
+    """``is_valid_slug_body`` is the one public reader of the slug grammar."""
+
+    def test_accepts_the_body_of_a_minted_key(self) -> None:
+        svc = get_identity("Service")
+        assert svc is not None
+        key = mint_entity_key(svc, name="Auth Service")
+        assert is_valid_slug_body(key.split(":", 1)[1]) is True
+
+    def test_rejects_prefixed_or_malformed_text(self) -> None:
+        for bad in ("service:auth", "Auth", "-auth", "auth-", "au th", "au_th", "", 7):
+            assert is_valid_slug_body(bad) is False
 
 
 class TestRegistry:

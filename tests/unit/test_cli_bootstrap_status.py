@@ -28,6 +28,7 @@ from potpie_context_core.lifecycle import (
 from potpie_context_core.ports.agent_context import StatusReport, StatusRequest
 from potpie_context_core.ports.graph.backend import BackendCapabilities
 from potpie_context_core.ports.graph.mutation import BackendReadiness
+from potpie_context_core.ports.resource_store import ResourceStoreStatus
 
 runner = CliRunner()
 
@@ -234,6 +235,54 @@ def test_doctor_json_includes_backend_readiness(
     assert payload["backend_readiness"]["capability_ready"] == {"mutation": False}
     assert payload["active_pot"] == "foo-pot"
     assert "graph status" in payload["recommended_next_action"]
+
+
+def test_doctor_json_includes_resource_store_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Pot:
+        pot_id = "foo-pot"
+
+    class _LedgerStatus:
+        available = True
+        binding = "none"
+
+    mock_host = MagicMock()
+    mock_host.daemon.status.return_value = {"mode": "in_process"}
+    mock_host.backend.profile = "memory"
+    mock_host.backend.capabilities.return_value = BackendCapabilities(
+        profile="memory",
+        mutation=True,
+        claim_query=True,
+    )
+    mock_host.backend.mutation.readiness.return_value = BackendReadiness(
+        profile="memory",
+        ready=True,
+        capability_ready={"mutation": True},
+    )
+    mock_host.pots.active_pot.return_value = _Pot()
+    mock_host.ledger.status.return_value = _LedgerStatus()
+    mock_host.resources.status.return_value = ResourceStoreStatus(
+        kind="local",
+        ready=True,
+        location="/home/.potpie/resources",
+        documents=2,
+    )
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+
+    result = runner.invoke(cli_main.app, ["--json", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["resources"] == {
+        "kind": "local",
+        "ready": True,
+        "location": "/home/.potpie/resources",
+        "documents": 2,
+        "detail": None,
+    }
+    # Readiness is reported for the pot doctor is looking at.
+    mock_host.resources.status.assert_called_once_with(pot_id="foo-pot")
 
 
 def test_default_host_mode_rejects_invalid_env(monkeypatch: pytest.MonkeyPatch) -> None:

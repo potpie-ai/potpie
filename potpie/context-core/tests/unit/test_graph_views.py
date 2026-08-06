@@ -85,6 +85,15 @@ def test_neighborhood_documents_environment_filter_rule() -> None:
     assert rule["include_unqualified_scope_key"] == "include_unqualified_environment"
 
 
+def test_document_context_stays_a_flat_claim_view() -> None:
+    spec = view_spec("knowledge.document_context")
+    # Inlining relations would swap the view's shape to entity_relations and
+    # return the caller's own scope entity as a docs result; the advertised
+    # result_shape is flat_claims and the runtime must match it.
+    assert spec.inline_relations == ()
+    assert spec.traversal is False
+
+
 def test_bugs_view_inlines_fix_relations() -> None:
     spec = view_spec("debugging.prior_occurrences")
     assert "RESOLVED" in spec.inline_relations

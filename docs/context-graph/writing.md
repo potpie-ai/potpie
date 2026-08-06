@@ -358,7 +358,8 @@ shape are detailed in [architecture.md](./architecture.md).
 - optional canonical-label enrichment; backfill required properties.
 
 With `CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL=1` (and not strict) it **downgrades instead of failing**:
-drops unknown labels, falls ADR → Document/Observation, coerces invalid lifecycle to `unknown`,
+drops unknown labels, maps an extractor `ADR` label onto the public `Document` entity and
+falls back to `Observation` otherwise, coerces invalid lifecycle to `unknown`,
 backfills missing edge temporal anchors with `now()`, rewrites unknown edge types → `RELATED_TO`
 (confidence 0.3), and drops endpoint-mismatched edges. Each downgrade is recorded and may attach a
 `QualityIssue` node. A final `validate_structural_mutations` + invalidation check raises

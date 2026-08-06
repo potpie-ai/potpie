@@ -2,9 +2,10 @@
 
 ``counts``/``freshness``/``quality`` are derivable from the claim rows, so any
 backend with a real ``claim_query`` (in_memory, embedded, neo4j) gets a working
-analytics projection without a backend-specific rebuild. ``repair`` is usually a
-no-op because these projections are computed on read, but writable backends can
-inject a narrow entity-summary repair callback.
+analytics projection without a backend-specific rebuild. ``repair`` rebuilds
+little because these projections are computed on read: writable backends inject
+narrow entity-summary / entity-label repair callbacks, and the document-key
+audit is detect-only and needs nothing beyond the claim scan.
 
 This keeps ``graph status`` / ``data_plane_status`` honest on the neo4j profile
 while the richer native projections (vector semantic, cypher inspection,
@@ -25,12 +26,18 @@ from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
     ENTITY_LABEL_TARGET,
     wants_entity_label_repair,
 )
+from potpie_context_engine.adapters.outbound.graph.document_key_repair import (
+    SCANNED_CLAIM_ENDPOINTS,
+    SCANNED_CLAIM_ENDPOINTS_TRUNCATED,
+    document_key_finding,
+    wants_document_key_repair,
+)
 from potpie_context_core.ports.claim_query import (
     ClaimQueryFilter,
     ClaimQueryPort,
     ClaimRow,
 )
-from potpie_context_core.ports.graph.analytics import RepairReport
+from potpie_context_core.ports.graph.analytics import RepairFinding, RepairReport
 
 # Pull a generous page; analytics over a single pot's claim set. Backends that
 # need true streaming aggregation can override this adapter.
@@ -91,22 +98,35 @@ class ClaimQueryAnalytics:
 
     def repair(self, pot_id: str, *, targets: Sequence[str] = ()) -> RepairReport:
         repaired: dict[str, int] = {}
+        findings: list[RepairFinding] = []
         if self.entity_summary_repair is not None and wants_entity_summary_repair(
             targets
         ):
             repaired[ENTITY_SUMMARY_TARGET] = self.entity_summary_repair(pot_id)
         if self.entity_label_repair is not None and wants_entity_label_repair(targets):
             repaired[ENTITY_LABEL_TARGET] = self.entity_label_repair(pot_id)
-        if repaired:
-            detail = ", ".join(
-                f"repaired {count} {target.replace('_', ' ')}"
-                for target, count in repaired.items()
+        if wants_document_key_repair(targets):
+            rows = self._rows(pot_id)
+            findings.append(
+                document_key_finding(
+                    {key for row in rows for key in (row.subject_key, row.object_key)},
+                    scanned=SCANNED_CLAIM_ENDPOINTS_TRUNCATED
+                    if len(rows) >= _SCAN_LIMIT
+                    else SCANNED_CLAIM_ENDPOINTS,
+                )
             )
+        parts = [
+            f"repaired {count} {target.replace('_', ' ')}"
+            for target, count in repaired.items()
+        ]
+        parts.extend(finding.detail for finding in findings if finding.detail)
+        if parts:
             return RepairReport(
                 pot_id=pot_id,
                 targets=tuple(targets),
                 repaired=repaired,
-                detail=detail,
+                detail=", ".join(parts),
+                findings=tuple(findings),
             )
         return RepairReport(
             pot_id=pot_id,

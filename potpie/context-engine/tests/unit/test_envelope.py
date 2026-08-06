@@ -92,6 +92,47 @@ class TestEnvelopeBuilder:
         assert envelope.items[0].candidate_key == "bug-a"
         assert envelope.items[1].candidate_key == "pref-a"
 
+    def test_docs_include_is_demoted_against_equal_prior_bugs(self) -> None:
+        # P9: equal raw scores must still surface project memory ahead of
+        # section claims when both includes are requested together.
+        builder = EnvelopeBuilder()
+        envelope = builder.build(
+            pot_id="pot-1",
+            intent="unknown",
+            results=[
+                IncludeResult(
+                    include="docs",
+                    response=_resp(
+                        family="docs",
+                        items=[
+                            _ranked_item(
+                                key="section-a",
+                                score=0.9,
+                                payload={"src": "section"},
+                            )
+                        ],
+                        coverage_status="complete",
+                    ),
+                ),
+                IncludeResult(
+                    include="prior_bugs",
+                    response=_resp(
+                        family="prior_bugs",
+                        items=[
+                            _ranked_item(
+                                key="bug-a", score=0.9, payload={"src": "bug"}
+                            )
+                        ],
+                        coverage_status="complete",
+                    ),
+                ),
+            ],
+            requested_includes=["docs", "prior_bugs"],
+        )
+        assert envelope.items[0].candidate_key == "bug-a"
+        assert envelope.items[1].candidate_key == "section-a"
+        assert envelope.items[0].score > envelope.items[1].score
+
     def test_default_includes_when_none_requested(self) -> None:
         builder = EnvelopeBuilder()
         envelope = builder.build(pot_id="pot-1", intent="feature", results=[])

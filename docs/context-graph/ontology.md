@@ -35,12 +35,12 @@ for the full command surface see [`cli-flow.md`](./cli-flow.md).
 
 ```mermaid
 flowchart TB
-  ont_e["ENTITY_TYPES<br/>(24 labels)"]
-  ont_p["EDGE_TYPES<br/>(25 public + RELATED_TO)"]
+  ont_e["ENTITY_TYPES<br/>(25 labels)"]
+  ont_p["EDGE_TYPES<br/>(27 public + RELATED_TO)"]
   ont_r["RECORD_TYPES"]
   ont_c["graph_contract.py<br/>versions / truth / ops / authorities"]
 
-  ont_views["Derived views<br/>identity registry · singleton registry={OWNED_BY}<br/>classifier tables · fact-family policy"]
+  ont_views["Derived views<br/>identity registry · singleton registry={OWNED_BY, SECTION_OF}<br/>classifier tables · fact-family policy"]
   ont_wb["Workbench contract<br/>8 subgraphs · 9 views"]
   ont_out["graph catalog / describe / status"]
   ont_guard{{"import-time coherence guards<br/>(coherence.py)"}}
@@ -64,7 +64,7 @@ from those rows at import.
 
 ## 1. The three catalogs
 
-### 1.1 `ENTITY_TYPES` — 24 labels
+### 1.1 `ENTITY_TYPES` — 25 labels
 
 Each `EntityTypeSpec` row carries category, description, identity
 (`identity_class`, `key_prefix`, `identity_policy`, `authoritative_source`),
@@ -82,7 +82,8 @@ it as an endpoint.**
 | People | `Team`, `Person` | |
 | Timeline | `Activity` (`is_activity=True`), `Period` | |
 | Memory tier | `Preference`, `Policy`, `BugPattern`, `Fix`, `Decision` | |
-| Generic fail-open fallbacks (`public=False`) | `Document`, `Observation`, `QualityIssue` | not advertised to agents; downgrade targets |
+| Reference material | `Document`, `DocumentSection` | structure only — chunk payloads live in the resource store, see [`resources.md`](./resources.md) |
+| Generic fail-open fallbacks (`public=False`) | `Observation`, `QualityIssue` | not advertised to agents; downgrade targets |
 
 **`Activity` is the single timeline collapse point.** PRs, commits, issues,
 incidents, and deployments do **not** get distinct entity types — they all mint
@@ -91,7 +92,7 @@ as one `Activity` entity (key prefix `activity`). There is no `PullRequest`,
 `Capability`, `Runbook`, or `Investigation` label; any doc or skill that names
 those is stale.
 
-### 1.2 `EDGE_TYPES` — 25 public predicates + `RELATED_TO`
+### 1.2 `EDGE_TYPES` — 27 public predicates + `RELATED_TO`
 
 Each `EdgeTypeSpec` declares `allowed_pairs`, `category`,
 `required_properties`, `singleton`, `predicate_family`, `exclusive_family`, and
@@ -103,13 +104,14 @@ legacy code-graph labels.
 | Category | Count | Predicates |
 |---|---:|---|
 | topology | 11 | `DEFINED_IN`, `DEPLOYED_TO`, `DEPENDS_ON`, `USES`, `USES_ADAPTER`, `CONFIGURES`, `DEPLOYED_WITH`, `EXPOSES`, `HOSTED_ON`, `PROVIDES`, `IMPLEMENTED_IN` |
-| ownership | 1 | `OWNED_BY` — the **only** `singleton=True` edge |
+| ownership | 1 | `OWNED_BY` — `singleton=True` |
 | people | 1 | `MEMBER_OF` |
 | timeline | 5 | `TOUCHED`, `PERFORMED`, `AUTHORED`, `IN_PERIOD`, `MENTIONS` |
 | memory | 7 | `POLICY_APPLIES_TO`, `REPRODUCES`, `RESOLVED`, `ATTEMPTED_FIX_FAILED`, `VERIFIED`, `DECIDED`, `AFFECTS` |
+| knowledge | 2 | `SECTION_OF` — `singleton=True`; `DOCUMENTS` |
 | generic | 1 | `RELATED_TO` (`public=False` catch-all) |
 
-That is 25 agent-facing predicates plus the `RELATED_TO` fallback = **26 keys**
+That is 27 agent-facing predicates plus the `RELATED_TO` fallback = **28 keys**
 total. `RELATED_TO` is the universal downgrade target and rides the same
 canonical `:RELATES_TO` storage edge as every other predicate (the storage edge
 is a single relationship type; the predicate name lives in its `name` property —
@@ -142,6 +144,10 @@ reader_include`.
 | `decision` | `Decision` | `DECIDED` (+ `AFFECTS`) | `decisions` |
 | *(any other)* | `Document` / `Observation` | — | — (free-form, no schema/reader) |
 
+`Document` is also the anchor for ingested reference material, which the
+planned `resource import` mints directly rather than through a free-form
+record — see [`resources.md`](./resources.md).
+
 `STRUCTURAL_INCLUDES = {features, infra_topology, timeline, owners, raw_graph}`
 are reader-backed includes that have **no** record-type anchor — they are
 populated by structural mutations, not by `record`. The structured-to-semantic
@@ -158,7 +164,8 @@ a second hand-maintained list:
   view over `ENTITY_TYPES`, not a standalone "Identity Resolver" module.
 - **Singleton registry** (`domain/singleton_predicates.py`) — synced to
   `replace_singletons(SINGLETON_EDGE_TYPES)`; the live set is **exactly
-  `{OWNED_BY}`**. `_DEFAULT_SINGLETONS` lists legacy names but they are
+  `{OWNED_BY, SECTION_OF}`** — one live owner per service, one parent document
+  per section. `_DEFAULT_SINGLETONS` lists legacy names but they are
   overwritten at import.
 - **Classifier tables** — `ENTITY_TEXT_CLASSIFIERS`,
   `ENTITY_PROPERTY_SIGNATURES`, `EDGE_ENDPOINT_INFERRED_LABELS`, consumed by
@@ -296,7 +303,13 @@ mint_entity_key`). There are three identity classes:
 are **not** accepted as aliases; hyphens stay valid in the *body*
 (`service:payments-api`). Notable specifics:
 
-- `Document`'s prefix is **`document`** (not `doc`).
+- `Document`'s prefix is **`document`** (not `doc`); `DocumentSection`'s is
+  **`docsection`** (`docsection:<doc>:<section>`).
+- `Document` is `SLUG_ALIAS` → `document:<slug>`. It was `CONTENT_HASH` before
+  the resource store; the prefix did not change, so old `document:<hash>` nodes
+  stay valid but will not converge with a re-import. `potpie graph repair
+  --document-keys` reports them (detection only — rewriting a key would orphan
+  every claim citing it).
 - `Decision` is `CONTENT_HASH` → `decision:<hash>`.
 - `Activity` (PRs/commits/issues/incidents/deployments) mints as
   `activity:<source>:<id>`.
@@ -335,7 +348,7 @@ It is what `graph catalog`/`describe` return.
 | `decisions` | decisions, preferences, policies |
 | `features` | product capabilities and their implementations |
 | `code_topology` | code assets and ownership-by-path |
-| `knowledge` | documents and observations |
+| `knowledge` | documents, document sections, and observations |
 | `admin` | exposes the full `tuple(ENTITY_TYPES)` / `tuple(EDGE_TYPES)` |
 
 There is **no** `project_map`, `operations`, `quality`, or `bugs` subgraph

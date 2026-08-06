@@ -44,7 +44,7 @@ from potpie_context_core.ports.graph.inspection import (
     GraphNode,
     GraphSlice,
 )
-from potpie_context_core.ports.graph.analytics import RepairReport
+from potpie_context_core.ports.graph.analytics import RepairFinding, RepairReport
 from potpie_context_core.ports.graph.backend import BackendCapabilities
 
 pytestmark = pytest.mark.unit
@@ -401,6 +401,24 @@ class _Analytics:
 
     def repair(self, pot_id, *, targets):
         self.calls.append((pot_id, tuple(targets)))
+        if targets == ["document_keys"]:
+            return RepairReport(
+                pot_id=pot_id,
+                targets=tuple(targets),
+                repaired={},
+                detail="1 document key(s) still use the legacy content-hash shape",
+                findings=(
+                    RepairFinding(
+                        target="document_keys",
+                        count=1,
+                        samples=("document:a1b2c3d4e5f6",),
+                        detail=(
+                            "1 document key(s) still use the legacy content-hash shape"
+                        ),
+                        recommended_next_action="re-import under a slug",
+                    ),
+                ),
+            )
         return RepairReport(
             pot_id=pot_id,
             targets=tuple(targets),
@@ -736,6 +754,28 @@ def test_graph_repair_accepts_entity_summaries_target() -> None:
     assert result.exit_code == 0, result.output
     assert backend.analytics.calls == [("p", ("entity_summaries",))]
     assert "repaired 2 entity summaries" in result.output
+
+
+def test_graph_repair_document_keys_reports_findings_without_repairing() -> None:
+    _common.set_json(True)
+    backend = _Backend()
+    _common.set_host(_Host(_Graph(), backend=backend))
+
+    result = CliRunner().invoke(graph.graph_app, ["repair", "--document-keys"])
+
+    assert result.exit_code == 0, result.output
+    assert backend.analytics.calls == [("p", ("document_keys",))]
+    payload = json.loads(result.output)["result"]
+    assert payload["repaired"] == {}
+    assert payload["findings"] == [
+        {
+            "target": "document_keys",
+            "count": 1,
+            "samples": ["document:a1b2c3d4e5f6"],
+            "detail": "1 document key(s) still use the legacy content-hash shape",
+            "recommended_next_action": "re-import under a slug",
+        }
+    ]
 
 
 @pytest.mark.parametrize(

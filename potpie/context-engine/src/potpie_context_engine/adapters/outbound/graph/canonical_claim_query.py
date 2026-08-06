@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Iterable, Mapping
 
 from potpie_context_core.graph_contract import evidence_strength_for_truth
-from potpie_context_core.ports.claim_query import ClaimRow
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
 
 # Edge properties that are part of the canonical V1.5 contract or backend system
 # frame. These are hydrated into first-class ``ClaimRow`` fields or intentionally
@@ -227,6 +227,7 @@ WHERE ($preds IS NULL OR r.name IN $preds)
   AND ($objects IS NULL OR r.object_key IN $objects)
   AND ($claim_keys IS NULL OR r.claim_key IN $claim_keys)
   AND ($subgraphs IS NULL OR r.subgraph IN $subgraphs)
+  AND ($excluded_subgraphs IS NULL OR NOT (r.subgraph IN $excluded_subgraphs))
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
   AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
@@ -238,6 +239,28 @@ WHERE ($preds IS NULL OR r.name IN $preds)
   AND ($object_label IS NULL OR $object_label IN labels(b))
 RETURN r{.*, fact_embedding: NULL} AS props
 """
+
+
+# ANN returns top-k by distance, then WHERE filters predicates/subgraphs. A
+# selective filter (predicate allowlist or subgraph exclusion) needs a larger
+# candidate pool so a dense neighborhood of out-of-family claims cannot empty
+# the post-filter result (resources P9 — section corpus crowding).
+_VECTOR_K_BASE_MULTIPLIER = 5
+_VECTOR_K_BASE_FLOOR = 50
+_VECTOR_K_SELECTIVE_MULTIPLIER = 25
+_VECTOR_K_SELECTIVE_FLOOR = 250
+
+
+def vector_candidate_k(limit: int, *, selective: bool) -> int:
+    """How many ANN neighbors to pull before applying claim filters."""
+    bound = max(1, int(limit))
+    if selective:
+        return max(bound * _VECTOR_K_SELECTIVE_MULTIPLIER, _VECTOR_K_SELECTIVE_FLOOR)
+    return max(bound * _VECTOR_K_BASE_MULTIPLIER, _VECTOR_K_BASE_FLOOR)
+
+
+def vector_filter_is_selective(filter_: ClaimQueryFilter) -> bool:
+    return bool(filter_.predicate_in or filter_.subgraph_not_in)
 
 
 ENTITY_LABELS_CYPHER = """
@@ -258,5 +281,7 @@ __all__ = [
     "row_from_record",
     "stamp_similarity",
     "stamp_scored_rows",
+    "vector_candidate_k",
+    "vector_filter_is_selective",
     "vector_property",
 ]

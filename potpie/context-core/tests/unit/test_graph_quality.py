@@ -10,6 +10,7 @@ from potpie_context_core.graph_quality import (
     EpisodicEdgeConflictInput,
     assess_graph_quality,
     detect_family_conflicts,
+    fact_family_for_source_type,
     freshness_ttl_hours_for_source_type,
     source_of_truth_for_source_type,
 )
@@ -77,6 +78,10 @@ def test_fact_family_policies_are_source_type_aware() -> None:
     # Code-derived topology / ownership families are authoritative-code truth.
     assert source_of_truth_for_source_type("Service") == "authoritative_code_truth"
     assert source_of_truth_for_source_type("Team") == "authoritative_code_truth"
+    # Document sections have their own SoT family (resources P9), not evidence.
+    assert fact_family_for_source_type("Document") == "documents"
+    assert fact_family_for_source_type("DocumentSection") == "documents"
+    assert freshness_ttl_hours_for_source_type("DocumentSection") == 12 * 7 * 24
 
 
 def test_detect_family_conflicts_same_valid_at_is_contradiction() -> None:

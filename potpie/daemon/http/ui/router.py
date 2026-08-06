@@ -47,6 +47,7 @@ _PREFIX_LABEL = {
     "fix": "Fix",
     "decision": "Decision",
     "document": "Document",
+    "docsection": "DocumentSection",
 }
 
 

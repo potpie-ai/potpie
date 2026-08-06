@@ -390,6 +390,32 @@ def test_subgraph_for_predicate() -> None:
     assert subgraph_for_predicate("DECIDED") == "decisions"
 
 
+def test_reference_material_predicates_route_to_the_knowledge_subgraph() -> None:
+    # An unmapped category falls back to "memory" silently, so both the
+    # category and the entity types are pinned explicitly.
+    assert subgraph_for_predicate("SECTION_OF") == "knowledge"
+    assert subgraph_for_predicate("DOCUMENTS") == "knowledge"
+
+
+def test_document_patch_routes_to_the_knowledge_subgraph() -> None:
+    # Document's entity category is "evidence", which is not in the category
+    # map — without the explicit entity-type entry this lands in "memory".
+    plan = validate_semantic_request(
+        _req(
+            {
+                "op": "patch_entity",
+                "subject": {"key": "document:q3-review", "type": "Document"},
+                "patch": {"summary": "Q3 capacity review, imported from PDF."},
+                "expected_entity_version": "entity-version:1",
+                "reason": "record the imported document",
+            },
+            allow_review_required=True,
+            approved_by="user:alice",
+        )
+    )
+    assert plan.accepted_ops[0].subgraph == "knowledge"
+
+
 # --- lowering ---------------------------------------------------------------
 
 

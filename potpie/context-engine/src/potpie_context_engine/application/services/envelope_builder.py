@@ -29,6 +29,26 @@ from potpie_context_core.agent_envelope import (
 from potpie_context_core.graph_views import INCLUDE_TO_VIEW
 
 
+# Cross-include demotion so a doc corpus cannot crowd project memory out of a
+# mixed envelope (resources P9). Applied only here — DocsReader itself is
+# unchanged, so a pure ``--include docs`` read keeps its internal ranking.
+INCLUDE_RANK_WEIGHT: Mapping[str, float] = {
+    "prior_bugs": 1.0,
+    "decisions": 1.0,
+    "coding_preferences": 1.0,
+    "features": 1.0,
+    "owners": 1.0,
+    "infra_topology": 1.0,
+    "timeline": 1.0,
+    "docs": 0.65,
+    "raw_graph": 0.5,
+}
+
+
+def include_rank_weight(include: str) -> float:
+    return float(INCLUDE_RANK_WEIGHT.get(include, 1.0))
+
+
 @dataclass(slots=True)
 class IncludeResult:
     """One reader's contribution to the envelope."""
@@ -84,12 +104,13 @@ class EnvelopeBuilder:
                 # under this intent. Skip silently.
                 continue
             resp = include_result.response
+            weight = include_rank_weight(inc)
             for ranked in resp.items:
                 items.append(
                     EvidenceItem(
                         include=inc,
                         candidate_key=ranked.candidate.candidate_key,
-                        score=ranked.score,
+                        score=ranked.score * weight,
                         payload=dict(ranked.candidate.payload),
                         coverage_status=resp.coverage_status,
                         breakdown=dict(ranked.breakdown),
@@ -130,8 +151,10 @@ def envelope_to_dict(envelope: AgentEnvelope) -> dict[str, object]:
 
 
 __all__ = [
+    "INCLUDE_RANK_WEIGHT",
     "EnvelopeBuilder",
     "IncludeResult",
     "envelope_to_dict",
+    "include_rank_weight",
     "UnsupportedInclude",
 ]

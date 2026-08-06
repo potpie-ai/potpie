@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Any, Iterable, Mapping
 
 from potpie_context_engine.application.readers._common import (
+    EXCLUDE_KNOWLEDGE_SUBGRAPH,
     ReadRequest,
     ReadResponse,
     claim_corroboration,
@@ -149,6 +150,7 @@ class TimelineReader:
                         include_invalidated=req.include_invalidated,
                         as_of=req.as_of,
                         source_ref_in=req.source_refs,
+                        subgraph_not_in=EXCLUDE_KNOWLEDGE_SUBGRAPH,
                         limit=query_limit,
                         fact_query=req.query,
                     )
@@ -163,6 +165,7 @@ class TimelineReader:
                         include_invalidated=req.include_invalidated,
                         as_of=req.as_of,
                         source_ref_in=req.source_refs,
+                        subgraph_not_in=EXCLUDE_KNOWLEDGE_SUBGRAPH,
                         # Timeline windows are source-event windows. Older rows may
                         # have occurred_at only in properties with valid_at set to
                         # ingestion time, so filter after hydration with
@@ -227,6 +230,7 @@ def _fetch_anchor_scoped_rows(
         "include_invalidated": req.include_invalidated,
         "as_of": req.as_of,
         "source_ref_in": req.source_refs,
+        "subgraph_not_in": EXCLUDE_KNOWLEDGE_SUBGRAPH,
         "limit": limit,
         "fact_query": req.query,
     }
@@ -267,6 +271,7 @@ def _expand_activity_group_edges(
         "include_invalidated": req.include_invalidated,
         "as_of": req.as_of,
         "source_ref_in": req.source_refs,
+        "subgraph_not_in": EXCLUDE_KNOWLEDGE_SUBGRAPH,
         "limit": limit,
         "fact_query": req.query,
     }

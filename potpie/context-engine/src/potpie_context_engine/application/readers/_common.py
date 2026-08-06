@@ -17,6 +17,13 @@ from potpie_context_engine.domain.ranking import (
 )
 
 
+# Resource-store section claims live under the knowledge subgraph. Non-docs
+# readers exclude it so a document corpus cannot crowd ANN recall for project
+# memory (resources P9). DocsReader does not use this — that is its home.
+KNOWLEDGE_SUBGRAPH = "knowledge"
+EXCLUDE_KNOWLEDGE_SUBGRAPH: tuple[str, ...] = (KNOWLEDGE_SUBGRAPH,)
+
+
 @dataclass(frozen=True, slots=True)
 class ReadRequest:
     """Reader input — keeps callers from depending on the global query model."""
@@ -449,6 +456,8 @@ def _strip_glob(path: str) -> str:
 
 
 __all__ = [
+    "EXCLUDE_KNOWLEDGE_SUBGRAPH",
+    "KNOWLEDGE_SUBGRAPH",
     "ReadRequest",
     "ReadResponse",
     "claim_candidate_key",

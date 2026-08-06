@@ -498,12 +498,19 @@ _SUBGRAPH_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "entity_types": (
             "Document",
+            "DocumentSection",
             "Observation",
             "Repository",
             "Service",
             "CodeAsset",
         ),
-        "relation_types": ("RELATED_TO", "MENTIONS", "AFFECTS"),
+        "relation_types": (
+            "DOCUMENTS",
+            "SECTION_OF",
+            "RELATED_TO",
+            "MENTIONS",
+            "AFFECTS",
+        ),
         "keywords": (
             "doc",
             "docs",
@@ -718,14 +725,20 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
         "keywords": ("owner", "ownership", "team", "path", "repo"),
     },
     "knowledge.document_context": {
-        "purpose": "Return documentation pointers and reference notes for a scope.",
+        "purpose": "Return the documents and document sections that are "
+        "reference material for a scope, plus older free-form doc notes.",
         "when_to_use": (
-            "Use when source docs or runbooks may hold the authoritative answer.",
+            "Use when an ingested document, a runbook, or a source doc may hold "
+            "the authoritative answer.",
         ),
         "result_shape": "flat_claims",
         "required_any_scope": ("scope", "query", "service", "repo", "path"),
         "optional_scope": ("scope", "query"),
         "supported_filters": ("scope", "query", "service", "repo", "path", "file_path"),
+        # "section" is deliberately absent: unlike runbook/reference/docs it is
+        # an ordinary software word (config section, a section of a file), and
+        # it outranks the topology and ownership views on tasks that have
+        # nothing to do with reference material.
         "keywords": ("docs", "document", "runbook", "reference", "note"),
     },
     "admin.inspection_slice": {

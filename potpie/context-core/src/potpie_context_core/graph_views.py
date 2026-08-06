@@ -220,8 +220,13 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
         "knowledge",
         "document_context",
         v1_include="docs",
-        description="Reference documentation pointers for a scope.",
+        description="Reference documentation for a scope — ingested documents "
+        "and their sections, plus the older free-form doc notes.",
         inputs=("scope", "query"),
+        # Deliberately empty, so the view keeps its advertised ``flat_claims``
+        # shape. Inlining these would re-project every docs read into
+        # entity+relations items — including an item for the scope entity the
+        # caller filtered by — and drop the ``claim`` block consumers read.
         inline_relations=(),
         ranking_inputs=("semantic_similarity",),
     ),

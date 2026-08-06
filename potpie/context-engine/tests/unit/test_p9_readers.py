@@ -1159,6 +1159,138 @@ class TestNewUseCaseReaders:
             == "document:graph-runbook"
         )
 
+    def test_docs_reader_returns_document_sections_and_their_parent(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.set_entity_label(
+            pot_id="pot-1",
+            entity_key="docsection:q3-review:capacity",
+            labels=("DocumentSection",),
+        )
+        store.add(
+            _row(
+                predicate="DOCUMENTS",
+                subject_key="docsection:q3-review:capacity",
+                object_key="service:context-engine",
+                fact="Q3 capacity planning for the context engine",
+            )
+        )
+        store.add(
+            _row(
+                predicate="SECTION_OF",
+                subject_key="docsection:q3-review:capacity",
+                object_key="document:q3-review",
+                fact="capacity section of the Q3 review",
+            )
+        )
+        reader = DocsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "context-engine"})
+        )
+
+        predicates = {r.candidate.payload["predicate"] for r in response.items}
+        # The section is found on its own label, then expanded one hop so the
+        # result carries the document it came from.
+        assert {"DOCUMENTS", "SECTION_OF"} <= predicates
+
+    def test_docs_reader_returns_sections_with_their_chunk_ids(self) -> None:
+        """An unscoped read is search-then-get in two calls: the section claim
+        an import wrote comes back already holding the ids ``resource get``
+        takes, so no ``resource list`` hop sits in between (R13)."""
+        store = InMemoryClaimQueryStore()
+        store.set_entity_label(
+            pot_id="pot-1",
+            entity_key="docsection:q3-review:capacity",
+            labels=("DocumentSection",),
+        )
+        store.add(
+            _row(
+                predicate="SECTION_OF",
+                subject_key="docsection:q3-review:capacity",
+                object_key="document:q3-review",
+                fact="capacity planning for Q3, by team",
+                source_ref="potpie://res/q3-review/capacity/0000",
+            )
+        )
+        reader = DocsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(ReadRequest(pot_id="pot-1", query="capacity planning"))
+
+        assert response.items
+        payload = response.items[0].candidate.payload
+        assert payload["subject_key"] == "docsection:q3-review:capacity"
+        assert payload["chunk_ids"] == ["potpie://res/q3-review/capacity/0000"]
+
+    def test_docs_reader_omits_chunk_ids_when_a_claim_has_none(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.set_entity_label(
+            pot_id="pot-1", entity_key="document:plain", labels=("Document",)
+        )
+        store.add(
+            _row(
+                predicate="DOCUMENTS",
+                subject_key="document:plain",
+                object_key="service:context-engine",
+                fact="a document with no stored chunks",
+            )
+        )
+        reader = DocsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "context-engine"})
+        )
+
+        assert "chunk_ids" not in response.items[0].candidate.payload
+
+    def test_docs_reader_still_reads_legacy_related_to_doc_claims(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.set_entity_label(
+            pot_id="pot-1", entity_key="document:legacy-note", labels=("Document",)
+        )
+        store.add(
+            _row(
+                predicate="RELATED_TO",
+                subject_key="document:legacy-note",
+                object_key="service:context-engine",
+                fact="note written before DOCUMENTS existed",
+            )
+        )
+        reader = DocsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "context-engine"})
+        )
+
+        assert [r.candidate.payload["subject_key"] for r in response.items] == [
+            "document:legacy-note"
+        ]
+
+    def test_docs_reader_returns_one_item_when_both_spellings_exist(self) -> None:
+        # Nothing migrates the RELATED_TO fallback, so a document can carry
+        # both predicates for one scope. That is one document, not two.
+        store = InMemoryClaimQueryStore()
+        store.set_entity_label(
+            pot_id="pot-1", entity_key="document:runbook", labels=("Document",)
+        )
+        for predicate in ("RELATED_TO", "DOCUMENTS"):
+            store.add(
+                _row(
+                    predicate=predicate,
+                    subject_key="document:runbook",
+                    object_key="service:payments-api",
+                    fact="runbook for the payments api",
+                )
+            )
+        reader = DocsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "payments-api"})
+        )
+
+        assert [r.candidate.payload["predicate"] for r in response.items] == [
+            "DOCUMENTS"
+        ]
+
 
 # ---------------------------------------------------------------------------
 # PriorBugsReader (UC4)
@@ -1277,3 +1409,62 @@ class TestPriorBugsReader:
 
         predicates = {r.candidate.payload["predicate"] for r in response.items}
         assert {"REPRODUCES", "RESOLVED"} <= predicates
+
+    def test_section_claims_do_not_crowd_or_leak_into_prior_bugs(self) -> None:
+        # P9: a dense knowledge/SECTION_OF corpus that shares symptom text with
+        # a real bug must neither appear as prior_bugs items nor empty the
+        # reader when the bug claim exists.
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="REPRODUCES",
+                subject_key="bug_pattern:pool-timeout",
+                object_key="service:auth-svc",
+                fact="connection pool exhausted under load timeout",
+                evidence_strength="attested",
+                subgraph="debugging",
+                properties={"scope_keys": ["service:auth-svc"]},
+            )
+        )
+        store.add(
+            _row(
+                predicate="RESOLVED",
+                subject_key="fix:pool-timeout",
+                object_key="bug_pattern:pool-timeout",
+                fact="raise the pool size when connection pool exhausted",
+                evidence_strength="attested",
+                subgraph="debugging",
+            )
+        )
+        for i in range(40):
+            store.add(
+                _row(
+                    predicate="SECTION_OF",
+                    subject_key=f"docsection:ops-runbook:pool-{i}",
+                    object_key="document:ops-runbook",
+                    fact="connection pool exhausted under load timeout",
+                    evidence_strength="stated",
+                    subgraph="knowledge",
+                )
+            )
+            store.set_entity_label(
+                pot_id="pot-1",
+                entity_key=f"docsection:ops-runbook:pool-{i}",
+                labels=("Entity", "DocumentSection"),
+            )
+
+        reader = PriorBugsReader(claim_query=store, ranker=RankingService())
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"services": ["auth-svc"]},
+                query="connection pool exhausted under load timeout",
+                max_items=8,
+            )
+        )
+
+        predicates = {r.candidate.payload["predicate"] for r in response.items}
+        assert "SECTION_OF" not in predicates
+        assert "DOCUMENTS" not in predicates
+        assert {"REPRODUCES", "RESOLVED"} & predicates
+        assert response.coverage_status != "empty"

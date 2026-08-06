@@ -849,8 +849,11 @@ _CATEGORY_SUBGRAPH = {
     "ownership": "code_topology",
     "people": "code_topology",
     "timeline": "recent_changes",
+    "knowledge": "knowledge",
     "generic": "admin",
 }
+# An unmapped category falls back to "memory" silently, so entity types whose
+# category is broader than their slice are pinned here explicitly.
 _ENTITY_TYPE_SUBGRAPH = {
     "Preference": "decisions",
     "Policy": "decisions",
@@ -858,6 +861,8 @@ _ENTITY_TYPE_SUBGRAPH = {
     "BugPattern": "debugging",
     "Fix": "debugging",
     "Activity": "recent_changes",
+    "Document": "knowledge",
+    "DocumentSection": "knowledge",
 }
 
 

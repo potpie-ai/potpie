@@ -4,24 +4,43 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 import threading
 from typing import Callable
 
 from potpie_context_core.api import (
+    Chunk,
     ClaimQueryFilter,
     DEFAULT_GRAPH_DEFINITION,
+    DocumentManifest,
     GraphDefinition,
     GraphInboxItem,
     GraphMutationPlanRecord,
     GraphRuntime,
+    ResourceStoreStatus,
+    SectionManifest,
     build_graph_runtime,
+    parse_resource_id,
+    require_resource_slug,
 )
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
+from potpie_context_engine.adapters.outbound.resources import (
+    build_chunk,
+    build_import_manifest,
+    chunk_not_found,
+    document_not_found,
+    find_chunk_ref,
+    read_source_document,
+    section_not_found,
+)
 from potpie_context_engine.testing.conformance import (
     GraphBackendConformanceMixin,
+    ResourceStoreConformanceMixin,
     run_graph_backend_conformance,
+    run_resource_store_conformance,
+    write_import_directory,
 )
 
 
@@ -147,6 +166,132 @@ class InMemoryGraphInboxStore:
         return self.list(**kwargs)
 
 
+@dataclass(frozen=True, slots=True)
+class _StoredResource:
+    manifest: DocumentManifest
+    texts: dict[tuple[str, int], str]
+
+
+@dataclass(slots=True)
+class InMemoryResourceStore:
+    """Reference ``ResourceStorePort`` with no filesystem behind it.
+
+    Shares the import-directory validator with ``LocalResourceStore``, so the
+    two answer the same contract. Atomicity comes for free: validation raises
+    before any state is touched, leaving a prior revision intact. Pot isolation
+    is structural — every document is keyed by ``(pot_id, doc)``.
+    """
+
+    _documents: dict[tuple[str, str], _StoredResource] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def import_dir(
+        self,
+        *,
+        pot_id: str,
+        slug: str,
+        source_dir: Path,
+        source_ref: str | None = None,
+        source_kind: str | None = None,
+    ) -> DocumentManifest:
+        doc = require_resource_slug(slug, kind="document")
+        source = read_source_document(Path(source_dir))
+        with self._lock:
+            stored = self._documents.get((pot_id, doc))
+            manifest = build_import_manifest(
+                pot_id=pot_id,
+                doc=doc,
+                source=source,
+                prior=stored.manifest if stored else None,
+                source_ref=source_ref,
+                source_kind=source_kind,
+            )
+            self._documents[(pot_id, doc)] = _StoredResource(
+                # The diff and warning fields report on one import; only the
+                # structure is durable state.
+                manifest=DocumentManifest(
+                    pot_id=manifest.pot_id,
+                    doc=manifest.doc,
+                    revision=manifest.revision,
+                    source_ref=manifest.source_ref,
+                    source_kind=manifest.source_kind,
+                    sections=manifest.sections,
+                ),
+                texts=dict(source.texts),
+            )
+        return manifest
+
+    def get(self, *, pot_id: str, resource_id: str) -> Chunk:
+        return self.get_many(pot_id=pot_id, resource_ids=(resource_id,))[0]
+
+    def get_many(
+        self, *, pot_id: str, resource_ids: tuple[str, ...]
+    ) -> tuple[Chunk, ...]:
+        chunks: list[Chunk] = []
+        with self._lock:
+            for resource_id in resource_ids:
+                resource = parse_resource_id(resource_id)
+                stored = self._documents.get((pot_id, resource.doc))
+                if stored is None:
+                    raise chunk_not_found(resource_id)
+                ref = find_chunk_ref(
+                    stored.manifest, section=resource.section, seq=resource.seq
+                )
+                text = stored.texts.get((resource.section, resource.seq))
+                if ref is None or text is None:
+                    raise chunk_not_found(resource_id)
+                chunks.append(
+                    build_chunk(
+                        manifest=stored.manifest, resource=resource, ref=ref, text=text
+                    )
+                )
+        return tuple(chunks)
+
+    def list(
+        self, *, pot_id: str, slug: str, section: str | None = None
+    ) -> tuple[SectionManifest, ...]:
+        doc = require_resource_slug(slug, kind="document")
+        with self._lock:
+            stored = self._documents.get((pot_id, doc))
+        if stored is None:
+            raise document_not_found(doc)
+        if section is None:
+            return stored.manifest.sections
+        wanted = require_resource_slug(section, kind="section")
+        rows = tuple(row for row in stored.manifest.sections if row.slug == wanted)
+        if not rows:
+            raise section_not_found(doc, wanted)
+        return rows
+
+    def delete(self, *, pot_id: str, slug: str) -> bool:
+        doc = require_resource_slug(slug, kind="document")
+        with self._lock:
+            return self._documents.pop((pot_id, doc), None) is not None
+
+    def purge_pot(self, pot_id: str) -> bool:
+        with self._lock:
+            owned = [key for key in self._documents if key[0] == pot_id]
+            for key in owned:
+                del self._documents[key]
+            return bool(owned)
+
+    def status(self, *, pot_id: str | None = None) -> ResourceStoreStatus:
+        with self._lock:
+            documents = (
+                sum(1 for key in self._documents if key[0] == pot_id)
+                if pot_id
+                else None
+            )
+        # Nothing to be unready about: the store is the process it runs in.
+        return ResourceStoreStatus(
+            kind="in_memory",
+            ready=True,
+            location=None,
+            documents=documents,
+            detail="resources are lost when the process exits",
+        )
+
+
 def build_test_backend(
     *, definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
 ) -> InMemoryGraphBackend:
@@ -194,8 +339,12 @@ __all__ = [
     "InMemoryGraphBackend",
     "InMemoryGraphInboxStore",
     "InMemoryGraphPlanStore",
+    "InMemoryResourceStore",
+    "ResourceStoreConformanceMixin",
     "assert_graph_backend_conforms",
     "build_test_backend",
     "build_test_graph_runtime",
     "run_graph_backend_conformance",
+    "run_resource_store_conformance",
+    "write_import_directory",
 ]

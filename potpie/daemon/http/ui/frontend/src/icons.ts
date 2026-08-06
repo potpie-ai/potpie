@@ -35,6 +35,8 @@ const ICON_PATHS: Record<string, string> = {
   Decision: "M12 3l9 9-9 9-9-9z",
   Document:
     "M14 2.5H6.5A1.5 1.5 0 0 0 5 4v16a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 20V7.5z M14 2.5V7.5h5 M9 13h6 M9 17h6",
+  DocumentSection:
+    "M4.5 4.5h15v6h-15z M4.5 13.5h15v6h-15z M7.5 7.5h6 M7.5 16.5h6",
   // soft-fail fallbacks
   Observation:
     "M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z M9.5 12a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0",

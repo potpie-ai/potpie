@@ -8,7 +8,7 @@ Three sections, all spec-driven:
    TTL, classifier cues, and project-map / debugging family mappings.
 2. :data:`EDGE_TYPES` — every predicate that can ride on a ``:RELATES_TO``
    claim, grouped by ``category`` (``topology`` / ``ownership`` / ``people``
-   / ``timeline`` / ``memory`` / ``generic``).
+   / ``timeline`` / ``memory`` / ``knowledge`` / ``generic``).
 3. :data:`RECORD_TYPES` — the agent-facing context_record vocabulary, each
    row joining a record type to its anchor entity, emitted predicate,
    payload schema, and reader include key. This is the table that unifies
@@ -617,20 +617,54 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         text_patterns=(r"\bdecision\b", r"\b(ADR|architecture decision)\b"),
         property_signatures=("rationale", "alternatives_rejected"),
     ),
-    # --- Generic fail-open fallbacks (soft-fail downgrade targets) ----------
-    # The agent reconciliation path coerces unrecognized output onto these
-    # rather than rejecting the batch. ``public=False`` keeps them out of the
-    # agent-facing topology contract; they carry no project-map family.
+    # --- Ingested reference material ----------------------------------------
+    # A document is split in half: its structure lives here, its payload bytes
+    # live in the resource store as chunk files (see
+    # ``docs/context-graph/resources.md``). Sections are the searchable grain —
+    # each carries an agent-authored summary that becomes an ordinary claim, so
+    # the existing embedding path is the index and no chunk ever enters a node.
     "Document": _e(
         "Document",
         "evidence",
-        "Generic document / note (soft-fail fallback for unrecognized doc-like entities).",
-        identity_class=IdentityClass.CONTENT_HASH,
+        "A named document ingested into the pot — a PDF, spreadsheet, runbook, "
+        "or design note. The graph holds its identity and section structure; "
+        "the payload bytes live in the resource store as chunk files, never as "
+        "node properties.",
+        identity_class=IdentityClass.SLUG_ALIAS,
         key_prefix="document",
-        public=False,
-        fact_family="evidence",
+        identity_policy="document:<slug>",
+        # Own SoT family so a doc corpus does not share freshness / ranking
+        # policy with soft-fail Observation nodes (resources P9).
+        fact_family="documents",
         source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+        # No property signature: ``source_kind`` is this codebase's general
+        # provenance word (``ProvenanceContext.source_kind``), and the
+        # classifier treats one signature property as sufficient — a Service
+        # carrying ``source_kind: github`` would be labelled a Document. The
+        # ``document:`` key prefix already classifies these nodes.
     ),
+    "DocumentSection": _e(
+        "DocumentSection",
+        "evidence",
+        "One structural division of a document — a heading, sheet, or chapter. "
+        "It carries the agent-authored summary that is the only index into its "
+        "chunks; the chunk payloads live in the resource store, never in the "
+        "graph.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="docsection",
+        identity_policy="docsection:<doc>:<section>",
+        fact_family="documents",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+        property_signatures=("chunk_count",),
+    ),
+    # --- Generic fail-open fallbacks (soft-fail downgrade targets) ----------
+    # The agent reconciliation path coerces unrecognized output onto these two
+    # rather than rejecting the batch. ``public=False`` keeps them out of the
+    # agent-facing topology contract; they carry no project-map family.
+    # ``Document`` used to live here; it is now a public entity above, so the
+    # ADR downgrade path lands on a real label rather than a catch-all.
     "Observation": _e(
         "Observation",
         "evidence",
@@ -929,6 +963,33 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         ],
         category="memory",
         source_inferred=("Decision",),
+    ),
+    # --- Reference material (ingested documents) ----------------------------
+    # The structural half of the resource store: SECTION_OF holds a document
+    # together, DOCUMENTS points it at whatever it is reference material for.
+    "SECTION_OF": _x(
+        "SECTION_OF",
+        "A section belongs to a document. Singleton on purpose: a section has "
+        "exactly one parent, so re-parenting supersedes the prior claim "
+        "instead of leaving the section attached to two documents.",
+        [("DocumentSection", "Document")],
+        category="knowledge",
+        predicate_family="document_structure",
+        exclusive_family="document_structure",
+        singleton=True,
+        source_inferred=("DocumentSection",),
+        target_inferred=("Document",),
+    ),
+    "DOCUMENTS": _x(
+        "DOCUMENTS",
+        "A document, or one of its sections, is reference material for an "
+        "entity — the structural answer to 'what documentation covers "
+        "service:payments-api'. This is the public, typed version of the "
+        "RELATED_TO fallback that doc_reference records land on today. The "
+        "source label is ambiguous between Document and DocumentSection, so "
+        "neither is inferred.",
+        [("Document", WILDCARD_ENDPOINT), ("DocumentSection", WILDCARD_ENDPOINT)],
+        category="knowledge",
     ),
     # --- Generic fail-open fallback (soft-fail downgrade target) ------------
     # Unrecognized agent-emitted edge types coerce onto this wildcard edge

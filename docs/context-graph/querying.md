@@ -138,7 +138,7 @@ The 9 readers map one-to-one onto the 9 named views (§8):
 | `prior_bugs` | `RESOLVED`, `ATTEMPTED_FIX_FAILED`, `VERIFIED`, `REPRODUCES` | expands the bug/fix neighborhood, folds `VERIFIED` into fix corroboration, labels failed attempts, hides narrower-scope bugs from broader queries |
 | `decisions` | `DECIDED`, `AFFECTS` | active/superseded decisions for a scope |
 | `owners` | `OWNED_BY`, `MEMBER_OF` | ownership by scope/path |
-| `docs` | `Document RELATED_TO scope` | scoped document context |
+| `docs` | `Document\|DocumentSection DOCUMENTS scope` (plus legacy `Document RELATED_TO scope`), expanded one hop over `SECTION_OF` | scoped reference material — see [resources.md](./resources.md) |
 | `raw_graph` | every live `:RELATES_TO` edge (incl. generic `RELATED_TO`) | unscoped, for the explorer UI — **not** an agent retrieval family |
 
 > Known spec/reader drift: the `service_neighborhood` view spec

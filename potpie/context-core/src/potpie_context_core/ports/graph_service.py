@@ -371,6 +371,10 @@ def read_item_for_detail(
                 "summary",
                 "status",
                 "source_refs",
+                # Survives ``compact`` on purpose: these are the ids
+                # ``resource get`` takes, and dropping them would put a
+                # ``resource list`` hop between a search hit and its text.
+                "chunk_ids",
                 "truth",
                 "coverage_status",
             )

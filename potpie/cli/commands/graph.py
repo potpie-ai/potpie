@@ -65,6 +65,7 @@ from potpie_context_core.graph_workbench import (
 )
 from potpie_context_engine.domain.ports.observability import SPAN_KIND_INTERNAL
 from potpie_context_core.graph_views import INCLUDE_TO_VIEW
+from potpie_context_core.ports.graph.analytics import RepairFinding
 from potpie_context_engine.domain.nudge import NUDGE_EVENT_HELP
 
 graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
@@ -2140,6 +2141,12 @@ def graph_repair(
     semantic_index: bool = typer.Option(False, "--semantic-index"),
     entity_summaries: bool = typer.Option(False, "--entity-summaries"),
     entity_labels: bool = typer.Option(False, "--entity-labels"),
+    document_keys: bool = typer.Option(
+        False,
+        "--document-keys",
+        help="Audit Document nodes still keyed by the legacy content hash "
+        "(report only; nothing is rewritten).",
+    ),
     all_: bool = typer.Option(False, "--all"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
@@ -2155,12 +2162,33 @@ def graph_repair(
                 targets.append("entity_summaries")
             if entity_labels:
                 targets.append("entity_labels")
+            if document_keys:
+                targets.append("document_keys")
         report = host.backend.analytics.repair(pot_id, targets=targets)
+        findings = tuple(report.findings)
         _emit_graph_result(
             ctx,
-            {"targets": list(report.targets), "repaired": dict(report.repaired)},
+            {
+                "targets": list(report.targets),
+                "repaired": dict(report.repaired),
+                "findings": [_repair_finding_payload(f) for f in findings],
+            },
             human=report.detail or f"repaired {dict(report.repaired)}",
+            recommended_next_action=next(
+                (f.recommended_next_action for f in findings if f.count), None
+            ),
         )
+
+
+def _repair_finding_payload(finding: RepairFinding) -> dict[str, Any]:
+    """Render one detect-only repair finding for the ``--json`` contract."""
+    return {
+        "target": finding.target,
+        "count": finding.count,
+        "samples": list(finding.samples),
+        "detail": finding.detail,
+        "recommended_next_action": finding.recommended_next_action,
+    }
 
 
 @backend_app.command("list")

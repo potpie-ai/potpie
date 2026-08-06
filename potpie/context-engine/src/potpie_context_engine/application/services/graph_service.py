@@ -1152,8 +1152,13 @@ def _normalize_read_item(
     subject_key = _str_or_none(payload.get("subject_key"))
     object_key = _str_or_none(payload.get("object_key"))
     entity_key = subject_key or object_key or item.candidate_key
+    # Fetchable chunk ids, when the reader named them. Carried through rather
+    # than left in the payload so a search hit on a document section arrives
+    # holding exactly what ``potpie resource get`` takes.
+    chunk_ids = _string_tuple(payload.get("chunk_ids"))
     return {
         "entity_key": entity_key,
+        **({"chunk_ids": list(chunk_ids)} if chunk_ids else {}),
         "entity_type": _entity_type_for_key(entity_key, (), definition=definition),
         "score": item.score,
         "summary": _first_text(

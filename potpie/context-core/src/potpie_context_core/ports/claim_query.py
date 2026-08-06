@@ -71,6 +71,7 @@ class ClaimQueryFilter:
     object_key_in: tuple[str, ...] = ()
     claim_key_in: tuple[str, ...] = ()
     subgraph_in: tuple[str, ...] = ()
+    subgraph_not_in: tuple[str, ...] = ()
     mutation_id_in: tuple[str, ...] = ()
     source_ref_in: tuple[str, ...] = ()
     subject_label: str | None = None  # filter by Entity label

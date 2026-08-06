@@ -28,6 +28,8 @@ from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import 
     row_from_record,
     stamp_scored_rows,
     stamp_similarity,
+    vector_candidate_k,
+    vector_filter_is_selective,
 )
 from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
@@ -51,6 +53,7 @@ WHERE r.group_id = $gid
   AND ($objects IS NULL OR r.object_key IN $objects)
   AND ($claim_keys IS NULL OR r.claim_key IN $claim_keys)
   AND ($subgraphs IS NULL OR r.subgraph IN $subgraphs)
+  AND ($excluded_subgraphs IS NULL OR NOT (r.subgraph IN $excluded_subgraphs))
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
   AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
@@ -116,6 +119,7 @@ class FalkorDBClaimQueryStore:
             "objects": list(filter_.object_key_in) or None,
             "claim_keys": list(filter_.claim_key_in) or None,
             "subgraphs": list(filter_.subgraph_in) or None,
+            "excluded_subgraphs": list(filter_.subgraph_not_in) or None,
             "mutation_ids": list(filter_.mutation_id_in) or None,
             "source_refs": list(filter_.source_ref_in) or None,
             "sources": list(filter_.source_system_in) or None,
@@ -150,7 +154,7 @@ class FalkorDBClaimQueryStore:
         assert filter_.fact_query is not None
         assert self._embedder is not None
         limit = filter_.limit if filter_.limit is not None and filter_.limit > 0 else 10
-        k = max(limit * 5, 50)
+        k = vector_candidate_k(limit, selective=vector_filter_is_selective(filter_))
         label_filtered = bool(filter_.subject_label or filter_.object_label)
         try:
             vector_params = {

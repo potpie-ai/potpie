@@ -391,6 +391,7 @@ def register(root: typer.Typer) -> None:
             default_pot_id = repo_default_pot_id(host, repo_identity)
 
             cli_install = collect_cli_install_status()
+            resources = host.resources.status(pot_id=pot_id or None)
             emit(
                 {
                     "daemon": daemon_status,
@@ -414,6 +415,13 @@ def register(root: typer.Typer) -> None:
                         "available": host.ledger.status().available,
                         "binding": host.ledger.status().binding,
                     },
+                    "resources": {
+                        "kind": resources.kind,
+                        "ready": resources.ready,
+                        "location": resources.location,
+                        "documents": resources.documents,
+                        "detail": resources.detail,
+                    },
                 },
                 human=(
                     f"daemon: {daemon_status['mode']} (up={daemon_status.get('up')})\n"
@@ -421,7 +429,14 @@ def register(root: typer.Typer) -> None:
                     f"backend: {host.backend.profile} ready={readiness.ready} "
                     f"caps={', '.join(caps.implemented())}\n"
                     f"ledger: {host.ledger.status().binding} "
-                    f"available={host.ledger.status().available}"
+                    f"available={host.ledger.status().available}\n"
+                    f"resources: {resources.kind} ready={resources.ready}"
+                    + (
+                        f" documents={resources.documents}"
+                        if resources.documents is not None
+                        else ""
+                    )
+                    + (f" ({resources.location})" if resources.location else "")
                     + (
                         f"\nrepo: {repo_identity} → {effective_current_repo_pot}"
                         + (

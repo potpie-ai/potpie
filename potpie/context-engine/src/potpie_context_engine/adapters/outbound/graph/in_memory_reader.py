@@ -157,6 +157,8 @@ def _matches_filter(
         return False
     if filter_.subgraph_in and row.subgraph not in filter_.subgraph_in:
         return False
+    if filter_.subgraph_not_in and row.subgraph in filter_.subgraph_not_in:
+        return False
     if filter_.mutation_id_in and row.mutation_id not in filter_.mutation_id_in:
         return False
     if filter_.source_ref_in and not _row_matches_source_refs(

@@ -860,7 +860,15 @@ _CATEGORY_SUBGRAPH = {
     "ownership": "code_topology",
     "people": "code_topology",
     "timeline": "recent_changes",
+    "knowledge": "knowledge",
     "generic": "admin",
+}
+# Entity categories are coarser than subgraphs (``evidence`` covers both the
+# soft-fail fallbacks and ingested documents), so labels whose slice differs
+# from their category default are pinned here. Mirrors the validator's map.
+_ENTITY_TYPE_SUBGRAPH = {
+    "Document": "knowledge",
+    "DocumentSection": "knowledge",
 }
 
 
@@ -876,6 +884,8 @@ def _subgraph_for_predicate(predicate: str) -> str:
 
 def _subgraph_for_entity(ref: GraphEntityRef | None) -> str:
     label = _label_for(ref, "Observation") if ref is not None else "Observation"
+    if label in _ENTITY_TYPE_SUBGRAPH:
+        return _ENTITY_TYPE_SUBGRAPH[label]
     spec = _entity_types().get(label)
     if spec is None:
         return "admin"

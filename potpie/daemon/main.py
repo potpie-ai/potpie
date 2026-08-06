@@ -50,6 +50,7 @@ _ALLOWED_RPC_SURFACES = frozenset(
         "ledger",
         "nudge",
         "pots",
+        "resources",
         "setup",
         "skills",
     }
@@ -212,8 +213,12 @@ def _error_payload(exc: Exception) -> dict[str, Any]:
         # Domain validation errors may carry structured guidance (e.g.
         # UnknownGraphViewError's did_you_mean) that the CLI error envelope
         # surfaces; keep it on the wire like CapabilityNotImplemented above.
+        # ``error_code`` is the domain's own stable code where it has one
+        # (``ResourceStoreError.code``); the envelope ``code`` stays
+        # ``validation_error`` so the client keeps routing these to ValueError.
         error = {
             "code": "validation_error",
+            "error_code": getattr(exc, "code", None),
             "message": str(exc),
             "detail": getattr(exc, "detail", None),
             "recommended_next_action": getattr(exc, "recommended_next_action", None),

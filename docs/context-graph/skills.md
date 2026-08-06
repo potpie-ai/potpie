@@ -240,7 +240,7 @@ through a **different tool surface**: `apply_graph_mutations(plan, event_id,
 summary)`, `mark_event_processed`, and `finish_batch`.
 
 Same philosophy (a model authoring semantic mutations, downgrading to
-`RELATED_TO` / `Document` / `Observation` when uncertain, with `domain/ontology.py`
+`RELATED_TO` / `Observation` when uncertain, with `domain/ontology.py`
 as the entity-key source of truth) — but a distinct agent, tool surface, and
 install path.
 

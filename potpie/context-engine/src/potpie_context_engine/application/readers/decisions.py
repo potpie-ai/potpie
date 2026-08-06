@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from potpie_context_engine.application.readers._common import (
+    EXCLUDE_KNOWLEDGE_SUBGRAPH,
     ReadRequest,
     ReadResponse,
     claim_candidate_key,
@@ -83,6 +84,7 @@ class DecisionsReader:
             "include_invalidated": req.include_invalidated,
             "as_of": req.as_of,
             "source_ref_in": req.source_refs,
+            "subgraph_not_in": EXCLUDE_KNOWLEDGE_SUBGRAPH,
             "limit": max(req.max_items * 8, 64),
             "fact_query": req.query,
         }
@@ -105,6 +107,7 @@ class DecisionsReader:
                         include_invalidated=req.include_invalidated,
                         as_of=req.as_of,
                         source_ref_in=req.source_refs,
+                        subgraph_not_in=EXCLUDE_KNOWLEDGE_SUBGRAPH,
                         limit=max(req.max_items * 8, 64),
                     )
                 )

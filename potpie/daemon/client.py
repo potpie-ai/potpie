@@ -127,6 +127,7 @@ class RemoteHostShell:
         self.skills = RemoteSurface(self.rpc, "skills")
         self.backend = RemoteSurface(self.rpc, "backend")
         self.ledger = RemoteSurface(self.rpc, "ledger")
+        self.resources = RemoteSurface(self.rpc, "resources")
         self.nudge = RemoteSurface(self.rpc, "nudge")
         self.config = RemoteSurface(self.rpc, "config")
         self.installer = RemoteSurface(self.rpc, "installer")
@@ -164,10 +165,15 @@ def _raise_remote_error(data: dict[str, Any]) -> None:
         exc = ValueError(message)
         # Re-attach structured guidance so the CLI error boundary can surface
         # detail/recommended_next_action exactly as with an in-process service.
+        # ``error_code`` carries the domain's own stable code (a resource store
+        # reports ``resource_chunk_too_large``, not just "validation_error"),
+        # which the command's error envelope reports verbatim.
         if detail is not None:
             setattr(exc, "detail", detail)
         if next_action is not None:
             setattr(exc, "recommended_next_action", next_action)
+        if error.get("error_code"):
+            setattr(exc, "code", str(error["error_code"]))
         raise exc
     raise ContextEngineDisabled(message)
 

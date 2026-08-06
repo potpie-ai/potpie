@@ -88,6 +88,7 @@ and `add_typer` sub-apps. Note the corrections vs older docs: there is **no
 | `graph` (+ nested `inbox`, `quality`, `bulk`) | `commands/graph.py` | `HostShell.graph` / `graph_workbench` / `backend` / `nudge` |
 | `timeline` | `commands/graph.py` | `HostShell.graph` (alias of a recent-changes read) |
 | `backend` | `commands/graph.py` | `HostShell.backend` (`GraphBackend`) |
+| `resource` | `commands/resource.py` | `HostShell.resources` (`ResourceFacade` over `ResourceStorePort`) |
 | `skills` | `commands/skills.py` | `HostShell.skills` (`SkillManager`) |
 | `cloud` | `commands/cloud.py` | managed sync — **all raise `CapabilityNotImplemented`** (roadmap) |
 
@@ -136,9 +137,9 @@ potpie ui      [--open/--no-open] [--pot <ref>]
   (daemon mode calls `host.daemon.ensure()` first); `--dry-run` returns a preview
   without executing. `--pot` only overrides the initial pot name.
 - **`doctor`** — local diagnostics composed from `backend.capabilities()` +
-  `backend.mutation.readiness()` + `daemon.status()` + `ledger.status()`; also
-  reports `effective_current_repo_pot` and `repo_default_pot` (the repo→pot
-  routing resolution for the current directory).
+  `backend.mutation.readiness()` + `daemon.status()` + `ledger.status()` +
+  `resources.status()`; also reports `effective_current_repo_pot` and
+  `repo_default_pot` (the repo→pot routing resolution for the current directory).
 - **`whoami`** — local OSS reports a `none` identity.
 - **`use <ref>`** — alias for `pot use`. `--managed` raises `CapabilityNotImplemented`
   (see Roadmap below).
@@ -180,8 +181,8 @@ potpie pot info
 potpie pot create <name> [--repo .] [--use] [--also-default-for-current-repo]
 potpie pot use    <ref> [--also-default-for-current-repo]
 potpie pot rename <ref> <new-name>
-potpie pot reset  [<ref>] [--confirm]
-potpie pot archive <ref>
+potpie pot reset   [<ref>] [--confirm]
+potpie pot archive <ref> [--confirm]
 
 potpie pot linked  [--repo .] [--summary]
 potpie pot default show | set | clear [--repo .]
@@ -192,8 +193,10 @@ potpie source status [<id>] [--pot <ref>]
 potpie source remove <id> [--pot <ref>]
 ```
 
-- **`pot reset`** is the destructive per-pot wipe — note there is **no
-  `graph reset`** command.
+- **`pot reset`** is the destructive per-pot wipe (graph partition **and**
+  resource store tree) — note there is **no `graph reset`** command.
+  **`pot archive`** soft-archives the pot and tears down the same data; both
+  require `--confirm`.
 - **`pot linked` / `pot default`** manage the repo→pot binding consumed by
   `resolve_pot_id`. `pot linked --summary` skips per-pot graph counts for a faster
   repo-routing summary. `pot create`/`pot use --also-default-for-current-repo` set
@@ -204,6 +207,8 @@ potpie source remove <id> [--pot <ref>]
 - **`source add <kind> <location>`** is generic registration only (no scan/ingest);
   registering a repo also sets the repo default. Repo-baseline ingestion is
   harness-led via skills ([skills.md](./skills.md)), not a scanner.
+- **`source remove`** drops the registration only — it does not purge documents or
+  graph claims (there is no source→document FK).
 
 ---
 
@@ -257,6 +262,49 @@ potpie cloud skills sync [--agent <id>]
 > **Roadmap (not yet wired):** every `cloud` command (and `pot list --managed`,
 > `use --managed`) raises `CapabilityNotImplemented`. The managed profile shares the
 > same service modules and command language; only the routing is unbuilt.
+
+---
+
+## Resources (`commands/resource.py` → `host.resources`)
+
+```bash
+potpie resource import <dir> --doc <slug> [--source-ref <uri>] [--source-kind <fmt>] [--pot <ref>]
+potpie resource get    <id> [<id>...] [--with-neighbors] [--pot <ref>]
+potpie resource list   --doc <slug> [--section <slug>] [--pot <ref>]
+potpie resource rm     <slug> [--confirm] [--pot <ref>]
+```
+
+Document payloads: the bytes the graph only points at. An agent writes an extraction
+script, the script emits `<section>/<seq>.txt` plus a `meta.json`, and `import` absorbs
+that directory atomically — writing chunks to a temp dir and renaming it into place, so a
+rejected or crashed import leaves the prior revision exactly as it was. `get` resolves a
+`potpie://res/<doc>/<section>/<seq>` id straight to a file read: no graph query, no
+embedding. It takes several ids at once and `--with-neighbors` expands each to the chunks
+either side *within the same section*, both resolved host-side so a multi-chunk read stays
+one round trip.
+
+`import` writes both halves of a document: bytes to the store, then structure to the
+graph — a `Document` entity owning one `DocumentSection` per division, joined by
+`SECTION_OF`, each section citing its own chunk ids as claim evidence. That write goes
+through `graph mutate`, the same door an agent's own write uses, so it is validated and
+risk-classified identically; the `graph` block in the payload reports `written`, `status`,
+`entity_key`, and the claim keys. Bytes land first on purpose — there is no transaction
+across the two stores, and a failed graph write leaves orphan files the next import
+overwrites, where the reverse order would leave claims citing chunks that do not exist. A
+re-import bumps `revision` and retracts the `SECTION_OF` claims of sections that
+disappeared. Import never puts chunk text in the graph, and never invents a scope edge:
+`recommended_next_action` points at the `DOCUMENTS` claim only the caller can write.
+
+Store failures carry their own stable `code` (`resource_chunk_too_large`,
+`resource_not_found`, `resource_slug_invalid`, …) rather than a flat `validation_error`;
+they exit `1` like any other caller mistake. `rm` is destructive and takes `--confirm`
+(prompting only where a human can answer — never under `--json` or a non-tty). `doctor`
+reports the store's kind, readiness, location, and the active pot's document count.
+
+`resource rm` retracts section claims before deleting bytes; `pot reset` / `pot archive`
+purge the pot's resource tree with the graph (P5). Resource bytes are not portable *by
+design*: `graph export` carries claims only, so chunk ids in a restored snapshot resolve
+to `resource_not_found` until the document is re-imported.
 
 ---
 
@@ -339,7 +387,7 @@ potpie graph search-entities [<query> | --query <text>] \
 
 - **`graph catalog`** returns the live contract (versions, commands, 7 truth classes,
   the 10 mutation ops — all `APPLICABLE`, 6 source authorities, the 9 views, the
-  public 24 entity types and 25 predicates). **`--task <text>`** reorders views by
+  public 23 entity types and 27 predicates). **`--task <text>`** reorders views by
   task relevance (`ranked_catalog_views`) and adds `task_ranking` metadata to the
   output (including `--profile read`); `--subgraph` filters, `--profile full|read`
   and `--format auto|table` shape output. See [ontology.md](./ontology.md) for the
@@ -471,7 +519,8 @@ potpie graph inspect <entity_key> [--depth 2] [--pot <ref>]      # legacy alias 
 
 potpie graph export <file> [--pot <ref>]
 potpie graph import <file> [--pot <ref>]
-potpie graph repair [--semantic-index] [--entity-summaries] [--all] [--pot <ref>]
+potpie graph repair [--semantic-index] [--entity-summaries] [--entity-labels] \
+                    [--document-keys] [--all] [--pot <ref>]
 ```
 
 - **`graph neighborhood`** is the **Traverse** axis (first-class), backed by
@@ -480,6 +529,15 @@ potpie graph repair [--semantic-index] [--entity-summaries] [--all] [--pot <ref>
 - Unbuilt capabilities surface as the structured not-implemented contract via
   `_require_backend_capability`. Per-profile coverage is in
   [architecture.md](./architecture.md).
+- **`graph repair --document-keys`** is **detect-only**: it counts and samples
+  `Document` nodes still keyed by the pre-resource-store content hash and returns
+  them under `findings` with a `recommended_next_action`. Nothing is rewritten —
+  re-minting an entity key would orphan every claim citing the old one.
+- **`graph export`/`import` is graph-only** and stays that way — a snapshot carries
+  claims and entities, never resource chunk bytes ([resources.md](./resources.md)
+  non-goals). A restored pot keeps document structure and section summaries, while
+  `resource get` on its chunk ids answers `resource_not_found` until the document is
+  re-imported.
 
 > **Roadmap (not yet wired):** `snapshot` (`graph export/import`) is real only on the
 > `in_memory`/`embedded` backends; `graph inspect`/`neighborhood` is unavailable on
@@ -579,9 +637,11 @@ potpie graph commit <plan_id> --verify
   `code`, `message`, `detail`, `recommended_next_action`.
 - `setup --dry-run`: returns a preview document; no mutation, dependency setup,
   source registration, or skill install occurs.
-- Destructive commands (`pot reset`, `pot archive`) require `--confirm` or interactive
-  confirmation.
-- Exit codes follow the `contract()` table above (`0/1/2/3/4`).
+- Destructive commands (`pot reset`, `pot archive`, `resource rm`) require `--confirm` or
+  interactive confirmation.
+- Exit codes follow the `contract()` table above (`0/1/2/3/4`). A group may report a
+  narrower `code` than `validation_error` where the domain has stable ones (see
+  `resource`); the exit code is unchanged.
 
 ## See also
 
@@ -593,4 +653,5 @@ potpie graph commit <plan_id> --verify
 - [writing.md](./writing.md) — the semantic DSL, propose→commit, risk/validation, inbox, quality.
 - [ingestion-nudge.md](./ingestion-nudge.md) — event stores, connectors, and the nudge trigger model.
 - [skills.md](./skills.md) — the skill catalog, install/drift, and the harness loop.
+- [resources.md](./resources.md) — where document payloads live and how `resource` ingests them.
 - [observability.md](./observability.md) — span names, logs, metrics, readiness.

@@ -7,6 +7,7 @@ import pytest
 from potpie_context_core.agent_context_port import (
     CONTEXT_INTENTS,
     CONTEXT_RESOLVE_RECIPES,
+    DEFAULT_INTENT_INCLUDES,
     context_recipe_for_intent,
 )
 
@@ -21,6 +22,15 @@ def test_all_intents_have_explicit_recipes() -> None:
             f"intent '{intent}' missing from CONTEXT_RESOLVE_RECIPES"
         )
         assert recipe["intent"] == intent
+
+
+def test_debugging_and_security_intents_omit_docs() -> None:
+    # P9: a document corpus must not enter debugging_memory / prior_bugs by
+    # default — docs are opt-in via --include or a docs-oriented intent.
+    assert "docs" not in DEFAULT_INTENT_INCLUDES["debugging"]
+    assert "docs" not in DEFAULT_INTENT_INCLUDES["security"]
+    assert "prior_bugs" in DEFAULT_INTENT_INCLUDES["debugging"]
+    assert "docs" in DEFAULT_INTENT_INCLUDES["docs"]
 
 
 def test_context_recipe_for_intent_returns_curated_not_generic() -> None:

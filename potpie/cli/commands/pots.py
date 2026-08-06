@@ -414,23 +414,59 @@ def pot_rename(ref: str, new_name: str) -> None:
 @pot_app.command("reset")
 def pot_reset(
     ref: str = typer.Argument(None),
-    confirm: bool = typer.Option(False, "--confirm"),
+    confirm: bool = typer.Option(
+        False,
+        "--confirm",
+        help="Required: clears the pot's graph partition and resource store.",
+    ),
 ) -> None:
     with contract():
         host = get_host()
         target = ref or resolve_pot_id(host)
+        if not confirm:
+            fail(
+                code="confirmation_required",
+                message=(
+                    f"resetting '{target}' clears its graph and stored document "
+                    "chunks"
+                ),
+                next_action=f"re-run with 'potpie pot reset {target} --confirm'",
+            )
         pot = host.pots.reset_pot(ref=target, confirm=confirm)
         emit(
-            {"id": pot.pot_id, "reset": True},
-            human=f"reset graph state for '{pot.name}'",
+            {"id": pot.pot_id, "reset": True, "resources_purged": True},
+            human=f"reset graph and resources for '{pot.name}'",
         )
 
 
 @pot_app.command("archive")
-def pot_archive(ref: str) -> None:
+def pot_archive(
+    ref: str,
+    confirm: bool = typer.Option(
+        False,
+        "--confirm",
+        help="Required: archives the pot and tears down its graph and resources.",
+    ),
+) -> None:
     with contract():
+        if not confirm:
+            fail(
+                code="confirmation_required",
+                message=(
+                    f"archiving '{ref}' also clears its graph and stored document "
+                    "chunks"
+                ),
+                next_action=f"re-run with 'potpie pot archive {ref} --confirm'",
+            )
         pot = get_host().pots.archive_pot(ref=ref)
-        emit({"id": pot.pot_id, "archived": True}, human=f"archived '{pot.name}'")
+        emit(
+            {
+                "id": pot.pot_id,
+                "archived": True,
+                "resources_purged": True,
+            },
+            human=f"archived '{pot.name}' (graph and resources cleared)",
+        )
 
 
 @source_app.command("add")
@@ -699,11 +735,18 @@ def source_status(
 
 @source_app.command("remove")
 def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> None:
+    """Drop a source registration. Does not purge documents or graph claims."""
     with contract():
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         host.pots.remove_source(pot_id=pot_id, source_id=source_id)
-        emit({"removed": source_id}, human=f"removed source {source_id}")
+        emit(
+            {"removed": source_id, "resources_touched": False},
+            human=(
+                f"removed source {source_id} "
+                "(registration only; documents unchanged)"
+            ),
+        )
 
 
 __all__ = ["pot_app", "source_app"]

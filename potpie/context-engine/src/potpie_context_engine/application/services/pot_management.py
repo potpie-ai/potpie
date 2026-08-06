@@ -3,6 +3,11 @@
 Wraps :class:`LocalPotStore` (flat-file persistence) and reports backend
 readiness from the wired ``GraphBackend``. The real control plane is the local
 state DB; this proves the service boundary and the CLI wiring.
+
+Pot teardown (``reset_pot`` / ``archive_pot``) also purges the resource store:
+graph reset alone would leave chunk files under ``<home>/resources/<pot_dir>/``
+pointing at nothing (R8). ``source remove`` is registration-only — it never
+touches resources; documents are cleaned with ``resource rm`` or pot teardown.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ from potpie_context_engine.adapters.outbound.pots.local_pot_store import LocalPo
 from potpie_context_core.errors import PotNotFound
 from potpie_context_core.lifecycle import DONE, StepResult
 from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_core.ports.resource_store import ResourceStorePort
 from potpie_context_engine.domain.ports.services.pot_management import (
     PotAggregateStatus,
     PotInfo,
@@ -24,6 +30,7 @@ from potpie_context_engine.domain.ports.services.pot_management import (
 class LocalPotManagementService:
     store: LocalPotStore
     backend: GraphBackend
+    resources: ResourceStorePort | None = None
 
     # --- lifecycle ----------------------------------------------------------
     def init(self, *, mode: str, backend: str) -> StepResult:
@@ -64,21 +71,40 @@ class LocalPotManagementService:
         return _pot(row)
 
     def reset_pot(self, *, ref: str, confirm: bool = False) -> PotInfo:
-        # Resolve the pot, then clear its graph state through the backend.
+        # Resolve the pot, clear its graph partition, then drop its resource
+        # tree. Graph first: a failed purge leaves orphan files (harmless,
+        # overwritten on the next import); the reverse would leave live claims
+        # pointing at files that no longer exist.
+        del confirm  # enforced at the CLI boundary
         target = next(
             (p for p in self.store.list_pots() if ref in (p["pot_id"], p["name"])),
             None,
         )
         if target is None:
             raise PotNotFound(f"No pot matching '{ref}'.")
-        self.backend.mutation.reset_pot(target["pot_id"])
+        self._teardown_pot_data(target["pot_id"])
         return _pot(target)
 
     def archive_pot(self, *, ref: str) -> PotInfo:
+        # Archive is pot deletion from the control plane: soft-flag the pot,
+        # and tear down the graph partition plus resource tree so an archived
+        # pot cannot leave dangling chunk files behind (R8).
+        target = next(
+            (p for p in self.store.list_pots() if ref in (p["pot_id"], p["name"])),
+            None,
+        )
+        if target is None:
+            raise PotNotFound(f"No pot matching '{ref}'.")
+        self._teardown_pot_data(target["pot_id"])
         row = self.store.archive(ref=ref)
         if row is None:
             raise PotNotFound(f"No pot matching '{ref}'.")
         return _pot(row)
+
+    def _teardown_pot_data(self, pot_id: str) -> None:
+        self.backend.mutation.reset_pot(pot_id)
+        if self.resources is not None:
+            self.resources.purge_pot(pot_id)
 
     # --- sources ------------------------------------------------------------
     def add_source(
@@ -100,6 +126,10 @@ class LocalPotManagementService:
         raise PotNotFound(f"No source '{source_id}' in pot '{pot_id}'.")
 
     def remove_source(self, *, pot_id: str, source_id: str) -> None:
+        # Registration only. A source's ``location`` is not a foreign key into
+        # the resource store (documents carry a free-form ``source_ref`` URI),
+        # so remove cannot know which documents — if any — came from it. Purge
+        # documents with ``resource rm``; wipe a pot with ``pot reset``.
         self.store.remove_source(pot_id=pot_id, source_id=source_id)
 
     # --- repo-local routing defaults ----------------------------------------

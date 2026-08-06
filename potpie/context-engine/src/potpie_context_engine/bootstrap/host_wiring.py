@@ -39,6 +39,7 @@ from potpie_context_engine.adapters.outbound.pots.flat_file_state_store import (
     FlatFileStateStore,
 )
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import LocalPotStore
+from potpie_context_engine.adapters.outbound.resources import LocalResourceStore
 from potpie_context_engine.adapters.outbound.session.injection_ledger import (
     LocalInjectionLedger,
 )
@@ -71,7 +72,7 @@ from potpie_context_engine.domain.ports.ledger.client import EventLedgerClientPo
 from potpie_context_engine.domain.ports.observability import ObservabilityPort
 from potpie_context_engine.domain.ports.provisioning import ProvisionableGraphBackend
 from potpie.daemon.lifecycle import Daemon
-from potpie_context_engine.host.shell import HostShell, LedgerFacade
+from potpie_context_engine.host.shell import HostShell, LedgerFacade, ResourceFacade
 
 
 def default_backend_profile() -> str:
@@ -131,7 +132,14 @@ def build_host_shell(
         graph = graph_runtime.graph
         graph_workbench = graph_runtime.workbench
         assert_runtime_coherence(reader_backed_includes=graph.backed_includes)
-        pots = LocalPotManagementService(store=pot_store, backend=backend)
+        # Document payloads live outside the graph; cloud swaps this store for
+        # object storage without the facade or the CLI noticing. One store
+        # instance is shared with pot management so ``pot reset`` / ``archive``
+        # can purge the same tree ``resource import`` wrote (R8).
+        resource_store = LocalResourceStore()
+        pots = LocalPotManagementService(
+            store=pot_store, backend=backend, resources=resource_store
+        )
         skills = DefaultSkillManager(
             targets={
                 "claude": ClaudeAgentTarget(),
@@ -148,6 +156,11 @@ def build_host_shell(
             client=ledger_client or ManagedEventLedgerClient(),
             cursors=LocalLedgerCursorStore(),
         )
+
+        # The graph service comes along because an import writes both halves —
+        # bytes here, structure through the same write door every other
+        # mutation uses.
+        resources = ResourceFacade(store=resource_store, graph=graph)
 
         # The nudge brain reads through the graph service and dedups via a local
         # per-session injection ledger (both deterministic; no model on this path).
@@ -179,6 +192,7 @@ def build_host_shell(
             skills=skills,
             backend=backend,
             ledger=ledger,
+            resources=resources,
             nudge=nudge,
             daemon=daemon,
             config=config,

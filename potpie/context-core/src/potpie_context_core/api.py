@@ -165,6 +165,7 @@ from potpie_context_core.ports.claim_query import (
 )
 from potpie_context_core.ports.graph.analytics import (
     GraphAnalyticsPort,
+    RepairFinding,
     RepairReport,
 )
 from potpie_context_core.ports.graph.backend import (
@@ -207,6 +208,30 @@ from potpie_context_core.ports.graph_service import (
     GraphReadRequest,
     GraphReadResult,
     GraphService,
+)
+from potpie_context_core.ports.resource_store import (
+    DEFAULT_SECTION_SLUG,
+    RECOMMENDED_MAX_SECTION_CHUNKS,
+    RESOURCE_CHUNK_MAX_CHARS,
+    RESOURCE_CHUNK_TARGET_CHARS,
+    RESOURCE_SEQ_WIDTH,
+    RESOURCE_URI_PREFIX,
+    Chunk,
+    ChunkRef,
+    DocumentManifest,
+    ResourceId,
+    ResourceStoreError,
+    ResourceStorePort,
+    ResourceStoreStatus,
+    SectionManifest,
+    format_resource_id,
+    parse_resource_id,
+    require_resource_slug,
+)
+from potpie_context_core.resource_to_semantic import (
+    ResourceImportResult,
+    resource_delete_to_semantic_request,
+    resource_import_to_semantic_request,
 )
 
 __all__ = [
@@ -319,6 +344,7 @@ __all__ = [
     "AsyncGraphPlanStorePort",
     "GraphPlanStorePort",
     "GraphAnalyticsPort",
+    "RepairFinding",
     "RepairReport",
     "GraphInspectionPort",
     "GraphNode",
@@ -337,6 +363,26 @@ __all__ = [
     "GraphEntitySearchResult",
     "GraphReadRequest",
     "GraphReadResult",
+    "ResourceStorePort",
+    "ResourceStoreError",
+    "ResourceStoreStatus",
+    "ResourceImportResult",
+    "resource_delete_to_semantic_request",
+    "resource_import_to_semantic_request",
+    "ResourceId",
+    "Chunk",
+    "ChunkRef",
+    "SectionManifest",
+    "DocumentManifest",
+    "RESOURCE_URI_PREFIX",
+    "RESOURCE_CHUNK_TARGET_CHARS",
+    "RESOURCE_CHUNK_MAX_CHARS",
+    "RESOURCE_SEQ_WIDTH",
+    "DEFAULT_SECTION_SLUG",
+    "RECOMMENDED_MAX_SECTION_CHUNKS",
+    "format_resource_id",
+    "parse_resource_id",
+    "require_resource_slug",
     "RecordReceipt",
     "RecordRequest",
     "ResolveRequest",

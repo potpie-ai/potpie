@@ -137,3 +137,23 @@ def test_scan_freshness_survives_mixed_naive_and_aware_stamps() -> None:
     assert freshness["oldest"] == "2025-11-24T00:00:00+00:00"
     assert freshness["newest"] == "2026-07-21T11:34:00+00:00"
     assert freshness["stamped_claims"] == 2
+
+
+def test_scan_repair_audits_document_keys_from_claim_rows() -> None:
+    # The neo4j / falkordb-fallback path scans document keys off the claim
+    # rows it already reads; nothing is written back.
+    rows = [
+        ClaimRow(
+            pot_id="p1",
+            predicate="RELATED_TO",
+            subject_key="document:a1b2c3d4e5f6",
+            object_key="service:payments-api",
+        )
+    ]
+
+    report = _fallback(rows).repair("p1", targets=["document_keys"])
+
+    assert report.repaired == {}
+    assert [f.target for f in report.findings] == ["document_keys"]
+    assert report.findings[0].samples == ("document:a1b2c3d4e5f6",)
+    assert "legacy content-hash" in (report.detail or "")

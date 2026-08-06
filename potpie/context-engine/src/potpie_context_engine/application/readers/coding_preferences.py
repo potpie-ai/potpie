@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from potpie_context_engine.application.readers._common import (
+    EXCLUDE_KNOWLEDGE_SUBGRAPH,
     ReadRequest,
     ReadResponse,
     claim_candidate_key,
@@ -58,6 +59,7 @@ class CodingPreferencesReader:
                     include_invalidated=req.include_invalidated,
                     as_of=req.as_of,
                     source_ref_in=req.source_refs,
+                    subgraph_not_in=EXCLUDE_KNOWLEDGE_SUBGRAPH,
                     fact_query=req.query,
                     limit=max(req.max_items * 4, 16),
                 )

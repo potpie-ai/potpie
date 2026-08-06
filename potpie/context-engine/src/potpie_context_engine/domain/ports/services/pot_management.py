@@ -82,10 +82,12 @@ class PotManagementService(Protocol):
     def rename_pot(self, *, ref: str, new_name: str) -> PotInfo: ...
 
     def reset_pot(self, *, ref: str, confirm: bool = False) -> PotInfo:
-        """Clear a pot's graph state (control-plane side of the reset)."""
+        """Clear a pot's graph partition and purge its resource store tree."""
         ...
 
-    def archive_pot(self, *, ref: str) -> PotInfo: ...
+    def archive_pot(self, *, ref: str) -> PotInfo:
+        """Soft-archive a pot and tear down its graph + resource data."""
+        ...
 
     # --- sources ------------------------------------------------------------
     def add_source(
@@ -96,7 +98,9 @@ class PotManagementService(Protocol):
 
     def source_status(self, *, pot_id: str, source_id: str) -> SourceInfo: ...
 
-    def remove_source(self, *, pot_id: str, source_id: str) -> None: ...
+    def remove_source(self, *, pot_id: str, source_id: str) -> None:
+        """Drop a source registration. Does not touch graph or resource data."""
+        ...
 
     # --- repo-local routing defaults ----------------------------------------
     def repo_default(self, *, repo: str) -> str | None:

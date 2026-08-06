@@ -10,13 +10,23 @@ from __future__ import annotations
 import pytest
 
 from potpie_context_core.graph_mutations import EdgeUpsert, EntityUpsert
+from potpie_context_core.identity import (
+    IdentityClass,
+    IdentitySpec,
+    validate_entity_key,
+)
 from potpie_context_core.ontology import (
     ALLOWED_LIFECYCLE_STATUSES,
     CANONICAL_EDGE_TYPES,
     CANONICAL_LABELS,
+    ENTITY_PROPERTY_SIGNATURES,
+    FACT_FAMILY_FRESHNESS_TTL_HOURS,
     ONTOLOGY_VERSION,
     SINGLETON_EDGE_TYPES,
     allowed_edge_types_between,
+    edge_spec,
+    entity_spec,
+    fact_family_for_label,
     predicate_family_for_episodic_supersede,
     temporal_subject_key_for_edge,
     validate_structural_mutations,
@@ -159,6 +169,137 @@ def test_allowed_lifecycle_statuses_export() -> None:
     assert "completed" in ALLOWED_LIFECYCLE_STATUSES
 
 
+# --- Reference material (documents + sections) ------------------------------
+
+
+def test_document_is_a_public_slug_alias_entity() -> None:
+    spec = entity_spec("Document")
+    assert spec is not None
+    assert spec.public is True
+    assert spec.identity_class is IdentityClass.SLUG_ALIAS
+    assert spec.key_prefix == "document"
+    assert spec.identity_policy == "document:<slug>"
+
+
+def test_document_section_is_a_public_slug_alias_entity() -> None:
+    spec = entity_spec("DocumentSection")
+    assert spec is not None
+    assert spec.public is True
+    assert spec.identity_class is IdentityClass.SLUG_ALIAS
+    assert spec.key_prefix == "docsection"
+    assert spec.identity_policy == "docsection:<doc>:<section>"
+
+
+def test_document_and_section_use_their_own_documents_fact_family() -> None:
+    # P9: section claims must not share the soft-fail ``evidence`` family with
+    # Observation, or a doc corpus inherits that family's freshness / ranking
+    # policy and crowds project memory.
+    assert fact_family_for_label("Document") == "documents"
+    assert fact_family_for_label("DocumentSection") == "documents"
+    assert fact_family_for_label("Observation") == "evidence"
+    assert "documents" in FACT_FAMILY_FRESHNESS_TTL_HOURS
+    assert FACT_FAMILY_FRESHNESS_TTL_HOURS["documents"] == 12 * 7 * 24
+
+
+def test_document_and_section_keys_validate_against_the_identity_registry() -> None:
+    document = IdentitySpec(
+        label="Document", klass=IdentityClass.SLUG_ALIAS, key_prefix="document"
+    )
+    section = IdentitySpec(
+        label="DocumentSection",
+        klass=IdentityClass.SLUG_ALIAS,
+        key_prefix="docsection",
+    )
+    assert validate_entity_key(document, "document:q3-review")
+    assert validate_entity_key(section, "docsection:q3-review:capacity")
+    assert not validate_entity_key(section, "docsection:")
+    # A 12-hex body is still a legal slug body, which is exactly why the
+    # promotion leaves existing ``document:<hash>`` nodes valid.
+    assert validate_entity_key(document, "document:a1b2c3d4e5f6")
+
+
+def test_section_of_and_documents_are_canonical_predicates() -> None:
+    for edge in ("SECTION_OF", "DOCUMENTS"):
+        assert edge in CANONICAL_EDGE_TYPES
+
+
+def test_section_of_only_links_a_section_to_a_document() -> None:
+    assert "SECTION_OF" in allowed_edge_types_between(
+        ("DocumentSection",), ("Document",)
+    )
+    assert "SECTION_OF" not in allowed_edge_types_between(
+        ("Document",), ("DocumentSection",)
+    )
+    assert "SECTION_OF" not in allowed_edge_types_between(
+        ("DocumentSection",), ("Service",)
+    )
+
+
+def test_section_of_rejects_a_bad_endpoint_pair_in_a_plan() -> None:
+    entities = [
+        EntityUpsert("docsection:q3:capacity", ("Entity", "DocumentSection"), {}),
+        EntityUpsert("service:payments-api", ("Entity", "Service"), {}),
+    ]
+    edges = [
+        EdgeUpsert("SECTION_OF", "docsection:q3:capacity", "service:payments-api", {})
+    ]
+    errors = validate_structural_mutations(entities, edges, [])
+    assert any("invalid endpoint labels" in e for e in errors)
+
+
+def test_documents_accepts_any_target_from_either_source_label() -> None:
+    assert "DOCUMENTS" in allowed_edge_types_between(("Document",), ("Service",))
+    assert "DOCUMENTS" in allowed_edge_types_between(
+        ("DocumentSection",), ("Repository",)
+    )
+    assert "DOCUMENTS" in allowed_edge_types_between(("Document",), ("BugPattern",))
+    # The source is not a wildcard — only a document or one of its sections
+    # is reference material.
+    assert "DOCUMENTS" not in allowed_edge_types_between(("Service",), ("Document",))
+
+
+def test_documents_does_not_infer_its_source_label() -> None:
+    # Document vs DocumentSection is genuinely ambiguous on this edge, so the
+    # classifier must not guess.
+    spec = edge_spec("DOCUMENTS")
+    assert spec is not None
+    assert spec.source_inferred_labels == ()
+
+
+def test_section_of_infers_both_endpoint_labels() -> None:
+    spec = edge_spec("SECTION_OF")
+    assert spec is not None
+    assert spec.source_inferred_labels == ("DocumentSection",)
+    assert spec.target_inferred_labels == ("Document",)
+
+
+def test_document_structure_is_an_exclusive_predicate_family() -> None:
+    assert predicate_family_for_episodic_supersede("SECTION_OF") == "document_structure"
+    assert (
+        temporal_subject_key_for_edge(
+            "SECTION_OF", "docsection:q3:capacity", "document:q3"
+        )
+        == "docsection:q3:capacity"
+    )
+
+
+def test_reference_material_entities_declare_distinctive_signatures() -> None:
+    # One signature property is sufficient for the classifier, so a generic
+    # name mislabels unrelated entities. ``source_kind`` is this codebase's
+    # provenance word and buys nothing here — the ``document:`` key prefix
+    # already classifies a document — so Document declares none at all.
+    assert "source_kind" not in ENTITY_PROPERTY_SIGNATURES
+    assert ENTITY_PROPERTY_SIGNATURES["chunk_count"] == ("DocumentSection",)
+
+
+def test_document_declares_no_text_patterns() -> None:
+    # ``\bdocument\b`` would drag every note onto the Document label; the
+    # write path names documents explicitly instead.
+    spec = entity_spec("Document")
+    assert spec is not None
+    assert spec.text_patterns == ()
+
+
 # --- Validation ------------------------------------------------------------
 
 
@@ -212,8 +353,10 @@ def test_allowed_edge_types_between_service_and_environment() -> None:
 # --- Cardinality + predicate families --------------------------------------
 
 
-def test_owned_by_is_the_only_singleton() -> None:
-    assert SINGLETON_EDGE_TYPES == frozenset({"OWNED_BY"})
+def test_singleton_predicates_are_owned_by_and_section_of() -> None:
+    # A service has one live owner; a section has one parent document. Every
+    # other predicate accumulates, so this set stays small on purpose.
+    assert SINGLETON_EDGE_TYPES == frozenset({"OWNED_BY", "SECTION_OF"})
 
 
 def test_owner_binding_predicate_family() -> None:
