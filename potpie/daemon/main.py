@@ -57,6 +57,27 @@ _ALLOWED_RPC_SURFACES = frozenset(
 )
 
 
+def _stop_embedded_graph_servers() -> None:
+    """Take the embedded graph server down with the daemon that started it.
+
+    The ``falkordb_lite`` server is a separate, daemonized process; nothing else
+    stops it when this one exits, so without this every ``potpie daemon stop``
+    strands a ``redis-server`` holding the db file open until the machine
+    reboots. Import locally and never raise: shutdown must not be the reason a
+    stop fails.
+    """
+    try:
+        from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
+            shutdown_embedded_servers,
+        )
+
+        stopped = shutdown_embedded_servers()
+        if stopped:
+            logger.info("stopped %d embedded graph server(s)", stopped)
+    except Exception:  # noqa: BLE001
+        logger.debug("embedded graph server shutdown failed", exc_info=True)
+
+
 def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI:
     host = build_host_shell()
     rpc_lock = asyncio.Lock()
@@ -84,6 +105,7 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
             remove_pid_file(pid_file)
             remove_pid_file(discovery_file)
             remove_pid_file(legacy_discovery_file)
+            _stop_embedded_graph_servers()
 
     app = FastAPI(title="potpie-daemon", lifespan=lifespan)
 

@@ -68,6 +68,23 @@ def _default_in_process_cli_host(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolated_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Never let a test resolve the *developer's* ``~/.potpie``.
+
+    These tests run the CLI in-process, so an unset ``CONTEXT_ENGINE_HOME``
+    lands every home-rooted default — pot store, resource store, the
+    ``falkordb_lite`` db file — on the live home and mutates it for real. Pin it
+    suite-wide; the few tests that assert the *unset* default delete it
+    themselves.
+    """
+    monkeypatch.setenv(
+        "CONTEXT_ENGINE_HOME", str(tmp_path_factory.mktemp("potpie-home"))
+    )
+
+
+@pytest.fixture(autouse=True)
 def _reset_cli_state():
     """Reset process-wide injected CLI state after each test."""
     yield

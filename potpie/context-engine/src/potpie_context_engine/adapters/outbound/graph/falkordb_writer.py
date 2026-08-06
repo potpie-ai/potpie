@@ -24,9 +24,14 @@ as a deferred profile and requires the optional ``falkordb`` client.
 from __future__ import annotations
 
 import asyncio
+import atexit
+import json
 import logging
 import os
+import time
 from typing import Any, Callable, Coroutine, TypeVar
+
+from potpie_context_core.errors import GraphSubstrateUnavailable
 
 from potpie_context_engine.adapters.outbound.graph.cypher import (
     _render_fact,
@@ -50,6 +55,30 @@ from potpie_context_engine.domain.retrieval_card import build_retrieval_card
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 
 logger = logging.getLogger(__name__)
+
+# Redis names the multi-part AOF's index file; its presence — not the
+# directory's — is what marks a usable AOF (see ``_aof_is_ready``).
+_AOF_DIRNAME = "appendonlydir"
+_AOF_MANIFEST = "appendonly.aof.manifest"
+
+# A rewrite of a local graph is sub-second; this bound only exists so a wedged
+# rewrite degrades instead of hanging the CLI.
+_AOF_REWRITE_TIMEOUT_S = 30.0
+_AOF_POLL_S = 0.05
+
+# ``redislite`` writes this handshake file beside the db so a second process
+# attaches to the running server instead of spawning its own, and removes it
+# when the owning process exits cleanly. Left behind, it is a record of a server
+# that died without saving — see ``_died_without_saving``.
+_SETTINGS_SUFFIX = ".settings"
+
+# Embedded servers this process started, by db path. Kept because ``redislite``
+# will not reliably stop them for us: its atexit hook shuts the server down only
+# when it sees at most one connection, and any process that has issued
+# concurrent queries — every daemon — has a larger pool by then and leaks the
+# server instead. Owning the shutdown is the only way to make ``daemon stop``
+# actually stop it.
+_OWNED_SERVERS: dict[str, Any] = {}
 
 _T = TypeVar("_T")
 
@@ -162,7 +191,271 @@ def build_falkordb_graph(settings: ContextEngineSettingsPort) -> Any:
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    return LiteFalkorDB(path).select_graph(name)
+    _refuse_untrustworthy_state(path)
+    db = LiteFalkorDB(path, serverconfig=_lite_server_config(path))
+    _ensure_lite_durability(db, path)
+    _remember_owned_server(db, path)
+    return db.select_graph(name)
+
+
+def _settings_file(path: str) -> str:
+    return path + _SETTINGS_SUFFIX
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Alive, owned by somebody else.
+        return True
+    return True
+
+
+def _died_without_saving(path: str) -> bool:
+    """Did the last embedded server for this db die ungracefully?
+
+    ``redislite`` removes its settings file as part of the shutdown its owning
+    process runs at exit, so the file surviving with a dead pid behind it is an
+    exact record of a server that was killed — OOM, ``kill -9``, a container
+    stop, a laptop that slept and never came back. A missing file, or a live
+    pid, means there is nothing to worry about.
+
+    Deliberately conservative: an unreadable or malformed settings file counts
+    as unclean, because the alternative is guessing in the direction that loses
+    data quietly.
+    """
+    settings_file = _settings_file(path)
+    if not os.path.isfile(settings_file):
+        return False
+    try:
+        with open(settings_file) as handle:
+            settings = json.load(handle)
+        pidfile = settings["pidfile"]
+        with open(pidfile) as handle:
+            pid = int(handle.read().strip())
+    except (OSError, ValueError, KeyError, TypeError):
+        return True
+    return not _pid_is_alive(pid)
+
+
+def _refuse_untrustworthy_state(path: str) -> None:
+    """Do not open a graph that may silently be missing its most recent writes.
+
+    After an ungraceful death the next process attaches to nothing, spawns a
+    fresh server, and loads whatever is on disk. With AOF that is everything.
+    Without it — a db whose first-run migration never completed — the newest
+    snapshot can predate committed writes, and the read that follows returns
+    ``ok: true`` over a partial graph. That is strictly worse than an error: a
+    memory product answering confidently from a dataset it cannot vouch for
+    teaches the agent to trust an answer that is wrong.
+
+    So: refuse, and name the recovery. Deleting the settings file is the
+    acknowledgement — it is the record of the crash, and removing it says the
+    operator accepts continuing from the last snapshot.
+    """
+    if not _died_without_saving(path) or _aof_is_ready(path):
+        return
+    raise GraphSubstrateUnavailable(
+        f"the embedded graph server for {path} shut down without saving, and no "
+        "crash-durable AOF was active at the time — the data on disk may be "
+        "missing writes that were reported as committed, so this graph cannot "
+        "be served as complete",
+        recommended_next_action=(
+            f"to continue from the last snapshot, accepting any writes lost in "
+            f"the crash, delete {_settings_file(path)} and re-run"
+        ),
+    )
+
+
+def _remember_owned_server(db: Any, path: str) -> None:
+    """Record a server *this* process started, so it can be stopped later.
+
+    Only servers we started: ``redislite`` sets ``cleanupregistry`` on the
+    client that spawned the server, and a process that merely attached to a
+    running one must never shut it down out from under its owner.
+
+    The atexit hook covers every process, not just the daemon. Any process that
+    runs two queries concurrently — the writer dispatches through
+    ``asyncio.to_thread`` — ends up with a multi-connection pool, which is the
+    exact condition under which ``redislite`` declines to stop the server it
+    started. Without this, a CLI run against a scratch home leaves a server
+    behind as reliably as the daemon does.
+    """
+    conn = getattr(db, "connection", None)
+    if conn is None or not getattr(conn, "cleanupregistry", False):
+        return
+    if not _OWNED_SERVERS:
+        atexit.register(shutdown_embedded_servers)
+    _OWNED_SERVERS[path] = conn
+
+
+def shutdown_embedded_servers() -> int:
+    """Stop every embedded server this process started. Returns how many.
+
+    Called on daemon shutdown. Without it, ``potpie daemon stop`` leaves a
+    ``redis-server`` reparented to init, holding the db file and its memory,
+    for as long as the machine is up — ``redislite``'s own atexit hook declines
+    to stop a server with more than one connection open, which is every daemon.
+
+    Best-effort and idempotent: a server that is already gone is a success.
+    """
+    stopped = 0
+    for path, conn in list(_OWNED_SERVERS.items()):
+        _OWNED_SERVERS.pop(path, None)
+        try:
+            conn.shutdown(save=True, now=True, force=True)
+            stopped += 1
+        except Exception as exc:  # noqa: BLE001 - shutdown must not raise
+            logger.debug("falkordb_lite: server at %s did not stop (%s)", path, exc)
+    return stopped
+
+
+def _active_socket(path: str) -> str | None:
+    """The unix socket of the server currently serving this db, if any."""
+    try:
+        with open(_settings_file(path)) as handle:
+            return json.load(handle).get("unixsocket")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def embedded_server_report(path: str) -> dict[str, Any]:
+    """Which embedded graph servers are running, and which nobody owns.
+
+    Every ``redislite`` server is daemonized, so it survives the process that
+    started it — six were found running on one laptop, the oldest 15 days old,
+    two of them against home directories that no longer existed. Each holds
+    memory and a db file open forever.
+
+    This *reports*; it does not kill. A server on another db path may belong to
+    a different Potpie home, another checkout, or another user, and there is no
+    way from here to tell a leak from somebody's live daemon. Reaping the ones
+    it started is :func:`shutdown_embedded_servers`' job, at a point where
+    ownership is known.
+    """
+    report: dict[str, Any] = {"running": 0, "for_this_graph": 0, "unattributed": []}
+    try:
+        import psutil
+    except ImportError:  # pragma: no cover - psutil ships with redislite
+        report["detail"] = "psutil unavailable; cannot enumerate embedded servers"
+        return report
+
+    ours = _active_socket(path)
+    for proc in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
+        try:
+            name = proc.info.get("name") or ""
+            if "redis-server" not in name:
+                continue
+            cmdline = " ".join(proc.info.get("cmdline") or [])
+            if "redislite" not in cmdline:
+                continue
+            report["running"] += 1
+            if ours and ours in cmdline:
+                report["for_this_graph"] += 1
+                continue
+            report["unattributed"].append(
+                {
+                    "pid": proc.info.get("pid"),
+                    "started_at": proc.info.get("create_time"),
+                }
+            )
+        except Exception:  # noqa: BLE001 - a process can exit mid-iteration
+            continue
+    if report["unattributed"]:
+        report["detail"] = (
+            f"{len(report['unattributed'])} embedded graph server(s) are running "
+            "that this graph does not use; they may belong to another Potpie "
+            "home, or be leftovers from processes that have exited"
+        )
+    return report
+
+
+def _aof_dir(path: str) -> str:
+    """Where Redis keeps the multi-part AOF — beside the db file, per its ``dir``."""
+    return os.path.join(os.path.dirname(path) or ".", _AOF_DIRNAME)
+
+
+def _aof_is_ready(path: str) -> bool:
+    """True when a *complete* AOF exists for this db file.
+
+    Deliberately tests the manifest rather than the directory. ``CONFIG SET
+    appendonly yes`` creates the directory immediately and writes
+    ``temp-appendonly.aof.incr`` while the rewrite runs in the background; a
+    process that exits in that window leaves a directory holding only that temp
+    file. Treating the directory as proof of an AOF would then make the next
+    startup load an empty AOF *over* a perfectly good RDB — silently discarding
+    the pot. The manifest only appears once the rewrite has completed, so an
+    interrupted migration correctly falls back to the RDB and retries.
+    """
+    return os.path.isfile(os.path.join(_aof_dir(path), _AOF_MANIFEST))
+
+
+def _lite_server_config(path: str) -> dict[str, str]:
+    """Server config for the embedded instance, conditional on a complete AOF.
+
+    Enabling ``appendonly`` at *startup* makes the AOF authoritative, and Redis
+    treats a missing AOF as an empty dataset — so passing it on a db that only
+    has an RDB silently discards every existing claim. The AOF is therefore
+    only requested once one is known-complete; the first run migrates at
+    runtime in :func:`_ensure_lite_durability`, rewriting from the loaded RDB.
+    """
+    if _aof_is_ready(path):
+        return {"appendonly": "yes", "appendfsync": "always"}
+    return {}
+
+
+def _ensure_lite_durability(db: Any, path: str) -> None:
+    """Turn on AOF for an embedded instance that does not have a complete one.
+
+    Without this the lite profile persists **only** on a clean shutdown:
+    ``redislite`` saves the RDB when the owning process exits, and the RDB rule
+    (``save 900 1``) is the sole other trigger, so an ungraceful death — OOM,
+    laptop sleep, SIGKILL — loses every write since the last save. Enabling AOF
+    here rather than in the startup config is what makes the upgrade
+    non-destructive: the RDB has already been loaded into memory, and
+    ``CONFIG SET appendonly yes`` rewrites the AOF from that, so existing pots
+    carry forward.
+
+    The wait is load-bearing, not politeness. The rewrite is asynchronous, and
+    a process that returns before it finishes can write claims and exit with
+    the AOF still a temp file — the writes reach neither a finished AOF nor
+    (on a crash) the RDB. Blocking until the manifest lands is what makes the
+    first run after the upgrade as durable as every run after it.
+
+    ``appendfsync always`` rather than ``everysec`` because Potpie writes a
+    handful of claims per interaction — the per-write fsync is affordable at
+    that volume, and it makes "committed" mean durable.
+
+    Best-effort: a store that will not take the setting is still usable exactly
+    as it was before, so this warns rather than failing startup.
+    """
+    if _aof_is_ready(path):
+        return
+    try:
+        conn = db.connection
+        conn.config_set("appendfsync", "always")
+        conn.config_set("appendonly", "yes")
+        deadline = time.monotonic() + _AOF_REWRITE_TIMEOUT_S
+        while time.monotonic() < deadline:
+            info = conn.info("persistence")
+            if not info.get("aof_rewrite_in_progress") and _aof_is_ready(path):
+                return
+            time.sleep(_AOF_POLL_S)
+        logger.warning(
+            "falkordb_lite: AOF rewrite at %s did not complete within %.0fs; "
+            "the graph persists only on clean shutdown until it does",
+            _aof_dir(path),
+            _AOF_REWRITE_TIMEOUT_S,
+        )
+    except Exception as exc:  # noqa: BLE001 - degrade, never block startup
+        logger.warning(
+            "falkordb_lite: could not enable AOF durability at %s (%s); "
+            "the graph persists only on clean shutdown until this succeeds",
+            _aof_dir(path),
+            exc,
+        )
 
 
 class FalkorDBGraphProvider:
@@ -455,4 +748,10 @@ class FalkorDBGraphWriter(GraphWriterPort):
                 )
 
 
-__all__ = ["FalkorDBGraphProvider", "FalkorDBGraphWriter", "build_falkordb_graph"]
+__all__ = [
+    "FalkorDBGraphProvider",
+    "FalkorDBGraphWriter",
+    "build_falkordb_graph",
+    "embedded_server_report",
+    "shutdown_embedded_servers",
+]

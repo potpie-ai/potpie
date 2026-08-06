@@ -9,6 +9,22 @@ class ContextEngineDisabled(ContextEngineError):
     """Feature flag off or graph clients unavailable."""
 
 
+class GraphSubstrateUnavailable(ContextEngineDisabled):
+    """The graph store cannot be trusted to answer, so it must not answer.
+
+    Distinct from "the backend is down": the store here is *reachable* and will
+    happily serve a dataset that may be missing recent writes — the worst
+    outcome for a memory product, because the answer looks complete. Raised
+    instead of opening the store, and carries the operator's recovery step so
+    the CLI's error contract can print something actionable rather than a
+    generic unavailability message.
+    """
+
+    def __init__(self, message: str, *, recommended_next_action: str | None = None):
+        super().__init__(message)
+        self.recommended_next_action = recommended_next_action
+
+
 class AlreadyIngested(ContextEngineError):
     """Source was already recorded in the ingestion ledger."""
 

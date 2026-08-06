@@ -236,7 +236,11 @@ def contract() -> Iterator[None]:
         fail(
             code="unavailable",
             message=str(exc),
-            next_action="check backend/daemon readiness with 'potpie doctor'",
+            # Some unavailability has a specific, known repair (e.g. a graph
+            # substrate that shut down uncleanly); prefer it over the generic
+            # pointer at doctor.
+            next_action=getattr(exc, "recommended_next_action", None)
+            or "check backend/daemon readiness with 'potpie doctor'",
             exit_code=EXIT_UNAVAILABLE,
         )
     except PotNotFound as exc:
