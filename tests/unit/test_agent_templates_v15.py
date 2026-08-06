@@ -433,3 +433,70 @@ def test_removed_connector_queue_commands_are_not_advertised() -> None:
             assert token not in lowered, (
                 f"{rel} still advertises removed connector queue command `{token}`"
             )
+
+
+# The P7 resource skills: per-format extraction flows over `potpie resource`.
+# R5 (chunk text never passes through the agent's output) is verified by skill
+# review — these tests are that review, pinned.
+_RESOURCE_SKILLS = (
+    "potpie-resource-pdf",
+    "potpie-resource-spreadsheet",
+    "potpie-resource-markdown",
+)
+
+
+def test_resource_skills_ship_in_both_bundles_and_match() -> None:
+    for skill_id in _RESOURCE_SKILLS:
+        plugin = TEMPLATES / "claude_plugin" / "skills" / skill_id / "SKILL.md"
+        bundle = (
+            TEMPLATES / "agent_bundle" / ".agents" / "skills" / skill_id / "SKILL.md"
+        )
+        assert plugin.is_file(), f"{skill_id} missing from claude_plugin"
+        assert bundle.is_file(), f"{skill_id} missing from agent_bundle"
+        assert plugin.read_text(encoding="utf-8") == bundle.read_text(
+            encoding="utf-8"
+        ), f"{skill_id} differs between claude_plugin and agent_bundle"
+
+
+@pytest.mark.parametrize("skill_id", _RESOURCE_SKILLS)
+def test_resource_skills_route_chunk_text_through_a_script(skill_id: str) -> None:
+    collapsed = " ".join(_read(f"{skill_id}/SKILL.md").lower().split())
+    # R5: the agent writes and runs an extraction script; it never types, pastes,
+    # or echoes document body text itself.
+    assert "chunk text never passes through your own output" in collapsed
+    assert "extraction *script*" in collapsed
+    assert "potpie resource import" in collapsed
+    # R1, restated where the authoring happens.
+    assert "payloads never enter the graph" in collapsed
+
+
+@pytest.mark.parametrize("skill_id", _RESOURCE_SKILLS)
+def test_resource_skills_teach_the_retrieval_quality_rules(skill_id: str) -> None:
+    collapsed = " ".join(_read(f"{skill_id}/SKILL.md").lower().split())
+    # Section granularity: 1-5 chunks, split anything coarser.
+    assert "too coarse" in collapsed
+    # Stable agent-chosen slugs, never derived from heading/sheet text.
+    assert "stable across re-imports" in collapsed
+    # Two-pass ingest: import with pending summaries, fill without blanking.
+    assert "summary_pending" in collapsed
+    assert "never blank earlier work" in collapsed
+    # R14: content_hash drives the re-summarize diff.
+    assert "content_hash" in collapsed
+    # Resolve-before-import so a re-ingest reuses the existing document slug.
+    assert "graph search-entities" in collapsed
+    # Structural linking, or the document is findable by semantic luck alone.
+    assert '"predicate": "documents"' in collapsed
+    # The read path a future agent uses: batched two-call fetch.
+    assert "potpie resource get" in collapsed and "--with-neighbors" in collapsed
+
+
+def test_spreadsheet_skill_requires_derived_fact_claims() -> None:
+    collapsed = " ".join(
+        _read("potpie-resource-spreadsheet/SKILL.md").lower().split()
+    )
+    # Structured sources retrieve badly as text: the claims must carry the
+    # derived facts, with chunk ids as evidence.
+    assert "chunked rows" in collapsed
+    assert "derive" in collapsed
+    assert "potpie://res/" in collapsed
+    assert "evidence" in collapsed

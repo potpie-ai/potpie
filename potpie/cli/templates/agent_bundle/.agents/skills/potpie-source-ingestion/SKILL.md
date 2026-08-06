@@ -1,6 +1,7 @@
 ---
 name: potpie-source-ingestion
-description: "Use when the user explicitly asks to ingest, refresh, or deeply understand a repository, PR, issue, ticket, runbook, incident report, document, or web link into Potpie. The harness performs todo-driven discovery, uses local/GitHub/integration tools and read-only subagents when available, builds evidence-backed semantic mutations, and writes through graph propose/verified commit."
+version: "2"
+description: "Use when the user explicitly asks to ingest, refresh, or deeply understand a repository, PR, issue, ticket, runbook, incident report, document, or web link into Potpie. The harness performs todo-driven discovery, uses local/GitHub/integration tools and read-only subagents when available, builds evidence-backed semantic mutations, and writes through graph propose/verified commit. Document payloads (PDF, spreadsheet, markdown/HTML) route through the per-format potpie-resource-* skills and `potpie resource import`."
 ---
 
 # Potpie Source Ingestion
@@ -236,13 +237,30 @@ Represent capabilities as `Feature` entities. Link repositories or services to
 features with `PROVIDES`, and use `IMPLEMENTED_IN` only when a source locates
 the implementation.
 
+## Document Payloads
+
+When a source is a document whose *content* must stay searchable and citable —
+a PDF, a spreadsheet, a long markdown/HTML doc, an exported wiki page — do not
+paste its body into summaries, descriptions, or claims. Payloads never enter
+the graph. Use the matching per-format skill (`potpie-resource-pdf`,
+`potpie-resource-spreadsheet`, `potpie-resource-markdown`): you write an
+extraction script, the script emits a chunk directory, and
+`potpie resource import` stores the bytes and writes the Document/section
+structure to the graph; agent-authored section summaries become the index.
+Then link coverage with `DOCUMENTS` claims, and for structured data derive the
+durable facts as ordinary claims citing `potpie://res/...` chunk ids as
+evidence. Facts a document *states* (decisions, preferences, infra) are still
+recorded as normal graph claims under the rules below — the resource store
+holds the evidence payload, not the conclusions.
+
 ## Source Rules
 
 - Tickets and issues can record timeline events, bug patterns, decisions, and
   docs. They do not prove a fix unless tied to a merged PR, commit, deployment,
   or explicit shipped-resolution source.
 - Documents can record preferences, decisions, runbook notes, service notes, and
-  infra facts only when they explicitly say them.
+  infra facts only when they explicitly say them. Their payloads belong in the
+  resource store (see Document Payloads above), never in graph properties.
 - Logs and transcripts can record diagnostic signals, investigations, fixes, and
   verifications. Keep raw logs out of descriptions except for short distinctive
   error text.

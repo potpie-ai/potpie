@@ -49,7 +49,7 @@ Express reads through `graph read --subgraph <subgraph> --view <view>`.
 | `debugging.prior_occurrences` | prior symptoms, fixes, failed attempts |
 | `decisions.active_decisions` | active architectural/product decisions |
 | `code_topology.ownership_by_path` | owners for a scope |
-| `knowledge.document_context` | docs and runbooks for a scope |
+| `knowledge.document_context` | docs, runbooks, and ingested document sections (hits carry chunk ids) |
 | `admin.inspection_slice` | raw canonical graph for debugging |
 
 ## Writing
@@ -135,6 +135,11 @@ tools/connectors. Do not use Potpie CLI queue ingestion as the ingestion path;
 write the graph updates yourself with `graph propose` / `graph commit --verify`
 or `graph inbox`.
 
+Document payloads (PDF, spreadsheet, markdown/HTML exports) are ingested with
+the per-format `potpie-resource-*` skills: an extraction script emits a chunk
+directory, `potpie resource import` stores bytes and graph structure, and
+`potpie resource get` fetches chunk text later. Payloads never enter the graph.
+
 ## Responding To Nudges
 
 A hook may inject context or instructions from `potpie graph nudge`.
@@ -161,6 +166,11 @@ Use these repo-local skills under `.agents/skills/`:
   datastores, integrations, and durable project facts.
 - `potpie-source-ingestion` - harness-led ingestion from repo links, docs, PRs,
   issues, tickets, runbooks, logs, and web links.
+- `potpie-resource-pdf` - ingest a PDF as searchable chunked document memory.
+- `potpie-resource-spreadsheet` - ingest a spreadsheet/CSV and derive its facts
+  as claims with chunk evidence.
+- `potpie-resource-markdown` - ingest markdown/HTML docs, wiki exports, and web
+  pages as searchable chunked document memory.
 - `potpie-graph` - graph CLI contract: status/catalog/describe/read/search,
   propose/commit/history, inbox, quality, and nudge handling.
 - `potpie-cli` - CLI setup, pot/source commands, graph commands, and

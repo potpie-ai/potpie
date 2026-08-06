@@ -1,7 +1,7 @@
 ---
 name: "potpie-graph"
-version: "5"
-description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions and responding to nudges."
+version: "6"
+description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions, fetching ingested document chunks with `potpie resource get`, and responding to nudges."
 ---
 
 # Potpie Graph Workbench
@@ -58,13 +58,33 @@ Views and what they answer:
 | `features.feature_context` | optional `--scope anchor_entity_key:repo:…` | what a repo/service does (Feature nodes via `PROVIDES` / `IMPLEMENTED_IN`) |
 | `decisions.active_decisions` | `--scope` | active decisions |
 | `code_topology.ownership_by_path` | `--scope` | who owns a scope |
-| `knowledge.document_context` | `--scope` | reference docs |
+| `knowledge.document_context` | `--scope` / `--query` | reference docs + ingested document sections (hits carry chunk ids) |
 
 Text reads return compact summaries for fast orientation. Timeline reads should
 use `--format table` or `--format jsonl` for bounded event rows. Use
 `--json --detail full --relations full --format raw` only when you need the
 underlying relation payloads for debugging or exact machine processing. Inspect
 `coverage`, `freshness`, and `quality` before relying on results.
+
+### Ingested documents: find, then fetch
+
+Ingested documents are `Document` / `DocumentSection` nodes whose section
+summaries are claims, so ordinary search and `document_context` reads land on
+them. A section hit already carries its chunk ids
+(`potpie://res/<doc>/<section>/<seq>` in `chunk_ids` / source refs) — fetch
+text with one batched call, no graph query on the path:
+
+```bash
+potpie resource get potpie://res/<doc>/<section>/0000 --with-neighbors
+potpie resource list --doc <doc-slug>
+```
+
+`SECTION_OF` holds a document together; `DOCUMENTS` points a document (or one
+section) at what it covers — assert it when reference material lands, so the
+structural read answers "what documentation covers this service". To ingest a
+new document, use the per-format `potpie-resource-*` skills (pdf, spreadsheet,
+markdown/html): an extraction script emits chunks, `potpie resource import`
+stores them; document payloads never enter the graph.
 
 ### Query expansion is your job
 

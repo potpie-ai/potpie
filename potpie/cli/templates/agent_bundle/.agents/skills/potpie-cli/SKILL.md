@@ -1,7 +1,7 @@
 ---
 name: potpie-cli
-version: "2"
-description: "Use when the task is centered on running, explaining, configuring, or troubleshooting the `potpie` command: doctor, login, pot management, source registration, search, graph workbench reads/writes, and pot scope behavior."
+version: "3"
+description: "Use when the task is centered on running, explaining, configuring, or troubleshooting the `potpie` command: doctor, login, pot management, source registration, search, graph workbench reads/writes, resource (document payload) commands, and pot scope behavior."
 ---
 
 # Potpie CLI
@@ -66,6 +66,22 @@ potpie --json search "query"
 potpie search "query" --include decisions,features
 potpie search "query" --pot <pot-id-or-alias>
 ```
+
+## Resources (document payloads)
+
+```bash
+potpie resource import <dir> --doc <slug> --source-ref <uri> --source-kind pdf
+potpie resource get potpie://res/<doc>/<section>/0000 --with-neighbors
+potpie resource list --doc <slug>
+potpie resource rm <slug> --confirm
+```
+
+`import` absorbs a chunk directory an extraction script produced — atomic,
+re-import replaces and bumps `revision`, and the document's structure is
+written to the graph in the same command. `get` resolves chunk ids to text
+with no graph query and batches multiple ids in one call. `rm` is destructive
+and requires `--confirm`. `potpie doctor` reports resource store readiness.
+Ingestion flows live in the per-format `potpie-resource-*` skills.
 
 ## Graph Workbench
 

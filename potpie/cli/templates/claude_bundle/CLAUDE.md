@@ -46,6 +46,9 @@ verification, or full evidence/debug payloads.
   setup troubleshooting.
 - `potpie-source-ingestion`: harness-led ingestion from repo links, docs, PRs,
   issues, tickets, logs, runbooks, and web links.
+- `potpie-resource-pdf` / `potpie-resource-spreadsheet` /
+  `potpie-resource-markdown`: ingest document payloads as chunked, searchable
+  document memory via `potpie resource import`; payloads never enter the graph.
 
 ## Writing
 
