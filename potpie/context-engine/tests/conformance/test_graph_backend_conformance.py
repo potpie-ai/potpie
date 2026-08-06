@@ -43,14 +43,32 @@ FULL_PROFILES = ["in_memory", "embedded"]
 # deliberately fail-closed until implemented.
 PARTIAL_PROFILES = ["neo4j", "falkordb", "falkordb_lite"]
 
+# Every profile a conformance run can actually stand up here: the two POC
+# substrates plus embedded FalkorDB, which needs no server. Semantic conformance
+# — as opposed to capability conformance — belongs on this list, because a
+# capability that answers is not the same as a capability that answers
+# *correctly*. ``falkordb_lite`` earns its place: it executes the same
+# ``cypher.py`` the ``neo4j`` and server-mode ``falkordb`` profiles do, so a
+# behavioural bug in the shared writer fails here rather than only in
+# environments CI cannot reach.
+RUNNABLE_PROFILES = FULL_PROFILES + ["falkordb_lite"]
 
-def _build(profile, tmp_path):
+
+def _build(profile, tmp_path, monkeypatch=None):
     if profile == "embedded":
         from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
             EmbeddedGraphBackend,
         )
 
         return EmbeddedGraphBackend(home=tmp_path)
+    if profile.startswith("falkordb") and monkeypatch is not None:
+        # ``falkordb_lite`` reads its db path from the environment, so without
+        # this it opens whatever ``CONTEXT_ENGINE_HOME`` points at and spawns a
+        # server against it. The suite-wide pin in conftest already keeps that
+        # off a real home; per-test isolation keeps profiles from sharing one.
+        monkeypatch.setenv(
+            "CONTEXT_ENGINE_FALKORDB_LITE_PATH", str(tmp_path / "falkordb.db")
+        )
     return build_backend(profile)
 
 
@@ -84,6 +102,22 @@ def _semantic_payload() -> dict:
                 "truth": "source_observation",
                 "evidence": [{"source_ref": "repo:manifest"}],
                 "description": "web service depends on api service",
+            }
+        ]
+    }
+
+
+def _retract_payload() -> dict:
+    """Retract exactly the claim ``_semantic_payload`` asserts."""
+    return {
+        "operations": [
+            {
+                "op": "retract_claim",
+                "subgraph": "infra_topology",
+                "subject": {"key": "service:web", "type": "Service"},
+                "predicate": "DEPENDS_ON",
+                "object": {"key": "service:api", "type": "Service"},
+                "reason": "web no longer depends on api",
             }
         ]
     }
@@ -258,11 +292,126 @@ def test_embedded_unbuilt_profile_fails_closed():
     assert exc.value.recommended_next_action
 
 
+@pytest.mark.parametrize("profile", RUNNABLE_PROFILES)
+def test_retracted_claim_can_be_reasserted(profile, tmp_path, monkeypatch):
+    """Assert → retract → assert the *same* claim must leave it live.
+
+    This is the one sequence where the canonical writers can silently disagree
+    with each other. Retraction is a soft tombstone, and the edge MERGE key
+    ``(group_id, name, subject, object, source_ref)`` is identical for the
+    tombstone and the re-assert — so the re-assert lands on the dead row, while
+    the writer counts submitted operations and reports success. Every read
+    filters ``invalid_at IS NULL``, so the claim is gone for good and nothing
+    says so.
+
+    It is parametrized over every runnable profile because the failure is
+    invisible from one backend: ``in_memory`` appends a fresh row and behaves
+    correctly, which is exactly why this went unnoticed while CI was green.
+
+    The resource store reaches this on the normal path — every re-import that
+    drops a section retracts it, and the next import that brings it back is a
+    re-assert.
+    """
+    backend = _build(profile, tmp_path / "backend", monkeypatch)
+    workbench = GraphWorkbenchService(
+        backend=backend,
+        plan_store=LocalJsonGraphPlanStore(home=tmp_path / "workbench"),
+        inbox_store=LocalJsonGraphInboxStore(home=tmp_path / "workbench"),
+    )
+
+    def commit(payload) -> None:
+        proposal = workbench.propose(payload, pot_id=POT)
+        assert proposal.ok is True, proposal.detail
+        # verify=True reads the plan's claim keys back with
+        # include_invalidated=False, which is the check that catches a write
+        # that "applied" onto a tombstone.
+        result = workbench.commit(
+            proposal.plan_id, pot_id=POT, approved_by="conformance", verify=True
+        )
+        assert result.ok is True, result.detail
+        assert result.status == "committed"
+        # ``commit.ok`` reports only that the plan was applied, so assert the
+        # readback separately: a write that lands on a tombstone applies
+        # cleanly and is still missing from every read. Only the readback is
+        # asserted — ``verification.ok`` also folds in quality drift, and
+        # retracting the pot's only claim legitimately orphans an entity.
+        if result.verification is not None:
+            assert result.verification.missing_claim_keys == ()
+
+    def live_claims():
+        return backend.claim_query.find_claims(
+            ClaimQueryFilter(pot_id=POT, predicate_in=("DEPENDS_ON",))
+        )
+
+    commit(_semantic_payload())
+    assert len(live_claims()) == 1
+
+    commit(_retract_payload())
+    assert live_claims() == []
+
+    commit(_semantic_payload())
+    rows = live_claims()
+    assert len(rows) == 1, "re-asserting a retracted claim must bring it back"
+    assert rows[0].invalid_at is None
+    assert rows[0].fact
+
+
+@pytest.mark.parametrize("profile", RUNNABLE_PROFILES)
+def test_reasserted_claim_carries_no_stale_invalidation_metadata(
+    profile, tmp_path, monkeypatch
+):
+    """A revived claim must not still explain itself as retracted.
+
+    Clearing ``invalid_at`` alone would make the row *readable* while it still
+    carried ``invalidation_reason`` / ``invalidated_by`` — a live claim whose
+    own properties say it was withdrawn, which is worse to debug than the
+    invisible version because every read now surfaces the contradiction.
+    """
+    backend = _build(profile, tmp_path / "backend", monkeypatch)
+    workbench = GraphWorkbenchService(
+        backend=backend,
+        plan_store=LocalJsonGraphPlanStore(home=tmp_path / "workbench"),
+        inbox_store=LocalJsonGraphInboxStore(home=tmp_path / "workbench"),
+    )
+    for payload in (_semantic_payload(), _retract_payload(), _semantic_payload()):
+        proposal = workbench.propose(payload, pot_id=POT)
+        workbench.commit(proposal.plan_id, pot_id=POT, approved_by="conformance")
+
+    rows = backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id=POT, predicate_in=("DEPENDS_ON",))
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.invalid_at is None
+    for dead_mark in (
+        "invalidation_reason",
+        "invalidated_by",
+        "expired_at",
+        "superseded_by_object",
+        "supersession_reason",
+        "deleted_by",
+    ):
+        assert not row.properties.get(dead_mark), (
+            f"revived claim still carries {dead_mark}"
+        )
+    if profile not in FULL_PROFILES:
+        # The canonical writers revive the tombstone in place, so this stamp is
+        # the only record that the claim was ever retracted. It is written from
+        # a CASE over the pre-clear ``invalid_at``, which only reads correctly
+        # if the clear happens in a later SET clause — assert the value, not
+        # just the absence of the dead marks, or that ordering can regress
+        # silently. (``in_memory``/``embedded`` keep the tombstone as its own
+        # row instead and have no need for it.)
+        assert row.properties.get("revived_at"), (
+            "an in-place revive must record that it happened"
+        )
+
+
 @pytest.mark.parametrize("profile", PARTIAL_PROFILES)
 def test_partial_backend_profiles_fail_closed_for_unbuilt_projections(
-    profile, tmp_path
+    profile, tmp_path, monkeypatch
 ):
-    backend = _build(profile, tmp_path)
+    backend = _build(profile, tmp_path, monkeypatch)
     assert isinstance(backend, GraphBackend)
     expected = {
         "neo4j": {"mutation", "claim_query", "semantic", "analytics"},

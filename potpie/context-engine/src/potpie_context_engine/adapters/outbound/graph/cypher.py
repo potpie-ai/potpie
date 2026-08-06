@@ -58,6 +58,21 @@ _RESERVED_EDGE_PROPERTY_KEYS: frozenset[str] = frozenset(
     }
 )
 
+# Properties that mark an edge dead. Re-asserting a claim must clear *all* of
+# them, not just ``invalid_at``: a row revived with a stale
+# ``superseded_by_object`` still reads live everywhere but explains itself as
+# superseded, and ``expired_at`` left set makes system-time queries disagree
+# with event-time ones. Written as one Cypher fragment so the assert path and
+# the SUPERSEDES path cannot drift apart.
+_REVIVE_CLAUSE = """
+                    r.invalid_at = null,
+                    r.expired_at = null,
+                    r.invalidation_reason = null,
+                    r.invalidated_by = null,
+                    r.superseded_by_object = null,
+                    r.supersession_reason = null,
+                    r.deleted_by = null"""
+
 _POT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _PREDICATE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _LABEL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
@@ -370,13 +385,24 @@ async def upsert_edges_async(
     - **Identity / MERGE key:** ``group_id``, ``name``, ``subject_key``,
       ``object_key``, ``source_ref``.
     - **System time:** ``uuid``, ``created_at`` (ON CREATE only),
-      ``expired_at`` (set to null ON CREATE).
+      ``expired_at`` (cleared on every assert).
     - **Event time:** ``valid_at`` (per-claim, from provenance or
       explicit), ``invalid_at`` (null until supersession).
     - **Provenance:** ``source_system``, ``evidence_strength``, ``fact``,
       ``confidence`` (optional), ``observed_at`` (write time).
     - **Ontology extras:** whatever else the caller put on
       ``EdgeUpsert.properties`` (e.g. ``environment``, ``code_scope``).
+
+    **Asserting a claim revives it.** Retraction is a soft tombstone — the row
+    stays and carries ``invalid_at`` — and the MERGE key cannot distinguish a
+    tombstone from a live edge, so an identical re-assert lands on the tombstone
+    by construction. Clearing the death marks unconditionally (rather than only
+    ``ON CREATE``, which never fires here) is what makes the result of a write
+    depend on *what is being claimed* rather than on whether that claim happened
+    to be retracted at some point in the past. Without it, every read filters on
+    ``invalid_at IS NULL`` and the re-assert is invisible while the writer still
+    reports success. ``revived_at`` records that this happened, since the
+    in-place update is the only history the MERGE key permits.
     """
     _require_valid_pot_id(pot_id)
     if not items:
@@ -461,21 +487,22 @@ async def upsert_edges_async(
                 edge_props["mutation_id"] = provenance.mutation_id
 
             await session.run(
-                """
-                MATCH (a:Entity {group_id: $gid, entity_key: $from_key})
-                MATCH (b:Entity {group_id: $gid, entity_key: $to_key})
-                MERGE (a)-[r:RELATES_TO {
+                f"""
+                MATCH (a:Entity {{group_id: $gid, entity_key: $from_key}})
+                MATCH (b:Entity {{group_id: $gid, entity_key: $to_key}})
+                MERGE (a)-[r:RELATES_TO {{
                     group_id: $gid,
                     name: $predicate,
                     subject_key: $from_key,
                     object_key: $to_key,
                     source_ref: $source_ref
-                }]->(b)
+                }}]->(b)
                 ON CREATE SET
                     r.uuid = randomUUID(),
-                    r.created_at = $now,
-                    r.expired_at = null,
-                    r.invalid_at = null
+                    r.created_at = $now
+                SET r.revived_at = CASE WHEN r.invalid_at IS NULL
+                                        THEN r.revived_at ELSE $now END
+                SET{_REVIVE_CLAUSE}
                 SET r += $props
                 """,
                 gid=pot_id,
@@ -735,6 +762,10 @@ async def _write_supersedes_claim(
 ) -> None:
     """Write ``SUPERSEDES`` as a normal :RELATES_TO claim so it follows the same
     audit + bitemporal rules as every other edge.
+
+    Including revive-on-assert: this MERGE has the same shape as the one in
+    :func:`upsert_edges_async`, so a supersession that repeats one previously
+    retracted would otherwise land on the tombstone and stay invisible.
     """
     source_ref = _stable_source_ref(
         predicate="SUPERSEDES",
@@ -744,21 +775,22 @@ async def _write_supersedes_claim(
     )
     fact = f"{new_key} supersedes {old_key}: {reason}"
     await session.run(
-        """
-        MATCH (a:Entity {group_id: $gid, entity_key: $new_key})
-        MATCH (b:Entity {group_id: $gid, entity_key: $old_key})
-        MERGE (a)-[r:RELATES_TO {
+        f"""
+        MATCH (a:Entity {{group_id: $gid, entity_key: $new_key}})
+        MATCH (b:Entity {{group_id: $gid, entity_key: $old_key}})
+        MERGE (a)-[r:RELATES_TO {{
             group_id: $gid,
             name: 'SUPERSEDES',
             subject_key: $new_key,
             object_key: $old_key,
             source_ref: $source_ref
-        }]->(b)
+        }}]->(b)
         ON CREATE SET
             r.uuid = randomUUID(),
-            r.created_at = $now_iso,
-            r.expired_at = null,
-            r.invalid_at = null
+            r.created_at = $now_iso
+        SET r.revived_at = CASE WHEN r.invalid_at IS NULL
+                                THEN r.revived_at ELSE $now_iso END
+        SET{_REVIVE_CLAUSE}
         SET
             r.valid_at = $now_iso,
             r.source_system = $source_system,

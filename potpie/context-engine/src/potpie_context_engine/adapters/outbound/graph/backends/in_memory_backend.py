@@ -237,6 +237,14 @@ class _Mutation:
         re-applying the same batch updates the same edge. Mirror that here: an
         existing live row with the same ``claim_key`` (or the same
         source_ref + predicate + endpoints) is replaced, not duplicated.
+
+        Note the ``invalid_at is not None`` skip: a retracted row is not a merge
+        target, so re-asserting a retracted claim appends a fresh live row and
+        leaves the tombstone as history. The canonical writers cannot do that —
+        their MERGE key is identical for both rows — so they revive the
+        tombstone in place instead and stamp ``revived_at``. The observable
+        contract is the same (the claim is live again); only the shape of the
+        retained history differs.
         """
         for i, existing in enumerate(self.store.rows):
             if existing.pot_id != row.pot_id or existing.invalid_at is not None:
