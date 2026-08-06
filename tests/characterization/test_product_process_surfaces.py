@@ -43,6 +43,7 @@ EXPECTED_CLI_COMMANDS = {
     "pot",
     "record",
     "resolve",
+    "resource",
     "search",
     "setup",
     "skills",
