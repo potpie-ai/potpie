@@ -25,14 +25,14 @@ from potpie_context_core.ports.graph.analytics import RepairReport
 logger = logging.getLogger(__name__)
 
 _COUNTS_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
+MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
 RETURN count(r) AS claims,
        count(DISTINCT r.name) AS predicates,
        count(CASE WHEN r.invalid_at IS NOT NULL THEN 1 END) AS invalidated
 """
 
 _ENTITY_COUNT_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
+MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
 WITH collect(DISTINCT r.subject_key) AS subjects, collect(DISTINCT r.object_key) AS objects
 RETURN size(subjects) + size([key IN objects WHERE NOT key IN subjects]) AS entities
 """
@@ -41,7 +41,7 @@ RETURN size(subjects) + size([key IN objects WHERE NOT key IN subjects]) AS enti
 # matches chronological order because the writers stamp zero-padded UTC
 # timestamps.
 _FRESHNESS_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
+MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
 WHERE r.valid_at IS NOT NULL
 RETURN min(r.valid_at) AS oldest, max(r.valid_at) AS newest, count(r) AS stamped
 """
