@@ -55,7 +55,6 @@ All inbound surfaces normalize to a single `IngestionSubmissionRequest`
 
 ```mermaid
 flowchart TD
-  ing_ep1["POST /api/v1/context/ingest<br/>(raw_episode)"]
   ing_ep2["POST /api/v1/context/events/reconcile<br/>(agent_reconciliation)"]
   ing_ep3["POST /api/v1/context/record<br/>(context_record)"]
   ing_wh["POST /webhooks/github<br/>(merged PRs)"]
@@ -65,7 +64,6 @@ flowchart TD
   ing_admit["event_admission.admit_event()"]
   ing_store["internal Postgres event store<br/>queued → processing → done/error"]
 
-  ing_ep1 --> ing_submit
   ing_ep2 --> ing_submit
   ing_ep3 --> ing_submit
   ing_wh --> ing_submit
@@ -79,7 +77,6 @@ flowchart TD
 
 | Surface | Kind / route | Notes |
 |---|---|---|
-| `POST /api/v1/context/ingest` | `raw_episode` (`submit_raw_episode.py`) | The old synchronous direct-write path is **gone** — raw episodes always go through the async DB pipeline (`202`/`queued`, or `200`/`applied` with `sync=true`). Requires `DATABASE_URL`. |
 | `POST /api/v1/context/events/reconcile` | `agent_reconciliation` | The canonical event-submission path; deduped by scope + `source_system` + `source_id`. |
 | `POST /api/v1/context/record` | `context_record` (`record_durable_context.py`) | **The deterministic exception** — see §3. |
 | `POST /webhooks/github` | `agent_reconciliation` | `GitHubConnector.normalize_webhook()` verifies HMAC (fail-closed unless `CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS=1`), emits a `ContextEvent` for merged PRs, maps repo→pot, stamps a server-trusted `webhook` Actor. |
@@ -90,6 +87,15 @@ For non-record events, `_do_submit` resolves pot/repo/source_id and calls
 either enqueue immediately or leave it for the flusher (windowed mode, §5). It
 also persists the ingress W3C `traceparent` onto the row's `correlation_id` so
 the later fan-in span can link back (see [observability.md](./observability.md)).
+
+**Retired:** `POST /api/v1/context/ingest` (`raw_episode`) is gone, along with
+`submit_raw_episode.py`, the client's `ingest()`, and the `ingest_episode`
+policy action. It was the last of the episodic tier — a fourth door into the
+same `IngestionSubmissionRequest` that `events/reconcile` already handles, with
+its own idempotency rule and its own 422 env switch. Historical `raw_episode`
+rows still read: the ingestion kind, its reconciliation-ledger dedupe, and its
+backfill playbook all stay. There is no replacement route because there was
+never a distinct pipeline — post to `events/reconcile` instead.
 
 ---
 

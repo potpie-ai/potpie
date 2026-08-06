@@ -1,6 +1,6 @@
 ---
 name: potpie-cli
-version: "3"
+version: "4"
 description: "Use when the task is centered on running, explaining, configuring, or troubleshooting the `potpie` command: doctor, login, pot management, source registration, search, graph workbench reads/writes, resource (document payload) commands, and pot scope behavior."
 ---
 
@@ -57,6 +57,13 @@ narrow timeline reads to the current repo.
 only when deliberately registering a repo to a non-default pot. If graph output
 warns that the selected pot is empty but another linked pot has claims, run the
 suggested `pot default set --repo current <pot>` command before continuing.
+
+`source add` accepts a closed set of kinds: `repo`, `linear`, `jira`,
+`confluence`, `notion`, `url`. A repo on any host is `repo` — `github`,
+`gitlab`, and `gitbucket` canonicalize to it. `--default` is repo-only.
+A document is not a source: `source add pdf ./q3.pdf` exits 1 with
+`source_kind_is_a_document`. Use the matching `potpie-resource-*` skill and
+`potpie resource import` instead.
 
 ## Search
 

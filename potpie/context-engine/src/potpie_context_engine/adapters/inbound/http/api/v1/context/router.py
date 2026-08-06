@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Literal, Optional
@@ -34,9 +33,6 @@ from potpie_context_engine.application.use_cases.record_durable_context import (
     record_durable_context,
 )
 from potpie_context_engine.application.use_cases.report_status import report_status
-from potpie_context_engine.application.use_cases.submit_raw_episode import (
-    submit_raw_episode,
-)
 from potpie_context_engine.bootstrap.ingestion_server import IngestionServerContainer
 from potpie_context_core.actor import Actor, ActorSurface, normalize_surface
 from potpie_context_engine.domain.ingestion_event_models import (
@@ -48,7 +44,6 @@ from potpie_context_engine.domain.ingestion_kinds import (
     INGESTION_KIND_AGENT_RECONCILIATION,
 )
 from potpie_context_engine.domain.ports.policy import (
-    ACTION_POT_INGEST_EPISODE,
     ACTION_POT_READ,
     ACTION_POT_RECORD,
     ACTION_POT_RESET,
@@ -137,16 +132,6 @@ def _audit_operator_action(
     _audit_logger.warning("operator_action %s", action, extra={"audit": fields})
 
 
-def _ingest_rejection_returns_422() -> bool:
-    """When true, sync ingest surfaces structured reconciliation failures as HTTP 422.
-
-    Set ``CONTEXT_ENGINE_INGEST_422=0`` to restore legacy 503 + plain detail string
-    for operators that treat any 2xx as success monitors.
-    """
-    v = os.getenv("CONTEXT_ENGINE_INGEST_422", "1").strip().lower()
-    return v not in ("0", "false", "no", "off")
-
-
 class BatchRetryEventsRequest(BaseModel):
     """Bulk-retry request body. Capped at 200 to avoid a runaway batch.
 
@@ -185,25 +170,6 @@ class HardResetRequest(BaseModel):
     skip_ledger: bool = Field(
         default=False,
         description="If true, only clear the canonical Neo4j graph; do not delete Postgres ledger rows.",
-    )
-
-
-class IngestEpisodeRequest(BaseModel):
-    """Raw episode admitted through the async reconciliation pipeline."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    pot_id: str
-    name: str
-    episode_body: str
-    source_description: str
-    reference_time: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
-        description="Event time for the episode (defaults to UTC now).",
-    )
-    idempotency_key: Optional[str] = Field(
-        default=None,
-        description="Optional dedupe key for raw episodic ingest (requires DATABASE_URL).",
     )
 
 
@@ -410,122 +376,6 @@ def create_context_router(
             surface=surface,
             client_name=client_name,
             auth_method="api_key",
-        )
-
-    @router.post(
-        "/ingest",
-        summary="Add episodic episode",
-        description=(
-            "Ingest a narrative event for the pot (group_id); routed through the reconciliation agent. "
-            "When DATABASE_URL is set, defaults to async (202): event is persisted then applied by a worker. "
-            "Use sync=true or header X-Context-Ingest-Sync for inline apply."
-        ),
-    )
-    def post_ingest_episode(
-        body: IngestEpisodeRequest,
-        request: Request,
-        auth_user: Any = Depends(require_auth),
-        container: IngestionServerContainer = Depends(get_container),
-        db: Session | None = Depends(get_db_optional),
-        sync: bool = Query(
-            False,
-            description="Synchronous apply after persist (200). Default false = async (202) when DATABASE_URL is set.",
-        ),
-        x_context_ingest_sync: str | None = Header(
-            None,
-            alias="X-Context-Ingest-Sync",
-            description="If true/1/yes, same as sync=true.",
-        ),
-    ):
-        want_sync = _wants_sync(sync, x_context_ingest_sync)
-        actor = _resolve_actor(auth_user, request)
-        _enforce(
-            container,
-            actor=actor,
-            resource=RESOURCE_POT,
-            action=ACTION_POT_INGEST_EPISODE,
-            pot_id=body.pot_id,
-        )
-        try:
-            result = submit_raw_episode(
-                container=container,
-                db=db,
-                pot_id=body.pot_id,
-                name=body.name,
-                episode_body=body.episode_body,
-                source_description=body.source_description,
-                reference_time=body.reference_time,
-                idempotency_key=body.idempotency_key,
-                sync=want_sync,
-                source_channel=actor.surface,
-                actor=actor,
-            )
-            if db is not None:
-                if result.ok:
-                    db.commit()
-                else:
-                    db.rollback()
-        except Exception:
-            if db is not None:
-                db.rollback()
-            raise
-
-        if not result.ok:
-            if result.status == "duplicate":
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "error": "duplicate_ingest",
-                        "event_id": result.event_id,
-                        "message": "Duplicate idempotency key or conflicting event.",
-                    },
-                )
-            if result.status == "reconciliation_rejected":
-                payload = {
-                    "status": "reconciliation_rejected",
-                    "event_id": result.event_id,
-                    "mutation_id": None,
-                    "errors": list(result.reconciliation_errors or []),
-                    "downgrades": list(result.downgrades or []),
-                }
-                if _ingest_rejection_returns_422():
-                    return JSONResponse(status_code=422, content=payload)
-                raise HTTPException(
-                    status_code=503,
-                    detail=result.error or "reconciliation_rejected",
-                )
-            err = result.error or "ingest_failed"
-            if err == "unknown_pot_id":
-                raise HTTPException(status_code=404, detail=UNKNOWN_POT_DETAIL)
-            if err == "async_requires_database":
-                raise HTTPException(
-                    status_code=503,
-                    detail="Async raw ingest requires DATABASE_URL (or pass sync=true for inline context graph write).",
-                )
-            if err == "context_graph_disabled":
-                raise HTTPException(
-                    status_code=503,
-                    detail="Context graph is disabled (opt in by unsetting CONTEXT_GRAPH_ENABLED or setting true).",
-                )
-            raise HTTPException(status_code=503, detail=err)
-
-        if result.status == "applied":
-            return {
-                "status": "applied",
-                "mutation_id": result.mutation_id,
-                "event_id": result.event_id,
-                "job_id": result.job_id,
-                "errors": [],
-                "downgrades": list(result.downgrades or []),
-            }
-        return JSONResponse(
-            status_code=202,
-            content={
-                "status": "queued",
-                "event_id": result.event_id,
-                "job_id": result.job_id,
-                "downgrades": list(result.downgrades or []),
-            },
         )
 
     @router.post(

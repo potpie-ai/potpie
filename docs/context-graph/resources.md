@@ -2,9 +2,9 @@
 
 | Status | Date | Owner | Code |
 |--------|------|-------|------|
-| P1–P5, P7, P9 landed | 2026-08-06 | nndn | `context-core/ontology.py`, `context-core/ports/resource_store.py`, `context-core/resource_to_semantic.py`, `context-engine/.../adapters/outbound/resources/`, `.../application/readers/docs.py`, `.../application/services/pot_management.py`, `.../host/shell.py`, `cli/commands/resource.py`, `cli/commands/pots.py`, `.../graph/document_key_repair.py`, `cli/templates/*/skills/potpie-resource-*/`, `.../application/services/envelope_builder.py`, `.../adapters/outbound/graph/{canonical_claim_query,falkordb_reader,neo4j_reader}.py` |
+| Complete (P1–P5, P7–P9) | 2026-08-06 | nndn | `context-core/ontology.py`, `context-core/ports/resource_store.py`, `context-core/resource_to_semantic.py`, `context-engine/.../adapters/outbound/resources/`, `.../application/readers/docs.py`, `.../application/services/pot_management.py`, `.../host/shell.py`, `cli/commands/resource.py`, `cli/commands/pots.py`, `cli/source_kinds.py`, `.../graph/document_key_repair.py`, `cli/templates/*/skills/potpie-resource-*/`, `.../application/services/envelope_builder.py`, `.../adapters/outbound/graph/{canonical_claim_query,falkordb_reader,neo4j_reader}.py` |
 
-P8 is unimplemented; **P6 (export/import round-trip) is dropped** — resource bytes are
+Every planned phase has landed; **P6 (export/import round-trip) is dropped** — resource bytes are
 deliberately outside the graph snapshot, see [Non-goals](#non-goals). The end-to-end path
 works: `potpie resource import` writes bytes to the local store *and* the document's structure
 to the graph, so an imported document is findable by search and by
@@ -14,8 +14,10 @@ Pot teardown (`pot reset` / `pot archive`) purges the resource tree with the gra
 `potpie-resource-pdf` / `-spreadsheet` / `-markdown` in both skill bundles, with the shared
 flow (resolve-before-import, script-emitted chunk directory, two-pass summaries, `DOCUMENTS`
 linking) pinned by content-contract tests. Section claims use their own `documents` fact
-family and are demoted / excluded from project-memory reads (P9). What is still missing:
-`source add` kind dispatch / ingest deprecations (P8).
+family and are demoted / excluded from project-memory reads (P9). P8 closed the two doors
+that let a document go somewhere useless: `source add` now dispatches on a closed kind
+table and sends document kinds to `resource import`, and the raw-episode ingest endpoint
+is deleted rather than left as a fourth way in.
 
 ## Problem
 
@@ -189,7 +191,7 @@ P1 and P2 are independent and can land in either order; everything after depends
 | ~~**P6 — Export/import**~~ *(dropped)* | Bundling the chunk tree into `graph export` is not planned. The snapshot stays graph-only; re-import is the recovery path. See [Non-goals](#non-goals). | — |
 | ~~**P7 — Skills**~~ *(landed)* | `potpie-resource-pdf` / `-spreadsheet` / `-markdown` in `claude_plugin` + `agent_bundle` (byte-identical; the bundle catalog auto-registers them for `skills install`): script-writing, stable section slugs, the 1–5 chunk rule, the two-pass summarize flow, resolve-before-import, and — for spreadsheets — deriving facts as claims with chunk-id evidence. Existing skills updated in step: `potpie-graph` v6 (find-then-fetch read path), `potpie-source-ingestion` v2 (payload routing), `potpie-cli` v3 (`resource` group), plus AGENTS.md/CLAUDE.md routing. Content contract pinned in `tests/unit/test_agent_templates_v15.py`. | P3, P4 |
 | ~~**P9 — Section fact family**~~ *(landed)* | `Document` / `DocumentSection` use `fact_family=documents`; `docs` is demoted in `EnvelopeBuilder` cross-include ranking; non-docs readers pass `subgraph_not_in=("knowledge",)`; selective vector queries over-fetch ANN candidates so section embeddings cannot starve `prior_bugs`. | P4 |
-| **P8 — Deprecations** | Real `kind` dispatch in `source add` (today a single `== "repo"` branch, `cli/commands/pots.py:457`). Retire `POST /api/v1/context/ingest` (`.../v1/context/router.py:415`) after checking for hosted rows. | P7 |
+| ~~**P8 — Deprecations**~~ *(landed)* | `source add` dispatches on a closed kind table (`cli/source_kinds.py`): git hosts canonicalize to `repo`, document kinds exit 1 toward `resource import`, unknown kinds exit 1, `--default` is repo-only. `POST /api/v1/context/ingest` and `submit_raw_episode.py` are deleted, with the client's `ingest()` and the `ingest_episode` policy action; the `raw_episode` ingestion kind stays so historical rows still read. | P7 |
 
 ## Verification
 
@@ -245,6 +247,7 @@ potpie pot reset --confirm && potpie resource list --doc q3-review              
 | `potpie/context-engine/src/.../application/readers/docs.py` | `DocsReader` — section claims and their `chunk_ids` |
 | `potpie/context-engine/src/.../adapters/outbound/resources/` | `LocalResourceStore` now, `S3ResourceStore` later |
 | `potpie/cli/commands/resource.py` | the `resource` group, mounted in `cli/main.py` |
+| `potpie/cli/source_kinds.py` | the closed `source add` kind table; document kinds route here |
 | `potpie/cli/templates/claude_plugin/skills/potpie-resource-*/` | per-format extraction skills; byte-identical copies in `agent_bundle/.agents/skills/`, which the bundle catalog scans |
 | `potpie/context-core/src/potpie_context_core/identity.py:57` | `_SLUG_BODY_RE` — the `--doc`/`--section` grammar, reuse it |
 | `potpie/context-core/src/potpie_context_core/graph_workbench_ontology.py:720` | `knowledge.document_context` — the existing reader these nodes feed |

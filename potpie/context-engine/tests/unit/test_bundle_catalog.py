@@ -28,7 +28,10 @@ def test_catalog_fields_are_populated_from_skill_front_matter() -> None:
     catalog = catalog_by_id()
     cli = catalog["potpie-cli"]
     assert cli.title == "Potpie CLI"
-    assert cli.version == "2"
+    # The version is read from front matter, not pinned here — pinning made
+    # every skill revision break this test instead of the content contract
+    # that owns it (tests/unit/test_agent_templates_v15.py).
+    assert cli.version.isdigit()
     assert "Potpie CLI" in cli.description or "potpie" in cli.description.lower()
 
     graph = catalog["potpie-graph"]

@@ -108,6 +108,123 @@ def test_source_add_json_marks_registration_only() -> None:
     assert fake_pots.repo_defaults == {}
 
 
+# ---------------------------------------------------------------------------
+# kind dispatch — every accepted kind has a handler, everything else exits 1
+# ---------------------------------------------------------------------------
+
+
+def test_source_add_registers_an_integration_kind() -> None:
+    fake_pots = _Pots()
+    _common.set_host(_Host(pots=fake_pots))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(
+        pots.source_app, ["add", "notion", "https://notion.so/wiki", "--pot", "pot-1"]
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    assert emitted["kind"] == "notion"
+    assert emitted["repo_default_set"] is False
+    assert "requested_kind" not in emitted
+    assert fake_pots.repo_defaults == {}
+
+
+def test_source_add_canonicalizes_git_hosts_to_repo() -> None:
+    """`github` stores as `repo` — repo-default matching only sees that kind."""
+    fake_pots = _Pots()
+    _common.set_host(_Host(pots=fake_pots))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(
+        pots.source_app, ["add", "github", "owner/repo", "--pot", "pot-1"]
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    assert emitted["kind"] == "repo"
+    assert emitted["requested_kind"] == "github"
+    assert fake_pots.calls == [
+        {"pot_id": "pot-1", "kind": "repo", "location": "owner/repo", "name": None}
+    ]
+    assert fake_pots.repo_defaults == {"owner/repo": "pot-1"}
+
+
+def test_source_add_canonicalization_is_reported_in_human_output() -> None:
+    fake_pots = _Pots()
+    _common.set_host(_Host(pots=fake_pots))
+
+    result = CliRunner().invoke(
+        pots.source_app, ["add", "gitlab", "owner/repo", "--pot", "pot-1"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "kind 'gitlab' registered as 'repo'" in result.output
+
+
+@pytest.mark.parametrize("kind", ["document", "pdf", "spreadsheet", "csv", "md"])
+def test_source_add_routes_document_kinds_to_resource_import(kind: str) -> None:
+    fake_pots = _Pots()
+    _common.set_host(_Host(pots=fake_pots))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(
+        pots.source_app, ["add", kind, "./q3.pdf", "--pot", "pot-1"]
+    )
+
+    assert result.exit_code == 1
+    emitted = json.loads(result.output)
+    assert emitted["code"] == "source_kind_is_a_document"
+    assert "potpie resource import" in emitted["recommended_next_action"]
+    assert fake_pots.calls == []
+
+
+def test_source_add_rejects_an_unknown_kind() -> None:
+    fake_pots = _Pots()
+    _common.set_host(_Host(pots=fake_pots))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(
+        pots.source_app, ["add", "kafka-topic", "orders", "--pot", "pot-1"]
+    )
+
+    assert result.exit_code == 1
+    emitted = json.loads(result.output)
+    assert emitted["code"] == "unknown_source_kind"
+    assert "repo" in emitted["detail"]["kinds"]
+    assert fake_pots.calls == []
+
+
+def test_source_add_rejects_explicit_default_on_a_non_repo_kind() -> None:
+    fake_pots = _Pots()
+    _common.set_host(_Host(pots=fake_pots))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(
+        pots.source_app,
+        ["add", "linear", "team/PLAT", "--pot", "pot-1", "--default"],
+    )
+
+    assert result.exit_code == 1
+    emitted = json.loads(result.output)
+    assert emitted["code"] == "repo_default_not_applicable"
+    assert fake_pots.calls == []
+
+
+def test_source_add_non_repo_kind_without_the_flag_still_registers() -> None:
+    """--default defaults to unset, so a non-repo kind is not tripped by it."""
+    fake_pots = _Pots()
+    _common.set_host(_Host(pots=fake_pots))
+    _common.set_json(True)
+
+    result = CliRunner().invoke(
+        pots.source_app, ["add", "jira", "PLAT", "--pot", "pot-1"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["kind"] == "jira"
+
+
 def test_source_add_repo_default_reports_unavailable_host() -> None:
     fake_pots = _Pots()
     fake_pots.set_repo_default = None  # type: ignore[method-assign]

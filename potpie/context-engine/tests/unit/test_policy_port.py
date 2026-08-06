@@ -13,7 +13,6 @@ from potpie_context_core.actor import Actor
 from potpie_context_core.reconciliation_config import ReconciliationConfig
 from potpie_context_engine.domain.ports.policy import (
     ACTION_APPLY_WRITE,
-    ACTION_POT_INGEST_EPISODE,
     ACTION_POT_READ,
     ACTION_POT_RECORD,
     ACTION_POT_RESET,
@@ -229,17 +228,6 @@ def test_policy_instances_keep_independent_captured_configuration(
     assert planner_decision.reason == REASON_AGENT_PLANNER_DISABLED
 
 
-def test_pot_ingest_episode_engine_disabled():
-    decision = _adapter(enabled=False, pots={"p1": "x"}).authorize(
-        actor=None,
-        resource=RESOURCE_POT,
-        action=ACTION_POT_INGEST_EPISODE,
-        context={"pot_id": "p1"},
-    )
-    assert not decision.allowed
-    assert decision.reason == REASON_CONTEXT_GRAPH_DISABLED
-
-
 def test_pot_reset_denies_unknown_pot():
     decision = _adapter(pots={"p1": "x"}).authorize(
         actor=None,
@@ -279,8 +267,7 @@ def test_unsupported_resource_returns_400():
         ACTION_POT_SUBMIT_EVENT,
         ACTION_POT_RECORD,
         ACTION_POT_RESET,
-        ACTION_POT_INGEST_EPISODE,
-    ],
+        ],
 )
 def test_known_pot_id_short_circuits_when_unknown(action):
     decision = _adapter(pots={"p1": "x"}).authorize(

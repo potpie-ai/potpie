@@ -15,7 +15,6 @@ from potpie_context_engine.domain.ports.policy import (
     ACTION_APPLY_WRITE,
     ACTION_CONNECTOR_FETCH,
     ACTION_CONNECTOR_LIST,
-    ACTION_POT_INGEST_EPISODE,
     ACTION_POT_READ,
     ACTION_POT_RECORD,
     ACTION_POT_RESET,
@@ -220,12 +219,6 @@ class DefaultPolicyAdapter:
                 detail="Episodic graph backend unavailable.",
                 status_code=503,
             )
-        if action == ACTION_POT_INGEST_EPISODE and not self._settings.is_enabled():
-            return PolicyDecision.deny(
-                REASON_CONTEXT_GRAPH_DISABLED,
-                detail="Context graph is disabled (CONTEXT_GRAPH_ENABLED).",
-            )
-
         if resolved is not None:
             return PolicyDecision.allow(resolved_pot_id=resolved.pot_id)
 

@@ -188,6 +188,7 @@ potpie pot linked  [--repo .] [--summary]
 potpie pot default show | set | clear [--repo .]
 
 potpie source add    <kind> <location> [--name <n>] [--pot <ref>] [--default/--no-default]
+                     # kind: repo | linear | jira | confluence | notion | url
 potpie source list   [--pot <ref>]
 potpie source status [<id>] [--pot <ref>]
 potpie source remove <id> [--pot <ref>]
@@ -204,9 +205,18 @@ potpie source remove <id> [--pot <ref>]
   repo default and the selected pot diverge).
 - **`source status`** with no ID prints a per-pot summary of all sources; with an
   ID it reports that single source.
-- **`source add <kind> <location>`** is generic registration only (no scan/ingest);
+- **`source add <kind> <location>`** is registration only (no scan/ingest);
   registering a repo also sets the repo default. Repo-baseline ingestion is
-  harness-led via skills ([skills.md](./skills.md)), not a scanner.
+  harness-led via skills ([skills.md](./skills.md)), not a scanner. `kind` is a
+  closed set (`cli/source_kinds.py`), because a kind with no handler used to
+  exit 0 and write a row nothing reads: git hosts (`github`/`gitlab`/`gitbucket`)
+  canonicalize to `repo` — the kind repo-default matching and `source status`
+  key on — and the canonicalization is reported as `requested_kind`; document
+  kinds (`pdf`/`spreadsheet`/`markdown`/…) exit 1 with
+  `source_kind_is_a_document` pointing at `resource import`
+  ([resources.md](./resources.md)); anything else exits 1 with
+  `unknown_source_kind`. `--default` is repo-only and errors if passed with
+  another kind.
 - **`source remove`** drops the registration only — it does not purge documents or
   graph claims (there is no source→document FK).
 
@@ -574,7 +584,7 @@ through services and capability ports.
 | `CONTEXT_ENGINE_AGENT_PLANNER_ENABLED` | service-side LLM reconciliation (**default off**) |
 | `CONTEXT_ENGINE_MAX_CHUNK_EVENTS` | batch chunk size (default 20) |
 | `CONTEXT_ENGINE_RECONCILIATION_ENABLED` / `_INFER_LABELS` / `_CONFLICT_DETECT` / `_AUTO_SUPERSEDE` | reconciliation feature flags |
-| `CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS`, `GITHUB_WEBHOOK_SECRET`, `CONTEXT_ENGINE_INGEST_422` | webhook/ingest controls |
+| `CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS`, `GITHUB_WEBHOOK_SECRET` | webhook controls |
 | `POTPIE_HOOK_DEBUG`, `POTPIE_HOOK_TIMEOUT`, `POTPIE_BIN`, `POTPIE_POT` | nudge-hook env |
 
 Backend precedence: `CONTEXT_ENGINE_BACKEND` > `GRAPH_DB_BACKEND` >

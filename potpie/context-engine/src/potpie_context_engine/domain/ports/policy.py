@@ -40,7 +40,6 @@ RESOURCE_APPLY = "apply"
 ACTION_POT_READ = "read"
 ACTION_POT_SUBMIT_EVENT = "submit_event"
 ACTION_POT_RECORD = "record"
-ACTION_POT_INGEST_EPISODE = "ingest_episode"
 ACTION_POT_RESET = "reset"
 ACTION_POT_RESOLVE_CONFLICT = "resolve_conflict"
 

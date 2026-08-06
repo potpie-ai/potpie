@@ -24,16 +24,6 @@ class PotpieContextApiError(Exception):
         super().__init__(f"HTTP {status_code}: {detail!r}")
 
 
-class IngestRejectedError(Exception):
-    """Server returned HTTP 422 with a structured reconciliation rejection body."""
-
-    def __init__(self, body: dict[str, Any]) -> None:
-        self.body = body
-        super().__init__(
-            str(body.get("status") or body.get("error") or "reconciliation_rejected")
-        )
-
-
 def _json_body_for_httpx(obj: Any) -> Any:
     """Recursively convert datetime to ISO strings for JSON bodies."""
     if isinstance(obj, datetime):
@@ -369,41 +359,6 @@ class PotpieContextApiClient:
             ),
             recommended_next_action="Use context_resolve/context_search or graph read locally.",
         )
-
-    def ingest(self, body: dict[str, Any], *, sync: bool) -> tuple[int, dict[str, Any]]:
-        params = {"sync": "true"} if sync else None
-        r = self.post_context("/ingest", json_body=body, params=params)
-        if r.status_code == 422:
-            payload: dict[str, Any]
-            try:
-                raw = r.json()
-                payload = raw if isinstance(raw, dict) else {}
-            except json.JSONDecodeError:
-                payload = {
-                    "status": "reconciliation_rejected",
-                    "errors": [],
-                    "event_id": None,
-                    "mutation_id": None,
-                    "downgrades": [],
-                }
-            raise IngestRejectedError(payload)
-        if r.status_code in (200, 202):
-            try:
-                return r.status_code, r.json()
-            except json.JSONDecodeError:
-                raise PotpieContextApiError(r.status_code, r.text) from None
-        if r.status_code == 409:
-            try:
-                detail = r.json().get("detail", {})
-                if (
-                    isinstance(detail, dict)
-                    and detail.get("error") == "duplicate_ingest"
-                ):
-                    return r.status_code, detail
-            except Exception:
-                pass
-        self._raise_for_status(r)
-        return r.status_code, {}
 
     def get_event(self, event_id: str) -> dict[str, Any]:
         encoded_event_id = quote(event_id.strip(), safe="")

@@ -32,6 +32,12 @@ from potpie.cli.telemetry.onboarding_events import (
     sanitized_failure_kind,
 )
 from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
+from potpie.cli.source_kinds import (
+    SourceKind,
+    known_tokens,
+    registrable_names,
+    resolve_kind,
+)
 from potpie_context_core.errors import CapabilityNotImplemented
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
@@ -427,8 +433,7 @@ def pot_reset(
             fail(
                 code="confirmation_required",
                 message=(
-                    f"resetting '{target}' clears its graph and stored document "
-                    "chunks"
+                    f"resetting '{target}' clears its graph and stored document chunks"
                 ),
                 next_action=f"re-run with 'potpie pot reset {target} --confirm'",
             )
@@ -469,9 +474,47 @@ def pot_archive(
         )
 
 
+def _dispatch_source_kind(raw: str) -> SourceKind:
+    """Resolve a kind token to its handler, or fail with the contract error.
+
+    Both failure modes are caller mistakes (exit 1) that a retry can fix,
+    and they need different retries — one points at ``resource import``,
+    the other at the accepted vocabulary — so they carry distinct codes.
+    """
+    resolved = resolve_kind(raw)
+    if resolved is None:
+        fail(
+            code="unknown_source_kind",
+            message=f"'{raw}' is not a source kind Potpie registers.",
+            detail={
+                "kinds": list(registrable_names()),
+                "accepted": list(known_tokens()),
+            },
+            next_action=("re-run with one of: " + ", ".join(registrable_names())),
+        )
+    if resolved.disposition == "resource":
+        fail(
+            code="source_kind_is_a_document",
+            message=(
+                f"'{raw}' names a document payload, which is stored in the "
+                "resource store, not the source registry."
+            ),
+            detail={"kind": resolved.name},
+            next_action=(
+                "split the document with the matching potpie-resource-* skill, "
+                "then run 'potpie resource import <dir> --doc <slug>'"
+            ),
+        )
+    return resolved
+
+
 @source_app.command("add")
 def source_add(
-    kind: str = typer.Argument(..., help="repo | github | document | ..."),
+    kind: str = typer.Argument(
+        ...,
+        help="repo | linear | jira | confluence | notion | url "
+        "(github/gitlab/gitbucket register as repo).",
+    ),
     location: str = typer.Argument(
         ...,
         help="Path, owner/repo, URL, or integration location to register. For "
@@ -480,17 +523,28 @@ def source_add(
     ),
     name: str = typer.Option(None, "--name", help="Optional display/source name."),
     pot: str = typer.Option(None, "--pot", help="Pot id/name (default: resolved pot)."),
-    make_default: bool = typer.Option(
-        True,
+    make_default: bool | None = typer.Option(
+        None,
         "--default/--no-default",
-        help="For repo sources, set this pot as the local default for this repo.",
+        help="Repo sources only: set this pot as the local default for this repo "
+        "(on by default). Passing --default for a non-repo kind is an error.",
     ),
 ) -> None:
     """Register source metadata only; no ingestion or repository scan is started."""
     with contract():
         host = get_host()
-        source_kind = kind.strip()
-        is_repo = source_kind.lower() == "repo"
+        source_kind = _dispatch_source_kind(kind)
+        is_repo = source_kind.disposition == "repo"
+        if not is_repo and make_default is True:
+            fail(
+                code="repo_default_not_applicable",
+                message=(
+                    f"--default only applies to repo sources; '{source_kind.name}' "
+                    "does not carry a repo identity."
+                ),
+                detail={"kind": source_kind.name},
+                next_action="drop --default, or bind the pot with 'potpie pot default set'",
+            )
         # Registration establishes the repo→pot mapping, so the target is the
         # explicit/active pot — never inferred from existing registrations.
         pot_id = resolve_pot_id(host, pot, infer_from_repo=False)
@@ -498,7 +552,7 @@ def source_add(
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_started",
             entrypoint="direct_command",
-            properties={"source_kind": source_kind},
+            properties={"source_kind": source_kind.name},
         )
         try:
             if is_repo:
@@ -507,12 +561,12 @@ def source_add(
                     pot_id=pot_id,
                     location=location,
                     name=name,
-                    make_default=make_default,
+                    make_default=make_default is not False,
                 )
             else:
                 src = host.pots.add_source(
                     pot_id=pot_id,
-                    kind=source_kind,
+                    kind=source_kind.name,
                     location=location,
                     name=name,
                 )
@@ -530,17 +584,22 @@ def source_add(
                 "cli_onboarding_repo_source_add_failed",
                 entrypoint="direct_command",
                 properties={
-                    "source_kind": kind,
+                    "source_kind": source_kind.name,
                     "failure_kind": sanitized_failure_kind(exc),
                     "duration_ms": elapsed_ms(started_ms),
                 },
             )
             raise
+        # An alias canonicalized (github → repo) is reported, never silent:
+        # the stored kind is what `source list` and repo-default matching see.
+        requested = kind.strip().lower()
+        if requested != source_kind.name:
+            payload["requested_kind"] = requested
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_completed",
             entrypoint="direct_command",
             properties={
-                "source_kind": payload.get("kind", source_kind),
+                "source_kind": payload.get("kind", source_kind.name),
                 "step_state": "done",
                 "duration_ms": elapsed_ms(started_ms),
             },
@@ -554,6 +613,11 @@ def source_add(
             human=(
                 f"registered source {payload['kind']}:{payload['name']} "
                 f"({payload['source_id']}) at {resolved_location} in pot {pot_id}\n"
+                + (
+                    f"kind '{requested}' registered as '{source_kind.name}'\n"
+                    if requested != source_kind.name
+                    else ""
+                )
                 + (f"set repo default -> {pot_id}\n" if repo_default_set else "")
                 + "no ingestion or scan started"
             ),
@@ -743,8 +807,7 @@ def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> Non
         emit(
             {"removed": source_id, "resources_touched": False},
             human=(
-                f"removed source {source_id} "
-                "(registration only; documents unchanged)"
+                f"removed source {source_id} (registration only; documents unchanged)"
             ),
         )
 

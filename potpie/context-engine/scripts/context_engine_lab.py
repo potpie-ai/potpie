@@ -19,7 +19,7 @@ import asyncio
 import json
 import sys
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +41,6 @@ from potpie_context_engine.adapters.outbound.cli_auth.potpie_api_config import (
     resolve_potpie_api_key,
 )
 from potpie_context_engine.adapters.outbound.http.potpie_context_api_client import (  # noqa: E402
-    IngestRejectedError,
     PotpieContextApiClient,
     PotpieContextApiError,
 )
@@ -96,16 +95,11 @@ def main() -> int:
     api.add_argument("--pot-id", default=None)
     api.add_argument("--repo-name", default=None)
     api.add_argument(
-        "--write", action="store_true", help="Also ingest sample episodes."
-    )
-    api.add_argument(
         "--record",
         action="store_true",
-        help="Also call context_record for sample records. Implies --write.",
+        help="Also call context_record for sample records.",
     )
-    api.add_argument(
-        "--sync", action="store_true", help="Use sync=true for ingest/record."
-    )
+    api.add_argument("--sync", action="store_true", help="Use sync=true for record.")
     api.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     api.add_argument("--print-json", action="store_true")
 
@@ -252,24 +246,6 @@ def _http_e2e(data: dict[str, Any]) -> dict[str, Any]:
         },
     )
 
-    for episode in data["episodes"]:
-        _http_step(
-            result,
-            f"ingest:{episode['name']}",
-            client,
-            "POST",
-            "/context/ingest",
-            params={"sync": "true"},
-            json={
-                "pot_id": pot_id,
-                "name": episode["name"],
-                "episode_body": episode["body"],
-                "source_description": episode["source"],
-                "reference_time": datetime.now(timezone.utc).isoformat(),
-                "idempotency_key": episode.get("idempotency_key"),
-            },
-        )
-
     _http_step(
         result,
         "search",
@@ -358,22 +334,6 @@ def _run_api_smoke(args: argparse.Namespace) -> int:
             }
         ),
     )
-
-    if args.write or args.record:
-        for episode in data["episodes"]:
-            body = {
-                "pot_id": pot_id,
-                "name": episode["name"],
-                "episode_body": episode["body"],
-                "source_description": episode["source"],
-                "reference_time": datetime.now(timezone.utc),
-                "idempotency_key": episode.get("idempotency_key"),
-            }
-            _api_step(
-                result,
-                f"ingest:{episode['name']}",
-                lambda body=body: client.ingest(body, sync=args.sync)[1],
-            )
 
     _api_step(
         result,
@@ -531,16 +491,6 @@ def _record_step(
 def _api_step(result: dict[str, Any], name: str, fn: Any) -> None:
     try:
         payload = fn()
-    except IngestRejectedError as exc:
-        result["failures"].append(
-            {
-                "step": name,
-                "status_code": 422,
-                "detail": exc.body,
-            }
-        )
-        result["steps"].append({"name": name, "ok": False})
-        return
     except PotpieContextApiError as exc:
         result["failures"].append(
             {
