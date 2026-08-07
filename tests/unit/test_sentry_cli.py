@@ -15,7 +15,11 @@ from potpie.cli.telemetry_context import (
     load_anonymous_install_id,
 )
 from potpie.cli.telemetry.identity_store import identity_path
-from domain.errors import CapabilityNotImplemented, ContextEngineDisabled, PotNotFound
+from potpie_context_core.errors import (
+    CapabilityNotImplemented,
+    ContextEngineDisabled,
+    PotNotFound,
+)
 
 _SAFE_CLI_ATTRS: Final[frozenset[str]] = frozenset(
     {
@@ -73,11 +77,16 @@ class _FakeMetricsRuntime:
 @pytest.fixture
 def fake_metrics(monkeypatch: pytest.MonkeyPatch) -> _FakeMetricsRuntime:
     fake = _FakeMetricsRuntime()
-    monkeypatch.setattr("bootstrap.sentry_metrics_runtime.count", fake.count)
     monkeypatch.setattr(
-        "bootstrap.sentry_metrics_runtime.distribution", fake.distribution
+        "potpie_context_engine.bootstrap.sentry_metrics_runtime.count", fake.count
     )
-    monkeypatch.setattr("bootstrap.sentry_metrics_runtime.flush", fake.flush)
+    monkeypatch.setattr(
+        "potpie_context_engine.bootstrap.sentry_metrics_runtime.distribution",
+        fake.distribution,
+    )
+    monkeypatch.setattr(
+        "potpie_context_engine.bootstrap.sentry_metrics_runtime.flush", fake.flush
+    )
     return fake
 
 
@@ -138,7 +147,8 @@ def test_cli_root_configures_sentry_errors_and_metrics_with_one_settings_load(
         error_settings.append,
     )
     monkeypatch.setattr(
-        "bootstrap.sentry_metrics_runtime.configure_metrics", metric_settings.append
+        "potpie_context_engine.bootstrap.sentry_metrics_runtime.configure_metrics",
+        metric_settings.append,
     )
     runner = CliRunner()
 

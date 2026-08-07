@@ -6,15 +6,34 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from adapters.outbound.graph.backends import KNOWN_PROFILES, build_backend
-from adapters.outbound.graph.backends.falkordb_backend import FalkorDBGraphBackend
-from bootstrap.host_wiring import build_host_shell, default_backend_profile
-from bootstrap.ingestion_server import build_ingestion_server
-from domain.context_events import EventRef
-from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
-from domain.lifecycle import SetupPlan
-from domain.ports.graph.backend import GraphBackend
-from domain.reconciliation import ReconciliationPlan
+from potpie_context_engine.adapters.outbound.graph.backends import (
+    KNOWN_PROFILES,
+    build_backend,
+)
+from potpie_context_engine.adapters.outbound.graph.backends.falkordb_backend import (
+    FalkorDBGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
+    canonical_label_changes,
+    repaired_entity_labels,
+)
+from potpie_context_engine.bootstrap.host_wiring import (
+    build_host_shell,
+    default_backend_profile,
+)
+from potpie_context_engine.bootstrap.ingestion_server import build_ingestion_server
+from potpie_context_core.context_events import EventRef
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphExtension
+from potpie_context_core.graph_mutations import (
+    EdgeUpsert,
+    EntityUpsert,
+    ProvenanceRef,
+)
+from potpie_context_core.lifecycle import SetupPlan
+from potpie_context_core.identity import IdentityClass
+from potpie_context_core.ontology import EntityTypeSpec
+from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_core.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.unit
 
@@ -93,6 +112,38 @@ class _RepairGraph:
             )
         if "SET e += $props" in cypher:
             self.updates.append(params)
+            return _FakeResult(["cnt"], [[1]])
+        return _FakeResult([], [])
+
+
+class _PagedLabelRepairGraph:
+    def __init__(self) -> None:
+        self.scan_cursors: list[str] = []
+        self.updated_keys: list[str] = []
+
+    def query(self, cypher: str, params: dict | None = None) -> _FakeResult:
+        params = params or {}
+        if "labels(e) AS labels" in cypher:
+            after = str(params["after"])
+            self.scan_cursors.append(after)
+            pages = {
+                "": [
+                    [
+                        "environment:a",
+                        ["Entity", "Activity", "Environment"],
+                    ]
+                ],
+                "environment:a": [
+                    [
+                        "environment:b",
+                        ["Entity", "DeploymentTarget", "Environment"],
+                    ]
+                ],
+                "environment:b": [],
+            }
+            return _FakeResult(["key", "labels"], pages[after])
+        if "RETURN count(e) AS cnt" in cypher:
+            self.updated_keys.append(str(params["key"]))
             return _FakeResult(["cnt"], [[1]])
         return _FakeResult([], [])
 
@@ -228,3 +279,50 @@ def test_falkordb_repair_backfills_entity_summaries() -> None:
     assert graph.updates[0]["props"]["description"] == "Web frontend service."
     assert graph.updates[1]["props"]["summary"] == "auth"
     assert graph.updates[1]["props"]["description"] == "auth"
+
+
+def test_falkordb_entity_label_repair_scans_every_page() -> None:
+    graph = _PagedLabelRepairGraph()
+    backend = FalkorDBGraphBackend(
+        _Settings(),
+        graph_provider=lambda: graph,
+    )
+
+    report = backend.analytics.repair("p1", targets=["entity_labels"])
+
+    assert report.repaired == {"entity_labels": 2}
+    assert graph.scan_cursors == ["", "environment:a", "environment:b"]
+    assert graph.updated_keys == ["environment:a", "environment:b"]
+
+
+def test_entity_label_repair_uses_bound_graph_definition() -> None:
+    definition = DEFAULT_GRAPH_DEFINITION.extend(
+        GraphExtension(
+            name="widgets",
+            version="1",
+            entity_types={
+                "Widget": EntityTypeSpec(
+                    label="Widget",
+                    category="topology",
+                    description="Widget.",
+                    identity_class=IdentityClass.SLUG_ALIAS,
+                    key_prefix="widget",
+                    identity_policy="widget:<slug>",
+                )
+            },
+        )
+    )
+    current = ("Entity", "Service", "Widget")
+
+    fixed = repaired_entity_labels(
+        "widget:a",
+        current,
+        entity_types=definition.entity_types,
+    )
+
+    assert fixed == ("Entity", "Widget")
+    assert canonical_label_changes(
+        current,
+        fixed,
+        entity_types=definition.entity_types,
+    ) == (("Service",), ())

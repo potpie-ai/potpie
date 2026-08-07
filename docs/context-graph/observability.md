@@ -96,7 +96,7 @@ the spans actually emitted today.
 
 | Span | Kind | Meaning | Code boundary |
 |---|---|---|---|
-| `daemon.health`, `daemon.rpc`, `daemon.attr` | server | Local daemon health probe + RPC dispatch. | `host/daemon_main.py` |
+| `daemon.health`, `daemon.rpc`, `daemon.attr` | server | Local daemon health probe + RPC dispatch. | `potpie/daemon/main.py` |
 | `graph.<command>` | internal | One workbench command: `graph.status`, `graph.catalog`, `graph.describe`, `graph.search_entities`, `graph.read`, `graph.neighborhood`, **`graph.propose`**, **`graph.commit`**, `graph.bulk`, `graph.history`, `graph.inbox` (carries `operation`), `graph.quality` (carries `report`), plus the legacy `graph.mutate` / `graph.mutation_template` / `graph.nudge`. | `potpie/cli/commands/graph.py` (`_graph_command`) |
 | `ingest.submit` | server | Inbound episode/event/record normalized and submitted. | `application/services/ingestion_submission_service.py` |
 | `HTTP <method> <route>`, `http.ready` | server | Ingestion HTTP server request + readiness. | `adapters/inbound/http/_hardening.py`, `adapters/inbound/http/api/router.py` |

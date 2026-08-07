@@ -13,7 +13,9 @@ import pytest
 
 from potpie.cli.telemetry.settings import SentrySettings
 
-sentry_metrics_runtime = import_module("bootstrap.sentry_metrics_runtime")
+sentry_metrics_runtime = import_module(
+    "potpie_context_engine.bootstrap.sentry_metrics_runtime"
+)
 configure_metrics = getattr(sentry_metrics_runtime, "configure_metrics")
 count = getattr(sentry_metrics_runtime, "count")
 

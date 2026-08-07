@@ -18,7 +18,7 @@ potpie --json graph commit <plan_id> --verify
 potpie --json graph history --plan <plan_id>
 ```
 
-If only MCP is configured, `context_record` is the compatibility fallback. Capture:
+Capture:
 
 - decisions
 - fixes (with the bug they resolve)

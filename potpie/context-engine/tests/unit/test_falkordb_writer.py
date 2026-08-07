@@ -9,14 +9,28 @@ best-effort index DDL, the async-shim record mapping, and that the reused
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from adapters.outbound.graph.falkordb_writer import (
+from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     FalkorDBGraphWriter,
     _records_from_result,
     build_falkordb_graph,
 )
-from domain.graph_mutations import EdgeUpsert, EntityUpsert, ProvenanceRef
+from potpie_context_core.api import (
+    DEFAULT_GRAPH_DEFINITION,
+    EdgeTypeSpec,
+    EntityTypeSpec,
+    GraphExtension,
+    IdentityClass,
+)
+from potpie_context_core.graph_mutations import (
+    EdgeUpsert,
+    EntityUpsert,
+    InvalidationOp,
+    ProvenanceRef,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -193,6 +207,28 @@ async def test_upsert_entities_issues_merge_via_shim() -> None:
     assert any("MERGE (e:Entity" in q for q, _ in graph.queries)
 
 
+async def test_upsert_entities_removes_stale_labels_in_one_query() -> None:
+    graph = _FakeGraph()
+    writer = FalkorDBGraphWriter(_FakeSettings(), graph=graph)
+
+    await writer.upsert_entities(
+        "p1",
+        [
+            EntityUpsert(
+                entity_key="environment:production",
+                labels=("Entity", "Environment"),
+                properties={},
+            )
+        ],
+        ProvenanceRef(pot_id="p1", source_event_id="e1"),
+    )
+
+    removals = [query for query, _ in graph.queries if " REMOVE e:" in query]
+    assert len(removals) == 1
+    assert "Environment" not in removals[0]
+    assert removals[0].count(":") > 1
+
+
 async def test_upsert_entities_empty_is_noop() -> None:
     graph = _FakeGraph()
     w = FalkorDBGraphWriter(_FakeSettings(), graph=graph)
@@ -201,6 +237,177 @@ async def test_upsert_entities_empty_is_noop() -> None:
     )
     assert n == 0
     assert graph.queries == []
+
+
+async def test_writer_uses_bound_extension_labels_and_predicates() -> None:
+    definition = DEFAULT_GRAPH_DEFINITION.extend(
+        GraphExtension(
+            name="widgets",
+            version="1",
+            entity_types={
+                "Widget": EntityTypeSpec(
+                    label="Widget",
+                    category="topology",
+                    description="Widget.",
+                    identity_class=IdentityClass.SLUG_ALIAS,
+                    key_prefix="widget",
+                    identity_policy="widget:<slug>",
+                )
+            },
+            edge_types={
+                "CONNECTS_WIDGET": EdgeTypeSpec(
+                    edge_type="CONNECTS_WIDGET",
+                    description="Connects widgets.",
+                    allowed_pairs=(("Widget", "Widget"),),
+                )
+            },
+        )
+    )
+    graph = _FakeGraph()
+    writer = FalkorDBGraphWriter(
+        _FakeSettings(),
+        graph=graph,
+        definition=definition,
+    )
+    provenance = ProvenanceRef(pot_id="p1", source_event_id="e1")
+
+    await writer.upsert_entities(
+        "p1",
+        [
+            EntityUpsert("widget:a", ("Widget",), {}),
+            EntityUpsert("widget:b", ("Widget",), {}),
+        ],
+        provenance,
+    )
+    written = await writer.upsert_edges(
+        "p1",
+        [EdgeUpsert("CONNECTS_WIDGET", "widget:a", "widget:b")],
+        provenance,
+    )
+
+    assert written == 1
+    assert any("SET e:Widget" in query for query, _ in graph.queries)
+    assert any(
+        params.get("predicate") == "CONNECTS_WIDGET" for _, params in graph.queries
+    )
+
+
+async def test_writer_removes_builtin_label_conflicting_with_extension_key() -> None:
+    definition = DEFAULT_GRAPH_DEFINITION.extend(
+        GraphExtension(
+            name="widgets",
+            version="1",
+            entity_types={
+                "Widget": EntityTypeSpec(
+                    label="Widget",
+                    category="topology",
+                    description="Widget.",
+                    identity_class=IdentityClass.SLUG_ALIAS,
+                    key_prefix="widget",
+                    identity_policy="widget:<slug>",
+                )
+            },
+        )
+    )
+    graph = _FakeGraph()
+    writer = FalkorDBGraphWriter(
+        _FakeSettings(),
+        graph=graph,
+        definition=definition,
+    )
+
+    await writer.upsert_entities(
+        "p1",
+        [
+            EntityUpsert(
+                "widget:a",
+                ("Entity", "Service", "Widget"),
+                {},
+            )
+        ],
+        ProvenanceRef(pot_id="p1", source_event_id="e1"),
+    )
+
+    removals = [query for query, _ in graph.queries if " REMOVE e:" in query]
+    assert len(removals) == 1
+    assert ":Service" in removals[0]
+    assert ":Widget" not in removals[0]
+    assert any("SET e:Widget" in query for query, _ in graph.queries)
+
+
+async def test_writer_never_embeds_unsafe_registered_labels_in_cypher() -> None:
+    unsafe = EntityTypeSpec(
+        label="Bad-Label",
+        category="topology",
+        description="Deliberately malformed test label.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="bad",
+        identity_policy="bad:<slug>",
+    )
+    definition = SimpleNamespace(entity_types={"Bad-Label": unsafe})
+    graph = _FakeGraph()
+    writer = FalkorDBGraphWriter(
+        _FakeSettings(),
+        graph=graph,
+        definition=definition,
+    )
+
+    await writer.upsert_entities(
+        "p1",
+        [EntityUpsert("bad:a", ("Bad-Label",), {})],
+        ProvenanceRef(pot_id="p1", source_event_id="e1"),
+    )
+
+    assert graph.queries
+    assert all("Bad-Label" not in query for query, _ in graph.queries)
+
+
+async def test_writer_uses_bound_extension_predicate_for_invalidation() -> None:
+    definition = DEFAULT_GRAPH_DEFINITION.extend(
+        GraphExtension(
+            name="widgets",
+            version="1",
+            entity_types={
+                "Widget": EntityTypeSpec(
+                    label="Widget",
+                    category="topology",
+                    description="Widget.",
+                    identity_class=IdentityClass.SLUG_ALIAS,
+                    key_prefix="widget",
+                    identity_policy="widget:<slug>",
+                )
+            },
+            edge_types={
+                "CONNECTS_WIDGET": EdgeTypeSpec(
+                    edge_type="CONNECTS_WIDGET",
+                    description="Connects widgets.",
+                    allowed_pairs=(("Widget", "Widget"),),
+                )
+            },
+        )
+    )
+    graph = _FakeGraph()
+    writer = FalkorDBGraphWriter(
+        _FakeSettings(),
+        graph=graph,
+        definition=definition,
+    )
+
+    await writer.invalidate(
+        "p1",
+        [
+            InvalidationOp(
+                target_entity_key=None,
+                target_edge=("CONNECTS_WIDGET", "widget:a", "widget:b"),
+                reason="superseded",
+            )
+        ],
+        ProvenanceRef(pot_id="p1", source_event_id="e1"),
+    )
+
+    assert any(
+        params.get("predicate") == "CONNECTS_WIDGET" for _, params in graph.queries
+    )
 
 
 async def test_upsert_edges_writes_falkordb_vecf32_embedding() -> None:

@@ -58,10 +58,12 @@ class DistributionDefaultsHook(BuildHookInterface):
             )
             build_data.setdefault("force_include", {}).update(
                 {
-                    str(
-                        distribution_defaults_out
-                    ): config_values.DISTRIBUTION_DEFAULTS_OUT.as_posix(),
-                    str(build_info_out): config_values.BUILD_INFO_OUT.as_posix(),
+                    str(distribution_defaults_out): self._artifact_path(
+                        config_values.DISTRIBUTION_DEFAULTS_OUT
+                    ),
+                    str(build_info_out): self._artifact_path(
+                        config_values.BUILD_INFO_OUT
+                    ),
                 }
             )
             build_data.setdefault(_GENERATED_BUILD_DIRS_KEY, []).append(
@@ -74,6 +76,19 @@ class DistributionDefaultsHook(BuildHookInterface):
     def finalize(self, version: str, build_data: dict, artifact_path: str) -> None:
         del version, artifact_path
         _remove_generated_artifacts(build_data)
+
+    def _artifact_path(self, source_tree_path: Path) -> str:
+        """Map a source-tree path to its in-artifact path.
+
+        Wheels ship the package without the ``src/`` prefix; sdists keep the
+        source-tree layout so a wheel built from the sdist finds the files at
+        the same relative paths.
+        """
+        rel = source_tree_path.as_posix()
+        target_name = getattr(self, "target_name", "wheel")
+        if target_name == "wheel" and rel.startswith("src/"):
+            return rel[len("src/") :]
+        return rel
 
 
 def _load_config_values_module() -> ModuleType:

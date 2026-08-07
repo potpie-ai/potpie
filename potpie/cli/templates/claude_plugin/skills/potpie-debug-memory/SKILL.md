@@ -77,17 +77,3 @@ If the source may matter but the canonical update is uncertain, use
 
 Debug memory is harness-led: investigate and verify before writing. Do not use
 scanner-driven graph updates or record a bug/fix from filenames or logs alone.
-
-## MCP Fallback
-
-Use this only when the `potpie` CLI is unavailable:
-
-```json
-{"intent":"debugging","include":["prior_bugs","infra_topology","timeline"],"mode":"fast","source_policy":"references_only"}
-```
-
-Include families belong to the envelope surface (`context_*` MCP tools and
-`potpie resolve`/`potpie search`); in the graph workbench they are served by the
-graph views `debugging.prior_occurrences`, `infra_topology.service_neighborhood`,
-and `recent_changes.timeline` — `graph read` does not accept include family
-names.

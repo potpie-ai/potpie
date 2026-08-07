@@ -18,8 +18,8 @@ from typing import Any
 
 import typer
 
-from bootstrap.observability_runtime import get_observability
-from application.services.graph_workbench import (
+from potpie_context_engine.bootstrap.observability_runtime import get_observability
+from potpie_context_core.workbench_service import (
     graph_error_envelope,
     graph_not_implemented_envelope,
     graph_success_envelope,
@@ -53,17 +53,19 @@ from potpie.cli.telemetry.product_analytics import AnalyticsValue
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
-from domain.errors import CapabilityNotImplemented
-from domain.graph_contract import GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION
-from domain.graph_contract import ONTOLOGY_VERSION
-from domain.graph_workbench import (
+from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.graph_contract import (
+    GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION,
+)
+from potpie_context_core.graph_contract import ONTOLOGY_VERSION
+from potpie_context_core.graph_workbench import (
     GRAPH_WORKBENCH_COMMANDS,
     GraphUnsupported,
     GraphWorkbenchStatus,
 )
-from domain.ports.observability import SPAN_KIND_INTERNAL
-from domain.graph_views import INCLUDE_TO_VIEW
-from domain.nudge import NUDGE_EVENT_HELP
+from potpie_context_engine.domain.ports.observability import SPAN_KIND_INTERNAL
+from potpie_context_core.graph_views import INCLUDE_TO_VIEW
+from potpie_context_engine.domain.nudge import NUDGE_EVENT_HELP
 
 graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
 inbox_app = typer.Typer(help="Pending graph-work inbox.")
@@ -249,7 +251,7 @@ def _record_graph_command_telemetry(
     except Exception:  # noqa: BLE001 - observability must never fail a command
         pass
     try:
-        from bootstrap import sentry_metrics_runtime
+        from potpie_context_engine.bootstrap import sentry_metrics_runtime
 
         sentry_metrics_runtime.count(
             f"ce.graph.{metric_root}_total",
@@ -402,6 +404,8 @@ def _emit_graph_result(
             or payload.get("recommended_next_action"),
         )
     emit(env.to_dict(), human=_with_graph_warnings(human, merged_warnings))
+    if payload.get("ok", True) is False:
+        raise typer.Exit(code=EXIT_VALIDATION)
 
 
 def _with_graph_warnings(human: str, warnings: tuple[str, ...]) -> str:
@@ -488,7 +492,9 @@ def graph_catalog(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Discover the graph contract: versions, views, mutation ops, ontology."""
-    from domain.ports.services.graph_service import GraphCatalogRequest
+    from potpie_context_core.ports.graph_service import (
+        GraphCatalogRequest,
+    )
 
     with _graph_command("graph.catalog") as ctx:
         host = get_host()
@@ -573,7 +579,9 @@ def graph_read(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """V2-style read over a named view (routes through the read trunk)."""
-    from domain.ports.services.graph_service import GraphReadRequest
+    from potpie_context_core.ports.graph_service import (
+        GraphReadRequest,
+    )
 
     with _graph_command("graph.read") as ctx:
         if not subgraph:
@@ -679,7 +687,9 @@ def timeline_recent(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Recent project events from the active/current pot, across all repo sources."""
-    from domain.ports.services.graph_service import GraphReadRequest
+    from potpie_context_core.ports.graph_service import (
+        GraphReadRequest,
+    )
 
     with contract():
         host = get_host()
@@ -753,7 +763,9 @@ def graph_search_entities(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Narrow entity/claim lookup for identity resolution before a write."""
-    from domain.ports.services.graph_service import GraphEntitySearchRequest
+    from potpie_context_core.ports.graph_service import (
+        GraphEntitySearchRequest,
+    )
 
     with _graph_command("graph.search-entities") as ctx:
         effective_query = query or query_arg
@@ -1283,7 +1295,7 @@ def graph_nudge(
     Deterministic and free — reads via the local embedder, never calls a model.
     Hooks forward their event + path here and inject the result.
     """
-    from domain.nudge import GraphNudgeRequest
+    from potpie_context_engine.domain.nudge import GraphNudgeRequest
 
     with _graph_command("graph.nudge") as ctx:
         host = get_host()
@@ -1356,7 +1368,9 @@ def graph_describe(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.describe") as ctx:
-        from domain.ports.services.graph_service import GraphDescribeRequest
+        from potpie_context_core.ports.graph_service import (
+            GraphDescribeRequest,
+        )
 
         _set_optional_pot(ctx, pot)
         payload = get_host().graph.describe(
@@ -2005,6 +2019,21 @@ def graph_quality_projection_drift(
     )
 
 
+@quality_app.command("entity-label-drift")
+def graph_quality_entity_label_drift(
+    subgraph: str = typer.Option(None, "--subgraph"),
+    limit: int = typer.Option(50, "--limit"),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    _run_quality_report(
+        command="graph.quality.entity-label-drift",
+        report="entity-label-drift",
+        pot=pot,
+        subgraph=subgraph,
+        limit=limit,
+    )
+
+
 def _run_quality_report(
     *,
     command: str,
@@ -2110,6 +2139,7 @@ def graph_import(
 def graph_repair(
     semantic_index: bool = typer.Option(False, "--semantic-index"),
     entity_summaries: bool = typer.Option(False, "--entity-summaries"),
+    entity_labels: bool = typer.Option(False, "--entity-labels"),
     all_: bool = typer.Option(False, "--all"),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
@@ -2123,6 +2153,8 @@ def graph_repair(
                 targets.append("semantic_index")
             if entity_summaries:
                 targets.append("entity_summaries")
+            if entity_labels:
+                targets.append("entity_labels")
         report = host.backend.analytics.repair(pot_id, targets=targets)
         _emit_graph_result(
             ctx,
@@ -2134,7 +2166,9 @@ def graph_repair(
 @backend_app.command("list")
 def backend_list() -> None:
     with contract():
-        from adapters.outbound.graph.backends import KNOWN_PROFILES
+        from potpie_context_engine.adapters.outbound.graph.backends import (
+            KNOWN_PROFILES,
+        )
 
         active = get_host().backend.profile
         emit(

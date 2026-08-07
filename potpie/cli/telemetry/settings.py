@@ -4,8 +4,11 @@ from dataclasses import dataclass, replace
 from typing import ClassVar, Literal
 
 from potpie.cli.telemetry.preferences import telemetry_enabled_by_preference
-from bootstrap.runtime_settings import RuntimeSettings, load_runtime_settings
-from bootstrap.sentry_settings import (
+from potpie_context_engine.bootstrap.runtime_settings import (
+    RuntimeSettings,
+    load_runtime_settings,
+)
+from potpie_context_engine.bootstrap.sentry_settings import (
     SentrySettings,
     default_cli_release,
     sentry_settings_from_runtime,

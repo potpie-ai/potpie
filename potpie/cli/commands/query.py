@@ -21,8 +21,12 @@ from potpie.cli.telemetry.onboarding_events import (
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
-from domain.agent_context_port import detect_context_intent
-from domain.ports.agent_context import RecordRequest, ResolveRequest, SearchRequest
+from potpie_context_core.agent_context_port import detect_context_intent
+from potpie_context_core.ports.agent_context import (
+    RecordRequest,
+    ResolveRequest,
+    SearchRequest,
+)
 
 
 def _split(value: str | None) -> tuple[str, ...]:

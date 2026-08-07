@@ -1,0 +1,1 @@
+"""Domain ports (interfaces)."""

@@ -7,18 +7,22 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from adapters.outbound.graph.apply_plan import apply_mutation_batch
-from adapters.outbound.graph.context_graph_service import ContextGraphService
-from adapters.outbound.graph.cypher import upsert_entities_async
-from domain.context_events import EventRef
-from domain.errors import CapabilityNotImplemented
-from domain.graph_mutations import (
+from potpie_context_engine.adapters.outbound.graph.apply_plan import (
+    apply_mutation_batch,
+)
+from potpie_context_engine.adapters.outbound.graph.context_graph_service import (
+    ContextGraphService,
+)
+from potpie_context_engine.adapters.outbound.graph.cypher import upsert_entities_async
+from potpie_context_core.context_events import EventRef
+from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.graph_mutations import (
     EdgeUpsert,
     EntityUpsert,
     ProvenanceContext,
     ProvenanceRef,
 )
-from domain.reconciliation import (
+from potpie_context_core.reconciliation import (
     MutationBatch,
 )
 
@@ -83,6 +87,7 @@ def test_apply_mutation_batch_uses_provenance_context_without_event_ref() -> Non
             plan,
             expected_pot_id="p1",
             provenance_context=ProvenanceContext(
+                mutation_id="mutation:reserved",
                 source_event_id="harness-run-1",
                 source_system="harness",
                 source_kind="graph-mutation",
@@ -93,7 +98,9 @@ def test_apply_mutation_batch_uses_provenance_context_without_event_ref() -> Non
     )
 
     assert result.ok is True
+    assert result.mutation_id == "mutation:reserved"
     prov = captured["edges"]
+    assert prov.mutation_id == "mutation:reserved"
     assert prov.source_event_id == "harness-run-1"
     assert prov.source_system == "harness"
     assert prov.source_kind == "graph-mutation"
