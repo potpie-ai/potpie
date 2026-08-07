@@ -8,9 +8,10 @@ from unittest.mock import patch
 
 import pytest
 
-from adapters.outbound.policy import DefaultPolicyAdapter
-from domain.actor import Actor
-from domain.ports.policy import (
+from potpie_context_engine.adapters.outbound.policy import DefaultPolicyAdapter
+from potpie_context_core.actor import Actor
+from potpie_context_core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.domain.ports.policy import (
     ACTION_APPLY_WRITE,
     ACTION_POT_INGEST_EPISODE,
     ACTION_POT_READ,
@@ -82,6 +83,7 @@ def _adapter(
     agent_available: bool = True,
     context_graph_available: bool = True,
     episodic_available: bool = True,
+    reconciliation_config: ReconciliationConfig | None = None,
 ) -> DefaultPolicyAdapter:
     return DefaultPolicyAdapter(
         settings=_Settings(enabled),
@@ -89,6 +91,7 @@ def _adapter(
         reconciliation_agent_available=agent_available,
         context_graph_available=context_graph_available,
         episodic_available=episodic_available,
+        reconciliation_config=reconciliation_config,
     )
 
 
@@ -187,6 +190,43 @@ def test_pot_record_denied_when_agent_unavailable():
         )
     assert not decision.allowed
     assert decision.reason == REASON_RECONCILIATION_AGENT_UNAVAILABLE
+
+
+def test_policy_instances_keep_independent_captured_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reconciliation_disabled = _adapter(
+        pots={"p1": "x"},
+        reconciliation_config=ReconciliationConfig(
+            enabled=False,
+            agent_planner_enabled=True,
+        ),
+    )
+    planner_disabled = _adapter(
+        pots={"p1": "x"},
+        reconciliation_config=ReconciliationConfig(
+            enabled=True,
+            agent_planner_enabled=False,
+        ),
+    )
+    monkeypatch.setenv("CONTEXT_ENGINE_RECONCILIATION_ENABLED", "1")
+    monkeypatch.setenv("CONTEXT_ENGINE_AGENT_PLANNER_ENABLED", "1")
+
+    reconciliation_decision = reconciliation_disabled.authorize(
+        actor=None,
+        resource=RESOURCE_POT,
+        action=ACTION_POT_SUBMIT_EVENT,
+        context={"pot_id": "p1"},
+    )
+    planner_decision = planner_disabled.authorize(
+        actor=None,
+        resource=RESOURCE_POT,
+        action=ACTION_POT_SUBMIT_EVENT,
+        context={"pot_id": "p1"},
+    )
+
+    assert reconciliation_decision.reason == REASON_RECONCILIATION_DISABLED
+    assert planner_decision.reason == REASON_AGENT_PLANNER_DISABLED
 
 
 def test_pot_ingest_episode_engine_disabled():

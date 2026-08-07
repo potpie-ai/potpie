@@ -62,21 +62,13 @@ entity; an entity exists only if an edge needs it as an endpoint.
 ## One CLI surface for humans and agents
 
 There is **no separate human-vs-agent API**. Both users and agents talk to the same
-`potpie` CLI, described in its own spine (`adapters/inbound/cli/host_cli.py`) as
+`potpie` CLI, described in its own spine (`potpie/cli/main.py`) as
 "the architecture's single spine": every command routes `CLI → HostShell →
 service(s) → ports`.
 
-Agents reach the same system two ways:
-
-- **Directly via the CLI**, including the full `potpie graph …` workbench.
-- **Via the in-process MCP tools** — exactly four: `context_resolve`,
-  `context_search`, `context_record`, `context_status` (`context_record` is the
-  only MCP write). These are compatibility adapters over the *same* graph
-  internals, not a second engine.
-
-The richer **Graph Surface Lite** (`potpie graph catalog/read/search-entities/
-propose/commit/…`) is **CLI-only**; the MCP/agent surface stays at exactly four
-tools. Read mechanics live in [querying.md](./querying.md); write mechanics in
+Agents reach the system directly through the CLI, including the full **Graph
+Surface Lite** (`potpie graph catalog/read/search-entities/propose/commit/…`).
+Read mechanics live in [querying.md](./querying.md); write mechanics in
 [writing.md](./writing.md); the full command reference in [cli-flow.md](./cli-flow.md).
 
 ## Harness-owned intelligence
@@ -107,7 +99,7 @@ skills teach.
 
 ```mermaid
 flowchart TB
-  cg_agent["agent harness<br/>(skills + CLI / 4 MCP tools)"]
+  cg_agent["agent harness<br/>(skills + CLI)"]
   cg_cli["potpie CLI → HostShell → services → ports"]
   cg_graph[("Context Graph<br/>compact claims + source refs")]
   cg_managed["Managed Potpie graph<br/>(roadmap: not yet wired)"]
@@ -166,7 +158,7 @@ local `default` pot. **Cross-pot federation is an explicit anti-goal.**
 The single biggest historical drift in these docs framed the `potpie graph …`
 workbench as a future "Graph V2." **That is wrong: the workbench is shipped today
 as V1.5.** Both the legacy V1 wrappers (`resolve` / `search` / `record`) *and* the
-full workbench are registered in `host_cli.py` right now.
+full workbench are registered in `main.py` right now.
 
 Concretely, the live contract constants are:
 
@@ -178,14 +170,14 @@ Concretely, the live contract constants are:
 
 So "v2" survives solely as the envelope version on workbench responses. What ships:
 
-- **Reads:** the 4-tool MCP contract *and* `potpie graph catalog/read/search-entities/
+- **Reads:** `potpie resolve/search` and `potpie graph catalog/read/search-entities/
   neighborhood/history` over the single read trunk; reads return ranked evidence
   (an `AgentEnvelope`) — **there is no server-side answer synthesis**, the agent
   reasons over the evidence ([querying.md](./querying.md)).
 - **Writes:** the canonical write door is **`graph propose` → `graph commit
   --verify`**. `graph mutate` is a **legacy wrapper** that internally calls
-  propose+commit; `record` / `context_record` remain live as the only MCP write
-  path ([writing.md](./writing.md)).
+  propose+commit; `potpie record` remains the compatibility write path
+  ([writing.md](./writing.md)).
 - **Defaults:** `falkordb_lite` embedded backend, a detached `daemon` host mode, the
   bundled local embedder, installed skills, and the zero-token nudge hooks — all
   with no mandatory Docker, Neo4j, Postgres, or cloud service.

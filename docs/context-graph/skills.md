@@ -33,7 +33,7 @@ repository or infer rich facts from prose for you."
 
 The single source of truth for skill content **and** metadata is the bundled set
 of `SKILL.md` files under
-`adapters/inbound/cli/templates/agent_bundle/.agents/skills/*/SKILL.md`.
+`potpie/cli/templates/agent_bundle/.agents/skills/*/SKILL.md`.
 
 `adapters/outbound/skills/bundle_catalog.py` scans those templates at runtime
 (`lru_cache`d), parses each file's YAML front-matter (`name` / `version` /
@@ -86,7 +86,7 @@ Install mechanics (`adapters/outbound/skills/agent_installer.py`):
 Before **every** install/update, `validate_packaged_skill_command_snippets`
 extracts every `potpie …` line from the skill's ```` ```bash ```` fences and
 validates each command + option against the **live Typer specs introspected from
-`adapters.inbound.cli.host_cli.app`**. A skill physically cannot ship a `potpie`
+`potpie.cli.main.app`**. A skill physically cannot ship a `potpie`
 command or flag that does not exist — the install raises `ValueError` first.
 (Only `potpie` lines are checked; other shell commands depend on the user's repo.)
 
@@ -123,9 +123,7 @@ run. **There is no top-level `potpie install`** — skills install only via
 | `potpie-debug-memory` | — | Use-case read+record skill (prior bugs/fixes). |
 
 The four use-case skills share one shape: a **Fast Path** read, an **Apply
-Results** step, a **Record** flow, and an MCP fallback recipe
-(`context_resolve` / `context_record` JSON) for harnesses that only have the
-4-tool MCP surface rather than the CLI.
+Results** step, and a **Record** flow over the CLI.
 
 ---
 
@@ -176,7 +174,7 @@ baking the ontology into prose. The discipline it teaches (full read mechanics i
 
 ## 5. The Claude Code plugin (hooks + slash commands)
 
-`adapters/inbound/cli/templates/claude_plugin/` is a self-contained Claude Code
+`potpie/cli/templates/claude_plugin/` is a self-contained Claude Code
 plugin: `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` declare
 it, and it carries its own copy of the 7 plugin skills under `skills/`.
 
@@ -217,8 +215,8 @@ result:
 
 | Command | Purpose |
 |---|---|
-| `/potpie-feature` | Load Potpie context **before** feature work (reads preferences, decisions, infra neighborhood; MCP `context_resolve` fallback). |
-| `/potpie-record` | Record durable learnings **after** useful work (resolve identity → propose/commit `--verify`; `context_record` fallback). |
+| `/potpie-feature` | Load Potpie context **before** feature work (reads preferences, decisions, and the infra neighborhood). |
+| `/potpie-record` | Record durable learnings **after** useful work (resolve identity → propose/commit `--verify`). |
 
 > **Roadmap (not yet wired):** the Claude Code plugin has no first-class CLI
 > install path. The bundle `claude-plugin` agent type exists
@@ -250,7 +248,7 @@ install path.
 > separate HTTP ingestion-server composition root and is **off by default**
 > (`domain/reconciliation_flags.py agent_planner_enabled()` returns False; opt-in
 > `CONTEXT_ENGINE_AGENT_PLANNER_ENABLED=1`). The canonical write path remains
-> harness-authored semantic mutations + the deterministic `context_record`. See
+> harness-authored semantic mutations + the deterministic record bridge. See
 > [ingestion-nudge.md](./ingestion-nudge.md).
 
 ---
@@ -258,6 +256,6 @@ install path.
 ## See also
 
 - [ingestion-nudge.md](./ingestion-nudge.md) — the zero-token nudge trigger model the plugin hook fires, and the server-side reconciliation pipeline.
-- [querying.md](./querying.md) — the read mechanics (catalog/read/search-entities, the AgentEnvelope, the 4-tool MCP fallback) the skills drive.
+- [querying.md](./querying.md) — the read mechanics (catalog/read/search-entities and the AgentEnvelope) the skills drive.
 - [writing.md](./writing.md) — the propose → commit `--verify` write door, the semantic DSL, inbox, and quality scoring.
 - [cli-flow.md](./cli-flow.md) — the full `potpie skills` and `potpie graph …` command/flag reference.

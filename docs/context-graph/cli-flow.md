@@ -14,9 +14,8 @@ relative to that root).
 ## One CLI for humans and agents
 
 There is no separate human-vs-agent API. Both people and coding harnesses drive
-the same `potpie` CLI; agents may also reach the same internals through the
-in-process MCP `context_*` tools (exactly four — see [querying.md](./querying.md)).
-`adapters/inbound/cli/host_cli.py build_app()` is the single console entrypoint
+the same `potpie` CLI.
+`potpie/cli/main.py build_app()` is the single console entrypoint
 (`[project.scripts]`): one Typer root whose `@app.callback` exposes three global
 options, with the rest of the surface assembled from top-level registrars and
 `add_typer` sub-apps. Every command routes `CLI → HostShell → service(s) → ports`.
@@ -24,7 +23,7 @@ options, with the rest of the surface assembled from top-level registrars and
 ```mermaid
 flowchart LR
   cf_user["user / agent"]
-  cf_cli["potpie CLI<br/>host_cli.py build_app()"]
+  cf_cli["potpie CLI<br/>main.py build_app()"]
   cf_common["commands/_common.py<br/>get_host • contract() • resolve_pot_id"]
   cf_shell["HostShell facade<br/>(daemon-backed RemoteHostShell by default)"]
   cf_svc["services: pots • graph • graph_workbench<br/>skills • daemon • ledger • nudge • backend"]
@@ -85,7 +84,6 @@ and `add_typer` sub-apps. Note the corrections vs older docs: there is **no
 | `ui` | `commands/ui.py` | ensures daemon, opens read-only graph explorer |
 | `pot` `source` | `commands/pots.py` | `HostShell.pots` (`PotManagementService`) |
 | `daemon` | `commands/daemon.py` | `HostShell.daemon` (`Daemon`) |
-| `service` | `commands/service.py` | daemon `/admin/services` IPC |
 | `ledger` | `commands/ledger.py` | `HostShell.ledger` (clients are stubs — roadmap) |
 | `graph` (+ nested `inbox`, `quality`, `bulk`) | `commands/graph.py` | `HostShell.graph` / `graph_workbench` / `backend` / `nudge` |
 | `timeline` | `commands/graph.py` | `HostShell.graph` (alias of a recent-changes read) |
@@ -93,8 +91,7 @@ and `add_typer` sub-apps. Note the corrections vs older docs: there is **no
 | `skills` | `commands/skills.py` | `HostShell.skills` (`SkillManager`) |
 | `cloud` | `commands/cloud.py` | managed sync — **all raise `CapabilityNotImplemented`** (roadmap) |
 
-The MCP server (`adapters/inbound/mcp/server.py`) binds to the same in-process
-`HostShell`. The async ingestion pipeline behind the HTTP API keeps a **separate**
+The async ingestion pipeline behind the HTTP API keeps a **separate**
 composition root (`bootstrap/ingestion_server.py`, default backend `neo4j`) — see
 [architecture.md](./architecture.md) and [ingestion-nudge.md](./ingestion-nudge.md).
 
@@ -210,21 +207,17 @@ potpie source remove <id> [--pot <ref>]
 
 ---
 
-## Daemon & service (local infra)
+## Daemon (local infra)
 
 ```bash
 potpie daemon start | status | logs [--follow] | restart | stop
-
-potpie service up   <name>
-potpie service down <name>
-potpie service status
-potpie service logs <name> [-f/--follow]
 ```
 
 - **`daemon`** (`commands/daemon.py` → `host.daemon`) — local recovery tooling, not
   onboarding steps. `DaemonStartError` → exit 2.
-- **`service`** (`commands/service.py`) — drives the daemon's `/admin/services` IPC
-  via `ipc_client.client_for(home)`; exit 2 when no daemon is running.
+- Supporting-service admin CLI (`potpie service …`) is not part of the OSS surface;
+  the detached daemon does not expose a compatible `/admin/services` discovery
+  contract for those commands.
 
 ---
 
@@ -290,8 +283,7 @@ and the (separate) server-side reconciliation skill surface are documented in
 
 ## Graph workbench (`commands/graph.py`) — the core surface
 
-The `potpie graph …` workbench is **shipped today as V1.5** (it is CLI-only; the
-MCP/agent surface stays at exactly four tools). Three Typer apps are defined here and
+The `potpie graph …` workbench is **shipped today as V1.5**. Three Typer apps are defined here and
 mounted at root: `graph` (with nested `inbox`, `quality`, `bulk`), plus top-level
 `timeline` and `backend`. Each graph command runs inside `_graph_command(name)`,
 wrapping `contract()` with the richer **workbench envelope**
@@ -303,13 +295,15 @@ usage events.
 facts (uv tool env, PATH, python shebang), and recommended follow-up commands.
 Do not use `python -m pip show potpie-context-engine` for local dev installs —
 the package lives in the uv tool environment. Prefer `uv tool list`,
-`which -a potpie`, and `make cli-status`.
+`which -a potpie`, `make cli-status`, and `make cli-install` for repo-local
+reinstalls (UI build + daemon stop + editable install).
 
 ```bash
 uv tool list
 which -a potpie
 head -n 1 "$(command -v potpie)"
 make cli-status
+make cli-install   # repo-local reinstall only
 potpie doctor
 potpie --json doctor
 ```
@@ -324,7 +318,7 @@ potpie graph catalog [--task <text>] [--subgraph <s>] [--profile full|read] [--f
 potpie graph describe [<subgraph>] [--view <v>] [--examples] [--pot <ref>]
 
 potpie graph read --subgraph <s> --view <v> \
-  [--query <text>] [--scope <k:v,...>] [--repo <r>] \
+  [--query <text>] [--query-threshold 0.70] [--scope <k:v,...>] [--repo <r>] \
   [--since <t>] [--until <t>] [--time-window/--window <dur>] \
   [--environment <env>] [--source-ref <ref> ...] \
   [--depth <n>] [--direction out|in|both] [--limit 12] \
@@ -333,7 +327,7 @@ potpie graph read --subgraph <s> --view <v> \
   [--current] [--pot <ref>]
 
 potpie timeline recent \
-  [--query <text>] [--since <t>] [--until <t>] [--time-window/--window <dur>] \
+  [--query <text>] [--query-threshold 0.70] [--since <t>] [--until <t>] [--time-window/--window <dur>] \
   [--service <svc>] [--limit 12] [--format ...] [--detail ...] [--relations ...] [--pot <ref>]
 
 potpie graph search-entities [<query> | --query <text>] \
@@ -359,6 +353,35 @@ potpie graph search-entities [<query> | --query <text>] \
   answer synthesis**. `timeline recent` is the same path as
   `graph read --subgraph recent_changes --view timeline`. Reader/ranking/view detail
   lives in [querying.md](./querying.md).
+
+  **Text-mode presentation** (default human output, no `--json`): `--format`,
+  `--detail`, and `--relations` shape the layout and depth independently.
+
+  | Flag | Text effect |
+  |------|-------------|
+  | `--format events` (timeline default) | Bullet list of deduped timeline events |
+  | `--format table` | Markdown pipe table (`occurred_at \| source_ref \| …`) |
+  | `--format raw` (non-timeline default) | Bullet list of ranked items |
+  | `--detail compact` | Core fields only (fact, score, summary) |
+  | `--detail full` | Adds truth, coverage, claim/breakdown metadata |
+  | `--relations summary` | Inline relation counts and predicate names |
+  | `--relations full` | Indented relation sub-lines (or secondary table with `--format table`) |
+
+  ```bash
+  # Human markdown table for recent changes
+  potpie graph read --subgraph recent_changes --view timeline --format table --limit 10
+
+  # Deeper relation detail in text mode
+  potpie graph read --subgraph recent_changes --view timeline \
+    --format events --detail full --relations full --limit 5
+
+  # Non-timeline entity table
+  potpie graph read --subgraph decisions --view preferences_for_scope \
+    --scope language:python --format table --limit 5
+  ```
+
+  `--json` uses the same item shaping (`detail` / `relations`) but emits structured
+  JSON instead of human tables/bullets.
 - **`graph search-entities`** is the **Filter** axis (identity resolution before a
   write) — structured per-entity lookup, **not** through the read trunk.
 
@@ -519,8 +542,19 @@ flowchart LR
 Local first run (OSS default — `falkordb_lite`, detached daemon, skills installed
 during setup):
 
+**Published package:**
+
 ```bash
-pip install potpie
+uv tool install potpie   # or: pip install potpie
+potpie setup --repo . --agent claude
+potpie status
+```
+
+**This repo (local development):** prefer `make cli-install` so the graph-explorer
+UI is built and any old daemon is stopped before the editable install.
+
+```bash
+make cli-install
 potpie setup --repo . --agent claude
 potpie status
 
@@ -555,7 +589,7 @@ potpie graph commit <plan_id> --verify
 - [vision.md](./vision.md) — what the Context Graph is and the product boundaries.
 - [architecture.md](./architecture.md) — composition roots, daemon model, GraphBackend ports & coverage.
 - [ontology.md](./ontology.md) — the catalogs the `catalog`/`describe` commands return.
-- [querying.md](./querying.md) — the read trunk, views, ranking, and the 4-tool MCP contract.
+- [querying.md](./querying.md) — the read trunk, views, ranking, and compatibility commands.
 - [writing.md](./writing.md) — the semantic DSL, propose→commit, risk/validation, inbox, quality.
 - [ingestion-nudge.md](./ingestion-nudge.md) — event stores, connectors, and the nudge trigger model.
 - [skills.md](./skills.md) — the skill catalog, install/drift, and the harness loop.

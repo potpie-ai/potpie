@@ -6,8 +6,10 @@ from contextlib import contextmanager
 
 import pytest
 
-from application.use_cases.context_graph_jobs import _ingress_links
-from bootstrap import observability_runtime
+from potpie_context_engine.application.use_cases.context_graph_jobs import (
+    _ingress_links,
+)
+from potpie_context_engine.bootstrap import observability_runtime
 
 
 class RecordingObs:

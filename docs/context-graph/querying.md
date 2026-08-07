@@ -14,19 +14,18 @@ server-side answer summary anywhere in the read trunk.
 
 ---
 
-## 1. Two altitudes, one data plane
+## 1. One CLI, one data plane
 
-There are two read surfaces, and they sit at different altitudes over the **same**
-service and the **same** canonical claim store. Both are shipped today (the data
-plane is `GRAPH_CONTRACT_VERSION="v1.5"`, `ONTOLOGY_VERSION="2026-06-graph"`).
+The CLI exposes two read shapes over the **same** service and canonical claim
+store. Both are shipped today (the data plane is
+`GRAPH_CONTRACT_VERSION="v1.5"`, `ONTOLOGY_VERSION="2026-06-graph"`).
 
 | Altitude | Surface | Who | Commands |
 |---|---|---|---|
-| **4-tool agent contract** | MCP `context_*` tools (`adapters/inbound/mcp/server.py`) bound by `AgentContextService` (`application/services/agent_context.py`) | harnesses over MCP | `context_resolve`, `context_search`, `context_record`, `context_status` |
-| **Graph Surface Lite** | the `potpie graph …` workbench (`adapters/inbound/cli/commands/graph.py`) over `DefaultGraphService` | humans + harnesses over the CLI | `graph catalog/read/search-entities/neighborhood/describe/status/history` (+ the write/inbox/quality commands in [`writing.md`](./writing.md)) |
+| **Compatibility commands** | `AgentContextService` (`application/services/agent_context.py`) | humans + harnesses over the CLI | `resolve`, `search`, `record`, `status` |
+| **Graph Surface Lite** | the `potpie graph …` workbench (`potpie/cli/commands/graph.py`) over `DefaultGraphService` | humans + harnesses over the CLI | `graph catalog/read/search-entities/neighborhood/describe/status/history` (+ the write/inbox/quality commands in [`writing.md`](./writing.md)) |
 
-The MCP surface is **exactly four tools** — `context_record` is its only write. The
-richer workbench is **CLI-only**; it is not mirrored onto MCP. `resolve`/`search`/
+The richer workbench and compatibility commands are both CLI surfaces. `resolve`/`search`/
 `record` on `AgentContextService` delegate straight to `GraphService`; only `status`
 is composite (data-plane status + `PotManagementService` + a `SkillManager` install
 nudge). Both altitudes are implemented by `DefaultGraphService`
@@ -41,7 +40,7 @@ nudge). Both altitudes are implemented by `DefaultGraphService`
 
 ## 2. The single read trunk (P8/P9)
 
-Every read — MCP `resolve`/`search`, `graph read`, named views, and the zero-token
+Every read — `resolve`/`search`, `graph read`, named views, and the zero-token
 nudge ([`ingestion-nudge.md`](./ingestion-nudge.md)) — collapses onto one path:
 
 ```mermaid
@@ -378,15 +377,15 @@ Full flag lists live in [`cli-flow.md`](./cli-flow.md); this is the read-side or
 | `graph status` | data-plane status for the active pot |
 | `graph catalog [--subgraph] [--profile full\|read]` | **contract discovery** — returns `GraphCatalogResult`: versions, commands, truth classes, mutation ops (+ empty review/deferred), source authorities, `match_mode`, views, public entity types & predicates. Derived entirely from the ontology + view map + constants ("no docs needed"). `--task` is **accepted but ignored in V1.5**. |
 | `graph describe [subgraph] [--view] [--examples]` | in-process `describe_contract()` (not a host call); returns a subgraph and optionally one view. |
-| `graph read --subgraph <s> --view <v>` | **Retrieve** axis (§7/§8); `--detail compact\|full`, `--relations summary\|full`, `--query`, `--scope k:v`, `--since/--until`, `--depth/--direction`, `--limit`, `--sort`, `--format`. |
+| `graph read --subgraph <s> --view <v>` | **Retrieve** axis (§7/§8); `--detail compact\|full`, `--relations summary\|full`, `--query`, `--query-threshold` (default `0.70`; lower is looser), `--scope k:v`, `--since/--until`, `--depth/--direction`, `--limit`, `--sort`, `--format`. `--detail` and `--relations` affect **both** `--json` and default human output. `--format table` renders markdown pipe tables in human mode; timeline views default to `--format events` (bullets). |
 | `timeline recent` | sugar for `graph read --subgraph recent_changes --view timeline`. |
 | `graph search-entities` | **Filter** axis (§7); structured typed lookup for identity resolution. |
 | `graph neighborhood --entity <key>` | **Traverse** axis (§7); `graph inspect <key>` is a legacy alias. |
 | `graph history` | mutation/claim/entity history (audit trail). |
 
-At the MCP altitude, `context_resolve`/`context_search` cover Retrieve, and
-`context_status` is the composite readiness/nudge tool. There is no `context_neighborhood`
-or `context_search_entities`; the workbench Filter/Traverse axes are CLI-only.
+The compatibility `resolve`/`search` commands cover Retrieve, while `status` is
+the composite readiness/nudge command. The workbench adds the Filter and Traverse
+axes through `graph search-entities` and `graph neighborhood`.
 
 ---
 

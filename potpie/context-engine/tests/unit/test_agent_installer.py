@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-import adapters.outbound.skills.agent_installer as agent_installer
-from adapters.outbound.skills.agent_installer import (
+import potpie_context_engine.adapters.outbound.skills.agent_installer as agent_installer
+from potpie_context_engine.adapters.outbound.skills.agent_installer import (
     install_global_agent_instructions,
     install_agent_bundle,
     install_skill_bundle,
@@ -15,9 +15,11 @@ from adapters.outbound.skills.agent_installer import (
     resolve_install_root,
     validate_packaged_skill_command_snippets,
 )
-from adapters.outbound.skills.claude_target import FileBackedAgentTarget
-from application.services.skill_manager import DefaultSkillManager
-from adapters.outbound.skills.bundle_catalog import catalog_by_id
+from potpie_context_engine.adapters.outbound.skills.claude_target import (
+    FileBackedAgentTarget,
+)
+from potpie_context_engine.application.services.skill_manager import DefaultSkillManager
+from potpie_context_engine.adapters.outbound.skills.bundle_catalog import catalog_by_id
 
 
 def test_resolve_install_root_prefers_git_repo(tmp_path: Path) -> None:
@@ -321,7 +323,8 @@ def test_install_agent_bundle_claude_creates_claude_files(tmp_path: Path) -> Non
     assert "CLAUDE.md" in result.created
     content = (repo / "CLAUDE.md").read_text(encoding="utf-8")
     assert "<!-- potpie-start -->" in content
-    assert "context_resolve" in content
+    assert "potpie graph read" in content
+    assert "context_resolve" not in content
     assert (repo / ".claude" / "commands" / "potpie-feature.md").exists()
     assert (repo / ".claude" / "commands" / "potpie-record.md").exists()
     assert (repo / ".claude" / "skills" / "potpie-cli" / "SKILL.md").exists()
@@ -344,7 +347,8 @@ def test_install_agent_bundle_claude_merges_into_existing_claude_md(
     assert "# My Project" in content
     assert "Existing content." in content
     assert "<!-- potpie-start -->" in content
-    assert "context_resolve" in content
+    assert "potpie graph read" in content
+    assert "context_resolve" not in content
 
 
 def test_install_agent_bundle_claude_unchanged_on_second_run(tmp_path: Path) -> None:
@@ -372,7 +376,8 @@ def test_install_agent_bundle_claude_updates_section_with_force(tmp_path: Path) 
     assert "CLAUDE.md" in result.updated
     content = (repo / "CLAUDE.md").read_text(encoding="utf-8")
     assert "OLD SECTION" not in content
-    assert "context_resolve" in content
+    assert "potpie graph read" in content
+    assert "context_resolve" not in content
     assert "# Project" in content
 
 
@@ -394,7 +399,8 @@ def test_install_agent_bundle_claude_updates_changed_section_without_force(
     assert "# Project" in content
     assert "Keep me." in content
     assert "CUSTOM" not in content
-    assert "context_resolve" in content
+    assert "potpie graph read" in content
+    assert "context_resolve" not in content
 
 
 def test_install_agent_bundle_claude_plugin_lays_out_plugin_dir(tmp_path: Path) -> None:

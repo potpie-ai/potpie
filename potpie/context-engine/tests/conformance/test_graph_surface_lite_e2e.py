@@ -9,18 +9,27 @@ from __future__ import annotations
 
 import pytest
 
-from adapters.outbound.graph.backends.embedded_backend import EmbeddedGraphBackend
-from adapters.outbound.graph.backends.in_memory_backend import InMemoryGraphBackend
-from adapters.outbound.intelligence.local_embedder import HashingEmbedder
-from application.services.graph_service import DefaultGraphService
-from domain.ports.agent_context import RecordRequest, ResolveRequest
-from domain.ports.claim_query import ClaimQueryFilter
-from domain.ports.services.graph_service import (
+from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
+    EmbeddedGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.intelligence.local_embedder import (
+    HashingEmbedder,
+)
+from potpie_context_engine.application.services.graph_service import DefaultGraphService
+from potpie_context_core.ports.agent_context import (
+    RecordRequest,
+    ResolveRequest,
+)
+from potpie_context_core.ports.claim_query import ClaimQueryFilter
+from potpie_context_core.ports.graph_service import (
     GraphCatalogRequest,
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
-from domain.semantic_mutations import SemanticMutationRequest
+from potpie_context_core.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
 
@@ -73,6 +82,94 @@ def test_read_backed_view_returns_data() -> None:
     assert env.items
     assert env.view == "infra_topology.service_neighborhood"
     assert env.subgraph_versions["_global"] >= 1
+
+
+def test_infra_resolve_ranks_by_task_query_end_to_end() -> None:
+    """End-to-end: mutate → context_resolve → query-sensitive infra ranking."""
+    svc = _service(embedder=True)
+    svc.mutate(
+        SemanticMutationRequest.parse(
+            {
+                "pot_id": POT,
+                "operations": [
+                    {
+                        "op": "link_entities",
+                        "subgraph": "infra_topology",
+                        "subject": {"key": "service:auth-svc", "type": "Service"},
+                        "predicate": "DEPENDS_ON",
+                        "object": {
+                            "key": "service:redis-sidecar",
+                            "type": "Service",
+                        },
+                        "truth": "source_observation",
+                        "description": "auth depends on redis sidecar for session connection pooling",
+                        "evidence": [
+                            {
+                                "source_ref": "manifest:redis",
+                                "authority": "repository_metadata",
+                            }
+                        ],
+                    },
+                    {
+                        "op": "link_entities",
+                        "subgraph": "infra_topology",
+                        "subject": {"key": "service:auth-svc", "type": "Service"},
+                        "predicate": "DEPENDS_ON",
+                        "object": {
+                            "key": "service:kafka-broker",
+                            "type": "Service",
+                        },
+                        "truth": "source_observation",
+                        "description": "auth publishes login events to kafka broker",
+                        "evidence": [
+                            {
+                                "source_ref": "manifest:kafka",
+                                "authority": "repository_metadata",
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
+    )
+    env = svc.resolve(
+        ResolveRequest(
+            pot_id=POT,
+            task="redis connection pool for sessions",
+            include=("infra_topology",),
+            scope={"service": "auth-svc"},
+            max_items=10,
+        )
+    )
+    infra_items = [item for item in env.items if item.include == "infra_topology"]
+    assert len(infra_items) == 2
+    top, second = infra_items[0], infra_items[1]
+    assert top.payload["object_key"] == "service:redis-sidecar"
+    assert (
+        top.breakdown["semantic_similarity"] > second.breakdown["semantic_similarity"]
+    )
+    assert top.breakdown["semantic_similarity"] != 0.5
+
+    # Same ranking through the graph-read surface (``graph read --query``):
+    # the view contract accepts ``query`` and similarity reaches the breakdown.
+    result = svc.read(
+        GraphReadRequest(
+            pot_id=POT,
+            subgraph="infra_topology",
+            view="service_neighborhood",
+            scope={"service": "auth-svc"},
+            query="redis connection pool for sessions",
+            depth=1,
+            limit=10,
+        )
+    )
+    assert result.ok
+    assert not result.unsupported
+    sims = {
+        item["entity_key"]: item["breakdown"]["semantic_similarity"]
+        for item in result.items
+    }
+    assert sims["service:redis-sidecar"] > sims["service:kafka-broker"]
 
 
 # 3. search-entities finds entities from a prior mutation

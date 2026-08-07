@@ -103,8 +103,7 @@ deterministically, with no LLM in the loop. P6 structured payloads
 `verification`) are validated here and embedded into
 `payload["record"]["structured"]`.
 
-`record` is the same write that backs the local CLI `potpie record` and the MCP
-`context_record` tool (the only MCP write). It is **Spine B** — the immediate
+`record` is the write behind the local CLI `potpie record`. It is **Spine B** — the immediate
 `DefaultGraphService.mutate` path via the record→semantic bridge. Full mechanics
 live in [writing.md](./writing.md); the point here is only that
 `context_record` short-circuits the async reconciliation pipeline entirely.
@@ -278,7 +277,7 @@ routes to `host.nudge.nudge(GraphNudgeRequest)`. Full flags are in
 
 ### 7.5 The fail-safe Claude Code hook
 
-`adapters/inbound/cli/templates/claude_plugin/hooks/potpie_nudge.py` is the thin
+`potpie/cli/templates/claude_plugin/hooks/potpie_nudge.py` is the thin
 adapter that turns harness lifecycle events into nudge events and shells
 `potpie --json graph nudge`. Event mapping:
 

@@ -102,7 +102,7 @@ potpie status
 potpie source add repo .
 potpie resolve "what should I know before working in this repository?"
 potpie search "authentication flow"
-potpie record --type decision --summary "Prefer the context-engine CLI for graph work"
+potpie record --type decision --summary "Prefer the Potpie CLI for graph work"
 ```
 
 You can find an exhaustive list with more examples in our [docs](https://docs.potpie.ai).

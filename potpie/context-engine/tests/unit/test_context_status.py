@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from domain.context_status import (
+from potpie_context_engine.domain.context_status import (
     DEFAULT_RESOLVER_CAPABILITIES,
     EventLedgerHealth,
     MaintenanceJob,
@@ -144,7 +144,9 @@ def test_status_source_to_payload_includes_capabilities() -> None:
 
 class _StubResolverAdvertiser:
     def __init__(self, entries: list[tuple[str, str, frozenset[str]]]) -> None:
-        from domain.source_resolution import ResolverCapabilityEntry
+        from potpie_context_engine.domain.source_resolution import (
+            ResolverCapabilityEntry,
+        )
 
         self._entries = [
             ResolverCapabilityEntry(provider=p, source_kind=k, policies=pols)
