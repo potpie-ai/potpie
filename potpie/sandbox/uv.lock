@@ -5,7 +5,8 @@ requires-python = ">=3.12, <3.15"
 [manifest]
 constraints = [
     { name = "aiohttp", specifier = ">=3.14.3" },
-    { name = "cryptography", specifier = ">=48.0.1" },
+    { name = "cryptography", specifier = ">=50.0.0" },
+    { name = "gitpython", specifier = ">=3.1.57" },
     { name = "idna", specifier = ">=3.15" },
     { name = "pydantic-ai-slim", specifier = ">=1.102.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
