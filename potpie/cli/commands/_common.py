@@ -768,31 +768,9 @@ def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
     except OSError:
         return []
     remote = _current_git_remote(cwd)
-    matches: list[tuple[str, str]] = []
-    try:
-        pots = list(host.pots.list_pots())
-    except Exception:  # noqa: BLE001 - pot resolution should not mask commands
-        return []
-    for pot in pots:
-        try:
-            sources = host.pots.list_sources(pot_id=pot.pot_id)
-        except Exception:  # noqa: BLE001
-            continue
-        for source in sources:
-            if getattr(source, "kind", None) != "repo":
-                continue
-            refs = {
-                str(getattr(source, "name", "") or "").strip(),
-                str(getattr(source, "location", "") or "").strip(),
-            }
-            if any(
-                _repo_source_matches_cwd(ref, cwd=cwd, remote=remote)
-                for ref in refs
-                if ref
-            ):
-                matches.append((pot.pot_id, pot.name))
-                break
-    return matches
+    return _pots_matching_repo_source(
+        host, lambda ref: _repo_source_matches_cwd(ref, cwd=cwd, remote=remote)
+    )
 
 
 def _pots_matching_repo_identity(
@@ -800,27 +778,78 @@ def _pots_matching_repo_identity(
 ) -> list[tuple[str, str]]:
     if not repo_identity:
         return []
+    return _pots_matching_repo_source(
+        host, lambda ref: repo_identity_key(ref) == repo_identity
+    )
+
+
+def _pots_matching_repo_source(
+    host: Any, matches_ref: Callable[[str], bool]
+) -> list[tuple[str, str]]:
+    """``(pot_id, name)`` for each pot with a repo source ``matches_ref`` accepts.
+
+    One pot per match, in pot order, as the per-pot walk this replaced produced.
+    """
     matches: list[tuple[str, str]] = []
+    matched: set[str] = set()
+    for pot_id, pot_name, refs in _repo_source_index(host):
+        if pot_id in matched:
+            continue
+        if any(matches_ref(ref) for ref in refs):
+            matches.append((pot_id, pot_name))
+            matched.add(pot_id)
+    return matches
+
+
+def _repo_source_index(host: Any) -> list[tuple[str, str, tuple[str, ...]]]:
+    """``(pot_id, pot_name, refs)`` for every repo source of every visible pot.
+
+    ``refs`` are the registered strings a working tree is matched against. The
+    control plane serves this as one call; the per-pot walk below is the
+    fallback for a host that predates it. That walk is a dict read per pot
+    in-process but one network + database round trip per pot against a hosted
+    control plane, which made repo→pot resolution — and so ``status`` and every
+    command that resolves a pot from the cwd — scale with the caller's pot
+    count.
+    """
+    index = _safe_call(lambda: list(host.pots.list_repo_sources()), None)
+    if index is None:
+        return _repo_source_index_per_pot(host)
+    return [
+        (
+            str(getattr(row, "pot_id", "") or ""),
+            str(getattr(row, "pot_name", "") or ""),
+            _repo_source_refs(row),
+        )
+        for row in index
+    ]
+
+
+def _repo_source_index_per_pot(host: Any) -> list[tuple[str, str, tuple[str, ...]]]:
     try:
         pots = list(host.pots.list_pots())
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - pot resolution should not mask commands
         return []
+    rows: list[tuple[str, str, tuple[str, ...]]] = []
     for pot in pots:
         try:
             sources = host.pots.list_sources(pot_id=pot.pot_id)
         except Exception:  # noqa: BLE001
             continue
-        for source in sources:
-            if getattr(source, "kind", None) != "repo":
-                continue
-            refs = (
-                str(getattr(source, "name", "") or "").strip(),
-                str(getattr(source, "location", "") or "").strip(),
-            )
-            if any(repo_identity_key(ref) == repo_identity for ref in refs if ref):
-                matches.append((pot.pot_id, pot.name))
-                break
-    return matches
+        rows.extend(
+            (pot.pot_id, pot.name, _repo_source_refs(source))
+            for source in sources
+            if getattr(source, "kind", None) == "repo"
+        )
+    return rows
+
+
+def _repo_source_refs(source: Any) -> tuple[str, ...]:
+    refs = (
+        str(getattr(source, "name", "") or "").strip(),
+        str(getattr(source, "location", "") or "").strip(),
+    )
+    return tuple(dict.fromkeys(ref for ref in refs if ref))
 
 
 def _current_repo_identity() -> str | None:

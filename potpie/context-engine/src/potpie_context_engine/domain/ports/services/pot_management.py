@@ -59,6 +59,21 @@ class SourceInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class PotRepoSource:
+    """A repo source joined to the pot that owns it.
+
+    The repo→pot index behind ``list_repo_sources``. Callers resolving "which
+    pot owns this working tree" need the pot identity alongside the registered
+    refs, and asking per pot is what made that resolution O(pots) round trips.
+    """
+
+    pot_id: str
+    pot_name: str
+    name: str
+    location: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PotAggregateStatus:
     """Control-plane half of ``context_status``."""
 
@@ -111,6 +126,23 @@ class PotManagementService(Protocol):
 
     def list_sources(self, *, pot_id: str) -> list[SourceInfo]: ...
 
+    def list_repo_sources(self) -> list[PotRepoSource]:
+        """Every repo source across all visible pots, in one call.
+
+        Repo→pot resolution ("which pot owns this working tree?") needs the
+        repo sources of every pot the caller can see. Walking ``list_pots`` and
+        calling ``list_sources`` per pot costs one round trip per pot, which is
+        free in-process and O(pots) network+DB calls against a hosted control
+        plane. This is the single-query form: a local store answers it from the
+        state it already loaded; a hosted store answers it with one indexed
+        query over its source registry.
+
+        Matching stays with the caller — a working tree's identity (git remote,
+        or a path that may sit under a registered parent directory) is a
+        client-side fact the control plane cannot evaluate.
+        """
+        ...
+
     def source_status(self, *, pot_id: str, source_id: str) -> SourceInfo: ...
 
     def remove_source(self, *, pot_id: str, source_id: str) -> None:
@@ -145,5 +177,6 @@ __all__ = [
     "PotAggregateStatus",
     "PotInfo",
     "PotManagementService",
+    "PotRepoSource",
     "SourceInfo",
 ]

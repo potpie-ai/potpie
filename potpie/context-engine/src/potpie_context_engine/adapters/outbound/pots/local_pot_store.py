@@ -144,6 +144,29 @@ class LocalPotStore:
     def list_sources(self, *, pot_id: str) -> list[dict[str, Any]]:
         return self._load().get("sources", {}).get(pot_id, [])
 
+    def list_repo_sources(self) -> list[dict[str, Any]]:
+        """Repo sources of every pot, joined to their pot, from one load.
+
+        Pot order follows :meth:`list_pots` so callers that pick "the single
+        matching pot" see the same ordering they got from the per-pot walk.
+        """
+        state = self._load()
+        sources = state.get("sources", {})
+        rows: list[dict[str, Any]] = []
+        for pot_id, pot in state.get("pots", {}).items():
+            for row in sources.get(pot_id, []):
+                if row.get("kind") != "repo":
+                    continue
+                rows.append(
+                    {
+                        "pot_id": pot_id,
+                        "pot_name": pot.get("name", pot_id),
+                        "name": row.get("name", row.get("location", "")),
+                        "location": row.get("location"),
+                    }
+                )
+        return rows
+
     def remove_source(self, *, pot_id: str, source_id: str) -> None:
         state = self._load()
         rows = state.get("sources", {}).get(pot_id, [])

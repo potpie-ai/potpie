@@ -23,6 +23,7 @@ from potpie_context_engine.domain.ports.services.pot_management import (
     PotAggregateStatus,
     PotInfo,
     PotManagementService,
+    PotRepoSource,
     SourceInfo,
 )
 from potpie_context_engine.domain.ports.services.setup import SetupOrchestrator
@@ -45,6 +46,7 @@ __all__ = [
     "PotAggregateStatus",
     "PotInfo",
     "PotManagementService",
+    "PotRepoSource",
     "SetupOrchestrator",
     "SkillInfo",
     "SkillManager",

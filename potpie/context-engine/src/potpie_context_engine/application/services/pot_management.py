@@ -22,6 +22,7 @@ from potpie_context_core.ports.resource_store import ResourceStorePort
 from potpie_context_engine.domain.ports.services.pot_management import (
     PotAggregateStatus,
     PotInfo,
+    PotRepoSource,
     PotTeardownResult,
     SourceInfo,
 )
@@ -129,6 +130,9 @@ class LocalPotManagementService:
     def list_sources(self, *, pot_id: str) -> list[SourceInfo]:
         return [_source(r) for r in self.store.list_sources(pot_id=pot_id)]
 
+    def list_repo_sources(self) -> list[PotRepoSource]:
+        return [_repo_source(r) for r in self.store.list_repo_sources()]
+
     def source_status(self, *, pot_id: str, source_id: str) -> SourceInfo:
         for row in self.store.list_sources(pot_id=pot_id):
             if row.get("source_id") == source_id:
@@ -178,6 +182,15 @@ def _pot(row: dict) -> PotInfo:
         name=row.get("name", row["pot_id"]),
         active=bool(row.get("active")),
         archived=bool(row.get("archived")),
+    )
+
+
+def _repo_source(row: dict) -> PotRepoSource:
+    return PotRepoSource(
+        pot_id=row["pot_id"],
+        pot_name=row.get("pot_name", row["pot_id"]),
+        name=row.get("name", row.get("location", "")),
+        location=row.get("location"),
     )
 
 
