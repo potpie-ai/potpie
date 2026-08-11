@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+# Dependency-graph hygiene stub (POT-2236).
+# GitHub's SBOM still listed a deleted potpie-legacy@0.1.0 snapshot with
+# aiohttp==3.14.1 and gitpython==3.1.54 after legacy/ was removed (#1034).
+# Re-publishing an empty manifest at this path replaces that stale snapshot
+# so Dependabot/Vanta Medium findings can clear. Not a workspace member.
+[project]
+name = "potpie-legacy"
+version = "0.1.0"
+description = "Empty stub replacing the removed legacy demo host (dependency-graph hygiene only)."
+requires-python = ">=3.12,<3.15"
+license = "Apache-2.0"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["_potpie_legacy_stub"]
