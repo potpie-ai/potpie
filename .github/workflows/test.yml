@@ -211,7 +211,8 @@ jobs:
   premerge-cli-journey:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Allow room for UV_HTTP_TIMEOUT (300s) on large wheel fetches during uv sync.
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
