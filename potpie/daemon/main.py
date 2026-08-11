@@ -15,7 +15,7 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 from starlette.concurrency import run_in_threadpool
 
-from potpie.daemon.http.ui import build_ui_api_router, mount_ui_static
+from potpie.daemon.http.ui import UiAuth, build_ui_api_router, mount_ui_static
 from potpie.daemon.process.pidfile import (
     remove_pid_file,
     write_discovery,
@@ -26,35 +26,22 @@ from potpie_context_engine.bootstrap.logging_setup import configure_logging
 from potpie_context_engine.bootstrap.observability_context import correlation_scope
 from potpie_context_engine.bootstrap.observability_runtime import get_observability
 from potpie_context_engine.bootstrap.host_wiring import build_host_shell
-from potpie_context_core.errors import CapabilityNotImplemented, PotNotFound
+from potpie_context_core.errors import (
+    CapabilityNotImplemented,
+    ContextEngineDisabled,
+    PotNotFound,
+)
 from potpie_context_engine.domain.ports.observability import SPAN_KIND_SERVER
 from potpie.daemon.rpc import decode, encode
+from potpie.daemon.surfaces import RPC_SURFACES, surface_contract
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_RPC_SURFACES = frozenset(
-    {
-        "agent_context",
-        "auth",
-        "backend",
-        "backend.analytics",
-        "backend.claim_query",
-        "backend.inspection",
-        "backend.mutation",
-        "backend.semantic",
-        "backend.snapshot",
-        "config",
-        "graph",
-        "graph_workbench",
-        "installer",
-        "ledger",
-        "nudge",
-        "pots",
-        "resources",
-        "setup",
-        "skills",
-    }
-)
+#: Kept as a name here because it is imported as one. The set itself moved to
+#: :mod:`potpie.daemon.surfaces` so it is a declaration a test can walk and an
+#: endpoint can publish, rather than a literal buried in an HTTP module that a
+#: second repository copies by hand.
+_ALLOWED_RPC_SURFACES = RPC_SURFACES
 
 
 def _stop_embedded_graph_servers() -> None:
@@ -108,6 +95,11 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
             _stop_embedded_graph_servers()
 
     app = FastAPI(title="potpie-daemon", lifespan=lifespan)
+    # ``/ui/api`` reads the same graph ``/rpc`` does — and, for a managed pot,
+    # spends this daemon's stored remote token — so it takes the same daemon
+    # token. Held on the app because both halves of the browser handoff (the
+    # router mints, the shell sets the cookie) need to reach it.
+    app.state.ui_auth = UiAuth(token=token)
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -125,6 +117,25 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
                     "pid": pid,
                     "backend": host.backend.profile,
                 }
+
+    @app.get("/surfaces")
+    def surfaces(authorization: str | None = Header(None)) -> dict[str, Any]:
+        """What this host implements, so a client need not assume its own copy.
+
+        The whole reason this exists: the allowlist is maintained twice, in two
+        repositories, and the copies drifted without anything noticing. A client
+        that can ask stops guessing — and a client asking a host that predates
+        this endpoint gets a 404, which it must read as "does not say" rather
+        than "implements nothing" (see
+        :func:`potpie.cli.hosts.advertised_surfaces`).
+
+        Behind the daemon token like ``/rpc``, and deliberately *not* folded
+        into ``/health``: that route is unauthenticated, and the inventory of
+        what this process serves is not something to hand to anything that can
+        reach the port.
+        """
+        _authorize(authorization, token)
+        return surface_contract()
 
     @app.post("/rpc")
     async def rpc(
@@ -205,8 +216,29 @@ def _resolve(host: Any, path: str) -> Any:
 
 
 def _validate_rpc_target(surface: str, member: str) -> None:
+    """Refuse anything outside the declared contract, in the right vocabulary.
+
+    The two refusals are not the same event and must not arrive as the same
+    answer. An undeclared *surface* is this host saying "I do not serve that" —
+    a capability answer, which the CLI renders at exit 2 with a next action.
+    Reporting it as ``ValueError`` sent it over the wire as ``validation_error``
+    (exit 1, "the caller got it wrong", no repair offered), which is how a
+    managed deployment missing ``resources`` came to blame the user for asking.
+
+    An undeclared or underscore-prefixed *member* really is a caller mistake and
+    stays a ``ValueError``. Nothing about the allowlist's security role changes:
+    either way the path is refused before :func:`_resolve` walks a single
+    attribute.
+    """
     if surface not in _ALLOWED_RPC_SURFACES:
-        raise ValueError(f"invalid RPC surface: {surface}")
+        raise CapabilityNotImplemented(
+            surface,
+            detail=f"this host does not implement the '{surface}' RPC surface",
+            recommended_next_action=(
+                "run this command against a host that does, e.g. "
+                "'potpie --host local ...'"
+            ),
+        )
     if not member or member.startswith("_"):
         raise ValueError(f"invalid RPC member: {member}")
 
@@ -230,6 +262,24 @@ def _error_payload(exc: Exception) -> dict[str, Any]:
     elif isinstance(exc, PotNotFound):
         logger.debug("daemon RPC returned expected missing pot error: %s", exc)
         error = {"code": "pot_not_found", "message": str(exc)}
+    elif isinstance(exc, ContextEngineDisabled):
+        # "Your backend is down" is an answer, not a daemon fault. Without this
+        # branch the whole family (including GraphSubstrateUnavailable and
+        # PotTeardownFailed) fell into the ``else``: a traceback in the daemon
+        # log and a Sentry event tagged ``is_expected=false`` for an entirely
+        # ordinary outcome, and the subclass's specific repair dropped in favour
+        # of the client's generic "run potpie doctor".
+        #
+        # Order is free against the branches above — CapabilityNotImplemented
+        # and PotNotFound are siblings under ContextEngineError, not subclasses
+        # of this one — but a subclass added under either would need to stay
+        # ahead of this branch to keep its own shape.
+        logger.debug("daemon RPC returned expected unavailability: %s", exc)
+        error = {
+            "code": "unavailable",
+            "message": str(exc),
+            "recommended_next_action": getattr(exc, "recommended_next_action", None),
+        }
     elif isinstance(exc, ValueError):
         logger.debug("daemon RPC returned expected validation error: %s", exc)
         # Domain validation errors may carry structured guidance (e.g.

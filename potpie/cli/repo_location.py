@@ -1,9 +1,25 @@
-"""Repo-source location normalization shared by CLI entrypoints."""
+"""Repo-source location normalization shared by CLI entrypoints.
+
+The two identity functions are re-exported from
+:mod:`potpie_context_engine.domain.repo_identity` rather than defined here. This
+module used to carry its own copy, and the copies drifted where it mattered
+least visibly: the engine's keyed a credential-bearing remote by its full
+``user:password@host`` netloc while this one keyed it by host alone, so
+``potpie setup`` and ``potpie source add repo .`` disagreed about whether two
+spellings of one repository were the same repository — and only one of them
+dedup'd. Re-exporting keeps this import path (the CLI's own seam) while leaving
+exactly one definition of what a repo *is*.
+"""
 
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+
+from potpie_context_engine.domain.repo_identity import (
+    normalize_repo_ref,
+    repo_identity_key,
+)
 
 
 def resolve_repo_location(location: str) -> str:
@@ -22,21 +38,6 @@ def resolve_repo_location(location: str) -> str:
     if raw.startswith((".", "~")):
         return str(Path(raw).expanduser().resolve(strict=False))
     return raw
-
-
-def repo_identity_key(value: str) -> str | None:
-    """Stable local key for matching repo sources/defaults.
-
-    Git remotes are normalized to ``host/owner/repo`` and lower-cased. Paths are
-    resolved but keep their original casing because filesystem semantics vary.
-    """
-
-    raw = (value or "").strip()
-    if not raw:
-        return None
-    if raw.startswith((".", "~")) or Path(raw).is_absolute():
-        return str(Path(raw).expanduser().resolve(strict=False))
-    return normalize_repo_ref(raw)
 
 
 def current_repo_identity(cwd: Path) -> str | None:
@@ -63,31 +64,6 @@ def current_git_remote(cwd: Path) -> str | None:
     if proc.returncode != 0:
         return None
     return normalize_repo_ref(proc.stdout.strip())
-
-
-def normalize_repo_ref(value: str) -> str | None:
-    raw = (value or "").strip()
-    if not raw:
-        return None
-    if raw.endswith(".git"):
-        raw = raw[:-4]
-    if raw.startswith("git@") and ":" in raw:
-        host, path = raw[4:].split(":", 1)
-        return f"{host}/{path}".strip("/").lower()
-    if "://" in raw:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(raw)
-        host = parsed.hostname or ""
-        try:
-            port = parsed.port
-        except ValueError:
-            port = None
-        if port:
-            host = f"{host}:{port}"
-        if host and parsed.path:
-            return f"{host}/{parsed.path.strip('/')}".lower()
-    return raw.strip("/").lower()
 
 
 __all__ = [

@@ -21,13 +21,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import subprocess
 from typing import Callable
-from urllib.parse import urlparse
 
 from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_engine.domain.embedding_modes import (
     EMBEDDING_MODEL_PREP_SKIPPED_ALIASES,
     SEMANTIC_EMBEDDER_ALIASES,
     normalize_embedding_mode,
+)
+from potpie_context_engine.domain.repo_identity import (
+    normalize_repo_ref,
+    repo_identity_key,
 )
 from potpie_context_core.lifecycle import (
     DONE,
@@ -358,15 +361,66 @@ class DefaultSetupOrchestrator:
         active = self.pots.active_pot()
         if active is None:
             return StepResult("source", SKIPPED, "no active pot")
-        existing = self.pots.list_sources(pot_id=active.pot_id)
-        if any(s.kind == "repo" and s.name == plan.repo for s in existing):
-            return StepResult(
-                "source", SKIPPED, f"repo '{plan.repo}' already registered"
-            )
+        # The old guard compared the raw CLI flag (``--repo .``) against the
+        # stored source *name*, which ``add_source`` sets to the resolved
+        # location — ``"." == "/abs/path"`` is never true, so it could only fire
+        # when a user re-typed the already-stored string. Every other re-run fell
+        # through to an unconditional append, and ``setup`` — the command whose
+        # docstring promises "idempotent first-run", and the natural thing to
+        # retry after a failure — left N rows for N runs. Resolve first, then
+        # match on the identity key so the same repo spelled two ways is one row.
         location = _resolve_setup_repo_location(plan.repo)
-        self.pots.add_source(pot_id=active.pot_id, kind="repo", location=location)
+        repo_key = repo_identity_key(location)
+        existing = _matching_repo_source(
+            self.pots.list_sources(pot_id=active.pot_id), repo_key=repo_key
+        )
+        if existing is not None:
+            self._converge_repo_default(location=location, pot_id=active.pot_id)
+            return StepResult(
+                "source",
+                SKIPPED,
+                f"repo '{location}' already registered ({existing.source_id})",
+                metadata={
+                    "source_id": existing.source_id,
+                    "location": location,
+                    "repo_key": repo_key,
+                    "already_registered": True,
+                },
+            )
+        source = self.pots.add_source(
+            pot_id=active.pot_id, kind="repo", location=location
+        )
         self.pots.set_repo_default(repo=location, pot_id=active.pot_id)
-        return StepResult("source", DONE, f"registered repo '{location}'")
+        return StepResult(
+            "source",
+            DONE,
+            f"registered repo '{location}'",
+            metadata={
+                "source_id": getattr(source, "source_id", None),
+                "location": location,
+                "repo_key": repo_key,
+                "already_registered": False,
+            },
+        )
+
+    def _converge_repo_default(self, *, location: str, pot_id: str) -> None:
+        """Bind the repo to this pot only if nothing usable is bound already.
+
+        A run that actually registers the source owns the routing decision. A
+        re-run that found the source already there must not silently undo a
+        deliberate ``potpie pot default set`` — re-running setup is how people
+        respond to a failure, not how they re-point a repo. The carve-outs are
+        the two states that are not a decision: no binding at all, and a binding
+        that names a pot which no longer exists (a run that died between
+        ``add_source`` and the binding, or an archived pot).
+        """
+        try:
+            current = self.pots.repo_default(repo=location)
+            if current and any(p.pot_id == current for p in self.pots.list_pots()):
+                return
+            self.pots.set_repo_default(repo=location, pot_id=pot_id)
+        except Exception:  # noqa: BLE001 - routing repair must not fail a soft step
+            return
 
     def _skills(self, plan: SetupPlan) -> str | StepResult:
         if plan.agent.strip().lower() == "default":
@@ -382,6 +436,27 @@ def _describe(result: object) -> str | None:
 
 
 __all__ = ["DefaultSetupOrchestrator"]
+
+
+def _matching_repo_source(sources, *, repo_key: str | None):
+    """The already-registered row for this repo, matched by identity key.
+
+    Both ``location`` and ``name`` are inspected: rows written before sources
+    carried a separate ``location`` hold the ref in ``name`` alone, and a dedup
+    that cannot see those is a dedup that duplicates them.
+    """
+    if not repo_key:
+        return None
+    for source in sources or []:
+        if getattr(source, "kind", None) != "repo":
+            continue
+        refs = (
+            str(getattr(source, "location", "") or "").strip(),
+            str(getattr(source, "name", "") or "").strip(),
+        )
+        if any(repo_identity_key(ref) == repo_key for ref in refs if ref):
+            return source
+    return None
 
 
 def _resolve_setup_repo_location(location: str) -> str:
@@ -408,20 +483,7 @@ def _current_git_remote(cwd: Path) -> str | None:
         return None
     if proc.returncode != 0:
         return None
-    return _normalize_repo_ref(proc.stdout.strip())
-
-
-def _normalize_repo_ref(value: str) -> str | None:
-    raw = (value or "").strip()
-    if not raw:
-        return None
-    if raw.endswith(".git"):
-        raw = raw[:-4]
-    if raw.startswith("git@") and ":" in raw:
-        host, path = raw[4:].split(":", 1)
-        return f"{host}/{path}".strip("/")
-    if "://" in raw:
-        parsed = urlparse(raw)
-        if parsed.netloc and parsed.path:
-            return f"{parsed.netloc}/{parsed.path.strip('/')}"
-    return raw
+    # This used to call a private copy of the shared normalizer that had lost its
+    # ``.lower()``, so setup persisted ``github.com/Potpie-AI/Potpie`` where
+    # ``source add repo .`` persisted ``github.com/potpie-ai/potpie`` for one repo.
+    return normalize_repo_ref(proc.stdout.strip())

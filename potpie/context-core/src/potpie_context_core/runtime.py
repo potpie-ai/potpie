@@ -631,8 +631,17 @@ def build_graph_runtime(
     policy: GraphMutationPolicy = DEFAULT_MUTATION_POLICY,
     observability: GraphObserver | None = None,
     reconciliation_config: ReconciliationConfig | None = None,
+    resource_index: Any = None,
 ) -> GraphRuntime:
-    """Validate composition and return the single supported graph runtime."""
+    """Validate composition and return the single supported graph runtime.
+
+    ``resource_index`` is a ``ResourceIndexPort`` backing the ``resources``
+    include family. It is optional and unvalidated on purpose: a runtime
+    composed without a document store (an ingestion pipeline, a test) is a
+    legitimate deployment, and the read trunk substitutes a fail-closed profile
+    that answers ``match_mode="disabled"`` rather than dropping the family from
+    the advertised contract.
+    """
 
     if not isinstance(definition, GraphDefinition):
         raise RuntimeCompositionError("definition must be a GraphDefinition")
@@ -707,6 +716,7 @@ def build_graph_runtime(
         definition=definition,
         policy=policy,
         reconciliation_config=reconciliation,
+        resource_index=resource_index,
     )
     workbench = GraphWorkbenchService(
         backend=runtime_backend,

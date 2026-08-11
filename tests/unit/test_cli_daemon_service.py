@@ -91,16 +91,32 @@ def test_service_command_group_is_removed(tmp_path: Path) -> None:
     assert "No such command 'service'" in result.output
 
 
+def _patch_setup_host(monkeypatch, host: "_SetupHost") -> None:
+    """Inject the host through the seam ``setup`` actually builds from.
+
+    ``setup`` used to reach for ``get_host()`` under ``--json`` — which, on the
+    default local origin, is the daemon RPC — and for a locally wired host
+    everywhere else. It now builds the local host in both modes, so this is the
+    one seam left; a fake behind ``get_host`` would silently stop being used and
+    these tests would start asserting against a real setup run.
+    """
+    monkeypatch.setattr(
+        bootstrap,
+        "_build_local_setup_host",
+        lambda **_kwargs: (host, host.backend.profile, host.daemon.in_process),
+    )
+    monkeypatch.setattr(
+        "potpie.cli.ui.setup_ux.rich_enabled",
+        lambda **_kwargs: False,
+    )
+
+
 def test_setup_daemon_dry_run_marks_daemon_host_mode(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     host = _SetupHost(home=tmp_path)
-    monkeypatch.setattr(bootstrap, "get_host", lambda: host)
-    monkeypatch.setattr(
-        "potpie.cli.ui.setup_ux.rich_enabled",
-        lambda **_kwargs: False,
-    )
+    _patch_setup_host(monkeypatch, host)
 
     result = runner.invoke(host_cli.app, ["--json", "setup", "--daemon", "--dry-run"])
 
@@ -116,11 +132,7 @@ def test_setup_daemon_uses_daemon_status_for_backend_validation(
     host = _SetupHost(home=tmp_path)
     host.backend.profile = "falkordb_lite"
     host.daemon.backend = "embedded"
-    monkeypatch.setattr(bootstrap, "get_host", lambda: host)
-    monkeypatch.setattr(
-        "potpie.cli.ui.setup_ux.rich_enabled",
-        lambda **_kwargs: False,
-    )
+    _patch_setup_host(monkeypatch, host)
 
     result = runner.invoke(
         host_cli.app,
@@ -129,7 +141,11 @@ def test_setup_daemon_uses_daemon_status_for_backend_validation(
 
     assert result.exit_code == 0, result.stdout
     assert host.setup.host_mode == "daemon"
-    assert host.daemon.calls == ["ensure:embedded", "status"]
+    # Reads the running daemon's backend; it no longer *starts* one first. The
+    # pre-start existed only because the run itself was about to travel over
+    # that daemon's RPC — the orchestrator's own `daemon` step starts it now,
+    # after config and the backend exist.
+    assert host.daemon.calls == ["status"]
 
 
 def test_setup_daemon_fails_when_requested_backend_cannot_be_verified(
@@ -137,11 +153,7 @@ def test_setup_daemon_fails_when_requested_backend_cannot_be_verified(
     tmp_path: Path,
 ) -> None:
     host = _SetupHost(home=tmp_path)
-    monkeypatch.setattr(bootstrap, "get_host", lambda: host)
-    monkeypatch.setattr(
-        "potpie.cli.ui.setup_ux.rich_enabled",
-        lambda **_kwargs: False,
-    )
+    _patch_setup_host(monkeypatch, host)
 
     result = runner.invoke(
         host_cli.app,

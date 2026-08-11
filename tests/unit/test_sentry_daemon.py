@@ -178,5 +178,10 @@ def test_daemon_rpc_rejects_private_targets() -> None:
     with pytest.raises(ValueError, match="invalid RPC member"):
         daemon_main._validate_rpc_target("backend", "_profile")
 
-    with pytest.raises(ValueError, match="invalid RPC surface"):
+    # Still refused before `_resolve` walks a single attribute; only the
+    # *answer* changed. An undeclared surface is now a capability gap rather
+    # than a caller mistake, because that is what a managed host missing
+    # `resources` actually is — see tests/unit/test_managed_surface_contract.py.
+    with pytest.raises(CapabilityNotImplemented) as surface_refusal:
         daemon_main._validate_rpc_target("backend.__class__", "profile")
+    assert surface_refusal.value.capability == "backend.__class__"

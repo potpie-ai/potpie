@@ -25,6 +25,7 @@ import type {
   GraphData,
   GraphEdge,
   GraphNode,
+  Origin,
   PotRef,
   SearchEntity,
   StatusResponse,
@@ -36,10 +37,27 @@ const TIMELINE_TYPES = typesInCategory("timeline");
 const SIDEBAR_W_KEY = "potpie-ui:sidebar-w";
 const SIDEBAR_W_DEFAULT = 320;
 const clampSidebarW = (w: number) => Math.min(640, Math.max(240, w));
-const requestedPot = () =>
+const searchParam = (name: string) =>
   typeof location === "undefined"
     ? null
-    : new URLSearchParams(location.search).get("pot");
+    : new URLSearchParams(location.search).get(name);
+const requestedPot = () => searchParam("pot");
+const requestedHost = (): Origin | null =>
+  searchParam("host") === "managed"
+    ? "managed"
+    : searchParam("host") === "local"
+      ? "local"
+      : null;
+
+const ORIGIN_LABEL: Record<Origin, string> = {
+  local: "Local (daemon)",
+  managed: "Managed",
+};
+
+/** Pot ids are unique per host, not across hosts — `default` very likely
+ *  exists on both — so anything that identifies a pot in this UI (the
+ *  `<select>` value, the "which pot is loaded" check) is keyed on the pair. */
+const potKey = (origin: Origin, id: string) => `${origin}:${id}`;
 
 function endId(v: string | GraphNode): string {
   return typeof v === "string" ? v : v.id;
@@ -68,6 +86,8 @@ function mergeGraph(a: GraphData, b: GraphData): GraphData {
 export default function App() {
   const [pots, setPots] = useState<PotRef[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeOrigin, setActiveOrigin] = useState<Origin>("local");
+  const [unavailable, setUnavailable] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [data, setData] = useState<GraphData>(EMPTY);
   const [selected, setSelected] = useState<GraphNode | null>(null);
@@ -132,7 +152,7 @@ export default function App() {
     localStorage.setItem(SIDEBAR_W_KEY, String(SIDEBAR_W_DEFAULT));
   };
 
-  const loadPot = useCallback(async (potId: string) => {
+  const loadPot = useCallback(async (potId: string, origin: Origin) => {
     const requestId = ++loadRequestRef.current;
     const isCurrent = () => requestId === loadRequestRef.current;
     setBusy(true);
@@ -140,7 +160,10 @@ export default function App() {
     setSelected(null);
     setResults([]);
     try {
-      const [st, g] = await Promise.all([api.status(potId), api.graph(potId)]);
+      const [st, g] = await Promise.all([
+        api.status(potId, origin),
+        api.graph(potId, origin),
+      ]);
       if (!isCurrent()) return;
       setStatus(st);
       setData({ nodes: g.nodes, edges: g.edges });
@@ -158,30 +181,62 @@ export default function App() {
     (async () => {
       try {
         const p = await api.pots();
-        setPots(p.pots);
-        const requested = requestedPot();
-        const requestedRef = requested
-          ? p.pots.find((x) => x.id === requested || x.name === requested)
-          : null;
-        const active =
-          requestedRef?.id || p.active?.id || p.pots.find((x) => x.active)?.id || null;
-        setActiveId(active);
-        if (active) await loadPot(active);
+        // A daemon from before host routing returns pots with no origin at
+        // all. Defaulting them to local keeps the selector working against a
+        // stale daemon instead of keying every pot on "undefined:<id>" and
+        // matching nothing; `potpie ui` separately says to restart it.
+        setPots(
+          (p.pots || []).map((x) => ({ ...x, origin: x.origin || "local" })),
+        );
+        setUnavailable(p.unavailable || {});
+        // `potpie ui` puts both in the URL; a ?pot= is matched within its host
+        // so a name that exists on both cannot land on the wrong one.
+        const wantHost = requestedHost();
+        const wantPot = requestedPot();
+        const inHost = wantHost
+          ? p.pots.filter((x) => x.origin === wantHost)
+          : p.pots;
+        const chosen =
+          (wantPot
+            ? inHost.find((x) => x.id === wantPot || x.name === wantPot)
+            : null) ||
+          (wantHost ? inHost.find((x) => x.active) : null) ||
+          (p.active
+            ? p.pots.find(
+                (x) => x.id === p.active!.id && x.origin === p.active!.origin,
+              )
+            : null) ||
+          p.pots.find((x) => x.origin === p.active_origin && x.active) ||
+          p.pots[0] ||
+          null;
+        setActiveOrigin(chosen?.origin || wantHost || p.active_origin);
+        setActiveId(chosen?.id || null);
+        if (chosen) await loadPot(chosen.id, chosen.origin);
       } catch (e: any) {
         setError(e?.message || String(e));
       }
     })();
   }, [loadPot]);
 
-  const switchPot = async (potId: string) => {
-    const ref = pots.find((p) => p.id === potId);
+  const switchPot = async (key: string) => {
+    const ref = pots.find((p) => potKey(p.origin, p.id) === key);
     if (!ref) return;
     setBusy(true);
     try {
-      await api.usePot(ref.id);
-      setActiveId(potId);
-      setPots((ps) => ps.map((p) => ({ ...p, active: p.id === potId })));
-      await loadPot(potId);
+      // Moves the host pointer too, so the terminal follows the selector —
+      // picking a managed pot here is the same act as `potpie pot use`.
+      await api.usePot(ref.id, ref.origin);
+      setActiveId(ref.id);
+      setActiveOrigin(ref.origin);
+      setPots((ps) =>
+        ps.map((p) => ({
+          ...p,
+          // Each host keeps its own pointer: selecting a managed pot must not
+          // clear the local host's active pot, only supersede it as current.
+          active: p.origin === ref.origin ? p.id === ref.id : p.active,
+        })),
+      );
+      await loadPot(ref.id, ref.origin);
     } catch (e: any) {
       setError(e?.message || String(e));
       setBusy(false);
@@ -192,20 +247,20 @@ export default function App() {
     async (node: GraphNode) => {
       if (!activeId) return;
       try {
-        const nb = await api.neighborhood(node.key, 1, activeId);
+        const nb = await api.neighborhood(node.key, 1, activeId, activeOrigin);
         setData((cur) => mergeGraph(cur, { nodes: nb.nodes, edges: nb.edges }));
       } catch (e: any) {
         setError(e?.message || String(e));
       }
     },
-    [activeId],
+    [activeId, activeOrigin],
   );
 
   const runSearch = async (e: FormEvent) => {
     e.preventDefault();
     if (!query.trim() || !activeId) return;
     try {
-      const r = await api.search(query.trim(), activeId);
+      const r = await api.search(query.trim(), activeId, activeOrigin);
       setResults(r.entities || []);
     } catch (err: any) {
       setError(err?.message || String(err));
@@ -217,13 +272,24 @@ export default function App() {
     if (inGraph) {
       setSelected(inGraph);
     } else {
-      api.neighborhood(key, 1, activeId || undefined).then((nb) => {
+      api.neighborhood(key, 1, activeId || undefined, activeOrigin).then((nb) => {
         setData((cur) => mergeGraph(cur, { nodes: nb.nodes, edges: nb.edges }));
         const found = nb.nodes.find((n) => n.id === key);
         if (found) setSelected(found);
       }).catch((e: any) => setError(e?.message || String(e)));
     }
   };
+
+  // Pots grouped by the host they live on, hosts in a stable order so the
+  // selector does not reshuffle when one of them is slow to answer.
+  const potGroups = useMemo(() => {
+    const by = new Map<Origin, PotRef[]>();
+    for (const o of ["local", "managed"] as Origin[]) {
+      const group = pots.filter((p) => p.origin === o);
+      if (group.length) by.set(o, group);
+    }
+    return [...by.entries()];
+  }, [pots]);
 
   // Per-type show/hide filtering, applied to both views. `hidden` holds entity
   // types; a category checkbox cascades to (and reflects) all of its types.
@@ -359,17 +425,29 @@ export default function App() {
           <label htmlFor="pot-selector">Pot</label>
           <select
             id="pot-selector"
-            value={activeId || ""}
+            value={activeId ? potKey(activeOrigin, activeId) : ""}
             onChange={(e) => switchPot(e.target.value)}
             disabled={busy}
           >
-            {pots.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} - {p.counts?.claims ?? 0} claims
-              </option>
+            {potGroups.map(([origin, group]) => (
+              // Grouped only when there is more than one host to tell apart;
+              // a single-host install keeps the flat list it always had.
+              <PotOptions
+                key={origin}
+                origin={origin}
+                pots={group}
+                grouped={potGroups.length > 1}
+              />
             ))}
           </select>
         </div>
+        {/* A host that could not be listed is stated rather than merely
+            missing: an empty selector otherwise reads as "no pots". */}
+        {Object.entries(unavailable).map(([origin, why]) => (
+          <span className="host-unavailable" key={origin} title={why}>
+            {ORIGIN_LABEL[origin as Origin] || origin} unavailable
+          </span>
+        ))}
       </header>
 
       <div className="body">
@@ -550,6 +628,30 @@ export default function App() {
 // Counts read as zero-padded two-digit numbers in the design (01, 07, 16…).
 function pad(n: number): string {
   return n < 10 ? `0${n}` : String(n);
+}
+
+// One host's pots as <option>s, wrapped in an <optgroup> only when there is
+// another host to distinguish them from. The value is the qualified key: two
+// hosts very often both have a pot called `default`.
+function PotOptions({
+  origin,
+  pots,
+  grouped,
+}: {
+  origin: Origin;
+  pots: PotRef[];
+  grouped: boolean;
+}) {
+  const options = pots.map((p) => (
+    <option key={potKey(p.origin, p.id)} value={potKey(p.origin, p.id)}>
+      {/* A pot past the count budget arrives with no `counts` at all. Showing
+          "0 claims" there would read as empty and steer you away from a pot
+          that may be the fullest one you have. */}
+      {p.counts ? `${p.name} - ${p.counts.claims ?? 0} claims` : p.name}
+    </option>
+  ));
+  if (!grouped) return <>{options}</>;
+  return <optgroup label={ORIGIN_LABEL[origin] || origin}>{options}</optgroup>;
 }
 
 // Per-row visibility toggle: a square button showing − when the type is shown

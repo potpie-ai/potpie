@@ -40,6 +40,11 @@ from potpie_context_engine.adapters.outbound.pots.flat_file_state_store import (
 )
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import LocalPotStore
 from potpie_context_engine.adapters.outbound.resources import LocalResourceStore
+from potpie_context_engine.adapters.outbound.resources.index import (
+    ResourceIndexDrain,
+    build_resource_index,
+    default_resource_index_profile,
+)
 from potpie_context_engine.adapters.outbound.session.injection_ledger import (
     LocalInjectionLedger,
 )
@@ -123,20 +128,30 @@ def build_host_shell(
         pot_store = LocalPotStore()
         reconciliation = reconciliation_config or reconciliation_config_from_env()
 
-        graph_runtime = build_graph_runtime(
-            backend,
-            LocalJsonGraphPlanStore(),
-            LocalJsonGraphInboxStore(),
-            reconciliation_config=reconciliation,
-        )
-        graph = graph_runtime.graph
-        graph_workbench = graph_runtime.workbench
-        assert_runtime_coherence(reader_backed_includes=graph.backed_includes)
         # Document payloads live outside the graph; cloud swaps this store for
         # object storage without the facade or the CLI noticing. One store
         # instance is shared with pot management so ``pot reset`` / ``archive``
         # can purge the same tree ``resource import`` wrote (R8).
         resource_store = LocalResourceStore()
+        # The retrieval index over those bytes. Built before the runtime
+        # because the ``resources`` include family is answered by the read
+        # trunk, which the runtime composes — the alternative, attaching it
+        # afterwards, would leave a window where the family exists and answers
+        # nothing.
+        resource_index = build_resource_index(default_resource_index_profile())
+        resource_drain = ResourceIndexDrain(index=resource_index)
+        resource_drain.start()
+
+        graph_runtime = build_graph_runtime(
+            backend,
+            LocalJsonGraphPlanStore(),
+            LocalJsonGraphInboxStore(),
+            reconciliation_config=reconciliation,
+            resource_index=resource_index,
+        )
+        graph = graph_runtime.graph
+        graph_workbench = graph_runtime.workbench
+        assert_runtime_coherence(reader_backed_includes=graph.backed_includes)
         pots = LocalPotManagementService(
             store=pot_store, backend=backend, resources=resource_store
         )
@@ -162,7 +177,14 @@ def build_host_shell(
         # mutation uses. The claim query is the read side of the same join: what
         # else points at a section before it is removed, and did the write land.
         resources = ResourceFacade(
-            store=resource_store, graph=graph, claims=backend.claim_query
+            store=resource_store,
+            graph=graph,
+            claims=backend.claim_query,
+            # The same index the read trunk answers ``--include resources``
+            # from. One instance, so an import is visible to the very next
+            # search without a reload — two would be two databases.
+            index=resource_index,
+            drain=resource_drain,
         )
 
         # The nudge brain reads through the graph service and dedups via a local

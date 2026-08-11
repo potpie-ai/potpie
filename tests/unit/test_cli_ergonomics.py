@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 
 import pytest
 import typer
@@ -31,6 +32,47 @@ def _reset_state():
     yield
     _common.set_json(False)
     _common.set_host(None)
+
+
+class _SocketOpenedInUnitTest(BaseException):
+    """Escapes the CLI's own ``except Exception`` transport handlers.
+
+    The commands under test wrap every HTTP call in ``except Exception`` and
+    turn the failure into a warning string, so a refusal raised as an
+    ``Exception`` would be swallowed and the test would pass while still having
+    dialled out. Only something outside that hierarchy reaches the test.
+    """
+
+
+@pytest.fixture(autouse=True)
+def _no_sockets(monkeypatch):
+    """Refuse any connection attempt from this module.
+
+    Every host, daemon and graph here is a fake, so a socket means a seam was
+    left unstubbed — and one was: ``ui._handoff_code`` POSTs to
+    ``{base_url}/ui/api/handoff``, and :class:`_Daemon` hands it
+    ``http://127.0.0.1:8765``. On a developer machine that port is their *real*
+    running daemon, and this "unit" test posted to it on every run. Note what
+    the fake discovery record does *not* do: it names a URL directly, so
+    ``CONTEXT_ENGINE_HOST_MODE=in_process`` — the conftest setting that keeps
+    the rest of the suite off the wire — has nothing to say about it.
+
+    The request went unnoticed because ``_handoff_code`` turns every transport
+    failure into a warning string and nothing asserted on the warning, so the
+    test passed identically whether it reached a daemon or not.
+
+    Loopback is the case worth blocking, not the exception to it: an address
+    that resolves to a service on the developer's own machine is the one a test
+    reaches by accident and the one whose side effects are real.
+    """
+
+    def _refuse(*args, **_kwargs):
+        raise _SocketOpenedInUnitTest(f"unit test opened a socket: {args!r}")
+
+    monkeypatch.setattr(socket, "create_connection", _refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", _refuse)
+    monkeypatch.setattr(socket.socket, "connect", _refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", _refuse)
 
 
 class _Pot:
@@ -315,7 +357,9 @@ def test_resolve_pot_fails_structured_when_repo_matches_multiple_pots(
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.source_app, ["list"])
-    assert result.exit_code != 0
+    # The exact code, not merely "it failed": a crash on the way to the
+    # ambiguity check fails too, and would satisfy a `!= 0`.
+    assert result.exit_code == _common.EXIT_VALIDATION, result.output
     payload = json.loads(result.output)
     assert payload["code"] == "ambiguous_pot"
     assert "shop" in payload["message"] and "shop-fork" in payload["message"]
@@ -531,7 +575,22 @@ def test_pot_linked_summary_skips_graph_counts(monkeypatch) -> None:
 
 
 def test_ui_pot_option_opens_selected_pot_url(monkeypatch) -> None:
-    monkeypatch.setattr(ui, "_probe_ui", lambda base: None)
+    """Both HTTP seams are stubbed, so the URL is built from fakes only.
+
+    ``_probe_ui`` was stubbed and ``_handoff_code`` was not — see
+    :func:`_no_sockets` for what that reached. Stubbing it also makes the
+    handoff *observable*: the code the daemon issues has to end up in the URL,
+    or the explorer opens onto a wall of 401s, and the real call being
+    swallowed into a warning is exactly how that went unnoticed.
+    """
+    handoff_discovery: list[dict[str, str]] = []
+
+    def _handoff(disc: dict[str, str]) -> tuple[str | None, str | None]:
+        handoff_discovery.append(disc)
+        return "hand0ff", None
+
+    monkeypatch.setattr(ui, "_probe_ui", lambda disc: None)
+    monkeypatch.setattr(ui, "_handoff_code", _handoff)
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
     )
@@ -545,7 +604,15 @@ def test_ui_pot_option_opens_selected_pot_url(monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["pot_id"] == "p1"
-    assert payload["url"] == "http://127.0.0.1:8765/ui?pot=p1"
+    # The URL names the host as well as the pot: the explorer serves both from
+    # this same loopback daemon, so the pot id alone would not say which graph.
+    # `k` is the single-use browser session; without it the page 401s.
+    assert payload["url"] == "http://127.0.0.1:8765/ui?host=local&pot=p1&k=hand0ff"
+    assert payload["origin"] == "local"
+    assert payload["warning"] is None
+    # The handoff is asked of the daemon this command actually discovered, not
+    # of some address the test happened to hardcode.
+    assert handoff_discovery == [{"base_url": "http://127.0.0.1:8765"}]
 
 
 def test_resolve_pot_prefers_active_when_among_multiple_matches(monkeypatch) -> None:
@@ -573,7 +640,7 @@ def test_resolve_pot_error_mentions_source_add_when_nothing_resolves(
     _common.set_json(True)
 
     result = CliRunner().invoke(pots.source_app, ["list"])
-    assert result.exit_code != 0
+    assert result.exit_code == _common.EXIT_VALIDATION, result.output
     payload = json.loads(result.output)
     assert payload["code"] == "no_active_pot"
     assert "source add repo ." in payload["recommended_next_action"]
@@ -630,7 +697,7 @@ def test_mutation_template_unknown_kind_fails_with_next_action() -> None:
     result = CliRunner().invoke(
         graph.graph_app, ["mutation-template", "--kind", "nope"]
     )
-    assert result.exit_code != 0
+    assert result.exit_code == _common.EXIT_VALIDATION, result.output
     payload = json.loads(result.output)
     assert payload["error"]["code"] == "unknown_template_kind"
     assert "repo-baseline" in payload["recommended_next_action"]

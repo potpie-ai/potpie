@@ -454,6 +454,26 @@ class LocalResourceStore:
             raise section_not_found(doc, wanted)
         return rows
 
+    def documents(self, *, pot_id: str) -> tuple[str, ...]:
+        """Every document slug this pot holds — one readdir, no manifest reads.
+
+        Exists for ``resource index rebuild``, which re-derives the index from
+        the files and therefore has to enumerate the files rather than the
+        index: a document whose bytes are present but which the index never saw
+        is precisely the case a rebuild is meant to repair, and asking the
+        index would skip it. Scratch trees are dot-prefixed, so skipping dotted
+        names lists documents and nothing else."""
+        try:
+            return tuple(
+                sorted(
+                    path.name
+                    for path in self._pot_root(pot_id).iterdir()
+                    if path.is_dir() and not path.name.startswith(".")
+                )
+            )
+        except OSError:
+            return ()
+
     # --- teardown -----------------------------------------------------------
     def delete(self, *, pot_id: str, slug: str) -> bool:
         doc = require_resource_slug(slug, kind="document")

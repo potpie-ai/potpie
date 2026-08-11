@@ -29,6 +29,7 @@ from potpie_context_engine.application.readers.infra_topology import InfraTopolo
 from potpie_context_engine.application.readers.owners import OwnersReader
 from potpie_context_engine.application.readers.prior_bugs import PriorBugsReader
 from potpie_context_engine.application.readers.raw_graph import RawGraphReader
+from potpie_context_engine.application.readers.resources import ResourcesReader
 from potpie_context_engine.application.readers.timeline_reader import TimelineReader
 from potpie_context_engine.application.services.envelope_builder import (
     EnvelopeBuilder,
@@ -42,6 +43,7 @@ from potpie_context_core.agent_context_port import (
 from potpie_context_core.agent_envelope import AgentEnvelope, UnsupportedInclude
 from potpie_context_core.definition import GraphReaderSpec
 from potpie_context_core.ports.claim_query import ClaimQueryPort
+from potpie_context_core.ports.resource_index import ResourceIndexPort
 from potpie_context_engine.domain.ranking import RankingService
 
 
@@ -57,6 +59,15 @@ class ReadOrchestrator:
     ranker: RankingService = field(default_factory=RankingService)
     builder: EnvelopeBuilder = field(default_factory=EnvelopeBuilder)
     reader_registry: Mapping[str, GraphReaderSpec] = field(default_factory=dict)
+    resource_index: ResourceIndexPort | None = None
+    """Backs ``resources``. ``None`` wires the fail-closed ``none`` profile.
+
+    Optional because a graph runtime can be composed with no document store at
+    all (an ingestion pipeline, a test), and mandatory-by-substitution because
+    the include family is always registered: the substitute answers zero hits
+    with ``match_mode="disabled"`` instead of the family vanishing from the
+    contract, which is what keeps the coherence check meaningful."""
+
     _routing: dict[str, _ReaderT] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -71,6 +82,14 @@ class ReadOrchestrator:
             "decisions": DecisionsReader(claim_query=cq, ranker=rk),
             "owners": OwnersReader(claim_query=cq, ranker=rk),
             "docs": DocsReader(claim_query=cq, ranker=rk),
+            # The one reader that does not read the claim store: document
+            # payloads come from the resource index. ``docs`` answers "what did
+            # we say about this document", ``resources`` answers "which passage
+            # says it" — a fact no section summary mentions is reachable only
+            # through the second.
+            "resources": ResourcesReader(
+                index=self.resource_index or _disabled_resource_index(), ranker=rk
+            ),
             # Visualization read: the whole canonical partition (all RELATES_TO,
             # incl. generic RELATED_TO) for the graph explorer — not a UC slice.
             "raw_graph": RawGraphReader(claim_query=cq, ranker=rk),
@@ -152,6 +171,22 @@ class ReadOrchestrator:
 
 
 __all__ = ["ReadOrchestrator"]
+
+
+def _disabled_resource_index() -> ResourceIndexPort:
+    """The stand-in used when no index was wired.
+
+    Imported lazily so ``application`` keeps depending on ``domain`` and
+    ``ports`` rather than on an outbound adapter at module load — the same
+    reason the graph readers never import a backend."""
+    from potpie_context_engine.adapters.outbound.resources.index._unimplemented import (
+        NullResourceIndex,
+    )
+
+    return NullResourceIndex(
+        detail="no resource index is wired on this host, so document payloads "
+        "are not searchable"
+    )
 
 
 def _build_reader(factory: Any, *, claim_query: ClaimQueryPort, ranker: RankingService):

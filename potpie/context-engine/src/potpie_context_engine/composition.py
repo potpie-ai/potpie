@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from potpie_context_core.definition import GraphDefinition
 from potpie_context_core.mutation_policy import GraphMutationPolicy
 from potpie_context_core.ports.graph.backend import GraphBackend
@@ -16,6 +18,7 @@ def build_graph_service(
     definition: GraphDefinition,
     policy: GraphMutationPolicy,
     reconciliation_config: ReconciliationConfig | None = None,
+    resource_index: Any = None,
 ) -> DefaultGraphService:
     return DefaultGraphService(
         backend=backend,
@@ -24,6 +27,10 @@ def build_graph_service(
         reconciliation_config=(
             reconciliation_config or reconciliation_config_from_env()
         ),
+        # A ``ResourceIndexPort``, or ``None`` where the host has no document
+        # store: the ``resources`` family then answers ``match_mode="disabled"``
+        # rather than disappearing from the contract.
+        resource_index=resource_index,
     )
 
 

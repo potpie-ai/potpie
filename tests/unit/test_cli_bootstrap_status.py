@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 import platform
 import sys
+from types import SimpleNamespace
 from typing import Union
 from unittest.mock import MagicMock
 
@@ -15,6 +16,7 @@ from typer.testing import CliRunner
 from potpie.cli import main as cli_main
 from potpie.cli.commands import _common, bootstrap
 from potpie.cli.commands._common import EXIT_DEGRADED
+from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_engine.bootstrap.host_wiring import default_host_mode
 from potpie_context_core.lifecycle import (
     DONE,
@@ -283,6 +285,84 @@ def test_doctor_json_includes_resource_store_readiness(
     }
     # Readiness is reported for the pot doctor is looking at.
     mock_host.resources.status.assert_called_once_with(pot_id="foo-pot")
+
+
+def test_doctor_survives_a_host_that_refuses_whole_surfaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A managed host serves no ledger. That must not cost the other blocks.
+
+    Found end-to-end against the hosted service: ``ledger.status`` raises
+    ``CapabilityNotImplemented`` there, which aborted the whole command — so
+    ``potpie doctor`` returned a bare error against every managed deployment
+    and the resource-index block was unreachable in exactly the place an
+    operator most needs it.
+    """
+
+    class _Pot:
+        pot_id = "foo-pot"
+
+    mock_host = MagicMock()
+    mock_host.daemon.status.return_value = {"mode": "in_process"}
+    mock_host.backend.profile = "falkordb"
+    mock_host.backend.capabilities.return_value = BackendCapabilities(
+        profile="falkordb", mutation=True, claim_query=True
+    )
+    mock_host.backend.mutation.readiness.return_value = BackendReadiness(
+        profile="falkordb", ready=True, capability_ready={"mutation": True}
+    )
+    mock_host.pots.active_pot.return_value = _Pot()
+    mock_host.ledger.status.side_effect = CapabilityNotImplemented(
+        "ledger.status", detail="managed ledger connectors are not deployed"
+    )
+    mock_host.resources.status.return_value = ResourceStoreStatus(
+        kind="local", ready=True, location="/data/resources", documents=2
+    )
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+
+    result = runner.invoke(cli_main.app, ["--json", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    # The gap is reported, with its reason, rather than raised.
+    assert payload["ledger"]["available"] is False
+    assert "not deployed" in payload["ledger"]["unavailable"]
+    # And everything downstream of it still answers.
+    assert payload["resources"]["documents"] == 2
+    assert payload["backend_ready"] is True
+
+
+def test_doctor_answers_before_a_pot_exists(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Readiness is per-pot; a fresh host has none, and doctor is how you find out.
+
+    The hosted backend rejects the empty pot id outright instead of answering
+    for "no pot", so probing it unguarded made ``doctor`` fail on precisely the
+    freshly-provisioned service an operator runs it against first.
+    """
+    mock_host = MagicMock()
+    mock_host.daemon.status.return_value = {"mode": "in_process"}
+    mock_host.backend.profile = "falkordb"
+    mock_host.backend.capabilities.return_value = BackendCapabilities(
+        profile="falkordb", mutation=True
+    )
+    mock_host.pots.active_pot.return_value = None
+    mock_host.ledger.status.return_value = SimpleNamespace(
+        available=True, binding="none"
+    )
+    mock_host.resources.status.return_value = ResourceStoreStatus(
+        kind="local", ready=True, location="/data/resources", documents=0
+    )
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+
+    result = runner.invoke(cli_main.app, ["--json", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["active_pot"] is None
+    assert payload["backend_ready"] is None
+    assert "no active pot" in payload["backend_readiness"]["unavailable"]
+    # The backend was never asked a question it cannot answer.
+    mock_host.backend.mutation.readiness.assert_not_called()
 
 
 def test_default_host_mode_rejects_invalid_env(monkeypatch: pytest.MonkeyPatch) -> None:

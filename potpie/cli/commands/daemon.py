@@ -5,11 +5,10 @@ from __future__ import annotations
 import typer
 
 from potpie.cli.commands._common import (
-    EXIT_UNAVAILABLE,
     contract,
     emit,
     fail,
-    get_host,
+    get_host_for,
 )
 from potpie.daemon.process.launcher import DaemonStartError
 from potpie.daemon.lifecycle import Daemon
@@ -18,7 +17,17 @@ daemon_app = typer.Typer(help="Local daemon lifecycle (recovery tools).")
 
 
 def _detached_daemon() -> Daemon:
-    daemon = get_host().daemon
+    """The local daemon process — never the active host.
+
+    A managed host is a remote service with no process here to start, stop or
+    tail, so "the daemon" in these commands can only ever mean the local one.
+    Pinning it means `potpie daemon restart` still repairs your machine while
+    the CLI is pointed at a managed pot, which is exactly when you are most
+    likely to need it.
+    """
+    from potpie.cli import hosts
+
+    daemon = get_host_for(hosts.LOCAL).daemon
     if not daemon.in_process:
         return daemon
     return Daemon(home=daemon.home, in_process=False)
@@ -33,7 +42,6 @@ def _start(daemon: Daemon) -> dict[str, int | str]:
             message=str(exc),
             detail=(str(exc.log_path) if exc.log_path else None),
             next_action="inspect the daemon log with 'potpie daemon logs'",
-            exit_code=EXIT_UNAVAILABLE,
         )
 
 
@@ -49,7 +57,6 @@ def _restart(daemon: Daemon) -> dict[str, int | str]:
             message=str(exc),
             detail=(str(exc.log_path) if exc.log_path else None),
             next_action="inspect the daemon log with 'potpie daemon logs'",
-            exit_code=EXIT_UNAVAILABLE,
         )
 
 

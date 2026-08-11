@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from potpie_context_engine.domain.repo_identity import repo_identity_key
+
 
 def default_home() -> Path:
     raw = os.getenv("CONTEXT_ENGINE_HOME")
@@ -167,13 +169,21 @@ class LocalPotStore:
                 )
         return rows
 
-    def remove_source(self, *, pot_id: str, source_id: str) -> None:
+    def remove_source(self, *, pot_id: str, source_id: str) -> bool:
+        """Drop one source row; report whether one was actually there.
+
+        A filter that quietly rewrites the list to itself cannot be told apart
+        from a removal, so an id belonging to another pot — or to no pot —
+        looked like a success all the way out to the CLI.
+        """
         state = self._load()
         rows = state.get("sources", {}).get(pot_id, [])
-        state.setdefault("sources", {})[pot_id] = [
-            r for r in rows if r.get("source_id") != source_id
-        ]
+        kept = [r for r in rows if r.get("source_id") != source_id]
+        if len(kept) == len(rows):
+            return False
+        state.setdefault("sources", {})[pot_id] = kept
         self._save(state)
+        return True
 
     # --- repo defaults ------------------------------------------------------
     def repo_default(self, *, repo: str) -> str | None:
@@ -210,24 +220,11 @@ class LocalPotStore:
         }
 
 
-def _repo_identity_key(value: str) -> str | None:
-    raw = (value or "").strip()
-    if not raw:
-        return None
-    if raw.startswith((".", "~")) or Path(raw).is_absolute():
-        return str(Path(raw).expanduser().resolve(strict=False))
-    if raw.endswith(".git"):
-        raw = raw[:-4]
-    if raw.startswith("git@") and ":" in raw:
-        host, path = raw[4:].split(":", 1)
-        return f"{host}/{path}".strip("/").lower()
-    if "://" in raw:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(raw)
-        if parsed.netloc and parsed.path:
-            return f"{parsed.netloc}/{parsed.path.strip('/')}".lower()
-    return raw.strip("/").lower()
+# Every ``repo_defaults`` key on every user's disk came out of this function, so
+# it moved to the domain rather than being reimplemented next to the callers that
+# also need it (the setup seam had its own drifted copy). Kept as a module-level
+# alias so the on-disk keys cannot change by accident.
+_repo_identity_key = repo_identity_key
 
 
 __all__ = ["LocalPotStore", "default_home"]

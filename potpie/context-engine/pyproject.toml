@@ -18,6 +18,15 @@ classifiers = ["Typing :: Typed"]
 dependencies = [
     "potpie-context-core==0.1.0",
     "pydantic>=2.0",
+    # The resource index's default profile (sqlite_hybrid) scores vectors with
+    # this. A base dependency rather than an extra because retrieval over
+    # imported documents is part of the graph API's behaviour, not an optional
+    # delivery surface — and because a silently-lexical default would be
+    # indistinguishable from a working one until recall was measured. It is a
+    # small prebuilt wheel with no transitive deps; FTS5 comes from the stdlib.
+    # Loading is still probed at runtime: a CPython built without
+    # ``enable_load_extension`` degrades to lexical *and says so*.
+    "sqlite-vec>=0.1.6",
 ]
 
 [project.optional-dependencies]

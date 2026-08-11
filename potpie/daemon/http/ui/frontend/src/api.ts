@@ -1,5 +1,6 @@
 import type {
   GraphData,
+  Origin,
   PotsResponse,
   SearchEntity,
   StatusResponse,
@@ -28,18 +29,26 @@ async function jget<T>(path: string): Promise<T> {
   return body as T;
 }
 
-function potParam(pot?: string): string {
-  return pot ? `pot=${encodeURIComponent(pot)}` : "";
+/** Build a query string from defined params only.
+ *
+ * Every read is scoped by `host` as well as `pot`: a pot id means nothing
+ * without the host it was listed from, so the two always travel together.
+ */
+function qs(params: Record<string, string | number | undefined>): string {
+  const parts = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== "")
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`);
+  return parts.length ? `?${parts.join("&")}` : "";
 }
 
 export const api = {
   pots: () => jget<PotsResponse>("/pots"),
 
-  usePot: async (ref: string) => {
+  usePot: async (ref: string, host?: Origin) => {
     const res = await fetch(`${BASE}/pots/use`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ref }),
+      body: JSON.stringify({ ref, host }),
     });
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
@@ -48,23 +57,17 @@ export const api = {
     return res.json();
   },
 
-  status: (pot?: string) =>
-    jget<StatusResponse>(`/status${pot ? `?${potParam(pot)}` : ""}`),
+  status: (pot?: string, host?: Origin) =>
+    jget<StatusResponse>(`/status${qs({ pot, host })}`),
 
-  graph: (pot?: string) =>
-    jget<GraphData>(`/graph${pot ? `?${potParam(pot)}` : ""}`),
+  graph: (pot?: string, host?: Origin) =>
+    jget<GraphData>(`/graph${qs({ pot, host })}`),
 
-  neighborhood: (key: string, depth: number, pot?: string) =>
-    jget<GraphData>(
-      `/neighborhood?key=${encodeURIComponent(key)}&depth=${depth}${
-        pot ? `&${potParam(pot)}` : ""
-      }`,
-    ),
+  neighborhood: (key: string, depth: number, pot?: string, host?: Origin) =>
+    jget<GraphData>(`/neighborhood${qs({ key, depth, pot, host })}`),
 
-  search: (q: string, pot?: string) =>
+  search: (q: string, pot?: string, host?: Origin) =>
     jget<{ entities: SearchEntity[] }>(
-      `/search?q=${encodeURIComponent(q)}&limit=20${
-        pot ? `&${potParam(pot)}` : ""
-      }`,
+      `/search${qs({ q, limit: 20, pot, host })}`,
     ),
 };

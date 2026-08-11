@@ -1,17 +1,39 @@
-"""Read-only JSON API for the local graph-explorer UI.
+"""Read-only JSON API for the graph-explorer UI.
 
-Every route resolves a pot (explicit ``?pot=`` or the active pot) and delegates
-to a ``HostShell`` surface. Nothing here mutates the graph — the UI is a
-browse/select surface, in keeping with the "harness is the intelligence" model.
+Every route resolves a *host* (``?host=local|managed``) and then a pot within it
+(explicit ``?pot=`` or that host's active pot) and delegates to a ``HostShell``
+surface. Nothing here mutates the graph — the UI is a browse/select surface, in
+keeping with the "harness is the intelligence" model.
+
+The daemon serves this API for **both** hosts rather than each host serving its
+own copy. The browser only ever talks to loopback, so a managed host's token
+stays on this machine instead of riding in a URL the browser would keep in its
+history — and the explorer works against a managed service that serves only the
+RPC surface and no SPA of its own.
+
+Every route here is behind ``require_ui_credential``: it reads the same graph
+``/rpc`` does, and proxying a managed host means an unauthenticated caller would
+otherwise be spending the daemon's stored remote token. See ``auth.py``.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
-from potpie_context_core.errors import CapabilityNotImplemented, PotNotFound
+from potpie.daemon.http.ui.auth import (
+    require_bearer,
+    require_same_origin,
+    require_ui_credential,
+    ui_auth,
+)
+
+from potpie_context_core.errors import (
+    CapabilityNotImplemented,
+    ContextEngineDisabled,
+    PotNotFound,
+)
 from potpie_context_core.graph_entity_summary import (
     normalize_entity_properties,
 )
@@ -49,6 +71,49 @@ _PREFIX_LABEL = {
     "document": "Document",
     "docsection": "DocumentSection",
 }
+
+
+#: How many pots on a *remote* host get their claim/source counts filled in for
+#: the selector. Each one costs two RPC round trips, so an account with a few
+#: hundred pots turned a dropdown into seconds of blocking network. The
+#: in-process host is exempt: there the same calls are local reads.
+#:
+#: The counts are a browsing aid, not the data — whichever pot actually gets
+#: opened is enriched by ``/api/status``, which is a single call for one pot.
+_REMOTE_COUNT_LIMIT: int = 25
+
+
+def _origins() -> tuple[str, ...]:
+    """Origins worth listing: local always, managed once one is configured."""
+    from potpie.cli import hosts
+
+    return hosts.configured_origins()
+
+
+def _default_origin() -> str:
+    from potpie.cli import hosts
+
+    return hosts.current_origin()
+
+
+def _host_for(local_host: Any, origin: str | None) -> tuple[Any, str]:
+    """``(host, origin)`` for a ``?host=`` value, defaulting to the active one.
+
+    ``local`` is the in-process host this router was built with — never a host
+    rebuilt from the registry, which for the local origin is an RPC client
+    aimed at this very daemon and would have us call ourselves.
+    """
+    from potpie.cli import hosts
+
+    name = (origin or "").strip().lower() or _default_origin()
+    if name == hosts.LOCAL:
+        return local_host, hosts.LOCAL
+    if name != hosts.MANAGED:
+        raise HTTPException(status_code=400, detail=f"unknown host {name!r}")
+    try:
+        return hosts.build_host(hosts.MANAGED), hosts.MANAGED
+    except Exception as exc:  # noqa: BLE001 - unconfigured or unreachable
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _resolve_pot(host: Any, pot: str | None) -> str:
@@ -89,25 +154,45 @@ def _caption(key: str, props: dict[str, Any]) -> str:
     return tail or key
 
 
-def _counts(host: Any, pot_id: str) -> dict[str, int]:
-    try:
-        dp = host.graph.data_plane_status(pot_id)
-    except Exception:  # noqa: BLE001
-        return {}
+def _usable_counts(dp: Any, pot_id: str) -> dict[str, int]:
+    """The numeric counts a ``DataPlaneStatus`` actually carries.
+
+    Raises rather than returning an empty mapping, however it came to be empty:
+    ``{}`` is truthy in JS, so the selector rendered "0 claims" for a pot holding
+    three and the caller had no way to tell a broken backend from an empty pot.
+    Callers omit the key instead, which is what the SPA already renders for a pot
+    past the remote count budget.
+
+    An empty result is never "this pot is empty": a healthy backend reports
+    ``claims: 0`` for an empty pot, and ``DataPlaneStatus`` swallows a failing
+    analytics call into ``{}``. So nothing usable here means the backend could
+    not say — which is exactly what the caller must not claim to know.
+
+    Takes the status object rather than fetching one so a caller that already
+    has it — ``/api/status`` — is not charged a second round trip, which against
+    a managed host is a second RPC call over the network.
+    """
     out: dict[str, int] = {}
-    for key, value in dict(getattr(dp, "counts", {}) or {}).items():
+    for key, value in dict(getattr(dp, "counts", None) or {}).items():
         try:
             out[str(key)] = int(value)
         except (TypeError, ValueError):
             continue
+    if not out:
+        raise ContextEngineDisabled(
+            f"backend reported no usable counts for pot {pot_id}"
+        )
     return out
 
 
+def _counts(host: Any, pot_id: str) -> dict[str, int]:
+    """Claim/entity counts for one pot; raises if the host cannot say."""
+    return _usable_counts(host.graph.data_plane_status(pot_id), pot_id)
+
+
 def _source_count(host: Any, pot_id: str) -> int:
-    try:
-        return len(host.pots.list_sources(pot_id=pot_id))
-    except Exception:  # noqa: BLE001
-        return 0
+    """Registered sources for one pot; raises if the host cannot say."""
+    return len(host.pots.list_sources(pot_id=pot_id))
 
 
 def _slice_to_graph(sl: Any) -> dict[str, Any]:
@@ -144,8 +229,13 @@ def _slice_to_graph(sl: Any) -> dict[str, Any]:
 
 
 def build_ui_api_router(host: Any) -> APIRouter:
-    """Build the ``/ui/api`` router bound to a concrete in-process ``host``."""
-    router = APIRouter()
+    """Build the ``/ui/api`` router bound to a concrete in-process ``host``.
+
+    The credential is a router-level dependency rather than a per-route one so
+    a route added here later is authenticated by construction, not by whoever
+    remembers to add the decorator.
+    """
+    router = APIRouter(dependencies=[Depends(require_ui_credential)])
 
     def _guarded(fn):
         # Map domain errors to HTTP so the SPA gets a clean JSON error body.
@@ -157,58 +247,160 @@ def build_ui_api_router(host: Any) -> APIRouter:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
         except PotNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ContextEngineDisabled as exc:
+            # A managed host that stops answering mid-read. Building the client
+            # opens no connection, so the failure surfaces here rather than in
+            # `_host_for` — without this it escaped as a 500 and read to the SPA
+            # as "the explorer is broken" instead of "that host is down".
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/api/pots")
     def list_pots() -> dict[str, Any]:
         def go():
-            pots = host.pots.list_pots()
-            active = host.pots.active_pot()
-            return {
-                "pots": [
-                    {
+            active_origin = _default_origin()
+            rows: list[dict[str, Any]] = []
+            unavailable: dict[str, str] = {}
+            counts_complete = True
+            active: dict[str, str] | None = None
+
+            for origin in _origins():
+                try:
+                    scoped, _ = _host_for(host, origin)
+                    pots = scoped.pots.list_pots()
+                except Exception as exc:  # noqa: BLE001
+                    # One unreachable host must not blank the selector: the
+                    # pots you can still open are the useful part of the answer.
+                    unavailable[origin] = _detail(exc)
+                    continue
+                budget = None if scoped is host else _REMOTE_COUNT_LIMIT
+                for index, p in enumerate(pots):
+                    row = {
                         "id": p.pot_id,
                         "name": p.name,
+                        "origin": origin,
                         "active": bool(p.active),
-                        "source_count": _source_count(host, p.pot_id),
-                        "counts": _counts(host, p.pot_id),
                     }
-                    for p in pots
-                ],
-                "active": (
-                    {"id": active.pot_id, "name": active.name} if active else None
-                ),
+                    # Counts are omitted rather than zeroed past the budget: a
+                    # zero here would read as "this pot is empty" and send you
+                    # to the wrong pot, which is worse than no number at all.
+                    if budget is None or index < budget:
+                        try:
+                            row["source_count"] = _source_count(scoped, p.pot_id)
+                            row["counts"] = _counts(scoped, p.pot_id)
+                        except Exception as exc:  # noqa: BLE001
+                            # Same rule as the budget: a pot whose counts could
+                            # not be read is listed without them and the reason
+                            # is stated, rather than silently shown as empty.
+                            counts_complete = False
+                            unavailable.setdefault(f"{origin} counts", _detail(exc))
+                    else:
+                        counts_complete = False
+                    rows.append(row)
+                    # Each host keeps its own pointer; the one that counts as
+                    # "the" active pot belongs to the active host.
+                    if p.active and origin == active_origin:
+                        active = {
+                            "id": p.pot_id,
+                            "name": p.name,
+                            "origin": origin,
+                        }
+
+            return {
+                "pots": rows,
+                "active": active,
+                "active_origin": active_origin,
+                "unavailable": unavailable,
+                "counts_complete": counts_complete,
             }
 
         return _guarded(go)
 
-    @router.post("/api/pots/use")
-    def use_pot(ref: str = Body(..., embed=True)) -> dict[str, Any]:
+    @router.post("/api/handoff", dependencies=[Depends(require_bearer)])
+    def handoff(request: Request) -> dict[str, Any]:
+        """Trade the daemon token for a code a browser navigation can carry.
+
+        ``potpie ui`` calls this and puts the code in the URL it opens; the page
+        handler spends it for a cookie. The token itself never reaches the
+        browser, where it would sit in history for the life of the profile.
+        """
+        code, expires_in = ui_auth(request).mint_code()
+        return {"code": code, "expires_in": expires_in}
+
+    # The one route here that writes. `require_same_origin` is the belt to
+    # SameSite's braces: a page in your browser must not be able to move the
+    # active pot — and with it the active *host* — out from under the CLI.
+    @router.post("/api/pots/use", dependencies=[Depends(require_same_origin)])
+    def use_pot(
+        ref: str = Body(..., embed=True),
+        origin: str | None = Body(None, embed=True, alias="host"),
+    ) -> dict[str, Any]:
         def go():
-            pot = host.pots.use_pot(ref=ref)
-            return {"id": pot.pot_id, "name": pot.name, "active": True}
+            from potpie.cli import hosts
+
+            # A qualified ``managed:api`` carries its own host, so the selector
+            # can hand back exactly what it was given.
+            qualified, bare = hosts.split_ref(ref)
+            scoped, resolved = _host_for(host, qualified or origin)
+            pot = scoped.pots.use_pot(ref=bare if qualified else ref)
+            # Persist only after the host accepted it, so a failed switch never
+            # strands the CLI on a host nobody chose. This is the same pointer
+            # `potpie pot use` writes: picking a pot in the explorer moves the
+            # terminal with it, which is the whole point of one registry.
+            hosts.set_persisted_origin(resolved)
+            return {
+                "id": pot.pot_id,
+                "name": pot.name,
+                "origin": resolved,
+                "active": True,
+            }
 
         return _guarded(go)
 
     @router.get("/api/catalog")
-    def catalog(pot: str | None = Query(None)) -> dict[str, Any]:
+    def catalog(
+        pot: str | None = Query(None),
+        origin: str | None = Query(None, alias="host"),
+    ) -> dict[str, Any]:
         def go():
-            pot_id = _resolve_pot(host, pot)
-            return host.graph.catalog(GraphCatalogRequest(pot_id=pot_id)).to_dict()
+            scoped, _ = _host_for(host, origin)
+            pot_id = _resolve_pot(scoped, pot)
+            return scoped.graph.catalog(GraphCatalogRequest(pot_id=pot_id)).to_dict()
 
         return _guarded(go)
 
     @router.get("/api/status")
-    def status(pot: str | None = Query(None)) -> dict[str, Any]:
+    def status(
+        pot: str | None = Query(None),
+        origin: str | None = Query(None, alias="host"),
+    ) -> dict[str, Any]:
+        """The header numbers for one pot — or a refusal, never a zero.
+
+        The listing route can *omit* counts it does not have, because the SPA
+        renders a row without them. This one cannot: the header reads
+        ``counts.entities ?? 0`` / ``counts.claims ?? 0``, so a missing key, a
+        null and an empty mapping all render identically to a real zero — "0
+        entities / 0 claims" beside ``backend_ready: true``, for a pot that may
+        hold thousands. So when the counts are unusable the whole response is
+        refused: ``_guarded`` turns that into a 503 the SPA shows as an error
+        naming the pot, which is the only shape that does not put a number the
+        backend never gave in front of someone choosing where to look.
+        """
+
         def go():
-            pot_id = _resolve_pot(host, pot)
-            dp = host.graph.data_plane_status(pot_id)
+            scoped, resolved = _host_for(host, origin)
+            pot_id = _resolve_pot(scoped, pot)
+            dp = scoped.graph.data_plane_status(pot_id)
+            # Before the dict is built: a partial status with confident-looking
+            # readiness is the half-answer this route exists to stop shipping.
+            counts = _usable_counts(dp, pot_id)
             return {
                 "pot_id": pot_id,
+                "origin": resolved,
                 "backend_profile": dp.backend_profile,
                 "backend_ready": bool(dp.backend_ready),
-                "counts": dict(dp.counts),
+                "counts": counts,
             }
 
         return _guarded(go)
@@ -225,10 +417,12 @@ def build_ui_api_router(host: Any) -> APIRouter:
         external_id: str | None = Query(None),
         limit: int = Query(15, ge=1, le=100),
         pot: str | None = Query(None),
+        origin: str | None = Query(None, alias="host"),
     ) -> dict[str, Any]:
         def go():
-            pot_id = _resolve_pot(host, pot)
-            result = host.graph.search_entities(
+            scoped, _ = _host_for(host, origin)
+            pot_id = _resolve_pot(scoped, pot)
+            result = scoped.graph.search_entities(
                 GraphEntitySearchRequest(
                     pot_id=pot_id,
                     query=q,
@@ -251,10 +445,12 @@ def build_ui_api_router(host: Any) -> APIRouter:
     def whole_graph(
         pot: str | None = Query(None),
         include_invalid: bool = Query(False),
+        origin: str | None = Query(None, alias="host"),
     ) -> dict[str, Any]:
         def go():
-            pot_id = _resolve_pot(host, pot)
-            sl = host.backend.inspection.slice(
+            scoped, _ = _host_for(host, origin)
+            pot_id = _resolve_pot(scoped, pot)
+            sl = scoped.backend.inspection.slice(
                 pot_id=pot_id,
                 filter_=ClaimQueryFilter(
                     pot_id=pot_id, include_invalidated=include_invalid
@@ -269,10 +465,12 @@ def build_ui_api_router(host: Any) -> APIRouter:
         key: str = Query(...),
         depth: int = Query(1, ge=1, le=4),
         pot: str | None = Query(None),
+        origin: str | None = Query(None, alias="host"),
     ) -> dict[str, Any]:
         def go():
-            pot_id = _resolve_pot(host, pot)
-            sl = host.backend.inspection.neighborhood(
+            scoped, _ = _host_for(host, origin)
+            pot_id = _resolve_pot(scoped, pot)
+            sl = scoped.backend.inspection.neighborhood(
                 pot_id=pot_id, entity_key=key, depth=depth
             )
             return {"pot_id": pot_id, **_slice_to_graph(sl)}
@@ -290,10 +488,12 @@ def build_ui_api_router(host: Any) -> APIRouter:
         direction: str | None = Query(None),
         limit: int = Query(12, ge=1, le=100),
         pot: str | None = Query(None),
+        origin: str | None = Query(None, alias="host"),
     ) -> dict[str, Any]:
         def go():
-            pot_id = _resolve_pot(host, pot)
-            env = host.graph.read(
+            scoped, _ = _host_for(host, origin)
+            pot_id = _resolve_pot(scoped, pot)
+            env = scoped.graph.read(
                 GraphReadRequest(
                     pot_id=pot_id,
                     subgraph=subgraph,
@@ -313,6 +513,19 @@ def build_ui_api_router(host: Any) -> APIRouter:
         return _guarded(go)
 
     return router
+
+
+def _detail(exc: Exception) -> str:
+    """Readable reason for a host that could not be listed.
+
+    ``_host_for`` has already wrapped registry failures in ``HTTPException``,
+    whose ``str()`` is the status line rather than the cause, so the detail is
+    unwrapped here — "503: connection refused" tells the user nothing that
+    "connection refused" does not.
+    """
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    return str(exc) or exc.__class__.__name__
 
 
 def _parse_scope(scope: str | None) -> dict[str, str]:

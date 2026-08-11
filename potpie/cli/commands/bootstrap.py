@@ -8,7 +8,10 @@ from all three services via ``context_status``.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import typer
 
@@ -24,7 +27,9 @@ from potpie.cli.commands._common import (
     emit,
     fail,
     get_host,
+    get_host_for,
     is_json,
+    origin_from_use_flags,
     repo_default_pot_id,
     repo_effective_pot_info,
     resolve_pot_id,
@@ -49,13 +54,77 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
 )
 from potpie_context_engine.application.services.config_service import (
     KNOWN_CONFIG_KEYS,
+    is_known_config_key,
+    is_secret_config_key,
     public_config_value,
 )
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
 from potpie_context_engine.domain.embedding_modes import normalize_embedding_mode
-from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.errors import (
+    CapabilityNotImplemented,
+    ContextEngineDisabled,
+    PotNotFound,
+)
 from potpie_context_core.lifecycle import SetupPlan, SetupReport
 from potpie_context_core.ports.agent_context import StatusRequest
+
+
+@dataclass(frozen=True, slots=True)
+class _Gap:
+    """Why one ``doctor`` probe could not answer, and what to do about it.
+
+    The repair is carried separately rather than folded into the sentence
+    because it is the only thing the report can act on: when the *first* probe
+    is the one that failed, this is where ``recommended_next_action`` comes
+    from, and the error boundary's generic "check readiness with 'potpie
+    doctor'" is never an answer inside doctor.
+    """
+
+    detail: str
+    next_action: str | None = None
+
+    def __str__(self) -> str:  # pragma: no cover - convenience for f-strings
+        return self.detail
+
+
+def _probe(call: Callable[[], Any]) -> tuple[Any, _Gap | None]:
+    """Run one ``doctor`` probe, turning a refusal into a reportable gap.
+
+    A diagnostic that dies on the first unavailable surface is the opposite of
+    a diagnostic: the operator learns one thing and loses the other twelve.
+    That is not hypothetical against a managed host, where ``ledger`` is not
+    deployed and answers by raising — enough, before this, to make
+    ``potpie doctor`` unusable there and to hide the resource-index block
+    entirely.
+
+    The first four are the whole vocabulary a host uses to say "not here": a
+    surface it does not implement, a backend that is down, a pot that is gone,
+    an argument it will not accept.
+
+    The last three are the *other* way a host fails to answer, and they are here
+    because callers pass the unwrapping in with the call. A managed service
+    built from a different revision of this repo can answer with a payload whose
+    shape has moved — a dict where a DTO was, a field that has been renamed —
+    and reading it raises ``AttributeError``/``TypeError``/``KeyError`` well
+    after the request succeeded. That is cross-repo drift, the same family this
+    command exists to diagnose, so it must become a row rather than take the
+    other twelve rows down with it. Anything outside these seven is a real bug
+    and still crashes, loudly, where it can be seen.
+    """
+    try:
+        return call(), None
+    except (
+        CapabilityNotImplemented,
+        ContextEngineDisabled,
+        PotNotFound,
+        ValueError,
+        AttributeError,
+        TypeError,
+        KeyError,
+    ) as exc:
+        return None, _Gap(
+            str(exc), getattr(exc, "recommended_next_action", None) or None
+        )
 
 
 def _embedded_graph_servers(profile: str) -> dict | None:
@@ -101,6 +170,169 @@ def _effective_current_repo_pot_id(
     return active_pot_id
 
 
+def _doctor_next_action(
+    readiness: Any, sections: dict[str, dict[str, Any]]
+) -> str | None:
+    """The one repair worth printing — and never a pointer back at doctor.
+
+    Ordering matters more than it looks. A probe that failed usually carries the
+    repair its raiser chose, and that beats any guess made here. Only when
+    nothing failed with advice does the backend line apply, and only when the
+    backend actually answered: telling someone to run ``potpie backend doctor``
+    against a host that never replied sends them to diagnose the wrong thing.
+
+    What must never appear is the error boundary's fallback, "check
+    backend/daemon readiness with 'potpie doctor'". It is the right answer for
+    every other command and a dead end here — it is what the operator was
+    already running when the daemon turned out to be down.
+    """
+    for row in sections.values():
+        if row["status"] != "ok" and row.get("recommended_next_action"):
+            return str(row["recommended_next_action"])
+    if (sections.get("backend_capabilities") or {}).get("status") != "ok":
+        return (
+            "the active host did not answer: start the local daemon with "
+            "'potpie setup', or check the configured host with 'potpie host list'"
+        )
+    if readiness is not None and readiness.get("ready", False):
+        return None
+    return "Run `potpie backend doctor` or inspect `potpie graph status --json`."
+
+
+#: Doctor's remote blocks, unwrapped from the host's answer into plain dicts.
+#:
+#: Each runs inside its own ``_probe``, which is the whole point: reading a
+#: renamed or re-typed field off a drifted managed host raises there and becomes
+#: one ``unavailable`` row, instead of escaping the command and costing the
+#: operator every other block in the report.
+def _readiness_block(readiness: Any) -> dict[str, Any]:
+    return {
+        "profile": readiness.profile,
+        "ready": readiness.ready,
+        "capability_ready": dict(readiness.capability_ready),
+        "detail": readiness.detail,
+    }
+
+
+def _ledger_block(ledger: Any) -> dict[str, Any]:
+    return {"available": ledger.available, "binding": ledger.binding}
+
+
+def _resources_block(resources: Any) -> dict[str, Any]:
+    return {
+        "kind": resources.kind,
+        "ready": resources.ready,
+        "location": resources.location,
+        "documents": resources.documents,
+        "detail": resources.detail,
+    }
+
+
+def _resource_index_block(index: Any) -> dict[str, Any]:
+    return {
+        "profile": index.profile,
+        "ready": index.ready,
+        "capabilities": list(index.capabilities),
+        "match_mode": index.match_mode,
+        "documents": index.documents,
+        "chunks": index.chunks,
+        "pending_embeddings": index.pending_embeddings,
+        "embedder": index.embedder,
+        "shared_store": index.shared_store,
+        "detail": index.detail,
+    }
+
+
+def _doctor_human(
+    *,
+    host_label: str,
+    daemon_status: dict[str, Any],
+    cli_install: dict[str, Any],
+    profile: str | None,
+    caps: Any,
+    readiness: Any,
+    readiness_gap: _Gap | None,
+    ledger: Any,
+    ledger_gap: _Gap | None,
+    resources: Any,
+    resources_gap: _Gap | None,
+    resource_index: Any,
+    resource_index_gap: _Gap | None,
+    repo_identity: str | None,
+    effective_current_repo_pot: str | None,
+    default_pot_id: str | None,
+    embedded_servers: dict[str, Any] | None,
+    advertised: frozenset[str] | None,
+    degraded: list[str],
+) -> str:
+    """The same report as ``--json``, in lines.
+
+    Built here rather than inline so the command body stays a list of probes,
+    but the rule it enforces is the point: human mode is never a *superset* of
+    the JSON and never a subset either. The host, daemon and install lines in
+    particular print whether or not the remote probes answered — they are the
+    blocks that need no host, and losing them to an unreachable service is the
+    failure this whole command was rewritten for.
+    """
+    from potpie.daemon.surfaces import RPC_SURFACES
+
+    lines = [
+        f"host: {host_label}",
+        f"daemon: {daemon_status.get('mode')} (up={daemon_status.get('up')})",
+        cli_install_human(cli_install),
+        f"backend: {profile or 'unknown'} "
+        + (f"ready={readiness['ready']} " if readiness else f"({readiness_gap}) ")
+        + f"caps={', '.join(caps) if caps is not None else '(unavailable)'}",
+        f"ledger: {ledger['binding']} available={ledger['available']}"
+        if ledger
+        else f"ledger: unavailable — {ledger_gap}",
+        (
+            f"resources: {resources['kind']} ready={resources['ready']}"
+            + (
+                f" documents={resources['documents']}"
+                if resources["documents"] is not None
+                else ""
+            )
+            + (f" ({resources['location']})" if resources["location"] else "")
+        )
+        if resources
+        else f"resources: unavailable — {resources_gap}",
+        (
+            f"resource index: {resource_index['profile']} "
+            f"ready={resource_index['ready']} "
+            f"mode={resource_index['match_mode']} "
+            f"chunks={resource_index['chunks']}"
+            + (
+                f" pending={resource_index['pending_embeddings']}"
+                if resource_index["pending_embeddings"]
+                else ""
+            )
+            + (f"\n  ! {resource_index['detail']}" if resource_index["detail"] else "")
+        )
+        if resource_index
+        else f"resource index: unavailable — {resource_index_gap}",
+    ]
+    if repo_identity:
+        lines.append(
+            f"repo: {repo_identity} → {effective_current_repo_pot}"
+            + (
+                f" (default={default_pot_id})"
+                if default_pot_id
+                else " (no repo default set)"
+            )
+        )
+    if embedded_servers and embedded_servers.get("detail"):
+        lines.append(f"embedded servers: {embedded_servers['detail']}")
+    missing = sorted(RPC_SURFACES - advertised) if advertised is not None else []
+    if missing:
+        lines.append(f"host does not serve: {', '.join(missing)}")
+    if degraded:
+        lines.append(
+            f"degraded: {', '.join(degraded)} (run with --json for the detail)"
+        )
+    return "\n".join(lines)
+
+
 def register(root: typer.Typer) -> None:
     @root.command()
     def setup(
@@ -141,6 +373,7 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """Idempotent first-run: provision config, storage, daemon, default pot, skills."""
         with contract():
+            _refuse_remote_setup_target()
             json_output = is_json()
             human_output = not json_output
             interactive_onboarding = (
@@ -164,20 +397,25 @@ def register(root: typer.Typer) -> None:
                 default_backend_profile,
             )
 
-            if human_output:
-                host, selected_backend, in_process = _build_local_setup_host(
-                    backend=backend,
-                    daemon=daemon,
-                    default_backend=default_backend_profile(),
-                )
-            else:
-                host = get_host()
-                in_process = getattr(host.daemon, "in_process", False)
-                selected_backend = backend or (
-                    getattr(host.backend, "profile", default_backend_profile())
-                    if in_process
-                    else default_backend_profile()
-                )
+            # Setup runs in *this* process regardless of output mode. It used to
+            # branch: humans got a locally-wired host, and `--json` got whichever
+            # host the origin resolved to — for the default local origin, a
+            # daemon RPC carrying the entire first run (model download, backend
+            # provision, migrations, skill install) under one 30s client
+            # deadline. On a cold machine that deadline expires while the daemon
+            # completes the work, and the CLI reports `unavailable` at exit 2 for
+            # a setup that succeeded. So the one mode agents and CI use was the
+            # only mode that could report a false failure, and the two modes were
+            # running two different programs. Running locally also puts `--repo .`
+            # back in the caller's working directory: resolved daemon-side it
+            # named whatever directory first started the daemon, so `setup` in
+            # repo B registered repo A. The detached daemon is still provisioned
+            # and hardened — the orchestrator's own `daemon` step does that.
+            host, selected_backend, in_process = _build_local_setup_host(
+                backend=backend,
+                daemon=daemon,
+                default_backend=default_backend_profile(),
+            )
             # --backend selects the storage profile for this run. Backend
             # selection happens at wiring time, so rebuild the host on the chosen
             # profile when it differs from the active one (keeps the report honest).
@@ -264,14 +502,14 @@ def register(root: typer.Typer) -> None:
                 _emit_setup_run_metric(plan, result="dry_run", dry_run=True)
                 return
 
-            if not in_process and not human_output:
-                host.daemon.ensure(plan)
-                daemon_status = host.daemon.status()
-                running_backend = daemon_status.get("backend")
-                if backend:
-                    _raise_if_backend_mismatch(running_backend, backend)
-
-            if not in_process and human_output:
+            # One check for both output modes, before anything is written: a
+            # daemon already serving a different backend must stop the run rather
+            # than have setup provision underneath it. `--json` used to *start*
+            # the daemon here first, because the run itself was about to travel
+            # over its RPC; now that setup executes in-process the orchestrator's
+            # own `daemon` step starts it, in dependency order, after config and
+            # the backend exist.
+            if not in_process:
                 _validate_existing_daemon_backend(host, requested_backend=backend)
 
             if use_live:
@@ -396,87 +634,234 @@ def register(root: typer.Typer) -> None:
 
     @root.command()
     def doctor() -> None:
-        """Local diagnostics: daemon, backend capabilities, skill drift."""
+        """Diagnostics for the active host: backend, capabilities, skill drift.
+
+        Doctor is the command you run *because* something is wrong, so no single
+        unavailable surface may abort it. That is an invariant over every remote
+        call in this function, not a list of the calls that were once known to
+        fail: the previous round wrapped the four probes a managed host refuses
+        and left bare the four it happened to answer, so a host that does not
+        serve ``backend`` — or a local daemon that is simply not running — still
+        took the entire report down, including the daemon, install and
+        embedded-server blocks that needed no host at all. Everything therefore
+        goes through ``section()``, which records a refusal as a row instead of
+        raising it.
+
+        **Doctor exits 0 whenever it produced a report.** Degradation is data:
+        against a managed host two sections are permanently unavailable, and a
+        non-zero exit there would make the command useless as a health gate.
+        Branch on ``ok`` and ``degraded_sections`` in the payload, not on the
+        exit code — and do not "fix" this later.
+        """
         with contract():
+            from potpie.cli import hosts
+            from potpie.daemon.surfaces import RPC_SURFACES
+
             host = get_host()
-            caps = host.backend.capabilities()
-            pot = host.pots.active_pot()
+            # One row per probe, in probe order: {"status", "detail",
+            # "recommended_next_action"}. The shape is fixed whether the probe
+            # answered or not, so an agent can branch on
+            # sections[name]["status"] without first checking the key is there.
+            sections: dict[str, dict[str, Any]] = {}
+
+            def section(
+                name: str, call: Callable[[], Any], *, skip: str | None = None
+            ) -> tuple[Any, _Gap | None]:
+                value, gap = (None, _Gap(skip)) if skip else _probe(call)
+                sections[name] = {
+                    "status": "ok" if gap is None else "unavailable",
+                    "detail": gap.detail if gap else None,
+                    "recommended_next_action": gap.next_action if gap else None,
+                }
+                return value, gap
+
+            # Every host attribute is read *inside* the lambda: `get_host()`
+            # binds late, so `host.backend` is itself the call that builds (and
+            # can refuse) the host.
+            # Each remote answer is unwrapped *inside* its probe, so a payload
+            # whose shape has drifted is caught by the same net as a surface that
+            # refuses. Unwrapped in the payload dict below instead, one renamed
+            # field on a managed host killed the whole report — including the
+            # daemon and install blocks that never needed a host.
+            caps, _caps_gap = section(
+                "backend_capabilities",
+                lambda: list(host.backend.capabilities().implemented()),
+            )
+            profile, _profile_gap = section(
+                "backend_profile", lambda: host.backend.profile
+            )
+            pot, pot_gap = section("active_pot", lambda: host.pots.active_pot())
             pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
-            readiness = host.backend.mutation.readiness(pot_id)
-            daemon_status = host.daemon.status()
+            # Readiness is per-pot and a managed backend rejects the empty id
+            # outright, so a host with no pot — or one that could not be asked
+            # which pot is active — is not asked at all.
+            readiness, readiness_gap = section(
+                "backend_readiness",
+                lambda: _readiness_block(host.backend.mutation.readiness(pot_id)),
+                skip=None
+                if pot_id
+                else (
+                    pot_gap.detail
+                    if pot_gap
+                    else "no active pot; backend readiness is per-pot"
+                ),
+            )
+            ledger, ledger_gap = section(
+                "ledger", lambda: _ledger_block(host.ledger.status())
+            )
+            resources, resources_gap = section(
+                "resources",
+                lambda: _resources_block(host.resources.status(pot_id=pot_id or None)),
+            )
+            # Beside the store, not inside it: the bytes can be perfectly
+            # healthy while the index that makes them findable is off, stale,
+            # or mid-drain — and that gap is invisible until a search quietly
+            # returns less than it should.
+            resource_index, resource_index_gap = section(
+                "resource_index",
+                lambda: _resource_index_block(
+                    host.resources.index_status(pot_id=pot_id or None)
+                ),
+            )
+            # Always the local daemon, even when the active host is managed: a
+            # remote service has no process here, and the local daemon's health
+            # is what `potpie daemon restart` would act on either way.
+            origin = hosts.current_origin()
+            daemon_status, daemon_gap = section(
+                "daemon", lambda: get_host_for(hosts.LOCAL).daemon.status()
+            )
+            if not isinstance(daemon_status, dict):
+                # Same whole-key-set rule as the blocks below: the healthy shape
+                # carries up/mode/home/pid/detail, so a fallback that dropped
+                # `home`/`pid` would KeyError the very consumer this row exists
+                # to keep answering.
+                daemon_status = {
+                    "up": None,
+                    "mode": "unknown",
+                    "home": None,
+                    "pid": None,
+                    "detail": daemon_gap.detail if daemon_gap else None,
+                }
 
             repo_identity = current_repo_identity_for_cli()
-            effective_current_repo_pot = _effective_current_repo_pot_id(
-                host,
-                repo_identity=repo_identity,
-                active_pot_id=pot_id or None,
+            routing, _routing_gap = section(
+                "repo_routing",
+                lambda: (
+                    _effective_current_repo_pot_id(
+                        host,
+                        repo_identity=repo_identity,
+                        active_pot_id=pot_id or None,
+                    ),
+                    repo_default_pot_id(host, repo_identity),
+                ),
             )
-            default_pot_id = repo_default_pot_id(host, repo_identity)
+            effective_current_repo_pot, default_pot_id = routing or (None, None)
+
+            # Not a section: `None` here means "this host does not publish a
+            # surface list", which is the normal answer from anything older than
+            # the `/surfaces` endpoint and not a failure of anything.
+            advertised = hosts.advertised_surfaces(host)
 
             cli_install = collect_cli_install_status()
-            resources = host.resources.status(pot_id=pot_id or None)
-            embedded_servers = _embedded_graph_servers(host.backend.profile)
+            embedded_servers = _embedded_graph_servers(profile or "")
+            degraded = sorted(
+                name for name, row in sections.items() if row["status"] != "ok"
+            )
             emit(
                 {
+                    "ok": not degraded,
+                    "sections": sections,
+                    "degraded_sections": degraded,
+                    "host": {
+                        "origin": origin,
+                        "label": hosts.origin_label(origin),
+                        "advertised_surfaces": sorted(advertised)
+                        if advertised is not None
+                        else None,
+                        # Never computed from silence: an unanswered host has an
+                        # unknown surface list, not an empty one.
+                        "missing_surfaces": sorted(RPC_SURFACES - advertised)
+                        if advertised is not None
+                        else None,
+                    },
                     "daemon": daemon_status,
                     "embedded_graph_servers": embedded_servers,
                     "cli_install": cli_install,
-                    "backend_profile": host.backend.profile,
-                    "backend_ready": readiness.ready,
-                    "backend_readiness": {
-                        "profile": readiness.profile,
-                        "ready": readiness.ready,
-                        "capability_ready": dict(readiness.capability_ready),
-                        "detail": readiness.detail,
+                    "backend_profile": profile,
+                    "backend_ready": readiness["ready"] if readiness else None,
+                    # Degraded blocks keep the *whole* key set with `None`
+                    # values, so a caller reading `payload["resources"]["documents"]`
+                    # gets None rather than a KeyError on the very hosts this
+                    # report exists for.
+                    "backend_readiness": readiness
+                    if readiness
+                    else {
+                        "profile": None,
+                        "ready": None,
+                        "capability_ready": {},
+                        "detail": None,
+                        "unavailable": readiness_gap.detail if readiness_gap else None,
                     },
-                    "backend_capabilities": list(caps.implemented()),
+                    "backend_capabilities": caps if caps is not None else [],
                     "active_pot": pot_id or None,
                     "effective_current_repo_pot": effective_current_repo_pot,
                     "repo_default_pot": default_pot_id,
-                    "recommended_next_action": None
-                    if readiness.ready
-                    else "Run `potpie backend doctor` or inspect `potpie graph status --json`.",
-                    "ledger": {
-                        "available": host.ledger.status().available,
-                        "binding": host.ledger.status().binding,
+                    "recommended_next_action": _doctor_next_action(readiness, sections),
+                    "ledger": ledger
+                    if ledger
+                    else {
+                        "available": False,
+                        "binding": None,
+                        "unavailable": ledger_gap.detail if ledger_gap else None,
                     },
-                    "resources": {
-                        "kind": resources.kind,
-                        "ready": resources.ready,
-                        "location": resources.location,
-                        "documents": resources.documents,
-                        "detail": resources.detail,
+                    "resources": resources
+                    if resources
+                    else {
+                        "kind": None,
+                        "ready": False,
+                        "location": None,
+                        "documents": None,
+                        "detail": None,
+                        "unavailable": resources_gap.detail if resources_gap else None,
+                    },
+                    "resource_index": resource_index
+                    if resource_index
+                    else {
+                        "profile": None,
+                        "ready": False,
+                        "capabilities": [],
+                        "match_mode": None,
+                        "documents": None,
+                        "chunks": None,
+                        "pending_embeddings": None,
+                        "embedder": None,
+                        "shared_store": None,
+                        "detail": None,
+                        "unavailable": resource_index_gap.detail
+                        if resource_index_gap
+                        else None,
                     },
                 },
-                human=(
-                    f"daemon: {daemon_status['mode']} (up={daemon_status.get('up')})\n"
-                    f"{cli_install_human(cli_install)}\n"
-                    f"backend: {host.backend.profile} ready={readiness.ready} "
-                    f"caps={', '.join(caps.implemented())}\n"
-                    f"ledger: {host.ledger.status().binding} "
-                    f"available={host.ledger.status().available}\n"
-                    f"resources: {resources.kind} ready={resources.ready}"
-                    + (
-                        f" documents={resources.documents}"
-                        if resources.documents is not None
-                        else ""
-                    )
-                    + (f" ({resources.location})" if resources.location else "")
-                    + (
-                        f"\nrepo: {repo_identity} → {effective_current_repo_pot}"
-                        + (
-                            f" (default={default_pot_id})"
-                            if default_pot_id
-                            else " (no repo default set)"
-                        )
-                        if repo_identity
-                        else ""
-                    )
-                    + (
-                        f"\nembedded servers: {embedded_servers['detail']}"
-                        if embedded_servers and embedded_servers.get("detail")
-                        else ""
-                    )
+                human=_doctor_human(
+                    host_label=hosts.origin_label(origin),
+                    daemon_status=daemon_status,
+                    cli_install=cli_install,
+                    profile=profile,
+                    caps=caps,
+                    readiness=readiness,
+                    readiness_gap=readiness_gap,
+                    ledger=ledger,
+                    ledger_gap=ledger_gap,
+                    resources=resources,
+                    resources_gap=resources_gap,
+                    resource_index=resource_index,
+                    resource_index_gap=resource_index_gap,
+                    repo_identity=repo_identity,
+                    effective_current_repo_pot=effective_current_repo_pot,
+                    default_pot_id=default_pot_id,
+                    embedded_servers=embedded_servers,
+                    advertised=advertised,
+                    degraded=degraded,
                 ),
             )
 
@@ -497,9 +882,13 @@ def register(root: typer.Typer) -> None:
     @root.command()
     def use(
         ref: str,
-        local: bool = typer.Option(False, "--local", help="Force local-origin pot."),
+        local: bool = typer.Option(
+            False, "--local", help="Select a local-origin pot (same as 'local:<ref>')."
+        ),
         managed: bool = typer.Option(
-            False, "--managed", help="Select a managed-origin pot."
+            False,
+            "--managed",
+            help="Select a managed-origin pot (same as 'managed:<ref>').",
         ),
         also_default_for_current_repo: bool = typer.Option(
             False,
@@ -509,25 +898,24 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """Select the active pot by name/id (top-level alias for `pot use`)."""
         with contract():
-            if managed:
-                raise CapabilityNotImplemented(
-                    "host.pots.use_managed",
-                    detail="managed pot routing is not implemented",
-                    recommended_next_action="select a local pot; managed routing lands in HU3",
-                )
+            # The flags are origin *selectors*, exactly equivalent to qualifying
+            # the ref — not labels on a selection made somewhere else.
+            requested_origin = origin_from_use_flags(local=local, managed=managed)
             host = get_host()
             payload, human = use_pot_selection(
                 host,
                 ref,
                 also_default_for_current_repo=also_default_for_current_repo,
-                origin="local",
+                origin=requested_origin,
             )
             emit(payload, human=human)
 
     config_app = typer.Typer(
         help=(
-            "Local config get/set/list (persisted to <home>/config.json). "
-            f"Known keys: {', '.join(KNOWN_CONFIG_KEYS)}."
+            "Local config get/set/unset/list (persisted to <home>/config.json). "
+            f"Known keys: {', '.join(KNOWN_CONFIG_KEYS)}. "
+            "`set` accepts only those; `unset` accepts any key, so a value "
+            "stored before the catalog was enforced can still be removed."
         )
     )
 
@@ -570,11 +958,91 @@ def register(root: typer.Typer) -> None:
 
     @config_app.command("set")
     def config_set(key: str, value: str) -> None:
+        """Persist one known config key. The write keeps the value; the echo does not.
+
+        Both guards below will read as dead code to someone skimming, and both
+        are load-bearing.
+
+        The catalog check turns a typo back into a refusal: ``config set emebdder
+        hashing`` used to persist a key nothing reads and print "set". It is also
+        what keeps ``config.json`` from being pressed into service as a secret
+        store — see ``is_known_config_key``.
+
+        The redaction is forward defence. No key in today's catalog is
+        secret-shaped, so with the check above it is currently unreachable — but
+        this was the one config command of three that echoed its raw argument,
+        to stdout *and* into the ``--json`` payload that agents and CI capture,
+        while ``get``/``list`` redacted the same key. Sharing their predicate is
+        what stops the writer drifting back apart from the readers the day a
+        credential key joins the catalog.
+        """
         with contract():
+            if not is_known_config_key(key):
+                fail(
+                    code="validation_error",
+                    message=f"unknown config key {key!r}",
+                    detail={"key": key, "known_keys": list(KNOWN_CONFIG_KEYS)},
+                    # Names the exit as well as the catalog. This gate is newer
+                    # than the homes it applies to: anyone who ran `config set
+                    # github_token` while it was still accepted has a key in
+                    # config.json that nothing reads and that `config get` still
+                    # answers `<redacted>` for, as though it were managed.
+                    # Refusing to rewrite it is right — nothing would read the
+                    # new value either — but refusing without naming `config
+                    # unset` would leave a credential the CLI can neither rotate
+                    # nor clear, which is a worse place than before the gate.
+                    next_action=(
+                        f"use one of: {', '.join(KNOWN_CONFIG_KEYS)} — "
+                        "a key already stored under this name is read by nothing; "
+                        f"remove it with 'potpie config unset {key}'"
+                    ),
+                    exit_code=EXIT_VALIDATION,
+                )
             get_host().config.set(key, value)
+            shown = public_config_value(key, value)
             emit(
-                {"key": key, "value": value, "persisted": True},
-                human=f"set {key}={value}",
+                {
+                    "key": key,
+                    "value": shown,
+                    # Both halves are needed. The key test alone missed the
+                    # credential a URL value can carry (`ledger.url` is not a
+                    # secret-shaped key), and the value comparison alone would
+                    # tell a user who literally typed "<redacted>" that they had
+                    # been redacted when nothing was withheld.
+                    "redacted": is_secret_config_key(key) or shown != value,
+                    "persisted": True,
+                },
+                human=f"set {key}={shown}",
+            )
+
+    @config_app.command("unset")
+    def config_unset(key: str) -> None:
+        """Remove one config key. Accepts keys the catalog no longer knows.
+
+        Deliberately ungated, where ``set`` is gated. The catalog check on the
+        writer strands every key this file used to accept, and the ones that
+        matter are credentials: ``config set github_token`` was accepted for
+        long enough that real homes hold one, ``config get`` still answers
+        ``<redacted>`` for it as though something managed it, and nothing reads
+        it. Sending that key back through the write gate is right — a rewrite
+        would be just as dead — so removal is the only repair left, and gating
+        it on the same catalog would refuse the exact keys it exists to clear.
+
+        ``removed`` distinguishes "there was one, it is gone" from "there was
+        nothing here". Both are exit 0 because both leave the user where they
+        asked to be, but reporting the first for the second is the
+        success-for-work-that-did-not-happen shape this CLI is being audited
+        for.
+        """
+        with contract():
+            removed = get_host().config.unset(key)
+            emit(
+                {"key": key, "removed": removed},
+                human=(
+                    f"unset {key}"
+                    if removed
+                    else f"{key} was not set (nothing removed)"
+                ),
             )
 
     root.add_typer(config_app, name="config")
@@ -705,6 +1173,39 @@ def _apply_setup_embedding_env(
         os.environ["CONTEXT_ENGINE_EMBEDDING_MODEL"] = embedding_model
     else:
         os.environ.setdefault("CONTEXT_ENGINE_EMBEDDING_MODEL", embedding_model)
+
+
+def _refuse_remote_setup_target() -> None:
+    """Refuse ``--host managed setup``: setup only ever provisions this machine.
+
+    Setup now runs entirely in-process so a cold first run cannot trip the
+    daemon's client deadline. That also means it silently ignores wherever the
+    invocation was pointed: ``--host managed setup`` provisioned a *local*
+    backend, created a *local* pot and started a *local* daemon, then exited 0
+    without ever contacting the host it was aimed at. An error that turns into a
+    wrong-host success is the failure this module's sibling registry states as a
+    rule — enumeration degrades, targeting fails loud.
+
+    Keyed to an explicit override rather than to the resolved origin: a caller
+    whose *persisted* pointer is managed has always been able to run `setup` to
+    fix up their local install, and taking that away would strand them with no
+    way to provision the machine they are typing on.
+    """
+    from potpie.cli import hosts
+
+    if hosts.origin_overridden() and hosts.selected_origin() != hosts.LOCAL:
+        label = hosts.origin_label(hosts.selected_origin())
+        fail(
+            code="validation_error",
+            message=(
+                f"'setup' provisions the local machine and cannot target "
+                f"{label}: backend, daemon, default pot and skills are all local."
+            ),
+            next_action=(
+                "run 'potpie setup' without --host to provision this machine, "
+                "or 'potpie host list' to see what the hosts already hold"
+            ),
+        )
 
 
 def _build_local_setup_host(

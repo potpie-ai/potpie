@@ -60,6 +60,13 @@ READER_BACKED_INCLUDES: frozenset[str] = frozenset(
         "decisions",
         "owners",
         "docs",
+        # Document payloads, served by ResourcesReader over the resource index
+        # rather than by the claim store. Always registered, even where no
+        # index is configured: the ``none`` profile answers zero hits with
+        # ``match_mode="disabled"``, which is a *labeled* degradation, whereas
+        # moving the key in and out of this set with the deployment would make
+        # the family look unimplemented and trip the coherence check.
+        "resources",
         # Visualization read: the full canonical subgraph (all RELATES_TO,
         # incl. generic RELATED_TO). Backed by RawGraphReader; used by the
         # graph explorer, not an agent use-case family.
@@ -90,7 +97,9 @@ DEFAULT_INTENT_INCLUDES: dict[str, tuple[str, ...]] = {
     "review": ("coding_preferences", "decisions", "timeline", "owners"),
     "operations": ("infra_topology", "timeline", "owners"),
     "planning": ("infra_topology", "decisions", "timeline", "docs"),
-    "docs": ("docs", "decisions"),
+    # Both halves of a document: ``docs`` says which one covers the topic and
+    # what we wrote about it, ``resources`` returns the passage that says it.
+    "docs": ("docs", "resources", "decisions"),
     "onboarding": ("infra_topology", "coding_preferences", "docs", "owners"),
     "refactor": ("infra_topology", "coding_preferences", "timeline"),
     "test": ("coding_preferences", "timeline"),
@@ -98,10 +107,13 @@ DEFAULT_INTENT_INCLUDES: dict[str, tuple[str, ...]] = {
     # ``unknown`` is what bare ``potpie search`` resolves to, so it is the one
     # intent that must not be narrow: an agent searching a phrase it read in a
     # document gets nothing back if ``docs`` is absent, with no hint that an
-    # include would have found it. Cross-include demotion in the envelope
-    # builder is what keeps a document corpus from crowding out project memory
-    # here.
-    "unknown": ("infra_topology", "timeline", "decisions", "docs"),
+    # include would have found it. ``resources`` is here for the sharper form
+    # of the same problem — a phrase that appears in the document but in no
+    # section summary is unreachable through ``docs`` at any depth, so a bare
+    # search would report "not found" about text the pot demonstrably holds.
+    # Cross-include demotion in the envelope builder is what keeps a document
+    # corpus from crowding out project memory here.
+    "unknown": ("infra_topology", "timeline", "decisions", "docs", "resources"),
 }
 
 CONTEXT_RESOLVE_RECIPES: dict[str, dict[str, Any]] = {

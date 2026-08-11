@@ -15,8 +15,8 @@ This module owns the cross-cutting concerns so the command bodies stay thin:
 from __future__ import annotations
 
 import json
-import os
 import time
+import traceback
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Final, Iterator, NoReturn, Sequence
@@ -43,12 +43,59 @@ EXIT_UNAVAILABLE = 2
 EXIT_DEGRADED = 3
 EXIT_AUTH = 4
 
+#: Statuses that mean a host answered and refused the credential.
+#:
+#: Duplicated from ``potpie.daemon.client._CREDENTIAL_REFUSED`` on purpose: the
+#: inbound CLI has to classify an exception it is handed, and importing the
+#: transport that produced it to do so would tie the one error boundary every
+#: command shares to one particular adapter. The adapter-level test in
+#: tests/unit/test_cli_error_contract.py is what keeps the two in step.
+CREDENTIAL_REFUSED_STATUSES: Final[frozenset[int]] = frozenset({401, 403})
+
+#: The exit-code table. Documented once in docs/context-graph/cli-flow.md and
+#: applied once, here; every other code means "command/validation failure".
+_EXIT_BY_CODE: Final[dict[str, int]] = {
+    "unavailable": EXIT_UNAVAILABLE,
+    "not_implemented": EXIT_UNAVAILABLE,
+    # The narrower unavailability codes belong in the table too, not just in the
+    # `exit_code=` argument of whichever call site raises them. Left to the call
+    # sites they drifted: `daemon_unavailable` exited 2 from `potpie status` and
+    # 1 from `potpie ui` for the same dead daemon, because only one of the two
+    # remembered to pass the number.
+    "daemon_unavailable": EXIT_UNAVAILABLE,
+    "daemon_start_failed": EXIT_UNAVAILABLE,
+    "telemetry_preference_write_failed": EXIT_UNAVAILABLE,
+    "degraded": EXIT_DEGRADED,
+    "auth_error": EXIT_AUTH,
+}
+
+
+def exit_code_for(code: str) -> int:
+    """The documented exit code for an error code — the table as a function.
+
+    Every emitter resolves the number through here so it cannot depend on who
+    is reading or on which call site happened to raise. Two drifts made that
+    worth enforcing in code rather than in prose: the same usage error exited 2
+    for a human and 1 under ``--json``, and ``unavailable`` exited 2 from the
+    error boundary and 1 from a hand-written ``fail()``. A wrapper that retries
+    on 2 because "a dependency is down" cannot tell either of those from a typo.
+
+    An unrecognised code is a validation failure. A code nobody has classified
+    is not grounds for claiming a dependency is unavailable.
+    """
+    return _EXIT_BY_CODE.get(code, EXIT_VALIDATION)
+
+
 _state: dict[str, Any] = {
     "json": False,
     "verbose": False,
     "host": None,
     "store": None,
     "json_error_formatter": None,
+    # What the argv scan below found, kept apart from the applied output mode;
+    # see `bootstrap_output_flags_from_argv`.
+    "argv_json": False,
+    "argv_verbose": False,
 }
 _CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {
@@ -66,6 +113,11 @@ _CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
 
 def set_json(value: bool) -> None:
     _state["json"] = bool(value)
+    # An explicit setter is the caller's whole opinion about output mode, so it
+    # also retires the argv scan: a fixture putting the CLI back into human
+    # output must not be re-flipped by a `--json` some earlier invocation left
+    # behind on process-wide state.
+    _state["argv_json"] = False
 
 
 def is_json() -> bool:
@@ -77,46 +129,120 @@ def bootstrap_output_flags_from_argv(argv: Sequence[str] | None = None) -> None:
 
     The root callback only runs after a command line parses successfully. Early
     bootstrap keeps parse-time failures on the documented JSON error contract.
+
+    The scan is also *remembered*, because the root callback used to undo it.
+    Click parses the group's arguments before the subcommand's, so
+    ``potpie pot list --json`` reached the callback with ``--json`` unset, the
+    callback wrote that back over the scan, and the ``NoSuchOption`` Click was
+    about to raise a moment later came out as bare text on stderr at exit 2 —
+    a rejection rendered in the one shape the caller had just said it could not
+    parse.
     """
     args = tuple(argv or ())
     scan_args = args
     if "--" in args:
         scan_args = args[: args.index("--")]
-    set_json("--json" in scan_args)
-    set_verbose("--verbose" in scan_args or "-v" in scan_args)
+    wants_json = "--json" in scan_args
+    wants_verbose = "--verbose" in scan_args or "-v" in scan_args
+    set_json(wants_json)
+    set_verbose(wants_verbose)
+    _state["argv_json"] = wants_json
+    _state["argv_verbose"] = wants_verbose
+
+
+def argv_requested_json() -> bool:
+    """True when this invocation's argv asked for JSON, wherever it said so."""
+    return bool(_state["argv_json"])
+
+
+def argv_requested_verbose() -> bool:
+    """True when this invocation's argv asked for verbose output."""
+    return bool(_state["argv_verbose"])
+
+
+def clear_argv_output_flags() -> None:
+    """Forget the argv scan once the invocation that made it is over.
+
+    The memory is scoped to one command line, not to the process. A run whose
+    root callback never executes — an unknown command, an eager ``--version`` —
+    would otherwise leave ``--json`` latched on for whatever drives the app
+    next, which in practice is every in-process test after it.
+    """
+    _state["argv_json"] = False
+    _state["argv_verbose"] = False
 
 
 def set_verbose(value: bool) -> None:
     _state["verbose"] = bool(value)
+    _state["argv_verbose"] = False
 
 
 def is_verbose() -> bool:
     return bool(_state["verbose"])
 
 
+class _ActiveHost:
+    """Forwards to whichever origin is current when the attribute is read.
+
+    Commands do ``host = get_host()`` once and then use that object for the
+    rest of the body, so a plain host captured up front would keep pointing at
+    the origin that was current at the *start* of the command. Resolving a
+    qualified ref like ``--pot managed:api`` has to move the whole command
+    across, not just the pot id — otherwise the id would be looked up on one
+    host and used on the other, which is the one outcome worth engineering
+    against. Binding late makes the 40-odd existing call sites correct without
+    touching them.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name: str) -> Any:
+        from potpie.cli import hosts
+
+        return getattr(hosts.build_host(hosts.current_origin()), name)
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        from potpie.cli import hosts
+
+        return f"<ActiveHost origin={hosts.current_origin()}>"
+
+
 def get_host():
-    """Return the process-wide ``HostShell`` (built lazily)."""
-    if _state["host"] is None:
-        mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "").strip().lower()
-        if mode != "in_process":
-            try:
-                from potpie.daemon.client import RemoteHostShell
-            except ModuleNotFoundError as exc:
-                if exc.name not in {"potpie.daemon", "potpie.daemon.client"}:
-                    raise
-            else:
-                _state["host"] = RemoteHostShell()
-                return _state["host"]
+    """Return the host for the current origin.
 
-        from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+    An injected host (tests, alternate wiring) wins outright — it is a
+    deliberate stand-in for the whole registry, not for one origin.
+    """
+    if _state["host"] is not None:
+        return _state["host"]
+    return _ActiveHost()
 
-        _state["host"] = build_host_shell()
-    return _state["host"]
+
+def get_host_for(origin: str):
+    """Return the host for a specific origin, ignoring what is current.
+
+    Used where a command already knows the origin — merged listings, and
+    routing a resolved pot to the host that owns it.
+    """
+    if _state["host"] is not None:
+        return _state["host"]
+    from potpie.cli import hosts
+
+    return hosts.build_host(origin)
 
 
 def set_host(host: Any) -> None:
-    """Inject a host (tests / alternate wiring)."""
+    """Inject a host (tests / alternate wiring).
+
+    Also drops the registry's per-process origin override: an injected host
+    defines the whole world for whatever runs next, so a leftover "current
+    origin" from an earlier command would be a stale opinion about a registry
+    that no longer applies.
+    """
     _state["host"] = host
+    from potpie.cli import hosts
+
+    hosts.set_current_origin(None)
 
 
 def get_store() -> CredentialStore:
@@ -175,11 +301,22 @@ def fail(
     message: str,
     detail: Any = None,
     next_action: str | None = None,
-    exit_code: int = EXIT_VALIDATION,
+    exit_code: int | None = None,
 ) -> NoReturn:
-    """Emit the structured error contract and exit with the given code."""
+    """Emit the structured error contract and exit with the documented code.
+
+    ``exit_code`` defaults to :func:`exit_code_for` rather than to
+    ``EXIT_VALIDATION``, so one call site cannot report ``unavailable`` at exit
+    1 while the error boundary reports the same code at exit 2. Passing it
+    explicitly stays available for the paths that mean something the code alone
+    does not say.
+    """
     if is_json():
         payload = {
+            # The one key every error shape in this CLI shares, `graph`'s
+            # workbench envelope included: a consumer can branch on failure
+            # before it knows which command group answered.
+            "ok": False,
             "code": code,
             "message": message,
             "detail": detail,
@@ -205,7 +342,7 @@ def fail(
             hint=detail if isinstance(detail, str) else None,
             next_action=next_action,
         )
-    raise typer.Exit(code=exit_code)
+    raise typer.Exit(code=exit_code_for(code) if exit_code is None else exit_code)
 
 
 @contextmanager
@@ -228,20 +365,29 @@ def contract() -> Iterator[None]:
             message=str(exc),
             detail=exc.detail,
             next_action=exc.recommended_next_action,
-            exit_code=EXIT_UNAVAILABLE,
         )
     except ContextEngineDisabled as exc:
-        result = "unavailable"
-        error_code = "unavailable"
+        # A 401/403 is the one member of this family where the host answered.
+        # Collapsed into `unavailable` it told the operator to check the network
+        # and restart a daemon that was never down, while the whole repair was
+        # one wrong token — and `EXIT_AUTH` existed with no host path able to
+        # reach it. The status code the transport attaches is the only thing
+        # that ever knew the difference; the boundary just never looked.
+        refused = getattr(exc, "status_code", None) in CREDENTIAL_REFUSED_STATUSES
+        error_code = "auth_error" if refused else "unavailable"
+        result = error_code
         fail(
-            code="unavailable",
+            code=error_code,
             message=str(exc),
-            # Some unavailability has a specific, known repair (e.g. a graph
-            # substrate that shut down uncleanly); prefer it over the generic
-            # pointer at doctor.
             next_action=getattr(exc, "recommended_next_action", None)
-            or "check backend/daemon readiness with 'potpie doctor'",
-            exit_code=EXIT_UNAVAILABLE,
+            or (
+                "check which key that host expects with 'potpie host list'"
+                if refused
+                # Some unavailability has a specific, known repair (e.g. a graph
+                # substrate that shut down uncleanly); prefer it over the generic
+                # pointer at doctor.
+                else "check backend/daemon readiness with 'potpie doctor'"
+            ),
         )
     except PotNotFound as exc:
         result = "pot_not_found"
@@ -249,8 +395,13 @@ def contract() -> Iterator[None]:
         fail(
             code="pot_not_found",
             message=str(exc),
-            next_action="list pots with 'potpie pot list' or create one with 'potpie setup'",
-            exit_code=EXIT_VALIDATION,
+            # Not every PotNotFound is *about* a pot: it is also how "this pot
+            # does not hold that" is reported, e.g. `source remove` of an id the
+            # pot never held. Hardcoding the pot repair there sends the operator
+            # to `pot list` to hunt for a pot that was never missing, so a
+            # raiser that knows the real next step gets to say so.
+            next_action=getattr(exc, "recommended_next_action", None)
+            or "list pots with 'potpie pot list' or create one with 'potpie setup'",
         )
     except ValueError as exc:
         result = "validation_error"
@@ -262,7 +413,6 @@ def contract() -> Iterator[None]:
             message=str(exc),
             detail=getattr(exc, "detail", None),
             next_action=getattr(exc, "recommended_next_action", None),
-            exit_code=EXIT_VALIDATION,
         )
     except typer.Exit:
         result = "exit"
@@ -287,7 +437,12 @@ def contract() -> Iterator[None]:
         fail(
             code="unexpected_cli_error",
             message="Unexpected internal error.",
-            exit_code=EXIT_VALIDATION,
+            # `--verbose` is documented as "Verbose tracebacks on errors" and
+            # this is the one branch with a traceback worth seeing — it was
+            # silently dropping it, so the only way to find out what an
+            # "Unexpected internal error" actually was involved reproducing the
+            # call by hand outside the CLI.
+            detail=traceback.format_exc() if is_verbose() else None,
         )
     finally:
         _record_cli_contract_metrics(
@@ -347,6 +502,208 @@ def _cli_metric_attributes(
     return attributes
 
 
+def _searchable_origins() -> list[str]:
+    """Origins a bare ref may resolve in, current one first.
+
+    An injected host stands in for the whole registry, so single-host mode is
+    preserved: searching "both" would ask the same fake twice and report every
+    pot as ambiguous with itself.
+    """
+    from potpie.cli import hosts
+
+    if _state["host"] is not None:
+        return [hosts.current_origin()]
+    current = hosts.current_origin()
+    return [current, *(o for o in hosts.configured_origins() if o != current)]
+
+
+def _qualify_hint(prefix: str, origin: str, ref: str) -> str:
+    """Next action for a ref that has to route around an unreachable ``origin``.
+
+    ``prefix`` is how the caller's own surface spells a pot ref (``--pot``,
+    ``potpie use``), so the hint is a line the user can actually run.
+    """
+    from potpie.cli import hosts
+
+    alternatives = " or ".join(
+        f"'{prefix} {hosts.qualify(other, ref)}'"
+        for other in hosts.ORIGINS
+        if other != origin
+    )
+    return f"target one host explicitly, e.g. {alternatives}"
+
+
+def _unreachable_host_hint(origin: str) -> str:
+    """Next action when the ref *names* ``origin`` and ``origin`` is down.
+
+    Distinct from :func:`_qualify_hint`, which routes a bare ref around the
+    unreachable host: once the ref says ``managed:api`` there is nowhere to
+    route to, and repeating "target one host explicitly" would be advice the
+    user already followed. The only repair left is the host itself.
+    """
+    from potpie.cli import hosts
+
+    if origin == hosts.MANAGED:
+        return (
+            "check the managed host with 'potpie host list', "
+            "or re-point it with 'potpie host set <url>'"
+        )
+    return "check backend/daemon readiness with 'potpie doctor'"
+
+
+def _refuse_origin_with_no_host_behind_it(
+    origin: str | None, ref: str, *, drop: str
+) -> None:
+    """Refuse an origin an injected host cannot honestly answer for.
+
+    An injected host (``potpie setup``, tests) stands in for the whole registry
+    rather than for one origin of it: there is exactly one host and it is
+    whichever origin is current. Naming any *other* origin — ``--managed``, or a
+    qualified ``managed:api`` — targets a host that is not there, and the stand-in
+    answers for it regardless: the pot id is read off the injected host while the
+    origin the command moves to, reports and persists is one nothing was resolved
+    against. Refusing beats relabelling, because the selection itself is the lie.
+
+    Both resolution paths route through here — ``--pot`` via
+    :func:`_resolve_explicit_pot` and ``potpie use`` via
+    :func:`_select_origin_for_use` — so the two cannot drift into disagreeing
+    about what one injected host means; that drift is exactly how ``--pot``
+    kept resolving cross-host after ``potpie use`` was fixed. ``drop`` spells the
+    target the way the calling surface does (``{origin}`` is substituted), so the
+    hint names something the user actually typed.
+    """
+    if origin is None or _state["host"] is None:
+        return
+    from potpie.cli import hosts
+
+    current = hosts.current_origin()
+    if origin == current:
+        return
+    fail(
+        code="validation_error",
+        message=(
+            f"Cannot target the {origin} host: this run is wired to "
+            f"a single {current} host."
+        ),
+        next_action=f"drop {drop.format(origin=origin)} and pass '{ref}' on its own",
+    )
+
+
+def _find_pot_in(
+    origin: str, ref: str, *, unreachable_hint: str | None = None
+) -> tuple[str, str] | None:
+    """``(pot_id, name)`` for ``ref`` on ``origin``, or ``None``.
+
+    Passing ``unreachable_hint`` turns a host that cannot be enumerated from
+    "holds no match" into a refusal carrying that hint. Resolving a bare ref
+    across two origins needs that: read as "no match", a momentarily
+    unreachable host shrinks the ambiguity check to a single candidate and the
+    command runs against the *other* graph without ever saying the first one
+    was not asked. Callers that merely enumerate leave it unset and keep
+    degrading, because a listing that dies when a remote is down is useless
+    exactly when you need to see what is local.
+    """
+    try:
+        pots = get_host_for(origin).pots.list_pots()
+    except Exception as exc:  # noqa: BLE001 - see docstring: degrade or refuse
+        if unreachable_hint is None:
+            return None
+        # A host that answered 401 was reached, so saying "cannot reach" and
+        # pointing at the network sends the operator to debug a connection that
+        # worked while the whole repair is one wrong token. Same split, and the
+        # same reason, as the `ContextEngineDisabled` branch in `contract()`.
+        if getattr(exc, "status_code", None) in CREDENTIAL_REFUSED_STATUSES:
+            fail(
+                code="auth_error",
+                message=f"The {origin} host refused the credential resolving '{ref}': {exc}",
+                next_action="check which key that host expects with 'potpie host list'",
+            )
+        fail(
+            code="unavailable",
+            message=f"Cannot reach the {origin} host to resolve '{ref}': {exc}",
+            next_action=unreachable_hint,
+        )
+    for pot in pots:
+        if ref in (pot.pot_id, pot.name):
+            return pot.pot_id, pot.name
+    return None
+
+
+def _resolve_explicit_pot(explicit: str) -> str:
+    """Resolve ``--pot`` / a pot ref, moving the command to the owning origin.
+
+    A qualified ``managed:api`` is unambiguous and searched only there. A bare
+    ref prefers the current origin and only then looks elsewhere; matching on
+    two origins is an error rather than a pick, because pot names are per-host
+    labels and `default` very likely exists on both. Guessing would run the
+    command against the wrong graph.
+
+    Every branch here is a *targeting* path, so every one of them passes an
+    ``unreachable_hint``: a host that cannot be enumerated must be reported as
+    unreachable and named. Read as "holds no match" it becomes ``pot_not_found``
+    instead, which sends the operator to ``pot list`` to look for a pot that was
+    never missing while the host that owns it is the thing that is down.
+
+    A qualifier naming an origin that has no host behind it is refused rather
+    than resolved; see :func:`_refuse_origin_with_no_host_behind_it`. The bare
+    branch needs no such guard because ``_searchable_origins`` already collapses
+    to the one origin an injected host stands for.
+    """
+    from potpie.cli import hosts
+
+    origin, ref = hosts.split_ref(explicit)
+    if ref is None:  # pragma: no cover - `explicit` is non-empty here
+        ref = explicit
+
+    if origin is not None:
+        _refuse_origin_with_no_host_behind_it(
+            origin, ref, drop="the '{origin}:' qualifier"
+        )
+        hosts.set_current_origin(origin)
+        found = _find_pot_in(
+            origin, ref, unreachable_hint=_unreachable_host_hint(origin)
+        )
+        if found is None:
+            fail(
+                code="pot_not_found",
+                message=f"No pot matching '{ref}' on the {origin} host.",
+                next_action=f"run 'potpie pot list --{origin}'",
+            )
+        return found[0]
+
+    candidates = _searchable_origins()
+    matches: list[tuple[str, str, str]] = []
+    for candidate in candidates:
+        found = _find_pot_in(
+            candidate,
+            ref,
+            unreachable_hint=(
+                _qualify_hint("--pot", candidate, ref)
+                if len(candidates) > 1
+                else _unreachable_host_hint(candidate)
+            ),
+        )
+        if found is not None:
+            matches.append((candidate, found[0], found[1]))
+
+    if not matches:
+        fail(
+            code="pot_not_found",
+            message=f"No pot matching '{explicit}'.",
+            next_action="run 'potpie pot list'",
+        )
+    if len(matches) > 1:
+        qualified = ", ".join(hosts.qualify(o, name) for o, _, name in matches)
+        fail(
+            code="ambiguous_pot",
+            message=f"'{explicit}' matches a pot on more than one host: {qualified}.",
+            next_action="qualify it, e.g. '--pot managed:<name>'",
+        )
+    origin, pot_id, _ = matches[0]
+    hosts.set_current_origin(origin)
+    return pot_id
+
+
 def resolve_pot_scope(
     host: Any, explicit: str | None = None, *, infer_from_repo: bool = True
 ) -> tuple[str, str]:
@@ -361,16 +718,10 @@ def resolve_pot_scope(
     from existing registrations would route the new source to the wrong pot
     (or fail as ambiguous when other pots already track the same repo).
     """
-    pots = host.pots
     if explicit:
-        for pot in pots.list_pots():
-            if explicit in (pot.pot_id, pot.name):
-                return pot.pot_id, "explicit"
-        fail(
-            code="pot_not_found",
-            message=f"No pot matching '{explicit}'.",
-            next_action="run 'potpie pot list'",
-        )
+        # Selects the origin as well as the pot; see _resolve_explicit_pot.
+        return _resolve_explicit_pot(explicit), "explicit"
+    pots = host.pots
     repo_identity = _current_repo_identity() if infer_from_repo else None
     default_pot = _repo_default_pot_id(host, repo_identity)
     if default_pot:
@@ -660,6 +1011,121 @@ def enrich_with_pot_guidance(
     )
 
 
+def origin_from_use_flags(*, local: bool, managed: bool) -> str | None:
+    """Map ``--local`` / ``--managed`` to a requested origin, or ``None``.
+
+    Both at once is a refusal rather than a precedence rule: on the flag pair
+    whose whole job is choosing which graph the CLI moves to, honouring one
+    would mean silently ignoring the other.
+    """
+    from potpie.cli import hosts
+
+    if local and managed:
+        fail(
+            code="validation_error",
+            message="--local and --managed name different hosts; pass at most one.",
+            next_action="pick one, or qualify the ref (e.g. 'potpie use managed:<name>')",
+        )
+    if local:
+        return hosts.LOCAL
+    if managed:
+        return hosts.MANAGED
+    return None
+
+
+def _select_origin_for_use(
+    ref: str, requested: str | None = None
+) -> tuple[str, str, bool]:
+    """Point the CLI at the host that owns ``ref``; return it and the bare ref.
+
+    Returns ``(bare_ref, origin, move_pointer)``, where ``origin`` is the host
+    the selection was actually resolved against — never a label chosen
+    independently of it.
+
+    ``requested`` (``--local`` / ``--managed``) and a qualified ``managed:api``
+    say the same thing, so they resolve identically and contradicting each
+    other is refused. Either way the origin is a *target*, not a starting
+    point: the ref is used there and nowhere else, because falling through to
+    the other host is precisely how "use this local pot" ends up selecting the
+    managed pot of the same name.
+
+    A bare ref is searched across every configured origin and a match on two is
+    refused rather than picked — pot names are per-host labels, so guessing
+    would eventually point the CLI at the wrong graph.
+
+    An injected host (``potpie setup``, tests) is the whole registry rather than
+    one origin of it, so there is exactly one host and it is whichever origin is
+    current. Targeting any *other* origin is refused instead of run: the fake
+    would happily answer for a host it is not, and the selection would be
+    reported and persisted under an origin nothing was resolved against.
+    """
+    from potpie.cli import hosts
+
+    qualifier, bare = hosts.split_ref(ref)
+    if qualifier is not None and bare is not None:
+        if requested is not None and requested != qualifier:
+            fail(
+                code="validation_error",
+                message=(
+                    f"--{requested} contradicts the ref '{ref}', "
+                    f"which targets the {qualifier} host."
+                ),
+                next_action=(
+                    f"drop --{requested}, or pass '{hosts.qualify(requested, bare)}'"
+                ),
+            )
+        requested, ref = qualifier, bare
+
+    if _state["host"] is not None:
+        # One host, so nothing to search and no pointer to move — but the origin
+        # reported is the one that is actually current, never a literal: a
+        # hardcoded `local` prints "(local)" for a session sitting on `managed`,
+        # which is the label/host disagreement this function returns an origin
+        # to prevent. And an origin that is not the current one has no host
+        # behind it at all, so it is refused before the fake can answer for it.
+        _refuse_origin_with_no_host_behind_it(
+            requested, ref, drop="the {origin} target"
+        )
+        return ref, hosts.current_origin(), False
+
+    if requested is not None:
+        # Move first and let the host itself report a miss, so a pot that is not
+        # there fails on the host the user asked for instead of resolving on the
+        # other one.
+        hosts.set_current_origin(requested)
+        return ref, requested, True
+
+    candidates = _searchable_origins()
+    matches = [
+        candidate
+        for candidate in candidates
+        if _find_pot_in(
+            candidate,
+            ref,
+            unreachable_hint=(
+                _qualify_hint("potpie use", candidate, ref)
+                if len(candidates) > 1
+                else None
+            ),
+        )
+        is not None
+    ]
+    if len(matches) > 1:
+        qualified = ", ".join(hosts.qualify(origin, ref) for origin in matches)
+        fail(
+            code="ambiguous_pot",
+            message=f"'{ref}' matches a pot on more than one host: {qualified}.",
+            next_action=(
+                "qualify it, e.g. 'potpie use managed:<name>', or pass --local / --managed"
+            ),
+        )
+    # Not found anywhere: hand it to the current host so the failure comes from
+    # the host, with its own wording, exactly as it did before.
+    origin = matches[0] if matches else hosts.current_origin()
+    hosts.set_current_origin(origin)
+    return ref, origin, True
+
+
 def use_pot_selection(
     host: Any,
     ref: str,
@@ -667,13 +1133,28 @@ def use_pot_selection(
     also_default_for_current_repo: bool = False,
     origin: str | None = None,
 ) -> tuple[dict[str, Any], str]:
+    """Select the active pot and report the origin it was resolved against.
+
+    ``origin`` is a *request* (``--local`` / ``--managed``), not a display
+    label: what gets printed and persisted is whatever the resolution actually
+    targeted, so the origin the user reads cannot disagree with the graph the
+    CLI moved to.
+    """
     repo_key = None
     if also_default_for_current_repo:
         repo_key = current_repo_identity_for_cli()
         if not repo_key:
             raise ValueError("--also-default-for-current-repo requires a repo")
 
+    ref, origin, move_pointer = _select_origin_for_use(ref, origin)
+
     pot = host.pots.use_pot(ref=ref)
+    # Persist only after the host accepted the ref, so a failed selection never
+    # strands the CLI pointing at a host the user did not choose.
+    if move_pointer:
+        from potpie.cli import hosts
+
+        hosts.set_persisted_origin(origin)
     repo_default_set = False
     if repo_key:
         host.pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
@@ -685,10 +1166,7 @@ def use_pot_selection(
     if warning:
         warnings.append(warning)
 
-    active_line = f"active pot → {pot.name}"
-    if origin:
-        active_line = f"{active_line} ({origin})"
-    lines = [active_line]
+    lines = [f"active pot → {pot.name} ({origin})"]
     if repo_default_set:
         lines.append(f"repo {repo_key} default → {pot.name} ({pot.pot_id})")
     lines.extend(f"warning: {item}" for item in warnings)
@@ -696,12 +1174,11 @@ def use_pot_selection(
     payload: dict[str, Any] = {
         "id": pot.pot_id,
         "name": pot.name,
+        "origin": origin,
         "repo_default_set": repo_default_set,
         "current_repo": routing,
         "warnings": warnings,
     }
-    if origin:
-        payload["origin"] = origin
 
     return enrich_with_pot_guidance(
         host,
@@ -937,14 +1414,19 @@ _ROUTING_REASON_LABELS: Final[dict[str, str]] = {
 
 
 __all__ = [
+    "CREDENTIAL_REFUSED_STATUSES",
     "EXIT_AUTH",
     "EXIT_DEGRADED",
     "EXIT_OK",
     "EXIT_UNAVAILABLE",
     "EXIT_VALIDATION",
+    "argv_requested_json",
+    "argv_requested_verbose",
     "bootstrap_output_flags_from_argv",
+    "clear_argv_output_flags",
     "contract",
     "emit",
+    "exit_code_for",
     "fail",
     "get_host",
     "get_store",
@@ -954,6 +1436,7 @@ __all__ = [
     "enrich_with_pot_guidance",
     "is_json",
     "is_verbose",
+    "origin_from_use_flags",
     "pot_graph_counts",
     "pot_scope_human",
     "pot_scope_info",

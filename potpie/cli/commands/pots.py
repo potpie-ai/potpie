@@ -14,6 +14,7 @@ from potpie.cli.commands._common import (
     empty_pot_warnings,
     fail,
     get_host,
+    get_host_for,
     pot_graph_counts,
     pot_scope_info,
     pot_scope_resolution_human,
@@ -38,7 +39,7 @@ from potpie.cli.source_kinds import (
     registrable_names,
     resolve_kind,
 )
-from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.errors import CapabilityNotImplemented, PotNotFound
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
 default_app = typer.Typer(help="Repo-local default pot routing.")
@@ -46,6 +47,29 @@ source_app = typer.Typer(
     help="Source registry for a pot; registration does not ingest or scan."
 )
 pot_app.add_typer(default_app, name="default")
+
+
+def _unlistable_host_repair(origins: tuple[str, ...]) -> str:
+    """Next action for a ``pot list`` in which no host answered at all.
+
+    Names the host that is actually down instead of always pointing at
+    ``potpie doctor``: doctor only knows about the local daemon, so handing it
+    to someone whose *managed* service is unreachable is a repair that cannot
+    succeed — the same misdirection as sending an operator to ``pot list`` to
+    hunt for a pot that was never missing.
+    """
+    from potpie.cli import hosts
+
+    local = "check backend/daemon readiness with 'potpie doctor'"
+    managed = (
+        "check the managed host with 'potpie host list', "
+        "or re-point it with 'potpie host set <base-url>'"
+    )
+    if hosts.MANAGED not in origins:
+        return local
+    if hosts.LOCAL not in origins:
+        return managed
+    return f"{local}; for the managed host, {managed}"
 
 
 @pot_app.command("list")
@@ -57,27 +81,98 @@ def pot_list(
     all_: bool = typer.Option(False, "--all", help="Local + managed pots."),
 ) -> None:
     with contract():
-        # Managed-origin listing needs login + managed routing (HU3). '--managed'
-        # alone is the structured not-implemented contract; '--all' shows locals
-        # and flags managed as pending so it never crashes.
-        if managed and not all_:
-            raise CapabilityNotImplemented(
-                "host.pots.list_managed",
-                detail="managed pot listing is not implemented",
-                recommended_next_action="run 'potpie login'; managed routing lands in HU3",
+        from potpie.cli import hosts
+
+        # Default shows every configured origin — the question "which pots do I
+        # have" is not usefully answered per host, and a bare `pot list` that
+        # hid the managed ones is what sent people looking for a broken server.
+        # The flags narrow it; --all forces both sections so an unconfigured or
+        # unreachable managed host is stated rather than merely absent.
+        if local and not managed:
+            origins: tuple[str, ...] = (hosts.LOCAL,)
+        elif managed and not local:
+            if hosts.managed_endpoint() is None:
+                raise CapabilityNotImplemented(
+                    "host.pots.list_managed",
+                    detail="no managed host is configured",
+                    recommended_next_action="run 'potpie host set <base-url> [--token <key>]'",
+                )
+            origins = (hosts.MANAGED,)
+        elif all_:
+            origins = hosts.ORIGINS
+        else:
+            origins = hosts.configured_origins()
+
+        current = hosts.current_origin()
+        rows: list[dict[str, object]] = []
+        unavailable: dict[str, str] = {}
+        human_lines: list[str] = []
+
+        for origin in origins:
+            if human_lines:
+                human_lines.append("")
+            human_lines.append(hosts.origin_label(origin))
+            try:
+                pots = get_host_for(origin).pots.list_pots()
+            except Exception as exc:  # noqa: BLE001 - see the module docstring
+                # Enumeration degrades: a listing that dies because a remote is
+                # down is useless exactly when you need to see what is local.
+                unavailable[origin] = str(exc)
+                # The message already names the host it came from, and the
+                # section header names it too; a third "unavailable:" prefix
+                # would say it three times in one line.
+                human_lines.append(f"  ({exc})")
+                continue
+            if not pots:
+                human_lines.append("  (no pots)")
+            for pot in pots:
+                # '*' is the pot commands actually act on; '·' is the other
+                # host's own pointer, which is real but not current.
+                marker = " "
+                if pot.active:
+                    marker = "*" if origin == current else "·"
+                rows.append(
+                    {
+                        "id": pot.pot_id,
+                        "name": pot.name,
+                        "active": bool(pot.active),
+                        "current": bool(pot.active and origin == current),
+                        "origin": origin,
+                    }
+                )
+                human_lines.append(f"{marker} {pot.name} ({pot.pot_id})")
+
+        if unavailable and len(unavailable) == len(origins):
+            # Degrading is only honest while some *other* host answered. With
+            # nothing left to degrade to — the sole configured host is down, or
+            # `--local`/`--managed` targeted exactly the host that is down — the
+            # envelope below is `pots: []`, and no `--json` consumer can tell
+            # that apart from "you have no pots": `pot list | jq '.pots|length'`
+            # answers 0 either way, and `unavailable` is a key nobody reads
+            # because exit 0 said there was nothing to read. Before the per-origin
+            # catch existed this propagated and exited 2, which is the answer.
+            fail(
+                code="unavailable",
+                message=(
+                    "No host answered the listing: "
+                    + "; ".join(
+                        f"{hosts.origin_label(origin)}: {unavailable[origin]}"
+                        for origin in origins
+                    )
+                ),
+                detail={"unavailable": unavailable},
+                next_action=_unlistable_host_repair(origins),
             )
-        pots = get_host().pots.list_pots()
-        payload: dict[str, object] = {
-            "pots": [
-                {"id": p.pot_id, "name": p.name, "active": p.active, "origin": "local"}
-                for p in pots
-            ],
-        }
-        pot_rows = [f"{'*' if p.active else ' '} {p.name} ({p.pot_id})" for p in pots]
-        human_lines = ["Local", *(pot_rows or ["(no pots)"])]
-        if all_:
-            payload["managed_pending"] = True
-            human_lines.append("  (managed pots require 'potpie login' — HU3)")
+
+        payload: dict[str, object] = {"pots": rows, "active_origin": current}
+        if unavailable:
+            payload["unavailable"] = unavailable
+        if len(origins) > 1:
+            human_lines.append("")
+            human_lines.append(
+                f"* active pot ({current}) · other host's active pot"
+                "   — target one with '--pot <host>:<name>'"
+            )
         emit(payload, human="\n".join(human_lines))
 
 
@@ -410,6 +505,52 @@ def pot_default_clear(repo: str = typer.Option("current", "--repo")) -> None:
         )
 
 
+#: "the result carried no teardown answer at all", which is not the same value
+#: as ``resources_purged=None`` and must not collapse into it — see
+#: :func:`_teardown`.
+_TEARDOWN_UNSAID: Any = object()
+
+
+def _teardown(result: Any) -> tuple[Any, bool | None, bool]:
+    """``(pot, resources_purged, reported)`` from a reset/archive result.
+
+    A current host returns ``PotTeardownResult`` — the pot plus what tearing
+    its data down actually did. An older one returns the bare ``PotInfo``,
+    which says the call succeeded and nothing at all about teardown. Reading
+    ``.pot`` off that raised ``AttributeError``, and the error boundary
+    flattened it into "Unexpected internal error" *after* the host had already
+    archived the pot: a destructive command reporting failure on success is the
+    worst shape this could take, because the obvious response is to run it
+    again.
+
+    ``reported`` is kept separate from ``resources_purged`` rather than folded
+    into its ``None``: that ``None`` already means "no resource store was
+    wired", which is a fact about the pot. Not knowing is a fact about the
+    host, and the two must not print the same sentence — one of them is
+    entitled to claim a teardown happened and the other is not.
+
+    Which is why the second read defaults to :data:`_TEARDOWN_UNSAID` and not to
+    ``None``: defaulting to ``None`` re-merged, one line later, the two answers
+    the split exists to keep apart. A shape carrying ``.pot`` and no
+    ``resources_purged`` — neither of the two shipped ones, but every future
+    one is a candidate — came back as ``reported=True`` and printed "(no stored
+    resources)", a claim about the pot that the host never made.
+    """
+    pot = getattr(result, "pot", None)
+    if pot is None:
+        return result, None, False
+    purged = getattr(result, "resources_purged", _TEARDOWN_UNSAID)
+    if purged is _TEARDOWN_UNSAID:
+        return pot, None, False
+    return pot, purged, True
+
+
+_TEARDOWN_UNREPORTED = (
+    "this host runs an older contract and reported no teardown detail; "
+    "verify with 'potpie graph status'"
+)
+
+
 @pot_app.command("rename")
 def pot_rename(ref: str, new_name: str) -> None:
     with contract():
@@ -437,18 +578,25 @@ def pot_reset(
                 ),
                 next_action=f"re-run with 'potpie pot reset {target} --confirm'",
             )
-        teardown = host.pots.reset_pot(ref=target, confirm=confirm)
-        pot = teardown.pot
         # ``resources_purged`` is the store's own answer, not a literal: it
         # used to report a cleared resource tree on pots that never held one.
-        purged = teardown.resources_purged
+        pot, purged, reported = _teardown(
+            host.pots.reset_pot(ref=target, confirm=confirm)
+        )
+        if not reported:
+            human = f"reset '{pot.name}' — {_TEARDOWN_UNREPORTED}"
+        elif purged:
+            human = f"reset graph and resources for '{pot.name}'"
+        else:
+            human = f"reset graph for '{pot.name}' (no stored resources)"
         emit(
-            {"id": pot.pot_id, "reset": True, "resources_purged": purged},
-            human=(
-                f"reset graph and resources for '{pot.name}'"
-                if purged
-                else f"reset graph for '{pot.name}' (no stored resources)"
-            ),
+            {
+                "id": pot.pot_id,
+                "reset": True,
+                "resources_purged": purged,
+                "teardown_reported": reported,
+            },
+            human=human,
         )
 
 
@@ -471,20 +619,26 @@ def pot_archive(
                 ),
                 next_action=f"re-run with 'potpie pot archive {ref} --confirm'",
             )
-        teardown = get_host().pots.archive_pot(ref=ref)
-        pot = teardown.pot
-        purged = teardown.resources_purged
+        pot, purged, reported = _teardown(get_host().pots.archive_pot(ref=ref))
+        if not reported:
+            # Deliberately does not say "graph cleared". On a host that predates
+            # the teardown contract, archive can be a flag and nothing more —
+            # the managed service today leaves every claim in place — so
+            # claiming the graph was cleared would be a lie told by the one
+            # command whose whole job is destroying data.
+            human = f"archived '{pot.name}' — {_TEARDOWN_UNREPORTED}"
+        elif purged:
+            human = f"archived '{pot.name}' (graph and resources cleared)"
+        else:
+            human = f"archived '{pot.name}' (graph cleared; no stored resources)"
         emit(
             {
                 "id": pot.pot_id,
                 "archived": True,
                 "resources_purged": purged,
+                "teardown_reported": reported,
             },
-            human=(
-                f"archived '{pot.name}' (graph and resources cleared)"
-                if purged
-                else f"archived '{pot.name}' (graph cleared; no stored resources)"
-            ),
+            human=human,
         )
 
 
@@ -817,7 +971,27 @@ def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> Non
     with contract():
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
-        host.pots.remove_source(pot_id=pot_id, source_id=source_id)
+        removed = host.pots.remove_source(pot_id=pot_id, source_id=source_id)
+        # Only an explicit ``False`` is a miss — a host that answers nothing is
+        # on an older contract and cannot be accused of having removed nothing.
+        # Reporting "removed source <id>" for an id this pot never held is the
+        # worst possible answer to the likeliest mistake: the registration is
+        # usually alive in the pot the caller did not pass, and the message
+        # sends them away believing it is gone. Named like the same miss in
+        # ``source status`` so both commands answer it identically.
+        if removed is False:
+            missing = PotNotFound(f"No source '{source_id}' in pot '{pot_id}'.")
+            # The right message pointed at the wrong repair: the boundary's
+            # default ``PotNotFound`` next action is "list pots with 'potpie pot
+            # list' or create one with 'potpie setup'", and the pot is not what
+            # is missing — the registration is usually alive in the pot the
+            # caller did not pass. Naming the listing that actually answers the
+            # question keeps this from being the same misdirection the message
+            # above was written to avoid.
+            missing.recommended_next_action = (
+                f"list this pot's sources with 'potpie source list --pot {pot_id}'"
+            )
+            raise missing
         emit(
             {"removed": source_id, "resources_touched": False},
             human=(

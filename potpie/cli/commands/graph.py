@@ -28,11 +28,11 @@ from potpie_context_core.workbench_service import (
     normalize_workbench_result,
 )
 from potpie.cli.commands._common import (
-    EXIT_UNAVAILABLE,
     EXIT_VALIDATION,
     contract,
     empty_pot_warnings,
     emit,
+    exit_code_for,
     fail,
     get_host,
     is_json,
@@ -80,6 +80,28 @@ graph_app.add_typer(quality_app, name="quality")
 graph_app.add_typer(bulk_app, name="bulk")
 
 
+def _with_shared_error_keys(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Lift a graph envelope's error onto the keys every CLI error carries.
+
+    ``graph`` keeps the workbench envelope — it is the same shape its
+    *successes* use, and the skills, the docs and the UI all parse it — but
+    until now a failure from ``graph read`` and a failure from anywhere else in
+    the CLI shared no key at all: ``resp['code']`` raised ``KeyError`` on
+    exactly the commands agents call most, and no single parser covered the
+    surface. The lift is additive and the nested ``error`` object stays exactly
+    where its readers expect it; success envelopes pass through untouched.
+    """
+    error = envelope.get("error")
+    if not isinstance(error, Mapping):
+        return envelope
+    return {
+        **envelope,
+        "code": error.get("code"),
+        "message": error.get("message"),
+        "detail": error.get("detail"),
+    }
+
+
 class _GraphCliCommandContext:
     def __init__(self, command: str) -> None:
         self.command = command
@@ -107,16 +129,18 @@ class _GraphCliCommandContext:
     def format_error(self, payload: dict[str, Any]) -> dict[str, Any]:
         code = str(payload.get("code") or "error")
         self.mark_result(result=code, error_code=code)
-        return graph_error_envelope(
-            command=self.command,
-            request_id=self.request_id,
-            pot_id=self.pot_id,
-            code=code,
-            message=str(payload.get("message") or "Graph command failed."),
-            detail=payload.get("detail"),
-            subgraph_versions=self.subgraph_versions,
-            recommended_next_action=payload.get("recommended_next_action"),
-        ).to_dict()
+        return _with_shared_error_keys(
+            graph_error_envelope(
+                command=self.command,
+                request_id=self.request_id,
+                pot_id=self.pot_id,
+                code=code,
+                message=str(payload.get("message") or "Graph command failed."),
+                detail=payload.get("detail"),
+                subgraph_versions=self.subgraph_versions,
+                recommended_next_action=payload.get("recommended_next_action"),
+            ).to_dict()
+        )
 
     def mark_result(
         self,
@@ -404,9 +428,16 @@ def _emit_graph_result(
             recommended_next_action=recommended_next_action
             or payload.get("recommended_next_action"),
         )
-    emit(env.to_dict(), human=_with_graph_warnings(human, merged_warnings))
+    emit(
+        _with_shared_error_keys(env.to_dict()),
+        human=_with_graph_warnings(human, merged_warnings),
+    )
     if payload.get("ok", True) is False:
-        raise typer.Exit(code=EXIT_VALIDATION)
+        # Through the shared table rather than a blanket 1: a workbench result
+        # that reports `unavailable` or `not_implemented` means the same thing
+        # here as it does everywhere else in the CLI, and a caller deciding
+        # whether a retry is worth attempting reads the number, not the body.
+        raise typer.Exit(code=exit_code_for(error_code))
 
 
 def _with_graph_warnings(human: str, warnings: tuple[str, ...]) -> str:
@@ -440,8 +471,11 @@ def _emit_graph_not_implemented(
         detail=detail,
         recommended_next_action=recommended_next_action,
     )
-    emit(env.to_dict(), human=detail or f"{ctx.command} is not implemented yet")
-    raise typer.Exit(code=EXIT_UNAVAILABLE)
+    emit(
+        _with_shared_error_keys(env.to_dict()),
+        human=detail or f"{ctx.command} is not implemented yet",
+    )
+    raise typer.Exit(code=exit_code_for("not_implemented"))
 
 
 def _error_code_from_result(payload: Mapping[str, Any]) -> str:

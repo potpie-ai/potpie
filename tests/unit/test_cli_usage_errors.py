@@ -96,13 +96,19 @@ def test_pot_help_no_longer_lists_removed_queue_groups() -> None:
     assert "jira-project" not in result.output
 
 
-def test_missing_argument_keeps_typer_text_in_human_mode(
+def test_missing_argument_keeps_typer_text_at_the_documented_exit_code(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    with pytest.raises(SystemExit) as exc_info:
+    """Human mode keeps Click's prose but loses Click's exit code.
+
+    ``UsageError.exit_code`` is 2, which in this CLI's table means "a dependency
+    is unavailable"; the same missing argument already exited 1 under ``--json``.
+    One of the two had to move, and 2 is the number a wrapper retries on.
+    """
+    with pytest.raises(typer.Exit) as exc_info:
         host_cli.run_cli(["pot", "create"])
 
-    assert exc_info.value.code == 2
+    assert exc_info.value.exit_code == _common.EXIT_VALIDATION
     captured = capsys.readouterr()
     assert "Missing argument" in captured.err or "Missing argument" in captured.out
 

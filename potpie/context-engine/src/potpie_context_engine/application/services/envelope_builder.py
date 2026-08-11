@@ -41,6 +41,14 @@ INCLUDE_RANK_WEIGHT: Mapping[str, float] = {
     "infra_topology": 1.0,
     "timeline": 1.0,
     "docs": 0.65,
+    # Below ``docs`` on purpose. A document corpus produces far more matchable
+    # text than project memory does, so at equal weight a mixed envelope fills
+    # with chunk hits and the decisions and prior bugs the agent asked for fall
+    # off the end — the same crowding that demoting ``docs`` to 0.65 fixed, one
+    # order of magnitude worse because the unit here is a chunk rather than a
+    # section. A pure ``--include resources`` read is unaffected: the weight is
+    # applied across includes, never inside the reader.
+    "resources": 0.6,
     "raw_graph": 0.5,
 }
 

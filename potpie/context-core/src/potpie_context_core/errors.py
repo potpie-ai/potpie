@@ -25,6 +25,24 @@ class GraphSubstrateUnavailable(ContextEngineDisabled):
         self.recommended_next_action = recommended_next_action
 
 
+class PotTeardownFailed(ContextEngineDisabled):
+    """A pot's graph wipe did not happen, so the rest of the teardown must not.
+
+    Tearing a pot down destroys two stores, and only one order is safe: the
+    resource tree may go once the claims citing its chunks are gone. Mutation
+    adapters report an unreachable store by *returning* ``{"ok": False,
+    "error": ...}`` rather than raising, so a caller that ignores the return
+    purges the chunk files anyway and leaves the pot worse than it found it —
+    live claims whose evidence no longer exists — while reporting success.
+    Raised instead of continuing, carrying the adapter's own error text so the
+    CLI's unavailability contract prints what actually failed.
+    """
+
+    def __init__(self, message: str, *, recommended_next_action: str | None = None):
+        super().__init__(message)
+        self.recommended_next_action = recommended_next_action
+
+
 class AlreadyIngested(ContextEngineError):
     """Source was already recorded in the ingestion ledger."""
 

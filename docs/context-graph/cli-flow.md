@@ -38,7 +38,14 @@ flowchart LR
 |---|---|
 | `--json` | machine-readable output for scripts/agents (stable, additive fields) |
 | `--verbose` / `-v` | verbose diagnostics |
-| `--version` | print version and exit |
+| `--version` | print version and exit (JSON under `--json`) |
+
+These are **root-only**: they belong to the root callback and no subcommand
+redeclares them, because two places deciding output mode is exactly how a
+`--json` request came to be silently downgraded. Putting one after the command
+(`potpie pot list --json`) is therefore a `usage_error` at exit 1 — but the
+refusal is rendered in the format the misplaced flag asked for, and its
+`recommended_next_action` is the corrected command line.
 
 ## Shared plumbing (`commands/_common.py`)
 
@@ -50,16 +57,46 @@ uniformly across the surface.
   `CONTEXT_ENGINE_HOST_MODE=in_process` builds an in-process shell via
   `bootstrap/host_wiring.py build_host_shell()`. A handful of commands bypass the
   HostShell entirely (see notes on `login` and `cloud`).
-- **`contract()`** — the error boundary that maps outcomes to exit codes and emits
-  structured JSON errors (`code`, `message`, `detail`, `recommended_next_action`):
+- **`contract()`** — the error boundary that maps outcomes to error codes, and
+  `exit_code_for()` (in `commands/_common.py`) that maps error codes to exit
+  codes. That function *is* the table below; every emitter resolves the number
+  through it, so a new `fail(code=...)` cannot invent a second meaning for an
+  exit code.
 
-  | Exit | Meaning |
-  |---|---|
-  | `0` | success |
-  | `1` | command / validation failure |
-  | `2` | daemon / API / dependency unavailable (incl. `CapabilityNotImplemented`, `ContextEngineDisabled`) |
-  | `3` | partial / degraded result |
-  | `4` | auth / permission failure |
+  | Condition | `code` | Exit |
+  |---|---|---|
+  | success | — | `0` |
+  | bad argument / bad value / unresolvable ref | `validation_error` | `1` |
+  | mistyped flag, missing argument, unknown command | `usage_error` | `1` |
+  | pot (or something the pot should hold) not found | `pot_not_found` | `1` |
+  | ref matches a pot on more than one host | `ambiguous_pot` | `1` |
+  | nothing to scope the command to | `no_active_pot` | `1` |
+  | a bug got out (`--verbose` adds the traceback as `detail`) | `unexpected_cli_error` | `1` |
+  | daemon / API / backend did not answer (`ContextEngineDisabled`) | `unavailable` | `2` |
+  | capability not built on this profile (`CapabilityNotImplemented`) | `not_implemented` | `2` |
+  | partial result — some hard step failed (`setup`) | `degraded` | `3` |
+  | a host answered and refused the credential (HTTP 401/403) | `auth_error` | `4` |
+
+  Three properties this table is meant to guarantee:
+
+  - **The exit code never depends on `--json`.** The same missing argument used
+    to exit 2 in prose and 1 as JSON, which made the number unusable for any
+    wrapper that also renders output for a human.
+  - **Usage errors are `1`, not Click's conventional `2`.** `2` is reserved here
+    for "a dependency is unavailable" — the one condition where retrying later
+    is the right response. A typo must not look like a dead daemon.
+  - **`doctor` is not in this table.** It exits `0` whenever it produced a
+    report, however much of the host refused to answer, and reports the damage
+    as data (`ok`, `degraded_sections`, and a per-section `status`). It is the
+    command you run *because* something is down, so a non-zero exit would make
+    it useless as a health gate. Branch on the payload, never on its exit code.
+  - **Every JSON error carries the same envelope**:
+    `{ok: false, code, message, detail, recommended_next_action}`. `graph`
+    commands add their workbench keys (`command`, `request_id`, `pot_id`,
+    `graph_contract_version`, `ontology_version`, `subgraph_versions`,
+    `warnings`, `unsupported`, `error`) *on top of* those five, so one parser
+    covers the whole surface. Note that `recommended_next_action` is a string
+    everywhere except `graph`, where it may also be an object.
 
 - **`resolve_pot_id(...)`** — pot-scope resolver, precedence:
   explicit `--pot` **>** repo-default binding **>** registered-repo match (active

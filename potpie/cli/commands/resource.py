@@ -21,7 +21,6 @@ from typing import Any, Iterator, Sequence
 import typer
 
 from potpie.cli.commands._common import (
-    EXIT_VALIDATION,
     contract,
     emit,
     fail,
@@ -29,6 +28,7 @@ from potpie.cli.commands._common import (
     is_json,
     resolve_pot_id,
 )
+from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_core.ports.resource_store import (
     Chunk,
     SectionManifest,
@@ -39,6 +39,14 @@ from potpie_context_core.resource_to_semantic import ResourceImportResult
 resource_app = typer.Typer(
     help="Document payloads: import a chunk directory, read chunks, list, remove."
 )
+
+# A nested sub-app, the shape ``pot default`` and ``ledger sources`` already
+# use. The index is an implementation detail of ``resource``, not a peer of it:
+# nothing here is meaningful without documents, and promoting it to a root
+# command group would advertise a fifth verb the four-tool contract does not
+# have.
+index_app = typer.Typer(help="The retrieval index over stored chunks.")
+resource_app.add_typer(index_app, name="index")
 
 
 @contextmanager
@@ -53,16 +61,46 @@ def _resource_contract() -> Iterator[None]:
     with contract():
         try:
             yield
+        except CapabilityNotImplemented as exc:
+            # These four verbs are advertised identically on every host —
+            # `resource --help` is host-independent — so the refusal is the only
+            # place a user can find out the feature is not there. It has to say
+            # so in their terms: a host that does not serve the `resources`
+            # surface answers "invalid RPC surface: resources", which names an
+            # internal routing concept and nothing a user can act on.
+            #
+            # Still loud, and still exit 2. Unlike an enumeration, `resource get`
+            # is aimed at a specific store; degrading it would mean answering
+            # from somewhere the caller did not ask about.
+            # Matched on the *surface* exactly, not on a prefix: the engine's own
+            # gaps are named `resource_index.<profile>....` and mean something
+            # much more specific ("switch the index profile"), which this
+            # rewording would destroy.
+            capability = str(getattr(exc, "capability", ""))
+            if capability != "resources" and not capability.startswith("resources."):
+                raise
+            raise CapabilityNotImplemented(
+                exc.capability,
+                detail="this host does not serve document payloads",
+                recommended_next_action=(
+                    "run this against the local host: "
+                    "'potpie --host local resource ...'"
+                ),
+            ) from exc
         except ValueError as exc:
             code = getattr(exc, "code", None)
             if not code:
                 raise
+            # No explicit `exit_code`: the code here comes from whatever the
+            # raiser attached, so pinning the number pins it for codes that do
+            # not exist yet. `exit_code_for` gives the same 1 for today's
+            # `confirmation_required`/`daemon_error` and the right answer if one
+            # of them ever becomes an unavailability.
             fail(
                 code=str(code),
                 message=str(exc),
                 detail=getattr(exc, "detail", None),
                 next_action=getattr(exc, "recommended_next_action", None),
-                exit_code=EXIT_VALIDATION,
             )
 
 
@@ -195,6 +233,191 @@ def resource_rm(
         )
 
 
+# --- index ------------------------------------------------------------------
+
+
+@index_app.command("status")
+def resource_index_status(
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    """Profile, declared capabilities, counts, and outstanding embeddings."""
+    with _resource_contract():
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        status = host.resources.index_status(pot_id=pot_id)
+        payload = {
+            "profile": status.profile,
+            "ready": status.ready,
+            # Declared capabilities, not a guess from the profile name: a
+            # hybrid profile whose extension will not load reports itself
+            # lexical here, which is the whole point of asking.
+            "capabilities": list(status.capabilities),
+            "match_mode": status.match_mode,
+            "documents": status.documents,
+            "chunks": status.chunks,
+            "windows": status.windows,
+            "pending_embeddings": status.pending_embeddings,
+            "embedder": status.embedder,
+            "dimensions": status.dimensions,
+            "location": status.location,
+            "replica": status.replica,
+            "shared_store": status.shared_store,
+            "detail": status.detail,
+            "recommended_next_action": _index_next_action(status),
+        }
+        emit(payload, human=_index_status_human(payload))
+
+
+@index_app.command("build")
+def resource_index_build(
+    doc: str = typer.Option(None, "--doc", help="Limit the drain to one document."),
+    wait: bool = typer.Option(
+        False, "--wait", help="Keep draining until nothing is pending."
+    ),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    """Embed pending chunks now instead of waiting for the background drain.
+
+    Import returns before the vectors exist — that is deliberate, and the
+    reason it takes seconds rather than minutes. This command is for the cases
+    that cannot wait for a background loop: a CI step, a post-deploy hook, or a
+    human who wants search working before the next command.
+    """
+    with _resource_contract():
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        # ``--doc`` narrows nothing today at the port level (pending work is
+        # per-pot), so it is honoured by rebuilding that document's rows first
+        # and then draining the pot. Rebuilding is what makes the flag mean
+        # something on a document whose index rows are missing entirely.
+        if doc:
+            host.resources.index_rebuild(pot_id=pot_id, doc=doc)
+        report = host.resources.index_build(pot_id=pot_id, wait=wait)
+        payload = {
+            "profile": report.profile,
+            "doc": doc,
+            "embedded": report.embedded,
+            "remaining": report.remaining,
+            "batches": report.batches,
+            "elapsed_ms": report.elapsed_ms,
+            "detail": report.detail,
+        }
+        emit(
+            payload,
+            human=(
+                f"embedded {report.embedded} window(s) in {report.elapsed_ms}ms; "
+                f"{report.remaining} pending"
+                + (f"\n  ! {report.detail}" if report.detail else "")
+            ),
+        )
+
+
+@index_app.command("rebuild")
+def resource_index_rebuild(
+    doc: str = typer.Option(None, "--doc", help="Rebuild one document only."),
+    confirm: bool = typer.Option(
+        False, "--confirm", help="Required: the index is dropped and re-derived."
+    ),
+    pot: str = typer.Option(None, "--pot"),
+) -> None:
+    """Drop the index and re-derive it from the stored files.
+
+    The index is derived state, so this is its entire recovery story — there is
+    no migration and no repair. It is safe by construction: the files are the
+    source of truth and nothing here writes to them. ``--confirm`` is required
+    only because re-embedding a corpus costs minutes, not because anything can
+    be lost.
+    """
+    with _resource_contract():
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        if not confirm:
+            fail(
+                code="confirmation_required",
+                message="rebuilding re-derives the whole index and re-embeds it",
+                next_action=(
+                    "re-run with 'potpie resource index rebuild --confirm'"
+                    + (f" --doc {doc}" if doc else "")
+                ),
+            )
+        reports = host.resources.index_rebuild(pot_id=pot_id, doc=doc)
+        payload = {
+            "documents": [
+                {
+                    "doc": report.doc,
+                    "sections": report.sections,
+                    "chunks": report.chunks,
+                    "windows": report.windows,
+                    "pending_embeddings": report.pending_embeddings,
+                    "detail": report.detail,
+                }
+                for report in reports
+            ],
+            "document_count": len(reports),
+            "chunk_count": sum(report.chunks for report in reports),
+            "pending_embeddings": sum(report.pending_embeddings for report in reports),
+            "recommended_next_action": (
+                "Run 'potpie resource index build --wait' to embed now, or let the "
+                "background drain finish."
+                if any(report.pending_embeddings for report in reports)
+                else 'Verify retrieval: potpie search "<a phrase>" --include resources'
+            ),
+        }
+        emit(payload, human=_index_rebuild_human(payload))
+
+
+def _index_next_action(status: Any) -> str:
+    if not status.ready:
+        return (
+            "Set CONTEXT_ENGINE_RESOURCE_INDEX to a working profile, then run "
+            "'potpie resource index rebuild --confirm'."
+        )
+    if status.pending_embeddings:
+        return (
+            f"{status.pending_embeddings} window(s) are not embedded yet; search is "
+            "lexical until they are. Run 'potpie resource index build --wait' to "
+            "finish now."
+        )
+    if not status.documents:
+        return "Import a document: potpie resource import ./out --doc <slug>"
+    return 'Verify retrieval: potpie search "<a phrase>" --include resources'
+
+
+def _index_status_human(payload: dict[str, Any]) -> str:
+    lines = [
+        f"index: {payload['profile']} ready={payload['ready']} "
+        f"mode={payload['match_mode']}",
+        f"  capabilities: {', '.join(payload['capabilities']) or 'none'}",
+        f"  documents: {payload['documents']}  chunks: {payload['chunks']}  "
+        f"windows: {payload['windows']}",
+        f"  pending embeddings: {payload['pending_embeddings']}",
+    ]
+    if payload["embedder"]:
+        lines.append(f"  embedder: {payload['embedder']} ({payload['dimensions']}d)")
+    if payload["location"]:
+        lines.append(f"  location: {payload['location']}")
+    if payload["shared_store"]:
+        lines.append(f"  replica: {payload['replica']}")
+    if payload["detail"]:
+        lines.append(f"  ! {payload['detail']}")
+    return "\n".join(lines)
+
+
+def _index_rebuild_human(payload: dict[str, Any]) -> str:
+    lines = [
+        f"rebuilt {payload['document_count']} document(s), "
+        f"{payload['chunk_count']} chunk(s)"
+    ]
+    for row in payload["documents"]:
+        lines.append(
+            f"  {row['doc']}: {row['chunks']} chunk(s), {row['windows']} window(s)"
+            + (f" — {row['detail']}" if row["detail"] else "")
+        )
+    if payload["pending_embeddings"]:
+        lines.append(f"  pending embeddings: {payload['pending_embeddings']}")
+    return "\n".join(lines)
+
+
 def _confirmed_interactively(doc: str) -> bool:
     """Ask, but only where a human can answer.
 
@@ -244,6 +467,8 @@ def _import_payload(result: ResourceImportResult) -> dict[str, Any]:
         )
     graph = _graph_payload(result)
     warnings.extend(graph["warnings"])
+    index = _index_payload(result)
+    warnings.extend(index["warnings"])
     return {
         "doc": manifest.doc,
         "revision": manifest.revision,
@@ -267,9 +492,46 @@ def _import_payload(result: ResourceImportResult) -> dict[str, Any]:
         "sections_removed": list(manifest.sections_removed),
         "summary_pending": list(pending),
         "graph": graph,
+        "index": index,
         "warnings": warnings,
         "recommended_next_action": _import_next_action(result, pending),
     }
+
+
+def _index_payload(result: ResourceImportResult) -> dict[str, Any]:
+    """Report the retrieval half — the part that makes the *text* findable.
+
+    Deliberately not a warning when embeddings are outstanding. Lexical
+    postings are written inline and vectors are drained in the background, so
+    ``pending_embeddings > 0`` is the designed success shape of a fast import;
+    treating it as a problem would train agents to wait for something they were
+    never meant to wait for. A missing index, or one that failed to write, *is*
+    a warning: search silently returns less.
+    """
+    report = result.index
+    if report is None:
+        return {
+            "indexed": False,
+            "profile": None,
+            "warnings": [
+                "chunks are stored, but no retrieval index is wired, so search "
+                "cannot reach text that no section summary mentions."
+            ],
+        }
+    payload: dict[str, Any] = {
+        "indexed": report.detail is None,
+        "profile": report.profile,
+        "chunks": report.chunks,
+        "windows": report.windows,
+        "pending_embeddings": report.pending_embeddings,
+        "warnings": [],
+    }
+    if report.detail:
+        payload["detail"] = report.detail
+        payload["warnings"] = [
+            f"chunks are stored, but indexing reported: {report.detail}"
+        ]
+    return payload
 
 
 def _graph_payload(result: ResourceImportResult) -> dict[str, Any]:
@@ -401,12 +663,24 @@ def _import_human(payload: dict[str, Any]) -> str:
         if payload[key]
     )
     graph = payload["graph"]
+    index = payload["index"]
     lines = [
         f"imported {payload['doc']} revision {payload['revision']}",
         f"  sections: {payload['section_count']}" + (f" ({counts})" if counts else ""),
         f"  chunks: {payload['chunk_count']}",
         f"  graph: {graph['status']}"
         + (f" ({graph['entity_key']})" if graph["entity_key"] else ""),
+        f"  index: {index['profile'] or 'none'}"
+        + (
+            f" ({index['chunks']} chunk(s)"
+            + (
+                f", {index['pending_embeddings']} embedding(s) pending)"
+                if index.get("pending_embeddings")
+                else ")"
+            )
+            if index["indexed"]
+            else ""
+        ),
     ]
     if payload["summary_pending"]:
         lines.append(f"  summary pending: {', '.join(payload['summary_pending'])}")

@@ -10,14 +10,23 @@ from typing import Any, Callable, Mapping, Sequence
 from potpie_context_core.api import (
     ClaimQueryFilter,
     DEFAULT_GRAPH_DEFINITION,
+    MATCH_MODE_DISABLED,
+    MATCH_MODE_HYBRID,
+    MATCH_MODE_LEXICAL,
+    Chunk,
+    ChunkRef,
+    DocumentManifest,
     EdgeUpsert,
     EntityUpsert,
     MutationBatch,
     RESOURCE_CHUNK_MAX_CHARS,
     RESOURCE_SEQ_WIDTH,
     ResourceStoreError,
+    SectionManifest,
     format_resource_id,
+    parse_resource_id,
 )
+from potpie_context_core.ports.resource_index import SNIPPET_TARGET_CHARS
 
 
 def run_graph_backend_conformance(backend_factory: Callable[[], object]) -> None:
@@ -327,6 +336,203 @@ def run_resource_store_conformance(store_factory: Callable[[], object]) -> None:
             raise AssertionError("purging an already-empty pot must be a no-op")
 
 
+def build_conformance_document(
+    *, pot_id: str = "conformance:pot-a", doc: str = "q3-review"
+) -> tuple[DocumentManifest, tuple[Chunk, ...]]:
+    """A two-section document with one deliberately unsummarized fact.
+
+    ``ERR_QUOTA_EXCEEDED`` appears in a chunk body and in *no* section summary.
+    That is the whole point of the corpus: it is the fact the summary-only
+    index could never reach, so a profile that declares ``lexical`` and cannot
+    find it has not implemented the capability it advertises.
+    """
+    bodies: dict[tuple[str, int], str] = {
+        ("liability", 0): (
+            "12. Limitation of Liability. In no event shall either party's "
+            "aggregate liability exceed the fees paid in the twelve months "
+            "preceding the claim."
+        ),
+        ("liability", 1): (
+            "The cap on damages does not apply to indemnification obligations "
+            "arising from third-party intellectual property claims."
+        ),
+        ("quotas", 0): (
+            "Service quotas. When a tenant exceeds its provisioned throughput "
+            "the API returns ERR_QUOTA_EXCEEDED with a retry-after header."
+        ),
+    }
+    manifest = DocumentManifest(
+        pot_id=pot_id,
+        doc=doc,
+        revision=1,
+        source_ref="file:///conformance.pdf",
+        source_kind="pdf",
+        sections=(
+            SectionManifest(
+                slug="liability",
+                title="12. Limitation of Liability",
+                summary="How much either side can owe the other, and the carve-outs.",
+                ordinal=0,
+                content_hash="liability-1",
+                chunks=(
+                    ChunkRef(seq=0, label="cap on damages"),
+                    ChunkRef(seq=1, label="IP indemnity carve-out"),
+                ),
+            ),
+            SectionManifest(
+                slug="quotas",
+                title="7. Service Quotas",
+                summary="Throughput ceilings and how the API reports one being hit.",
+                ordinal=1,
+                content_hash="quotas-1",
+                chunks=(ChunkRef(seq=0, label="throughput ceiling"),),
+            ),
+        ),
+    )
+    chunks = tuple(
+        Chunk(
+            resource_id=format_resource_id(doc, section, seq),
+            doc=doc,
+            section=section,
+            seq=seq,
+            text=text,
+            chars=len(text),
+            revision=1,
+            source_ref="file:///conformance.pdf",
+        )
+        for (section, seq), text in bodies.items()
+    )
+    return manifest, chunks
+
+
+def run_resource_index_conformance(index_factory: Callable[[], object]) -> None:
+    """Exercise capability honesty, the graph tie, drain, and pot isolation.
+
+    Every assertion is gated on a *declared* capability, the way the graph
+    backend suite gates on ``caps.inspection`` and friends. That is what makes
+    the suite meaningful for a profile that implements one arm and not the
+    other: ``none`` must pass it by honestly answering nothing, and
+    ``sqlite_hybrid`` must pass it by actually retrieving — and neither is
+    allowed to claim a capability it does not answer.
+    """
+
+    index = index_factory()
+    caps = index.capabilities()
+    pot_a = "conformance:pot-a"
+    pot_b = "conformance:pot-b"
+    manifest, chunks = build_conformance_document(pot_id=pot_a)
+
+    # --- capability honesty -------------------------------------------------
+    if caps.hybrid and not (caps.lexical and caps.semantic):
+        raise AssertionError("a profile cannot declare hybrid without both arms")
+    if index.status().profile != caps.profile:
+        raise AssertionError("status and capabilities disagree about the profile")
+
+    report = index.index_document(pot_id=pot_a, manifest=manifest, chunks=chunks)
+    if caps.incremental and report.chunks != len(chunks):
+        raise AssertionError("an incremental profile must index every chunk given")
+
+    # A disabled profile is a legitimate implementation: it must answer, not
+    # raise, and it must say ``disabled`` rather than look like an empty corpus.
+    if not caps.implemented():
+        empty = index.search(pot_id=pot_a, query="ERR_QUOTA_EXCEEDED", limit=5)
+        if empty.hits or empty.match_mode != MATCH_MODE_DISABLED:
+            raise AssertionError(
+                "a profile declaring no capability must return zero hits "
+                "labeled 'disabled'"
+            )
+        return
+
+    # --- lexical: the fact no summary mentions ------------------------------
+    if caps.lexical:
+        found = index.search(pot_id=pot_a, query="ERR_QUOTA_EXCEEDED", limit=5)
+        if not found.hits:
+            raise AssertionError(
+                "a lexical profile must find an exact token present in chunk "
+                "text and absent from every section summary"
+            )
+        top = found.hits[0]
+        if top.section != "quotas":
+            raise AssertionError("the lexical arm ranked the wrong section first")
+        if top.match_mode not in {MATCH_MODE_LEXICAL, MATCH_MODE_HYBRID}:
+            raise AssertionError(
+                f"unexpected match_mode for a term hit: {top.match_mode}"
+            )
+
+        # --- the graph tie, with no second retrieval call -------------------
+        if top.document_key != f"document:{manifest.doc}":
+            raise AssertionError("document_key is not derivable from the resource id")
+        if top.section_key != f"docsection:{manifest.doc}:{top.section}":
+            raise AssertionError("section_key is not derivable from the resource id")
+        if parse_resource_id(top.resource_id).doc != manifest.doc:
+            raise AssertionError("a hit's resource id does not round-trip")
+
+    # --- snippets: a window, never the body ---------------------------------
+    if caps.snippets:
+        hit = index.search(pot_id=pot_a, query="liability", limit=5).hits
+        if hit and any(len(row.snippet) > SNIPPET_TARGET_CHARS for row in hit):
+            raise AssertionError("a snippet must be bounded, not a chunk body")
+
+    # --- semantic: pending work drains, then paraphrase retrieves -----------
+    if caps.semantic:
+        drained = index.drain(pot_id=pot_a)
+        if drained.remaining:
+            raise AssertionError("one drain over a tiny corpus must clear the backlog")
+        # Draining an empty backlog is a no-op, not an error: the loop calls
+        # this on every wake-up.
+        if index.drain(pot_id=pot_a).embedded:
+            raise AssertionError("a second drain must find nothing pending")
+        if index.status(pot_id=pot_a).pending_embeddings:
+            raise AssertionError("status must agree with the drain about the backlog")
+        paraphrase = index.search(
+            pot_id=pot_a, query="how much can we be forced to pay", limit=5
+        )
+        if not paraphrase.hits:
+            raise AssertionError(
+                "a semantic profile must retrieve on a paraphrase that shares "
+                "no distinctive term with the text"
+            )
+        if all(row.similarity is None for row in paraphrase.hits):
+            raise AssertionError("a semantic hit must carry the similarity it scored")
+
+    # --- pot isolation, the hardest invariant -------------------------------
+    if index.search(pot_id=pot_b, query="ERR_QUOTA_EXCEEDED", limit=5).hits:
+        raise AssertionError("one pot can read another pot's chunks")
+
+    # --- adversarial input: query text is not a query language --------------
+    for hostile in ("a:b", 'NEAR("x")', '"unbalanced', "col*umn", "-", "AND OR"):
+        index.search(pot_id=pot_a, query=hostile, limit=3)
+
+    # --- derived state: drop, re-derive, identical results ------------------
+    if caps.incremental and caps.lexical:
+        before = index.search(pot_id=pot_a, query="ERR_QUOTA_EXCEEDED", limit=5)
+        if index.drop_document(pot_id=pot_a, slug=manifest.doc) is not True:
+            raise AssertionError("dropping an indexed document must report success")
+        if index.search(pot_id=pot_a, query="ERR_QUOTA_EXCEEDED", limit=5).hits:
+            raise AssertionError("a dropped document must stop matching")
+        if index.drop_document(pot_id=pot_a, slug=manifest.doc) is not False:
+            raise AssertionError("dropping an absent document must be a no-op")
+        index.index_document(pot_id=pot_a, manifest=manifest, chunks=chunks)
+        if caps.semantic:
+            # A rebuild restores the lexical postings inline and leaves the
+            # vectors pending, exactly as an import does — so "identical
+            # results" is a claim about the re-derived index once it has
+            # finished draining, not about the instant after the write. Any
+            # other reading would make the property untestable for a profile
+            # whose whole design defers embedding.
+            index.drain(pot_id=pot_a)
+        after = index.search(pot_id=pot_a, query="ERR_QUOTA_EXCEEDED", limit=5)
+        if [row.resource_id for row in after.hits] != [
+            row.resource_id for row in before.hits
+        ]:
+            raise AssertionError("re-deriving the index changed its results")
+
+    # --- teardown -----------------------------------------------------------
+    index.purge_pot(pot_a)
+    if index.search(pot_id=pot_a, query="ERR_QUOTA_EXCEEDED", limit=5).hits:
+        raise AssertionError("purging a pot left its chunks searchable")
+
+
 class GraphBackendConformanceMixin:
     """Pytest-compatible mixin for backend adapter test suites."""
 
@@ -345,10 +551,22 @@ class ResourceStoreConformanceMixin:
         run_resource_store_conformance(self.store_factory)
 
 
+class ResourceIndexConformanceMixin:
+    """Pytest-compatible mixin for resource-index adapter test suites."""
+
+    index_factory: Callable[[], object]
+
+    def test_resource_index_conformance(self) -> None:
+        run_resource_index_conformance(self.index_factory)
+
+
 __all__ = [
     "GraphBackendConformanceMixin",
+    "ResourceIndexConformanceMixin",
     "ResourceStoreConformanceMixin",
+    "build_conformance_document",
     "run_graph_backend_conformance",
+    "run_resource_index_conformance",
     "run_resource_store_conformance",
     "write_import_directory",
 ]

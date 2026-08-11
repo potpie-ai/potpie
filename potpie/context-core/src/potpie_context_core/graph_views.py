@@ -230,6 +230,23 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
         inline_relations=(),
         ranking_inputs=("semantic_similarity",),
     ),
+    _v(
+        "knowledge",
+        "document_passages",
+        v1_include="resources",
+        description="Passages from ingested documents, retrieved from the "
+        "resource index rather than the claim store. Answers 'which text "
+        "actually says this' where knowledge.document_context answers 'which "
+        "document covers it, and what did we say about it'. A hit is a snippet "
+        "plus the chunk id `potpie resource get` takes, and carries the "
+        "Document / DocumentSection keys so no second lookup is needed.",
+        inputs=("query", "doc"),
+        # A chunk has no edges — it is a payload the graph only points at (R1),
+        # so there is nothing to inline. The tie back to the graph travels as
+        # ``document_key`` / ``section_key`` on each hit instead.
+        inline_relations=(),
+        ranking_inputs=("semantic_similarity",),
+    ),
 )
 
 

@@ -35,6 +35,17 @@ class ConfigService(Protocol):
 
     def set(self, key: str, value: str) -> None: ...
 
+    def unset(self, key: str) -> bool:
+        """Remove ``key`` if present; return whether it was there.
+
+        The counterpart to a write gate. Once ``set`` only accepts keys the
+        system actually reads, every key it *used* to accept is stranded — and
+        this file spent long enough accepting anything that real homes hold
+        credentials nothing reads. Removal has to stay open to keys the catalog
+        has since disowned, so this deliberately takes any key at all.
+        """
+        ...
+
     def probe(self) -> Mapping[str, Any]:
         """Cheap state for ``doctor``/``status`` (home path, config presence)."""
         ...

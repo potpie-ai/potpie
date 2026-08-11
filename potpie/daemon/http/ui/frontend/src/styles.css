@@ -220,6 +220,21 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+/* A host the daemon could not reach. Muted, not alarming: the pots you can
+   still open are right beside it and remain usable. */
+.host-unavailable {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  height: 29px;
+  flex: none;
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: -0.02em;
+  cursor: help;
+}
 
 /* ── Body / sidebar ─────────────────────────────────────────────────────── */
 .body {

@@ -1,5 +1,6 @@
 """CLI output helpers."""
 
+import json
 import logging
 
 from potpie.cli.ui.output import (
@@ -119,11 +120,19 @@ def test_emit_error_json_mode(capsys) -> None:
     configure_error_output(as_json=True)
     try:
         emit_error("Bad thing", "use a better thing", hint="try again")
-        err = capsys.readouterr().err
-        assert '"code": "bad_thing"' in err
-        assert '"message": "use a better thing"' in err
-        assert '"detail": "try again"' in err
-        assert '"recommended_next_action": null' in err
+        captured = capsys.readouterr()
+        # stdout, and carrying `ok`: the auth surface emits the same envelope
+        # on the same stream as `commands/_common.fail`, or `--json` consumers
+        # have to special-case which command they asked for.
+        payload = json.loads(captured.out)
+        assert payload == {
+            "ok": False,
+            "code": "bad_thing",
+            "message": "use a better thing",
+            "detail": "try again",
+            "recommended_next_action": None,
+        }
+        assert captured.err == ""
     finally:
         configure_error_output(as_json=False)
 

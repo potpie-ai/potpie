@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from potpie_context_core.ports.resource_index import IndexReport
 from potpie_context_core.ports.resource_store import (
     DocumentManifest,
     SectionManifest,
@@ -90,6 +91,15 @@ class ResourceImportResult:
     from zero and must not be reported as "unlinked". Zero is the state the
     import nudge exists for: chunks and structure landed, but nothing says what
     the document is *about*, so it is findable by semantic luck alone.
+    """
+    index: IndexReport | None = None
+    """The third half of an import: the retrieval index over the bytes.
+
+    ``None`` when no index was wired. Non-``None`` with
+    ``pending_embeddings > 0`` is the *expected* success shape rather than a
+    partial failure — lexical postings are written inline and vectors are
+    deliberately left for the drain, which is what keeps import a
+    seconds-long command instead of a minutes-long one.
     """
 
     @property

@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import json
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
 from potpie_context_core.lifecycle import SetupPlan
@@ -29,6 +31,19 @@ KNOWN_CONFIG_KEYS: tuple[str, ...] = (
     "ledger.binding",
     "ledger.org",
     "ledger.url",
+)
+
+# Keys the runtime still honours but never advertises. ``configured_embedder_choice``
+# / ``configured_embedding_model`` (local_embedder.py) fall back to these older
+# spellings after the catalog names, so a writer that only accepted
+# ``KNOWN_CONFIG_KEYS`` would refuse a key the reader demonstrably obeys — the CLI
+# lying in the other direction. They stay out of the advertised catalog because
+# `config list`'s ``known_keys`` and the sub-app help are how a user learns the
+# *current* names; drop an entry here only once nothing reads it.
+_ACCEPTED_ALIAS_KEYS: tuple[str, ...] = (
+    "embedding_provider",
+    "embedding_backend",
+    "sentence_transformer_model",
 )
 
 _SECRET_KEY_MARKERS: tuple[str, ...] = (
@@ -86,12 +101,47 @@ def is_secret_config_key(key: str) -> bool:
     return any(compound in joined for compound in _COMPOUND_SECRET_MARKERS)
 
 
+def is_known_config_key(key: str) -> bool:
+    """Is this a key some part of the system actually reads?
+
+    The catalog was decorative — printed in the sub-app help and echoed as
+    ``known_keys`` by ``config list``, but never enforced — so ``config set``
+    persisted ``emebdder`` and reported success for a setting nothing would ever
+    look at. Callers that gate writes on this turn that silent no-op into a
+    refusal, and keep ``config.json`` (written at the process umask, unlike every
+    credential store in this repo) from being used as an arbitrary secret store.
+    """
+    return key in KNOWN_CONFIG_KEYS or key in _ACCEPTED_ALIAS_KEYS
+
+
+def _without_url_userinfo(value: str) -> str:
+    """Blank the ``user:password@`` an operator may have typed inside a URL.
+
+    :func:`is_secret_config_key` classifies by *key name*, which by construction
+    cannot see a credential that arrived in the value. ``ledger.url`` is not a
+    secret-shaped key, so ``config set ledger.url https://user:tok@host`` echoed
+    the token straight back to stdout and into the ``--json`` payload — the same
+    leak the key-based redaction closes one column to the left, through the one
+    kind of value in this catalog that routinely carries a credential.
+    """
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        # Not parseable as a URL: nothing here can claim to know where a
+        # credential would be, so changing the value would be guessing.
+        return value
+    if not parts.scheme or "@" not in parts.netloc:
+        return value
+    host = parts.netloc.rsplit("@", 1)[1]
+    return urlunsplit(parts._replace(netloc=f"{_REDACTED}@{host}"))
+
+
 def public_config_value(key: str, value: Any) -> str | None:
     if value is None:
         return None
     if is_secret_config_key(key):
         return _REDACTED
-    return str(value)
+    return _without_url_userinfo(str(value))
 
 
 @dataclass(slots=True)
@@ -141,6 +191,28 @@ class LocalConfigService:
         self.ensure_home()
         self._save(data)
 
+    def unset(self, key: str) -> bool:
+        """Drop ``key`` from the file; report whether it was actually there.
+
+        Unlike :meth:`set`, this accepts keys outside the catalog on purpose.
+        The write gate strands every key ``set`` used to accept, and the ones
+        worth caring about are the credentials that got in while it accepted
+        anything — so the one command that can clear them must not consult the
+        same catalog that refuses to rewrite them.
+
+        Returning a bool rather than raising keeps the caller honest: "there was
+        nothing to remove" is a different sentence from "removed", and reporting
+        the second for the first is the silent-success shape this CLI has been
+        pulling out of its commands.
+        """
+        data = self._load()
+        if key not in data:
+            return False
+        del data[key]
+        self.ensure_home()
+        self._save(data)
+        return True
+
     def probe(self) -> dict[str, Any]:
         return {"home": str(self.home), "config_exists": self._path.exists()}
 
@@ -156,12 +228,20 @@ class LocalConfigService:
         tmp = self._path.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
+        # Owner-only, and set on the temp *before* the rename so the file is never
+        # briefly world-readable — the ordering credentials_store/hosts/ipc_auth
+        # all use. Nothing in the catalog is a credential, but `config set` used
+        # to accept any key at all, so real homes out there already have tokens
+        # in this file; it was the only state file in the repo left at umask.
+        tmp.chmod(stat.S_IRUSR | stat.S_IWUSR)
         tmp.replace(self._path)
+        self._path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
 __all__ = [
     "KNOWN_CONFIG_KEYS",
     "LocalConfigService",
+    "is_known_config_key",
     "is_secret_config_key",
     "public_config_value",
 ]

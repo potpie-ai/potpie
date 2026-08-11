@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import sys
 import traceback
 from dataclasses import dataclass, field
 from typing import Any
@@ -100,12 +99,22 @@ def emit_error(
     """Emit a structured error.
 
     JSON mode mirrors the host-routed error contract (``commands/_common.fail``):
-    ``{code, message, detail, recommended_next_action}`` — one schema across the
-    whole CLI. Human mode keeps the rich title/message/hint rendering used by the
-    interactive auth flows.
+    ``{ok, code, message, detail, recommended_next_action}`` — one schema across
+    the whole CLI. Human mode keeps the rich title/message/hint rendering used by
+    the interactive auth flows.
+
+    Two things kept the ~55 auth call sites off that contract while claiming to
+    be on it. The envelope had no ``ok``, so the one key a consumer is told it
+    can branch on before knowing which command answered was missing from the
+    entire ``login``/``github``/``linear``/``atlassian`` surface; and it went to
+    *stderr*, so ``potpie --json login`` put nothing whatsoever on stdout — a
+    caller reading the documented stream saw an empty string and a non-zero exit
+    with no machine-readable reason. ``fail`` has always written its envelope to
+    stdout; the errors a script has to parse are output, not diagnostics.
     """
     if _json_errors:
         payload: dict[str, Any] = {
+            "ok": False,
             "code": code or _error_code(title),
             "message": message,
             "detail": hint,
@@ -115,7 +124,7 @@ def emit_error(
             payload["traceback"] = "".join(
                 traceback.format_exception(type(exc), exc, exc.__traceback__)
             )
-        print(json.dumps(payload), file=sys.stderr)
+        print(json.dumps(payload))
         return
     print_structured_error(
         title=title,

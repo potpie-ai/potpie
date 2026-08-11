@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import typer
 
-from potpie.cli.commands._common import EXIT_UNAVAILABLE, emit, fail
+from potpie.cli.commands._common import emit, fail
 from potpie.cli.telemetry import sentry_runtime, settings
 from potpie.cli.telemetry.preferences import (
     TelemetryPreferenceWriteError,
@@ -55,7 +55,6 @@ def _save_preferences(preferences: TelemetryPreferences) -> None:
             message="Could not update telemetry preference.",
             detail=str(exc),
             next_action="check that the Potpie config directory is writable, then retry",
-            exit_code=EXIT_UNAVAILABLE,
         )
 
 

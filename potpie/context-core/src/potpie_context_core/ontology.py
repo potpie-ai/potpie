@@ -1728,6 +1728,12 @@ STRUCTURAL_INCLUDES: frozenset[str] = frozenset(
         "timeline",
         "owners",
         "raw_graph",
+        # Document *payloads*, served by the resource index rather than by the
+        # claim store. Structural because no record type produces it: an agent
+        # never submits a chunk, it imports a document and the chunks are
+        # derived. ``docs`` stays the record-backed family for what an agent
+        # wrote *about* a document.
+        "resources",
     }
 )
 

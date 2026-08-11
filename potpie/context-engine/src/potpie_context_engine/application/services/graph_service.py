@@ -110,13 +110,23 @@ class DefaultGraphService:
     )
     validator: Callable[[SemanticMutationRequest], Any] | None = None
     lowerer: Callable[[SemanticMutationRequest, Any], Any] | None = None
+    resource_index: Any = None
+    """Backs the ``resources`` include family. ``None`` degrades it, labeled.
+
+    A ``ResourceIndexPort``. It rides on the graph service because the read
+    trunk is one orchestrator and ``resources`` is one of its include families
+    — routing it anywhere else would mean a second read path and a second
+    envelope shape for the same ``--include`` flag."""
+
     _orchestrator: ReadOrchestrator = field(init=False)
 
     def __post_init__(self) -> None:
-        # One read trunk over the backend's canonical claim store.
+        # One read trunk over the backend's canonical claim store, plus the
+        # resource index for the one family whose evidence is not a claim.
         self._orchestrator = ReadOrchestrator(
             claim_query=self.backend.claim_query,
             reader_registry=self.definition.readers,
+            resource_index=self.resource_index,
         )
         if self.validator is None:
             self.validator = lambda request: validate_semantic_request(

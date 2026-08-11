@@ -123,7 +123,10 @@ index is not yet ready; the two are reported separately. `potpie doctor`
 composes `backend.capabilities()` + `backend.mutation.readiness()` +
 `daemon.status()` + `ledger.status()` so a half-ready system is debuggable.
 `potpie ui` (the read-only graph explorer) is served by this daemon — it ensures
-the daemon, discovers `base_url`, and opens `<base>/ui`.
+the daemon, discovers `base_url`, and opens
+`<base>/ui?host=<origin>[&pot=<id>]&k=<code>`. `/ui/api` takes the same token as
+`/rpc`; `k` is the single-use code the CLI spends that token on, which the page
+trades for a session cookie so the token itself never reaches the browser.
 
 ## CLI surfaces onto one data plane
 
