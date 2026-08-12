@@ -93,11 +93,11 @@ command or flag that does not exist — the install raises `ValueError` first.
 ### CLI surface
 
 ```bash
-potpie skills list   [--agent claude|codex|cursor|opencode] [--scope global|project] [--path]
+potpie skills list   [--agent claude|claude-plugin|codex|cursor|opencode] [--scope global|project] [--path]
 potpie skills install [<id>] [--agent …] [--scope …] [--path]
-potpie skills update  [--all] [--agent …]
-potpie skills status  [--agent …]
-potpie skills remove  [<id>|--all] [--agent …]
+potpie skills update  [--all] [--agent …] [--scope …] [--path]
+potpie skills status  [--agent …] [--scope …] [--path]
+potpie skills remove  [<id>|--all] [--agent …] [--scope …] [--path]
 potpie skills add     <source>        # TODO stub
 ```
 
@@ -106,6 +106,42 @@ potpie skills add     <source>        # TODO stub
 run. **There is no top-level `potpie install`** — skills install only via
 `potpie skills install` (and `setup`). Full flags live in
 [cli-flow.md](./cli-flow.md).
+
+Four properties of this surface are load-bearing:
+
+- **`--path` is resolved in the caller's process**, before the RPC crosses to
+  the daemon. The daemon runs with whatever cwd it was launched from, so a
+  relative path resolved there used to write the bundle into *its* directory and
+  report success for the repo you were standing in; `~` was never expanded at
+  all. Paths always arrive at the host absolute, or absent.
+- **Naming a skill installs that skill.** `skills install <id>` no longer also
+  writes the harness's instruction file (`CLAUDE.md` / `AGENTS.md`), its slash
+  commands, or any skill you did not name. The bundle sweep — `install` with no
+  id — owns those, and reports them under `metadata.support_files`.
+- **Drift is content, not a version integer.** `install` / `update` / `status` /
+  `list` compare what is on disk against what the bundle would write (a dry run
+  of the real installer), so a truncated or hand-edited `SKILL.md` shows up as
+  `drifted` and reinstalling repairs it. `list` reports `installed_version`
+  alongside the catalog `version` instead of printing the catalog's twice.
+- **Project-scope manifests are keyed by project.** One record per repo root, so
+  installing or removing in one checkout says nothing about any other.
+
+### Where harness files land
+
+Skills install where the harness reads them — `~/.claude/skills`,
+`~/.cursor/skills`, `~/.agents/skills`, `~/.config/opencode/skills`.
+`CONTEXT_ENGINE_HOME` deliberately does **not** move them: it relocates Potpie's
+own state, and someone who moves their pot store to another volume still runs
+Claude Code out of `~/.claude`. **`POTPIE_HARNESS_HOME`** is the knob that does
+move them, for sandboxes, CI, and Potpie's own test suites (which pin it in an
+autouse fixture — without it, running the suite overwrote the developer's real
+harness files).
+
+`--agent claude-plugin` is project-scope only (the plugin directory has to keep
+its `.claude-plugin/plugin.json` as the plugin root); at global scope it refuses
+with that repair. Its bundle carries ten of the eleven catalog skills — the
+missing `potpie-cli` is reported in `metadata.unavailable` on a sweep and
+refused if you name it, rather than being counted as installed forever.
 
 ---
 

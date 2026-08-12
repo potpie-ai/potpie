@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Iterable, Mapping, cast
 
 from potpie_context_engine.adapters.outbound.skills.claude_target import (
     ProjectAgentTarget,
@@ -53,12 +54,83 @@ class DefaultSkillManager:
         raise ValueError("scope must be 'global' or 'project'")
 
     @staticmethod
-    def _metadata(target: AgentTargetPort, *, scope: str) -> dict[str, str]:
-        root = getattr(target, "skills_root", None) or getattr(target, "path", None)
-        metadata = {"scope": scope}
+    def _metadata(
+        target: AgentTargetPort,
+        *,
+        scope: str,
+        support_files: tuple[str, ...] = (),
+        unavailable: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        # ``target_root`` first: it is where files actually land. Reading
+        # ``path`` off a project target reported the ``--path`` the caller typed,
+        # which is a different directory from the repo root the installer
+        # resolves to whenever they point at a subdirectory.
+        root = (
+            getattr(target, "target_root", None)
+            or getattr(target, "skills_root", None)
+            or getattr(target, "path", None)
+        )
+        metadata: dict[str, Any] = {"scope": scope}
         if root is not None:
             metadata["target_root"] = str(root)
+        if support_files:
+            metadata["support_files"] = list(support_files)
+        if unavailable:
+            metadata["unavailable"] = list(unavailable)
         return metadata
+
+    @staticmethod
+    def _available(target: AgentTargetPort) -> frozenset[str] | None:
+        """Ids this harness's bundle carries, or ``None`` if it will not say.
+
+        The catalog is built from one bundle and installs go to several, so
+        "in the catalog" and "installable for this harness" are different
+        questions. Conflating them made the Claude plugin — which ships ten of
+        the eleven skills — report the eleventh in ``changed`` on every single
+        run, because nothing was written and nothing could be read back.
+        """
+        lister = getattr(target, "available", None)
+        if not callable(lister):
+            return None
+        return frozenset(cast("Iterable[str]", lister()))
+
+    @staticmethod
+    def _unavailable_skill_error(sid: str, agent: str) -> ValueError:
+        return ValueError(
+            f"Skill '{sid}' is in the catalog but this build's {agent} bundle "
+            f"does not carry it, so there is nothing to install. "
+            f"Install it for another harness, e.g. 'potpie skills install {sid} "
+            f"--agent claude'."
+        )
+
+    @staticmethod
+    def _matches_bundle(
+        target: AgentTargetPort, skill_id: str, *, path: str | None
+    ) -> bool:
+        """Is the installed skill's content still what the bundle carries?
+
+        A target that cannot answer is taken at its word rather than assumed
+        drifted — the alternative reinstalls every skill on every command for
+        anyone running a target this build does not know about.
+        """
+        checker = getattr(target, "matches_bundle", None)
+        if not callable(checker):
+            return True
+        return bool(checker(skill_id=skill_id, path=path))
+
+    def _is_current(
+        self,
+        target: AgentTargetPort,
+        sid: str,
+        *,
+        installed: Mapping[str, str],
+        version: str,
+        path: str | None,
+    ) -> bool:
+        """Both halves of "already installed": the right version, intact on disk."""
+        if installed.get(sid) != version:
+            return False
+        return self._matches_bundle(target, sid, path=path)
 
     @staticmethod
     def _unknown_skill_error(
@@ -87,21 +159,38 @@ class DefaultSkillManager:
     @staticmethod
     def _install_support_files(
         target: AgentTargetPort, *, path: str | None = None
-    ) -> None:
+    ) -> tuple[str, ...]:
+        """Write the harness's instruction file / slash commands; say which.
+
+        Returns the files it touched so the caller can report them. They used to
+        be written on every install, including one that named a single skill,
+        and never appeared in the result at all — so a command asked for one
+        skill and silently edited the user's ``CLAUDE.md``.
+        """
         installer = getattr(target, "install_support_files", None)
-        if callable(installer):
-            installer(path=path)
+        if not callable(installer):
+            return ()
+        result = installer(path=path)
+        created = tuple(getattr(result, "created", ()) or ())
+        updated = tuple(getattr(result, "updated", ()) or ())
+        return created + updated
 
     def list(
         self, *, agent: str = "claude", scope: str = "global", path: str | None = None
     ) -> list[SkillInfo]:
         catalog = catalog_by_id()
-        installed = self._target_for_scope(
-            agent=agent, scope=scope, path=path
-        ).installed()
+        target = self._target_for_scope(agent=agent, scope=scope, path=path)
+        installed = target.installed()
         out: list[SkillInfo] = []
         for sid, info in catalog.items():
             ver = installed.get(sid)
+            # The *installed* version, not the catalog's. Reporting the catalog
+            # version beside every installed skill made this listing
+            # structurally unable to show drift: it gave a clean bill of health
+            # to the same skills ``skills status`` was calling outdated.
+            drifted = ver is not None and not self._matches_bundle(
+                target, sid, path=path
+            )
             out.append(
                 SkillInfo(
                     id=info.id,
@@ -110,6 +199,7 @@ class DefaultSkillManager:
                     description=info.description,
                     installed=ver is not None,
                     installed_version=ver,
+                    drifted=drifted,
                 )
             )
         return out
@@ -127,8 +217,20 @@ class DefaultSkillManager:
         requested = bool(skill_id)
         ids = [skill_id] if requested else list(RECOMMENDED_SKILL_IDS)
         changed: list[str] = []
+        unavailable: list[str] = []
+        available = self._available(target)
         installed = target.installed()
         for sid in ids:
+            if available is not None and sid not in available:
+                # Named, it is a refusal: there is no version of this skill for
+                # this harness and reporting it installed is how a caller comes
+                # to believe an agent has context it does not. Swept, it is
+                # reported instead of skipped — a bundle that cannot carry
+                # everything should say so, not quietly install ten of eleven.
+                if requested:
+                    raise self._unavailable_skill_error(str(sid), agent)
+                unavailable.append(str(sid))
+                continue
             info = catalog.get(sid)
             if info is None:
                 # A *recommended* id the catalog does not carry is a packaging
@@ -139,17 +241,28 @@ class DefaultSkillManager:
                 if requested:
                     raise self._unknown_skill_error(sid, catalog)
                 continue
-            if installed.get(sid) == info.version:
+            if self._is_current(
+                target, sid, installed=installed, version=info.version, path=path
+            ):
                 continue
             validate_packaged_skill_command_snippets(skill_ids=(sid,))
             target.install(skill_id=sid, version=info.version, path=path)
             changed.append(sid)
-        self._install_support_files(target, path=path)
+        # Only the sweep gets to touch the harness's own files. Naming one skill
+        # id is a request for that skill, and honouring it by also rewriting
+        # CLAUDE.md — a file the user wrote — is a bigger edit than the one they
+        # asked for, made without saying so.
+        support = () if requested else self._install_support_files(target, path=path)
         return SkillOperationResult(
             agent=agent,
             operation="install",
             changed=tuple(changed),
-            metadata=self._metadata(target, scope=scope),
+            metadata=self._metadata(
+                target,
+                scope=scope,
+                support_files=support,
+                unavailable=tuple(unavailable),
+            ),
         )
 
     def update(
@@ -178,7 +291,13 @@ class DefaultSkillManager:
         requested = bool(skill_id)
         ids = [skill_id] if requested else list(installed)
         changed: list[str] = []
+        available = self._available(target)
         for sid in ids:
+            if available is not None and sid not in available:
+                # Same split as ``install``: the sweep only ever walks ids that
+                # are already installed, so reaching this at all means a named
+                # id, and there is no version of it for this harness to move to.
+                raise self._unavailable_skill_error(str(sid), agent)
             info = catalog.get(sid)
             if info is None:
                 # Sweeping what is installed must walk past an entry this
@@ -190,17 +309,21 @@ class DefaultSkillManager:
                         sid, catalog, installed=sid in installed
                     )
                 continue
-            if installed.get(sid) == info.version:
+            if self._is_current(
+                target, sid, installed=installed, version=info.version, path=path
+            ):
                 continue
             validate_packaged_skill_command_snippets(skill_ids=(sid,))
-            target.install(skill_id=sid, version=info.version)
+            # ``path=`` was dropped here while ``install`` passed it, so the two
+            # commands could resolve the same ``--path`` to different roots.
+            target.install(skill_id=sid, version=info.version, path=path)
             changed.append(sid)
-        self._install_support_files(target, path=path)
+        support = () if requested else self._install_support_files(target, path=path)
         return SkillOperationResult(
             agent=agent,
             operation="update",
             changed=tuple(changed),
-            metadata=self._metadata(target, scope=scope),
+            metadata=self._metadata(target, scope=scope, support_files=support),
         )
 
     def remove(
@@ -247,30 +370,43 @@ class DefaultSkillManager:
         self, *, agent: str, path: str | None = None, scope: str = "global"
     ) -> SkillStatus:
         catalog = catalog_by_id()
-        installed = self._target_for_scope(
-            agent=agent, scope=scope, path=path
-        ).installed()
+        target = self._target_for_scope(agent=agent, scope=scope, path=path)
+        installed = target.installed()
+        available = self._available(target)
         installed_infos: list[SkillInfo] = []
         missing: list[SkillInfo] = []
         outdated: list[SkillInfo] = []
         for sid in RECOMMENDED_SKILL_IDS:
+            # "Recommended" has to mean recommended *for this harness*. A skill
+            # its bundle cannot carry is not missing, it is inapplicable, and
+            # listing it as missing produced a permanent nag whose install
+            # command has nothing to install.
+            if available is not None and sid not in available:
+                continue
             info = catalog[sid]
             ver = installed.get(sid)
             if ver is None:
                 missing.append(info)
-            elif ver != info.version:
-                outdated.append(info)
+                continue
+            # Content drift lands in ``outdated`` beside a stale version, and
+            # for the same reason: both mean "what the harness is loading is not
+            # what this build ships", and both are fixed by the same reinstall.
+            # A file corrupted at its recorded version was previously reported
+            # as healthy by every command in this group.
+            drifted = not self._matches_bundle(target, sid, path=path)
+            record = SkillInfo(
+                id=info.id,
+                title=info.title,
+                version=info.version,
+                description=info.description,
+                installed=True,
+                installed_version=ver,
+                drifted=drifted,
+            )
+            if ver != info.version or drifted:
+                outdated.append(record)
             else:
-                installed_infos.append(
-                    SkillInfo(
-                        id=info.id,
-                        title=info.title,
-                        version=info.version,
-                        description=info.description,
-                        installed=True,
-                        installed_version=ver,
-                    )
-                )
+                installed_infos.append(record)
         return SkillStatus(
             agent=agent,
             installed=tuple(installed_infos),

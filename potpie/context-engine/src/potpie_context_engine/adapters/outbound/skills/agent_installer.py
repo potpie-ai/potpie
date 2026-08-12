@@ -51,8 +51,16 @@ def resolve_install_root(path: str | Path) -> Path:
     return target
 
 
-def _iter_bundle_files(bundle_name: str) -> list[tuple[Path, str]]:
-    """Return packaged template files from the named bundle as (repo-relative path, UTF-8 text)."""
+@lru_cache(maxsize=8)
+def _iter_bundle_files(bundle_name: str) -> tuple[tuple[Path, str], ...]:
+    """Return packaged template files from the named bundle as (repo-relative path, UTF-8 text).
+
+    Cached because it is now on a read path, not just a write one: every
+    content-drift check re-walks the bundle it is comparing against, and
+    ``skills status`` runs one per recommended skill. The bundle ships inside the
+    installed wheel and cannot change under a running process; tests that edit
+    templates in place call :func:`clear_bundle_file_cache`.
+    """
     root = resources.files("potpie.cli").joinpath("templates", bundle_name)
     out: list[tuple[Path, str]] = []
     stack = [(root, Path("."))]
@@ -70,10 +78,15 @@ def _iter_bundle_files(bundle_name: str) -> list[tuple[Path, str]]:
             if child.name.endswith((".pyc", ".pyo")):
                 continue
             out.append((child_rel, child.read_text(encoding="utf-8")))
-    return sorted(out, key=lambda item: item[0].as_posix())
+    return tuple(sorted(out, key=lambda item: item[0].as_posix()))
 
 
-def iter_template_files() -> list[tuple[Path, str]]:
+def clear_bundle_file_cache() -> None:
+    """Test helper: drop cached reads of the packaged template bundles."""
+    _iter_bundle_files.cache_clear()
+
+
+def iter_template_files() -> tuple[tuple[Path, str], ...]:
     """Return agent_bundle template files (default / codex path)."""
     return _iter_bundle_files("agent_bundle")
 
@@ -328,6 +341,7 @@ def _install_file(
     result: InstallResult,
     *,
     force: bool,
+    dry_run: bool = False,
 ) -> None:
     target = install_root / rel_path
     if target.exists():
@@ -338,12 +352,14 @@ def _install_file(
         if not force:
             result.skipped.append(rel_path.as_posix())
             return
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        if not dry_run:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
         result.updated.append(rel_path.as_posix())
         return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    if not dry_run:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
     result.created.append(rel_path.as_posix())
 
 
@@ -356,6 +372,7 @@ def _install_bundle(
     include: Callable[[Path], bool] | None = None,
     remap: Callable[[Path], Path | None] | None = None,
     merge_files: frozenset[str] = _DEFAULT_MERGE_FILES,
+    dry_run: bool = False,
 ) -> None:
     for rel_path, content in _iter_bundle_files(bundle_name):
         if include is not None and not include(rel_path):
@@ -376,15 +393,18 @@ def _install_bundle(
             if action == "unchanged":
                 result.unchanged.append(out_path.as_posix())
                 continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(merged, encoding="utf-8")
+            if not dry_run:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(merged, encoding="utf-8")
             if action == "created":
                 result.created.append(out_path.as_posix())
             else:
                 result.updated.append(out_path.as_posix())
             continue
 
-        _install_file(install_root, out_path, content, result, force=force)
+        _install_file(
+            install_root, out_path, content, result, force=force, dry_run=dry_run
+        )
 
 
 def _cursor_bundle_include(rel_path: Path) -> bool:
@@ -419,11 +439,18 @@ def install_skill_bundle(
     *,
     skill_ids: Iterable[str] | None = None,
     force: bool = False,
+    dry_run: bool = False,
 ) -> InstallResult:
     """Install selected packaged skills directly into a skills root.
 
     ``skills_root`` is the directory that contains one subdirectory per skill,
     for example ``~/.cursor/skills`` or ``~/.agents/skills``.
+
+    ``dry_run`` classifies every file exactly as a real run would — created /
+    updated / unchanged / skipped — and writes nothing. That is what makes
+    content drift detectable: the comparison is the installer's own, so it
+    cannot drift from what install actually does the way a second, parallel
+    "is it current?" implementation would.
     """
     root = Path(skills_root).expanduser().resolve()
     result = InstallResult(root=str(root))
@@ -435,6 +462,7 @@ def install_skill_bundle(
         force=force,
         include=lambda rel: _include_selected_skills(rel, selected),
         remap=lambda rel: Path(rel.as_posix()[len(_SOURCE_SKILLS_PREFIX) :]),
+        dry_run=dry_run,
     )
     return result
 
@@ -444,6 +472,7 @@ def install_global_agent_instructions(
     *,
     agent: str = "default",
     force: bool = True,
+    dry_run: bool = False,
 ) -> InstallResult:
     """Install compact global instructions for harnesses with file-based rules.
 
@@ -467,8 +496,55 @@ def install_global_agent_instructions(
         force=force,
         include=lambda rel: rel.as_posix() == filename,
         merge_files=frozenset({filename}),
+        dry_run=dry_run,
     )
     return result
+
+
+def _support_file_include(
+    rel_path: Path, selected: frozenset[str] | None, *, support_files: bool
+) -> bool:
+    """Include a bundle file that is *not* one of the packaged skills.
+
+    Split out because "install the skill I named" and "install this harness's
+    supporting files" are two different requests that shared one code path:
+    ``skills install potpie-cli`` also wrote ``CLAUDE.md``, two slash commands
+    and an entire second skill nobody asked for, and reported only the one id in
+    ``changed``.
+    """
+    del rel_path, selected
+    return support_files
+
+
+def _claude_bundle_include(
+    rel_path: Path, selected: frozenset[str] | None, *, support_files: bool
+) -> bool:
+    """Claude's project bundle carries both kinds of file, so it is split here.
+
+    ``.claude/skills/<id>/`` is a skill and obeys the selection (its
+    ``potpie-graph`` copy is byte-identical to the ``agent_bundle`` one that the
+    remap below installs). ``CLAUDE.md`` and ``.claude/commands/`` are support
+    files.
+    """
+    sid = _skill_id_from_generic_skill_path(rel_path)
+    if sid is not None:
+        return selected is None or sid in selected
+    return support_files
+
+
+def _claude_plugin_include(
+    rel_path: Path, selected: frozenset[str] | None, *, support_files: bool
+) -> bool:
+    """Same split for the plugin bundle, whose skills sit at ``skills/<id>/``.
+
+    Everything else — ``.claude-plugin/``, ``commands/``, ``hooks/``, the README
+    — is what makes the directory a loadable plugin, so it travels with any
+    install that is allowed to write support files.
+    """
+    sid = _skill_id_from_generic_skill_path(rel_path)
+    if sid is not None:
+        return selected is None or sid in selected
+    return support_files
 
 
 def install_agent_bundle(
@@ -477,6 +553,8 @@ def install_agent_bundle(
     agent: str = "default",
     force: bool = False,
     skill_ids: Iterable[str] | None = None,
+    support_files: bool = True,
+    dry_run: bool = False,
 ) -> InstallResult:
     """Install agent bundle files into the nearest git repo root under *path*.
 
@@ -485,6 +563,10 @@ def install_agent_bundle(
     - ``claude-plugin``: the Claude Code plugin under ``.claude/potpie-plugin/``
     - ``cursor``: ``AGENTS.md`` + ``.cursor/skills/``
     - ``opencode``: ``.opencode/skills/``
+
+    ``support_files=False`` installs only the selected skills, leaving the
+    harness's instruction file and slash commands alone — what a caller naming
+    one skill id actually asked for.
     """
     root = resolve_install_root(path)
     result = InstallResult(root=str(root))
@@ -497,7 +579,16 @@ def install_agent_bundle(
         )
 
     if normalized == "claude":
-        _install_bundle(root, "claude_bundle", result, force=force)
+        _install_bundle(
+            root,
+            "claude_bundle",
+            result,
+            force=force,
+            include=lambda rel: _claude_bundle_include(
+                rel, selected, support_files=support_files
+            ),
+            dry_run=dry_run,
+        )
         _install_bundle(
             root,
             "agent_bundle",
@@ -505,6 +596,7 @@ def install_agent_bundle(
             force=force,
             include=lambda rel: _include_selected_skills(rel, selected),
             remap=_claude_skills_bundle_remap,
+            dry_run=dry_run,
         )
     elif normalized == "claude-plugin":
         _install_bundle(
@@ -512,7 +604,11 @@ def install_agent_bundle(
             "claude_plugin",
             result,
             force=force,
+            include=lambda rel: _claude_plugin_include(
+                rel, selected, support_files=support_files
+            ),
             remap=_claude_plugin_remap,
+            dry_run=dry_run,
         )
     elif normalized == "cursor":
         _install_bundle(
@@ -521,9 +617,12 @@ def install_agent_bundle(
             result,
             force=force,
             include=lambda rel: (
-                rel.as_posix() == "AGENTS.md" or _include_selected_skills(rel, selected)
+                _support_file_include(rel, selected, support_files=support_files)
+                if rel.as_posix() == "AGENTS.md"
+                else _include_selected_skills(rel, selected)
             ),
             remap=_cursor_bundle_remap,
+            dry_run=dry_run,
         )
     elif normalized == "opencode":
         _install_bundle(
@@ -533,6 +632,7 @@ def install_agent_bundle(
             force=force,
             include=lambda rel: _include_selected_skills(rel, selected),
             remap=_opencode_bundle_remap,
+            dry_run=dry_run,
         )
     else:
         _install_bundle(
@@ -541,11 +641,43 @@ def install_agent_bundle(
             result,
             force=force,
             include=lambda rel: (
-                rel.as_posix() == "AGENTS.md" or _include_selected_skills(rel, selected)
+                _support_file_include(rel, selected, support_files=support_files)
+                if rel.as_posix() == "AGENTS.md"
+                else _include_selected_skills(rel, selected)
             ),
+            dry_run=dry_run,
         )
 
     return result
+
+
+def available_skill_ids(*, agent: str = "default") -> frozenset[str]:
+    """Skill ids the packaged bundle can actually install for this harness.
+
+    The catalog is built from ``agent_bundle`` alone, and not every harness
+    bundle carries every id — the Claude Code plugin ships ten of the eleven.
+    Without this the manager reported the missing one in ``changed`` on every
+    run: the install wrote nothing, ``installed()`` never saw the file, and the
+    next command "installed" it again, forever.
+    """
+    normalized = agent.strip().lower() if agent else "default"
+    if normalized == "claude-plugin":
+        bundles = ("claude_plugin",)
+    elif normalized == "claude":
+        bundles = ("agent_bundle", "claude_bundle")
+    else:
+        bundles = ("agent_bundle",)
+    ids: set[str] = set()
+    for bundle_name in bundles:
+        for rel_path, _ in _iter_bundle_files(bundle_name):
+            if rel_path.name != "SKILL.md":
+                continue
+            sid = _skill_id_for_path(rel_path) or _skill_id_from_generic_skill_path(
+                rel_path
+            )
+            if sid:
+                ids.add(sid)
+    return frozenset(ids)
 
 
 def project_skill_path(root: str | Path, *, agent: str, skill_id: str) -> Path:
@@ -556,6 +688,8 @@ def project_skill_path(root: str | Path, *, agent: str, skill_id: str) -> Path:
         return install_root / ".cursor" / "skills" / skill_id / "SKILL.md"
     if normalized == "claude":
         return install_root / ".claude" / "skills" / skill_id / "SKILL.md"
+    if normalized == "claude-plugin":
+        return install_root / _CLAUDE_PLUGIN_PREFIX / "skills" / skill_id / "SKILL.md"
     if normalized == "opencode":
         return install_root / ".opencode" / "skills" / skill_id / "SKILL.md"
     return install_root / ".agents" / "skills" / skill_id / "SKILL.md"

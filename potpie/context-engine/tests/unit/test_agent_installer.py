@@ -163,7 +163,7 @@ def test_skill_manager_repairs_support_files_when_skill_is_current(
     tmp_path: Path,
 ) -> None:
     catalog = catalog_by_id()
-    version = catalog["potpie-cli"].version
+    current = {sid: info.version for sid, info in catalog.items()}
     calls: list[str | None] = []
 
     class _Target:
@@ -171,7 +171,7 @@ def test_skill_manager_repairs_support_files_when_skill_is_current(
         skills_root = tmp_path / ".agents" / "skills"
 
         def installed(self) -> dict[str, str]:
-            return {"potpie-cli": version}
+            return dict(current)
 
         def install(
             self, *, skill_id: str, version: str, path: str | None = None
@@ -186,7 +186,10 @@ def test_skill_manager_repairs_support_files_when_skill_is_current(
 
     manager = DefaultSkillManager(targets={"codex": _Target()})
 
-    result = manager.install(agent="codex", skill_id="potpie-cli")
+    # The sweep still repairs them — that is the command that owns the harness's
+    # own files. Naming one skill no longer does; see
+    # ``test_installing_one_named_skill_does_not_touch_the_instruction_file``.
+    result = manager.install(agent="codex")
 
     assert result.changed == ()
     assert calls == [None]

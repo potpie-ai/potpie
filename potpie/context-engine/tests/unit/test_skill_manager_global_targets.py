@@ -20,7 +20,7 @@ def test_skill_manager_installs_global_harness_targets(
 ) -> None:
     home = tmp_path / "home"
     potpie_home = tmp_path / "potpie"
-    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("POTPIE_HARNESS_HOME", str(home))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(potpie_home))
     host = build_host_shell(backend=InMemoryGraphBackend())
 
@@ -52,17 +52,25 @@ def test_skill_manager_installs_global_harness_targets(
         assert skill_file.exists()
         support_file = expected_support.get(agent)
         if support_file is not None:
+            # Naming one skill installs that skill. The harness's own
+            # instruction file belongs to the bundle sweep below.
+            assert not support_file.exists()
+        status = host.skills.status(agent=agent)
+        assert [s.id for s in status.installed] == ["potpie-cli"]
+
+    for agent in expected:
+        host.skills.install(agent=agent)
+        support_file = expected_support.get(agent)
+        if support_file is not None:
             assert support_file.exists()
             assert "Potpie is durable project memory" in support_file.read_text(
                 encoding="utf-8"
             )
-        status = host.skills.status(agent=agent)
-        assert [s.id for s in status.installed] == ["potpie-cli"]
 
 
 def test_global_harness_target_paths(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("POTPIE_HARNESS_HOME", str(home))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
     host = build_host_shell(backend=InMemoryGraphBackend())
 
@@ -103,7 +111,7 @@ def test_skill_manager_installs_project_scope(monkeypatch, tmp_path: Path) -> No
     assert rerun.changed == ()
 
 
-def test_project_scope_install_preserves_existing_agents_md(
+def test_project_scope_bundle_install_preserves_existing_agents_md(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
@@ -114,12 +122,7 @@ def test_project_scope_install_preserves_existing_agents_md(
     agents_md = repo / "AGENTS.md"
     agents_md.write_text("# Existing Setup\n\nKeep this.\n", encoding="utf-8")
 
-    result = host.skills.install(
-        agent="codex",
-        skill_id="potpie-cli",
-        path=str(repo),
-        scope="project",
-    )
+    result = host.skills.install(agent="codex", path=str(repo), scope="project")
 
     text = agents_md.read_text(encoding="utf-8")
     assert result.metadata["scope"] == "project"
@@ -128,13 +131,42 @@ def test_project_scope_install_preserves_existing_agents_md(
     assert "<!-- potpie-start -->" in text
     assert "# Context Engine" in text
     assert (repo / ".agents" / "skills" / "potpie-cli" / "SKILL.md").exists()
+    assert result.metadata["support_files"] == ["AGENTS.md"]
+
+
+def test_installing_one_named_skill_does_not_touch_the_instruction_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Naming a skill asks for that skill, not for an edit to AGENTS.md.
+
+    ``skills install potpie-cli`` used to also rewrite the harness instruction
+    file the user wrote, plus its slash commands and — for Claude — a second
+    skill, while reporting only the one id it was given.
+    """
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
+    host = build_host_shell(backend=InMemoryGraphBackend())
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    agents_md = repo / "AGENTS.md"
+    agents_md.write_text("# Existing Setup\n\nKeep this.\n", encoding="utf-8")
+
+    result = host.skills.install(
+        agent="codex", skill_id="potpie-cli", path=str(repo), scope="project"
+    )
+
+    assert result.changed == ("potpie-cli",)
+    assert "support_files" not in result.metadata
+    assert agents_md.read_text(encoding="utf-8") == "# Existing Setup\n\nKeep this.\n"
+    assert (repo / ".agents" / "skills" / "potpie-cli" / "SKILL.md").exists()
+    assert not (repo / ".agents" / "skills" / "potpie-graph").exists()
 
 
 def test_skill_manager_removes_all_global_harness_skills(
     monkeypatch, tmp_path: Path
 ) -> None:
     home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("POTPIE_HARNESS_HOME", str(home))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
     host = build_host_shell(backend=InMemoryGraphBackend())
 

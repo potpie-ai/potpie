@@ -28,6 +28,10 @@ class SkillInfo:
     description: str = ""
     installed: bool = False
     installed_version: str | None = None
+    #: Installed, but its files no longer match what the bundle carries — a
+    #: hand-edit or a half-written install. Distinct from an outdated
+    #: ``installed_version``, which a version comparison can already see.
+    drifted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +68,17 @@ class AgentTargetPort(Protocol):
 
     def installed(self) -> Mapping[str, str]:
         """Installed skill id -> version for this harness."""
+        ...
+
+    def matches_bundle(self, *, skill_id: str, path: str | None = None) -> bool:
+        """Is the installed skill byte-identical to what ``install`` would write?
+
+        Optional: the manager treats a target that does not implement it as
+        "current", because reinstalling on every command is a worse default than
+        missing drift on a third-party target. Implementations should answer by
+        dry-running their own install rather than by comparing a recorded
+        version — a version integer cannot see a truncated or edited file.
+        """
         ...
 
     def install(

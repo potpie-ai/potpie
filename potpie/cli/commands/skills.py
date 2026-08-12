@@ -12,6 +12,8 @@ has no bearing on where your agent reads its skills from.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 
 from potpie.cli.commands._common import contract, emit, get_host_for
@@ -37,23 +39,28 @@ def _skills():
 def skills_list(
     agent: str = typer.Option("claude", "--agent"),
     scope: str = typer.Option("global", "--scope"),
-    path: str = typer.Option(None, "--path"),
+    path: str | None = typer.Option(None, "--path"),
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
+        path = _resolve_path(path)
         items = _skills().list(agent=agent, scope=effective_scope, path=path)
         emit(
             {
                 "agent": agent,
                 "scope": effective_scope,
                 "skills": [
-                    {"id": s.id, "version": s.version, "installed": s.installed}
+                    {
+                        "id": s.id,
+                        "version": s.version,
+                        "installed": s.installed,
+                        "installed_version": s.installed_version,
+                        "drifted": s.drifted,
+                    }
                     for s in items
                 ],
             },
-            human="\n".join(
-                f"  {'✓' if s.installed else ' '} {s.id} v{s.version}" for s in items
-            ),
+            human="\n".join(_skill_line(s) for s in items),
         )
 
 
@@ -63,11 +70,12 @@ def skills_install(
         None, help="Install one skill by id; omit to install the recommended bundle."
     ),
     agent: str = typer.Option("claude", "--agent"),
-    path: str = typer.Option(None, "--path"),
+    path: str | None = typer.Option(None, "--path"),
     scope: str = typer.Option("global", "--scope"),
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
+        path = _resolve_path(path)
         started_ms = now_ms()
         capture_project_binding_event(
             "cli_onboarding_agent_skills_install_started",
@@ -111,7 +119,11 @@ def skills_install(
                 "metadata": dict(res.metadata),
             },
             human=_format_skill_operation(
-                verb="installed", agent=res.agent, changed=res.changed
+                verb="installed",
+                agent=res.agent,
+                changed=res.changed,
+                support_files=res.metadata.get("support_files"),
+                unavailable=res.metadata.get("unavailable"),
             ),
         )
 
@@ -127,7 +139,7 @@ def skills_update(
         help="Update every installed Potpie skill for the selected agent and scope.",
     ),
     agent: str = typer.Option("claude", "--agent"),
-    path: str = typer.Option(None, "--path"),
+    path: str | None = typer.Option(None, "--path"),
     scope: str = typer.Option("global", "--scope"),
 ) -> None:
     """Update installed skills — one named id, or everything installed.
@@ -146,6 +158,7 @@ def skills_update(
     """
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
+        path = _resolve_path(path)
         res = _skills().update(
             agent=agent,
             skill_id=skill_id,
@@ -161,7 +174,11 @@ def skills_update(
                 "metadata": dict(res.metadata),
             },
             human=_format_skill_operation(
-                verb="updated", agent=res.agent, changed=res.changed
+                verb="updated",
+                agent=res.agent,
+                changed=res.changed,
+                support_files=res.metadata.get("support_files"),
+                unavailable=res.metadata.get("unavailable"),
             ),
         )
 
@@ -175,11 +192,12 @@ def skills_remove(
         help="Remove every installed Potpie skill for the selected agent and scope.",
     ),
     agent: str = typer.Option("claude", "--agent"),
-    path: str = typer.Option(None, "--path"),
+    path: str | None = typer.Option(None, "--path"),
     scope: str = typer.Option("global", "--scope"),
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
+        path = _resolve_path(path)
         res = _skills().remove(
             agent=agent,
             skill_id=skill_id,
@@ -201,12 +219,18 @@ def skills_remove(
 @skills_app.command("status")
 def skills_status(
     agent: str = typer.Option("claude", "--agent"),
-    path: str = typer.Option(None, "--path"),
+    path: str | None = typer.Option(None, "--path"),
     scope: str = typer.Option("global", "--scope"),
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
+        path = _resolve_path(path)
         st = _skills().status(agent=agent, path=path, scope=effective_scope)
+        # ``drifted`` is called out separately from ``outdated`` even though it
+        # is a subset of it: the two have the same repair but different causes,
+        # and "outdated" beside a skill sitting at the current version reads as
+        # a bug in the report rather than as a damaged file.
+        drifted = [s.id for s in st.outdated if s.drifted]
         emit(
             {
                 "agent": st.agent,
@@ -214,10 +238,12 @@ def skills_status(
                 "installed": [s.id for s in st.installed],
                 "missing": [s.id for s in st.missing],
                 "outdated": [s.id for s in st.outdated],
+                "drifted": drifted,
             },
             human=(
                 f"agent={st.agent} installed={len(st.installed)} "
                 f"missing={[s.id for s in st.missing]} outdated={[s.id for s in st.outdated]}"
+                + (f" drifted={drifted}" if drifted else "")
             ),
         )
 
@@ -229,12 +255,46 @@ def skills_add(source: str) -> None:
         emit({"detail": res.detail}, human=res.detail or "added")
 
 
-def _format_skill_operation(*, verb: str, agent: str, changed: tuple[str, ...]) -> str:
+def _skill_line(skill) -> str:
+    """One catalog row: the bundle's version, and what is actually installed.
+
+    The installed version only earns a mention when it differs — printing
+    ``v3 (installed v3)`` on eleven rows buries the one row where it is ``v2``.
+    """
+    mark = "✓" if skill.installed else " "
+    line = f"  {mark} {skill.id} v{skill.version}"
+    if skill.installed and skill.installed_version != skill.version:
+        line = f"{line} (installed v{skill.installed_version})"
+    if skill.drifted:
+        line = f"{line} [modified — reinstall to repair]"
+    return line
+
+
+def _format_skill_operation(
+    *,
+    verb: str,
+    agent: str,
+    changed: tuple[str, ...],
+    support_files: list[str] | None = None,
+    unavailable: list[str] | None = None,
+) -> str:
     if changed:
-        return f"{verb} Potpie skills for {agent}: {', '.join(changed)}"
-    if verb == "installed":
-        return f"Potpie skills for {agent} are already installed"
-    return f"Potpie skills for {agent} are already up to date"
+        line = f"{verb} Potpie skills for {agent}: {', '.join(changed)}"
+    elif verb == "installed":
+        line = f"Potpie skills for {agent} are already installed"
+    else:
+        line = f"Potpie skills for {agent} are already up to date"
+    # Named, because these are files the command wrote that the caller did not
+    # list — the harness instruction file and its slash commands. Silence here
+    # is how ``skills install`` came to edit a user-authored CLAUDE.md without
+    # anything in its output saying so.
+    if support_files:
+        line = f"{line}\n{verb} support files: {', '.join(support_files)}"
+    # And the mirror image: a sweep that covered less than the catalog says so,
+    # rather than letting "installed 10 skills" read as "installed everything".
+    if unavailable:
+        line = f"{line}\nnot carried by the {agent} bundle: {', '.join(unavailable)}"
+    return line
 
 
 def _format_skill_remove(*, agent: str, removed: tuple[str, ...]) -> str:
@@ -248,6 +308,28 @@ def _effective_scope(*, scope: str, path: str | None) -> str:
     if path and normalized == "global":
         return "project"
     return normalized
+
+
+def _resolve_path(path: str | None) -> str | None:
+    """Absolutise ``--path`` here, in the caller's process.
+
+    Every one of these commands crosses an RPC to the daemon, which runs with
+    whatever working directory it was launched from — often ``/`` or the
+    directory of a terminal closed weeks ago. A relative path therefore resolved
+    *there*: ``skills install --path .`` wrote eleven skill directories into the
+    daemon's cwd and reported the install as done for the repo the user was
+    standing in. A quoted ``~/project`` was worse still, since nothing expanded
+    it and the daemon created a directory literally named ``~``.
+
+    The caller's cwd is the only one that can be meant, and this process is the
+    only one that knows it.
+    """
+    if path is None:
+        return None
+    text = path.strip()
+    if not text:
+        return path
+    return str(Path(text).expanduser().resolve())
 
 
 __all__ = ["skills_app"]

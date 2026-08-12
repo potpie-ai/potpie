@@ -50,6 +50,7 @@ from potpie_context_engine.adapters.outbound.session.injection_ledger import (
 )
 from potpie_context_engine.adapters.outbound.skills.claude_target import (
     ClaudeAgentTarget,
+    ClaudePluginAgentTarget,
     CodexAgentTarget,
     CursorAgentTarget,
     OpenCodeAgentTarget,
@@ -158,6 +159,11 @@ def build_host_shell(
         skills = DefaultSkillManager(
             targets={
                 "claude": ClaudeAgentTarget(),
+                # Registered so the harness is known rather than merely absent:
+                # its bundle ships in the wheel and installs at project scope,
+                # but leaving it out made every subcommand answer with a "Known:"
+                # list that read as "unsupported".
+                "claude-plugin": ClaudePluginAgentTarget(),
                 "codex": CodexAgentTarget(),
                 "cursor": CursorAgentTarget(),
                 "opencode": OpenCodeAgentTarget(),

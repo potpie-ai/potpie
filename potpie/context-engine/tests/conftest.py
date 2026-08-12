@@ -33,3 +33,20 @@ def _isolated_home(
     monkeypatch.setenv(
         "CONTEXT_ENGINE_HOME", str(tmp_path_factory.mktemp("potpie-home"))
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_harness_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Never let a test write into the *developer's* ``~/.claude`` & friends.
+
+    ``CONTEXT_ENGINE_HOME`` above pins Potpie's own state and deliberately does
+    not pin this one: skills install where the harness reads them, which is the
+    real home directory. So the skill-manager tests installed eleven files into
+    the live ``~/.claude``, ``~/.cursor``, ``~/.agents`` and
+    ``~/.config/opencode`` and overwrote whatever versions were there.
+    """
+    monkeypatch.setenv(
+        "POTPIE_HARNESS_HOME", str(tmp_path_factory.mktemp("potpie-harness-home"))
+    )
