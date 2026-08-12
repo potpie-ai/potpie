@@ -68,6 +68,14 @@ class HashingEmbedder:
     dimensions: int = _DEFAULT_DIMENSIONS
     name: str = "local-hashing-v1"
 
+    calibrated: bool = False
+    """Its cosine ranks, but does not measure meaning — see ``EmbedderPort``.
+
+    Feature hashing projects lexical overlap through random signs, so two
+    passages that say the same thing in different words are not near each other
+    and the *magnitude* carries almost no signal. Measured: blending this
+    cosine into resource relevance costs 0.047 top-1 against ignoring it."""
+
     def __post_init__(self) -> None:
         # A non-positive dimension would crash at runtime (modulo-by-zero in
         # ``_bucket`` for 0, negative indexing for <0); reject it up front.
@@ -98,6 +106,11 @@ class SentenceTransformerEmbedder:
     @property
     def name(self) -> str:
         return f"sentence-transformers/{self.model_name}"
+
+    @property
+    def calibrated(self) -> bool:
+        """A trained sentence encoder: its cosine is evidence, not just order."""
+        return True
 
     @property
     def dimensions(self) -> int:

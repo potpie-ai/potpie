@@ -91,6 +91,25 @@ RRF_K = 60
 #: narrow to survive a weighted mean against recency and strength.
 LEXICAL_RANK_DECAY = 10.0
 
+#: How much of a lexical hit's relevance is its measured cosine, when the
+#: semantic arm scored the same chunk. The rest stays rank-and-coverage.
+#:
+#: Rank-only relevance is *ordinal*: rank 1 scores 1.0 whether the chunk answers
+#: the query or merely beat everything else, which is why unanswerable queries
+#: used to come back at the same confident score as correct ones. Cosine is the
+#: only bounded, measured [0, 1] signal in the pipeline, so it is what turns
+#: "nothing beat this" into "this is actually close to what was asked".
+#:
+#: 0.75 is measured, not chosen for roundness — see
+#: ``docs/context-graph/retrieval-tuning.md``. Over a 316-chunk corpus and 190
+#: labelled questions the region 0.65-0.80 is a plateau, and both ends of it are
+#: far better than either extreme. **1.0 is not the limit of a good thing**: at
+#: pure cosine, top-1 collapses from 0.72 to 0.54, which is the same failure
+#: :func:`~...readers.resources._relevance` documents — an exact identifier is
+#: the strongest lexical signal and the weakest embedding one, so the remaining
+#: 0.25 of rank-and-coverage is what keeps ``ERR_QUOTA_EXCEEDED`` findable.
+SIMILARITY_BLEND = 0.75
+
 # --- Error codes ------------------------------------------------------------
 # Stable strings the CLI maps to exit codes and ``--json`` error payloads.
 
@@ -262,6 +281,15 @@ class IndexSearchResult:
     semantic_candidates: int = 0
     detail: str | None = None
 
+    similarity_calibrated: bool = False
+    """Whether ``ChunkHit.similarity`` means "close in meaning", not just "ranks".
+
+    Travels with the result rather than being looked up, because the reader has
+    no way to reach the embedder and should not grow one. ``False`` is the
+    conservative default: a profile that has not said so is read as ordinal, and
+    a reader that ignores this field behaves exactly as it did before the field
+    existed. See :data:`SIMILARITY_BLEND` for what turns on it."""
+
 
 @dataclass(frozen=True, slots=True)
 class IndexReport:
@@ -408,6 +436,7 @@ __all__ = [
     "RESOURCE_INDEX_UNAVAILABLE",
     "RESOURCE_INDEX_WRITE_FAILED",
     "RRF_K",
+    "SIMILARITY_BLEND",
     "SNIPPET_TARGET_CHARS",
     "ChunkHit",
     "DrainReport",

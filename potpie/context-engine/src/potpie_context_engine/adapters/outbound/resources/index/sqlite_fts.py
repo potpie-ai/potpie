@@ -89,6 +89,14 @@ WINDOW_KIND_SECTION = "section"
 ARM_CANDIDATE_MULTIPLIER = 5
 ARM_CANDIDATE_MINIMUM = 50
 
+#: BM25 weights for ``chunks_fts``'s columns, in declaration order:
+#: ``(text, label, section_title)``. Unweighted, all three score at 1.0, so a
+#: query term landing in a 30-character section title counted exactly as much as
+#: one buried in a 4,000-character body — and the title is the more deliberate
+#: signal, since a human named the section that. BM25's length normalization
+#: already favours short fields; this says the field also *means* more.
+BM25_COLUMN_WEIGHTS: tuple[float, float, float] = (1.0, 2.0, 3.0)
+
 _SCHEMA = (
     """
     CREATE TABLE IF NOT EXISTS meta(
@@ -291,13 +299,24 @@ def fts_match_expression(query: str) -> str | None:
     A query made *entirely* of stopwords keeps them. "how do I" retrieving
     loosely is a poor answer; retrieving nothing is a wrong one, and the
     semantic arm is the better judge of that query anyway.
+
+    A token of at least :data:`_PREFIX_MIN_CHARS` also gets FTS5's prefix
+    operator. Until it did, no prefix reached SQLite at all: quoting made every
+    token an exact phrase, so :func:`term_coverage` would credit ``fail`` for a
+    chunk saying ``failover`` that the arm had no way to *retrieve* — scoring
+    knew about a match retrieval could not find. The floor stops it degenerating
+    into a wildcard scan: three characters or fewer stay exact, because ``"of"*``
+    matches most of the corpus and buys nothing.
     """
     tokens = list(query_terms(query))
     if not tokens:
         return None
     # Bound the expression: a pasted paragraph is a legal query and a
     # thousand-term OR is a pathological one.
-    return " OR ".join(f'"{token}"' for token in tokens[:64])
+    return " OR ".join(
+        f'"{token}"*' if len(token) >= _PREFIX_MIN_CHARS else f'"{token}"'
+        for token in tokens[:64]
+    )
 
 
 def embed_windows(text: str) -> tuple[tuple[int, int], ...]:
@@ -811,7 +830,18 @@ class SqliteFtsResourceIndex:
             hits=hits,
             lexical_candidates=len(lexical),
             semantic_candidates=len(semantic),
+            similarity_calibrated=self.similarity_calibrated(),
         )
+
+    def similarity_calibrated(self) -> bool:
+        """Whether this index's similarity numbers measure meaning.
+
+        An embedder that has not declared itself is read as uncalibrated: the
+        reader's conservative branch is the one that was shipping before the
+        flag existed, so an unknown third-party embedder degrades to the old
+        behaviour rather than to an untested one.
+        """
+        return bool(getattr(self.embedder, "calibrated", False))
 
     @staticmethod
     def _answered_mode(
@@ -849,15 +879,18 @@ class SqliteFtsResourceIndex:
             return {}
         sql = (
             "SELECT c.id AS id, "
-            "snippet(chunks_fts, 0, '', '', '…', 16) AS snip "
+            "snippet(chunks_fts, 0, '', '', '…', 16) AS snip, "
+            "bm25(chunks_fts, ?, ?, ?) AS relevance "
             "FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid "
             "WHERE chunks_fts MATCH ? AND c.pot_id = ?"
         )
-        params: list[Any] = [expression, pot_id]
+        # Parameters bind in the order they appear in the statement text, so the
+        # column weights lead and the ordering runs off the alias.
+        params: list[Any] = [*BM25_COLUMN_WEIGHTS, expression, pot_id]
         if doc:
             sql += " AND c.doc = ?"
             params.append(doc)
-        sql += " ORDER BY bm25(chunks_fts) LIMIT ?"
+        sql += " ORDER BY relevance LIMIT ?"
         params.append(limit)
         with self._lock:
             try:

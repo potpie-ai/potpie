@@ -161,11 +161,13 @@ def test_changing_the_embedder_marks_every_vector_pending(tmp_path):
 
 def test_hostile_query_text_becomes_a_legal_match_expression():
     """FTS5 MATCH is a query language; user text is not. Quote, never pass through."""
-    assert fts_match_expression("ERR_QUOTA_EXCEEDED") == '"ERR_QUOTA_EXCEEDED"'
-    # ``:`` would be a column filter and raise; ``NEAR`` is an operator.
-    assert fts_match_expression("col:value") == '"col" OR "value"'
-    assert fts_match_expression('NEAR("x")') == '"NEAR" OR "x"'
-    assert fts_match_expression('"unbalanced') == '"unbalanced"'
+    assert fts_match_expression("ERR_QUOTA_EXCEEDED") == '"ERR_QUOTA_EXCEEDED"*'
+    # ``:`` would be a column filter and raise; ``NEAR`` is an operator. The
+    # quoting is what neutralizes them; the trailing ``*`` is ours, applied
+    # outside the quotes, so it never turns user text into an operator.
+    assert fts_match_expression("col:value") == '"col" OR "value"*'
+    assert fts_match_expression('NEAR("x")') == '"NEAR"* OR "x"'
+    assert fts_match_expression('"unbalanced') == '"unbalanced"*'
     # Nothing tokenizable is not an empty query — it is *no* query.
     assert fts_match_expression("--- ***") is None
     assert fts_match_expression("") is None
@@ -178,16 +180,16 @@ def test_function_words_are_dropped_so_a_question_does_not_match_everything():
     chunk containing ``CRDTs`` ranked fifth behind chunks whose only claim was
     the word "we".
     """
-    assert fts_match_expression("why did we reject CRDTs") == '"reject" OR "CRDTs"'
+    assert fts_match_expression("why did we reject CRDTs") == '"reject"* OR "CRDTs"*'
     assert fts_match_expression("how do I roll back the payments service") == (
-        '"roll" OR "back" OR "payments" OR "service"'
+        '"roll"* OR "back"* OR "payments"* OR "service"*'
     )
     # A query that is *only* function words keeps them: retrieving loosely beats
     # retrieving nothing, and the semantic arm is the better judge there anyway.
-    assert fts_match_expression("what is it") == '"what" OR "is" OR "it"'
+    assert fts_match_expression("what is it") == '"what"* OR "is" OR "it"'
     # Words an operator might genuinely be searching for are not function words,
     # however short. "not cumulative" means it.
-    assert fts_match_expression("not cumulative") == '"not" OR "cumulative"'
+    assert fts_match_expression("not cumulative") == '"not" OR "cumulative"*'
 
 
 def test_term_coverage_separates_a_real_answer_from_a_lucky_rank():
@@ -226,7 +228,26 @@ def test_coverage_tolerates_morphology_but_not_coincidence():
 
 def test_underscores_stay_inside_one_token():
     """``get_user_id`` is one identifier, not three words."""
-    assert fts_match_expression("get_user_id") == '"get_user_id"'
+    assert fts_match_expression("get_user_id") == '"get_user_id"*'
+
+
+def test_long_enough_terms_get_a_prefix_so_retrieval_can_reach_inflections():
+    """Prefix matching has to reach SQLite, not just the coverage denominator.
+
+    Before this, every token was an exact phrase, so ``fail`` could not
+    *retrieve* a chunk saying ``failover`` — while :func:`term_coverage` happily
+    credited it as covered. Scoring knew about a match retrieval could not find.
+    """
+    assert fts_match_expression("failover") == '"failover"*'
+    assert fts_match_expression("fail") == '"fail"*'
+    # Short tokens stay exact: ``"of"*`` matches most of a corpus and buys
+    # nothing, which is the same reason the coverage side has a floor.
+    assert fts_match_expression("api v2") == '"api" OR "v2"'
+    assert fts_match_expression("dns ttl cache") == '"dns" OR "ttl" OR "cache"*'
+    # A prefix widens retrieval; it does not widen coverage, which still counts
+    # whole tokens (plus its own >=4-char prefix rule). Under-counting there
+    # only discounts confidence, never removes a hit.
+    assert term_coverage("Webhook retries use backoff.", ("retry",)) == 0.0
 
 
 def test_windows_cover_the_whole_chunk_with_overlap():

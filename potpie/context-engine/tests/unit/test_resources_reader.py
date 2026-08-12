@@ -9,6 +9,7 @@ from potpie_context_core.agent_context_port import (
     READER_BACKED_INCLUDES,
 )
 from potpie_context_core.ports.resource_index import (
+    LEXICAL_RANK_DECAY,
     MATCH_MODE_DISABLED,
     MATCH_MODE_HYBRID,
     MATCH_MODE_LEXICAL,
@@ -214,6 +215,69 @@ def test_scope_service_is_ignored_rather_than_silently_honoured():
     rdr, index = reader(IndexSearchResult(profile="sqlite_fts"))
     rdr.read(ReadRequest(pot_id="p", query="x", scope={"service": "billing"}))
     assert index.calls[0]["doc"] is None
+
+
+def _relevance_of(*, similarity, lexical_rank, term_coverage, calibrated):
+    """The relevance the reader votes with, read back off the ranked item."""
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_hybrid",
+            match_mode=MATCH_MODE_HYBRID,
+            hits=(
+                hit(
+                    0,
+                    similarity=similarity,
+                    lexical_rank=lexical_rank,
+                    semantic_rank=1,
+                    term_coverage=term_coverage,
+                ),
+            ),
+            similarity_calibrated=calibrated,
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="liability cap"))
+    return response.items[0].breakdown["semantic_similarity"]
+
+
+def test_a_calibrated_cosine_is_blended_into_relevance():
+    """Rank alone is ordinal: rank 1 scores 1.0 whether or not it answers."""
+    ordinal = _relevance_of(
+        similarity=0.40, lexical_rank=1, term_coverage=1.0, calibrated=False
+    )
+    blended = _relevance_of(
+        similarity=0.40, lexical_rank=1, term_coverage=1.0, calibrated=True
+    )
+    assert ordinal == pytest.approx(1.0)
+    # 0.25 * 1.0 + 0.75 * 0.40
+    assert blended == pytest.approx(0.55)
+
+
+def test_an_uncalibrated_index_keeps_the_ordinal_score():
+    """Protects the OSS default, which ships the hashing embedder.
+
+    Blending that embedder's cosine is measurably *worse* than ignoring it
+    (top-1 0.705 -> 0.658 over 190 questions), so the improvement that a real
+    sentence encoder buys must not be applied where the number is noise. A
+    profile that does not declare calibration gets the pre-blend behaviour.
+    """
+    assert IndexSearchResult(profile="sqlite_fts").similarity_calibrated is False
+    # rank 2 -> 10 / (10 - 1 + 2), times the coverage discount, and the cosine
+    # makes no difference to it at any value.
+    expected = (LEXICAL_RANK_DECAY / (LEXICAL_RANK_DECAY - 1.0 + 2)) * 0.5
+    for similarity in (0.05, 0.4, 0.95):
+        assert _relevance_of(
+            similarity=similarity,
+            lexical_rank=2,
+            term_coverage=0.5,
+            calibrated=False,
+        ) == pytest.approx(expected)
+
+
+def test_a_lexical_only_hit_is_never_blended_even_when_calibrated():
+    """No cosine was measured for it; a stand-in would be an invented signal."""
+    assert _relevance_of(
+        similarity=None, lexical_rank=1, term_coverage=1.0, calibrated=True
+    ) == pytest.approx(1.0)
 
 
 def test_resources_is_advertised_backed_and_demoted():

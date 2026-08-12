@@ -33,6 +33,7 @@ from typing import Any, Sequence
 from potpie_context_core.ports.resource_index import (
     LEXICAL_RANK_DECAY,
     MATCH_MODE_DISABLED,
+    SIMILARITY_BLEND,
     ChunkHit,
     IndexSearchResult,
     ResourceIndexPort,
@@ -174,11 +175,11 @@ def _candidate(hit: ChunkHit, result: IndexSearchResult) -> Candidate:
         # once, by the envelope builder's rank demotion, rather than by
         # understating what a chunk is here.
         strength="attested",
-        semantic_similarity=_relevance(hit),
+        semantic_similarity=_relevance(hit, calibrated=result.similarity_calibrated),
     )
 
 
-def _relevance(hit: ChunkHit) -> float | None:
+def _relevance(hit: ChunkHit, *, calibrated: bool = False) -> float | None:
     """The relevance the ranker should order this hit by.
 
     ``semantic_similarity`` is the ranker's only relevance channel, so whatever
@@ -203,6 +204,31 @@ def _relevance(hit: ChunkHit) -> float | None:
     embedding one". This makes scoring agree with filtering instead of
     contradicting it. Semantic-only hits are untouched: their measured cosine
     is the honest number and stays.
+
+    What the paragraph above got *half* right is that the cosine is an input to
+    be weighed rather than a verdict to be obeyed. Forwarding it whole inverts
+    the ranking; discarding it leaves the score purely ordinal, and an ordinal
+    score cannot tell "nothing beat this" from "this answers the question" —
+    measured, that is a corpus where unanswerable queries top out *above* the
+    weakest correct answer. So when both arms scored a chunk, the two are
+    blended at :data:`SIMILARITY_BLEND`, which is measured rather than assumed
+    and is deliberately short of 1.0 for exactly the reason the ``CRDTs``
+    failure gives.
+
+    A chunk **only** the lexical arm found keeps the pure rank-and-coverage
+    score: no cosine was measured for it, and substituting a neutral stand-in
+    would be inventing a signal, the same mistake as treating unknown coverage
+    as zero. The asymmetry is real but small in practice — measured over 190
+    questions, 189 of the top hits were scored by both arms — and it grows only
+    as a corpus outgrows the candidate pool.
+
+    ``calibrated`` is what keeps this honest across deployments. The blend is an
+    improvement only where the cosine means something: with a real sentence
+    encoder it moves top-1 from 0.700 to 0.721, and with the bundled hashing
+    embedder — potpie's OSS default, which ships without a model download — it
+    moves top-1 from 0.705 *down* to 0.658. So an uncalibrated index keeps the
+    ordinal score, and the tuning that helps a hosted deployment cannot quietly
+    degrade the default one.
     """
     if hit.lexical_rank is None:
         return hit.similarity
@@ -213,7 +239,10 @@ def _relevance(hit: ChunkHit) -> float | None:
     # is the second half of the signal: how much of what was asked for is
     # actually here. Unknown coverage means unmeasured, so it does not discount.
     coverage = 1.0 if hit.term_coverage is None else hit.term_coverage
-    return rank_score * coverage
+    ordinal = rank_score * coverage
+    if hit.similarity is None or not calibrated:
+        return ordinal
+    return (1.0 - SIMILARITY_BLEND) * ordinal + SIMILARITY_BLEND * hit.similarity
 
 
 def _payload(hit: ChunkHit, result: IndexSearchResult) -> dict[str, Any]:
