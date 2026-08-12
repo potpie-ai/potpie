@@ -76,28 +76,66 @@ class LocalPotStore:
         """Create a pot. Repo registration belongs on ``add_source`` via the CLI."""
         _ = repo
         state = self._load()
-        # Reuse an existing pot by name (idempotent setup).
+        # Reuse an existing pot by name (idempotent setup) — but never an
+        # archived one. Archiving tore its graph and resource tree down, so
+        # "reuse" would hand back an empty pot under a name the caller expected
+        # to be new, and quietly un-hide it by making it active.
         for pid, row in state.get("pots", {}).items():
-            if row.get("name") == name:
+            if row.get("name") == name and not row.get("archived"):
                 if use:
                     state["active"] = pid
                     self._save(state)
-                return {**row, "active": state.get("active") == pid}
+                return {**row, "active": state.get("active") == pid, "created": False}
         pot_id = f"pot_{uuid.uuid4().hex[:12]}"
         row = {"pot_id": pot_id, "name": name, "archived": False}
         state.setdefault("pots", {})[pot_id] = row
         if use or state.get("active") is None:
             state["active"] = pot_id
         self._save(state)
-        return {**row, "active": state.get("active") == pot_id}
+        return {**row, "active": state.get("active") == pot_id, "created": True}
 
-    def _resolve_ref(self, state: dict[str, Any], ref: str) -> str | None:
-        if ref in state.get("pots", {}):
+    def _resolve_ref(
+        self, state: dict[str, Any], ref: str, *, include_archived: bool = False
+    ) -> str | None:
+        """The pot id a ref names.
+
+        Archived pots are excluded by default: they are not selectable, not
+        writable, and not routable, so leaving them in the id/name space means a
+        live pot can be shadowed by a dead one. Callers that need to *see* an
+        archived pot — the listing, and the lookup that decides which refusal to
+        raise — opt in.
+        """
+        pots = state.get("pots", {})
+
+        def _eligible(pid: str) -> bool:
+            return include_archived or not pots[pid].get("archived")
+
+        if ref in pots and _eligible(ref):
             return ref
-        for pid, row in state.get("pots", {}).items():
-            if row.get("name") == ref:
+        for pid, row in pots.items():
+            if row.get("name") == ref and _eligible(pid):
                 return pid
         return None
+
+    def find(self, *, ref: str, include_archived: bool = True) -> dict[str, Any] | None:
+        """The row a ref names, without selecting or mutating anything."""
+        state = self._load()
+        pid = self._resolve_ref(state, ref, include_archived=include_archived)
+        if pid is None:
+            return None
+        return {**state["pots"][pid], "active": state.get("active") == pid}
+
+    def names_in_use(self) -> dict[str, str]:
+        """``name -> pot_id`` for every live pot, for uniqueness checks."""
+        state = self._load()
+        return {
+            str(row.get("name")): pid
+            for pid, row in state.get("pots", {}).items()
+            if not row.get("archived") and row.get("name")
+        }
+
+    def pot_ids(self) -> frozenset[str]:
+        return frozenset(self._load().get("pots", {}))
 
     def use(self, *, ref: str) -> dict[str, Any] | None:
         state = self._load()
@@ -156,6 +194,11 @@ class LocalPotStore:
         sources = state.get("sources", {})
         rows: list[dict[str, Any]] = []
         for pot_id, pot in state.get("pots", {}).items():
+            # An archived pot is not a routing candidate. Left in, a repo whose
+            # pot had been archived still resolved to it, and every repo-scoped
+            # read and write went into a pot whose graph had been torn down.
+            if pot.get("archived"):
+                continue
             for row in sources.get(pot_id, []):
                 if row.get("kind") != "repo":
                     continue

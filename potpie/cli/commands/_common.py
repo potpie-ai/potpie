@@ -18,6 +18,7 @@ import json
 import time
 import traceback
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Final, Iterator, NoReturn, Sequence
 
@@ -32,6 +33,8 @@ from potpie.cli.repo_location import (
 from potpie_context_core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
+    PotArchived,
+    PotNameConflict,
     PotNotFound,
 )
 from potpie_context_engine.domain.ports.cli_auth.credentials import CredentialStore
@@ -389,6 +392,25 @@ def contract() -> Iterator[None]:
                 else "check backend/daemon readiness with 'potpie doctor'"
             ),
         )
+    except PotArchived as exc:
+        # Its own code, not `pot_not_found`: the ref resolved, and sending the
+        # operator to `pot list` to look for a pot that is deliberately not in
+        # that listing is the same misdirection this table exists to avoid.
+        result = "pot_archived"
+        error_code = "pot_archived"
+        fail(
+            code="pot_archived",
+            message=str(exc),
+            next_action=getattr(exc, "recommended_next_action", None),
+        )
+    except PotNameConflict as exc:
+        result = "pot_name_conflict"
+        error_code = "pot_name_conflict"
+        fail(
+            code="pot_name_conflict",
+            message=str(exc),
+            next_action=getattr(exc, "recommended_next_action", None),
+        )
     except PotNotFound as exc:
         result = "pot_not_found"
         error_code = "pot_not_found"
@@ -589,10 +611,74 @@ def _refuse_origin_with_no_host_behind_it(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _PotMatch:
+    """One host's answer for a pot ref, including whether it is archived.
+
+    Archived pots are matched rather than skipped so the refusal can say
+    ``pot_archived``. Filtering them out here instead produced ``pot_not_found``
+    for a ref that resolved perfectly well, sending the operator to ``pot list``
+    to hunt for a pot that listing deliberately hides.
+    """
+
+    origin: str
+    pot_id: str
+    name: str
+    archived: bool
+
+
+def _resolve_match(
+    matches: list[_PotMatch],
+    *,
+    ref: str,
+    qualify_hint: str,
+    list_hint: str,
+    not_found_message: str | None = None,
+) -> _PotMatch:
+    """Pick the one pot a ref means, or refuse with the reason it cannot.
+
+    A live pot always wins over an archived one, on any host: an archived pot
+    still answering to a name is precisely how a dead pot shadows a live one, so
+    it must not make a ref ambiguous either.
+    """
+    from potpie.cli import hosts
+
+    live = [match for match in matches if not match.archived]
+    if len(live) > 1:
+        qualified = ", ".join(hosts.qualify(m.origin, m.name) for m in live)
+        fail(
+            code="ambiguous_pot",
+            message=f"'{ref}' matches a pot on more than one host: {qualified}.",
+            next_action=qualify_hint,
+        )
+    if live:
+        return live[0]
+    if matches:
+        archived = matches[0]
+        fail(
+            code="pot_archived",
+            message=(
+                f"Pot '{archived.name}' ({archived.pot_id}) is archived, so it "
+                f"cannot be used as a target. Archiving cleared its graph and "
+                f"stored documents."
+            ),
+            next_action=(
+                "see it with 'potpie pot list --archived', or start a new pot "
+                "with 'potpie pot create <name> --use'"
+            ),
+        )
+    fail(
+        code="pot_not_found",
+        message=not_found_message or f"No pot matching '{ref}'.",
+        next_action=list_hint,
+    )
+    raise AssertionError("unreachable")  # pragma: no cover - fail() exits
+
+
 def _find_pot_in(
     origin: str, ref: str, *, unreachable_hint: str | None = None
-) -> tuple[str, str] | None:
-    """``(pot_id, name)`` for ``ref`` on ``origin``, or ``None``.
+) -> _PotMatch | None:
+    """The match for ``ref`` on ``origin``, or ``None``.
 
     Passing ``unreachable_hint`` turns a host that cannot be enumerated from
     "holds no match" into a refusal carrying that hint. Resolving a bare ref
@@ -625,7 +711,12 @@ def _find_pot_in(
         )
     for pot in pots:
         if ref in (pot.pot_id, pot.name):
-            return pot.pot_id, pot.name
+            return _PotMatch(
+                origin=origin,
+                pot_id=pot.pot_id,
+                name=pot.name,
+                archived=bool(getattr(pot, "archived", False)),
+            )
     return None
 
 
@@ -663,16 +754,17 @@ def _resolve_explicit_pot(explicit: str) -> str:
         found = _find_pot_in(
             origin, ref, unreachable_hint=_unreachable_host_hint(origin)
         )
-        if found is None:
-            fail(
-                code="pot_not_found",
-                message=f"No pot matching '{ref}' on the {origin} host.",
-                next_action=f"run 'potpie pot list --{origin}'",
-            )
-        return found[0]
+        match = _resolve_match(
+            [found] if found is not None else [],
+            ref=ref,
+            qualify_hint="qualify it, e.g. '--pot managed:<name>'",
+            list_hint=f"run 'potpie pot list --{origin}'",
+            not_found_message=f"No pot matching '{ref}' on the {origin} host.",
+        )
+        return match.pot_id
 
     candidates = _searchable_origins()
-    matches: list[tuple[str, str, str]] = []
+    matches: list[_PotMatch] = []
     for candidate in candidates:
         found = _find_pot_in(
             candidate,
@@ -684,24 +776,16 @@ def _resolve_explicit_pot(explicit: str) -> str:
             ),
         )
         if found is not None:
-            matches.append((candidate, found[0], found[1]))
+            matches.append(found)
 
-    if not matches:
-        fail(
-            code="pot_not_found",
-            message=f"No pot matching '{explicit}'.",
-            next_action="run 'potpie pot list'",
-        )
-    if len(matches) > 1:
-        qualified = ", ".join(hosts.qualify(o, name) for o, _, name in matches)
-        fail(
-            code="ambiguous_pot",
-            message=f"'{explicit}' matches a pot on more than one host: {qualified}.",
-            next_action="qualify it, e.g. '--pot managed:<name>'",
-        )
-    origin, pot_id, _ = matches[0]
-    hosts.set_current_origin(origin)
-    return pot_id
+    match = _resolve_match(
+        matches,
+        ref=explicit,
+        qualify_hint="qualify it, e.g. '--pot managed:<name>'",
+        list_hint="run 'potpie pot list'",
+    )
+    hosts.set_current_origin(match.origin)
+    return match.pot_id
 
 
 def resolve_pot_scope(
@@ -1097,21 +1181,24 @@ def _select_origin_for_use(
 
     candidates = _searchable_origins()
     matches = [
-        candidate
+        found
         for candidate in candidates
-        if _find_pot_in(
-            candidate,
-            ref,
-            unreachable_hint=(
-                _qualify_hint("potpie use", candidate, ref)
-                if len(candidates) > 1
-                else None
-            ),
+        if (
+            found := _find_pot_in(
+                candidate,
+                ref,
+                unreachable_hint=(
+                    _qualify_hint("potpie use", candidate, ref)
+                    if len(candidates) > 1
+                    else None
+                ),
+            )
         )
         is not None
     ]
-    if len(matches) > 1:
-        qualified = ", ".join(hosts.qualify(origin, ref) for origin in matches)
+    live = [match for match in matches if not match.archived]
+    if len(live) > 1:
+        qualified = ", ".join(hosts.qualify(m.origin, ref) for m in live)
         fail(
             code="ambiguous_pot",
             message=f"'{ref}' matches a pot on more than one host: {qualified}.",
@@ -1119,9 +1206,12 @@ def _select_origin_for_use(
                 "qualify it, e.g. 'potpie use managed:<name>', or pass --local / --managed"
             ),
         )
-    # Not found anywhere: hand it to the current host so the failure comes from
-    # the host, with its own wording, exactly as it did before.
-    origin = matches[0] if matches else hosts.current_origin()
+    # Not found anywhere — or found only as an archived pot: hand it to the host
+    # that holds it (or the current one) so the failure comes from the host,
+    # with its own wording, exactly as it did before. The host's ``use_pot``
+    # raises ``PotArchived`` for the archived case.
+    origin = (live or matches or [None])[0]
+    origin = origin.origin if origin is not None else hosts.current_origin()
     hosts.set_current_origin(origin)
     return ref, origin, True
 
@@ -1309,6 +1399,10 @@ def _repo_source_index_per_pot(host: Any) -> list[tuple[str, str, tuple[str, ...
         return []
     rows: list[tuple[str, str, tuple[str, ...]]] = []
     for pot in pots:
+        # Matches the control-plane index above, which drops archived pots: an
+        # archived pot is not a routing candidate for the current repo.
+        if getattr(pot, "archived", False):
+            continue
         try:
             sources = host.pots.list_sources(pot_id=pot.pot_id)
         except Exception:  # noqa: BLE001
@@ -1348,7 +1442,14 @@ def repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
     if not pot_id:
         return None
     pot_id = str(pot_id)
-    return pot_id if _pot_for_id(host, pot_id) is not None else None
+    pot = _pot_for_id(host, pot_id)
+    # A pointer at a pot that is gone, or archived, is stale rather than
+    # authoritative — and honouring the archived case routed every repo-scoped
+    # read and write into a pot whose graph had already been torn down, which
+    # answers empty instead of failing.
+    if pot is None or bool(getattr(pot, "archived", False)):
+        return None
+    return pot_id
 
 
 def repo_default_matches(host: Any, repo_key: str | None, pot_id: str) -> bool:

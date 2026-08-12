@@ -4,6 +4,15 @@ Wraps :class:`LocalPotStore` (flat-file persistence) and reports backend
 readiness from the wired ``GraphBackend``. The real control plane is the local
 state DB; this proves the service boundary and the CLI wiring.
 
+``archived`` is a terminal lifecycle state, not a display hint. Archiving tears
+a pot's graph and resource tree down, so the flag has to be enforced everywhere
+a pot can be *chosen*: :meth:`_require_live` guards selection, rename, reset,
+re-archive, source registration and repo-default binding, while the store's ref
+resolution and repo-source index drop archived pots outright. The flag used to
+be write-only — nothing read it — which left archived pots listed, selectable,
+writable, and still routing every repo-scoped command into a graph that had
+already been emptied.
+
 Pot teardown (``reset_pot`` / ``archive_pot``) also purges the resource store:
 graph reset alone would leave chunk files under ``<home>/resources/<pot_dir>/``
 pointing at nothing (R8). The purge is conditional on the graph wipe having
@@ -18,7 +27,12 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import LocalPotStore
-from potpie_context_core.errors import PotNotFound, PotTeardownFailed
+from potpie_context_core.errors import (
+    PotArchived,
+    PotNameConflict,
+    PotNotFound,
+    PotTeardownFailed,
+)
 from potpie_context_core.lifecycle import DONE, StepResult
 from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_core.ports.resource_store import ResourceStorePort
@@ -61,19 +75,84 @@ class LocalPotManagementService:
     def create_pot(
         self, *, name: str, repo: str | None = None, use: bool = False
     ) -> PotInfo:
+        self._require_name_is_not_a_pot_id(name)
         return _pot(self.store.create(name=name, repo=repo, use=use))
 
     def use_pot(self, *, ref: str) -> PotInfo:
+        self._require_live(ref, verb="be selected")
         row = self.store.use(ref=ref)
         if row is None:
             raise PotNotFound(f"No pot matching '{ref}'.")
         return _pot(row)
 
     def rename_pot(self, *, ref: str, new_name: str) -> PotInfo:
+        target = self._require_live(ref, verb="be renamed")
+        self._require_name_free(new_name, allow_pot_id=target.pot_id)
+        self._require_name_is_not_a_pot_id(new_name, allow_pot_id=target.pot_id)
         row = self.store.rename(ref=ref, new_name=new_name)
         if row is None:
             raise PotNotFound(f"No pot matching '{ref}'.")
         return _pot(row)
+
+    # --- lifecycle guards ---------------------------------------------------
+    def _require_live(self, ref: str, *, verb: str) -> PotInfo:
+        """The pot a ref names, refusing an archived one by name.
+
+        ``PotNotFound`` would be the wrong answer here and send the operator to
+        ``pot list`` to hunt for something that is not missing. The store's own
+        resolution already skips archived pots, so this is the lookup that gets
+        to see one — and the only place that can tell the two refusals apart.
+        """
+        row = self.store.find(ref=ref, include_archived=True)
+        if row is None:
+            raise PotNotFound(f"No pot matching '{ref}'.")
+        pot = _pot(row)
+        if pot.archived:
+            raise PotArchived(
+                f"Pot '{pot.name}' ({pot.pot_id}) is archived, so it cannot "
+                f"{verb}. Archiving cleared its graph and stored documents.",
+                recommended_next_action=(
+                    "see it with 'potpie pot list --archived', or start a new pot "
+                    "with 'potpie pot create <name> --use'"
+                ),
+            )
+        return pot
+
+    def _require_name_free(self, name: str, *, allow_pot_id: str) -> None:
+        """Refuse a rename onto a name another live pot already answers to.
+
+        ``rename`` enforced nothing, so two pots could end up sharing a name and
+        every bare ref then picked whichever came first in the file — including
+        the bare ref handed to ``pot reset --confirm``.
+
+        ``create`` deliberately does not call this: reusing a pot by name is
+        what makes ``setup`` re-runnable, and that reuse is itself what keeps
+        names unique on the create path.
+        """
+        owner = self.store.names_in_use().get(name)
+        if owner is not None and owner != allow_pot_id:
+            raise PotNameConflict(
+                f"Another pot already uses the name '{name}' ({owner}).",
+                recommended_next_action=(
+                    "pick a different name, or rename the other pot first"
+                ),
+            )
+
+    def _require_name_is_not_a_pot_id(
+        self, name: str, *, allow_pot_id: str | None = None
+    ) -> None:
+        """Refuse a name that shadows some pot's id.
+
+        Refs resolve against ids *and* names, so a pot named after another pot's
+        id makes every reference to that other pot ambiguous — and ids win the
+        lookup, so the shadowed pot becomes permanently unreachable by name.
+        """
+        if name in self.store.pot_ids() and name != allow_pot_id:
+            raise PotNameConflict(
+                f"'{name}' is another pot's id, and a name that shadows an id "
+                f"makes every reference to that pot ambiguous.",
+                recommended_next_action="pick a name that is not a pot id",
+            )
 
     def reset_pot(self, *, ref: str, confirm: bool = False) -> PotTeardownResult:
         # Resolve the pot, clear its graph partition, and drop its resource tree
@@ -81,32 +160,22 @@ class LocalPotManagementService:
         # next import overwrites them); live claims citing chunk files that were
         # deleted underneath them are not.
         del confirm  # enforced at the CLI boundary
-        target = next(
-            (p for p in self.store.list_pots() if ref in (p["pot_id"], p["name"])),
-            None,
-        )
-        if target is None:
-            raise PotNotFound(f"No pot matching '{ref}'.")
+        target = self._require_live(ref, verb="be reset")
         return PotTeardownResult(
-            pot=_pot(target),
-            resources_purged=self._teardown_pot_data(target["pot_id"]),
+            pot=target,
+            resources_purged=self._teardown_pot_data(target.pot_id),
         )
 
     def archive_pot(self, *, ref: str) -> PotTeardownResult:
         # Archive is pot deletion from the control plane: soft-flag the pot,
         # and tear down the graph partition plus resource tree so an archived
         # pot cannot leave dangling chunk files behind (R8).
-        target = next(
-            (p for p in self.store.list_pots() if ref in (p["pot_id"], p["name"])),
-            None,
-        )
-        if target is None:
-            raise PotNotFound(f"No pot matching '{ref}'.")
+        target = self._require_live(ref, verb="be archived")
         # Teardown first, flag second, and the flag is only reached because
         # teardown raises on a failed graph wipe: archiving a pot whose claims
         # are still live hides it from `pot list` while its data stays in the
         # graph — data the user can then neither see nor clear.
-        purged = self._teardown_pot_data(target["pot_id"])
+        purged = self._teardown_pot_data(target.pot_id)
         row = self.store.archive(ref=ref)
         if row is None:
             raise PotNotFound(f"No pot matching '{ref}'.")
@@ -135,6 +204,9 @@ class LocalPotManagementService:
     def add_source(
         self, *, pot_id: str, kind: str, location: str, name: str | None = None
     ) -> SourceInfo:
+        # Registering a source into an archived pot writes a row that nothing
+        # will ever route to, and reports it as a successful binding.
+        self._require_live(pot_id, verb="take new sources")
         return _source(
             self.store.add_source(
                 pot_id=pot_id, kind=kind, location=location, name=name
@@ -170,11 +242,25 @@ class LocalPotManagementService:
 
     # --- repo-local routing defaults ----------------------------------------
     def repo_default(self, *, repo: str) -> str | None:
-        return self.store.repo_default(repo=repo)
+        """The repo's default pot, unless it has since been archived.
+
+        A stored pointer at an archived pot is stale, not authoritative:
+        honouring it kept routing every repo-scoped read and write into a pot
+        whose graph and documents had already been torn down, and the reads came
+        back empty rather than wrong, which is much harder to notice.
+        """
+        pot_id = self.store.repo_default(repo=repo)
+        if not pot_id:
+            return None
+        row = self.store.find(ref=pot_id, include_archived=True)
+        if row is None or row.get("archived"):
+            return None
+        return pot_id
 
     def set_repo_default(self, *, repo: str, pot_id: str) -> None:
         if not any(p.pot_id == pot_id for p in self.list_pots()):
             raise PotNotFound(f"No pot matching '{pot_id}'.")
+        self._require_live(pot_id, verb="be a repo default")
         self.store.set_repo_default(repo=repo, pot_id=pot_id)
 
     def clear_repo_default(self, *, repo: str) -> bool:
@@ -265,6 +351,9 @@ def _pot(row: dict) -> PotInfo:
         name=row.get("name", row["pot_id"]),
         active=bool(row.get("active")),
         archived=bool(row.get("archived")),
+        # Absent on every row that is not a ``create`` answer, and those are
+        # making no claim about creation either way.
+        created=row.get("created"),
     )
 
 

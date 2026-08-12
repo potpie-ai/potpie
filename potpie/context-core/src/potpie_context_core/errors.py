@@ -59,6 +59,43 @@ class PotNotFound(ContextEngineError):
     """Host could not resolve pot_id."""
 
 
+class PotArchived(ContextEngineError):
+    """The pot exists, but archiving it was the end of its life.
+
+    Distinct from :class:`PotNotFound` because the two need different repairs:
+    a ref nobody recognises is a typo, while this one resolved — the pot is
+    listed under ``pot list --archived`` and its graph and resource tree were
+    torn down when it was archived. Selecting it, writing to it, or routing a
+    repo into it can only produce an empty answer from a pot the operator
+    believes still holds their project's memory.
+
+    The flag used to be write-only: nothing in the product read it, so archived
+    pots kept appearing in ``pot list``, kept being selectable, kept accepting
+    claims, and a repo default pointing at one kept routing every scoped read
+    and write into it.
+    """
+
+    def __init__(self, message: str, *, recommended_next_action: str | None = None):
+        super().__init__(message)
+        self.recommended_next_action = recommended_next_action
+
+
+class PotNameConflict(ContextEngineError):
+    """A pot name (or a name shadowing a pot id) is already taken.
+
+    Pot names are the refs humans type, and ``rename`` enforced nothing: two
+    pots could end up sharing one, after which every bare-ref resolution picked
+    an arbitrary one of them — including ``pot reset <name> --confirm``, which
+    then destroyed whichever it happened to find first. A name equal to another
+    pot's *id* is the same defect wearing a different hat, since refs resolve
+    against both.
+    """
+
+    def __init__(self, message: str, *, recommended_next_action: str | None = None):
+        super().__init__(message)
+        self.recommended_next_action = recommended_next_action
+
+
 class MutationBatchValidationError(ContextEngineError):
     """A :class:`~potpie_context_core.reconciliation.MutationBatch` failed structural validation.
 

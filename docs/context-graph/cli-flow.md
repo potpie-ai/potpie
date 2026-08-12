@@ -70,6 +70,8 @@ uniformly across the surface.
   | mistyped flag, missing argument, unknown command | `usage_error` | `1` |
   | pot (or something the pot should hold) not found | `pot_not_found` | `1` |
   | ref matches a pot on more than one host | `ambiguous_pot` | `1` |
+  | ref resolved, but the pot is archived | `pot_archived` | `1` |
+  | a pot name is taken, or shadows a pot id | `pot_name_conflict` | `1` |
   | nothing to scope the command to | `no_active_pot` | `1` |
   | a bug got out (`--verbose` adds the traceback as `detail`) | `unexpected_cli_error` | `1` |
   | daemon / API / backend did not answer (`ContextEngineDisabled`) | `unavailable` | `2` |
@@ -213,7 +215,7 @@ A Pot is the unit of tenancy/isolation; the pot id **is** the storage `group_id`
 Local setup creates and activates a `default` pot.
 
 ```bash
-potpie pot list [--local | --managed | --all]
+potpie pot list [--local | --managed | --all] [--archived]
 potpie pot info
 potpie pot create <name> [--repo .] [--use] [--also-default-for-current-repo]
 potpie pot use    <ref> [--also-default-for-current-repo]
@@ -233,8 +235,26 @@ potpie source remove <id> [--pot <ref>]
 
 - **`pot reset`** is the destructive per-pot wipe (graph partition **and**
   resource store tree) — note there is **no `graph reset`** command.
-  **`pot archive`** soft-archives the pot and tears down the same data; both
+  **`pot archive`** tears down the same data and then retires the pot; both
   require `--confirm`.
+- **`archived` is a terminal lifecycle state, enforced — not a display hint.**
+  Archiving clears the pot's graph and resource tree, so there is nothing left
+  to select: archived pots are excluded from `pot list` (a footer names the
+  count; `--archived` shows them marked `~`), excluded from ref resolution, and
+  refused by `pot use` / `rename` / `reset` / `archive` / `default set` and
+  `source add` with `pot_archived`. A repo default pointing at one reads as
+  unset, and its repo sources drop out of repo→pot matching, so no command keeps
+  routing into an emptied graph. `pot create <archived-name>` starts a fresh pot
+  rather than resurrecting the old one.
+- **Pot names are unique among live pots, and may not shadow a pot id.** Refs
+  resolve against ids *and* names, so `rename` refuses both collisions with
+  `pot_name_conflict`; without that, two pots could share a name and
+  `pot reset <name> --confirm` destroyed an arbitrary one. `create` stays
+  idempotent (reuse by name is what makes `setup` re-runnable) and now reports
+  `created: false` when it reused instead of claiming it created something.
+- **`reset` / `archive` / `rename` take a host-qualified ref** (`managed:<name>`)
+  and route through the same resolver as `--pot`, so they get the cross-host
+  ambiguity refusal too. Their confirmation prompts name the pot *and* the host.
 - **`pot linked` / `pot default`** manage the repo→pot binding consumed by
   `resolve_pot_id`. `pot linked --summary` skips per-pot graph counts for a faster
   repo-routing summary. `pot create`/`pot use --also-default-for-current-repo` set

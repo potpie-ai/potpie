@@ -24,7 +24,18 @@ class PotInfo:
     pot_id: str
     name: str
     active: bool = False
+    #: Terminal lifecycle state. Enforced, not decorative: an archived pot
+    #: cannot be selected, renamed, written to, or routed to, and its graph and
+    #: resource tree were torn down when it was archived.
     archived: bool = False
+    #: Only meaningful on a ``create_pot`` answer, where ``False`` means an
+    #: existing pot of that name was reused. ``create`` is idempotent by design
+    #: (``setup`` re-runs), but it reported "created" either way.
+    #:
+    #: ``None`` is "this host did not say", which is not the same claim as
+    #: ``False`` and must not print the same sentence: a host that predates the
+    #: field would otherwise have every ``pot create`` reported as a reuse.
+    created: bool | None = None
     created_at: datetime | None = None
 
 

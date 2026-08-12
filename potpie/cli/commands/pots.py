@@ -79,6 +79,11 @@ def pot_list(
     ),
     managed: bool = typer.Option(False, "--managed", help="Managed-origin pots only."),
     all_: bool = typer.Option(False, "--all", help="Local + managed pots."),
+    archived: bool = typer.Option(
+        False,
+        "--archived",
+        help="Include archived pots (excluded by default; they cannot be used).",
+    ),
 ) -> None:
     with contract():
         from potpie.cli import hosts
@@ -123,24 +128,39 @@ def pot_list(
                 # would say it three times in one line.
                 human_lines.append(f"  ({exc})")
                 continue
-            if not pots:
+            # Archived pots are hidden rather than listed unmarked. Every pot
+            # command refuses them, so leaving them in the default listing
+            # offered targets that nothing accepts — and `archived` was not even
+            # in the JSON, so no consumer could tell them apart.
+            shown = [p for p in pots if archived or not getattr(p, "archived", False)]
+            hidden = len(pots) - len(shown)
+            if not shown:
                 human_lines.append("  (no pots)")
-            for pot in pots:
+            for pot in shown:
+                is_archived = bool(getattr(pot, "archived", False))
                 # '*' is the pot commands actually act on; '·' is the other
                 # host's own pointer, which is real but not current.
                 marker = " "
-                if pot.active:
+                if is_archived:
+                    marker = "~"
+                elif pot.active:
                     marker = "*" if origin == current else "·"
                 rows.append(
                     {
                         "id": pot.pot_id,
                         "name": pot.name,
                         "active": bool(pot.active),
+                        "archived": is_archived,
                         "current": bool(pot.active and origin == current),
                         "origin": origin,
                     }
                 )
-                human_lines.append(f"{marker} {pot.name} ({pot.pot_id})")
+                suffix = "  archived" if is_archived else ""
+                human_lines.append(f"{marker} {pot.name} ({pot.pot_id}){suffix}")
+            if hidden:
+                human_lines.append(
+                    f"  ({hidden} archived — see 'potpie pot list --archived')"
+                )
 
         if unavailable and len(unavailable) == len(origins):
             # Degrading is only honest while some *other* host answered. With
@@ -320,15 +340,20 @@ def pot_create(
     with contract():
         host = get_host()
         pot = host.pots.create_pot(name=name, use=use)
+        # ``create`` is idempotent so ``setup`` can re-run, but saying "created"
+        # for a pot that already held a project's memory reads as a fresh empty
+        # pot, which is the opposite of what was returned. A host that does not
+        # report the field keeps the old wording rather than being made to claim
+        # a reuse it never mentioned — see ``PotInfo.created``.
+        created = getattr(pot, "created", None)
         payload: dict[str, object] = {
             "id": pot.pot_id,
             "name": pot.name,
             "active": pot.active,
+            "created": created,
         }
-        human = (
-            f"created pot '{pot.name}' ({pot.pot_id})"
-            f"{' [active]' if pot.active else ''}"
-        )
+        verb = "using existing pot" if created is False else "created pot"
+        human = f"{verb} '{pot.name}' ({pot.pot_id}){' [active]' if pot.active else ''}"
         guidance_repo: str | None = repo
         if repo is not None:
             source = register_repo_source(
@@ -551,10 +576,38 @@ _TEARDOWN_UNREPORTED = (
 )
 
 
+#: ``pot reset``/``archive``/``rename`` were the only pot commands that handed a
+#: raw ref straight to the host. Two consequences, both bad on the commands whose
+#: job is destroying data: ``pot reset managed:x`` failed as ``pot_not_found``
+#: even though ``pot list`` prints that exact syntax as the way to target a host,
+#: and a bare name matching a pot on both hosts picked one silently. Routing them
+#: through the same resolver as ``--pot`` gives them the qualifier, the
+#: cross-host ambiguity refusal, and the origin move — see
+#: :func:`_common._resolve_explicit_pot`.
+def _destructive_target(host: Any, ref: str) -> tuple[str, str]:
+    """``(pot_id, label)`` for a ref a destructive command is about to act on."""
+    pot_id = resolve_pot_id(host, ref, infer_from_repo=False)
+    return pot_id, _target_label(pot_id)
+
+
+def _target_label(pot_id: str) -> str:
+    """How to name the target in a confirmation prompt: pot *and* host.
+
+    A prompt that says only ``resetting 'default'`` is not enough to consent to
+    when ``default`` exists on two hosts and the CLI has been moved to one of
+    them by the ref itself.
+    """
+    from potpie.cli import hosts
+
+    return f"{pot_id} on the {hosts.current_origin()} host"
+
+
 @pot_app.command("rename")
 def pot_rename(ref: str, new_name: str) -> None:
     with contract():
-        pot = get_host().pots.rename_pot(ref=ref, new_name=new_name)
+        host = get_host()
+        pot_id, _ = _destructive_target(host, ref)
+        pot = host.pots.rename_pot(ref=pot_id, new_name=new_name)
         emit({"id": pot.pot_id, "name": pot.name}, human=f"renamed → {pot.name}")
 
 
@@ -569,12 +622,16 @@ def pot_reset(
 ) -> None:
     with contract():
         host = get_host()
-        target = ref or resolve_pot_id(host)
+        if ref:
+            target, label = _destructive_target(host, ref)
+        else:
+            target = resolve_pot_id(host)
+            label = _target_label(target)
         if not confirm:
             fail(
                 code="confirmation_required",
                 message=(
-                    f"resetting '{target}' clears its graph and stored document chunks"
+                    f"resetting {label} clears its graph and stored document chunks"
                 ),
                 next_action=f"re-run with 'potpie pot reset {target} --confirm'",
             )
@@ -610,16 +667,18 @@ def pot_archive(
     ),
 ) -> None:
     with contract():
+        host = get_host()
+        target, label = _destructive_target(host, ref)
         if not confirm:
             fail(
                 code="confirmation_required",
                 message=(
-                    f"archiving '{ref}' also clears its graph and stored document "
-                    "chunks"
+                    f"archiving {label} also clears its graph and stored document "
+                    "chunks, and the pot cannot be used again afterwards"
                 ),
-                next_action=f"re-run with 'potpie pot archive {ref} --confirm'",
+                next_action=f"re-run with 'potpie pot archive {target} --confirm'",
             )
-        pot, purged, reported = _teardown(get_host().pots.archive_pot(ref=ref))
+        pot, purged, reported = _teardown(host.pots.archive_pot(ref=target))
         if not reported:
             # Deliberately does not say "graph cleared". On a host that predates
             # the teardown contract, archive can be a flag and nothing more —
